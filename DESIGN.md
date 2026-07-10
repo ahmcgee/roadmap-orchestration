@@ -479,6 +479,22 @@ gate, wave replans (count fixed by the DAG), session integration review. Conditi
 mid-loop rescues and integration-failure consults (§7, same cap pool). Nothing else may
 run on Fable.
 
+### Feedback topology: bookends, not babysitting
+
+The steering model generalizes to a named principle: the orchestrator is a source of
+feedback **at the beginning (plan-check) and the end (exit gate) — never the sole source
+of feedback throughout**. What makes the middle safe to leave alone is planned
+self-sufficiency: each unit is dispatched with everything it needs to *evaluate its own
+output*, not just produce it — runnable acceptance checks, a provisioned environment, the
+brief's commands, runtime-evidence requirements. Planning a unit's self-validation is part
+of planning the unit; a unit that can't check itself is a spec defect, not an execution
+risk. The known trap in self-checking is **decorative tests** — green checks from tests
+that would not fail if the behaviour were actually wrong (tautological assertions, mocks
+that mock away the subject) — so the reviewer is explicitly charged with applying the
+would-this-fail test to every new test, empirically when unsure (plant a bug, confirm red,
+restore), and the gate treats such tests as its business. A green check is evidence only
+if the check could fail.
+
 ---
 
 ## 7. Integration strategy

@@ -54,7 +54,22 @@ const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebas
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
 const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, gateRounds: 0 }
-const run = (prompt, opts) => { spend[opts.model] = (spend[opts.model] ?? 0) + 1; return agent(prompt, opts) }
+// One code-level retry on structured-output failure: agents deep in tool-work
+// occasionally end their turn without a valid structured report (observed ~1 in 15
+// impl-stage calls across eval runs). A single retry with an explicit report-last
+// instruction converts a unit-killing flake into an occasional double-cost call.
+const run = async (prompt, opts) => {
+  spend[opts.model] = (spend[opts.model] ?? 0) + 1
+  try { return await agent(prompt, opts) }
+  catch (e) {
+    if (!String(e?.message ?? e).includes('StructuredOutput')) throw e
+    spend[opts.model] = (spend[opts.model] ?? 0) + 1
+    return agent(
+      prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
+      'report matching the requested schema — put any commentary in its `notes` field and add no other fields.',
+      { ...opts, label: `${opts.label ?? 'agent'}#retry` })
+  }
+}
 // Verdict-threshold tilt by plan-time risk tier — makes `risk` bind at review/gate time.
 const riskTilt = (r) =>
   r === 'high' ? 'This unit is high-risk: a missed defect ships — when in doubt, demand revision rather than approve. '
@@ -158,15 +173,31 @@ async function provision(where, label) {
 }
 
 async function quarantine(unit, reason, extra) {
-  await run(
+  // The dossier is the redesign feed, so its content must survive any file-level mishap:
+  // the investigator RETURNS findings through the schema (landing in checkpointed
+  // state.json), and a separate verbatim-writer renders the file — investigative agents
+  // flake on side-effects; verbatim writers don't (observed across eval runs).
+  const dossierPath = `${repo}/.roadmap/quarantine/${unit.id}.md`
+  const d = await run(
     `Unit ${unit.id} of a roadmap build is being quarantined (${reason}). Its spec is at ${specOf(unit)} and its ` +
-    `work-in-progress lives on branch unit/${unit.id} (worktree ${wtOf(unit)}). Investigate briefly and write a ` +
-    `concise redesign dossier to ${repo}/.roadmap/quarantine/${unit.id}.md covering: what was attempted, what ` +
-    `failed (with the strongest evidence), and your best hypothesis for the root cause. ` +
+    `work-in-progress lives on branch unit/${unit.id} (worktree ${wtOf(unit)}). Investigate briefly and report a ` +
+    `concise redesign dossier: what was attempted, what failed (with the strongest evidence), and your best ` +
+    `hypothesis for the root cause. Report your findings in the structured output — do not write any files. ` +
     `Additional context: ${JSON.stringify(extra ?? {})}`,
-    { model: 'sonnet', phase: 'Quarantine', label: `dossier:${unit.id}`, schema: S.ok },
+    { model: 'sonnet', phase: 'Quarantine', label: `dossier:${unit.id}`, schema: S.dossier },
   ).catch(() => null)
-  return { status: 'quarantined', branch: `unit/${unit.id}`, reason }
+  const dossier = d ?? {
+    attempted: 'investigation agent failed — raw harness evidence only',
+    evidence: JSON.stringify(extra ?? {}),
+    hypothesis: reason,
+  }
+  await run(
+    `Create the file ${dossierPath} (creating parent directories as needed) with exactly this content:\n` +
+    `# ${unit.id} — quarantine dossier\n\nReason: ${reason}\n\n## Attempted\n${dossier.attempted}\n\n` +
+    `## Evidence\n${dossier.evidence}\n\n## Hypothesis\n${dossier.hypothesis}\n`,
+    { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}`, schema: S.ok },
+  ).catch(() => null)
+  return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
 }
 
 /* --------------------------- per-unit pipeline -------------------------- */
@@ -259,7 +290,12 @@ async function runUnit(unit) {
       `finding as blocking only if it would cause incorrect behavior, violate the spec or a contract, or leave ` +
       `acceptance criteria untested — AND the defect is introduced by this diff. Real issues that predate the ` +
       `diff go in preExisting (they never block). Do not flag style, nitpicks, or anything a linter/formatter/` +
-      `typechecker would catch. Give each blocking finding a confidence in [0,1]. If the spec or its contracts ` +
+      `typechecker would catch. The tests are part of the diff under review, and a green check is evidence only ` +
+      `if the test could fail: for each new or modified test, ask whether it would fail if the behaviour were ` +
+      `actually wrong — a tautological test (asserting whatever the code currently does) or a test that mocks ` +
+      `away the very thing it claims to test is a blocking finding. When unsure, check empirically: introduce a ` +
+      `plausible bug in the worktree, run the tests, confirm at least one fails, then restore your change. ` +
+      `Give each blocking finding a confidence in [0,1]. If the spec or its contracts ` +
       `are internally contradictory or unsatisfiable as written, set unsatisfiable:true. ` +
       `Verification evidence: ${JSON.stringify(verify)}`,
       { model: 'opus', effort: 'high', phase: 'Review', label: `review:${unit.id}#${round}`, schema: S.review })
@@ -306,8 +342,9 @@ async function runUnit(unit) {
       `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
-      `oversights — subtle spec misses, contract edge cases, weak tests, the things a capable engineer plausibly ` +
-      `overlooks — are exactly your job. If revising, give specific directives: what and why, not code.` +
+      `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
+      `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. If revising, ` +
+      `give specific directives: what and why, not code.` +
       `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
       { model: 'fable', effort: C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     if (gate.verdict === 'approve') return { status: 'merge-ready', branch: `unit/${unit.id}`, base }

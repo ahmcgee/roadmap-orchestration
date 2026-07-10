@@ -79,6 +79,13 @@ files. Read their outputs, then decide:
   degrades its work exactly the way it would degrade yours. Acceptance criteria are the
   one place to be exacting: each criterion an individually checkable clause ("X returns Y
   under Z"), because the exit gate grades them one by one and vague criteria grade noisily.
+- **Plan each unit's self-validation as part of the unit.** The highest-leverage planning
+  habit: think ahead to everything the unit needs not just to *do* the work but to
+  *evaluate its own output* — runnable acceptance checks, the provisioned environment to
+  run them in, the commands in the brief, runtime evidence requirements for
+  behavior-sensitive work. Your feedback enters at the beginning (plan-check) and the end
+  (gate); in between, the unit must be able to check itself. A unit that cannot
+  self-validate isn't ready to dispatch — that's a spec defect, not an execution risk.
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance
   tests targeting the *seams* between units. You plan them; schedule an early unit to
   write them; the merge gate runs them.
