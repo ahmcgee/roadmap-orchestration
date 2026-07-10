@@ -1,0 +1,12 @@
+{
+  "name": "roadmap-orchestrator",
+  "description": "Execute a slice of a product roadmap autonomously: decompose into independently verifiable units, build each in an isolated git worktree via a multi-agent workflow with architect gates, integrate serially, and deliver one merge-ready branch.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Aaron McGee",
+    "url": "https://github.com/ahmcgee"
+  },
+  "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme",
+  "repository": "https://github.com/ahmcgee/roadmap-orchestration",
+  "keywords": ["roadmap", "orchestration", "multi-agent", "worktree", "autonomous", "skill"]
+}
