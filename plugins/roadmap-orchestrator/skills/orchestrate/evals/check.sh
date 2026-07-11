@@ -61,6 +61,30 @@ else
   flunk "gate-bad handled (got: $GB)"
 fi
 
+# --- green-tip mirror (preview) -------------------------------------------------
+# The fixture plan carries an api-kind preview block, so the harness must detach the
+# primary checkout at the final suite-green tip (state.json's integrationTip — the branch
+# tip can sit ahead of it when a final merge was reverted; the mirror tracks green only).
+# The load-bearing property is checked implicitly above: unit statuses must match the
+# table exactly — the preview may never alter any outcome (feedback accumulates; it
+# never steers).
+TIP=$(node -e "const s=require('$STATE');console.log(s.integrationTip||'')")
+if git -C "$REPO" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  flunk "primary checkout is a detached-HEAD mirror (still on a branch)"
+else
+  pass "primary checkout is a detached-HEAD mirror"
+fi
+HEAD_SHA=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+[ -n "$TIP" ] && [ "$HEAD_SHA" = "$TIP" ] \
+  && pass "mirror rides the integration tip ($TIP)" \
+  || flunk "mirror rides the integration tip (HEAD=$HEAD_SHA tip=$TIP)"
+PV_STATUS=$(node -e "const s=require('$STATE');console.log((s.preview||{}).status||'absent')")
+PV_SHA=$(node -e "const s=require('$STATE');console.log((s.preview||{}).sha||'')")
+[ "$PV_STATUS" = live ] && pass "state.json preview.status is live" || flunk "state.json preview.status is live (got: $PV_STATUS)"
+[ -n "$PV_SHA" ] && [ "$PV_SHA" = "$TIP" ] \
+  && pass "state.json preview.sha matches the integration tip" \
+  || flunk "state.json preview.sha matches the integration tip (got: $PV_SHA)"
+
 # --- integrated result --------------------------------------------------------
 expect "integration branch exists" git -C "$REPO" rev-parse --verify roadmap/eval
 if [ -d "$WT/__integration" ]; then

@@ -4,12 +4,14 @@ export const meta = {
   phases: [
     { title: 'Setup', detail: 'integration + unit worktrees' },
     { title: 'Implement', detail: 'plan + code (Opus)' },
-    { title: 'Architect', detail: 'plan-check + exit gate (Fable)' },
+    { title: 'Architect', detail: 'plan-check + escalated exit gate (Fable)' },
+    { title: 'Opus-gate', detail: 'Opus exit gate; escalates to Fable when hard' },
     { title: 'Verify', detail: 'build/tests (Haiku)' },
     { title: 'Review', detail: 'adversarial review (Opus)' },
     { title: 'Fix', detail: 'apply findings/directives (Opus)' },
     { title: 'Escalate', detail: 'rescue consults (Fable, capped)' },
     { title: 'Merge', detail: 'serial queue + integrated suite gate' },
+    { title: 'Preview', detail: 'green-tip mirror advance (Haiku)' },
     { title: 'Quarantine', detail: 'dossiers for redesign' },
   ],
 }
@@ -35,6 +37,14 @@ const C = {
   minBlockConfidence: 0.6,
   gateEffort: 'medium',
   planCheckRisk: ['low', 'med', 'high'],
+  previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
+  // Exit-gate economy: Opus grades its own work first and escalates to the Fable architect
+  // only on a genuinely hard call (see the exit gate below). 'always-fable' restores the
+  // guaranteed frontier pass on every unit. High-risk and contract-touching units always
+  // take the Fable gate regardless; gateAuditRate deterministically samples a fraction of
+  // Opus-approved units for a Fable audit (0 disables).
+  exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
+  gateAuditRate: 0.15,
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
 }
@@ -42,6 +52,9 @@ const repo = plan.repoPath          // absolute path to the repository
 const wtRoot = plan.worktreeRoot    // absolute path OUTSIDE the repository
 const intBranch = prior.integrationBranch
 const intWt = `${wtRoot}/__integration`
+// Preview process artifacts live OUTSIDE the repo so mirror checkouts never touch them.
+const prevPid = `${wtRoot}/__preview.pid`
+const prevLog = `${wtRoot}/__preview.log`
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
 const wtOf = (u) => `${wtRoot}/${u.id}`
 // Location discipline for mechanical agents: smoke testing showed that given a bad path
@@ -53,7 +66,23 @@ const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
-const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, gateRounds: 0 }
+const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, gateRounds: 0, opusGateRounds: 0 }
+// Debt ledger for this wave: consciously-deferred imperfections surfaced by the reviewer,
+// the exit gates, or the implementer. Returned in the wave state; the architect triages it
+// at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
+const debtLog = []
+const addDebt = (unitId, sha, items, defaults = {}) => {
+  for (const d of items ?? []) {
+    if (!d) continue
+    const o = typeof d === 'string' ? { what: d } : d
+    debtLog.push({
+      unit: unitId, sha,
+      kind: o.kind ?? defaults.kind ?? 'quality',
+      severity: o.severity ?? defaults.severity ?? 'minor',
+      what: o.what ?? '', why: o.why ?? '',
+    })
+  }
+}
 // One code-level retry on structured-output failure: agents deep in tool-work
 // occasionally end their turn without a valid structured report (observed ~1 in 15
 // impl-stage calls across eval runs). A single retry with an explicit report-last
@@ -75,11 +104,23 @@ const riskTilt = (r) =>
   r === 'high' ? 'This unit is high-risk: a missed defect ships — when in doubt, demand revision rather than approve. '
   : r === 'low' ? 'This unit is low-risk: block only on clear correctness or contract violations; do not gold-plate. '
   : ''
+// Deterministic audit sampling — a stable fraction of Opus-approved units still take the
+// Fable gate as an anti-rubber-stamp check. Keyed on the unit id so it is a pure function
+// (no Date.now/Math.random — those are forbidden and would break resumeFromRunId replay).
+const hashUnit = (id) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0; return h }
+const auditPick = (unit) => C.gateAuditRate > 0 && (hashUnit(unit.id) % 1000) < Math.round(C.gateAuditRate * 1000)
 
 /* ------------------------------- schemas ------------------------------- */
 const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
 const arr = (t) => ({ type: 'array', items: { type: t } })
 const oneOf = (vals) => ({ type: 'string', enum: vals })
+// Deferred-imperfection items — consciously accepted, not blocking. Collected into the
+// wave's debt ledger. `what` is the only hard requirement; the rest classify for triage.
+const debtArr = { type: 'array', items: obj({
+  what: { type: 'string' }, why: { type: 'string' },
+  severity: oneOf(['minor', 'major']), kind: oneOf(['correctness', 'test', 'structure', 'ergonomics']),
+}, ['what']) }
+const directiveArr = { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) }
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
   ws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' }, detail: { type: 'string' } }, ['ok', 'sha']),
@@ -95,8 +136,15 @@ const S = {
   planVerdict: obj({
     verdict: oneOf(['approve', 'redirect', 'quarantine']), guidance: { type: 'string' }, notes: { type: 'string' },
   }, ['verdict', 'guidance']),
-  impl: obj({ summary: { type: 'string' }, filesChanged: arr('string'), notes: { type: 'string' } },
+  impl: obj({ summary: { type: 'string' }, filesChanged: arr('string'), debt: debtArr, notes: { type: 'string' } },
     ['summary', 'filesChanged']),
+  // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
+  // escalate to the Fable architect — trigger names the reason frontier judgment is needed.
+  opusGate: obj({
+    verdict: oneOf(['approve', 'revise', 'escalate']),
+    trigger: oneOf(['stuck', 'hard-tradeoff', 'foundational', 'oversight', 'none']),
+    directives: directiveArr, debt: debtArr, notes: { type: 'string' },
+  }, ['verdict']),
   // `blocked` = the tooling itself could not run (env/deps/config) — a third outcome,
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
   verify: obj({
@@ -115,7 +163,7 @@ const S = {
   }, ['blocking', 'preExisting', 'nonBlocking', 'unsatisfiable']),
   gate: obj({
     verdict: oneOf(['approve', 'revise', 'quarantine']),
-    directives: { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) },
+    directives: directiveArr, debt: debtArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
   directive: obj({ action: oneOf(['redirect', 'quarantine']), guidance: { type: 'string' } }, ['action', 'guidance']),
@@ -138,6 +186,14 @@ let inFlight = 0
 let mergeChain = Promise.resolve()
 let checkpointChain = Promise.resolve()
 let settleWaiters = []
+// Green-tip mirror (DESIGN §7.5): the PRIMARY checkout rides the latest suite-green
+// integration tip so the user — and the between-wave explorer — only ever observe real
+// states, never mid-merge trees. Strictly observability: every path below logs and
+// continues on failure; no unit outcome may depend on the preview.
+let previewStatus = plan.preview && C.previewRefresh !== 'off' ? 'pending' : 'none'
+let previewSha = null
+let previewTarget = null
+let previewChain = Promise.resolve()
 
 const rec = (id) => units.get(id)
 const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
@@ -145,6 +201,10 @@ const ready = (u) => rec(u.id).status === 'pending' && depsOf(u.id).every((d) =>
 const blockedBy = (u) => depsOf(u.id).some((d) => ['quarantined', 'blocked'].includes(rec(d)?.status))
 const serialize = () => ({
   integrationBranch: intBranch, integrationTip, consultsUsed, spend,
+  preview: { sha: previewSha, status: previewStatus },
+  // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
+  // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
+  debt: debtLog,
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
@@ -170,6 +230,40 @@ async function provision(where, label) {
     (p.setup ? `Then run, from inside ${where}: ${p.setup}. ` : '') +
     `Report ok:false with the exact error if any step cannot complete.`,
     { model: 'haiku', phase: 'Setup', label, schema: S.ok })
+}
+
+// Green-tip mirror advance: detach the primary checkout at a suite-green tip and refresh
+// the preview process there. Coalescing latest-wins chain — merges never wait for it, and
+// an advance that finds the mirror already at target is a no-op. Failure leaves the mirror
+// stale (or 'failed' at setup) and the wave continues: observability, never a gate.
+const previewRestart = () => {
+  const p = plan.preview
+  if (p.refresh) return `Then run, from inside ${repo}: ${p.refresh}. `
+  if (!p.start) return ''
+  return `Then restart the preview: ${p.stop || `kill the process id in ${prevPid} if that file exists (ignore kill errors)`}; ` +
+    `then start it again from inside ${repo} with \`nohup ${p.start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\`. `
+}
+const previewHealth = () => plan.preview.healthcheck
+  ? `Then verify it responds: ${plan.preview.healthcheck} (retry a few times over ~15 seconds before concluding failure). `
+  : ''
+function refreshMirror() {
+  if (previewStatus !== 'live') return
+  previewTarget = integrationTip
+  previewChain = previewChain.then(async () => {
+    if (previewSha === previewTarget) return   // coalesce: latest-wins
+    const sha = previewTarget
+    const r = await run(
+      STRICT +
+      `In the git repository at ${repo} (the primary checkout, currently a detached-HEAD preview mirror): ` +
+      `run \`git checkout --detach ${sha}\`. If git refuses (for example locally-modified files), report ` +
+      `ok:false with the exact error — never stash, reset, or force. ` +
+      previewRestart() + previewHealth() +
+      `Report ok plus the checkout's HEAD sha.`,
+      { model: 'haiku', phase: 'Preview', label: `mirror:${sha.slice(0, 7)}`, schema: S.ws },
+    ).catch(() => null)
+    if (r?.ok && sameSha(r.sha, sha)) previewSha = sha
+    else log(`preview mirror stale (advance to ${sha.slice(0, 7)} failed: ${r?.detail ?? r?.sha ?? 'agent error'})`)
+  }).catch(() => null)
 }
 
 async function quarantine(unit, reason, extra) {
@@ -258,14 +352,16 @@ async function runUnit(unit) {
   if (!implPlan.feasible)
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
 
-  await run(
+  const impl = await run(
     `Implement unit ${unit.id} in the worktree at ${w}, following this plan:\n${JSON.stringify(implPlan)}\n` +
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
     `frozen. Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
-    `and the tests the spec's acceptance criteria call for. Work only inside ${w}. Commit your work on the ` +
-    `current branch with clear messages.`,
+    `and the tests the spec's acceptance criteria call for. If you consciously defer any imperfection (a shortcut, ` +
+    `a thin test, a known-suboptimal structure) rather than fix it now, record it in \`debt\` — do not silently ` +
+    `leave it. Work only inside ${w}. Commit your work on the current branch with clear messages.`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
+  addDebt(unit.id, base, impl.debt, { kind: 'quality' })
   } // end !unit.existingBranch — adopted branches enter the pipeline here
 
   // Free-tier polish loop: verify → adversarial review → fix, bounded.
@@ -331,7 +427,68 @@ async function runUnit(unit) {
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
 
-  // Architect exit gate — the guaranteed frontier pass. Reads the real diff.
+  // Any deferred imperfection the reviewer surfaced but did not block on is real debt —
+  // bank it whichever gate approves, so it is never silently lost.
+  const bankReviewDebt = () => {
+    addDebt(unit.id, base, review?.nonBlocking, { kind: 'quality' })
+    addDebt(unit.id, base, review?.preExisting, { kind: 'quality', severity: 'major' })
+  }
+  const gateReverify = (label) => run(
+    STRICT +
+    `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
+    `from ${spec} (commands: ${brief}). Report failures verbatim. blocked:true if the tooling itself cannot ` +
+    `run. Fix nothing.`,
+    { model: 'haiku', phase: 'Verify', label, schema: S.verify })
+
+  // Exit gate — Opus-first, escalating to the Fable architect only when the call is
+  // genuinely hard. High-risk units, contract-touching diffs, and a deterministic audit
+  // sample skip straight to the guaranteed Fable gate: Opus cannot reliably self-detect the
+  // subtle oversights that gate exists to catch, so where the stakes are structurally
+  // highest, frontier judgment stays mandatory (DESIGN.md decision 4).
+  const forceFrontier =
+    C.exitGate === 'always-fable' || unit.risk === 'high' ||
+    verify.contractSurfaceTouched || auditPick(unit)
+
+  if (!forceFrontier) {
+    // Bounded Opus self-gate: a FRESH adversarial Opus (not the implementer) grades the
+    // acceptance criteria one by one, then approves, self-revises (free), or escalates.
+    for (let g = 0; g < C.maxGateRounds; g++) {
+      spend.opusGateRounds++
+      const og = await run(
+        riskTilt(unit.risk) +
+        `You are the exit gate for unit ${unit.id} of a roadmap build, standing in for the architect — but you ` +
+        `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
+        `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
+        `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
+        `Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
+        `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
+        `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
+        `actually wrong are exactly what to hunt. Then choose a verdict: "approve" only if you would merge this ` +
+        `as-is and personally vouch for it; "revise" if there is a concrete, mechanical fix you can specify and it ` +
+        `needs no frontier judgment (give directives — what and why, not code); "escalate" to the frontier ` +
+        `architect if you are stuck, if the right choice is a genuinely hard trade-off where every option carries ` +
+        `a substantive drawback, if the increment is architecturally foundational to the wider solution, or if ` +
+        `you have found an oversight you are not confident you can resolve. Name the escalation trigger. Record ` +
+        `any imperfection you consciously ship rather than fix in \`debt\` (what, why, severity, kind).` +
+        `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
+        { model: 'opus', effort: 'high', phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
+      addDebt(unit.id, base, og.debt)
+      if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
+      if (og.verdict === 'escalate') break
+      await run(
+        `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
+        `${JSON.stringify(og.directives)}\nCommit your changes.`,
+        { model: 'opus', effort: 'high', phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
+      verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
+      if (verify.blocked)
+        return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+    }
+    // Opus approved nothing across its rounds — whether it escalated or merely failed to
+    // converge, the frontier architect decides next. Fall through to the Fable gate below.
+  }
+
+  // Fable architect gate — the frontier pass. Reached by force policy, an Opus escalation,
+  // or Opus non-convergence. Nothing merges through here without frontier approval.
   for (let g = 0; g < C.maxGateRounds; g++) {
     spend.gateRounds++
     const gate = await run(
@@ -344,21 +501,18 @@ async function runUnit(unit) {
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. If revising, ` +
-      `give specific directives: what and why, not code.` +
+      `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
+      `than fix in \`debt\`.` +
       `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
       { model: 'fable', effort: C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
-    if (gate.verdict === 'approve') return { status: 'merge-ready', branch: `unit/${unit.id}`, base }
+    addDebt(unit.id, base, gate.debt)
+    if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
     await run(
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes.`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
-    verify = await run(
-      STRICT +
-      `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
-      `from ${spec} (commands: ${brief}). Report failures verbatim. blocked:true if the tooling itself cannot ` +
-      `run. Fix nothing.`,
-      { model: 'haiku', phase: 'Verify', label: `gate-verify:${unit.id}#${g}`, schema: S.verify })
+    verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
       return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
   }
@@ -399,6 +553,7 @@ async function mergeUnit(unit) {
   }
 
   integrationTip = res.head
+  if (C.previewRefresh === 'merge') refreshMirror()
   return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: res.head }
 }
 
@@ -462,6 +617,30 @@ if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup
 const intProv = await provision(intWt, 'provision:integration')
 if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${intProv.detail}`)
 
+// Preview setup: detach the primary checkout at the wave-start tip and stand the preview
+// up there. Failure never gates the wave — throwing here would gate the arc on its own
+// observability.
+if (previewStatus === 'pending') {
+  const p = plan.preview
+  const ps = await run(
+    STRICT +
+    `Set up the arc's preview mirror in the PRIMARY repository checkout at ${repo}: first, if the file ` +
+    `${prevPid} exists, kill the process id it contains (ignore kill errors) and delete the file. ` +
+    `Then run \`git checkout --detach ${integrationTip}\` — if git refuses (for example locally-modified ` +
+    `files), report ok:false with the exact error; never stash, reset, or force. ` +
+    (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
+    (p.start ? `Then start the preview from inside ${repo} with \`nohup ${p.start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\`. ` : '') +
+    previewHealth() +
+    `Report ok plus the checkout's HEAD sha.`,
+    { model: 'haiku', phase: 'Preview', label: 'preview-setup', schema: S.ws },
+  ).catch(() => null)
+  if (ps?.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
+  else {
+    previewStatus = 'failed'
+    log(`preview setup failed — continuing without a mirror (${ps?.detail ?? ps?.sha ?? 'agent error'})`)
+  }
+}
+
 const inScope = plan.units.filter((u) => u.inScope)
 log(`wave ${serialize().wave}: ${inScope.length} in-scope units, ${C.maxConsults} rescue consults available`)
 
@@ -478,5 +657,8 @@ while (true) {
   await nextSettle()
 }
 
+if (C.previewRefresh === 'wave') refreshMirror()   // single advance to the final tip
+await previewChain                                  // drain pending mirror advances
+checkpoint()                                        // state.json reflects the final mirror position
 await checkpointChain
 return serialize()

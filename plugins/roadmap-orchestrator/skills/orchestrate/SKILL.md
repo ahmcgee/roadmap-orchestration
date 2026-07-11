@@ -43,6 +43,15 @@ config knobs live in `reference.md` (read it before Phase 0). If the repo carrie
    harness while an arc is in flight.
 7. **Workflows take no mid-run input.** Every ambiguity you leave unresolved in Phase 0
    becomes a quarantine later. Ask the user now or decide now.
+8. **Feedback accumulates; it never steers.** Explorer findings, health-check findings, and
+   user notes land in `.roadmap/feedback/` and wait for your next judgment boundary — a wave
+   replan or the session integration review. Nothing in that directory may interrupt,
+   reroute, or message an in-flight unit, and no new frontier touchpoint may be created to
+   read it sooner. This is the bookends principle applied to runtime evidence: the preview
+   and the health check widen what the bookends can *see*, not when they happen — the health
+   check runs only at boundaries, never mid-wave. Deferred technical debt obeys the same
+   discipline but is *durable*, not consumed: un-fixed items land in the living
+   `.roadmap/debt.md` and carry forward until a later wave or arc addresses them.
 
 ## Phase 0 — Plan (interactive; the highest-leverage act in the system)
 
@@ -52,9 +61,10 @@ mixed), the user's cut line ("build up to …"), and the repo you're standing in
 **First, check for an existing `.roadmap/`.** A top-level `state.json` means an arc is in
 flight — resume it or ask the user; never plan over it (its stale `integrationTip` would
 silently fork new worktrees from a dead base). `archive/` and the living documents
-(`constraints.md`, and any notes) are prior knowledge: read them into the new plan —
-constraints carry forward, archived contracts may seed new ones but are *not* binding. A
-fresh arc starts only from a closed-out `.roadmap/`.
+(`constraints.md`, `debt.md`, and any notes) are prior knowledge: read them into the new
+plan — constraints carry forward, unresolved debt is candidate scope you weigh against the
+cut line (mop-up units are units like any other), archived contracts may seed new ones but
+are *not* binding. A fresh arc starts only from a closed-out `.roadmap/`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce
@@ -86,6 +96,19 @@ files. Read their outputs, then decide:
   behavior-sensitive work. Your feedback enters at the beginning (plan-check) and the end
   (gate); in between, the unit must be able to check itself. A unit that cannot
   self-validate isn't ready to dispatch — that's a spec defect, not an execution risk.
+- **Plan the arc's preview.** Self-validation scales up: the units check themselves; the
+  *arc* should be demonstrable while it integrates. Decide how the integrated result is
+  exercised — dev server, built CLI, or, for a library-only arc, driving the public
+  API/REPL (`kind: api`, almost always possible) — and fill the plan's `preview` block
+  (shape in `reference.md`). The harness keeps the primary checkout riding the latest
+  suite-green integration tip (the green-tip mirror), so the user watches real states
+  from their own repo, and each wave an Opus explorer you spawn hunts the integrated
+  behavior for what tests and diffs can't show. While provisioning: have Haiku create
+  `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
+  light pro forma that makes it hard to be unclear (*What I did — steps/command/URL ·
+  What I observed · What I expected · How much it matters — blocker/major/minor/idea ·
+  Where — area/page/unit if known*) — committed with the plan pack. Kill any stale
+  `worktreeRoot/__preview.pid` left by a dead arc.
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance
   tests targeting the *seams* between units. You plan them; schedule an early unit to
   write them; the merge gate runs them.
@@ -133,8 +156,13 @@ Persist everything under `.roadmap/` (shapes in `reference.md`), then **stop and
 the user**: present the decomposition, contracts, cut-line interpretation, and your
 questions — batched, once. Discipline the questions: only ask what you couldn't resolve
 yourself, rank by impact × uncertainty, cap around five, and attach your recommended
-answer to each so the user can mostly confirm. Get approval before dispatch. If invoked
-with `--dry-run`, stop here; the plan pack is itself a deliverable.
+answer to each so the user can mostly confirm. When you present the plan, also tell the
+user two things, concretely: where the preview will be reachable (`preview.howToAccess`,
+plus the fact that their checkout will ride the integration tip detached during waves —
+don't switch branches), and the absolute path of `.roadmap/feedback/user/` — they can
+copy `TEMPLATE.md` there at any time; notes are batched into your next triage, never
+injected mid-run, and cost no frontier tokens to record. Get approval before dispatch.
+If invoked with `--dry-run`, stop here; the plan pack is itself a deliverable.
 
 ## Phase 1…n — Execute waves
 
@@ -148,10 +176,20 @@ Workflow({ scriptPath: "<this skill's directory>/harness.mjs",
 
 The harness runs every ready unit through: worktree setup → Opus implementation plan →
 **architect plan-check** → Opus implement → verify/review/fix loop (all free-tier) →
-**architect exit gate** → serial merge onto the integration branch with the full suite as
-the gate. The plan-check and exit gate are `fable` agents standing in for you — their
-prompts are deliberately open-ended; trust them as you'd trust yourself. State is
-checkpointed to `.roadmap/state.json` after every status change.
+**Opus exit gate** → serial merge onto the integration branch with the full suite as the
+gate. The plan-check is a `fable` agent standing in for you. The exit gate is now
+Opus-first — Opus grades its own work and **escalates to the Fable architect gate only on
+a genuinely hard call**: it's stuck, every option carries a substantive drawback, or the
+increment is architecturally foundational to the wider solution. `risk: high` units and any
+diff touching a frozen contract surface always take the Fable gate regardless, plus a small
+deterministic audit sample (`gateAuditRate`) — Opus cannot reliably self-detect the subtle
+oversights the frontier gate exists to catch, so where stakes are structurally highest,
+frontier judgment stays mandatory. This is what makes Fable spend conservative; the
+between-wave health check below is the systemic backstop. Set `config.exitGate:
+'always-fable'` to restore a guaranteed frontier pass on every unit. The gate prompts are
+deliberately open-ended; trust them as you'd trust yourself. State is checkpointed to
+`.roadmap/state.json` after every status change; the returned state carries a `debt` array
+(imperfections consciously deferred this wave) for you to triage at the boundary.
 
 Between waves, judgment returns to you:
 
@@ -162,8 +200,45 @@ Between waves, judgment returns to you:
   re-enters as a *new* spec; never re-run one under the spec that failed.
 - **Contingent boundaries**: read the learnings, revise the downstream specs, launch the
   next wave.
+- **Explore, then triage feedback.** If the arc has a preview, spawn one **Opus explorer**
+  (model pinned) against it at the current integration tip. Its charter is *runtime
+  behavior only* — the diff, tests, and gates already judged the code: drive flows end to
+  end the way a skeptical user would, poke edge cases, feed hostile/empty/huge inputs,
+  break expected sequences, hunting behavior that is unexpected, counterintuitive,
+  underdocumented, brittle, or misaligned with the specs' intent. It reports ≤~10
+  findings — severity, exact repro, observed vs expected, the sha observed — changes
+  nothing, and an empty report is legitimate. Persist findings via a Haiku verbatim-writer
+  to `feedback/explorer/wave-<n>.md` (investigators flake on side effects; verbatim
+  writers don't).
+- **Check codebase health** (unless `config.healthCheck: 'off'`). The explorer judges
+  *runtime behavior*; this is its code/test/structure counterpart, and it is your job as
+  the owner of overall product quality — per-unit gates see one unit, never the accumulating
+  drag that makes every later wave slower. Spawn one **Opus health assessor** (model pinned)
+  against the integration tip to report, with specifics: **test health** — coverage gaps,
+  slow tests, and brittleness (tests that assert implementation detail, over-mock, or depend
+  on ordering/timing); **structural health** — files grown too large, unintended
+  duplication, misplaced code, architectural drift; **ergonomics** — manual dev steps that
+  should be automated (running tests, setup) and missing tooling that taxes every round. In
+  parallel, catch *intermittent* failures mechanically: have Haiku run the full suite
+  `config.flakeReruns` times (default 3) — any pass↔fail flip is a brittleness item.
+  Brittleness that produces intermittent gate failures is not the next unit's problem to
+  absorb; it is a degradation you must catch here. Persist to `feedback/health/wave-<n>.md`
+  via a Haiku verbatim-writer; findings are evidence, they change nothing on their own.
+- **Triage — you, once, at this boundary.** Triage the whole `.roadmap/feedback/` batch
+  (explorer + health + user) **and the wave's returned `debt` array** together: fold items
+  into revised specs, cut fix units into the next wave (debt or a health finding worth
+  fixing now becomes a fix unit like any other), treat contract-contradicting feedback as a
+  contract amendment (yours alone — record it; the integration review re-examines it), or
+  dismiss with a stated reason. **Debt you choose not to fix this wave doesn't vanish** —
+  have Haiku append it to the living `.roadmap/debt.md` ledger (it carries across waves and
+  arcs, so a later wave or session mops it up); annotate an entry resolved when a fix unit
+  lands. Sonnet-compress the batch first if it's large; findings at a superseded sha are
+  discounted, not re-litigated. Have Haiku move consumed feedback files to
+  `feedback/triaged/<wave>/`. Triage silently — contact the user **only** for a critical
+  call you genuinely cannot make.
 - **Nothing to replan?** Just dispatch. Keep your own turns terse — between waves you are
-  a dispatcher, not a narrator.
+  a dispatcher, not a narrator. A boundary line like "preview at X; 6 feedback items:
+  4 actioned, 2 dismissed" is plenty.
 
 If a run dies mid-wave, resume it with `resumeFromRunId` (completed units replay free from
 the journal, same session). Across sessions, `.roadmap/state.json` is the source of truth:
@@ -172,20 +247,26 @@ recompute where things stand and continue — merged units are simply done.
 ## Session end
 
 1. **Integration review — yours, guaranteed.** With the final state, contract amendments,
-   and quarantine list in hand, read the integrated diff on the integration branch and
-   judge cross-unit coherence — the one thing no per-unit gate could see. Hand any
-   findings to Opus fixers as directives.
+   the quarantine list, and any untriaged feedback in hand, read the integrated diff on
+   the integration branch and judge cross-unit coherence — the one thing no per-unit gate
+   could see. Hand any findings to Opus fixers as directives.
 2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the
-   cut line; gate and consult spend; notes for the next session. Partial completion with
-   honest dossiers is a good outcome.
+   cut line; feedback actioned / dismissed / pending (pending items go into next-session
+   notes); the debt ledger's state (what landed in `.roadmap/debt.md`, what you fixed
+   in-arc); gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
+   notes for the next session. Partial completion with honest dossiers is a good outcome.
 3. **Ask the user** before fast-forwarding `main` to the integration branch.
 4. **Close out the arc.** `.roadmap/` is arc-scoped working state, not permanent
    documentation — left raw, it sabotages the future: a later run that reads the stale
    `state.json` forks worktrees from a dead integration tip, retired "frozen" contracts
    masquerade as binding, and maintainers inherit expired planning clutter. After `main`
-   advances: archive the arc (plan, brief, specs, contracts, state, dossiers, report)
+   advances: stop the preview process (`worktreeRoot/__preview.pid`) and re-attach the
+   primary checkout to `main`; archive the arc (plan, brief, specs, contracts, state,
+   dossiers, feedback — triaged and pending alike — report)
    into `.roadmap/archive/<date>-<cutline>/` in one commit; keep the living documents
-   (`constraints.md`, notes) at top level for future arcs to read and extend; remove unit
+   (`constraints.md`, `debt.md`, notes) at top level for future arcs to read and extend —
+   unresolved debt is a first-class input to the next arc's Phase 0, not archived clutter;
+   remove unit
    worktrees and merged `unit/*` branches (keep quarantined branches — their dossiers
    point at them); delete the integration branch once merged. The absence of a top-level
    `state.json` is the unambiguous "no arc in flight" marker the next run keys on.

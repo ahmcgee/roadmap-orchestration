@@ -25,7 +25,7 @@ Your architecture is directionally right. Where I differ:
 | 1 | "The root is code, not a living frontier agent" | **Agree, and it's better than you think**: the dynamic-workflow script *is* deterministic zero-token code that can spawn agents. The harness loop doesn't need to be authored — it can literally be the workflow script. But there is an irreducible thin frontier presence: the main Claude Code loop between waves. Don't fight it; it's the only place human input can enter. Minimize its turns, don't eliminate it. |
 | 2 | "Frontier authors the harness" | **Disagree.** The harness is written **once, as part of the skill** — generic, parameterized by a plan pack. Having the frontier re-author orchestration code per run is both a token spend and a reliability bug farm. The frontier authors *plan data* (DAG, contracts, unit specs), never orchestration code. This is the single biggest economy in the design. |
 | 3 | One parameterized workflow template per unit | **Agree.** Realized as a plain function inside one workflow script, not as separate workflows (see §2 on nesting). |
-| 4 | Cheap review/fix, demand-gated escalation to frontier | **Revised by operating experience: per-unit frontier judgment is guaranteed, not demand-gated.** Opus reliably gets a unit ~90% there but leaves small oversights that need re-steering — so every unit passes a **Fable architect exit gate** (reads the diff and evidence, writes directives, never code), plus a plan-check before implementation — default every unit, since up-front plan quality is precisely what makes post-hoc gating sufficient. Demand-gating survives only as a mid-loop *rescue* path for stuck units, and that predicate is evaluated by **plain code over objective signals** (fix-round counts, test results, paths touched) — never by asking a cheap model "do you need help?". The spend dial now controls the *depth* of frontier attention per unit, not whether it happens. §6. |
+| 4 | Cheap review/fix, demand-gated escalation to frontier | **Revised twice.** *First:* per-unit frontier judgment was made **guaranteed** — Opus reliably gets a unit ~90% there but leaves small oversights it doesn't know it left, so demand-gating (asking Opus "are you confident?") missed exactly them; every unit got a **Fable architect exit gate** plus a plan-check. *Then, for Fable economy:* the exit gate became **Opus-first with a retained frontier safety net**. Opus grades its own work and escalates to the Fable gate only on a call it *can* reliably self-assess — it's stuck, a genuinely hard trade-off, or the increment is architecturally foundational — NOT on hidden-oversight confidence. The guaranteed Fable pass is kept exactly where undetected oversights are most costly (`risk: high`, contract-touching diffs) plus a deterministic audit sample against systematic rubber-stamping; hidden oversights that slip a low/med unit are caught systemically by the between-wave health check (§6.6), not per-unit. Mid-loop *rescue* for stuck units still fires by **plain code over objective signals** (fix-round counts, test results, paths touched) — never by asking a cheap model "do you need help?". The plan-check stays guaranteed (cheap, pre-code, high value). §6. |
 | 5 | Guaranteed frontier pass at the post-integration gate | **Half agree.** Per-merge frontier is O(N) — it violates your own constraint. The per-merge gate is code + tests (free). The *guaranteed* frontier acts are O(1) per session: the plan pack up front and one integration review at the end. And the real fix for cross-unit semantic incompatibility is to **prevent it at plan time with frozen interface contracts**, not just detect it at merge time. §7. |
 | 6 | Bounded give-up / quarantine | **Agree.** §8. |
 | 7 | Structured state, parse-once | **Agree.** §10. |
@@ -249,7 +249,9 @@ out-of-scope frontier unit — nearly free while context is hot, valuable later.
 | **Mid-loop rescue consult** (conditional, capped) | **Fable, effort low** | For units stuck before reaching the gate; directive only. |
 | Merge-conflict resolution | Opus | Contextual judgment, free; uncertainty routes to the predicate. |
 | Integration bisect (revert-and-retest search) | Code + Haiku | Pure mechanism. |
-| **Wave replan** (contingent edges only) | **Fable** | Genuine contingent judgment; count is read off the DAG. |
+| Green-tip mirror advance / preview refresh | Code + Haiku | Pure mechanism; ~1 call per merge (§7.5). |
+| Preview exploration (per wave, architect-spawned) | Opus, explicitly pinned | Adversarial runtime driving of the integrated result; findings are evidence, never directives. |
+| **Wave replan** (contingent edges only) + feedback-batch triage | **Fable** | Genuine contingent judgment; count is read off the DAG; triage rides the same boundary (§7.5). |
 | **Session integration review** | **Fable** | The one guaranteed backstop for cross-unit semantics; O(1). |
 | Status/report regeneration (`ROADMAP-STATUS.md`) | Haiku | Rendering. |
 
@@ -415,21 +417,35 @@ Notes:
 
 ## 6. Verification & escalation ladder (the spend dial)
 
-Operating experience says Opus gets a unit ~90% there and leaves small oversights that
-need frontier re-steering — so per-unit frontier judgment is **guaranteed, not
-demand-gated**. The ladder, cheapest rung first; each rung exists to make the next rung's
-attention cheaper:
+Operating experience says Opus gets a unit ~90% there and leaves small oversights that need
+frontier re-steering. That first justified a **guaranteed** per-unit Fable gate; it now
+justifies an **Opus-first gate with a retained frontier safety net** (rung 4) — the same
+insight, spent more carefully. The ladder, cheapest rung first; each rung exists to make the
+next rung's attention cheaper:
 
 1. **Machine checks** (free, Haiku-executed): build, tests, lint, contract-surface diff.
 2. **Opus review** (free): adversarial, fresh-context; filters the noise so frontier
    attention lands on a polished candidate.
 3. **Opus fix rounds** (free): bounded at K.
-4. **Fable architect gate** (metered, **guaranteed, every unit**): reads the actual diff +
-   spec + evidence; emits `{approve | directives | quarantine}`; bounded at G re-check
-   rounds reading delta diffs only. Its sibling, the **plan-check** (same architect,
-   before implementation, default every unit), catches wrong-approach before Opus writes
-   code — one cheap redirect at plan time saves a full fix cycle at the gate, and quality
-   up front is what keeps the gate convergent at all.
+4. **Exit gate — Opus-first, escalate to Fable** (rungs 4a/4b):
+   - **4a. Opus exit gate** (free, every non-forced unit): a fresh adversarial Opus grades
+     the acceptance criteria and either approves, self-revises (a mechanical fix it can
+     specify, bounded at G), or **escalates**. It escalates only on a call Opus can honestly
+     self-assess: *stuck*, *hard trade-off* (every option carries a substantive drawback),
+     or *architecturally foundational*. It cannot self-assess hidden correctness oversights —
+     so it is not asked to.
+   - **4b. Fable architect gate** (metered): reads the actual diff + spec + evidence; emits
+     `{approve | directives | quarantine}`, bounded at G. Reached by Opus escalation, by Opus
+     non-convergence, or unconditionally when `forceFrontier` holds — `exitGate:
+     'always-fable'`, `risk: high`, a contract-touching diff, or the deterministic
+     `gateAuditRate` audit sample. This is where the guaranteed frontier pass is *retained*,
+     concentrated on the units whose undetected oversights cost the most; the rest are
+     backstopped systemically at the between-wave health check (§6.6), not per-unit.
+   Their sibling, the **plan-check** (same architect, before implementation, default every
+   unit), catches wrong-approach before Opus writes code — one cheap redirect at plan time
+   saves a full fix cycle at the gate, and quality up front is what keeps the gate convergent
+   at all. It stays guaranteed: cheap, pre-code, and Opus cannot check its own approach as
+   impartially as it can grade a finished diff.
 5. **Mid-loop rescue consult** (metered, conditional, capped): for units that get *stuck*
    before ever reaching the gate. The predicate is pure code over objective signals only:
 
@@ -455,12 +471,16 @@ config:
 { maxFixRounds: K = 2,            // free polish before metered attention
   maxGateRounds: G = 2,            // gate directive→fix→re-check cycles before quarantine
   planCheckRisk: ['low','med','high'],  // plan-check coverage — default every unit
-  gateEffort: 'medium',            // effort on gate calls ('low' floor; 'high' for risk:high)
+  exitGate: 'opus-first',          // 'opus-first' (Opus grades, escalates) | 'always-fable'
+  gateAuditRate: 0.15,             // fraction of Opus-approved units still Fable-audited
+  gateEffort: 'medium',            // effort on Fable gate calls ('low' floor; 'high' for risk:high)
   maxConsults: E = ⌈U/4⌉ }         // mid-loop rescue budget
 ```
 
-Turning it down (G=1, plan-check high-risk only, gateEffort low) approaches the old
-demand-gated design's cost; turning it up (gateEffort high, larger G) buys more scrutiny.
+`exitGate: 'opus-first'` with a low `gateAuditRate` spends the least frontier; `exitGate:
+'always-fable'` restores the guaranteed-gate design. Turning the rest down (G=1, plan-check
+high-risk only, gateEffort low) approaches the old demand-gated design's cost; turning it up
+(gateEffort high, larger G) buys more scrutiny.
 But note where extra budget actually pays off: mid-development steering has proven
 unnecessary when the plan is right, and no amount of gate depth rescues a bad plan — so
 marginal frontier spend goes to the *planning* side (spec detail, plan-checks, phase-0
@@ -474,10 +494,13 @@ integration review, since an amended contract can invalidate assumptions of alre
 units. Compression policy: logs and transcripts bound for frontier are Sonnet-compressed;
 the diff under judgment is not (§5).
 
-**Guaranteed vs conditional frontier:** guaranteed = plan pack, per-unit plan-check + exit
-gate, wave replans (count fixed by the DAG), session integration review. Conditional =
-mid-loop rescues and integration-failure consults (§7, same cap pool). Nothing else may
-run on Fable.
+**Guaranteed vs conditional frontier:** guaranteed = plan pack, per-unit plan-check, the
+Fable exit gate for `forceFrontier` units (`risk: high`, contract-touching, audit sample) +
+wave replans (count fixed by the DAG) + session integration review. Conditional = the Fable
+exit gate for low/med units (only on Opus escalation or non-convergence), mid-loop rescues,
+and integration-failure consults (§7, same cap pool). Nothing else may run on Fable — in
+particular the between-wave health check and debt assessment (§6.6) are **Opus**, not
+frontier.
 
 ### Feedback topology: bookends, not babysitting
 
@@ -494,6 +517,52 @@ that mock away the subject) — so the reviewer is explicitly charged with apply
 would-this-fail test to every new test, empirically when unsure (plant a bug, confirm red,
 restore), and the gate treats such tests as its business. A green check is evidence only
 if the check could fail.
+
+**Widening the bookends' evidence, not adding touchpoints.** Bookends-not-babysitting
+constrains *when* frontier feedback happens, never *what evidence* it may read. The
+continuous preview and the accumulated feedback batch (§7.5) add zero touchpoints:
+evidence flows in continuously — an Opus explorer exercising the integrated runtime each
+wave, the user dropping notes whenever they like — but judgment over it happens only at
+boundaries that already exist (wave replan, session integration review), exactly as
+quarantine dossiers already do. Steering — feedback flowing *into* in-flight units
+mid-run — remains rejected: no path exists from a finding to a running unit, and no new
+frontier touchpoint may be created to read the batch sooner.
+
+### 6.6 Systemic quality: the debt ledger and the between-wave health check
+
+Two quality failures are invisible to a per-unit pipeline, and both compound. First, agents
+consciously leave "minor" issues behind — a shortcut, a thin test, a known-suboptimal
+structure — and nothing recorded them: the reviewer's non-blocking and pre-existing findings
+were computed and thrown away. Second, a *less visible* debt accumulates across waves — tests
+turn slow or brittle (intermittently failing), files bloat, duplication creeps in, dev steps
+that should be automated stay manual — and each round inherits the drag. A unit tasked with a
+narrow requirement has neither the remit nor the vantage to fix either; the root architect
+does, and must, or the build slows to a crawl while every individual gate stays green.
+
+Two mechanisms, both riding the existing bookends (no new frontier touchpoints, no mid-run
+steering):
+
+- **Debt ledger** (`.roadmap/debt.md`, living). Producers already forming quality opinions —
+  the implementer, the reviewer (its `nonBlocking`/`preExisting`), both exit gates, and the
+  health assessor below — emit structured `debt` items instead of discarding them. The
+  harness returns the wave's items in state; the architect triages them at the boundary
+  (promote to a fix unit, or append to the ledger). Unlike feedback, debt is **durable**: it
+  carries across waves and arcs and is read at Phase 0 as candidate scope, so a later
+  dynamic wave mops it up. This is the same "evidence accrues, judgment at boundaries"
+  discipline as feedback, with a forward-carrying store instead of a consumed one.
+- **Between-wave health check** (Opus, architect-spawned, `healthCheck: 'each-wave'`). The
+  code/test/structure counterpart to the runtime explorer: it reads the integration tip for
+  test brittleness and coverage gaps, structural drift (oversized files, duplication,
+  misplacement), and ergonomics (un-automated steps). Intermittent failures — the sharpest
+  form of brittleness, and the one a single run hides — are caught mechanically: Haiku
+  re-runs the full suite `flakeReruns` times and any pass↔fail flip is a brittleness item.
+  Findings are evidence in `feedback/health/`, folded into the same triage. It is **Opus,
+  not Fable** — assessment is voluminous reading, not frontier judgment; the *decision* about
+  what to fix is the architect's at the boundary.
+
+These are also what makes the Opus-first exit gate (rung 4) affordable: cheaper per-unit
+gating is backstopped by a systemic pass that catches the accumulating and the intermittent —
+the failure modes a per-unit frontier gate was never well-placed to see anyway.
 
 ---
 
@@ -542,6 +611,56 @@ every unit already passed an architect gate, this review no longer re-litigates 
 quality — it is purely cross-unit (seams, amendments, joint behavior), which keeps it O(1)
 and small as U grows. This is where the *integration*-level guaranteed frontier pass lives
 — once per session, not once per merge.
+
+---
+
+## 7.5. Continuous preview & accumulated feedback
+
+The gate's named residual (§12, risk 3) is that it judges artifacts, not behavior. This
+layer attacks the residual directly, with three parts — none of them a new frontier
+touchpoint.
+
+**The green-tip mirror (code + Haiku, ~1 call per merge).** When the plan pack carries a
+`preview` block (planned at Phase 0 like `provision`: kind server/cli/api, start/refresh
+recipe, `howToAccess`, healthcheck — the self-validating-units ethic scaled up: units
+check themselves, the *arc* is demonstrable while it integrates), the harness detaches
+the **primary checkout** at the integration tip and advances it after each suite-green
+merge on a coalescing, latest-wins chain the merge queue never waits for. The user
+watches from their own repo and provisioned environment; the preview only ever shows
+real, suite-green states — never mid-merge trees, conflict markers, or reverted
+half-states, which is precisely the noise a naive "watch the integration branch" design
+would inject into the feedback batch. `main` never moves (detached HEAD, invariant 5
+intact), and the merge plumbing stays in its own worktree: user git activity can at worst
+stale the mirror (one detach-checkout heals it), never derail the queue. The mirror is
+**observability, never a gate** — any preview failure logs, marks `preview.status:
+"failed"`, and the wave continues; no unit outcome may depend on it.
+
+**Per-wave adversarial exploration (Opus, free tier).** Between waves — after the queue
+drains, when judgment returns to the architect anyway — the architect spawns one pinned
+Opus explorer against the preview. Its charter is exclusively *runtime behavior*: the
+diff, tests, and gates already judged the code, so it re-reviews nothing; it drives the
+integrated thing the way a skeptical user would — flows end to end, edge cases, hostile
+inputs, broken sequences — hunting behavior that is unexpected, counterintuitive,
+underdocumented, brittle, or misaligned with the specs' intent. Findings are capped
+(~10), carry severity + exact repro + observed-vs-expected + the sha observed, and are
+persisted by a Haiku verbatim-writer to `.roadmap/feedback/explorer/`. Per-merge
+exploration was considered and rejected: N explorations of overlapping partial
+integrations produce duplicate findings, and duplicates are metered frontier *input* at
+triage — the one cost this design protects.
+
+**The feedback batch (triage rides existing boundaries).** Explorer findings and user
+notes (`.roadmap/feedback/user/` — auto-created at Phase 0 with a pro forma template,
+announced at dispatch, writable at any time) are never actioned on arrival. At the next
+wave replan the architect triages the batch — fold into revised specs, cut fix units into
+the next wave, treat contract-contradicting feedback as a contract-amendment decision
+(recorded, re-examined at the integration review), or dismiss with a stated reason —
+exactly the path quarantine dossiers already travel. Consumed items move to
+`feedback/triaged/<wave>/`; large batches are Sonnet-compressed first; findings observed
+at a superseded sha are discounted. Feedback still pending at session end feeds the
+integration review and the report, then archives with the arc. Economics: the mirror is
+one Haiku call per merge; exploration is Opus (free tier); triage is frontier but rides
+an already-guaranteed boundary — ~0.5–2k output tokens folded into the §4 `C·W` term, no
+new term in the cost shape.
 
 ---
 
@@ -613,6 +732,10 @@ Everything under `.roadmap/` (committed; the plan *is* a reviewable artifact):
   specs/<unit>.md      # frontier skeleton + sonnet expansion
   state.json           # single mutable file (below)
   quarantine/<unit>.md # dossiers
+  feedback/            # runtime evidence awaiting batch triage (§7.5)
+    explorer/*.md      #   per-wave exploration findings
+    user/*.md          #   user notes, droppable any time (TEMPLATE.md pro forma)
+    triaged/<wave>/    #   consumed items — never re-triaged
   ROADMAP-STATUS.md    # regenerated view, never hand-edited, never re-parsed by a model
 ```
 
@@ -715,8 +838,12 @@ Ranked by how much of the design's value each can destroy:
    emergent interactions don't live in a diff. Mitigations: the verify stage attaches
    runtime evidence to the gate dossier (test output; for user-facing units, a scripted
    run or screenshot), and genuinely behavior-sensitive units get `risk: high`, which
-   raises gate effort and makes runtime evidence mandatory in the dossier. The residual is
-   real — name it in the skill docs.
+   raises gate effort and makes runtime evidence mandatory in the dossier. The continuous
+   preview (§7.5) attacks the residual directly: an Opus explorer exercises the
+   *integrated* runtime each wave and the human can watch mid-stream, with findings
+   entering the architect's evidence at the next boundary — the residual shrinks from
+   "runtime behavior is invisible until session end" to "runtime behavior is judged one
+   boundary late."
 4. **The test suite is the integration gate's ground truth.** A weak suite makes layer 2
    vacuous and pushes everything onto the O(1) frontier review, which cannot carry it.
    Mitigation: plan pack must assess suite strength during recon and budget test-writing
@@ -738,6 +865,23 @@ Ranked by how much of the design's value each can destroy:
    constraint). The design converts these into quarantines rather than guesses — correct
    but wasteful if frequent; the fix is a better phase-0 interrogation, which is a prompt
    問題, not an architecture problem.
+9. **Preview process lifecycle.** A crashed harness leaks a running dev server. Mitigated
+   by the pidfile convention (`worktreeRoot/__preview.pid`) and kill checks at Phase 0,
+   resume, and close-out; the residual — ports, containers, or side processes a `stop`
+   command doesn't cover — is owned by whoever writes the preview recipe at Phase 0.
+10. **Explorer/gate duplication.** Findings that restate what gates already judged burn
+    metered triage input. Mitigated by the explorer's runtime-only charter (it is told
+    the diff and tests were already judged), the findings cap, and cheap dismissal at
+    triage.
+11. **Feedback vs frozen contracts.** A user note may demand what a contract forbids.
+    That is a contract-amendment decision for the architect at triage — recorded in
+    state, re-examined at the integration review (invariant 4) — never something the
+    explorer or a fix unit acts on directly.
+12. **Mirror divergence.** The user is invited into the primary checkout, so their git
+    activity will occasionally collide with the mirror. By construction it breaks only
+    the mirror — a refused detach-checkout (user-dirtied tracked file) logs and leaves
+    the mirror stale; one clean checkout heals it — and never the merge queue, which
+    lives in its own worktree.
 
 **Prototype order:** (1) plan-only on real roadmaps → (2) 5-unit end-to-end for gate convergence → (3)
 merge-queue + gate under deliberately-conflicting units → (4) checkpoint/resume kill

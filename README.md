@@ -29,11 +29,15 @@ For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
   questions — the only human touchpoint before autonomy.
 - **Execution waves (autonomous):** a zero-token workflow harness runs each unit through
   worktree setup → plan → **architect plan-check** → implement → verify/review/fix →
-  **architect exit gate**, then a serial merge queue with the full test suite as the gate.
-  Failures quarantine with dossiers; nothing loops forever.
+  **Opus-first exit gate** (escalates to the Fable architect only on genuinely hard or
+  foundational calls; high-risk and contract-touching units always take the Fable gate),
+  then a serial merge queue with the full test suite as the gate. Between waves the
+  architect runs a codebase-health check (test brittleness, structural drift, ergonomics)
+  and triages deferred tech debt into a living ledger. Failures quarantine with dossiers;
+  nothing loops forever.
 - **Session end:** a cross-unit integration review, a spend report, your confirmation
-  before `main` moves, and arc close-out (state archived, living constraint docs carried
-  forward).
+  before `main` moves, and arc close-out (state archived, living constraint + debt docs
+  carried forward).
 
 The economics: the frontier model plans, gates, and judges — it never generates volume.
 Implementation, review, and fixes run on Opus; mechanics on Haiku; coordination is plain

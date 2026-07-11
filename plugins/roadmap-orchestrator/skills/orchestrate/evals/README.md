@@ -24,6 +24,14 @@ The provisioning path is exercised implicitly: the suite requires a gitignored `
 and a generated config that only exist if the plan's `provision` block ran in each
 worktree. If provisioning regresses, every unit reads `blocked` and the checker fails.
 
+The **green-tip mirror** is probed the same way: the fixture plan carries an api-kind
+`preview` block (no processes — nothing flaky to babysit), so the harness must detach the
+fixture repo's primary checkout and advance it merge by merge. The checker asserts the
+end state: HEAD detached at the final suite-green tip, `state.json` reporting
+`preview: {status: "live", sha: <that tip>}` — and, load-bearing, that every unit status
+still matches the table above (the preview is observability; it may never alter an
+outcome).
+
 `check.sh` grades the **end state** deterministically (git facts, files, `state.json`) —
 zero model tokens: statuses match the table, the planted violation never reaches
 integration unfixed, dossiers exist for quarantines, the full suite passes on the
@@ -57,6 +65,9 @@ real. Map FAIL lines back to what you changed:
 - Everything `blocked`/env-quarantined → provisioning broke.
 - `add-divide` ran before `add-multiply` merged, or units stuck `pending` → scheduler/DAG
   regression.
+- Mirror checks fail (HEAD not detached at the green tip, `preview.status` not `live`) →
+  the preview setup/refresh path regressed; unit statuses passing alongside means the
+  no-gating property held and only the mirror mechanics broke.
 - Spend WARNs → convergence or dial regressions worth a look even if statuses pass.
 
 ## Keeping it honest

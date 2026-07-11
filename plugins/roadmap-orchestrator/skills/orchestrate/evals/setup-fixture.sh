@@ -233,6 +233,7 @@ cat > .roadmap/plan.json <<EOF
     { "from": "add-multiply", "to": "add-divide", "type": "semantic", "mode": "contract", "contract": "contracts/calc-api.md" }
   ],
   "provision": { "copy": [".env.local"], "setup": "node tools/gen-config.js" },
+  "preview": { "kind": "api", "howToAccess": "From the repo checkout, drive the library directly with node -e and require('./calc') — exercise every exported function." },
   "config": { "maxConsults": 2 }
 }
 EOF
