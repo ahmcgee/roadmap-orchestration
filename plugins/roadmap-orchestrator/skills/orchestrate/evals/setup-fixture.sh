@@ -1,9 +1,30 @@
 #!/usr/bin/env bash
 # Build the roadmap-orchestrator eval fixture: a tiny Node repo + a canned plan pack +
 # planted gate-probe branches. See evals/README.md for what each unit probes.
-# Usage: setup-fixture.sh <target-dir>   (target must not already exist)
+#
+# Two modes:
+#   setup-fixture.sh <target-dir>              default single-wave harness fixture (6 units,
+#                                              planted gate-probe branches) — the harness
+#                                              regression guard, graded by check.sh.
+#   setup-fixture.sh --conductor <target-dir>  multi-wave conductor fixture (3 units, no
+#                                              adopted branches, an architect-log seed, a
+#                                              stats.js health-bait, plan.config.conductor)
+#                                              — graded by check-conductor.sh.
+# The default mode is byte-identical to the historical single-arg form; --conductor only ADDS
+# and swaps the plan pack, so a plain run never sees the conductor-specific plants.
+# Usage: setup-fixture.sh [--conductor] <target-dir>   (target must not already exist)
 set -euo pipefail
-TARGET=${1:?usage: setup-fixture.sh <target-dir>}
+MODE=default
+TARGET=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --conductor) MODE=conductor ;;
+    -*) echo "unknown flag: $1"; echo "usage: setup-fixture.sh [--conductor] <target-dir>"; exit 1 ;;
+    *) [ -n "$TARGET" ] && { echo "unexpected extra argument: $1"; exit 1; }; TARGET="$1" ;;
+  esac
+  shift
+done
+[ -n "$TARGET" ] || { echo "usage: setup-fixture.sh [--conductor] <target-dir>"; exit 1; }
 [ -e "$TARGET" ] && { echo "refusing to overwrite: $TARGET exists"; exit 1; }
 REPO="$TARGET/repo"; WT="$TARGET/worktrees"
 mkdir -p "$REPO" "$WT"
@@ -68,6 +89,36 @@ console.log('generated/config.json written')
 EOF
 
 printf '.env.local\ngenerated/\n' > .gitignore
+
+# --- conductor mode: plant stats.js, a health-assessor bait ---------------------
+# stats.js reimplements Euclid's gcd inline instead of reusing the catalogued shared.gcd
+# (conventions.md clause 1). It rides the BASE commit, so it is present in every worktree and
+# in the integration tree from wave 1 — the wave-tail health assessor should read it against
+# the conventions contract and draft a consolidation fix-unit (admitted at the boundary, merged
+# in wave 2). It is NOT wired into test.sh: the duplication is a structural/consistency finding,
+# not a test failure, and keeping the base suite untouched keeps default mode byte-identical.
+if [ "$MODE" = conductor ]; then
+cat > stats.js <<'EOF'
+'use strict'
+// Statistics helpers for the calculator. NOTE (health-assessor bait): lcm() reimplements
+// Euclid's gcd inline instead of reusing the catalogued shared.gcd (.roadmap/contracts/
+// conventions.md clause 1) — a prohibited duplication the wave-tail health assessor should
+// flag for consolidation onto shared.gcd.
+function gcd(a, b) {
+  a = Math.abs(a); b = Math.abs(b)
+  while (b) { const t = b; b = a % b; a = t }
+  return a
+}
+function lcm(a, b) {
+  if (a === 0 || b === 0) return 0
+  return Math.abs(a * b) / gcd(a, b)
+}
+
+module.exports = {
+  lcm,
+}
+EOF
+fi
 
 # ---------------------------------------------------------------- plan pack
 mkdir -p .roadmap/specs .roadmap/contracts .roadmap/quarantine
@@ -141,6 +192,8 @@ Acceptance criteria:
 - `bash test.sh` exits 0.
 EOF
 
+# --- default mode only: the three adopted-branch gate-probe specs -----------------
+if [ "$MODE" = default ]; then
 cat > .roadmap/specs/gate-good.md <<'EOF'
 # Unit: gate-good
 Goal: extend calc.js with `subtract(a, b)` returning the difference.
@@ -184,6 +237,49 @@ Acceptance criteria:
 - `node -e "const a=require('assert'),c=require('./calc');a.deepStrictEqual(c.simplifyRatio(5,10),[1,2])"` exits 0.
 - test.js contains direct assertions for simplifyRatio.
 EOF
+fi
+
+# --- conductor mode only: the architect-log handoff-journal seed ------------------
+# Phase 0 normally seeds this; the fixture plants no Phase-0 run, so the seed stands in for
+# the architect's handoff journal. In-workflow tier-3 boundary agents read it FIRST and append
+# their own `## Wave N` sections — so the seed deliberately carries NO `## Wave` header
+# (check-conductor.sh probe (a) asserts a wave section appeared BEYOND this seed).
+if [ "$MODE" = conductor ]; then
+cat > .roadmap/architect-log.md <<'EOF'
+# Architect log (eval fixture seed)
+
+Seeded at Phase 0 (no Phase-0 planning runs in this fixture — this file stands in for the
+architect's handoff journal). Successive in-workflow boundary agents read this FIRST and
+append their own `## Wave N` sections; this seed itself carries no wave section.
+
+## Decisions
+- Three units are in scope behind the `eval` cut line: add-multiply (low), add-divide (med,
+  contract edge from add-multiply through calc-api.md), impossible-cache (med).
+- add-divide depends on add-multiply and launches only after multiply merges.
+- The conventions contract (conventions.md) binds every unit: shared.js helpers are the
+  single source of truth; inline reinvention of a catalogued helper (e.g. gcd) is a
+  prohibited duplication and a legitimate consolidation target at the boundary.
+
+## Watch-list
+- impossible-cache may prove unsatisfiable; an in-contract respec such as in-process
+  memoization is acceptable; cross-process persistence is not.
+- stats.js reimplements gcd inline instead of reusing shared.gcd — expect the wave-tail
+  health assessor to draft a consolidation fix-unit; admitting it is the default action.
+
+## Dismissal criteria
+- Findings observed at a superseded sha are discounted, not re-litigated.
+- Health fix-unit drafts are the default action — admit them unless they are noise
+  (cosmetic, out of scope, or contradicting a frozen contract).
+- The cut line binds the default: once the three planned units (or their respecs) are
+  merged, admit a draft only if it fixes cross-unit drift or broken tooling. Test-ergonomics
+  polish, refactors without a defect, and marginal extra coverage on a healthy suite are
+  below the line — cut them, bank them as debt, and set arcComplete. An arc that never
+  dries is a failure mode, not diligence.
+- A quarantine whose dossier reason is "unsatisfiable as written" is respecced under a NEW
+  id within contract, never re-run under its old id, and never resolved by amending a frozen
+  contract (that decision returns to the root).
+EOF
+fi
 
 git add -A
 git commit -qm "fixture: base calculator + plan pack"
@@ -192,6 +288,9 @@ git commit -qm "fixture: base calculator + plan pack"
 echo 'TOKEN=eval-fixture' > .env.local
 
 # ------------------------------------------------- planted gate-probe branches
+# (default mode only — the conductor fixture builds its extra units in-workflow at the
+# boundary, so it plants no adopted branches.)
+if [ "$MODE" = default ]; then
 # fixture/gate-good — a clean, correct diff. Expected: approved and merged with little
 # or no gate friction (the over-blocking probe).
 git checkout -qb fixture/gate-good
@@ -303,10 +402,12 @@ EOF
 git add -A
 git commit -qm "gate-convention: add simplifyRatio with inline gcd"
 git checkout -q main
+fi
 
 BASE=$(git rev-parse HEAD)
 
 # ------------------------------------------------------------ plan + state json
+if [ "$MODE" = default ]; then
 cat > .roadmap/plan.json <<EOF
 {
   "repoPath": "$REPO",
@@ -334,11 +435,50 @@ cat > .roadmap/state.json <<EOF
 { "integrationBranch": "roadmap/eval", "integrationTip": "$BASE",
   "consultsUsed": 0, "wave": 0, "units": {} }
 EOF
+else
+# Conductor fixture: three real units (no adopted branches), a contract edge, an api-kind
+# preview (so the runtime explorer runs), and plan.config.conductor with maxWavesPerRun 3.
+# impossible-cache quarantines wave 1 (deterministic feasible:false → Fable plan-check),
+# engaging the tier-3 Fable boundary agent; the stats.js health-bait feeds a consolidation
+# fix-unit; a 2-wave arc-complete run is expected. state.json seeds a `run` block so the
+# multi-wave run carries one stable runId across both waves (the harness preserves prior.run).
+cat > .roadmap/plan.json <<EOF
+{
+  "repoPath": "$REPO",
+  "worktreeRoot": "$WT",
+  "cutLine": "eval",
+  "units": [
+    { "id": "add-multiply",     "title": "multiply()",                "risk": "low", "kind": "code", "inScope": true },
+    { "id": "add-divide",       "title": "divide()",                  "risk": "med", "kind": "code", "inScope": true },
+    { "id": "impossible-cache", "title": "cross-process memoization", "risk": "med", "kind": "code", "inScope": true }
+  ],
+  "edges": [
+    { "from": "add-multiply", "to": "add-divide", "type": "semantic", "mode": "contract", "contract": "contracts/calc-api.md" }
+  ],
+  "provision": { "copy": [".env.local"], "setup": "node tools/gen-config.js" },
+  "conventions": "$REPO/.roadmap/contracts/conventions.md",
+  "preview": { "kind": "api", "howToAccess": "From the repo checkout, drive the library directly with node -e and require('./calc') — exercise every exported function." },
+  "config": { "maxConsults": 2, "conductor": { "maxWavesPerRun": 3 } }
+}
+EOF
+
+cat > .roadmap/state.json <<EOF
+{ "integrationBranch": "roadmap/eval", "integrationTip": "$BASE",
+  "consultsUsed": 0, "wave": 0, "units": {},
+  "run": { "runId": "eval-conductor-run", "scriptPath": "conductor.mjs" } }
+EOF
+fi
 
 git add .roadmap/plan.json .roadmap/state.json
 git commit -qm "fixture: plan + initial state"
 
 echo "Fixture ready at $TARGET"
 echo "  repo:  $REPO  (base $BASE)"
-echo "  next:  launch the harness with plan/state from $REPO/.roadmap/ (see evals/README.md),"
-echo "         then run: check.sh $TARGET"
+if [ "$MODE" = conductor ]; then
+  echo "  mode:  conductor (3 units, architect-log seed, stats.js health-bait, maxWavesPerRun 3)"
+  echo "  next:  launch conductor.mjs ONCE via Workflow with args {plan, state, config: {}, harnessPath}"
+  echo "         (see evals/README.md), then run: check-conductor.sh $TARGET"
+else
+  echo "  next:  launch the harness with plan/state from $REPO/.roadmap/ (see evals/README.md),"
+  echo "         then run: check.sh $TARGET"
+fi

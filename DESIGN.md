@@ -8,8 +8,10 @@ treating Opus/Sonnet/Haiku as free at the margin.
 
 > **Implementation:** `plugins/roadmap-orchestrator/skills/orchestrate/` — `SKILL.md`
 > (goals + invariants for the executing architect), `harness.mjs` (the generic zero-token
-> wave executor), `reference.md` (data shapes, config knobs, platform rules), `evals/`
-> (the regression fixture). Distributed via this repo's plugin marketplace
+> wave executor), `conductor.mjs` (the multi-wave dispatch loop with in-workflow boundary
+> triage — §9.1), `reference.md` (data shapes, config knobs, platform rules), `evals/`
+> (the regression fixture) plus `evals/unit/` (zero-token control-flow simulations for both
+> scripts — §9.1). Distributed via this repo's plugin marketplace
 > (`.claude-plugin/marketplace.json`); invoke as `/roadmap-orchestrator:orchestrate`. The
 > skill is deliberately less prescriptive than this document: it pins the invariants and
 > the code, and leaves every judgment call to the frontier model running it.
@@ -96,10 +98,12 @@ runtime. Separating what is **known** from what remains **assumed**:
 ┌────────────────────────────────────────────────────────────────────────┐
 │ MAIN LOOP (Claude Code / Fable) — the *slow* heartbeat, metered        │
 │   Phase 0: intake, clarify with user (interactive), author Plan Pack   │
-│   Between waves: read state.json, replan contingent units, launch next │
+│   Runs: launch the conductor once; it loops the waves (§9.1)           │
+│   Root wakes only on a frozen return reason (replan / contract /       │
+│   needs-user / caps / degraded) — routine dispatch is delegated        │
 │   Session end: final integration review, report, hand-off notes        │
 └──────────────┬─────────────────────────────────────────────────────────┘
-               │ Workflow({scriptPath: skill's generic harness, args: {planPack, state}})
+               │ Workflow({scriptPath: conductor.mjs, args:{plan,state,config,harnessPath}})
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ WORKFLOW SCRIPT (plain JS) — the *fast* zero-token loop                 │
@@ -724,14 +728,23 @@ Two nested persistence mechanisms with different lifetimes:
   agent after every unit status change and committed on an orchestration branch. Any
   future session reconstructs the entire arc from the repo alone.
 
-**Wave protocol** (one main-loop turn per boundary, deliberately terse):
+**Wave protocol** (one main-loop turn per *run*, not per boundary — the conductor
+absorbs the between-wave dispatch that used to wake the root; §9.1):
 
 ```
-read .roadmap/{plan.json,state.json}
-  → if contingent boundary crossed or quarantines exist: Fable replan (revise specs / respec quarantined / stop)
-  → else: pure dispatch, no frontier judgment
-  → Workflow({scriptPath: harness, args: {plan, state, config}})   // background
-  → on completion notification: persist returned state, regenerate status doc (Haiku), loop or finish
+root: Workflow({scriptPath: conductor.mjs, args:{plan, state, config, harnessPath}})  // once, background
+  conductor loops, ≤ maxWavesPerRun:
+    → workflow({scriptPath: harnessPath}, {plan, state, config})   // one wave (nesting depth 1)
+    → route the boundary through the tier ladder (first match wins):
+         1  script-mechanical  — admit health fix-unit drafts, bank debt, dispatch next wave (0 frontier)
+         2  Opus triage        — routine judgment; may never kill / respec / amend (escalates)
+         3  in-workflow Fable   — Opus escalations + quarantine respecs (plan data, never code)
+         4  early return        — wakes the root
+    → persist plan/specs/state to disk (Haiku) BEFORE the next dispatch (rung-3 recovery)
+  return to root ONLY on a frozen reason:
+     arc-complete | contingent-replan | contract-amendment | needs-user
+   | max-waves | agent-budget | boundary-degraded | root-triage
+root: on the return, act per the reason; else (arc-complete) → session-end sequence
 ```
 
 Wave sizing: the ready frontier of the DAG, capped by config (default ~12–16 units — one
@@ -744,6 +757,154 @@ re-runs (idempotent by construction: branch-per-unit, serial integration).
 can never launch beyond it regardless of how many waves execute. The final wave's
 completion triggers the session-end sequence: integration review → report → (with user
 confirmation) fast-forward main.
+
+### 9.1 The conductor — multi-wave dispatch without root wakes (decision, 2026-07-11)
+
+**The cache economics that forced it.** Waves run far longer than the platform's 5-minute
+prompt-cache TTL, so every between-wave root wake was an *uncached* full-history reload of
+the root's entire (and growing) session, paid at frontier price — and the §9 wave protocol
+above classified the majority of those boundaries as "pure dispatch, no frontier judgment."
+An N-wave arc therefore paid ~N full-history frontier reloads to buy, on most
+boundaries, no judgment at all. The state a boundary needs is already externalized in
+`.roadmap/` by design (crash-recovery rung 3 is the existence proof), so the judgment can
+move to where the state already lives. **Decision:** `conductor.mjs`, a second top-level
+workflow script the root launches *once* per run (`{plan, state, config, harnessPath}`),
+loops `workflow({scriptPath: harnessPath}, …)` per wave and routes each boundary through a
+tiered ladder in-workflow; the root wakes once per **run**, not once per boundary. It
+becomes the default dispatch path; the per-wave harness launch remains the fallback.
+
+**The tier ladder and its authority bars.** Each boundary routes through the first matching
+rung (mirrors the §6 Opus-first gate posture, one level up):
+
+1. **Script-mechanical** (zero frontier tokens): no quarantines, no crossed contingent
+   edge, no `kind:'contract'` debt, nothing needing judgment — mechanically admit the health
+   assessor's fix-unit drafts (they are "the default action", §6.6), bank debt (Haiku
+   verbatim-writer), move consumed feedback, dispatch the next wave.
+2. **Opus triage**: routine judgment — weigh explorer/health findings, dispose of
+   non-contract debt and feedback, veto noise drafts. It **may never** kill a unit, respec a
+   quarantine, amend a contract, or design a contingent dependent; those are escalate-only.
+3. **In-workflow Fable**: Opus escalations and quarantine respecs (writes new unit
+   *skeletons* — plan data, legal Fable output — never code). Appends an architect journal so
+   the next fresh boundary agent inherits rationale. It **may never** amend a contract or
+   design a contingent dependent.
+4. **Early return**: wakes the root with the frozen reason.
+
+Kill-class and contract-class decisions keep their existing owners — the ladder delegates
+*routine* boundary triage downward, not the dangerous acts.
+
+**What stays root-only, and why.** The Phase-0 plan pack (unchanged — the highest-leverage
+frontier act, §2); **contingent replans**, which are mini-Phase-0 acts (a dependent's design
+needs the dependency's actual results, §3); **contract amendments** (invariant 4 — an
+amended contract can invalidate already-merged units, so it must reach the session
+integration review); **needs-user** calls (invariant 7 — no mid-run human input exists); and
+the **session integration review** itself (the one cross-unit judgment no boundary pass can
+make, §7 layer 3). The conductor returns on any of these rather than resolving them.
+
+**Invariant 8 reworded — temporal, not identity.** Invariant 8's content was always about
+*timing* (frontier feedback happens only at boundaries, never mid-wave, never reaching a
+running unit), not about *which agent* holds the pen at the boundary. The ladder keeps the
+timing intact and delegates triage *authority* downward — and because tier 3 fires only on
+escalation, the net frontier touchpoints per boundary go **down**, not up. The fix-unit-draft
+veto that §6.6 vested in "the architect at the boundary" relocates accordingly, and is split
+across three cheaper checks rather than lost: the Phase-0 **dismissal criteria** seeded into
+`.roadmap/architect-log.md` pre-encode the veto for tier-1 default-admission; the **tier-2
+Opus** pass exercises it live; and the journal gets a **retrospective review at session end**.
+
+**Tier-3 respec authority + mitigations.** Writing a new spec for a quarantined unit is
+legal Fable output (plan data), so tier 3 owns quarantine respecs. Three mitigations keep it
+honest: every boundary agent reads the **architect-log handoff brief** first (inherited
+rationale + watch-list); respec decisions are **journaled** and re-examined at the session
+integration review; and a respec always sets `supersedes`, which flips the failed unit
+`inScope:false` and repoints its edges to the new id — a failed spec is **retired, never
+re-run** (the re-design-not-retry rule, §8).
+
+**The discovered `edge.mode` gap.** The harness scheduler's `ready()` ignores `edge.mode` —
+it will dispatch a contingent dependent the moment its predecessor merges, before any
+replan. Contingent discipline is therefore now **conductor code**, not a harness property:
+before each dispatch the conductor **withholds** (transient `inScope:false`, on a dispatched
+copy only) any contingent `to`-unit whose `from` isn't merged, keeping independent work
+running; and it returns `contingent-replan` only when an edge is genuinely **crossed** —
+`from` merged, `to` withheld-or-out-of-scope (a dependent the root already replanned into
+scope that then quarantined routes through the normal ladder, not a spurious replan). The
+per-wave fallback dispatchers inherit this duty (recorded in reference.md).
+
+**Ruling 1 — no finality prediction.** The conductor **never** sets `boundary:'off'` and
+never peeks ahead to guess the final wave: health fix-units are the very mechanism that
+reveals an arc isn't finished, so suppressing the health check on an apparently-final wave
+would blind exactly the single-wave arcs where drift is likeliest. Arc-completeness is
+detected **post-hoc** (a boundary yields no new work → `arc-complete`), and the final wave's
+untriaged boundary evidence is handed to the root as integration-review input — a
+strictly better-informed review. This is a deliberate **supersession-in-spirit** of §9's
+old "final wave runs `boundary:'off'`" instruction (the root may still pass it explicitly on
+a known-final relaunch).
+
+**architect-log idempotency.** The journal writer uses replace-if-header semantics ("ensure
+exactly one `## Wave N` section; replace its body if present, else append"), so a resumed or
+re-run wave overwrites its own section without duplicating it. "Appended never overwritten"
+still holds — at **wave granularity**: distinct waves only ever append, a re-run wave only
+ever replaces itself.
+
+**Recovery.** The robust path is **rung-3 fresh-launch-from-checkpoint**: the conductor
+persists the consumed plan/specs/state to disk (Haiku writers, all awaited) *before* every
+dispatch, and the harness's setup guards make relaunch idempotent, so the loss bound is a
+single in-flight wave's uncached calls. **Rung-2** same-session `resumeFromRunId` replay is
+kept but is **best-effort across the nesting boundary** (conductor→harness journal replay was
+not proven, only reasoned) — never the source of truth.
+
+**The three-tier eval ladder.** The conductor is almost entirely deterministic control flow
+(tier-routing predicates, budget math, plan mutation, early-return shapes) — the class of
+code where one wrong branch silently misroutes a boundary and no prompt-quality eval would
+notice. So the quality ladder is now three tiers: `parse.sh` (syntax) → `evals/unit/`
+zero-token simulations (control flow — the `AsyncFunction` loader + scripted fakes run a
+whole wave in milliseconds via `node:test`) → the paid fixture (`evals/check-conductor.sh`,
+prompts + real model behavior, source of truth for model properties). Invariant-6 "done"
+becomes parse ✓ + sims ✓ + fixture ✓. **Drift caveat:** the fakes encode *assumed* platform
+semantics; the sims catch control-flow regressions cheaply but never substitute for the paid
+fixture on prompts/models/platform behavior.
+
+**Nesting budget.** The conductor consumes the one allowed `workflow()` nesting level
+(conductor → harness); both scripts must stay **leaf-only** below it — `conductor.mjs` never
+calls `workflow()` except to launch the harness, and `harness.mjs` never calls it at all. A
+grandchild workflow throws (§1).
+
+**Convergence brake (arc-observed, first live conductor run).** Default-admit of health
+fix-unit drafts has no natural stopping point: a healthy assessor drafts *something* every
+wave (waves 3–5 of the first live arc each admitted fresh test-ergonomics drafts on a
+34-line calculator), so an admit-unless-noise triage extends the arc until `max-waves`.
+Fix: the tier-2 triager's charter binds the default to the **cut line** — once the plan's
+own units are merged, a draft must justify a wave, not merely be an improvement;
+below-the-line drafts are cut, banked to the debt ledger (nothing is lost), and
+`arcComplete` is set in the same verdict. The Phase-0 architect-log seed should carry
+matching dismissal criteria — the two mechanisms are the same veto expressed at authoring
+time and at triage time. `boundaries` forensics are arc-cumulative across relaunches
+(seeded from the passed state, like `spend`), so a mid-arc root adjudication — a legitimate
+`contract-amendment` return was also observed live — never erases in-run continuation
+evidence.
+
+### 9.2 Fable spend audit (2026-07-11, `fable-feedback.md`)
+
+Arc evidence sharpened where the frontier tier actually earns its price. **All** demonstrated
+value concentrated on the contract-touching **forced** gate: the atlas-cli catch — a unit
+that arrived 54/54 green, clean lint/typecheck, and Opus-approved, which the Fable gate still
+refused because the implementation had silently reshaped a frozen contract surface and cited
+a debt-ledger entry that didn't exist. That is the exact defect class the frontier gate
+exists for (a conformance violation inside self-consistent, fully-tested code); its
+non-convergence was *correct* (the fix was a contract amendment only the architect could
+make), and because two downstream units consume that contract "as their whole world," the
+catch protected both. **Decisions recorded:**
+
+1. **Contract-touching forced-Fable: unchanged** — vindicated; stakes-based routing worked
+   as designed (§6).
+2. **Plan-check charter refocused, not narrowed.** The 11 plan-checks were plausibility
+   insurance that never fired, while two specs carried internal contradictions that Fable
+   plan-checks approved past (implementers resolved them ad hoc). Both plan-check prompt
+   variants (harness.mjs, Fable + Opus) now explicitly **interrogate the spec itself** —
+   internal contradictions, spec-vs-contract-vs-codebase-reality conflicts, stale premises —
+   redirecting with the resolution when clear, quarantining/escalating when not. Refocus was
+   chosen over dropping `low` from `planCheckRisk`: Opus-first makes low-tier coverage cheap,
+   and the failure was a **charter gap**, not an over-broad tier.
+3. **`gateAuditRate` held at 0.10.** The audit sample caught nothing here the risk/contract
+   triggers hadn't already routed — do not raise without new evidence.
 
 ---
 
@@ -908,6 +1069,16 @@ Ranked by how much of the design's value each can destroy:
     the mirror — a refused detach-checkout (user-dirtied tracked file) logs and leaves
     the mirror stale; one clean checkout heals it — and never the merge queue, which
     lives in its own worktree.
+13. **Conductor ladder mis-routing / tier-3 respec quality (§9.1).** Moving boundary triage
+    in-workflow trades a root wake for a routing decision made by code + Opus + Fable: a
+    boundary wrongly handled at too low a rung (a draft admitted that should have been
+    vetoed, a respec that misreads a dossier) is not caught at the boundary — detection
+    defers to the next between-wave health check (§6.6) or the session integration review.
+    Bounded, not catastrophic (the ladder cannot kill or amend contracts below tier 4), and
+    mitigated on four fronts: the Phase-0 architect-log dismissal-criteria seed, the
+    end-of-session journal review, the `boundaryTriage:'root'` retreat dial (every boundary
+    returns, i.e. the old behavior), and the routing table pinned by the zero-token
+    `evals/unit/` sims so a control-flow regression fails in milliseconds, not in a live arc.
 
 **Prototype order:** (1) plan-only on real roadmaps → (2) 5-unit end-to-end for gate convergence → (3)
 merge-queue + gate under deliberately-conflicting units → (4) checkpoint/resume kill

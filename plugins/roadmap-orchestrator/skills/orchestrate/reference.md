@@ -28,6 +28,12 @@ this to the user unless asked.
   specs/<unit>.md      # goal, constraints, contract references, acceptance criteria
                        #   (write criteria as individually gradeable clauses — the gate
                        #   grades them one by one, and vague criteria grade noisily)
+  architect-log.md     # arc-scoped architect journal: decisions + rationale, watch-list,
+                       #   dismissal criteria. Seeded at Phase 0 (Opus, committed with the
+                       #   plan pack); the conductor's tier-3 Fable boundary agent appends a
+                       #   `## Wave N` section each time it runs, so successive fresh boundary
+                       #   agents inherit rationale. Read first by both boundary agents.
+                       #   Archived at close-out.
   state.json           # harness-owned after wave 1; you write the initial one.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
   quarantine/<unit>.md # dossiers written by the harness
@@ -46,6 +52,8 @@ this to the user unless asked.
 
 Everything above except `constraints.md`, `debt.md` (and notes) is **arc-scoped**: it
 coordinates one arc and is archived at session close-out (SKILL.md, Session end).
+`architect-log.md` is arc-scoped too — seeded at Phase 0, appended per tier-3 boundary,
+archived at close-out.
 `constraints.md` and `debt.md` are **living documents** — they survive arcs and each new arc
 reads and extends them (`debt.md` accumulates deferred debt until a later wave or arc mops it
 up; a resolved item is annotated, not deleted, so the history stays legible). Contracts
@@ -132,7 +140,21 @@ the green-tip mirror's position. `failed` never affects any unit outcome (see Pr
 feedback semantics below). `run` is an **optional passthrough**: the architect records
 `{runId, scriptPath}` (from the Workflow tool result, which returns the session-persisted
 script path) into the initial state at launch, and `serialize()` preserves it — it makes
-same-session `resumeFromRunId` mechanical and forensics one `cat`.
+same-session `resumeFromRunId` mechanical and forensics one `cat`. On a **conductor** run
+(the default dispatch path — see "conductor.mjs — multi-wave dispatch" below) `run` records
+the *conductor's* `{runId, scriptPath}`, now identifying the whole multi-wave run: the
+conductor and its child harness share one journal, so `resumeFromRunId` replays completed
+waves for free.
+
+When the conductor drives the arc, the state also carries a **`conductor` block** — the
+forensics spine and rung-3 recovery signal, checkpointed at every boundary and before every
+return: `{ reason, wavesRun, boundaries: [{ wave, tier, escalated }] }`. `reason` is `null`
+while a wave is in flight and the frozen return reason on return (enum below); `tier` is the
+ladder rung that handled each boundary (1–4); `escalated` is the reason a tier handed up/out,
+else `null` (a `null` entry is a boundary the conductor triaged and continued past in-run).
+`wavesRun` is per-run; `boundaries` is **arc-cumulative** — seeded from the passed state's
+conductor block, same semantics as `spend` — so a root adjudication mid-arc (amend → relaunch)
+extends the forensics instead of erasing the prior runs' entries.
 
 The returned state also carries, when the wave-tail boundary phase ran anything, a **`boundary`
 block**: `{ explorer, health, flake }` — the explorer result (`findings[]`, `shaObserved`), the
@@ -142,7 +164,10 @@ is `null` when its job was off or failed, and the whole block is **omitted** whe
 run the explorer/health agents yourself. Verbatim renderings are also written to
 `feedback/{explorer,health}/wave-<n>.md`. `spend` is **arc-cumulative**: it seeds from the
 passed state's `spend` and accumulates across relaunches (a per-wave delta is the difference
-between two successive checkpoints), so no cross-crash hand-summing. `debt`, by contrast, stays
+between two successive checkpoints), so no cross-crash hand-summing. A conductor run also
+merges its own agent() calls into these same tier keys and adds two conductor-specific
+counters, `boundaryTriages` (tier-2 Opus) and `boundaryFables` (tier-3 Fable) — both
+arc-cumulative like the rest (see the conductor section). `debt`, by contrast, stays
 **per-wave** — only the imperfections surfaced *this* wave — because `.roadmap/debt.md` is the
 cross-wave accumulator.
 
@@ -153,6 +178,141 @@ dependency is `merged`. While a unit is `running` it also carries a `stage` fiel
 a terminal status replaces the whole record, so no stale stage survives. Checkpoints land at
 every unit status change **and** every stage transition, coalesced latest-wins — the file can
 trail the newest event by one write.
+
+## `conductor.mjs` — multi-wave dispatch
+
+The **default** dispatch path. `conductor.mjs` is a top-level Workflow script that loops the
+arc's waves in a single run, so the root wakes once per *run* instead of once per boundary
+(each wake is an uncached full-history reload past the 5-min prompt-cache TTL). It dispatches
+each wave by calling the harness, then routes the boundary through a tiered triage ladder,
+returning to the root only when a decision genuinely needs the frontier architect. A direct
+per-wave `harness.mjs` launch remains the fallback/recovery path; every conductor knob is
+inert there.
+
+**Launch shape** — the root passes `harnessPath` (absolute path to `harness.mjs`); the
+conductor throws without it, because it cannot resolve the child script to dispatch a wave:
+
+```jsonc
+Workflow({
+  scriptPath: "<conductor.mjs>",
+  args: { plan, state, config, harnessPath }   // harnessPath REQUIRED
+})
+```
+
+`args` may arrive JSON-stringified (same platform quirk as the harness — parsed defensively).
+`config` is threaded to the harness **untouched** (the conductor never sets `boundary:'off'`
+itself — see below).
+
+**Wave loop + state threading.** A bounded loop (≤ `maxWavesPerRun`): dispatch a wave via
+`workflow({scriptPath: harnessPath}, …)`, take its returned state, and feed it as the next
+wave's `prior`. The harness's `wave: prior.wave+1`, unit map, and arc-cumulative `spend` then
+accumulate for free across waves — the returned state of each wave IS the next wave's prior.
+`.roadmap/state.json` is overwritten every wave; per-wave boundary evidence is graded from the
+`feedback/` files, not the final state's `boundary` block.
+
+**The tier ladder** (per boundary, first match wins — the routing order is load-bearing):
+
+| # | Route | When |
+|---|---|---|
+| — | return `contingent-replan` | a contingent edge crossed (`from` merged, `to` withheld this wave or out of scope) |
+| — | return `contract-amendment` | any `kind:'contract'` debt this wave |
+| — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
+| — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — old behaviour / escape hatch) |
+| **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
+| **2** | Opus boundary triager | any judgment (explorer/health findings, flake flips, non-contract debt, census user-feedback files), or `fixUnitAdmit:'triage'` + drafts present |
+| **1** | script (mechanical) | only health fix-unit **drafts**, or nothing — admitted with no frontier tokens |
+
+- **Tier 2 (Opus)** weighs findings, disposes of debt and non-contract feedback, and admits
+  or cuts health-assessor fix-unit drafts (drafts are the default action). It may **not** kill
+  a unit, amend a contract, design a contingent dependent, or answer for the user — it
+  escalates: `quarantine-redesign`/`hard-call` hand **down** to tier 3 carrying the Opus
+  assessment as a lead; `contract-amendment`/`contingent-replan`/`needs-user` return to the
+  **root**.
+- **Tier 3 (Fable)** handles quarantine respecs and Opus escalations, routing each quarantine
+  by its dossier *reason* (env-blocked → re-run under a fresh id; unsatisfiable → respec under
+  a new id; else split/revise), and appends the architect journal. It emits **skeletons only**
+  (`id/title/risk/goal/constraints/contractRefs/acceptance/edges/supersedes`) plus a `journal`
+  — never code, never a contract amendment (escalates to root). `supersedes` retires the old
+  unit (`inScope:false`) and repoints its edges to the new id; new ids are kebab-sanitized and
+  collision-suffixed; a respec **never** reuses a failed/quarantined id.
+- A crossed contingent counts an edge only when the dependent was **withheld this wave or is
+  out of scope**. A dependent the root already replanned into scope and that ran this wave is
+  not "crossed": if it quarantined it routes through the normal ladder, not a spurious
+  `contingent-replan`.
+- After a tier runs, **Sonnet `expandSpec`** renders every new-unit skeleton to
+  `.roadmap/specs/<id>.md`; a pure-code `mergePlan` appends the units (`inScope:true`) and
+  edges and applies `supersedes`/cuts. Arc-completeness is detected **post-hoc**: a tier says
+  so, or the boundary produced no new units and no spec revisions → `arc-complete`.
+
+**Contingent withholding** (the harness scheduler ignores `edge.mode`). Before every dispatch
+the conductor mechanically sets aside any contingent `to`-unit whose `from` is not yet merged,
+via a transient `inScope:false` **on the dispatched plan copy only** — never on the persisted
+plan, so a withheld unit is never mistaken for a root cut. Independent work keeps running; the
+conductor returns `contingent-replan` when an edge crosses or when withheld units are the only
+remaining dispatchable work. **A direct per-wave harness launch inherits this duty** — the
+harness's `ready()` ignores `edge.mode`, so a fallback dispatcher must withhold contingent
+dependents itself or the harness will launch them early.
+
+**Budget guard.** For waves after the first, a pre-dispatch guard refuses to start a wave that
+could cross the 1000-call cap: `runLocalCalls + 8 + dispatchable×perUnitCallEstimate +
+agentBudgetReserve > 1000` → return `agent-budget` (with `nextWaveUnits` + `estimate`);
+exhausting `maxWavesPerRun` returns `max-waves`. Both mean *relaunch fresh* — a new run resets
+the per-run 1000-agent counter. The guard sums **model-tier keys only** (`fable/opus/sonnet/
+haiku`) because `spend` also carries derived counters that subset those tiers (summing all
+would double-count), and adds only the conductor's not-yet-merged calls on top of the harness
+`spend` deltas.
+
+**Persistence semantics.** At a **continuation** boundary (a wave that dispatches another) the
+conductor runs five Haiku verbatim-writers in order, all awaited before the next dispatch and
+idempotent by wave-N markers for resume safety:
+
+1. `persist-plan` — overwrite `plan.json` with the merged plan.
+2. `bank-debt` — a `<!-- wave N -->` section in `debt.md`, **always stamped** (even "no new
+   entries"), replace-if-marker-exists.
+3. `log-append` — a `## Wave N` section in `architect-log.md`, **tier-3 only** (the Fable
+   agent's `journal`), replace-if-header-exists; append-per-wave, resume-safe.
+4. `move-feedback` — this wave's `explorer`/`health` renderings plus actioned/dismissed user
+   notes → `feedback/triaged/N/`.
+5. `persist-state` — the **consumed** state: `boundary` removed, `debt` cleared to `[]`, the
+   `conductor` block written — so rung-3 recovery never re-triages folded items.
+
+An **early return** persists **only** `state.json`, with the `boundary` block and `debt` array
+left **INTACT** (the root consumes them; the conductor never banks terminal debt itself).
+
+**Return envelope.** Every return (early or arc-complete) carries:
+
+```jsonc
+{ status: 'conductor-return',
+  reason,            // arc-complete | contingent-replan | contract-amendment | needs-user
+                     //   | max-waves | agent-budget | boundary-degraded | root-triage
+  wave, wavesRun,
+  state,             // final persisted state (incl. the `conductor` block)
+  plan,              // the conductor's merged working plan
+  spendDelta,        // per-key nonzero delta of state.spend vs the launch state
+  /* + reason-specific brief: */
+  // contingent-replan → { edges }
+  // contract-amendment → { debt, contracts }         // contract-debt items + contract paths
+  // needs-user        → { question, context }        // question from the escalating agent's notes
+  // arc-complete      → { arcSummary }                // merged/quarantined/deferred/pendingFeedback/wavesRun
+  // agent-budget      → { nextWaveUnits, estimate }
+  // root-triage       → { pendingFeedback, quarantined }
+  // boundary-degraded, max-waves → { }
+}
+```
+
+The final wave's boundary output is intentionally left **untriaged** — the conductor never
+predicts finality (health fix-units are what extend arcs), so it never sets `boundary:'off'`
+itself; arc-completeness is post-hoc, and the last wave's boundary evidence is handed to the
+root as better-informed integration-review material. The root may still pass `boundary:'off'`
+explicitly on a known-final relaunch.
+
+**Nesting budget.** The conductor spends the **one** allowed `workflow()` nesting level
+(conductor → harness); neither script may add another. `harness.mjs` stays leaf-only forever —
+a `workflow()` call inside a child throws.
+
+**Forensic labels** (for journal reading / `resumeFromRunId` replay): `census:w<N>`,
+`triage:w<N>`, `boundary:w<N>`, `spec-expand:<id>`, `spec-revise:<id>`, and the five
+persistence writers `persist-plan`/`bank-debt`/`log-append`/`move-feedback`/`persist-state:w<N>`.
 
 ## Config knobs (defaults in the harness; override via `plan.config` or the Workflow `config` arg)
 
@@ -181,14 +341,28 @@ mid-flight touchpoints: per-unit quality is held by the Opus gate, and systemic 
 (brittleness, structural drift, ergonomics) by the between-wave health check — a boundary
 act, not a per-unit one.
 
+### Conductor knobs (under `plan.config.conductor` / `config.conductor` — `config` wins; inert on a direct harness launch)
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `maxWavesPerRun` | `3` | Wave-loop bound; exhaustion → `max-waves` return (a fresh relaunch resets the 1000-agent counter) |
+| `boundaryTriage` | `'opus-first'` | `'opus-first'` full ladder · `'always-fable'` skip the Opus tier (judgment goes straight to Fable) · `'root'` every boundary returns (old per-wave behaviour / escape hatch) |
+| `agentBudgetReserve` | `200` | Headroom below the 1000-call cap; the pre-wave budget guard returns before crossing |
+| `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit; corrected each wave by the actual harness `spend` deltas |
+| `fixUnitAdmit` | `'auto'` | `'auto'` tier-1 mechanical admit of health-assessor drafts · `'triage'` force ≥Opus veto when drafts are present |
+
 ## Model tiers — the economic contract
 
 | Tier | Does | Never does |
 |---|---|---|
-| `fable` | Plan pack, escalated/guaranteed plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage (at existing boundaries only — never a new touchpoint), integration review | Code, fixes, bulk text |
-| `opus` | Implementation, tests, adversarial review, Opus-first plan-check + Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (wave-tail, harness-run in the boundary phase; the architect still decides what to admit) | — |
-| `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression | — |
-| `haiku` | Git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / health findings / the debt ledger, status rendering | Judgment |
+| `fable` | Plan pack, escalated/guaranteed plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage, the conductor's in-workflow **tier-3 boundary agent** — Opus escalations + quarantine respecs + architect journal — all at existing boundaries only (never mid-wave, never reaching a running unit), integration review | Code, fixes, bulk text |
+| `opus` | Implementation, tests, adversarial review, Opus-first plan-check + Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (wave-tail, harness-run in the boundary phase; the architect still decides what to admit), the conductor's **tier-2 boundary triager** (may escalate up to Fable or out to the root; never kills a unit, respecs a quarantine, or amends a contract) | — |
+| `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression, the conductor's skeleton→spec expansion (`specs/<id>.md`) | — |
+| `haiku` | Git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / health findings / the debt ledger, status rendering, the conductor's feedback/quarantine census + between-wave persistence writers (plan/debt/log/feedback/state) | Judgment |
+
+Root-only (never delegated down the conductor ladder): the Phase-0 plan pack, contingent
+replans, contract amendments, needs-user calls, and the session integration review — the
+conductor early-returns to the root for each.
 
 ## Platform rules the harness respects (keep respecting them if you ever modify it)
 
@@ -221,6 +395,10 @@ act, not a per-unit one.
   base is quarantined before any work happens. Keep both if you modify the harness.
 - Workflows take no mid-run input; ~16 agents run concurrently; the merge queue is serial
   by design — wall clock, not tokens, is the throughput limit.
+- **One `workflow()` nesting level, and the conductor spends it.** The default dispatch path
+  is conductor → harness, which consumes the single allowed nesting level; `harness.mjs` must
+  stay leaf-only forever. A `workflow()` call inside a child script throws — neither script
+  may add another level.
 
 ### Known platform issues
 
@@ -280,7 +458,8 @@ Quarantine reasons route to different between-wave actions — read them, don't 
 
 The returned state includes a `spend` tally — per-tier agent counts (`fable`/`opus`/
 `sonnet`/`haiku`) plus `opusPlanChecks`, `planChecks` (Fable plan-checks only),
-`opusGateRounds`, and `gateRounds` (Fable) — the session report's "where did frontier
+`opusGateRounds`, `gateRounds` (Fable), and — on a conductor run — `boundaryTriages`
+(tier-2 Opus) and `boundaryFables` (tier-3 Fable) — the session report's "where did frontier
 attention go" table, and the evidence base for tuning the dial next session. It is
 **arc-cumulative**: the tally seeds from the passed state's `spend` and accumulates across
 relaunches, so a crashed-and-resumed arc no longer needs its per-run tallies hand-summed (a
@@ -317,19 +496,29 @@ is the user's pro forma — never parsed as feedback itself.
 ## Plan-check semantics — Opus-first, escalate to Fable
 
 Before any code exists, the plan-check catches a wrong approach — the cheapest place in the
-system to redirect. Like the exit gate it is now **Opus-first**: a fresh Opus reads the spec,
-its contracts, and the implementer's proposed plan, then returns `approve` (implement as-is),
-`redirect` (the engineer revises per its guidance, then implements), or `escalate`. Opus may
-approve or redirect but **may not quarantine** — kill decisions stay frontier-only. It
-escalates to the **Fable architect plan-check** on uncertainty, a foundational or
-contract-touching concern, or a plan that looks unbuildable, carrying its assessment across as
-a lead (the same handoff idiom the exit gate uses). The Fable plan-check (unchanged behaviour:
-`approve | redirect | quarantine`) is also reached unconditionally where the stakes are
-structural: `planCheck: 'always-fable'`, `risk: high`, or a plan that declares itself
-infeasible (`feasible:false`) — an infeasible plan **must** route to Fable and may never be
-killed or waved through by Opus alone. `planCheckRisk` still decides which tiers get *any*
-check; `planCheck` decides which tier pays. The tally splits `spend.opusPlanChecks` from
-`spend.planChecks` (Fable only), mirroring the gate.
+system to redirect. Its charter is **the spec as much as the plan**: this is the only pre-code
+eyes on the spec itself, so both variants interrogate the SPEC as hard as the proposed plan —
+hunting contradictions *within* the spec, clauses that contradict a referenced contract or
+documented codebase reality, and stale premises the implementer would otherwise resolve ad hoc
+mid-build. A spec defect is not the engineer's to absorb; it is resolved now, through the
+verdict. (Arc-observed rationale: 11 plan-checks never fired on plan plausibility but approved
+past spec-internal contradictions the implementer then had to reconcile by hand — the failure
+was a charter gap, not a coverage gap, so the charter was refocused rather than narrowed.)
+
+Like the exit gate it is **Opus-first**: a fresh Opus reads the spec, its contracts, and the
+implementer's proposed plan, then returns `approve` (implement as-is), `redirect` (the engineer
+revises per its guidance, then implements — this includes **naming the explicit resolution of a
+spec contradiction** when the right call is clearly within its authority), or `escalate`. Opus
+may approve or redirect but **may not quarantine** — kill decisions stay frontier-only. It
+escalates to the **Fable architect plan-check** on contract interpretation, **a spec
+contradiction it cannot resolve itself**, architectural foundations, genuine uncertainty, or a
+plan that looks unbuildable, carrying its assessment across as a lead (the same handoff idiom
+the exit gate uses). The Fable plan-check (`approve | redirect | quarantine`) is also reached
+unconditionally where the stakes are structural: `planCheck: 'always-fable'`, `risk: high`, or
+a plan that declares itself infeasible (`feasible:false`) — an infeasible plan **must** route
+to Fable and may never be killed or waved through by Opus alone. `planCheckRisk` still decides
+which tiers get *any* check; `planCheck` decides which tier pays. The tally splits
+`spend.opusPlanChecks` from `spend.planChecks` (Fable only), mirroring the gate.
 
 ## Exit gate semantics — Opus-first, escalate to Fable
 

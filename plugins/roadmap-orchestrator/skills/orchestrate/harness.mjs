@@ -601,11 +601,17 @@ async function runUnit(unit) {
       return run(
         `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
         `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
+        `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan ` +
+        `(arc-observed: plan-checks that judged only plan plausibility approved past spec-internal contradictions ` +
+        `the implementer then had to resolve ad hoc): hunt contradictions within the spec, clauses that contradict ` +
+        `a referenced contract or documented codebase reality, and stale premises. A spec defect is not the ` +
+        `engineer's to absorb — resolve it now through your verdict. ` +
         `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
-        `as-is; "redirect" = the engineer revises the plan per your guidance, then implements; "quarantine" = do ` +
-        `not implement at all (e.g. the spec is unsatisfiable within its contracts, or needs redesign above the ` +
-        `engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, say what and why ` +
-        `in a few sentences — the engineer needs direction, not instructions.${lead}`,
+        `as-is; "redirect" = the engineer revises the plan per your guidance, then implements (this includes ` +
+        `naming the explicit resolution of a spec contradiction when the right call is clear); "quarantine" = do ` +
+        `not implement at all (e.g. the spec is unsatisfiable or self-contradictory within its contracts, or needs ` +
+        `redesign above the engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, ` +
+        `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
         { model: 'fable', effort: 'low', phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
     }
 
@@ -619,11 +625,15 @@ async function runUnit(unit) {
         `killing a unit is frontier-only, so you may approve or redirect the plan yourself, never quarantine. Read ` +
         `the spec at ${spec} and the contracts it references, then judge this plan against them:\n` +
         `${JSON.stringify(implPlan)}\n` +
+        `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
+        `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
+        `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ` +
         `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
         `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
-        `not instructions); "escalate" = hand to the frontier architect when the call turns on contract ` +
-        `interpretation, architectural foundations, genuine uncertainty, or the unit looks unbuildable. Name the ` +
-        `escalation trigger.`,
+        `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
+        `call is clearly within your authority); "escalate" = hand to the frontier architect when the call turns ` +
+        `on contract interpretation, a spec contradiction you cannot resolve yourself, architectural foundations, ` +
+        `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.`,
         { model: 'opus', effort: 'high', phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
       if (oc.verdict === 'escalate') {
         const lead = ` A first-pass Opus plan-check could not clear this itself` +
