@@ -28,7 +28,8 @@ For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
   the raw source material (capped Opus fan-out), and asks you a small, ranked batch of
   questions — the only human touchpoint before autonomy.
 - **Execution waves (autonomous):** a zero-token workflow harness runs each unit through
-  worktree setup → plan → **architect plan-check** → implement → verify/review/fix →
+  worktree setup → plan → **Opus-first plan-check** (Fable on escalation, and guaranteed for
+  high-risk or infeasible plans) → implement → verify/review/fix →
   **Opus-first exit gate** (escalates to the Fable architect only on genuinely hard or
   foundational calls; high-risk and contract-touching units always take the Fable gate),
   then a serial merge queue with the full test suite as the gate. Between waves the

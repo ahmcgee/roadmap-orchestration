@@ -120,11 +120,12 @@ fi
 node -e "
 const s = require('$STATE'); const sp = s.spend || {}
 console.log('spend:', JSON.stringify(sp))
+console.log('plan-checks: opus=' + (sp.opusPlanChecks ?? 0) + ' fable=' + (sp.planChecks ?? 0))
 const merged = Object.values(s.units).filter(u => u.status === 'merged').length
 let warn = ''
 if ((sp.gateRounds ?? 0) > merged * 2 + 2) warn += 'gate rounds high relative to merged units (convergence?); '
 if ((s.consultsUsed ?? 0) > 2) warn += 'consult cap exceeded?; '
-if ((sp.fable ?? 0) > 17) warn += 'frontier call count high for a 6-unit fixture; '
+if ((sp.fable ?? 0) > 12) warn += 'frontier call count high for a 6-unit fixture; '
 if (warn) { console.log('WARN  ' + warn) } else { console.log('PASS  spend within expected envelope') }
 "
 

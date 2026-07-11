@@ -49,8 +49,9 @@ From a Claude Code session (the harness needs the Workflow runtime):
 3. `bash check.sh /tmp/roadmap-eval` — exit 0 with `ALL CHECKS PASSED`, or FAIL lines
    naming what regressed.
 
-Cost per run: roughly 9–16 Fable calls (plan-checks, gates, possible consults ≈ $1–2 of
-frontier spend) plus free-tier Opus/Haiku time. Cheap enough to run on every harness edit.
+Cost per run: roughly 3–10 Fable calls (plan-checks are now mostly Opus, so Fable is
+escalated plan-checks + forced/audit gates + possible consults ≈ $0.50–1.50 of frontier
+spend) plus free-tier Opus/Haiku time. Cheap enough to run on every harness edit.
 
 ## Interpreting failures
 
@@ -66,7 +67,10 @@ real. Map FAIL lines back to what you changed:
 - `gate-good` not merged → the gate or reviewer is over-blocking; check `minBlockConfidence`,
   the review taxonomy wording, and the risk tilt.
 - `impossible-cache` merged → the unsatisfiable fast-exit or plan-check regressed —
-  something built and merged code that violates a frozen contract.
+  something built and merged code that violates a frozen contract. With the Opus-first
+  plan-check, also check the escalation path: an infeasible plan (`feasible:false`) must
+  route to the **Fable** plan-check and may never be killed or approved by Opus alone — a
+  merge here can mean Opus wrongly waved the plan through instead of escalating.
 - Everything `blocked`/env-quarantined → provisioning broke.
 - `add-divide` ran before `add-multiply` merged, or units stuck `pending` → scheduler/DAG
   regression.

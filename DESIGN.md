@@ -25,7 +25,7 @@ Your architecture is directionally right. Where I differ:
 | 1 | "The root is code, not a living frontier agent" | **Agree, and it's better than you think**: the dynamic-workflow script *is* deterministic zero-token code that can spawn agents. The harness loop doesn't need to be authored — it can literally be the workflow script. But there is an irreducible thin frontier presence: the main Claude Code loop between waves. Don't fight it; it's the only place human input can enter. Minimize its turns, don't eliminate it. |
 | 2 | "Frontier authors the harness" | **Disagree.** The harness is written **once, as part of the skill** — generic, parameterized by a plan pack. Having the frontier re-author orchestration code per run is both a token spend and a reliability bug farm. The frontier authors *plan data* (DAG, contracts, unit specs), never orchestration code. This is the single biggest economy in the design. |
 | 3 | One parameterized workflow template per unit | **Agree.** Realized as a plain function inside one workflow script, not as separate workflows (see §2 on nesting). |
-| 4 | Cheap review/fix, demand-gated escalation to frontier | **Revised twice.** *First:* per-unit frontier judgment was made **guaranteed** — Opus reliably gets a unit ~90% there but leaves small oversights it doesn't know it left, so demand-gating (asking Opus "are you confident?") missed exactly them; every unit got a **Fable architect exit gate** plus a plan-check. *Then, for Fable economy:* the exit gate became **Opus-first with a retained frontier safety net**. Opus grades its own work and escalates to the Fable gate only on a call it *can* reliably self-assess — it's stuck, a genuinely hard trade-off, or the increment is architecturally foundational — NOT on hidden-oversight confidence. The guaranteed Fable pass is kept exactly where undetected oversights are most costly (`risk: high`, contract-touching diffs) plus a deterministic audit sample against systematic rubber-stamping; hidden oversights that slip a low/med unit are caught systemically by the between-wave health check (§6.6), not per-unit. Mid-loop *rescue* for stuck units still fires by **plain code over objective signals** (fix-round counts, test results, paths touched) — never by asking a cheap model "do you need help?". The plan-check stays guaranteed (cheap, pre-code, high value). §6. |
+| 4 | Cheap review/fix, demand-gated escalation to frontier | **Revised twice.** *First:* per-unit frontier judgment was made **guaranteed** — Opus reliably gets a unit ~90% there but leaves small oversights it doesn't know it left, so demand-gating (asking Opus "are you confident?") missed exactly them; every unit got a **Fable architect exit gate** plus a plan-check. *Then, for Fable economy:* the exit gate became **Opus-first with a retained frontier safety net**. Opus grades its own work and escalates to the Fable gate only on a call it *can* reliably self-assess — it's stuck, a genuinely hard trade-off, or the increment is architecturally foundational — NOT on hidden-oversight confidence. The guaranteed Fable pass is kept exactly where undetected oversights are most costly (`risk: high`, contract-touching diffs) plus a deterministic audit sample against systematic rubber-stamping; hidden oversights that slip a low/med unit are caught systemically by the between-wave health check (§6.6), not per-unit. Mid-loop *rescue* for stuck units still fires by **plain code over objective signals** (fix-round counts, test results, paths touched) — never by asking a cheap model "do you need help?". *Then, extending the same posture to the plan-check:* it too became **Opus-first** — a fresh Opus checks every plan and escalates to Fable only on uncertainty, a foundational/contract concern, or apparent infeasibility, with the guaranteed Fable pass retained for `risk: high` and claimed-infeasible plans (and Opus may never quarantine — kill decisions stay frontier-only). Cheap, pre-code, still high value; the tier that pays just moved. §6. |
 | 5 | Guaranteed frontier pass at the post-integration gate | **Half agree.** Per-merge frontier is O(N) — it violates your own constraint. The per-merge gate is code + tests (free). The *guaranteed* frontier acts are O(1) per session: the plan pack up front and one integration review at the end. And the real fix for cross-unit semantic incompatibility is to **prevent it at plan time with frozen interface contracts**, not just detect it at merge time. §7. |
 | 6 | Bounded give-up / quarantine | **Agree.** §8. |
 | 7 | Structured state, parse-once | **Agree.** §10. |
@@ -243,7 +243,7 @@ out-of-scope frontier unit — nearly free while context is hot, valuable later.
 | Verification (run tests/lint/build, structure the results) | Haiku | Execute + report. |
 | Review (fresh-context, adversarial, against spec + contract) | Opus | Free noise filter so the architect gate reads a polished candidate. |
 | Fix generation (incl. applying gate directives) | Opus | High output volume; never frontier. |
-| **Architect plan-check** (every unit by default, pre-implementation) | **Fable, effort low** | Kills wrong approaches before code exists; ~0.3–0.8k out per unit. |
+| **Architect plan-check** (every unit by default, pre-implementation) | **Opus-first; Fable on escalation / high-risk / infeasible** | Kills wrong approaches before code exists; Opus checks the plan and escalates to Fable (~0.3–0.8k out) only when the call is structural. |
 | **Architect exit gate** (guaranteed, every unit) | **Fable** | Reads the *actual diff* + evidence, writes directives (~1–2.5k out); the per-unit steering pass. |
 | Dossier compression (logs/transcripts bound for frontier) | Sonnet | Frontier never reads raw logs — but the gate reads the real diff uncompressed (§5). |
 | **Mid-loop rescue consult** (conditional, capped) | **Fable, effort low** | For units stuck before reaching the gate; directive only. |
@@ -260,7 +260,7 @@ out-of-scope frontier unit — nearly free while context is hot, valuable later.
 ```
 F(U) ≈ A                    intake judgment + interactive clarification      ~6–15k
      + B·U                  spec skeletons, B ≈ 0.5–1.5k/unit
-     + P·U                  plan-checks (default every unit), P ≈ 0.3–0.8k
+     + P·(U_high + esc)     Fable plan-checks: high-risk + infeasible units + Opus escalations (Opus-first checks the rest free), P ≈ 0.3–0.8k
      + R·U                  exit gates, R ≈ 1–2.5k/unit incl. delta re-checks
      + C·W                  wave replans, C ≈ 2–5k; W = 0 in the pure-contract regime
      + D·E                  mid-loop rescue consults, D ≈ 0.5–1.5k; E hard-capped
@@ -404,8 +404,14 @@ Notes:
   tests, and has no obvious defects.
 - **Gate economics ride on input, not output.** The gate reads the real diff (5–30k input
   tokens at $10/M ⇒ $0.05–0.30/unit) and writes short directives (~1–2k output).
-  Summarizing the diff for the gate would be a false economy — the oversights it exists to
-  catch are exactly what summaries drop. Re-check rounds read only the delta diff.
+  Summarizing the diff for a **forced** gate (high-risk, contract-touching, `always-fable`)
+  is a false economy — the oversights it exists to catch are exactly what summaries drop, so
+  those keep the full-diff read at `gateEffort`. An **audit-only** gate (fired solely by the
+  `gateAuditRate` sample) is the deliberate exception: its job is anti-rubber-stamp sampling,
+  not exhaustive re-grading, so it reads `git diff --stat` + spec + prior verify/review
+  evidence first at the cheaper `auditEffort`, expanding to full diffs only where a violation
+  would be consequential and the moment anything looks off. Re-check rounds read only the
+  delta diff.
 - **Resume-friendliness:** all prompts are deterministic functions of the plan pack
   (stable unit IDs, no timestamps), so `resumeFromRunId` replays completed units from the
   journal at zero cost after a mid-run failure.
@@ -470,17 +476,19 @@ config:
 ```
 { maxFixRounds: K = 2,            // free polish before metered attention
   maxGateRounds: G = 2,            // gate directive→fix→re-check cycles before quarantine
-  planCheckRisk: ['low','med','high'],  // plan-check coverage — default every unit
+  planCheckRisk: ['low','med','high'],  // which tiers get *any* plan-check — default every unit
+  planCheck: 'opus-first',         // 'opus-first' (Opus checks, escalates) | 'always-fable'
   exitGate: 'opus-first',          // 'opus-first' (Opus grades, escalates) | 'always-fable'
-  gateAuditRate: 0.15,             // fraction of Opus-approved units still Fable-audited
-  gateEffort: 'medium',            // effort on Fable gate calls ('low' floor; 'high' for risk:high)
+  gateAuditRate: 0.10,             // fraction of Opus-approved units still Fable-audited
+  gateEffort: 'medium',            // effort on forced Fable gate calls ('high' for risk:high)
+  auditEffort: 'low',              // effort on audit-only Fable gates (diff-stat-first)
   maxConsults: E = ⌈U/4⌉ }         // mid-loop rescue budget
 ```
 
-`exitGate: 'opus-first'` with a low `gateAuditRate` spends the least frontier; `exitGate:
-'always-fable'` restores the guaranteed-gate design. Turning the rest down (G=1, plan-check
-high-risk only, gateEffort low) approaches the old demand-gated design's cost; turning it up
-(gateEffort high, larger G) buys more scrutiny.
+`planCheck`/`exitGate: 'opus-first'` with a low `gateAuditRate` spends the least frontier;
+`planCheck`/`exitGate: 'always-fable'` restores the guaranteed-check/guaranteed-gate design.
+Turning the rest down (G=1, plan-check high-risk only, gateEffort low) approaches the old
+demand-gated design's cost; turning it up (gateEffort high, larger G) buys more scrutiny.
 But note where extra budget actually pays off: mid-development steering has proven
 unnecessary when the plan is right, and no amount of gate depth rescues a bad plan — so
 marginal frontier spend goes to the *planning* side (spec detail, plan-checks, phase-0
@@ -494,13 +502,14 @@ integration review, since an amended contract can invalidate assumptions of alre
 units. Compression policy: logs and transcripts bound for frontier are Sonnet-compressed;
 the diff under judgment is not (§5).
 
-**Guaranteed vs conditional frontier:** guaranteed = plan pack, per-unit plan-check, the
-Fable exit gate for `forceFrontier` units (`risk: high`, contract-touching, audit sample) +
-wave replans (count fixed by the DAG) + session integration review. Conditional = the Fable
-exit gate for low/med units (only on Opus escalation or non-convergence), mid-loop rescues,
-and integration-failure consults (§7, same cap pool). Nothing else may run on Fable — in
-particular the between-wave health check and debt assessment (§6.6) are **Opus**, not
-frontier.
+**Guaranteed vs conditional frontier:** guaranteed = plan pack, the Fable plan-check for
+high-risk and claimed-infeasible plans (Opus-first plan-check for the rest), the Fable exit
+gate for `forceFrontier` units (`risk: high`, contract-touching, audit sample) + wave replans
+(count fixed by the DAG) + session integration review. Conditional = the Fable plan-check on
+Opus escalation, the Fable exit gate for low/med units (only on Opus escalation or
+non-convergence), mid-loop rescues, and integration-failure consults (§7, same cap pool).
+Nothing else may run on Fable — in particular the between-wave health check and debt
+assessment (§6.6) are **Opus**, not frontier.
 
 ### Feedback topology: bookends, not babysitting
 

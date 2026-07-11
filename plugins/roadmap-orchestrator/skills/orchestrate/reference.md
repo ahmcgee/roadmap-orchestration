@@ -90,7 +90,10 @@ ask; absent → plan fresh, treating `archive/` + living docs as prior knowledge
     "start": "npm run dev",        // server kind: long-running; the harness daemonizes it
                                    //   (log + pidfile at worktreeRoot/__preview.{log,pid},
                                    //   outside the repo so they never dirty the checkout)
-    "stop": "",                    // optional; default: kill the recorded pid
+    "stop": "",                    // optional; default kills the whole preview process GROUP
+                                   //   (the pidfile pid is a group leader). A custom stop
+                                   //   MUST group-kill too — a single-pid kill strands
+                                   //   child listeners.
     "refresh": "",                 // optional per-advance step after the mirror moves; ""
                                    //   for hot-reloading servers (the checkout move suffices);
                                    //   absent + server kind → stop/start
@@ -113,16 +116,24 @@ ask; absent → plan fresh, treating `archive/` + living docs as prior knowledge
 ```json
 { "integrationBranch": "roadmap/session-<date>",
   "integrationTip": "<sha to fork from — usually main's HEAD>",
-  "consultsUsed": 0, "wave": 0, "units": {} }
+  "consultsUsed": 0, "wave": 0, "units": {},
+  "run": { "runId": "<id>", "scriptPath": "<session-persisted harness path>" } }
 ```
 
 The harness also records `"preview": { "sha": "<sha>", "status": "live" | "failed" | "none" }` —
 the green-tip mirror's position. `failed` never affects any unit outcome (see Preview &
-feedback semantics below).
+feedback semantics below). `run` is an **optional passthrough**: the architect records
+`{runId, scriptPath}` (from the Workflow tool result, which returns the session-persisted
+script path) into the initial state at launch, and `serialize()` preserves it — it makes
+same-session `resumeFromRunId` mechanical and forensics one `cat`.
 
 Unit statuses: `pending → running → merge-ready → merged`, or `quarantined` / `blocked`
 (dependency quarantined) / `deferred` (beyond cut line). Dependents launch only when every
-dependency is `merged`.
+dependency is `merged`. While a unit is `running` it also carries a `stage` field
+(`setup | plan | implement | polish | gate | merge-queue`) for forensics and crash recovery;
+a terminal status replaces the whole record, so no stale stage survives. Checkpoints land at
+every unit status change **and** every stage transition, coalesced latest-wins — the file can
+trail the newest event by one write.
 
 ## Config knobs (defaults in the harness, or the skill for the between-wave knobs; override via `plan.config` or the Workflow `config` arg)
 
@@ -132,10 +143,12 @@ dependency is `merged`.
 | `maxGateRounds` | 2 | Architect directive→fix→re-check cycles before quarantine |
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `minBlockConfidence` | 0.6 | Review findings below this confidence don't trigger fix rounds — false blockers are the reviewer's main cost |
-| `gateEffort` | `medium` | Effort on the Fable exit-gate calls; raise to `high` for risky arcs |
-| `planCheckRisk` | `['low','med','high']` | Which risk tiers get the pre-implementation plan-check — every unit by default; drop `low` only to trade plan quality for speed |
+| `gateEffort` | `medium` | Effort on the forced Fable exit-gate calls (high-risk/contract/`always-fable`); raise to `high` for risky arcs |
+| `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check — every unit by default; drop `low` only to trade plan quality for speed. Which tier *pays* for the check is set by `planCheck` |
+| `planCheck` | `'opus-first'` | `'opus-first'`: a fresh Opus checks the plan and escalates to the Fable architect only on uncertainty / a foundational or contract concern / apparent unbuildability. `'always-fable'`: guaranteed Fable plan-check on every checked unit. `risk:high` units and claimed-infeasible plans always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'`: Opus grades its own work and escalates to the Fable architect gate only when stuck / facing a hard trade-off / when the increment is architecturally foundational. `'always-fable'`: restore a guaranteed Fable exit gate on every unit |
-| `gateAuditRate` | `0.15` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables. `risk:high` and contract-touching units always take Fable regardless |
+| `gateAuditRate` | `0.10` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables. `risk:high` and contract-touching units always take Fable regardless |
+| `auditEffort` | `'low'` | Effort for audit-*only* Fable gates (the `gateAuditRate` sample was the sole force reason) — these read diff-stat-first; forced gates keep the full-diff read at `gateEffort` |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` (advance after every suite-green merge, coalescing latest-wins), `'wave'` (once, after the queue drains), `'off'` (no mirror). Inert without a `plan.preview` block |
 | `healthCheck` | `'each-wave'` | Between-wave codebase-health assessment (architect-run, not the harness): `'each-wave'` or `'off'` |
 | `flakeReruns` | `3` | Full-suite re-runs the between-wave health check uses to catch intermittent failures; `0` disables flake detection |
@@ -152,8 +165,8 @@ act, not a per-unit one.
 
 | Tier | Does | Never does |
 |---|---|---|
-| `fable` | Plan pack, plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage (at existing boundaries only — never a new touchpoint), integration review | Code, fixes, bulk text |
-| `opus` | Implementation, tests, adversarial review, Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (between waves, architect-spawned; the architect still decides what to admit) | — |
+| `fable` | Plan pack, escalated/guaranteed plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage (at existing boundaries only — never a new touchpoint), integration review | Code, fixes, bulk text |
+| `opus` | Implementation, tests, adversarial review, Opus-first plan-check + Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (between waves, architect-spawned; the architect still decides what to admit) | — |
 | `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression | — |
 | `haiku` | Git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / health findings / the debt ledger, status rendering | Judgment |
 
@@ -189,6 +202,25 @@ act, not a per-unit one.
 - Workflows take no mid-run input; ~16 agents run concurrently; the merge queue is serial
   by design — wall clock, not tokens, is the throughput limit.
 
+### Known platform issues
+
+Behaviours of the current dynamic-workflow runtime the harness works *around* — not bugs in
+this skill, and worth filing upstream at github.com/anthropics/claude-code:
+
+- **Adopt-rejection after host death.** If the Claude Code process dies while a workflow is
+  running, the platform's same-session resume/adopt path can refuse to re-attach. Treat it as
+  a crash: relaunch fresh and follow the recovery ladder (SKILL.md, Phase 1…n). The setup
+  guards make a fresh relaunch behave like a resume — a unit branch already merged into the
+  integration branch short-circuits to `merged`, and a crashed `running` unit auto-adopts its
+  committed branch and re-enters at verify — so the refusal stops mattering.
+- **The crash notification recommends `resumeFromRunId` across sessions.** It cannot work
+  there: the journal is same-session only. Obey the ladder, not the notification.
+- **Schema-retry resends payloads verbatim.** On a structured-output validation failure the
+  platform re-sends the *same* oversized payload until the unit dies, with no chance to
+  shorten it. This is why the harness caps free-text field lengths (impl `summary`/`notes`,
+  debt `what`/`why`) and tells implementers to commit before emitting the report — an
+  over-long report can kill a unit whose work is already committed and done.
+
 ## Verify semantics — three outcomes, not two
 
 Per-unit verification is a cheap-to-expensive ladder: lint/typecheck the changed files →
@@ -213,9 +245,10 @@ Quarantine reasons route to different between-wave actions — read them, don't 
 **environment/tooling blocked** → fix provisioning or the brief, re-run as-is;
 **unsatisfiable spec/contract** → respec or amend the contract; everything else → redesign.
 
-The returned state includes a `spend` tally (per-tier agent calls, plan-checks, gate
-rounds) — the session report's "where did frontier attention go" table, and the evidence
-base for tuning the dial next session.
+The returned state includes a `spend` tally — per-tier agent counts (`fable`/`opus`/
+`sonnet`/`haiku`) plus `opusPlanChecks`, `planChecks` (Fable plan-checks only),
+`opusGateRounds`, and `gateRounds` (Fable) — the session report's "where did frontier
+attention go" table, and the evidence base for tuning the dial next session.
 
 ## Preview & feedback semantics
 
@@ -244,6 +277,23 @@ next judgment boundary. At triage, consumed files move to `feedback/triaged/<wav
 (Haiku); large batches are Sonnet-compressed before the architect reads them; findings
 observed at a superseded sha are discounted, not re-litigated. `feedback/user/TEMPLATE.md`
 is the user's pro forma — never parsed as feedback itself.
+
+## Plan-check semantics — Opus-first, escalate to Fable
+
+Before any code exists, the plan-check catches a wrong approach — the cheapest place in the
+system to redirect. Like the exit gate it is now **Opus-first**: a fresh Opus reads the spec,
+its contracts, and the implementer's proposed plan, then returns `approve` (implement as-is),
+`redirect` (the engineer revises per its guidance, then implements), or `escalate`. Opus may
+approve or redirect but **may not quarantine** — kill decisions stay frontier-only. It
+escalates to the **Fable architect plan-check** on uncertainty, a foundational or
+contract-touching concern, or a plan that looks unbuildable, carrying its assessment across as
+a lead (the same handoff idiom the exit gate uses). The Fable plan-check (unchanged behaviour:
+`approve | redirect | quarantine`) is also reached unconditionally where the stakes are
+structural: `planCheck: 'always-fable'`, `risk: high`, or a plan that declares itself
+infeasible (`feasible:false`) — an infeasible plan **must** route to Fable and may never be
+killed or waved through by Opus alone. `planCheckRisk` still decides which tiers get *any*
+check; `planCheck` decides which tier pays. The tally splits `spend.opusPlanChecks` from
+`spend.planChecks` (Fable only), mirroring the gate.
 
 ## Exit gate semantics — Opus-first, escalate to Fable
 

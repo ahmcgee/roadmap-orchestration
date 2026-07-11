@@ -4,7 +4,7 @@ export const meta = {
   phases: [
     { title: 'Setup', detail: 'integration + unit worktrees' },
     { title: 'Implement', detail: 'plan + code (Opus)' },
-    { title: 'Architect', detail: 'plan-check + escalated exit gate (Fable)' },
+    { title: 'Architect', detail: 'escalated plan-check + exit gate (Fable)' },
     { title: 'Opus-gate', detail: 'Opus exit gate; escalates to Fable when hard' },
     { title: 'Verify', detail: 'build/tests (Haiku)' },
     { title: 'Review', detail: 'adversarial review (Opus)' },
@@ -38,13 +38,16 @@ const C = {
   gateEffort: 'medium',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
-  // Exit-gate economy: Opus grades its own work first and escalates to the Fable architect
-  // only on a genuinely hard call (see the exit gate below). 'always-fable' restores the
-  // guaranteed frontier pass on every unit. High-risk and contract-touching units always
-  // take the Fable gate regardless; gateAuditRate deterministically samples a fraction of
-  // Opus-approved units for a Fable audit (0 disables).
+  // Frontier economy: Fable is the metered tier, so Opus grades first everywhere and escalates
+  // only on a genuinely hard call. The plan-check is Opus-first (see below) unless
+  // planCheck === 'always-fable'; the exit gate is Opus-first unless exitGate === 'always-fable'.
+  // High-risk and contract-touching units always take the Fable gate regardless; gateAuditRate
+  // deterministically samples a fraction of Opus-approved units for a Fable audit (0 disables),
+  // and audit-only forced gates run at the cheaper auditEffort.
+  planCheck: 'opus-first',   // 'opus-first' | 'always-fable'
   exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
-  gateAuditRate: 0.15,
+  gateAuditRate: 0.10,
+  auditEffort: 'low',
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
 }
@@ -55,6 +58,20 @@ const intWt = `${wtRoot}/__integration`
 // Preview process artifacts live OUTSIDE the repo so mirror checkouts never touch them.
 const prevPid = `${wtRoot}/__preview.pid`
 const prevLog = `${wtRoot}/__preview.log`
+// Preview process control, shared by first setup and every mirror restart. setsid makes the
+// recorded pid a process-group leader so stop can kill the whole tree, not just the parent —
+// a single-pid kill strands child listeners and leaves ports held. All best-effort.
+const previewStartCmd = (start) => `\`setsid nohup ${start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\``
+// Eval-observed: repeating the long pidfile path buries the STRICT preamble's cd target, so
+// the stop text names it exactly once and uses pronouns after.
+const previewStopCmd =
+  `kill the whole preview process group recorded in the pidfile at ${prevPid}, if that file exists: ` +
+  `\`kill -TERM -- -$(cat <pidfile>)\` (the leading minus targets the group), falling back to \`pkill -g\` on ` +
+  `the same pid and then a plain \`kill\` of it; ignore all kill errors, then delete the pidfile`
+const previewSweepRetry =
+  `If the start or its healthcheck fails because a port is already in use, sweep leftover listeners exactly once ` +
+  `(kill the old pidfile's process group if ${prevPid} exists, otherwise \`fuser -k\` / \`lsof\` the preview's ` +
+  `ports), retry the start once, then report ok:false with the exact error. `
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
 const wtOf = (u) => `${wtRoot}/${u.id}`
 // Location discipline for mechanical agents: smoke testing showed that given a bad path
@@ -62,6 +79,13 @@ const wtOf = (u) => `${wtRoot}/${u.id}`
 const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails or the directory ' +
   'is not the described git checkout, report ok/pass as false with the exact error and stop. Never substitute ' +
   'your current working directory, the enclosing project, or any other repository. '
+// Report discipline for the code-writing agents: commit first (the commit is the deliverable,
+// and it is what makes a killed unit recoverable), then keep the structured report short. The
+// platform's schema-retry resends an over-long payload verbatim until the unit dies, so an
+// oversized report can waste all the work it describes.
+const REPORT = 'Commit your work BEFORE emitting the structured report — the commit is the deliverable. Then keep ' +
+  'the report tight: `summary` in 2–3 short sentences, every other free-text field terse. An oversized report ' +
+  'fails validation and can kill this unit even though the work is done. '
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
@@ -76,7 +100,7 @@ const convClause = conventions
   : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
-const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, gateRounds: 0, opusGateRounds: 0 }
+const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, opusPlanChecks: 0, gateRounds: 0, opusGateRounds: 0 }
 // Debt ledger for this wave: consciously-deferred imperfections surfaced by the reviewer,
 // the exit gates, or the implementer. Returned in the wave state; the architect triages it
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
@@ -105,7 +129,9 @@ const run = async (prompt, opts) => {
     spend[opts.model] = (spend[opts.model] ?? 0) + 1
     return agent(
       prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
-      'report matching the requested schema — put any commentary in its `notes` field and add no other fields.',
+      'report matching the requested schema — put any commentary in its `notes` field and add no other fields. ' +
+      'Your previous report likely failed because it was too long — shorten every free-text field aggressively; ' +
+      'one sentence each is acceptable.',
       { ...opts, label: `${opts.label ?? 'agent'}#retry` })
   }
 }
@@ -127,13 +153,18 @@ const oneOf = (vals) => ({ type: 'string', enum: vals })
 // Deferred-imperfection items — consciously accepted, not blocking. Collected into the
 // wave's debt ledger. `what` is the only hard requirement; the rest classify for triage.
 const debtArr = { type: 'array', items: obj({
-  what: { type: 'string' }, why: { type: 'string' },
+  what: { type: 'string', maxLength: 400 }, why: { type: 'string', maxLength: 400 },
   severity: oneOf(['minor', 'major']), kind: oneOf(['correctness', 'test', 'structure', 'ergonomics']),
 }, ['what']) }
 const directiveArr = { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) }
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
   ws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' }, detail: { type: 'string' } }, ['ok', 'sha']),
+  // Unit-worktree setup outcome. `state` drives the destructive-re-run guards: 'already-merged'
+  // and 'has-commits' touch nothing; 'adopted' enters the pipeline at verify; 'ready' is fresh.
+  setup: obj({ ok: { type: 'boolean' }, sha: { type: 'string' },
+    state: oneOf(['ready', 'already-merged', 'adopted', 'has-commits']), detail: { type: 'string' } },
+    ['ok', 'sha', 'state']),
   // `feasible:false` is the planner's escape valve for an unsatisfiable spec — without
   // it, an agent that correctly refuses to build has no legal output (eval-observed).
   // Optional `notes` on the tight schemas is a pressure-release: with
@@ -146,8 +177,20 @@ const S = {
   planVerdict: obj({
     verdict: oneOf(['approve', 'redirect', 'quarantine']), guidance: { type: 'string' }, notes: { type: 'string' },
   }, ['verdict', 'guidance']),
-  impl: obj({ summary: { type: 'string' }, filesChanged: arr('string'), debt: debtArr, notes: { type: 'string' } },
-    ['summary', 'filesChanged']),
+  // Opus-first plan-check: approve/redirect itself, but killing a unit is frontier-only, so it
+  // escalates (never quarantines) — trigger names why frontier judgment is needed on the plan.
+  opusPlanVerdict: obj({
+    verdict: oneOf(['approve', 'redirect', 'escalate']),
+    trigger: oneOf(['uncertain', 'foundational', 'contract', 'quarantine-candidate', 'none']),
+    guidance: { type: 'string' }, notes: { type: 'string' },
+  }, ['verdict', 'guidance']),
+  // filesChanged first so a truncated payload loses free text, not the required audit trail;
+  // summary/notes capped because the platform's schema-retry resends over-long output verbatim.
+  impl: obj({
+    filesChanged: arr('string'),
+    summary: { type: 'string', maxLength: 700 },
+    debt: debtArr, notes: { type: 'string', maxLength: 1000 },
+  }, ['summary', 'filesChanged']),
   // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
   // escalate to the Fable architect — trigger names the reason frontier judgment is needed.
   opusGate: obj({
@@ -206,11 +249,23 @@ let previewTarget = null
 let previewChain = Promise.resolve()
 
 const rec = (id) => units.get(id)
+// Per-unit forensic breadcrumb: stamp the pipeline stage onto a running record and checkpoint.
+// Guarded to `running` so a terminal result (which replaces the record wholesale) never keeps
+// a stale stage — after a crash, `stage` tells you how far a running unit got.
+const setStage = (id, stage) => {
+  const r = units.get(id)
+  if (r?.status !== 'running') return
+  units.set(id, { ...r, stage })
+  checkpoint()
+}
 const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
 const ready = (u) => rec(u.id).status === 'pending' && depsOf(u.id).every((d) => rec(d)?.status === 'merged')
 const blockedBy = (u) => depsOf(u.id).some((d) => ['quarantined', 'blocked'].includes(rec(d)?.status))
 const serialize = () => ({
   integrationBranch: intBranch, integrationTip, consultsUsed, spend,
+  // Run identity ({runId, scriptPath}) set by the architect at launch — carried through so
+  // same-session resume is mechanical and crash forensics are one `cat` of state.json.
+  ...(prior.run ? { run: prior.run } : {}),
   preview: { sha: previewSha, status: previewStatus },
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
@@ -259,8 +314,8 @@ const previewRestart = () => {
   const p = plan.preview
   if (p.refresh) return `Then run, from inside ${repo}: ${p.refresh}. `
   if (!p.start) return ''
-  return `Then restart the preview: ${p.stop || `kill the process id in ${prevPid} if that file exists (ignore kill errors)`}; ` +
-    `then start it again from inside ${repo} with \`nohup ${p.start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\`. `
+  return `Then restart the preview: ${p.stop || previewStopCmd}; then start it again from inside ${repo} with ` +
+    `${previewStartCmd(p.start)}. ${previewSweepRetry}`
 }
 const previewHealth = () => plan.preview.healthcheck
   ? `Then verify it responds: ${plan.preview.healthcheck} (retry a few times over ~15 seconds before concluding failure). `
@@ -315,28 +370,60 @@ async function quarantine(unit, reason, extra) {
 
 /* --------------------------- per-unit pipeline -------------------------- */
 async function runUnit(unit) {
+  setStage(unit.id, 'setup')   // status became 'running' in start() before this call
   const spec = specOf(unit)
   const w = wtOf(unit)
   const base = integrationTip // diff base: the freshest integrated tip we know
   // unit.existingBranch adopts pre-written work (a hand-authored branch, or an eval
   // fixture): skip plan/implement and run it through the same verify → review → gate.
   const source = unit.existingBranch ?? base
+  // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
+  // the record with {status:'running'} before us). A unit that was 'running' in the last
+  // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
+  const adopt = !!unit.existingBranch || prior.units?.[unit.id]?.status === 'running'
 
   const ws = await run(
     STRICT +
-    `In the git repository at ${repo}: create branch unit/${unit.id} at ${source} with a worktree at ${w} ` +
-    `(git worktree add ${w} -b unit/${unit.id} ${source}). If the branch or path already exists from an earlier ` +
-    `attempt, remove and recreate them cleanly. Report ok:true only when the worktree is ready and clean, and ` +
-    `put the worktree's HEAD sha in \`sha\`.`,
-    { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}`, schema: S.ws })
-  // Trust but verify in code: a worktree in the wrong repo or off the wrong base never proceeds.
-  if (!ws.ok || (!unit.existingBranch && !sameSha(ws.sha, base)))
+    `In the git repository at ${repo}, set up the worktree for unit ${unit.id} at ${w} on branch unit/${unit.id} ` +
+    `(fork base ${source}). Work these cases in order and report the FIRST that matches:\n` +
+    // "Already merged" = the tip LANDED via one of our --no-ff merges, i.e. it is the second
+    // parent of a merge commit on the integration branch. is-ancestor alone false-positives on
+    // commit-less branches (eval-observed: a quarantined unit's empty branch, parked at an old
+    // integration commit, reported already-merged and short-circuited to 'merged' on relaunch).
+    `1) Branch unit/${unit.id} exists and its tip is the second parent of a merge commit on ${intBranch} ` +
+    `(\`git log --merges --format=%P ${intBranch} | awk '{print $2}' | grep -q "$(git rev-parse unit/${unit.id})"\` ` +
+    `succeeds) — it is already merged. Touch nothing; report ok:true, state:'already-merged', sha = the branch tip.\n` +
+    // Case 2 tests against base, not source: under self-adoption (existingBranch = the unit's own
+    // branch) source..branch is always empty, and case 3 would delete the work adoption preserves.
+    `2) Branch unit/${unit.id} exists with unmerged work ` +
+    `(\`git rev-list ${base}..unit/${unit.id}\` is non-empty): ` +
+    (adopt
+      ? `adopt it as-is: if a stale worktree occupies ${w}, clear the WORKTREE ONLY first ` +
+        `(\`git worktree remove --force ${w}\`, then \`git worktree prune\`; if the directory still exists, ` +
+        `delete it) — the branch itself must never be touched. Then \`git worktree add ${w} unit/${unit.id}\` ` +
+        `(NO -b, no reset); report ok:true, state:'adopted', sha = the branch tip.\n`
+      : `do NOT touch it — delete nothing; report ok:false, state:'has-commits', sha = the branch tip.\n`) +
+    `3) Otherwise remove any stale branch/worktree remnants and create a fresh worktree ` +
+    `(git worktree add ${w} -b unit/${unit.id} ${source}); report ok:true, state:'ready', sha = HEAD.`,
+    { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}`, schema: S.setup })
+  // Already merged: unblock dependents, re-run nothing (holds even with existingBranch set).
+  if (ws.state === 'already-merged')
+    return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: ws.sha, note: 'detected already merged at setup' }
+  // Un-adopted commits beyond base: nothing was destroyed — surface for a deliberate decision.
+  if (ws.state === 'has-commits')
+    return quarantine(unit, `branch unit/${unit.id} has commits beyond its base and was not adopted — nothing was ` +
+      `destroyed; adopt via unit.existingBranch on relaunch, or delete the branch deliberately`, ws)
+  // Trust but verify in code: a fresh 'ready' worktree must sit exactly on the expected base
+  // unless forked from an explicit existingBranch (an eval fixture legitimately differs);
+  // adopted/already-merged branches legitimately diverge, so the assertion is 'ready'-only.
+  if (!ws.ok || (ws.state === 'ready' && !unit.existingBranch && !sameSha(ws.sha, base)))
     return quarantine(unit, `workspace setup failed or wrong base (got ${ws.sha || 'nothing'}, expected ${source})`, ws)
   const prov = await provision(w, `provision:${unit.id}`)
   if (!prov.ok)
     return quarantine(unit, `environment provisioning failed — fix tooling/provision config, not the spec: ${prov.detail}`, prov)
 
-  if (!unit.existingBranch) {
+  if (!unit.existingBranch && ws.state !== 'adopted') {
+  setStage(unit.id, 'plan')
   // Plan first, then the architect plan-check — wrong approaches die before code exists.
   let implPlan = await run(
     `You will implement one unit of a larger roadmap, but first: plan. Read the unit spec at ${spec} and any ` +
@@ -347,18 +434,54 @@ async function runUnit(unit) {
     `feasible:false and explain the contradiction in \`approach\`. Do not write code yet.`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
 
-  // A claimed-unsatisfiable plan is always architect-checked, whatever the risk tier.
+  // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
+  // before code exists), but only structural calls (high risk, claimed-infeasible, or the
+  // always-fable policy) pay the Fable architect up front. Everything else gets a free Opus
+  // plan-check that escalates to Fable only when the call turns frontier.
   if (C.planCheckRisk.includes(unit.risk) || !implPlan.feasible) {
-    spend.planChecks++
-    const check = await run(
-      `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
-      `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
-      `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
-      `as-is; "redirect" = the engineer revises the plan per your guidance, then implements; "quarantine" = do ` +
-      `not implement at all (e.g. the spec is unsatisfiable within its contracts, or needs redesign above the ` +
-      `engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, say what and why ` +
-      `in a few sentences — the engineer needs direction, not instructions.`,
-      { model: 'fable', effort: 'low', phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
+    // The Fable plan-check — the frontier pass. `lead` carries an Opus escalation's assessment
+    // so the architect confirms/overturns a concrete concern rather than re-deriving it; '' when
+    // reached directly, keeping that prompt byte-identical to before.
+    const fablePlanCheck = (lead = '') => {
+      spend.planChecks++
+      return run(
+        `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
+        `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
+        `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
+        `as-is; "redirect" = the engineer revises the plan per your guidance, then implements; "quarantine" = do ` +
+        `not implement at all (e.g. the spec is unsatisfiable within its contracts, or needs redesign above the ` +
+        `engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, say what and why ` +
+        `in a few sentences — the engineer needs direction, not instructions.${lead}`,
+        { model: 'fable', effort: 'low', phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
+    }
+
+    let check
+    if (unit.risk === 'high' || !implPlan.feasible || C.planCheck === 'always-fable') {
+      check = await fablePlanCheck()
+    } else {
+      spend.opusPlanChecks++
+      const oc = await run(
+        `You are an Opus plan-checker standing in for the architect on unit ${unit.id} of a roadmap build — but ` +
+        `killing a unit is frontier-only, so you may approve or redirect the plan yourself, never quarantine. Read ` +
+        `the spec at ${spec} and the contracts it references, then judge this plan against them:\n` +
+        `${JSON.stringify(implPlan)}\n` +
+        `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
+        `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
+        `not instructions); "escalate" = hand to the frontier architect when the call turns on contract ` +
+        `interpretation, architectural foundations, genuine uncertainty, or the unit looks unbuildable. Name the ` +
+        `escalation trigger.`,
+        { model: 'opus', effort: 'high', phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
+      if (oc.verdict === 'escalate') {
+        const lead = ` A first-pass Opus plan-check could not clear this itself` +
+          `${oc.trigger && oc.trigger !== 'none' ? ` (escalation trigger "${oc.trigger}")` : ''}; use its assessment ` +
+          `as a lead to confirm or overturn — not as ground truth: ` +
+          `${JSON.stringify({ guidance: oc.guidance, notes: oc.notes })}.`
+        check = await fablePlanCheck(lead)
+      } else {
+        // approve/redirect map straight onto the shared verdict handling below.
+        check = { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
+      }
+    }
     if (check.verdict === 'quarantine') return quarantine(unit, 'plan rejected by architect', check)
     if (check.verdict === 'redirect') {
       implPlan = await run(
@@ -371,6 +494,7 @@ async function runUnit(unit) {
   if (!implPlan.feasible)
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
 
+  setStage(unit.id, 'implement')
   const impl = await run(
     `Implement unit ${unit.id} in the worktree at ${w}, following this plan:\n${JSON.stringify(implPlan)}\n` +
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
@@ -378,12 +502,13 @@ async function runUnit(unit) {
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
     `and the tests the spec's acceptance criteria call for. If you consciously defer any imperfection (a shortcut, ` +
     `a thin test, a known-suboptimal structure) rather than fix it now, record it in \`debt\` — do not silently ` +
-    `leave it. Work only inside ${w}. Commit your work on the current branch with clear messages.`,
+    `leave it. Work only inside ${w}. Commit your work on the current branch with clear messages. ${REPORT}`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   addDebt(unit.id, base, impl.debt, { kind: 'quality' })
-  } // end !unit.existingBranch — adopted branches enter the pipeline here
+  } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
 
   // Free-tier polish loop: verify → adversarial review → fix, bounded.
+  setStage(unit.id, 'polish')
   let verify, review
   for (let round = 0; round <= C.maxFixRounds; round++) {
     verify = await run(
@@ -441,7 +566,7 @@ async function runUnit(unit) {
     await run(
       `Fix unit ${unit.id} in ${w}. Spec: ${spec}. Failing checks (verbatim): ${JSON.stringify(verify.failures)}. ` +
       `Blocking review findings: ${JSON.stringify(blockers)}.` +
-      `${directive ? ` Architect direction: ${directive.guidance}` : ''} Commit your fixes.`,
+      `${directive ? ` Architect direction: ${directive.guidance}` : ''} Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
@@ -464,9 +589,15 @@ async function runUnit(unit) {
   // sample skip straight to the guaranteed Fable gate: Opus cannot reliably self-detect the
   // subtle oversights that gate exists to catch, so where the stakes are structurally
   // highest, frontier judgment stays mandatory (DESIGN.md decision 4).
+  setStage(unit.id, 'gate')
   const forceFrontier =
     C.exitGate === 'always-fable' || unit.risk === 'high' ||
     verify.contractSurfaceTouched || auditPick(unit)
+  // An audit-only force (the sample fired, nothing structural did) is a spot-check of an
+  // Opus-approved unit, not a from-scratch re-gate: it runs at the cheaper auditEffort and
+  // reads a diet of the diff. Any structural force keeps the full-read gateEffort path.
+  const auditOnly = auditPick(unit) && C.exitGate !== 'always-fable' &&
+    unit.risk !== 'high' && !verify.contractSurfaceTouched
 
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
@@ -501,7 +632,7 @@ async function runUnit(unit) {
       if (og.verdict === 'escalate') break
       await run(
         `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
-        `${JSON.stringify(og.directives)}\nCommit your changes.`,
+        `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
         { model: 'opus', effort: 'high', phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
       verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
       if (verify.blocked)
@@ -522,13 +653,21 @@ async function runUnit(unit) {
       `Use its findings as a lead to confirm or overturn — not as ground truth, and do not re-derive them from ` +
       `scratch: ${JSON.stringify({ directives: opusHandoff.directives, notes: opusHandoff.notes })}.`
     : ''
+  // Audit-only gates read a diet first and expand on suspicion (a full re-read of an
+  // Opus-approved unit is the false economy the audit is meant to avoid); every forced gate
+  // keeps the byte-identical full-read instruction, since summarising their diff hides misses.
+  const diffRead = auditOnly
+    ? `read \`git diff --stat ${base}..HEAD\`, the spec's acceptance criteria, and the verification evidence ` +
+      `first, then read in full the diff of every file where a spec or contract violation would be consequential ` +
+      `— expand to the complete diff the moment anything looks off. You are auditing an Opus-approved unit for ` +
+      `systematic rubber-stamping, not re-gating from scratch. `
+    : `read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. `
   for (let g = 0; g < C.maxGateRounds; g++) {
     spend.gateRounds++
     const gate = await run(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
-      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then read ` +
-      `\`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ${convClause}Verification evidence: ` +
+      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}Verification evidence: ` +
       `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
@@ -537,13 +676,13 @@ async function runUnit(unit) {
       `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
       `than fix in \`debt\`.` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
-      { model: 'fable', effort: C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
+      { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     addDebt(unit.id, base, gate.debt)
     if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
     await run(
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
-      `${JSON.stringify(gate.directives)}\nCommit your changes.`,
+      `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
@@ -556,7 +695,11 @@ async function runUnit(unit) {
 async function mergeUnit(unit) {
   let res = await run(
     STRICT +
-    `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id} ` +
+    `In the integration worktree at ${intWt} (branch ${intBranch}): first, if a merge is already in progress ` +
+    `(a MERGE_HEAD exists), clear it with \`git merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
+    `of HEAD (\`git merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
+    `already landed), skip the merge but still run the project's full test suite (commands: ${brief}) and report ` +
+    `merged:true with the current HEAD sha. Otherwise merge branch unit/${unit.id} ` +
     `(git merge --no-ff unit/${unit.id}). If the merge conflicts, abort it (git merge --abort) and report ` +
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
     `cleanly, run the project's full test suite (commands: ${brief}) and report the result. Report the current ` +
@@ -594,12 +737,15 @@ async function mergeUnit(unit) {
 function start(unit) {
   inFlight++
   units.set(unit.id, { status: 'running' })
+  checkpoint()   // coalesces with the wave-start burst to ~1 Haiku write; a 'running' record is what recovery adopts
   ;(async () => {
     let result = await runUnit(unit)
       .catch((e) => quarantine(unit, `pipeline error: ${e?.message ?? e}`).catch(() =>
         ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
     if (result.status === 'merge-ready') {
-      units.set(unit.id, result)
+      // Stamp 'merge-queue' directly (not via setStage — status is 'merge-ready', not 'running');
+      // this transient record is overwritten by the terminal result below, so no stale stage survives.
+      units.set(unit.id, { ...result, stage: 'merge-queue' })
       checkpoint()
       const segment = mergeChain.then(() => mergeUnit(unit)).catch((e) =>
         quarantine(unit, `merge pipeline error: ${e?.message ?? e}`))
@@ -647,6 +793,13 @@ const intSetup = await run(
   `Report ok:true only when the integration worktree is ready and clean, with its HEAD sha in \`sha\`.`,
   { model: 'haiku', phase: 'Setup', label: 'integration-worktree', schema: S.ws })
 if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup.detail ?? intSetup.sha}`)
+// Git is the source of truth for the branch; state.json is bookkeeping. A relaunch with a
+// stale checkpoint would otherwise fork every unit off the old tip — and, if every unit
+// short-circuits at setup, write that stale tip back out, poisoning the next wave.
+if (!sameSha(intSetup.sha, integrationTip)) {
+  log(`integration branch is ahead of the checkpointed tip — reconciled to ${intSetup.sha.slice(0, 7)}`)
+  integrationTip = intSetup.sha
+}
 const intProv = await provision(intWt, 'provision:integration')
 if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${intProv.detail}`)
 
@@ -657,12 +810,12 @@ if (previewStatus === 'pending') {
   const p = plan.preview
   const ps = await run(
     STRICT +
-    `Set up the arc's preview mirror in the PRIMARY repository checkout at ${repo}: first, if the file ` +
-    `${prevPid} exists, kill the process id it contains (ignore kill errors) and delete the file. ` +
+    `Set up the arc's preview mirror: cd to the PRIMARY repository checkout at ${repo} and stay there for ` +
+    `every git command. Then, ${previewStopCmd} (the pidfile lives OUTSIDE the repo). ` +
     `Then run \`git checkout --detach ${integrationTip}\` — if git refuses (for example locally-modified ` +
     `files), report ok:false with the exact error; never stash, reset, or force. ` +
     (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
-    (p.start ? `Then start the preview from inside ${repo} with \`nohup ${p.start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\`. ` : '') +
+    (p.start ? `Then start the preview from inside ${repo} with ${previewStartCmd(p.start)}. ${previewSweepRetry}` : '') +
     previewHealth() +
     `Report ok plus the checkout's HEAD sha.`,
     { model: 'haiku', phase: 'Preview', label: 'preview-setup', schema: S.ws },

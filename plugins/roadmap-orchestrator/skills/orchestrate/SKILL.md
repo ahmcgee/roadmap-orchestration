@@ -117,7 +117,9 @@ files. Read their outputs, then decide:
   light pro forma that makes it hard to be unclear (*What I did — steps/command/URL ·
   What I observed · What I expected · How much it matters — blocker/major/minor/idea ·
   Where — area/page/unit if known*) — committed with the plan pack. Kill any stale
-  `worktreeRoot/__preview.pid` left by a dead arc.
+  `worktreeRoot/__preview.pid` left by a dead arc — the whole process *group*
+  (`kill -TERM -- -$(cat …)`), since the preview is started as a group leader and a
+  single-pid kill strands its child listeners.
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance
   tests targeting the *seams* between units. You plan them; schedule an early unit to
   write them; the merge gate runs them.
@@ -183,22 +185,32 @@ Workflow({ scriptPath: "<this skill's directory>/harness.mjs",
            args: { plan, state, config } })
 ```
 
+The Workflow result returns a `runId` and the session-persisted `scriptPath`; record both
+into `state.json`'s optional `run` field at launch, so a same-session `resumeFromRunId` is
+mechanical and post-crash forensics are one `cat` away.
+
 The harness runs every ready unit through: worktree setup → Opus implementation plan →
 **architect plan-check** → Opus implement → verify/review/fix loop (all free-tier) →
 **Opus exit gate** → serial merge onto the integration branch with the full suite as the
-gate. The plan-check is a `fable` agent standing in for you. The exit gate is now
-Opus-first — Opus grades its own work and **escalates to the Fable architect gate only on
-a genuinely hard call**: it's stuck, every option carries a substantive drawback, or the
-increment is architecturally foundational to the wider solution. `risk: high` units and any
-diff touching a frozen contract surface always take the Fable gate regardless, plus a small
-deterministic audit sample (`gateAuditRate`) — Opus cannot reliably self-detect the subtle
-oversights the frontier gate exists to catch, so where stakes are structurally highest,
-frontier judgment stays mandatory. This is what makes Fable spend conservative; the
-between-wave health check below is the systemic backstop. Set `config.exitGate:
-'always-fable'` to restore a guaranteed frontier pass on every unit. The gate prompts are
-deliberately open-ended; trust them as you'd trust yourself. State is checkpointed to
-`.roadmap/state.json` after every status change; the returned state carries a `debt` array
-(imperfections consciously deferred this wave) for you to triage at the boundary.
+gate. The plan-check is now **Opus-first**, the same pattern as the exit gate: a fresh Opus
+reads the plan and **escalates to the Fable architect only on a call it can't own** —
+uncertainty, a foundational or contract-touching concern, or a plan that looks unbuildable.
+Opus may approve or redirect but **may not quarantine**; kill decisions stay frontier-only,
+so `risk: high` units and any plan that declares itself infeasible always take the Fable
+plan-check regardless. The exit gate is Opus-first the same way — Opus grades its own work
+and **escalates to the Fable architect gate only on a genuinely hard call**: it's stuck,
+every option carries a substantive drawback, or the increment is architecturally foundational
+to the wider solution. `risk: high` units and any diff touching a frozen contract surface
+always take the Fable gate regardless, plus a small deterministic audit sample
+(`gateAuditRate`) — Opus cannot reliably self-detect the subtle oversights the frontier gate
+exists to catch, so where stakes are structurally highest, frontier judgment stays mandatory.
+This is what makes Fable spend conservative; the between-wave health check below is the
+systemic backstop. Set `config.planCheck: 'always-fable'` or `config.exitGate: 'always-fable'`
+to restore a guaranteed frontier pass on plan-checks or exit gates respectively. The gate
+prompts are deliberately open-ended; trust them as you'd trust yourself. State is checkpointed
+to `.roadmap/state.json` at every unit status change **and** stage transition (coalesced
+latest-wins — the file can trail the newest event by one write); the returned state carries a
+`debt` array (imperfections consciously deferred this wave) for you to triage at the boundary.
 
 Between waves, judgment returns to you:
 
@@ -264,9 +276,27 @@ Between waves, judgment returns to you:
   a dispatcher, not a narrator. A boundary line like "preview at X; 6 feedback items:
   4 actioned, 2 dismissed" is plenty.
 
-If a run dies mid-wave, resume it with `resumeFromRunId` (completed units replay free from
-the journal, same session). Across sessions, `.roadmap/state.json` is the source of truth:
-recompute where things stand and continue — merged units are simply done.
+**If a run dies mid-wave — recovery ladder.** `resumeFromRunId` replays completed units free
+from the journal, but it is **same-session only — even when the crash notification recommends
+it** (that recommendation is wrong across sessions; the journal does not survive the host
+process). Work the ladder in order:
+
+1. **Same session, run still alive** — nothing to do; it will notify you when it finishes.
+2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in
+   `state.json`'s `run` field.
+3. **Adopt rejected, or a new session** — launch fresh, passing the latest checkpointed
+   `state.json`. The setup guards make this behave like a resume: a unit branch already merged
+   into the integration branch short-circuits to `merged` (nothing re-runs); a crashed
+   `running` unit auto-adopts its committed branch and re-enters at verify (use the unit's
+   `stage` field and `git log unit/<id>` to see what it reached). You lose only the in-flight
+   agent calls of the moment of death — no reimplementation, nothing destroyed. A branch with
+   commits beyond its fork base that the passed state does *not* mark `running` is **refused,
+   not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately by
+   setting `unit.existingBranch`, or delete the branch yourself.
+
+Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group**
+(`kill -TERM -- -$(cat …)`), not just the leader — the preview is started as a group leader,
+so a single-pid kill strands its child listeners.
 
 ## Session end
 
@@ -284,8 +314,10 @@ recompute where things stand and continue — merged units are simply done.
    documentation — left raw, it sabotages the future: a later run that reads the stale
    `state.json` forks worktrees from a dead integration tip, retired "frozen" contracts
    masquerade as binding, and maintainers inherit expired planning clutter. After `main`
-   advances: stop the preview process (`worktreeRoot/__preview.pid`) and re-attach the
-   primary checkout to `main`; archive the arc (plan, brief, specs, contracts, state,
+   advances: stop the preview process — kill the whole group recorded in
+   `worktreeRoot/__preview.pid` (it is a group leader; a single-pid kill strands child
+   listeners) — and re-attach the primary checkout to `main`; archive the arc (plan, brief,
+   specs, contracts, state,
    dossiers, feedback — triaged and pending alike — report)
    into `.roadmap/archive/<date>-<cutline>/` in one commit; keep the living documents
    (`constraints.md`, `debt.md`, notes) at top level for future arcs to read and extend —
