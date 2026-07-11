@@ -552,13 +552,22 @@ steering):
   discipline as feedback, with a forward-carrying store instead of a consumed one.
 - **Between-wave health check** (Opus, architect-spawned, `healthCheck: 'each-wave'`). The
   code/test/structure counterpart to the runtime explorer: it reads the integration tip for
-  test brittleness and coverage gaps, structural drift (oversized files, duplication,
-  misplacement), and ergonomics (un-automated steps). Intermittent failures — the sharpest
-  form of brittleness, and the one a single run hides — are caught mechanically: Haiku
-  re-runs the full suite `flakeReruns` times and any pass↔fail flip is a brittleness item.
-  Findings are evidence in `feedback/health/`, folded into the same triage. It is **Opus,
-  not Fable** — assessment is voluminous reading, not frontier judgment; the *decision* about
-  what to fix is the architect's at the boundary.
+  test brittleness and coverage gaps, structural drift (oversized files, misplacement),
+  **cross-unit consistency** (units that independently reinvented a helper or diverged on the
+  pattern for the same task — the drift the isolate-and-parallel design manufactures and no
+  per-unit gate can see, since siblings never observe each other), and ergonomics
+  (un-automated steps). Intermittent failures — the sharpest form of brittleness, and the one
+  a single run hides — are caught mechanically: Haiku re-runs the full suite `flakeReruns`
+  times and any pass↔fail flip is a brittleness item. The assessor is **empowered, not merely
+  advisory**: for each finding worth fixing it drafts a ready-to-dispatch consolidation
+  fix-unit spec, and those drafts **default into the next wave** at triage unless the
+  architect cuts them — the counter to findings dying unactioned in a folder. This does not
+  breach the no-mid-run-steering rule: the drafts gate nothing mid-wave and reach no running
+  unit; they are admitted only at the boundary the architect already owns, and run the same
+  isolation → gate → merge pipeline as any unit. It is **Opus, not Fable** — assessment and
+  drafting are voluminous reading/writing, not frontier judgment; the *decision* about what to
+  admit stays the architect's at the boundary, now expressed as a veto over noise rather than
+  authoring each fix from scratch.
 
 These are also what makes the Opus-first exit gate (rung 4) affordable: cheaper per-unit
 gating is backstopped by a systemic pass that catches the accumulating and the intermittent —
@@ -573,7 +582,15 @@ Three layers, ordered by cost-effectiveness:
 **Layer 1 — Prevention (plan-time, frontier, O(1)-ish).** The plan pack freezes shared
 interfaces in `contracts/` (types, API signatures, schemas, error/ownership conventions)
 before any unit starts. Units treat contracts as immutable; any diff touching
-`contracts/` auto-fires the predicate. The plan also specifies a small **cross-unit
+`contracts/` auto-fires the predicate. Interface contracts bind units *pairwise on a seam*;
+a single **standing conventions contract** (`contracts/conventions.md`, `plan.conventions`)
+binds *all* units at once — a shared-utility catalog they must reuse and the naming/error/
+pattern conventions they must follow — and the harness threads it into every unit's
+implement/review/gate so it is enforced, not merely documented. Its reach is proactive and
+therefore bounded: it binds against the shared surface that exists *now*, so it cannot stop
+two concurrently-built units from independently adding the same new helper. That
+sibling-reinvention residual is exactly what the between-wave cross-unit consistency check
+(§6.6) exists to catch — prevention where prevention is possible, detection for the rest. The plan also specifies a small **cross-unit
 acceptance-test plan** targeting the seams between units — Fable writes the *plan* (which
 interactions to exercise, ~1–2k tokens), a Sonnet/Opus unit (scheduled first, cheap)
 writes the actual tests. This converts "cross-unit semantic incompatibility" from an

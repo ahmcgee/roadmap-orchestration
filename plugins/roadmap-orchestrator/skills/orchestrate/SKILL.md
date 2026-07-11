@@ -78,7 +78,16 @@ files. Read their outputs, then decide:
 - **Freeze contracts** — the interfaces shared between units (types, signatures, schemas,
   conventions) — into `.roadmap/contracts/` before anything builds. This is your main
   weapon against cross-unit incompatibility; the merge gate only catches what it can't
-  prevent.
+  prevent. Alongside the interface contracts, freeze one **standing conventions contract**
+  (`contracts/conventions.md`, pointed to by `plan.conventions`): a catalog of the shared
+  utilities every unit must reuse rather than reinvent, plus the naming, error-handling, and
+  recurring-pattern conventions every unit must follow. Unlike an interface contract, which
+  binds the units on one seam, this binds *all* units — the harness threads it into every
+  unit's implement/review/gate, so it is enforced like a contract, not merely hoped for. Its
+  reach is proactive and bounded: it binds work against the shared surface and conventions
+  that exist *now*, so it cannot stop two units built concurrently from independently adding
+  the same new helper — that sibling-reinvention case is caught reactively by the
+  between-wave health check below.
 - **Classify every dependency edge**: `contract` (the dependent needs only the interface,
   which you just wrote — fully front-loadable) or `contingent` (the dependent's *design*
   needs the dependency's actual results — forces a wave boundary and a replan by you).
@@ -216,20 +225,35 @@ Between waves, judgment returns to you:
   drag that makes every later wave slower. Spawn one **Opus health assessor** (model pinned)
   against the integration tip to report, with specifics: **test health** — coverage gaps,
   slow tests, and brittleness (tests that assert implementation detail, over-mock, or depend
-  on ordering/timing); **structural health** — files grown too large, unintended
-  duplication, misplaced code, architectural drift; **ergonomics** — manual dev steps that
-  should be automated (running tests, setup) and missing tooling that taxes every round. In
-  parallel, catch *intermittent* failures mechanically: have Haiku run the full suite
-  `config.flakeReruns` times (default 3) — any pass↔fail flip is a brittleness item.
-  Brittleness that produces intermittent gate failures is not the next unit's problem to
-  absorb; it is a degradation you must catch here. Persist to `feedback/health/wave-<n>.md`
-  via a Haiku verbatim-writer; findings are evidence, they change nothing on their own.
+  on ordering/timing); **structural health** — files grown too large, misplaced code,
+  architectural drift; **cross-unit consistency** — the failure mode the isolate-and-parallel
+  design *manufactures*: two units that independently added equivalent helpers, diverged on
+  the pattern or convention for the same task, or reimplemented something the conventions
+  contract already catalogs. No per-unit gate can see this (siblings never see each other),
+  and it is the drift the standing conventions contract can't pre-empt, so this pass is its
+  only catch. Also **ergonomics** — manual dev steps that should be automated (running tests,
+  setup) and missing tooling that taxes every round. In parallel, catch *intermittent*
+  failures mechanically: have Haiku run the full suite `config.flakeReruns` times (default 3)
+  — any pass↔fail flip is a brittleness item. Brittleness that produces intermittent gate
+  failures is not the next unit's problem to absorb; it is a degradation you must catch here.
+  **Have the assessor return more than prose: for each finding it judges worth fixing, a
+  ready-to-dispatch consolidation fix-unit draft** (id, goal, files, acceptance criteria) —
+  the same shape a unit spec has, so triage can act on it without re-authoring. Persist the
+  narrative to `feedback/health/wave-<n>.md` via a Haiku verbatim-writer. These findings
+  still **gate nothing mid-wave** (invariant 8 holds — nothing reaches a running unit); the
+  change is at the boundary, in triage below.
 - **Triage — you, once, at this boundary.** Triage the whole `.roadmap/feedback/` batch
   (explorer + health + user) **and the wave's returned `debt` array** together: fold items
   into revised specs, cut fix units into the next wave (debt or a health finding worth
   fixing now becomes a fix unit like any other), treat contract-contradicting feedback as a
   contract amendment (yours alone — record it; the integration review re-examines it), or
-  dismiss with a stated reason. **Debt you choose not to fix this wave doesn't vanish** —
+  dismiss with a stated reason. **The health assessor's consolidation fix-unit drafts are
+  the default action, not a suggestion:** admit them into the next wave's plan unless you
+  see a reason to cut — your judgment enters as a *veto over noise*, not as authoring each
+  from scratch, which is what keeps cross-unit drift from dying unactioned in a folder the
+  way ungoverned feedback used to. They run through the identical pipeline (isolation →
+  gate → merge) as any unit, so admitting one costs no safety. Still your call at the
+  boundary; still nothing mid-wave. **Debt you choose not to fix this wave doesn't vanish** —
   have Haiku append it to the living `.roadmap/debt.md` ledger (it carries across waves and
   arcs, so a later wave or session mops it up); annotate an entry resolved when a fix unit
   lands. Sonnet-compress the batch first if it's large; findings at a superseded sha are

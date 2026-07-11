@@ -64,6 +64,16 @@ const STRICT = 'Start by `cd` to the exact absolute path named in this task — 
   'your current working directory, the enclosing project, or any other repository. '
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
+// Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
+// error/pattern conventions). Threaded into implement/review/both gates so units enforce
+// cross-unit consistency proactively; '' when absent, leaving those prompts byte-identical.
+// Place it under .roadmap/contracts/ so edits to it fire the same frozen-surface escalation.
+const conventions = plan.conventions
+const convClause = conventions
+  ? `A standing cross-cutting conventions contract at ${conventions} catalogues shared utilities every unit must ` +
+    `reuse rather than reinvent and conventions (naming, error handling, recurring patterns) every unit must ` +
+    `follow; treat it as a frozen contract alongside the unit's own. `
+  : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
 const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, gateRounds: 0, opusGateRounds: 0 }
@@ -210,12 +220,21 @@ const serialize = () => ({
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
 const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 
+// Crash-safety checkpoint of the whole wave state. Coalesced latest-wins (same idiom as the
+// preview mirror below): a burst of status changes collapses to a single Haiku write, since
+// only the newest snapshot matters for recovery. The final `await checkpointChain` still
+// guarantees the last state lands — the last queued segment observes the final target.
+let checkpointTarget = null
+let checkpointWritten = null
 function checkpoint() {
-  const snapshot = JSON.stringify(serialize(), null, 2)
-  checkpointChain = checkpointChain.then(() =>
-    run(`Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${snapshot}`,
-      { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok })
-      .catch(() => null))
+  checkpointTarget = JSON.stringify(serialize(), null, 2)
+  checkpointChain = checkpointChain.then(async () => {
+    if (checkpointTarget === checkpointWritten) return   // coalesce: latest already written
+    const snap = checkpointTarget
+    checkpointWritten = snap
+    await run(`Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${snap}`,
+      { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok }).catch(() => null)
+  }).catch(() => null)
 }
 
 // Optional environment provisioning (plan.provision: {copy: [...gitignored files], setup: "cmd"}).
@@ -355,7 +374,7 @@ async function runUnit(unit) {
   const impl = await run(
     `Implement unit ${unit.id} in the worktree at ${w}, following this plan:\n${JSON.stringify(implPlan)}\n` +
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
-    `frozen. Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
+    `frozen. ${convClause}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
     `and the tests the spec's acceptance criteria call for. If you consciously defer any imperfection (a shortcut, ` +
     `a thin test, a known-suboptimal structure) rather than fix it now, record it in \`debt\` — do not silently ` +
@@ -382,7 +401,7 @@ async function runUnit(unit) {
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
-      `spec at ${spec} and its contracts. You did not write this code; assume it contains mistakes. Report a ` +
+      `spec at ${spec} and its contracts. ${convClause}You did not write this code; assume it contains mistakes. Report a ` +
       `finding as blocking only if it would cause incorrect behavior, violate the spec or a contract, or leave ` +
       `acceptance criteria untested — AND the defect is introduced by this diff. Real issues that predate the ` +
       `diff go in preExisting (they never block). Do not flag style, nitpicks, or anything a linter/formatter/` +
@@ -449,6 +468,10 @@ async function runUnit(unit) {
     C.exitGate === 'always-fable' || unit.risk === 'high' ||
     verify.contractSurfaceTouched || auditPick(unit)
 
+  // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
+  // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
+  // rather than re-deriving the concern from the spec, contracts, and diff from scratch.
+  let opusHandoff = null
   if (!forceFrontier) {
     // Bounded Opus self-gate: a FRESH adversarial Opus (not the implementer) grades the
     // acceptance criteria one by one, then approves, self-revises (free), or escalates.
@@ -460,7 +483,7 @@ async function runUnit(unit) {
         `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
-        `Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
+        `${convClause}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. Then choose a verdict: "approve" only if you would merge this ` +
@@ -473,6 +496,7 @@ async function runUnit(unit) {
         `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
         { model: 'opus', effort: 'high', phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
       addDebt(unit.id, base, og.debt)
+      opusHandoff = og
       if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
       if (og.verdict === 'escalate') break
       await run(
@@ -489,13 +513,22 @@ async function runUnit(unit) {
 
   // Fable architect gate — the frontier pass. Reached by force policy, an Opus escalation,
   // or Opus non-convergence. Nothing merges through here without frontier approval.
+  // On an Opus handoff, the first Fable round inherits Opus's lead (see opusHandoff above);
+  // '' when the gate was forced, so a forced-frontier prompt is byte-identical to before.
+  const opusContext = opusHandoff
+    ? ` A first-pass Opus exit gate already examined this unit and could not clear it itself ` +
+      `(last verdict "${opusHandoff.verdict}"` +
+      `${opusHandoff.trigger && opusHandoff.trigger !== 'none' ? `, escalation trigger "${opusHandoff.trigger}"` : ''}). ` +
+      `Use its findings as a lead to confirm or overturn — not as ground truth, and do not re-derive them from ` +
+      `scratch: ${JSON.stringify({ directives: opusHandoff.directives, notes: opusHandoff.notes })}.`
+    : ''
   for (let g = 0; g < C.maxGateRounds; g++) {
     spend.gateRounds++
     const gate = await run(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then read ` +
-      `\`git diff ${base}..HEAD\` in full and whatever surrounding code you need. Verification evidence: ` +
+      `\`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ${convClause}Verification evidence: ` +
       `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
@@ -503,7 +536,7 @@ async function runUnit(unit) {
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. If revising, ` +
       `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
       `than fix in \`debt\`.` +
-      `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
+      `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     addDebt(unit.id, base, gate.debt)
     if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }

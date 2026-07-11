@@ -10,7 +10,7 @@ a plan→merge pipeline, and nothing else detects it.
 
 `setup-fixture.sh` builds a throwaway repo (a tiny dependency-free Node calculator) with a
 complete canned plan pack — so no Phase-0 planning runs; the eval isolates the *execution*
-machinery. Five units, each probing a specific pipeline property:
+machinery. Six units, each probing a specific pipeline property:
 
 | Unit | Probes | Expected end state |
 |---|---|---|
@@ -19,6 +19,7 @@ machinery. Five units, each probing a specific pipeline property:
 | `impossible-cache` | Unsatisfiable fast-exit: the spec sincerely demands cross-process persistence that the frozen contract forbids | `quarantined`, never merged |
 | `gate-good` | **Over-blocking probe**: a clean pre-baked branch (via `existingBranch`) adopted straight into verify→review→gate | `merged`, low gate friction |
 | `gate-bad` | **Rubber-stamp probe**: a pre-baked branch that passes every runnable acceptance command but violates the spec's prose (Math.round vs round-half-away-from-zero; the negative-half case is deliberately untested) | `quarantined`, **or** `merged` with the violation fixed — never merged as-is |
+| `gate-convention` | **Conventions-enforcement probe**: a pre-baked branch whose `simplifyRatio` is functionally correct and passes every runnable check, but reimplements the catalogued `shared.gcd` inline — a `conventions.md` violation invisible to the machine checks, catchable only by reading the standing contract (`plan.conventions`, threaded into review/gate) against the diff | `quarantined`, **or** `merged` with the duplication replaced by `shared.gcd` — never merged as-is |
 
 The provisioning path is exercised implicitly: the suite requires a gitignored `.env.local`
 and a generated config that only exist if the plan's `provision` block ran in each
@@ -48,7 +49,7 @@ From a Claude Code session (the harness needs the Workflow runtime):
 3. `bash check.sh /tmp/roadmap-eval` — exit 0 with `ALL CHECKS PASSED`, or FAIL lines
    naming what regressed.
 
-Cost per run: roughly 8–14 Fable calls (plan-checks, gates, possible consults ≈ $1–2 of
+Cost per run: roughly 9–16 Fable calls (plan-checks, gates, possible consults ≈ $1–2 of
 frontier spend) plus free-tier Opus/Haiku time. Cheap enough to run on every harness edit.
 
 ## Interpreting failures
@@ -58,6 +59,10 @@ concluding regression (`setup-fixture.sh` into a fresh dir). A failure that repe
 real. Map FAIL lines back to what you changed:
 
 - `gate-bad RUBBER-STAMPED` → the gate prompt (or its model/effort) lost its teeth.
+- `gate-convention RUBBER-STAMPED` → the standing conventions contract isn't reaching the
+  reviewer/gate (check `plan.conventions` is set and the `convClause` still threads into the
+  review + both gate prompts), or the gate stopped treating a catalogued-helper duplication
+  as a contract violation.
 - `gate-good` not merged → the gate or reviewer is over-blocking; check `minBlockConfidence`,
   the review taxonomy wording, and the risk tilt.
 - `impossible-cache` merged → the unsatisfiable fast-exit or plan-check regressed —

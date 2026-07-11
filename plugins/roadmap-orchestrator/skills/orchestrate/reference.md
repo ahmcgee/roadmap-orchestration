@@ -12,6 +12,11 @@ this to the user unless asked.
                        #   (Phase 0 recon output; interpolated into every per-unit prompt
                        #   so agents never rediscover — or guess — the commands)
   contracts/*.md       # frozen interfaces; any diff touching these fires escalation
+  contracts/conventions.md # OPTIONAL standing cross-cutting contract (pointed to by
+                       #   plan.conventions): shared-utility catalog units must reuse +
+                       #   naming/error/pattern conventions units must follow. Threaded by
+                       #   the harness into every unit's implement/review/gate. Kept here so
+                       #   edits to it fire the same frozen-surface escalation as any contract.
   constraints.md       # cross-cutting design constraints & decisions from the source
                        #   material that aren't interface contracts (perf budgets, tech
                        #   choices, compliance, non-goals); specs cite the ones that
@@ -95,6 +100,10 @@ ask; absent → plan fresh, treating `archive/` + living docs as prior knowledge
     "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
+  "conventions": "…",              // optional; path to the standing cross-cutting conventions
+                                   //   contract (e.g. <repoPath>/.roadmap/contracts/conventions.md).
+                                   //   Present → threaded into every unit's implement/review/gate
+                                   //   as a frozen contract; absent → those prompts are unchanged.
   "config": { }                    // optional overrides — knobs below
 }
 ```
@@ -144,7 +153,7 @@ act, not a per-unit one.
 | Tier | Does | Never does |
 |---|---|---|
 | `fable` | Plan pack, plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage (at existing boundaries only — never a new touchpoint), integration review | Code, fixes, bulk text |
-| `opus` | Implementation, tests, adversarial review, Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment (between waves, architect-spawned) | — |
+| `opus` | Implementation, tests, adversarial review, Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (between waves, architect-spawned; the architect still decides what to admit) | — |
 | `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression | — |
 | `haiku` | Git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / health findings / the debt ledger, status rendering | Judgment |
 
@@ -279,11 +288,23 @@ feedback is consumed; a resolved item is annotated, not deleted.
 Between waves (unless `healthCheck: 'off'`), an architect-spawned **Opus** health assessor
 reads the integration tip for what per-unit gates structurally cannot see: **test health**
 (coverage gaps, slow tests, brittleness — assertion-on-implementation-detail, over-mocking,
-order/timing dependence), **structural health** (oversized files, unintended duplication,
-misplaced code, architectural drift), and **ergonomics** (un-automated dev steps, missing
-tooling that taxes every round). Intermittent failures are caught mechanically: Haiku runs
-the full suite `flakeReruns` times (default 3) and any pass↔fail flip is a brittleness item.
-Findings land in `feedback/health/wave-<n>.md` as evidence (they gate nothing on their own)
-and flow into the same triage → fix unit or `debt.md`. This is where the root architect owns
-overall product quality and catches degradations — notably intermittent test failures —
-before they compound into every later wave.
+order/timing dependence), **structural health** (oversized files, misplaced code,
+architectural drift), **cross-unit consistency** (units that independently added equivalent
+helpers, diverged on the pattern/convention for the same task, or reimplemented something the
+conventions contract already catalogs — the drift the isolate-and-parallel design produces and
+no per-unit gate or proactive contract can catch, since siblings never see each other), and
+**ergonomics** (un-automated dev steps, missing tooling that taxes every round). Intermittent
+failures are caught mechanically: Haiku runs the full suite `flakeReruns` times (default 3)
+and any pass↔fail flip is a brittleness item.
+
+The assessor is **empowered, not merely advisory**: for each finding worth fixing it returns a
+ready-to-dispatch **consolidation fix-unit draft** (id, goal, files, acceptance criteria — a
+unit spec's shape), and at triage those drafts **default into the next wave** unless the
+architect cuts them. This is the counter to findings dying unactioned in a folder; the
+architect's judgment enters as a veto over noise, not as authoring each fix. It does not
+weaken invariant 8: the drafts gate nothing mid-wave, reach no running unit, and are admitted
+only at the boundary the architect already owns — and they run the identical isolation → gate →
+merge pipeline as any unit, so admitting one costs no safety. Findings still also flow into
+`debt.md` when not promoted. This is where the root architect owns overall product quality and
+catches degradations — cross-unit drift and intermittent test failures alike — before they
+compound into every later wave.

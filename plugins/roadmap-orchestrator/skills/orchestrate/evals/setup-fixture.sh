@@ -24,6 +24,21 @@ module.exports = {
 }
 EOF
 
+cat > shared.js <<'EOF'
+'use strict'
+// Shared utilities catalogued in .roadmap/contracts/conventions.md. Per that contract,
+// calc.js functions MUST reuse these rather than reimplement equivalent logic inline.
+function gcd(a, b) {
+  a = Math.abs(a); b = Math.abs(b)
+  while (b) { const t = b; b = a % b; a = t }
+  return a
+}
+
+module.exports = {
+  gcd,
+}
+EOF
+
 cat > test.js <<'EOF'
 const assert = require('assert')
 const fs = require('fs')
@@ -72,6 +87,22 @@ cat > .roadmap/contracts/calc-api.md <<'EOF'
    no state that outlives the process.
 2. Domain errors (e.g. division by zero) throw RangeError with a descriptive message.
 3. Every exported function has direct coverage in test.js.
+EOF
+
+# Standing cross-cutting conventions contract (plan.conventions points here). Unlike the
+# per-seam calc-api contract, this binds EVERY unit; the harness threads it into each unit's
+# implement/review/gate. Clauses 2–3 are already satisfied by every planted branch, so only
+# a unit that needs the catalogued gcd helper (gate-convention) can trip clause 1.
+cat > .roadmap/contracts/conventions.md <<'EOF'
+# Cross-cutting conventions (frozen — binds every unit at once)
+1. Shared-utility catalog — reuse, never reinvent. The helpers in shared.js are the single
+   source of truth. A unit that needs one MUST `require('./shared')` and call it;
+   reimplementing equivalent logic inline is a prohibited duplication, even when correct:
+   - `gcd(a, b)` — greatest common divisor of two integers.
+2. Domain errors are thrown as RangeError with a descriptive message (consistent with
+   calc-api.md); do not introduce other error types.
+3. calc.js keeps a single `module.exports = { ... }` object literal at the bottom — never
+   per-property `module.exports.foo =` / `exports.foo =` assignments.
 EOF
 
 cat > .roadmap/specs/add-multiply.md <<'EOF'
@@ -134,6 +165,24 @@ Acceptance criteria:
 - `node -e "const a=require('assert'),c=require('./calc');a.strictEqual(c.percent(1,8),13)"` exits 0.
 - `node -e "const a=require('assert'),c=require('./calc');a.strictEqual(c.percent(50,200),25)"` exits 0.
 - test.js contains direct assertions for percent.
+EOF
+
+# The conventions probe. The runnable acceptance commands pass whether or not gcd is reused,
+# so the reinvention is invisible to the machine checks and catchable ONLY by reading
+# conventions.md against the diff — the cross-cutting analogue of gate-bad's prose violation.
+cat > .roadmap/specs/gate-convention.md <<'EOF'
+# Unit: gate-convention
+Goal: extend calc.js with `simplifyRatio(a, b)` returning a two-element array [na, nb] —
+a/b reduced to lowest terms by dividing both by their greatest common divisor. Examples:
+simplifyRatio(6, 8) returns [3, 4]; simplifyRatio(5, 10) returns [1, 2].
+Constraints: .roadmap/contracts/calc-api.md AND .roadmap/contracts/conventions.md — in
+particular, use the catalogued shared `gcd` helper (conventions clause 1); do not
+reimplement gcd inline.
+Acceptance criteria:
+- `bash test.sh` exits 0.
+- `node -e "const a=require('assert'),c=require('./calc');a.deepStrictEqual(c.simplifyRatio(6,8),[3,4])"` exits 0.
+- `node -e "const a=require('assert'),c=require('./calc');a.deepStrictEqual(c.simplifyRatio(5,10),[1,2])"` exits 0.
+- test.js contains direct assertions for simplifyRatio.
 EOF
 
 git add -A
@@ -214,6 +263,47 @@ git add -A
 git commit -qm "gate-bad: add percent with tests"
 git checkout -q main
 
+# fixture/gate-convention — simplifyRatio is functionally correct and passes every runnable
+# acceptance command, but it reimplements Euclid's gcd inline instead of reusing the
+# catalogued shared.gcd (conventions.md clause 1 — a prohibited duplication). Expected: the
+# duplication must NOT reach the integration branch — caught at review or gate (quarantine,
+# or merged after being rewritten to reuse shared.gcd, both count). The conventions probe.
+git checkout -qb fixture/gate-convention
+cat > calc.js <<'EOF'
+'use strict'
+// Small calculator library. All exports are pure, synchronous functions
+// (see .roadmap/contracts/calc-api.md).
+function add(a, b) { return a + b }
+function simplifyRatio(a, b) {
+  let x = Math.abs(a), y = Math.abs(b)
+  while (y) { const t = y; y = x % y; x = t }
+  const g = x || 1
+  return [a / g, b / g]
+}
+
+module.exports = {
+  add,
+  simplifyRatio,
+}
+EOF
+cat > test.js <<'EOF'
+const assert = require('assert')
+const fs = require('fs')
+const calc = require('./calc')
+
+// Environment gates: these exist only after provisioning ran (plan.json `provision`).
+assert.ok(fs.existsSync('.env.local'), 'missing .env.local — provisioning did not copy env files')
+assert.ok(fs.existsSync('generated/config.json'), 'missing generated/config.json — provisioning setup did not run')
+
+assert.strictEqual(calc.add(2, 3), 5)
+assert.deepStrictEqual(calc.simplifyRatio(6, 8), [3, 4])
+assert.deepStrictEqual(calc.simplifyRatio(5, 10), [1, 2])
+console.log('ok')
+EOF
+git add -A
+git commit -qm "gate-convention: add simplifyRatio with inline gcd"
+git checkout -q main
+
 BASE=$(git rev-parse HEAD)
 
 # ------------------------------------------------------------ plan + state json
@@ -227,12 +317,14 @@ cat > .roadmap/plan.json <<EOF
     { "id": "add-divide",       "title": "divide()",                   "risk": "med",  "kind": "code", "inScope": true },
     { "id": "impossible-cache", "title": "cross-process memoization",  "risk": "med",  "kind": "code", "inScope": true },
     { "id": "gate-good",        "title": "subtract() (adopted branch)", "risk": "low", "kind": "code", "inScope": true, "existingBranch": "fixture/gate-good" },
-    { "id": "gate-bad",         "title": "percent() (adopted branch)",  "risk": "high", "kind": "code", "inScope": true, "existingBranch": "fixture/gate-bad" }
+    { "id": "gate-bad",         "title": "percent() (adopted branch)",  "risk": "high", "kind": "code", "inScope": true, "existingBranch": "fixture/gate-bad" },
+    { "id": "gate-convention",  "title": "simplifyRatio() (adopted branch)", "risk": "high", "kind": "code", "inScope": true, "existingBranch": "fixture/gate-convention" }
   ],
   "edges": [
     { "from": "add-multiply", "to": "add-divide", "type": "semantic", "mode": "contract", "contract": "contracts/calc-api.md" }
   ],
   "provision": { "copy": [".env.local"], "setup": "node tools/gen-config.js" },
+  "conventions": "$REPO/.roadmap/contracts/conventions.md",
   "preview": { "kind": "api", "howToAccess": "From the repo checkout, drive the library directly with node -e and require('./calc') — exercise every exported function." },
   "config": { "maxConsults": 2 }
 }

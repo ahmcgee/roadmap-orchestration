@@ -61,6 +61,27 @@ else
   flunk "gate-bad handled (got: $GB)"
 fi
 
+# --- conventions-contract probe ------------------------------------------------
+# gate-convention reimplements the catalogued shared.gcd inline (conventions.md clause 1).
+# The runnable checks pass either way, so this is caught only by reading the conventions
+# contract against the diff. Quarantine, or merge with the duplication removed, both count;
+# merging the inline reimplementation as-is is a rubber-stamp of a frozen-contract violation.
+GC=$(status_of gate-convention)
+if [ "$GC" = quarantined ]; then
+  if no_pipeline_error gate-convention; then pass "gate-convention handled: quarantined (catalogued-helper duplication caught)"; fi
+  expect "gate-convention has a quarantine dossier" test -f "$REPO/.roadmap/quarantine/gate-convention.md"
+elif [ "$GC" = merged ]; then
+  # Merged is acceptable ONLY if the inline gcd was replaced by a reference to shared.gcd.
+  if grep -Eq "require\(['\"]\./shared['\"]\)" "$WT/__integration/calc.js" 2>/dev/null \
+     && grep -q "gcd" "$WT/__integration/calc.js" 2>/dev/null; then
+    pass "gate-convention handled: merged with the duplication removed (reuses shared.gcd)"
+  else
+    flunk "gate-convention RUBBER-STAMPED: merged with gcd reimplemented inline — the conventions-contract violation reached integration"
+  fi
+else
+  flunk "gate-convention handled (got: $GC)"
+fi
+
 # --- green-tip mirror (preview) -------------------------------------------------
 # The fixture plan carries an api-kind preview block, so the harness must detach the
 # primary checkout at the final suite-green tip (state.json's integrationTip — the branch
@@ -103,7 +124,7 @@ const merged = Object.values(s.units).filter(u => u.status === 'merged').length
 let warn = ''
 if ((sp.gateRounds ?? 0) > merged * 2 + 2) warn += 'gate rounds high relative to merged units (convergence?); '
 if ((s.consultsUsed ?? 0) > 2) warn += 'consult cap exceeded?; '
-if ((sp.fable ?? 0) > 14) warn += 'frontier call count high for a 5-unit fixture; '
+if ((sp.fable ?? 0) > 17) warn += 'frontier call count high for a 6-unit fixture; '
 if (warn) { console.log('WARN  ' + warn) } else { console.log('PASS  spend within expected envelope') }
 "
 
