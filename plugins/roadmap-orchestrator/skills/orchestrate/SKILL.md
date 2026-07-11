@@ -88,6 +88,16 @@ files. Read their outputs, then decide:
   that exist *now*, so it cannot stop two units built concurrently from independently adding
   the same new helper — that sibling-reinvention case is caught reactively by the
   between-wave health check below.
+  Before any freeze lands over a surface that **already exists in code** (skip only when every
+  frozen surface is greenfield), run a mechanical contract-vs-code cross-check: a **Haiku**
+  agent (Sonnet where signatures are subtle) lists the surfaces each drafted contract freezes
+  that exist today — endpoints, CLI verbs, exported signatures, schemas — and diffs each
+  against the live implementation, reporting per surface *matches* / *differs* (how, at
+  file:line) / *absent*. Adjudicate every `differs` before freezing: amend the contract to
+  reality, or make the divergence an explicit migration unit with the contract as the target
+  state — never freeze a contradiction silently. Arc-observed: a corpus-faithful-but-code-stale
+  freeze is invisible to the fidelity audit (which reads source, not the repo) and surfaces
+  later as a mid-implementation mismatch or a quarantine.
 - **Classify every dependency edge**: `contract` (the dependent needs only the interface,
   which you just wrote — fully front-loadable) or `contingent` (the dependent's *design*
   needs the dependency's actual results — forces a wave boundary and a replan by you).
@@ -139,7 +149,10 @@ the plan fails to record, contradictions between plan and source, and design dec
 of pertinence that deserve to be written down. You adjudicate every finding — amend the
 plan, record it in `.roadmap/constraints.md`, or dismiss it with a stated reason — and
 fold anything genuinely ambiguous into the user question batch. Auditors read
-uncompressed and report small; you judge. No frontier volume is spent.
+uncompressed and report small; you judge. No frontier volume is spent. The audit verifies
+plan-against-*source*, never plan-against-*repo* — a contract that faithfully records the
+source but contradicts code that already exists sails through it; closing that gap is the
+contract-vs-code cross-check's job (freeze-contracts, above).
 
 **Record cross-cutting constraints** in `.roadmap/constraints.md` — design decisions and
 constraints from the source that aren't interface contracts (performance budgets,
@@ -187,7 +200,9 @@ Workflow({ scriptPath: "<this skill's directory>/harness.mjs",
 
 The Workflow result returns a `runId` and the session-persisted `scriptPath`; record both
 into `state.json`'s optional `run` field at launch, so a same-session `resumeFromRunId` is
-mechanical and post-crash forensics are one `cat` away.
+mechanical and post-crash forensics are one `cat` away. Pass `config: { boundary: 'off' }` on
+the arc's **final** wave — the session integration review supersedes the wave-tail boundary
+phase there.
 
 The harness runs every ready unit through: worktree setup → Opus implementation plan →
 **architect plan-check** → Opus implement → verify/review/fix loop (all free-tier) →
@@ -206,7 +221,12 @@ always take the Fable gate regardless, plus a small deterministic audit sample
 exists to catch, so where stakes are structurally highest, frontier judgment stays mandatory.
 This is what makes Fable spend conservative; the between-wave health check below is the
 systemic backstop. Set `config.planCheck: 'always-fable'` or `config.exitGate: 'always-fable'`
-to restore a guaranteed frontier pass on plan-checks or exit gates respectively. The gate
+to restore a guaranteed frontier pass on plan-checks or exit gates respectively. Implementers
+report a conscious deviation from a *frozen contract surface* through the structured
+`contractMismatch` field (they cannot write `.roadmap/` or reference ledger entries, so this is
+their only honest channel); a report fires the mid-loop architect consult and forces the Fable
+exit gate with the report text in its prompt, and banks a `kind: 'contract'` debt entry for you
+to adjudicate at the boundary. The gate
 prompts are deliberately open-ended; trust them as you'd trust yourself. State is checkpointed
 to `.roadmap/state.json` at every unit status change **and** stage transition (coalesced
 latest-wins — the file can trail the newest event by one write); the returned state carries a
@@ -221,45 +241,35 @@ Between waves, judgment returns to you:
   re-enters as a *new* spec; never re-run one under the spec that failed.
 - **Contingent boundaries**: read the learnings, revise the downstream specs, launch the
   next wave.
-- **Explore, then triage feedback.** If the arc has a preview, spawn one **Opus explorer**
-  (model pinned) against it at the current integration tip. Its charter is *runtime
-  behavior only* — the diff, tests, and gates already judged the code: drive flows end to
-  end the way a skeptical user would, poke edge cases, feed hostile/empty/huge inputs,
-  break expected sequences, hunting behavior that is unexpected, counterintuitive,
-  underdocumented, brittle, or misaligned with the specs' intent. It reports ≤~10
-  findings — severity, exact repro, observed vs expected, the sha observed — changes
-  nothing, and an empty report is legitimate. Persist findings via a Haiku verbatim-writer
-  to `feedback/explorer/wave-<n>.md` (investigators flake on side effects; verbatim
-  writers don't).
-- **Check codebase health** (unless `config.healthCheck: 'off'`). The explorer judges
-  *runtime behavior*; this is its code/test/structure counterpart, and it is your job as
-  the owner of overall product quality — per-unit gates see one unit, never the accumulating
-  drag that makes every later wave slower. Spawn one **Opus health assessor** (model pinned)
-  against the integration tip to report, with specifics: **test health** — coverage gaps,
-  slow tests, and brittleness (tests that assert implementation detail, over-mock, or depend
-  on ordering/timing); **structural health** — files grown too large, misplaced code,
-  architectural drift; **cross-unit consistency** — the failure mode the isolate-and-parallel
-  design *manufactures*: two units that independently added equivalent helpers, diverged on
-  the pattern or convention for the same task, or reimplemented something the conventions
-  contract already catalogs. No per-unit gate can see this (siblings never see each other),
-  and it is the drift the standing conventions contract can't pre-empt, so this pass is its
-  only catch. Also **ergonomics** — manual dev steps that should be automated (running tests,
-  setup) and missing tooling that taxes every round. In parallel, catch *intermittent*
-  failures mechanically: have Haiku run the full suite `config.flakeReruns` times (default 3)
-  — any pass↔fail flip is a brittleness item. Brittleness that produces intermittent gate
-  failures is not the next unit's problem to absorb; it is a degradation you must catch here.
-  **Have the assessor return more than prose: for each finding it judges worth fixing, a
-  ready-to-dispatch consolidation fix-unit draft** (id, goal, files, acceptance criteria) —
-  the same shape a unit spec has, so triage can act on it without re-authoring. Persist the
-  narrative to `feedback/health/wave-<n>.md` via a Haiku verbatim-writer. These findings
-  still **gate nothing mid-wave** (invariant 8 holds — nothing reaches a running unit); the
-  change is at the boundary, in triage below.
-- **Triage — you, once, at this boundary.** Triage the whole `.roadmap/feedback/` batch
-  (explorer + health + user) **and the wave's returned `debt` array** together: fold items
-  into revised specs, cut fix units into the next wave (debt or a health finding worth
-  fixing now becomes a fix unit like any other), treat contract-contradicting feedback as a
-  contract amendment (yours alone — record it; the integration review re-examines it), or
-  dismiss with a stated reason. **The health assessor's consolidation fix-unit drafts are
+- **Read the boundary results — the harness already ran the jobs.** At each wave's tail
+  (strictly after the last merge and mirror advance) the workflow itself runs, in parallel:
+  the **Opus runtime explorer** against the preview (only when it is live — driven via
+  `plan.preview.howToAccess`), the **Opus health assessor** against the integration tip, and
+  Haiku full-suite **flake re-runs** (`flakeReruns`, default 3). You wake exactly once, cache
+  warm, with everything triage needs in the returned state's `boundary` block and, via Haiku
+  verbatim-writers, in `feedback/{explorer,health}/wave-<n>.md`. (This is why the root wakes
+  once, not minutes-apart on two cold full-history reloads.) Charters are unchanged from when
+  you spawned these yourself: the explorer judges *runtime behavior only* — poking edge cases,
+  hostile/empty/huge inputs, broken sequences for behavior that is unexpected, brittle, or
+  off-spec — and reports ≤~10 findings (severity, exact repro, observed vs expected; an empty
+  report is legitimate, not a failure); the assessor judges test / structural /
+  cross-unit-consistency / ergonomics health (the sibling-reinvention drift no per-unit gate
+  can see) and returns a **ready-to-dispatch, spec-shaped consolidation fix-unit draft** (id,
+  goal, files, acceptance) for each finding worth fixing. Invariant 8 is intact — boundary
+  jobs run after every merge and gate nothing. `config.boundary: 'off'` disables the phase;
+  set it on the arc's **final** wave, where the session integration review supersedes it. If
+  the `boundary` block is **absent** from the returned state, the phase was off or every job
+  failed — only then spawn the explorer/health agents yourself (the old way).
+- **Triage — you, once, at this boundary.** Triage the returned state's `boundary` block
+  (explorer findings + health findings + flake flips) **and** the `.roadmap/feedback/` user
+  notes **and** the wave's returned `debt` array together: fold items into revised specs, cut
+  fix units into the next wave (debt or a health finding worth fixing now becomes a fix unit
+  like any other), treat contract-contradicting feedback as a contract amendment (yours
+  alone — record it; the integration review re-examines it), or dismiss with a stated reason.
+  A `kind: 'contract'` debt entry is an implementer-reported frozen-surface mismatch — the
+  Fable gate already adjudicated it for merge-readiness, but **the contract amendment is
+  yours alone**: amend the contract to reality, or spec the divergence as an explicit
+  migration unit. **The health assessor's consolidation fix-unit drafts are
   the default action, not a suggestion:** admit them into the next wave's plan unless you
   see a reason to cut — your judgment enters as a *veto over noise*, not as authoring each
   from scratch, which is what keeps cross-unit drift from dying unactioned in a folder the
@@ -292,7 +302,9 @@ process). Work the ladder in order:
    agent calls of the moment of death — no reimplementation, nothing destroyed. A branch with
    commits beyond its fork base that the passed state does *not* mark `running` is **refused,
    not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately by
-   setting `unit.existingBranch`, or delete the branch yourself.
+   setting `unit.existingBranch`, or delete the branch yourself. A **self-referential**
+   `existingBranch` (the unit's own `unit/<id>`) is refused at plan validation — anchor the
+   commits under a differently-named ref first (e.g. `adopt/<id>`) and adopt that.
 
 Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group**
 (`kill -TERM -- -$(cat …)`), not just the leader — the preview is started as a group leader,

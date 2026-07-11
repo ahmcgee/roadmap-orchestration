@@ -36,12 +36,20 @@ outcome).
 `check.sh` grades the **end state** deterministically (git facts, files, `state.json`) —
 zero model tokens: statuses match the table, the planted violation never reaches
 integration unfixed, dossiers exist for quarantines, the full suite passes on the
-integration worktree, and spend is within a generous envelope.
+integration worktree, the wave-tail **boundary phase** ran (the returned state carries a
+`boundary` block and `feedback/health/wave-1.md` + `feedback/explorer/wave-1.md` were written —
+the fixture's live api-kind preview means the runtime explorer runs too), and spend is within a
+generous envelope.
+
+`parse.sh` is a token-free pre-flight: it parses `harness.mjs` under an `AsyncFunction` wrapper
+(plain `node --check` chokes on the harness's legal top-level `return`), catching a syntax slip
+before you spend a run. Run it on every harness edit; it prints `parse OK`.
 
 ## How to run
 
 From a Claude Code session (the harness needs the Workflow runtime):
 
+0. `bash parse.sh` — token-free parse gate; must print `parse OK` before you spend a run.
 1. `bash setup-fixture.sh /tmp/roadmap-eval`
 2. Read `/tmp/roadmap-eval/repo/.roadmap/plan.json` and `state.json`, then launch
    `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {plan, state, config: {}}})`
@@ -51,7 +59,9 @@ From a Claude Code session (the harness needs the Workflow runtime):
 
 Cost per run: roughly 3–10 Fable calls (plan-checks are now mostly Opus, so Fable is
 escalated plan-checks + forced/audit gates + possible consults ≈ $0.50–1.50 of frontier
-spend) plus free-tier Opus/Haiku time. Cheap enough to run on every harness edit.
+spend) plus free-tier Opus/Haiku time. The wave-tail boundary phase adds ~2 Opus (explorer +
+health assessor) and ~2-3 Haiku (flake re-run + verbatim writers) per wave — free-tier, no
+added Fable. Cheap enough to run on every harness edit.
 
 ## Interpreting failures
 
@@ -88,3 +98,7 @@ real. Map FAIL lines back to what you changed:
 - The planted `gate-bad` defect will grow stale against improving models (a future Opus
   reviewer may always catch it pre-gate — the check still passes, but the gate itself goes
   unprobed). When that happens, plant a subtler prose-only violation.
+- **Future work:** a `contract-stale` unit exercising the `contractMismatch` channel
+  end-to-end (frozen surface contradicting live code → mid-loop consult → forced Fable gate →
+  `kind: 'contract'` debt) is not yet built — it needs a real Fable consult, so it adds cost
+  and nondeterminism the current fixture deliberately avoids.

@@ -106,6 +106,16 @@ PV_SHA=$(node -e "const s=require('$STATE');console.log((s.preview||{}).sha||'')
   && pass "state.json preview.sha matches the integration tip" \
   || flunk "state.json preview.sha matches the integration tip (got: $PV_SHA)"
 
+# --- boundary phase (wave-tail explorer + health assessor + flake re-runs) ------
+# The harness runs the boundary phase at the wave tail (config.boundary defaults on); its
+# results ride the returned state's `boundary` block and are rendered to feedback/ by Haiku
+# verbatim-writers. healthCheck defaults on, so the health file is always written; the fixture
+# plan carries a live api-kind preview, so the runtime explorer runs and its file is too.
+BOUNDARY=$(node -e "const s=require('$STATE');console.log(s.boundary?'present':'absent')")
+[ "$BOUNDARY" = present ] && pass "state.json carries a boundary block (wave-tail phase ran)" || flunk "state.json carries a boundary block (got: $BOUNDARY)"
+expect "wave-1 health feedback written" test -f "$REPO/.roadmap/feedback/health/wave-1.md"
+expect "wave-1 explorer feedback written" test -f "$REPO/.roadmap/feedback/explorer/wave-1.md"
+
 # --- integrated result --------------------------------------------------------
 expect "integration branch exists" git -C "$REPO" rev-parse --verify roadmap/eval
 if [ -d "$WT/__integration" ]; then
@@ -117,6 +127,9 @@ else
 fi
 
 # --- spend sanity (informational thresholds, generous by design) ---------------
+# The wave-tail boundary phase adds ~2 Opus (explorer + health) + ~2-3 Haiku (flake re-run +
+# verbatim writers) per wave; the envelope below bounds fable/gateRounds/consults only, none
+# of which the boundary touches, so no threshold widening is needed for it.
 node -e "
 const s = require('$STATE'); const sp = s.spend || {}
 console.log('spend:', JSON.stringify(sp))

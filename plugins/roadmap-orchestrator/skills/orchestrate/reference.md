@@ -32,8 +32,8 @@ this to the user unless asked.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
   quarantine/<unit>.md # dossiers written by the harness
   feedback/            # accumulated runtime evidence; triaged in batch at judgment boundaries
-    explorer/*.md      #   per-wave adversarial exploration findings (architect-spawned Opus)
-    health/*.md        #   per-wave code/test/structure/ergonomics health findings (Opus);
+    explorer/*.md      #   per-wave adversarial exploration findings (harness-run Opus, wave-tail)
+    health/*.md        #   per-wave code/test/structure/ergonomics health findings (harness-run Opus);
                        #   feeds triage → fix units or the debt.md ledger
     user/*.md          #   the user drops notes here AT ANY TIME (copying TEMPLATE.md); read
                        #   at the next boundary — never an input to a running wave
@@ -71,7 +71,14 @@ ask; absent → plan fresh, treating `archive/` + living docs as prior knowledge
     "existingBranch": "..."        // optional: adopt a pre-written branch — skips
                                    //   plan/implement, runs it through the same
                                    //   verify → review → gate pipeline (also how the
-                                   //   eval fixture probes the gate; see evals/)
+                                   //   eval fixture probes the gate; see evals/).
+                                   //   MUST NOT be the unit's own `unit/<id>` — a
+                                   //   self-referential adopt is hard-refused at plan
+                                   //   validation (setup could delete its own source);
+                                   //   anchor under a different ref (adopt/<id>) instead.
+                                   //   Its tip is pre-captured read-only before setup and
+                                   //   the resulting worktree sha is asserted against it —
+                                   //   a setup agent that recreated the branch is quarantined.
   }],
   "edges": [{
     "from": "auth-core",           // dependency
@@ -127,6 +134,18 @@ feedback semantics below). `run` is an **optional passthrough**: the architect r
 script path) into the initial state at launch, and `serialize()` preserves it — it makes
 same-session `resumeFromRunId` mechanical and forensics one `cat`.
 
+The returned state also carries, when the wave-tail boundary phase ran anything, a **`boundary`
+block**: `{ explorer, health, flake }` — the explorer result (`findings[]`, `shaObserved`), the
+health result (`findings[]`, `fixUnits[]`), and the flake result (`runs`, `flips[]`); any half
+is `null` when its job was off or failed, and the whole block is **omitted** when no job ran
+(preview not live *and* `healthCheck: 'off'`) or every job failed — its absence is the signal to
+run the explorer/health agents yourself. Verbatim renderings are also written to
+`feedback/{explorer,health}/wave-<n>.md`. `spend` is **arc-cumulative**: it seeds from the
+passed state's `spend` and accumulates across relaunches (a per-wave delta is the difference
+between two successive checkpoints), so no cross-crash hand-summing. `debt`, by contrast, stays
+**per-wave** — only the imperfections surfaced *this* wave — because `.roadmap/debt.md` is the
+cross-wave accumulator.
+
 Unit statuses: `pending → running → merge-ready → merged`, or `quarantined` / `blocked`
 (dependency quarantined) / `deferred` (beyond cut line). Dependents launch only when every
 dependency is `merged`. While a unit is `running` it also carries a `stage` field
@@ -135,7 +154,7 @@ a terminal status replaces the whole record, so no stale stage survives. Checkpo
 every unit status change **and** every stage transition, coalesced latest-wins — the file can
 trail the newest event by one write.
 
-## Config knobs (defaults in the harness, or the skill for the between-wave knobs; override via `plan.config` or the Workflow `config` arg)
+## Config knobs (defaults in the harness; override via `plan.config` or the Workflow `config` arg)
 
 | Knob | Default | Meaning |
 |---|---|---|
@@ -150,8 +169,9 @@ trail the newest event by one write.
 | `gateAuditRate` | `0.10` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables. `risk:high` and contract-touching units always take Fable regardless |
 | `auditEffort` | `'low'` | Effort for audit-*only* Fable gates (the `gateAuditRate` sample was the sole force reason) — these read diff-stat-first; forced gates keep the full-diff read at `gateEffort` |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` (advance after every suite-green merge, coalescing latest-wins), `'wave'` (once, after the queue drains), `'off'` (no mirror). Inert without a `plan.preview` block |
-| `healthCheck` | `'each-wave'` | Between-wave codebase-health assessment (architect-run, not the harness): `'each-wave'` or `'off'` |
-| `flakeReruns` | `3` | Full-suite re-runs the between-wave health check uses to catch intermittent failures; `0` disables flake detection |
+| `boundary` | `'on'` | Wave-tail boundary phase (harness-run, strictly after all merges + mirror advances): the Opus runtime explorer (when a preview is live) + Opus health assessor + Haiku flake re-runs, in parallel; results land in the returned state's `boundary` block. `'off'` for the arc's final wave, where the session integration review supersedes it |
+| `healthCheck` | `'each-wave'` | The health-assessor half of the boundary phase — now **harness-run at the wave tail**, not architect-spawned: `'each-wave'` or `'off'` |
+| `flakeReruns` | `3` | Full-suite re-runs the wave-tail health check uses to catch intermittent failures; `0` disables flake detection |
 
 Spend direction when tuning: extra frontier budget goes to the **planning side** (spec
 detail, plan-checks, Phase-0 interrogation), never to more mid-flight touchpoints — gate
@@ -166,7 +186,7 @@ act, not a per-unit one.
 | Tier | Does | Never does |
 |---|---|---|
 | `fable` | Plan pack, escalated/guaranteed plan-checks, escalated exit gates + audit-sample gates, rescue consults, wave replans, feedback/debt triage (at existing boundaries only — never a new touchpoint), integration review | Code, fixes, bulk text |
-| `opus` | Implementation, tests, adversarial review, Opus-first plan-check + Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (between waves, architect-spawned; the architect still decides what to admit) | — |
+| `opus` | Implementation, tests, adversarial review, Opus-first plan-check + Opus-first exit gate, fixes, conflict resolution, preview exploration + codebase-health assessment incl. cross-unit consistency + drafting consolidation fix-unit specs (wave-tail, harness-run in the boundary phase; the architect still decides what to admit) | — |
 | `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression | — |
 | `haiku` | Git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / health findings / the debt ledger, status rendering | Judgment |
 
@@ -218,8 +238,21 @@ this skill, and worth filing upstream at github.com/anthropics/claude-code:
 - **Schema-retry resends payloads verbatim.** On a structured-output validation failure the
   platform re-sends the *same* oversized payload until the unit dies, with no chance to
   shorten it. This is why the harness caps free-text field lengths (impl `summary`/`notes`,
-  debt `what`/`why`) and tells implementers to commit before emitting the report — an
-  over-long report can kill a unit whose work is already committed and done.
+  debt `what`/`why`, and the boundary `explore`/`health`/`flake` fields) and tells implementers
+  to commit before emitting the report — an over-long report can kill a unit whose work is
+  already committed and done.
+- **H-7 phantom-ledger reference — resolved.** An implementer that hit a genuine
+  frozen-surface-vs-code mismatch once deviated correctly in code but left a "see debt.md"
+  comment for a ledger entry it could not write (units never touch `.roadmap/`), and a gate
+  quarantined partly on that phantom reference. Resolved two ways: the implement/fix prompts
+  now forbid `.roadmap/` references outright (report deviations only through structured
+  output), and the impl schema gained an optional **`contractMismatch`** field (string,
+  maxLength 300 — "which surface, how reality differs"). A present `contractMismatch` fires the
+  mid-loop architect consult (consumable, budget-respecting), **forces the Fable exit gate**
+  (skipping any audit-only cheapening) with the report text and an explicit adjudication clause
+  in its prompt, and banks a `{ kind: 'contract', severity: 'major' }` debt entry — surfaced in
+  the wave's `debt` array even when the unit merges, for the architect to adjudicate the
+  contract amendment at the boundary.
 
 ## Verify semantics — three outcomes, not two
 
@@ -248,7 +281,10 @@ Quarantine reasons route to different between-wave actions — read them, don't 
 The returned state includes a `spend` tally — per-tier agent counts (`fable`/`opus`/
 `sonnet`/`haiku`) plus `opusPlanChecks`, `planChecks` (Fable plan-checks only),
 `opusGateRounds`, and `gateRounds` (Fable) — the session report's "where did frontier
-attention go" table, and the evidence base for tuning the dial next session.
+attention go" table, and the evidence base for tuning the dial next session. It is
+**arc-cumulative**: the tally seeds from the passed state's `spend` and accumulates across
+relaunches, so a crashed-and-resumed arc no longer needs its per-run tallies hand-summed (a
+single wave's delta is the difference between two successive checkpoints).
 
 ## Preview & feedback semantics
 
@@ -326,7 +362,10 @@ counter to agents quietly leaving "minor" issues behind. Producers emit structur
 items `{what, why, severity: minor|major, kind: correctness|test|structure|ergonomics}`:
 the implementer (shortcuts it took), the reviewer (its `nonBlocking` / `preExisting`
 findings, which previously evaporated), both exit gates (imperfections approved rather than
-fixed), and the between-wave health assessor. The harness collects the wave's items into the
+fixed), and the wave-tail health assessor. The harness itself also banks a
+`{ kind: 'contract', severity: 'major' }` entry for every implementer-reported
+`contractMismatch` (see known issues, H-7) and now banks fix-round debt too (it previously
+evaporated) — both flow to the same triage. The harness collects the wave's items into the
 returned state's `debt` array (surfaced *this* wave, not accumulated — the file is the
 accumulator). At the between-wave boundary the architect triages debt alongside feedback:
 promote worth-fixing-now items into fix units, or have Haiku append the rest to `debt.md`.
@@ -335,8 +374,9 @@ feedback is consumed; a resolved item is annotated, not deleted.
 
 ## Health check semantics — the systemic quality backstop
 
-Between waves (unless `healthCheck: 'off'`), an architect-spawned **Opus** health assessor
-reads the integration tip for what per-unit gates structurally cannot see: **test health**
+At each wave's tail (unless `healthCheck: 'off'`), a **harness-run Opus** health assessor —
+part of the boundary phase, no longer architect-spawned — reads the integration tip for what
+per-unit gates structurally cannot see: **test health**
 (coverage gaps, slow tests, brittleness — assertion-on-implementation-detail, over-mocking,
 order/timing dependence), **structural health** (oversized files, misplaced code,
 architectural drift), **cross-unit consistency** (units that independently added equivalent
