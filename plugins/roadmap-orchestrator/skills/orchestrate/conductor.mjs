@@ -108,6 +108,17 @@ const deltaSpend = (sp) => {
   return d
 }
 
+// Skill-defect ledger — the orchestrator misbehaving, not the product (same idiom as harness.mjs).
+// Seeded arc-cumulative from the passed state so a mid-arc relaunch extends the record rather than
+// erasing it, and merged with whatever the child harness reports. The root renders it to
+// .roadmap/skill-feedback.md; the conductor also stamps it there at every persist point, because a
+// run that dies never returns and its evidence would otherwise die with it.
+const degradations = [...(inState.degradations ?? [])]
+const degrade = (o) => {
+  degradations.push({ script: 'conductor', wave: state?.wave ?? 0, ...o })
+  log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
+}
+
 // One code-level retry on structured-output failure — identical idiom to harness.mjs's run():
 // agents deep in tool-work occasionally end a turn without a valid structured report; a single
 // retry with an explicit report-last instruction converts a flake into an occasional double call.
@@ -117,6 +128,8 @@ const run = async (prompt, opts) => {
   catch (e) {
     if (!String(e?.message ?? e).includes('StructuredOutput')) throw e
     cSpend[opts.model] = (cSpend[opts.model] ?? 0) + 1
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'schema-retry',
+      what: `structured output rejected, retrying — ${String(e?.message ?? e).slice(0, 200)}` })
     return agent(
       prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
       'report matching the requested schema — put any commentary in its `notes` field and add no other fields. ' +
@@ -126,11 +139,50 @@ const run = async (prompt, opts) => {
   }
 }
 
+// agent() RESOLVES TO null (it does NOT throw) when a subagent dies — a terminal API error, OR its
+// own schema-retries exhausted. A bare `.catch()` does not cover that path, and neither does run()'s
+// StructuredOutput retry, which only fires on a THROW: arc-observed, the tier-2 triager overran a
+// 600-char `notes` cap, burned its retries inside the subagent, resolved null, and run()'s
+// shorten-aggressively rescue — written for exactly this — never fired once.
+// So runOr() re-runs that rescue itself on a null, then falls back. EVERY run() whose result is
+// dereferenced must funnel through it: `fallback` (never null) is what keeps a dead agent from
+// becoming a dead arc.
+const runOr = async (fallback, prompt, opts) => {
+  const r = await run(prompt, opts).catch((e) => {
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
+      what: `threw — ${String(e?.message ?? e).slice(0, 200)}` })
+    return null
+  })
+  if (r) return r
+  // The null carries NO error object — the platform does not expose the cause. Record what we know
+  // and name the transcript, so the next person is not left guessing "network?" for three runs.
+  degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'no-report',
+    what: 'agent died without a report (agent() returned null — cause not exposed by the platform); ' +
+      'salvaging once, then falling back. Read the agent transcript for the real error.' })
+  const retried = await run(
+    prompt + ' IMPORTANT: your previous report was rejected — most likely a free-text field exceeded ' +
+    'its maximum length. Shorten EVERY free-text field aggressively; one sentence each is acceptable, ' +
+    'and `notes` is the first thing to cut. Emit exactly the requested schema and no other fields.',
+    { ...opts, label: `${opts.label ?? 'agent'}#salvage` },
+  ).catch(() => null)
+  if (!retried)
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'salvage-failed',
+      what: 'salvage retry also produced no report — degrading to the coded fallback' })
+  return retried ?? fallback
+}
+
 // Location discipline for mechanical writers (copied from harness.mjs): given a bad path,
 // Haiku will improvise in its cwd and report plausible success — fail-loud beats adaptive.
 const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails or the directory ' +
   'is not the described git checkout, report ok/pass as false with the exact error and stop. Never substitute ' +
   'your current working directory, the enclosing project, or any other repository. '
+// EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
+// A cap is a contract with the model, and the prompt is the only place that contract is stated — a
+// capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
+// `notes` cap, no terseness clause, and a closing line inviting the agent to put overflow THERE. It
+// overran, exhausted its schema-retries, and died at two consecutive boundaries. See RATIONALE §9.
+const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. '
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
@@ -184,7 +236,12 @@ const S_triage = obj({
   escalate: { type: 'boolean' },
   escalateReason: oneOf(['quarantine-redesign', 'contract-amendment', 'contingent-replan', 'needs-user', 'hard-call', 'none']),
   arcComplete: { type: 'boolean' },
-  notes: { type: 'string', maxLength: 600 },
+  // `notes` is the PRESSURE-RELEASE valve, so it must not be the thing that bursts. At 600 it was:
+  // arc-observed, a triager disposing of 15 findings overran it, exhausted its schema-retries, and
+  // died — twice at the same boundary. It is also where a 'needs-user' escalation must carry the
+  // exact question AND the context to answer it. Cap it loosely; the payload-size risk the other
+  // caps guard lives in the ARRAYS (which stay capped), not here.
+  notes: { type: 'string', maxLength: 2000 },
 }, ['admit', 'cut', 'promote', 'escalate', 'arcComplete'])
 
 // Fable tier-3 boundary agent: escalations + quarantine respecs. newUnits/reviseSpecs/cutUnits
@@ -198,7 +255,7 @@ const S_boundaryPlan = obj({
   escalate: { type: 'boolean' },
   escalateReason: oneOf(['contract-amendment', 'contingent-replan', 'needs-user', 'cut-line', 'none']),
   arcComplete: { type: 'boolean' },
-  notes: { type: 'string', maxLength: 600 },
+  notes: { type: 'string', maxLength: 2000 },   // pressure-release — see S_triage.notes
 }, ['newUnits', 'journal', 'escalate', 'arcComplete'])
 
 const S = { ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']) }
@@ -258,6 +315,29 @@ const draftSkeleton = (d) => ({
 })
 
 const contractPaths = () => [...new Set(plan.edges.filter((e) => e.contract).map((e) => e.contract))]
+
+// .roadmap/skill-feedback.md — the ORCHESTRATOR's own defect log, and the one artifact meant to
+// leave this repo: the user carries it back to the skill's own repo. It is therefore a LIVING doc
+// (like constraints.md / debt.md), never archived with the arc, and strictly separate from debt.md
+// (product imperfections, a different audience). Written at EVERY persist point, not just on
+// return, because a run that dies never returns and its evidence would die with it. Rendering is a
+// pure function of `degradations`, so a resume rewrites it byte-identically.
+const fmtDegradation = (d) =>
+  `- **${d.kind ?? 'unknown'}** \`${d.label ?? 'agent'}\` (${d.script ?? '?'} · ${d.model ?? '?'} · wave ${d.wave ?? '?'}` +
+  `${d.phase ? ` · ${d.phase}` : ''}) — ${d.what ?? ''}`
+async function writeSkillFeedback() {
+  if (!degradations.length) return
+  const body = degradations.map(fmtDegradation).join('\n')
+  await run(
+    STRICT + `Overwrite the file ${repo}/.roadmap/skill-feedback.md with exactly this content and nothing else ` +
+    `(create it if missing):\n# Skill feedback — roadmap-orchestrator\n\nDefects in the ORCHESTRATOR itself ` +
+    `(not the product) observed while running this arc. Carry these back to the skill's repository; they are ` +
+    `not product debt and do not belong in debt.md.\n\n## Degradations (${degradations.length})\n\n${body}\n\n` +
+    `Each line names the agent label — find its transcript in the workflow's agent-*.jsonl to see the real ` +
+    `error, which the platform does not expose to the script.\n`,
+    { model: 'haiku', effort: 'low', label: 'skill-feedback', phase: 'Persist', schema: S.ok },
+  ).catch(() => null)
+}
 const arcSummary = (census) => {
   const u = state.units ?? {}
   const ids = (s) => Object.entries(u).filter(([, r]) => r?.status === s).map(([id]) => id)
@@ -272,12 +352,20 @@ async function ret(reason, tier, extra = {}) {
   const st = { ...state, spend: { ...(state.spend ?? {}) } }   // tier-4 handoff: boundary + debt stay INTACT (the root consumes them)
   mergeConductorSpend(st)
   st.conductor = { reason, wavesRun, boundaries }
+  if (degradations.length) st.degradations = degradations
   phase('Persist')
+  await writeSkillFeedback()
   await run(
     STRICT + `Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${JSON.stringify(st, null, 2)}`,
     { model: 'haiku', effort: 'low', label: `persist-state:w${st.wave}`, phase: 'Persist', schema: S.ok },
   ).catch(() => null)
-  return { status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan, spendDelta: deltaSpend(st.spend), ...extra }
+  return {
+    status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
+    spendDelta: deltaSpend(st.spend),
+    // Always present (empty when clean) so the root never has to wonder whether the run was healthy.
+    degradations,
+    ...extra,
+  }
 }
 
 /* --------------------------- boundary prompts -------------------------- */
@@ -289,8 +377,11 @@ const censusPrompt = (N) => STRICT +
   `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
   `in \`pendingUserFeedback\` (empty array if that directory is absent or holds only TEMPLATE.md).\n` +
   `2) List the *.md files under ${repo}/.roadmap/quarantine/ — put their basenames in \`quarantineDossiers\` ` +
-  `(empty array if absent).\nReport ok:true when both listings completed. Never guess filenames.`
+  `(empty array if absent).\nReport ok:true when both listings completed. Never guess filenames. ${TERSE}`
 
+// The cut-line brake is load-bearing (arc-observed, RATIONALE §7): a healthy assessor drafts
+// something EVERY wave, so an admit-by-default triage with no brake never dries — one live run
+// admitted fresh test-ergonomics drafts on waves 3/4/5 and returned max-waves. Don't soften it.
 const opusTriagePrompt = (N, P) =>
   `You are the wave-${N} boundary triager for a roadmap build, standing in for the architect. Read, in this order: ` +
   `${repo}/.roadmap/architect-log.md FIRST (inherited rationale + dismissal criteria), then ` +
@@ -302,8 +393,8 @@ const opusTriagePrompt = (N, P) =>
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
   `fix-unit DRAFTS to admit. Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
-  `\`promote\`. THE CUT LINE BINDS THE DEFAULT (arc-observed: a healthy assessor drafts something every wave, and ` +
-  `an admit-by-default triage without a brake extends the arc forever): once the plan's own units are merged, a ` +
+  `\`promote\`. THE CUT LINE BINDS THE DEFAULT — a healthy assessor drafts something every wave, so admitting by ` +
+  `default with no brake would extend the arc forever: once the plan's own units are merged, a ` +
   `draft must justify a WAVE, not merely be an improvement — refactors without a defect, ergonomics polish, and ` +
   `marginal coverage on a healthy suite are noise to cut even though they are real; bank them to \`debtLedger\` ` +
   `instead so nothing is lost. When you cut the last drafts as below-the-line, set arcComplete:true in the same ` +
@@ -314,7 +405,7 @@ const opusTriagePrompt = (N, P) =>
   `'contract-amendment'/'contingent-replan'/'needs-user' return to the root. When escalating 'needs-user', put ` +
   `the exact user-facing question (with the context needed to answer it) in \`notes\` — that text IS what reaches ` +
   `the user. Set arcComplete:true if the cut line ` +
-  `is reached and no further work remains. Return structured output only — write nothing; overflow goes in \`notes\`.`
+  `is reached and no further work remains. Return structured output only — write nothing. ` + TERSE
 
 const fableBoundaryPrompt = (N, P, lead) =>
   `You are the wave-${N} Fable boundary agent for a roadmap build — the architect's in-workflow stand-in for ` +
@@ -336,7 +427,7 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `'contract-amendment'/'contingent-replan'/'needs-user' to return to the root, or 'cut-line' when the arc is ` +
   `complete. When escalating 'needs-user', put the exact user-facing question (with the context needed to answer ` +
   `it) in \`notes\` — that text IS what reaches the user. ` +
-  `Return skeletons and journal only — write no code and no files.${lead}`
+  `Return skeletons and journal only — write no code and no files. ${TERSE}${lead}`
 
 const specExpandPrompt = (skel) => SPECWRITE +
   `Expand this unit skeleton into a full spec and write it to exactly ${repo}/.roadmap/specs/${skel.id}.md and no ` +
@@ -425,11 +516,18 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath })
   wavesRun++
   const N = state.wave
+  // Absorb the wave's skill defects into the arc-cumulative ledger (the harness reports per-wave).
+  for (const d of state.degradations ?? []) degradations.push(d)
+  if (state.degradations?.length) log(`wave ${N}: ${state.degradations.length} harness degradation(s) recorded`)
 
-  // 4. Census (Haiku) — feedback + quarantine folder listing.
+  // 4. Census (Haiku) — feedback + quarantine folder listing. A dead census degrades to an empty
+  // one rather than killing the run: the authoritative boundary evidence is the in-memory state,
+  // and an empty census only means user-feedback files go untriaged this boundary (they persist
+  // on disk and are picked up at the next one).
   phase('Census')
-  const census = await run(censusPrompt(N), { model: 'haiku', effort: 'low', label: `census:w${N}`, phase: 'Census', schema: S_census })
-    .catch(() => ({ ok: false, pendingUserFeedback: [], quarantineDossiers: [] }))
+  const census = await runOr(
+    { ok: false, pendingUserFeedback: [], quarantineDossiers: [] },
+    censusPrompt(N), { model: 'haiku', effort: 'low', label: `census:w${N}`, phase: 'Census', schema: S_census })
 
   // 5. Predicates (the wave's withheld set disambiguates crossed vs already-replanned contingents).
   const P = predicates(census, new Set(withheld))
@@ -455,11 +553,19 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   let boundaryPlan = null
   let opusLead = ''
 
+  // A dead triage tier has no safe fallback — inventing an empty verdict would silently admit or
+  // drop work the root never saw. Hand the boundary back instead: the root triages it by hand (the
+  // same recovery as boundary-degraded) and relaunches. Legible return beats a stack trace.
+  const degraded = () => ret('triage-degraded', tier,
+    { pendingFeedback: census.pendingUserFeedback ?? [], quarantined: P.quarantined.map((id) => ({ id })) })
+
   // Tier 2 — Opus boundary triager.
   if (tier === 2) {
     phase('Triage-opus')
     cSpend.boundaryTriages++
-    triageResult = await run(opusTriagePrompt(N, P), { model: 'opus', effort: 'high', label: `triage:w${N}`, phase: 'Triage-opus', schema: S_triage })
+    triageResult = await runOr(null, opusTriagePrompt(N, P),
+      { model: 'opus', effort: 'high', label: `triage:w${N}`, phase: 'Triage-opus', schema: S_triage })
+    if (!triageResult) return await degraded()
     if (triageResult.escalate) {
       const er = triageResult.escalateReason
       if (er === 'quarantine-redesign' || er === 'hard-call') {
@@ -477,7 +583,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   if (tier === 3) {
     phase('Triage-fable')
     cSpend.boundaryFables++
-    boundaryPlan = await run(fableBoundaryPrompt(N, P, opusLead), { model: 'fable', effort: 'low', label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
+    boundaryPlan = await runOr(null, fableBoundaryPrompt(N, P, opusLead),
+      { model: 'fable', effort: 'low', label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
+    if (!boundaryPlan) return await degraded()
     if (boundaryPlan.escalate) {
       const er = boundaryPlan.escalateReason
       if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user')
@@ -539,6 +647,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   mergeConductorSpend(consumed)
   boundaries.push({ wave: N, tier: ranTier, escalated: null })
   consumed.conductor = { reason: null, wavesRun, boundaries }
+  // Skill defects are NOT consumed like debt — they are arc-cumulative and outlive the arc.
+  if (degradations.length) consumed.degradations = degradations
+  await writeSkillFeedback()
 
   // persist-plan: overwrite plan.json with the merged plan.
   await run(

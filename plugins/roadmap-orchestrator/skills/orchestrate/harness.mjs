@@ -99,6 +99,27 @@ const NOROADMAP = `You cannot create or modify anything under ${repo}/.roadmap/ 
   `orchestrator's. Never leave code comments or commit messages referencing debt-ledger or dossier entries: ` +
   `you cannot write those entries, so the reference would be fabricated. Report deviations and deferred ` +
   `imperfections ONLY through your structured output fields. `
+// EVERY prompt whose schema carries a maxLength must also carry this. A cap is a contract with the
+// model, and the prompt is the only place that contract is communicated — a capped field with no
+// matching instruction is a trap: the agent overruns it, burns its schema-retries, and dies
+// returning null (arc-observed: the conductor's triage prompt had a 600-char `notes` cap, no
+// terseness clause, and an invitation to put overflow THERE — it died at two consecutive
+// boundaries). Applied as a const, not remembered per-prompt, so it cannot drift out of a new prompt.
+const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. '
+// `contractMismatch` is a TRIGGER, not a notes field: its mere PRESENCE fires the architect consult,
+// forces the (metered) Fable exit gate, banks a kind:'contract' debt entry, and bounces the whole run
+// back to the root for a contract amendment. The model must be told that, or it uses the field as a
+// scratchpad — arc-observed: an implementer wrote "None. FYI: ..." (explicitly stating no contract was
+// contradicted) and cost a frontier gate plus a full root round-trip on a non-existent amendment.
+// NOTE: deliberately no code-side "is this really a mismatch" guard. Suppressing a genuine
+// frozen-surface deviation (the H-7 failure, RATIONALE §10) is far worse than an extra escalation, and
+// any string-matching heuristic would eventually swallow a real one. Over-escalation is the safe error.
+const MISMATCH_IS_A_TRIGGER =
+  'Leave `contractMismatch` EMPTY unless you actually deviated from a frozen contract surface. It is a trigger, ' +
+  'not a notes field: merely filling it in escalates to the frontier architect and returns the whole run for a ' +
+  'contract amendment. Never write "none" or an FYI there — observations, caveats and things you merely want ' +
+  'flagged go in `notes` or `debt`. '
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
@@ -134,6 +155,18 @@ const addDebt = (unitId, sha, items, defaults = {}) => {
     })
   }
 }
+// Skill-defect ledger for THIS wave: every time the ORCHESTRATOR's own machinery misbehaves — an
+// agent dies without a report, a schema-retry fires, a salvage rescues a null — record it here
+// instead of silently swallowing it. Rides back in the wave state; the root renders it into
+// .roadmap/skill-feedback.md. Every safety net below is otherwise SILENT, which is exactly how a
+// deterministic schema-cap bug masqueraded as three runs of "network flakiness" (RATIONALE §14).
+// Defects in the ORCHESTRATOR only — product imperfections go to `debt`, a different audience.
+const degradations = []
+const degrade = (o) => {
+  degradations.push({ script: 'harness', wave: (prior.wave ?? 0) + 1, ...o })
+  log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
+}
+
 // One code-level retry on structured-output failure: agents deep in tool-work
 // occasionally end their turn without a valid structured report (observed ~1 in 15
 // impl-stage calls across eval runs). A single retry with an explicit report-last
@@ -144,6 +177,9 @@ const run = async (prompt, opts) => {
   catch (e) {
     if (!String(e?.message ?? e).includes('StructuredOutput')) throw e
     spend[opts.model] = (spend[opts.model] ?? 0) + 1
+    // A schema-retry firing is itself a signal: one is noise, a pattern means a cap is wrong.
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'schema-retry',
+      what: `structured output rejected, retrying — ${String(e?.message ?? e).slice(0, 200)}` })
     return agent(
       prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
       'report matching the requested schema — put any commentary in its `notes` field and add no other fields. ' +
@@ -151,6 +187,36 @@ const run = async (prompt, opts) => {
       'one sentence each is acceptable.',
       { ...opts, label: `${opts.label ?? 'agent'}#retry` })
   }
+}
+// agent() RESOLVES TO null (it does NOT throw) when a subagent dies — a terminal API error, or its
+// own schema-retries exhausted. run()'s StructuredOutput retry above only fires on a THROW, so it
+// never covers that path. Any result that gets DEREFERENCED must funnel through runOr(), which
+// re-runs the shorten-aggressively rescue on a null and then falls back. Wave-level calls
+// (integration worktree setup, provisioning) are the fatal ones: a null there is a TypeError that
+// kills the whole wave — and, under the conductor, the whole multi-wave run.
+// The null carries NO error object — the platform tells us nothing about why. So record what we DO
+// know (which agent, where) and point at the transcript; that is the difference between "the network
+// is flaky, probably" and "read agent-*.jsonl for label X".
+const runOr = async (fallback, prompt, opts) => {
+  const r = await run(prompt, opts).catch((e) => {
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
+      what: `threw — ${String(e?.message ?? e).slice(0, 200)}` })
+    return null
+  })
+  if (r) return r
+  degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'no-report',
+    what: 'agent died without a report (agent() returned null — cause not exposed by the platform); ' +
+      'salvaging once, then falling back. Read the agent transcript for the real error.' })
+  const retried = await run(
+    prompt + ' IMPORTANT: your previous report was rejected — most likely a free-text field exceeded ' +
+    'its maximum length. Shorten EVERY free-text field aggressively; one sentence each is acceptable. ' +
+    'Emit exactly the requested schema and no other fields.',
+    { ...opts, label: `${opts.label ?? 'agent'}#salvage` },
+  ).catch(() => null)
+  if (!retried)
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'salvage-failed',
+      what: 'salvage retry also produced no report — degrading to the coded fallback' })
+  return retried ?? fallback
 }
 // Verdict-threshold tilt by plan-time risk tier — makes `risk` bind at review/gate time.
 const riskTilt = (r) =>
@@ -313,10 +379,18 @@ const serialize = () => ({
   // Run identity ({runId, scriptPath}) set by the architect at launch — carried through so
   // same-session resume is mechanical and crash forensics are one `cat` of state.json.
   ...(prior.run ? { run: prior.run } : {}),
+  // The conductor block is the conductor's, but the harness OWNS state.json mid-wave — so without
+  // this passthrough every checkpoint strips it, and a crash mid-wave (the common case) leaves the
+  // rung-3 recovery signal and the arc-cumulative boundary forensics missing from disk. Arc-observed:
+  // three completed waves on disk, `conductor: undefined`. Passthrough only — never authored here.
+  ...(prior.conductor ? { conductor: prior.conductor } : {}),
   preview: { sha: previewSha, status: previewStatus },
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
+  // Skill defects surfaced THIS wave — the orchestrator misbehaving, not the product. The root
+  // renders these into .roadmap/skill-feedback.md and carries them back to the skill's repo.
+  ...(degradations.length ? { degradations } : {}),
   ...(boundary ? { boundary } : {}),
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
@@ -345,7 +419,8 @@ function checkpoint() {
 async function provision(where, label) {
   if (!plan.provision) return { ok: true }
   const p = plan.provision
-  return run(
+  return runOr(
+    { ok: false, detail: 'provisioning agent died (no report) — treat as an environment failure' },
     STRICT +
     `Provision the checkout at ${where} so its build and tests can run: ` +
     (p.copy?.length ? `copy these gitignored files from ${repo} into the same relative locations: ${p.copy.join(', ')}. ` : '') +
@@ -436,8 +511,7 @@ async function runBoundary() {
       `sequences — hunting behavior that is unexpected, counterintuitive, underdocumented, brittle, or ` +
       `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). Change nothing: no commits, no file ` +
       `edits, no restarts. At most 10 findings — severity, exact repro, observed vs expected; an empty report ` +
-      `is legitimate and better than manufactured findings. Keep every free-text field terse — an oversized ` +
-      `report fails validation. Report shaObserved: ${explSha}.`,
+      `is legitimate and better than manufactured findings. ${TERSE}Report shaObserved: ${explSha}.`,
       { model: 'opus', effort: 'high', phase: 'Boundary', label: `explorer:w${waveN}`, schema: S.explore }
     ).catch(() => null),
     !doHealth ? null : run(
@@ -451,14 +525,14 @@ async function runBoundary() {
       `ergonomics — manual dev steps that should be automated, missing tooling that taxes every round. For ` +
       `each finding worth fixing, also return a ready-to-dispatch fix-unit draft (id, goal, files, acceptance ` +
       `criteria as individually checkable clauses). Read-only — change nothing. An empty report is legitimate. ` +
-      `Keep every free-text field terse — an oversized report fails validation.`,
+      TERSE,
       { model: 'opus', effort: 'high', phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
     ).catch(() => null),
     !(doHealth && C.flakeReruns > 0) ? null : run(
       STRICT +
       `In the integration worktree at ${intWt}: run the project's full test suite ${C.flakeReruns} times in a ` +
       `row (commands: ${brief}). Report runs = how many completed, and in flips the exact name of every test ` +
-      `that changed pass/fail between runs (empty when stable). Fix nothing.`,
+      `that changed pass/fail between runs (empty when stable). Fix nothing. ${TERSE}`,
       { model: 'haiku', phase: 'Boundary', label: `flake:w${waveN}`, schema: S.flake }
     ).catch(() => null),
   ])
@@ -533,7 +607,10 @@ async function runUnit(unit) {
     adoptTip = rp.sha
   }
 
-  const ws = await run(
+  const ws = await runOr(
+    // A dead setup agent must not be read as a green worktree: ok:false routes to quarantine below,
+    // where a null would instead have thrown and blamed the unit for an infrastructure failure.
+    { ok: false, sha: '', state: 'ready', detail: 'setup agent died without a report' },
     STRICT +
     `In the git repository at ${repo}, set up the worktree for unit ${unit.id} at ${w} on branch unit/${unit.id} ` +
     `(fork base ${source}). Work these cases in order and report the FIRST that matches:\n` +
@@ -596,14 +673,17 @@ async function runUnit(unit) {
     // The Fable plan-check — the frontier pass. `lead` carries an Opus escalation's assessment
     // so the architect confirms/overturns a concrete concern rather than re-deriving it; '' when
     // reached directly, keeping that prompt byte-identical to before.
+    // Charter note (arc-observed, RATIONALE §4): 11 plan-checks in one arc never fired on plan
+    // PLAUSIBILITY but approved past spec-internal contradictions the implementer then had to
+    // reconcile ad hoc. Hence the spec-interrogation clause below — don't drop it. (Kept as a
+    // comment, not prompt text: the agent is not the maintainer.)
     const fablePlanCheck = (lead = '') => {
       spend.planChecks++
       return run(
         `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
         `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
-        `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan ` +
-        `(arc-observed: plan-checks that judged only plan plausibility approved past spec-internal contradictions ` +
-        `the implementer then had to resolve ad hoc): hunt contradictions within the spec, clauses that contradict ` +
+        `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
+        `hunt contradictions within the spec, clauses that contradict ` +
         `a referenced contract or documented codebase reality, and stale premises. A spec defect is not the ` +
         `engineer's to absorb — resolve it now through your verdict. ` +
         `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
@@ -669,8 +749,8 @@ async function runUnit(unit) {
     `leave it. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
     `choose the deviation you judge correct, keep building, and describe it in the structured \`contractMismatch\` ` +
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
-    `note the deviation only in code comments. ${NOROADMAP}Work only inside ${w}. Commit your work on the current ` +
-    `branch with clear messages. ${REPORT}`,
+    `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
+    `your work on the current branch with clear messages. ${REPORT}`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   addDebt(unit.id, base, impl.debt, { kind: 'quality' })
   noteMismatch(impl)
@@ -738,8 +818,8 @@ async function runUnit(unit) {
       `Fix unit ${unit.id} in ${w}. Spec: ${spec}. Failing checks (verbatim): ${JSON.stringify(verify.failures)}. ` +
       `Blocking review findings: ${JSON.stringify(blockers)}.` +
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}` +
-      ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ${NOROADMAP}` +
-      `Commit your fixes. ${REPORT}`,
+      ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
+      `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     addDebt(unit.id, base, fixed.debt, { kind: 'quality' })
     noteMismatch(fixed)
@@ -800,7 +880,7 @@ async function runUnit(unit) {
         `architect if you are stuck, if the right choice is a genuinely hard trade-off where every option carries ` +
         `a substantive drawback, if the increment is architecturally foundational to the wider solution, or if ` +
         `you have found an oversight you are not confident you can resolve. Name the escalation trigger. Record ` +
-        `any imperfection you consciously ship rather than fix in \`debt\` (what, why, severity, kind).` +
+        `any imperfection you consciously ship rather than fix in \`debt\` (what, why, severity, kind). ${TERSE}` +
         `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
         { model: 'opus', effort: 'high', phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
       addDebt(unit.id, base, og.debt)
@@ -858,7 +938,7 @@ async function runUnit(unit) {
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. If revising, ` +
       `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
-      `than fix in \`debt\`.${mismatchClause}` +
+      `than fix in \`debt\`. ${TERSE}${mismatchClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     addDebt(unit.id, base, gate.debt)
@@ -976,7 +1056,8 @@ function start(unit) {
 }
 
 phase('Setup')
-const intSetup = await run(
+const intSetup = await runOr(
+  { ok: false, sha: '', detail: 'integration-worktree setup agent died without a report' },
   STRICT +
   `In the git repository at ${repo}: 1) ensure branch ${intBranch} exists — if not, create it at ` +
   `${integrationTip}; 2) ensure a worktree for it exists at ${intWt} (git worktree add ${intWt} ${intBranch}); ` +
