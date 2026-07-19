@@ -438,6 +438,12 @@ EOF
 else
 # Conductor fixture: three real units (no adopted branches), a contract edge, an api-kind
 # preview (so the runtime explorer runs), and plan.config.conductor with maxWavesPerRun 3.
+# The cap stays at 3 DELIBERATELY, though the fixture's expected shape is a 2-wave run. Tightening
+# it to 2 was tried and reverted (2026-07-19): the fixture plants a blocker — `bash test.sh` exits 1
+# because provisioning is out-of-band — and the wave-2 boundary can legitimately admit a draft that
+# fixes it, as it did on a real run. At a cap of 2 that correct behaviour exhausts the loop and
+# returns `max-waves`, failing check (d)'s `arc-complete`. A cap that reds on correct behaviour
+# costs more to live with than the extra wave costs to run. Budget for 3 waves; see README.
 # impossible-cache quarantines wave 1 (deterministic feasible:false → Fable plan-check),
 # engaging the tier-3 Fable boundary agent; the stats.js health-bait feeds a consolidation
 # fix-unit; a 2-wave arc-complete run is expected. state.json seeds a `run` block so the

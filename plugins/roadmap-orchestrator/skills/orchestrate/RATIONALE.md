@@ -188,10 +188,19 @@ by tier:
 
   > Keep every free-text field terse — an oversized report fails validation.
 
-  The two prompts with that clause have never failed. The two without it both died, at two consecutive
-  boundaries, on `/notes: must NOT have more than 600 characters`. **A `maxLength` in a schema is a
-  contract with the model, and the prompt is the only place that contract is communicated.** Raising
-  the cap alone just moves the cliff.
+  The two prompts without it both died, at two consecutive boundaries, on
+  `/notes: must NOT have more than 600 characters`. **A `maxLength` in a schema is a contract with the
+  model, and the prompt is the only place that contract is communicated.** Raising the cap alone just
+  moves the cliff; the fix that worked raised it AND reworded.
+
+  **Superseded, 2026-07-18** — this section used to add "the two prompts with that clause have never
+  failed." They have since: 16 opus calls died carrying it. The generic clause is necessary and not
+  sufficient, so every capped field now states its own budget. What survived the correction is the
+  stronger claim, and it survived a real test: deaths occurred **only** on capped schemas (16/62
+  capped opus calls vs 0/102 uncapped, p~4e-8), a split that holds when matched on turn length. What
+  is NOT established is which field overran — no payloads survive for workflow agents — so treat
+  per-field attribution as inference, and note one capped-schema-independent death in the record
+  (`plan:`, on the uncapped `S.plan`). Caps are the amplifier, not the whole mechanism.
 - **`feasible: false` is the planner's escape valve.** Without it, an agent that correctly refuses to
   build an unsatisfiable spec has no legal output.
 - **`agent()` resolves to `null` on a terminal API error — it does not throw.** This is the single

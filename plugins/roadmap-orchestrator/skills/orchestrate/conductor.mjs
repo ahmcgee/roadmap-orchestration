@@ -75,6 +75,14 @@ let wavesRun = 0
 // as the harness's spend tally): a root adjudication mid-arc relaunches the conductor, and
 // without seeding, each relaunch would erase the prior runs' boundary forensics.
 const boundaries = (inState.conductor?.boundaries ?? []).map((b) => ({ ...b }))   // [{ wave, tier, escalated: <reason|null> }]
+// Last wave's boundary evidence, kept for the max-waves return. Ruling 1 gives the root the final
+// wave's evidence on any TERMINAL return, and max-waves is terminal — but it is the one terminal
+// return the conductor cannot see coming: every other path returns before the persist step, whereas
+// max-waves only becomes terminal after the loop has already triaged the wave and cleared its
+// boundary as a continuation. Eval-observed 2026-07-19: a 3-wave run returned max-waves with no
+// boundary block at all, so the root relaunching had nothing to read.
+let lastBoundary = null
+let lastBoundaryWave = null
 
 /* --------------------------- spend accounting -------------------------- */
 // Per-tier tally of THIS script's own agent() calls, plus the two conductor-specific counters.
@@ -131,10 +139,9 @@ const run = async (prompt, opts) => {
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'schema-retry',
       what: `structured output rejected, retrying — ${String(e?.message ?? e).slice(0, 200)}` })
     return agent(
-      prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
-      'report matching the requested schema — put any commentary in its `notes` field and add no other fields. ' +
-      'Your previous report likely failed because it was too long — shorten every free-text field aggressively; ' +
-      'one sentence each is acceptable.',
+      prompt + ' IMPORTANT: your previous structured report was REJECTED. Emit exactly the requested schema and ' +
+      'no other keys — an unexpected key is rejected as hard as an over-long one. Cut every free-text field ' +
+      'hard; keep only what the structured fields cannot carry. Do not redo the task.',
       { ...opts, label: `${opts.label ?? 'agent'}#retry` })
   }
 }
@@ -182,7 +189,9 @@ const STRICT = 'Start by `cd` to the exact absolute path named in this task — 
 // `notes` cap, no terseness clause, and a closing line inviting the agent to put overflow THERE. It
 // overran, exhausted its schema-retries, and died at two consecutive boundaries. See RATIONALE §9.
 const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
-  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. '
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
+  'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
+  'unexpected key is rejected as hard as an over-long one. '
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
@@ -277,6 +286,31 @@ function withhold() {
   return { dispatchPlan, withheld: [...withheldIds] }
 }
 
+// Arc-completeness was STATUS-BLIND: the decision read only what the boundary agents emitted, and
+// arcSummary buckets merged/quarantined/deferred, so a pending/running/blocked in-scope unit was
+// invisible to the triager that declared the arc done. 2026-07-18: four in-scope, satisfiable units
+// were still outstanding when tier-2 called arc-complete, and the root caught it by hand.
+//
+// The guard is deliberately NOT "refuse while anything is non-terminal" — that livelocks. A unit
+// whose dependency was cut or quarantined without a respec can never reach a terminal state, and
+// refusing on it would burn a paid boundary every relaunch, forever. So: refuse only for units that
+// are actually SATISFIABLE — every dependency merged, or itself outstanding-and-satisfiable — and
+// hand the rest to the root as evidence rather than silently dropping them.
+function outstanding() {
+  const inScopeIds = new Set(plan.units.filter((u) => u.inScope).map((u) => u.id))
+  const nonTerminal = [...inScopeIds].filter((id) => !isTerminal(id))
+  const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
+  const set = new Set(nonTerminal)
+  // Fixed point: drop anything blocked behind a dependency that is neither merged nor itself
+  // still-live. What survives is work the next wave could actually dispatch.
+  for (let changed = true; changed;) {
+    changed = false
+    for (const id of [...set])
+      if (!depsOf(id).every((d) => uStatus(d) === 'merged' || set.has(d))) { set.delete(id); changed = true }
+  }
+  return { satisfiable: [...set], stuck: nonTerminal.filter((id) => !set.has(id)) }
+}
+
 // Pure routing predicates (a function of plan + returned state + census + this wave's withheld set).
 function predicates(census, withheldIds) {
   const units = state.units ?? {}
@@ -284,6 +318,10 @@ function predicates(census, withheldIds) {
   const explorer = b.explorer ?? {}
   const health = b.health ?? {}
   const flake = b.flake ?? {}
+  // Design-fidelity drift is judged like health: findings flow to triage, drafts are the default
+  // vehicle. Folding them in HERE (rather than a parallel channel) is what delivers "drift admitted
+  // as fix units by default" — they inherit tier-1/tier-2 default-admit and the cut-line brake.
+  const design = b.design ?? {}
   const debt = state.debt ?? []
   const inScopeIds = new Set(plan.units.filter((u) => u.inScope).map((u) => u.id))
   // crossedContingent: a contingent edge whose `from` merged but whose `to` was NOT dispatched —
@@ -299,8 +337,8 @@ function predicates(census, withheldIds) {
   // the plan (its record stays 'quarantined' — the harness never rewrites an existing record), so
   // excluding out-of-scope ids stops a respecced quarantine from re-triaging forever.
   const quarantined = Object.entries(units).filter(([id, r]) => r?.status === 'quarantined' && inScopeIds.has(id)).map(([id]) => id)
-  const findings = [...(explorer.findings ?? []), ...(health.findings ?? [])]
-  const healthFixUnits = health.fixUnits ?? []
+  const findings = [...(explorer.findings ?? []), ...(health.findings ?? []), ...(design.findings ?? [])]
+  const healthFixUnits = [...(health.fixUnits ?? []), ...(design.fixUnits ?? [])]
   const flakeFlips = flake.flips ?? []
   const userFeedback = census.pendingUserFeedback ?? []
   const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0
@@ -377,7 +415,8 @@ const censusPrompt = (N) => STRICT +
   `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
   `in \`pendingUserFeedback\` (empty array if that directory is absent or holds only TEMPLATE.md).\n` +
   `2) List the *.md files under ${repo}/.roadmap/quarantine/ — put their basenames in \`quarantineDossiers\` ` +
-  `(empty array if absent).\nReport ok:true when both listings completed. Never guess filenames. ${TERSE}`
+  `(empty array if absent).\nReport ok:true when both listings completed. Never guess filenames. Keep ` +
+  `\`detail\` to one sentence (max 300 characters). ${TERSE}`
 
 // The cut-line brake is load-bearing (arc-observed, RATIONALE §7): a healthy assessor drafts
 // something EVERY wave, so an admit-by-default triage with no brake never dries — one live run
@@ -391,7 +430,9 @@ const opusTriagePrompt = (N, P) =>
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
   `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
-  `fix-unit DRAFTS to admit. Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
+  `fix-unit DRAFTS to admit. ` +
+  `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
+  `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
   `\`promote\`. THE CUT LINE BINDS THE DEFAULT — a healthy assessor drafts something every wave, so admitting by ` +
   `default with no brake would extend the arc forever: once the plan's own units are merged, a ` +
@@ -405,7 +446,8 @@ const opusTriagePrompt = (N, P) =>
   `'contract-amendment'/'contingent-replan'/'needs-user' return to the root. When escalating 'needs-user', put ` +
   `the exact user-facing question (with the context needed to answer it) in \`notes\` — that text IS what reaches ` +
   `the user. Set arcComplete:true if the cut line ` +
-  `is reached and no further work remains. Return structured output only — write nothing. ` + TERSE
+  `is reached and no further work remains. Return structured output only — write nothing. Hold \`notes\` to a ` +
+  `few short paragraphs (max 2000 characters). ` + TERSE
 
 const fableBoundaryPrompt = (N, P, lead) =>
   `You are the wave-${N} Fable boundary agent for a roadmap build — the architect's in-workflow stand-in for ` +
@@ -427,7 +469,8 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `'contract-amendment'/'contingent-replan'/'needs-user' to return to the root, or 'cut-line' when the arc is ` +
   `complete. When escalating 'needs-user', put the exact user-facing question (with the context needed to answer ` +
   `it) in \`notes\` — that text IS what reaches the user. ` +
-  `Return skeletons and journal only — write no code and no files. ${TERSE}${lead}`
+  `Return skeletons and journal only — write no code and no files. Hold \`journal\` to one short paragraph ` +
+  `(max 1500 characters) and \`notes\` to a few (max 2000 characters). ${TERSE}${lead}`
 
 const specExpandPrompt = (skel) => SPECWRITE +
   `Expand this unit skeleton into a full spec and write it to exactly ${repo}/.roadmap/specs/${skel.id}.md and no ` +
@@ -529,6 +572,18 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     { ok: false, pendingUserFeedback: [], quarantineDossiers: [] },
     censusPrompt(N), { model: 'haiku', effort: 'low', label: `census:w${N}`, phase: 'Census', schema: S_census })
 
+  // Single choke point for BOTH arc-complete exits (tier-3 cut-line and the tier-agnostic one
+  // below) — each was independently status-blind, so guarding only one would leave the same bug
+  // reachable by the other path.
+  const finish = async (tier) => {
+    const { satisfiable, stuck } = outstanding()
+    if (satisfiable.length)
+      return await ret('arc-stalled', tier, { arcSummary: arcSummary(census), outstanding: satisfiable, stuck })
+    // Nothing dispatchable remains. Units stuck behind an unresolved quarantine are NOT a reason to
+    // refuse — nothing further can move them — but they must be named, not silently dropped.
+    return await ret('arc-complete', tier, { arcSummary: arcSummary(census), ...(stuck.length ? { stuck } : {}) })
+  }
+
   // 5. Predicates (the wave's withheld set disambiguates crossed vs already-replanned contingents).
   const P = predicates(census, new Set(withheld))
 
@@ -590,7 +645,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       const er = boundaryPlan.escalateReason
       if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user')
         return await ret(er, 3, briefFor(er, P, N, triageResult, boundaryPlan, census))
-      if (er === 'cut-line') return await ret('arc-complete', 3, { arcSummary: arcSummary(census) })
+      if (er === 'cut-line') return await finish(3)
     }
   }
   const ranTier = tier
@@ -628,8 +683,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
 
   // Arc complete: a tier said so, or the boundary produced no new units and no spec revisions.
+  // Routed through finish(), which refuses to close over dispatchable work.
   if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0))
-    return await ret('arc-complete', ranTier, { arcSummary: arcSummary(census) })
+    return await finish(ranTier)
 
   // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
   phase('Spec-expand')
@@ -642,6 +698,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   const waveDebt = state.debt ?? []   // captured before the consumed state clears it
   // Consumed continuation state: boundary removed + debt cleared (folded), conductor.reason null.
   const consumed = { ...state, spend: { ...(state.spend ?? {}) } }
+  if (state.boundary) { lastBoundary = state.boundary; lastBoundaryWave = N }
   delete consumed.boundary
   consumed.debt = []
   mergeConductorSpend(consumed)
@@ -682,7 +739,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   await run(
     STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
     `Move these files if they exist — skip any that are missing (this is idempotent): ` +
-    `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md` +
+    `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
+    `${repo}/.roadmap/feedback/design/wave-${N}.md` +
     `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
     `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
     { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
@@ -698,6 +756,11 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
 }
 
 // Loop exhausted without an arc-complete / early return -> relaunch fresh (resets the agent counter).
+// Hand back the last wave's boundary (see lastBoundary): the root needs the same evidence here as on
+// any other terminal return. Marked `triaged` because, unlike a true terminal boundary, this one was
+// already dispositioned — its findings are banked and its feedback moved, so re-actioning it would
+// duplicate the ladder's work.
+if (lastBoundary) state = { ...state, boundary: { ...lastBoundary, triaged: true, wave: lastBoundaryWave } }
 return await ret('max-waves', null, {})
 
 // Reason-specific brief fields for the return envelope. Hoisted (function declaration) so the

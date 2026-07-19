@@ -313,6 +313,17 @@ test('maxWavesPerRun:2 with an always-fresh draft caps at 2 waves and returns ma
   assert.equal(result.status, 'conductor-return')
   assert.equal(result.wave, 2)
   assert.ok(result.state && result.plan, 'envelope carries state + plan')
+
+  // Ruling 1: a TERMINAL return hands the final wave's boundary evidence to the root. max-waves is
+  // terminal, but it is the only terminal return the conductor cannot see coming — every other path
+  // returns before the persist step, while this one becomes terminal only after the loop has already
+  // triaged the wave and cleared its boundary as a continuation. Eval-observed 2026-07-19: a 3-wave
+  // run returned max-waves with no boundary at all, leaving the relaunching root nothing to read.
+  assert.ok(result.state.boundary, 'max-waves must hand the final boundary back, not swallow it')
+  assert.equal(result.state.boundary.triaged, true,
+    'and must mark it triaged — unlike a true terminal boundary this evidence was already ' +
+    'dispositioned, so a root that re-actions it duplicates the ladder')
+  assert.equal(result.state.boundary.wave, 2, 'the boundary names the wave it came from')
 })
 
 /* ============================================================================== */
@@ -752,4 +763,42 @@ test('the conductor opens exactly one workflow nesting level (always the harness
   for (const c of workflow.calls) {
     assert.equal(c.scriptPath, HARNESS_PATH, 'every workflow() call targets the harness, never another workflow script')
   }
+})
+
+/* --------------------- arc-completeness is status-aware ---------------------- */
+// Arc-completeness read only what the boundary agents EMITTED — never unit statuses — and
+// arcSummary buckets merged/quarantined/deferred, so pending/running/blocked in-scope units were
+// invisible to the tier that declared the arc done. 2026-07-18: tier-2 called arc-complete with
+// four in-scope, satisfiable units outstanding; only the root caught it.
+const unitOf = (id, o = {}) => ({ id, title: id, risk: 'low', kind: 'code', inScope: true, ...o })
+
+test('arc-complete is refused while in-scope dispatchable work remains -> arc-stalled', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('leftover')] })
+  const state = mkState({ units: { 'seed-unit': { status: 'merged' } } })   // leftover: no record = pending
+  const { result } = await conduct({ plan, state, waveHandler: waves(state) })
+
+  assert.equal(result.reason, 'arc-stalled', 'a satisfiable in-scope unit must block the close')
+  assert.deepEqual(result.outstanding, ['leftover'])
+})
+
+test('arc-stalled does NOT livelock on work wedged behind an unresolved quarantine', async () => {
+  // `wedged` depends on a quarantined unit that was never respecced: it can never reach a terminal
+  // state, so refusing on it would burn a paid boundary on every relaunch, forever. It must be
+  // reported as `stuck` and let the arc close.
+  const plan = mkPlan({
+    units: [unitOf('seed-unit'), unitOf('dead'), unitOf('wedged')],
+    edges: [{ from: 'dead', to: 'wedged', type: 'semantic', mode: 'contract' }],
+  })
+  const state = mkState({ units: { 'seed-unit': { status: 'merged' }, dead: { status: 'quarantined' } } })
+  const { result } = await conduct({ plan, state, waveHandler: waves(state) })
+
+  assert.equal(result.reason, 'arc-complete', 'unreachable work must not hold the arc open forever')
+  assert.deepEqual(result.stuck, ['wedged'], 'but it must be named, never silently dropped')
+})
+
+test('a fully merged arc still closes as arc-complete', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit')] })
+  const state = mkState({ units: { 'seed-unit': { status: 'merged' } } })
+  const { result } = await conduct({ plan, state, waveHandler: waves(state) })
+  assert.equal(result.reason, 'arc-complete')
 })

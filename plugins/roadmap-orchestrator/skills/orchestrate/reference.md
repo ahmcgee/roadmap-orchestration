@@ -39,6 +39,8 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
     explorer/*.md      #   per-wave runtime exploration findings (harness-run Opus, wave-tail)
     health/*.md        #   per-wave code/test/structure/ergonomics health findings (Opus)
+    design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (Opus);
+                       #   written only on waves that merged a design-cited unit
     user/*.md          #   the user drops notes here AT ANY TIME (copying TEMPLATE.md); read
                        #   at the next boundary — never an input to a running wave
     triaged/<wave>/    #   consumed items, moved here at triage; never re-triaged
@@ -64,6 +66,11 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
     "risk": "high",                // low | med | high — drives plan-check coverage and gate effort
     "kind": "code",                // anything else is yours to handle between waves
     "inScope": true,               // resolved cut line, ancestor-closed
+    "design": ["checkin#opening-chrome"],  // optional in general, REQUIRED where a
+                                   //   designAuthority `covers` this unit's surface. Cites the
+                                   //   binding comp section(s). Threaded into implement/review/
+                                   //   gate, and interrogated by plan-check like a contract:
+                                   //   a spec clause contradicting the cited comp is a redirect.
     "existingBranch": "..."        // optional: adopt a pre-written branch — skips plan/implement,
                                    //   runs it through the same verify → review → gate pipeline.
                                    //   MUST NOT be the unit's own `unit/<id>` (hard-refused at
@@ -76,6 +83,21 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
     "type": "semantic",            // semantic | file-overlap (both just order scheduling)
     "mode": "contract",            // contract | contingent — contingent edges end the wave; you replan after
     "contract": "contracts/token-provider.md"
+  }],
+  "designAuthorities": [{          // optional. Where designs are provided they BIND — a screen
+                                   //   with a comp is never built from primitives. See SKILL.md.
+    "id": "checkin",               // stable slug — units cite it in `design`
+    "source": "…",                 // provenance: design project, export, or design-system package
+    "path": "apps/web/src/design/checkin/",  // IN-REPO copy, committed WITH the plan pack so
+                                   //   every unit forks with the comp already in its base — a
+                                   //   comp the implementer cannot read is one it will reinvent.
+                                   //   ADOPTABLE source belongs in the PRODUCT tree, never under
+                                   //   .roadmap/: coding agents may not write there (NOROADMAP)
+                                   //   and it is archived at close-out, so imports would break.
+    "reference": ".roadmap/design/checkin/",  // optional; renders kept for COMPARISON only,
+                                   //   never imported — safe to archive with the arc
+    "covers": ["/checkin", "#today"]     // surfaces this authority governs — a UI unit touching
+                                   //   one of these with no `design` citation is a plan defect
   }],
   "provision": {                   // optional but strongly recommended — a fresh worktree has
     "copy": [".env", ".npmrc"],    //   no deps/env; without it, test gates fail for non-code
@@ -202,7 +224,8 @@ branch with the full suite as the gate. Then, at the wave tail, the **boundary p
   `preview.howToAccess`; ≤10 findings with severity, exact repro, observed vs expected; an empty
   report is legitimate), the **Opus health assessor** against the integration tip, and Haiku
   full-suite **flake re-runs** (`flakeReruns`). Results land in the returned state's `boundary`
-  block and, via Haiku verbatim-writers, in `feedback/{explorer,health}/wave-<n>.md`.
+  block and, via Haiku verbatim-writers, in `feedback/{explorer,health,design}/wave-<n>.md`
+  (`design/` only on waves that merged a design-cited unit).
 
 **The health assessor is empowered, not advisory.** It judges what no per-unit gate can see: test
 health (coverage gaps, brittleness — assertions on implementation detail, over-mocking,
@@ -273,7 +296,10 @@ free.
   failed id.
 - After a tier runs, **Sonnet** renders every new skeleton to `.roadmap/specs/<id>.md` and a pure-code
   merge appends the units and edges. **Arc-completeness is post-hoc**: a tier says so, or the boundary
-  produced no new units and no spec revisions → `arc-complete`.
+  produced no new units and no spec revisions. Both paths are then filtered through a satisfiability
+  census — if any in-scope unit is still non-terminal *and* dispatchable, the return is `arc-stalled`
+  instead, carrying `outstanding`. Units wedged behind an unresolved quarantine can never move, so
+  they do not block the close; they ride back in `stuck`.
 
 **Contingent withholding.** The harness's scheduler ignores `edge.mode`, so before every dispatch the
 conductor sets aside any contingent `to`-unit whose `from` is not yet merged, via a transient
@@ -284,7 +310,11 @@ dependents yourself or the harness will launch them early.
 **Budget guard.** For waves after the first, a pre-dispatch guard refuses to start a wave that could
 cross the 1000-call cap: `runLocalCalls + 8 + dispatchable×perUnitCallEstimate + agentBudgetReserve
 > 1000` → return `agent-budget`. Exhausting `maxWavesPerRun` returns `max-waves`. Both mean *relaunch
-fresh* — a new run resets the per-run counter.
+fresh* — a new run resets the per-run counter. `max-waves` is the one terminal return the conductor
+cannot see coming: it becomes terminal only after the loop has triaged the wave and cleared its
+boundary as a continuation. So the final boundary is restored onto the returned state, marked
+`{triaged: true, wave: N}` — the evidence is there to read, but it has already been dispositioned
+(findings banked, feedback moved), so do not re-action it.
 
 **Persistence.** At a **continuation** boundary the conductor runs five Haiku verbatim-writers, all
 awaited before the next dispatch and idempotent by wave-N markers: `persist-plan` (the merged
@@ -298,7 +328,7 @@ persists only `state.json`, with `boundary` and `debt` left **INTACT** — the r
 
 ```jsonc
 { status: 'conductor-return',
-  reason,            // arc-complete | contingent-replan | contract-amendment | needs-user
+  reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
                      //   | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
   wave, wavesRun,
@@ -309,7 +339,9 @@ persists only `state.json`, with `boundary` and `debt` left **INTACT** — the r
   // contingent-replan → { edges }
   // contract-amendment → { debt, contracts }
   // needs-user        → { question, context }
-  // arc-complete      → { arcSummary }
+  // arc-complete      → { arcSummary, stuck? }
+  // max-waves         → state.boundary restored, marked {triaged:true, wave}
+  // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }
   // root-triage       → { pendingFeedback, quarantined }
   // triage-degraded   → { pendingFeedback, quarantined }

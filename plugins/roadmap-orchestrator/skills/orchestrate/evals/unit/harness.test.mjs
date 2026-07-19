@@ -429,8 +429,81 @@ test('17 StructuredOutput retry counts twice; a plain impl error quarantines the
   assert.equal(calls.filter((c) => c.label.startsWith('impl:a')).length, 2, 'original + retry recorded')
   assert.equal(state.spend.opus, calls.filter((c) => c.model === 'opus').length, 'spend.opus counts every opus call incl. the retry')
 
-  // b: a non-StructuredOutput error propagates and quarantines the unit as a pipeline error.
+  // b: the implement call died and the branch has no commits, so quarantine is still correct —
+  // but the ORIGINAL error must survive into the reason. runOr swallows the throw into the
+  // degradation ledger, and a dossier reading only "no commit" would send the next reader hunting
+  // for a cause that was in hand all along.
   assert.equal(state.units.b.status, 'quarantined')
-  assert.match(state.units.b.reason, /pipeline error/)
-  assert.match(state.units.b.reason, /non-structured explosion/)
+  assert.match(state.units.b.reason, /neither a report nor a commit/)
+  assert.match(state.units.b.reason, /non-structured explosion/, 'the real cause must survive runOr')
+})
+
+// The 2026-07-18 regression this whole change exists to prevent: two units whose work was
+// COMMITTED were quarantined because the reporting call died. The branch, not the report, is the
+// evidence — so a lost report with commits present must proceed to judgment, and must force the
+// frontier gate (the debt/contractMismatch signal died with the report).
+test('18 lost impl report + commits present -> unit proceeds and takes the frontier gate', async () => {
+  const { fn, calls } = makeAgent([
+    // every attempt fails, including the #retry and #salvage rescues — the real 2026-07-18 shape
+    { match: /^impl:a/, result: () => { throw structuredOutputError() } },
+    // the branch says the work landed
+    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'merged', 'committed work must not be thrown away over a lost report')
+  assert.ok(calls.some((c) => c.label === 'commit-probe:a'), 'the branch is asked before assuming the worst')
+  assert.ok(calls.some((c) => c.label === 'gate:a#0'), 'a lost report forces the Fable gate, not the cheap Opus one')
+  assert.ok(!calls.some((c) => c.label === 'opus-gate:a#0'), 'the Opus-first gate is skipped when evidence is missing')
+  assert.match(calls.find((c) => c.label === 'gate:a#0').prompt, /report was lost/i,
+    'the gate must be told the self-reported evidence is absent, not merely empty')
+  assert.ok(state.degradations.some((d) => d.label === 'impl:a'), 'the loss is recorded, not silent')
+})
+
+// `blocked` was a one-way door: nothing ever reset it, so a unit blocked behind a quarantine that
+// was later superseded and merged stayed undispatchable for the rest of the arc. 2026-07-18
+// stranded four in-scope units this way; the root un-stuck them by hand, twice.
+test('19 blocked units re-enter dispatch once the blocking dependency resolves', async () => {
+  const plan = makePlan([unit('dep'), unit('blocked')], [{ from: 'dep', to: 'blocked', mode: 'contract' }])
+
+  // Wave 1: dep quarantines, so `blocked` is stamped blocked.
+  const { fn } = makeAgent([{ match: /^review:dep/, result: {
+    blocking: [], preExisting: [], nonBlocking: [], unsatisfiable: true } }])
+  const w1 = await runWave(fn, plan, makeState())
+  assert.equal(w1.units.dep.status, 'quarantined')
+  assert.equal(w1.units.blocked.status, 'blocked')
+
+  // Wave 2 resumes from that state with the dependency now merged (as a respec would leave it).
+  // The stale `blocked` stamp must not outlive the condition that caused it.
+  const { fn: fn2 } = makeAgent()
+  const w2 = await runWave(fn2, plan, makeState({ wave: 1, units: { dep: { status: 'merged' }, blocked: { status: 'blocked' } } }))
+  assert.equal(w2.units.blocked.status, 'merged', 'an unblocked unit must be dispatched, not stranded')
+})
+
+// Gate-review finding: reportLostEver was wired only at the impl site. A fix agent that dies every
+// round leaves verify green, so the polish loop never breaks on failure and the unit reached the
+// CHEAP gate carrying neither the review blockers nor the (dead) debt/contractMismatch signal.
+test('20 a lost FIX report also forces the frontier gate', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^review:a#0$/, result: {
+      blocking: [{ summary: 'real defect', file: 'a.js', confidence: 1 }],
+      preExisting: [], nonBlocking: [], unsatisfiable: false } },
+    { match: /^fix:a/, result: () => { throw structuredOutputError() } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.ok(calls.some((c) => c.label === 'gate:a#0'), 'a lost fix report must force the Fable gate')
+  assert.ok(!calls.some((c) => c.label === 'opus-gate:a#0'), 'the cheap gate must not adjudicate missing evidence')
+  assert.ok(state.degradations.some((d) => d.label === 'fix:a#0'), 'the loss is ledgered')
+})
+
+// Gate-review finding: `deferred` was the same one-way door `blocked` was. The harness stamps it on
+// any out-of-scope unit at first sight — including contingent units the conductor TRANSIENTLY
+// withheld — and nothing reset it. A root replanning a withheld dependent back into scope got an
+// arc that silently "completed" without ever dispatching it.
+test('21 a stale `deferred` stamp on an in-scope unit is cleared at wave start', async () => {
+  const { fn } = makeAgent()
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'deferred' } } }))
+  assert.equal(state.units.a.status, 'merged', 'a unit the plan says is in scope must be dispatched')
 })

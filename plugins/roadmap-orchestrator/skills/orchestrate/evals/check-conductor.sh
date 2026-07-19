@@ -5,17 +5,27 @@
 # (status_of / reason_of / no_pipeline_error, PASS / FAIL / WARN).
 # Usage: check-conductor.sh <target-dir>     — exit 0 = all checks pass.
 #
-# Expected shape: an autonomous 2-wave run ending arc-complete. Wave 1 quarantines
-# impossible-cache (engaging the tier-3 Fable boundary agent) and, via the stats.js
-# health-bait, drafts a gcd-consolidation fix-unit; wave 2 merges the admitted unit(s) and
-# the boundary yields nothing new → arc-complete. Per ruling 1 the conductor NEVER sets
-# boundary:'off', so wave-2 boundary evidence EXISTS and the final state carries the boundary
-# block untriaged (integration-review evidence for the root). Wave-1 evidence was moved into
-# feedback/triaged/1/ at the wave-1 continuation boundary.
+# Nominal shape: an autonomous 2-wave run ending arc-complete. Wave 1 quarantines
+# impossible-cache (engaging the tier-3 Fable boundary agent) and, via the stats.js health-bait,
+# drafts a gcd-consolidation fix-unit; wave 2 merges the admitted unit(s) and the boundary yields
+# nothing new → arc-complete.
+#
+# That is the shape to HOPE for, not to demand. This fixture also plants a blocker (test.sh exits 1
+# without out-of-band provisioning), so its boundaries can legitimately keep admitting real work:
+# observed 2026-07-19, a 3-wave run ended max-waves with a further unit admitted and undispatched.
+# Demanding arc-complete reds on correct behaviour and teaches the wrong lesson — the same trap that
+# made a 2-wave cap look attractive before it was reverted. So (d) accepts any legitimate return and
+# fails only the *-degraded ones, and (f) branches on how the run ended:
+#   - returns firing BEFORE the persist step (arc-complete, arc-stalled, escalations) leave the final
+#     boundary untriaged, feedback still in place;
+#   - max-waves becomes terminal only after the loop triaged that wave as a continuation, so its
+#     feedback IS moved and the boundary rides back marked `triaged:true` (restored by the conductor);
+#   - agent-budget returns pre-dispatch, so the prior wave's evidence is consumed and NOT restored.
+# Either way the root must receive it; a boundary that vanished is the real regression.
 #
 # Rerun tolerance: probes (b) and the respec-disposition half of (c) depend on a model
 # DRAFTING work (health assessor, Fable respec) — a single unexpected FAIL there warrants one
-# rerun before concluding regression. Probes (a), (d), (e), (f) are deterministic.
+# rerun before concluding regression. Probes (a), (e), (f) are deterministic; (d) is a router.
 set -uo pipefail
 TARGET=${1:?usage: check-conductor.sh <target-dir>}
 REPO="$TARGET/repo"; WT="$TARGET/worktrees"; STATE="$REPO/.roadmap/state.json"
@@ -23,6 +33,7 @@ RM="$REPO/.roadmap"
 fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
 flunk() { printf 'FAIL  %s\n' "$1"; fail=1; }
+warn() { printf 'WARN  %s\n' "$1"; }   # legitimate-but-not-ideal: informative, never fails
 expect() { # expect <description> <command...>
   local desc=$1; shift
   if "$@" >/dev/null 2>&1; then pass "$desc"; else flunk "$desc"; fi
@@ -73,9 +84,29 @@ else
   flunk "(a) architect-log grew a wave section beyond the seed (no '## Wave N' — tier-3 routing or log-append regressed)"
 fi
 
-# --- (d) arc-complete return ----------------------------------------------------
-[ "$REASON" = arc-complete ] && pass "(d) conductor.reason == arc-complete" \
-  || flunk "(d) conductor.reason == arc-complete (got: ${REASON:-absent})"
+# --- (d) the run ended for a legitimate reason ----------------------------------
+# arc-complete is the IDEAL shape, not the only correct one. This fixture plants a blocker
+# (test.sh exits 1 without out-of-band provisioning) and a health-bait, so its boundaries can
+# legitimately keep admitting real work — observed 2026-07-19: a 3-wave run returned max-waves
+# with `fix-testsh-robustness` admitted and undispatched. Failing that taught the wrong lesson
+# (see the reverted 2-wave cap in setup-fixture.sh). What IS a defect is the machinery failing:
+# a *-degraded return means the boundary or triage produced nothing.
+case "$REASON" in
+  arc-complete)
+    pass "(d) conductor.reason == arc-complete (ideal shape)" ;;
+  max-waves|agent-budget)
+    warn "(d) conductor.reason == $REASON — legitimate: the arc still wanted work when the bound hit. Relaunch resumes it. Check the cut-line brake if this repeats." ;;
+  arc-stalled)
+    warn "(d) conductor.reason == arc-stalled — legitimate: a tier called the arc done while dispatchable in-scope work remained, and the census refused. Read \`outstanding\`." ;;
+  contract-amendment|needs-user|contingent-replan)
+    warn "(d) conductor.reason == $REASON — a legitimate root escalation, not a failure (see README)." ;;
+  root-triage)
+    warn "(d) conductor.reason == root-triage — every boundary returns by config (boundaryTriage:'root'); not a defect." ;;
+  boundary-degraded|triage-degraded)
+    flunk "(d) conductor.reason == $REASON — the boundary/triage machinery produced nothing; this is a real defect, not a routing outcome." ;;
+  *)
+    flunk "(d) conductor.reason is a known return reason (got: ${REASON:-absent})" ;;
+esac
 
 # --- planted three: happy path + scheduling + unsatisfiable quarantine ----------
 MULT=$(status_of add-multiply); DIV=$(status_of add-divide)
@@ -185,15 +216,39 @@ else
   flunk "(e) debt.md carries a '<!-- wave 1 -->' section (debt banking regressed)"
 fi
 
-# --- (f) ruling 1: final-boundary evidence EXISTS, earlier waves' was triaged ----
-# The conductor never sets boundary:'off': the FINAL wave's boundary output is left in
-# place as untriaged integration-review evidence; every earlier wave's was consumed
-# (moved to feedback/triaged/<n>/ by the conductor, or by the root at an adjudication).
+# --- (f) ruling 1: the root always gets the final wave's boundary evidence -------
+# The conductor never sets boundary:'off', so the root always receives the last wave's evidence.
+# WHAT STATE it arrives in depends on how the run ended, and that is the part this used to get
+# wrong by assuming one shape:
+#   - returns that fire BEFORE the persist step (arc-complete, arc-stalled, escalations) leave the
+#     final boundary UNTRIAGED: its feedback files are still in place, nothing was moved;
+#   - max-waves / agent-budget become terminal only AFTER the loop triaged the wave as a
+#     continuation, so its feedback IS moved to triaged/<final>/ and the boundary rides back marked
+#     `triaged:true` (conductor restores it — otherwise the relaunching root reads nothing).
+# Either way the evidence must exist somewhere; a boundary that vanished is the real regression.
 FINAL=$WAVE
-expect "(f) wave-$FINAL health feedback exists (final boundary ran, moved nothing)" test -f "$RM/feedback/health/wave-$FINAL.md"
-expect "(f) wave-$FINAL explorer feedback exists (preview live → runtime explorer ran)" test -f "$RM/feedback/explorer/wave-$FINAL.md"
+# Only max-waves restores the boundary (conductor.mjs, post-loop). agent-budget returns pre-dispatch
+# with the previous wave's boundary already consumed and nothing restored — so it is "final wave was
+# triaged" WITHOUT a restored block. Conflating the two false-FAILs a legitimate agent-budget run.
+case "$REASON" in
+  max-waves)    FINAL_TRIAGED=1; EXPECT_BLOCK=1 ;;
+  agent-budget) FINAL_TRIAGED=1; EXPECT_BLOCK=0 ;;
+  *)            FINAL_TRIAGED=0; EXPECT_BLOCK=1 ;;
+esac
+
+if [ "$FINAL_TRIAGED" = 0 ]; then
+  expect "(f) wave-$FINAL health feedback exists (final boundary ran, moved nothing)" test -f "$RM/feedback/health/wave-$FINAL.md"
+  expect "(f) wave-$FINAL explorer feedback exists (preview live → runtime explorer ran)" test -f "$RM/feedback/explorer/wave-$FINAL.md"
+  LASTCONSUMED=$((FINAL - 1))
+else
+  # The final wave was triaged as a continuation before the bound hit — its evidence belongs in
+  # triaged/<FINAL>/, checked by the loop below, not left in place.
+  pass "(f) reason=$REASON → final wave was triaged as a continuation; its evidence is checked as consumed"
+  LASTCONSUMED=$FINAL
+fi
+
 n=1
-while [ "$n" -lt "$FINAL" ]; do
+while [ "$n" -le "$LASTCONSUMED" ]; do
   if [ -d "$RM/feedback/triaged/$n" ] && [ -n "$(ls -A "$RM/feedback/triaged/$n" 2>/dev/null)" ]; then
     pass "(f) wave-$n boundary evidence was triaged into feedback/triaged/$n/"
   else
@@ -201,9 +256,20 @@ while [ "$n" -lt "$FINAL" ]; do
   fi
   n=$((n+1))
 done
+
 BOUNDARY=$(sfield x "s.boundary?'present':'absent'")
-[ "$BOUNDARY" = present ] && pass "(f) final state carries the boundary block intact (untriaged review evidence)" \
-  || flunk "(f) final state carries a boundary block (got: $BOUNDARY — ruling 1 requires it be handed to the root intact)"
+BTRIAGED=$(sfield x "((s.boundary||{}).triaged===true)?'yes':'no'")
+if [ "$EXPECT_BLOCK" = 0 ]; then
+  warn "(f) reason=$REASON returns before any boundary is produced or restored; no final block expected (got: $BOUNDARY)"
+elif [ "$BOUNDARY" != present ]; then
+  flunk "(f) final state carries a boundary block (got: $BOUNDARY — ruling 1 requires the root get it; on max-waves the conductor must restore what the continuation triage cleared)"
+elif [ "$FINAL_TRIAGED" = 1 ] && [ "$BTRIAGED" = yes ]; then
+  pass "(f) final state carries the boundary block, correctly marked triaged (already dispositioned)"
+elif [ "$FINAL_TRIAGED" = 1 ]; then
+  flunk "(f) final boundary is present but NOT marked triaged — a root that re-actions it duplicates the ladder's work"
+else
+  pass "(f) final state carries the boundary block intact (untriaged review evidence)"
+fi
 
 # --- carried-over sanity: green-tip mirror (preview) ----------------------------
 TIP=$(sfield x "s.integrationTip")

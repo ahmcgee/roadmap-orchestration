@@ -89,9 +89,15 @@ const STRICT = 'Start by `cd` to the exact absolute path named in this task — 
 // and it is what makes a killed unit recoverable), then keep the structured report short. The
 // platform's schema-retry resends an over-long payload verbatim until the unit dies, so an
 // oversized report can waste all the work it describes.
+// Every budget here is stated because the cap exists: 2026-07-18 evidence is that opus structured-
+// output deaths happened ONLY on capped schemas (16/62 vs 0/102 uncapped), and a cap the model is
+// never told is one it cannot respect. Which FIELD overran is unknown — no payloads survive — so
+// every capped field names its budget rather than betting on one.
 const REPORT = 'Commit your work BEFORE emitting the structured report — the commit is the deliverable. Then keep ' +
-  'the report tight: `summary` in 2–3 short sentences, every other free-text field terse. An oversized report ' +
-  'fails validation and can kill this unit even though the work is done. '
+  'every free-text field terse and inside its budget: `summary` 2–3 short sentences (max 700 characters); ' +
+  '`contractMismatch` one or two sentences (max 300 characters), left empty unless it truly applies; each `debt` ' +
+  "entry's `what` and `why` a sentence or two (max 400 characters each); `notes` at most a short paragraph " +
+  '(max 2000 characters). An oversized report fails validation and can kill this unit even though the work is done. '
 // .roadmap/ belongs to the orchestrator, never to a coding agent. Arc-observed: an
 // implementer that respected the write-bar still left a "see debt.md" comment for an
 // entry it could not write, and a gate quarantined partly on the phantom reference.
@@ -106,7 +112,9 @@ const NOROADMAP = `You cannot create or modify anything under ${repo}/.roadmap/ 
 // terseness clause, and an invitation to put overflow THERE — it died at two consecutive
 // boundaries). Applied as a const, not remembered per-prompt, so it cannot drift out of a new prompt.
 const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
-  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. '
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
+  'Respect every character budget named below exactly, keep each finding to a sentence or two, and emit no ' +
+  'field the schema does not define — an unexpected key is rejected as hard as an over-long one. '
 // `contractMismatch` is a TRIGGER, not a notes field: its mere PRESENCE fires the architect consult,
 // forces the (metered) Fable exit gate, banks a kind:'contract' debt entry, and bounces the whole run
 // back to the root for a contract amendment. The model must be told that, or it uses the field as a
@@ -131,6 +139,22 @@ const convClause = conventions
   ? `A standing cross-cutting conventions contract at ${conventions} catalogues shared utilities every unit must ` +
     `reuse rather than reinvent and conventions (naming, error handling, recurring patterns) every unit must ` +
     `follow; treat it as a frozen contract alongside the unit's own. `
+  : ''
+// Design authorities bind like contracts (SKILL.md Phase 0). Arc-observed: without this, UI units
+// built without their comps in the fork base and "comp-conformant" criteria were graded by jsdom
+// presence tests — the result was systematic bespoke reimplementation of every designed screen.
+// The dominant failure was ADOPTION, not visual drift, and adoption is judgeable from the comp
+// SOURCE by a text agent, so this clause carries the per-unit half; the eyes live at the boundary.
+// Same idiom as convClause: '' when the unit cites no design, leaving every prompt byte-identical
+// on arcs without designAuthorities (the property the sims assert, and what makes the paid
+// fixtures valid evidence for changes that ride alongside this one).
+const authOf = (cite) => (plan.designAuthorities ?? []).find((a) => a.id === String(cite).split('#')[0])
+const designClause = (unit) => unit.design?.length
+  ? `This unit's surface is governed by design authorities — binding sections: ${unit.design.join(', ')}; ` +
+    `source in-repo at ${[...new Set(unit.design.map((d) => authOf(d)?.path).filter(Boolean))].join(', ')}. ` +
+    `A comp binds like a frozen contract: adopt the comp's component and wire it through thin adapters — never ` +
+    `rebuild a designed screen from primitives. Partial adoption can be right, but it is a deliberate choice: ` +
+    `it must be stated and justified, never left to pass silently. `
   : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
@@ -181,10 +205,10 @@ const run = async (prompt, opts) => {
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'schema-retry',
       what: `structured output rejected, retrying — ${String(e?.message ?? e).slice(0, 200)}` })
     return agent(
-      prompt + ' IMPORTANT: after completing the task, your final action must be a single structured-output ' +
-      'report matching the requested schema — put any commentary in its `notes` field and add no other fields. ' +
-      'Your previous report likely failed because it was too long — shorten every free-text field aggressively; ' +
-      'one sentence each is acceptable.',
+      prompt + ' IMPORTANT: your previous structured report was REJECTED, so the work may be done but unrecorded. ' +
+      'Emit exactly the requested schema and no other keys — an unexpected key is rejected as hard as an ' +
+      'over-long one. Cut every free-text field to one sentence; drop optional fields entirely rather than ' +
+      'filling them. Do not redo the task: if the commit already exists, report what it did.',
       { ...opts, label: `${opts.label ?? 'agent'}#retry` })
   }
 }
@@ -197,6 +221,13 @@ const run = async (prompt, opts) => {
 // The null carries NO error object — the platform tells us nothing about why. So record what we DO
 // know (which agent, where) and point at the transcript; that is the difference between "the network
 // is flaky, probably" and "read agent-*.jsonl for label X".
+// A dead REPORT is not a dead UNIT. 2026-07-18, twice: a code-writing agent committed its work,
+// then its structured report was rejected five times, `run()` rethrew, and the scheduler's catch
+// quarantined a unit whose commits were on the branch and correct. The architect re-verified and
+// resurrected both by hand. REPORT's commit-first discipline exists precisely so the commit
+// survives the report — this sentinel is the other half of that bargain: when a code-writing
+// agent's report is lost, ASK THE BRANCH what happened instead of assuming the worst.
+const REPORT_LOST = { summary: '(report lost — see degradations)', filesChanged: [], reportLost: true }
 const runOr = async (fallback, prompt, opts) => {
   const r = await run(prompt, opts).catch((e) => {
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
@@ -276,7 +307,7 @@ const S = {
     // untouchable, so contractSurfaceTouched can never see this case — arc-observed).
     // Presence fires the mid-loop architect consult and forces the Fable exit gate.
     contractMismatch: { type: 'string', maxLength: 300 },
-    debt: debtArr, notes: { type: 'string', maxLength: 1000 },
+    debt: debtArr, notes: { type: 'string', maxLength: 2000 },
   }, ['summary', 'filesChanged']),
   // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
   // escalate to the Fable architect — trigger names the reason frontier judgment is needed.
@@ -338,6 +369,25 @@ const S = {
   }, ['findings', 'fixUnits']),
   flake: obj({ runs: { type: 'number' }, flips: arr('string'), detail: { type: 'string', maxLength: 400 } },
     ['runs', 'flips']),
+  // Per-wave design reconcile. The severity split is the atlas2 handoff's own taxonomy, because it
+  // is the one that changes what you DO: a bug is a fix unit, an adoption gap is a fix unit that
+  // deletes code, and 'irreconcilable' is the signal that a dedicated arc is needed — the finding
+  // that arrived a whole arc too late last time. `visionUsed` is REQUIRED and load-bearing: with no
+  // screenshot capability provisioned the agent must degrade to comparing DOM against comp source
+  // and SAY so, because a fidelity check that silently cannot see is worse than none.
+  design: obj({
+    findings: { type: 'array', maxItems: 10, items: obj({
+      surface: { type: 'string', maxLength: 120 }, comp: { type: 'string', maxLength: 120 },
+      severity: oneOf(['bug', 'adoption-gap', 'irreconcilable']),
+      what: { type: 'string', maxLength: 400 },
+    }, ['surface', 'severity', 'what']) },
+    fixUnits: { type: 'array', maxItems: 6, items: obj({
+      id: { type: 'string', maxLength: 60 }, goal: { type: 'string', maxLength: 300 },
+      files: arr('string'), acceptance: arr('string'),
+    }, ['id', 'goal', 'acceptance']) },
+    visionUsed: { type: 'boolean' },
+    shaObserved: { type: 'string' }, notes: { type: 'string', maxLength: 500 },
+  }, ['findings', 'fixUnits', 'visionUsed']),
 }
 
 /* --------------------------- live wave state --------------------------- */
@@ -502,7 +552,15 @@ async function runBoundary() {
   const explSha = previewSha ?? tip
   const doExplore = previewStatus === 'live'
   const doHealth = C.healthCheck !== 'off'
-  const [expl, hlth, flk] = await Promise.all([
+  // Design-cited units that reached `merged` IN THIS WAVE. The plan is the authority on what is
+  // UI work — deliberately NO diff-path heuristic (*.tsx and friends), because a unit that touches
+  // a designed surface without citing it is the plan-pack defect Phase 0 hunts, and papering over
+  // it here would hide exactly what we want surfaced. Needs the preview: the green-tip mirror is
+  // the only place a browsable, integrated surface is guaranteed to exist.
+  const designUnits = plan.units.filter((u) => u.design?.length &&
+    rec(u.id)?.status === 'merged' && prior.units?.[u.id]?.status !== 'merged')
+  const doDesign = designUnits.length > 0 && previewStatus === 'live'
+  const [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
       `You are the wave-${waveN} runtime explorer for a roadmap build. The integrated result is live as a ` +
       `preview — drive it via: ${plan.preview.howToAccess}. It serves integration tip ${explSha}. Your charter ` +
@@ -511,7 +569,8 @@ async function runBoundary() {
       `sequences — hunting behavior that is unexpected, counterintuitive, underdocumented, brittle, or ` +
       `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). Change nothing: no commits, no file ` +
       `edits, no restarts. At most 10 findings — severity, exact repro, observed vs expected; an empty report ` +
-      `is legitimate and better than manufactured findings. ${TERSE}Report shaObserved: ${explSha}.`,
+      `is legitimate and better than manufactured findings. Hold \`notes\` to a short paragraph (max 500 ` +
+      `characters). ${TERSE}Report shaObserved: ${explSha}.`,
       { model: 'opus', effort: 'high', phase: 'Boundary', label: `explorer:w${waveN}`, schema: S.explore }
     ).catch(() => null),
     !doHealth ? null : run(
@@ -525,20 +584,44 @@ async function runBoundary() {
       `ergonomics — manual dev steps that should be automated, missing tooling that taxes every round. For ` +
       `each finding worth fixing, also return a ready-to-dispatch fix-unit draft (id, goal, files, acceptance ` +
       `criteria as individually checkable clauses). Read-only — change nothing. An empty report is legitimate. ` +
-      TERSE,
+      `Hold \`notes\` to a short paragraph (max 500 characters). ` + TERSE,
       { model: 'opus', effort: 'high', phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
     ).catch(() => null),
     !(doHealth && C.flakeReruns > 0) ? null : run(
       STRICT +
       `In the integration worktree at ${intWt}: run the project's full test suite ${C.flakeReruns} times in a ` +
       `row (commands: ${brief}). Report runs = how many completed, and in flips the exact name of every test ` +
-      `that changed pass/fail between runs (empty when stable). Fix nothing. ${TERSE}`,
+      `that changed pass/fail between runs (empty when stable). Fix nothing. Keep \`detail\` to one sentence (max 400 characters). ${TERSE}`,
       { model: 'haiku', phase: 'Boundary', label: `flake:w${waveN}`, schema: S.flake }
+    ).catch(() => null),
+    !doDesign ? null : run(
+      `You are the wave-${waveN} design-fidelity reconciler for a roadmap build. These units merged this wave ` +
+      `against design authorities: ${designUnits.map((u) => `${u.id} (${u.design.join(', ')})`).join('; ')}. ` +
+      `FIRST read ${repo}/.roadmap/architect-log.md: the architect may have APPROVED divergences from a comp, or ` +
+      `folded a divergence into the comp itself — those are decisions, not drift, and reporting them as findings ` +
+      `wastes a wave. Then, for each unit's covered surfaces, drive the live preview (${plan.preview.howToAccess}, ` +
+      `serving ${explSha}) and compare what it renders against the comp source under the authority paths ` +
+      `(${[...new Set(designUnits.flatMap((u) => u.design.map((d) => authOf(d)?.path)).filter(Boolean))].join(', ')}). ` +
+      `If the brief (${brief}) documents a screenshot command, capture each surface and judge it VISUALLY against ` +
+      `the comp render, and report visionUsed:true. If no screenshot capability is provisioned, compare the served ` +
+      `DOM against the comp source instead and report visionUsed:FALSE — do not imply you saw anything you did ` +
+      `not. Classify each finding: "bug" = it renders wrong; "adoption-gap" = the surface reimplements what the ` +
+      `comp already provides; "irreconcilable" = the built behaviour and the comp cannot both be right, so a ` +
+      `human decision is needed. For each finding worth fixing, return a ready-to-dispatch fix-unit draft (id, ` +
+      `goal, files, acceptance criteria as individually checkable clauses). Change nothing — no commits, no ` +
+      `edits. An empty report is legitimate. Hold \`notes\` to a short paragraph (max 500 characters). ` +
+      `${TERSE}Report shaObserved: ${explSha}.`,
+      { model: 'opus', effort: 'high', phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
     ).catch(() => null),
   ])
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
-  if (!expl && !hlth && !flk) return
-  boundary = { explorer: expl, health: hlth, flake: flk }
+  if (!expl && !hlth && !flk && !dsgn) return
+  if (designUnits.length && !dsgn)
+    degrade({ label: `design:w${waveN}`, model: 'opus', phase: 'Boundary', kind: 'no-report',
+      what: `design reconcile did not report for ${designUnits.map((u) => u.id).join(', ')} ` +
+        `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave ` +
+        `and are not revisited automatically. Re-run the reconcile against them before close-out.` })
+  boundary = { explorer: expl, health: hlth, flake: flk, design: dsgn }
   // Persist narratives via Haiku verbatim-writers (investigators flake on side effects;
   // verbatim writers don't — same idiom as the quarantine dossier). Rendering is a pure
   // function of the structured results, so a resume replays it byte-identically.
@@ -561,6 +644,17 @@ async function runBoundary() {
     (flk ? (flk.flips.length ? `${flk.runs} runs; flips: ${flk.flips.join(', ')}` : `${flk.runs} runs; stable`) : 'not run') +
     (flk?.detail ? ` — ${flk.detail}` : '') + '\n',
     { model: 'haiku', effort: 'low', phase: 'Boundary', label: `health-write:w${waveN}`, schema: S.ok }).catch(() => null))
+  if (dsgn) writes.push(run(
+    `Create the file ${fb}/design/wave-${waveN}.md (creating parent directories as needed) with exactly this ` +
+    `content:\n# Wave ${waveN} — design fidelity (sha ${explSha}, ` +
+    `${dsgn.visionUsed ? 'screenshots compared visually' : 'NO SCREENSHOT CAPABILITY — DOM vs comp source only'})\n\n` +
+    (dsgn.findings.length
+      ? dsgn.findings.map((f) => `- **${f.severity}** ${f.surface}${f.comp ? ` vs ${f.comp}` : ''} — ${f.what}`).join('\n')
+      : 'No findings.') +
+    `\n\n## Fix-unit drafts\n` +
+    ((dsgn.fixUnits ?? []).map((u) => `- ${u.id}: ${u.goal}\n  - files: ${(u.files ?? []).join(', ')}\n  - acceptance: ${u.acceptance.join(' · ')}`).join('\n') || 'None.') +
+    (dsgn.notes ? `\n\nNotes: ${dsgn.notes}` : '') + '\n',
+    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `design-write:w${waveN}`, schema: S.ok }).catch(() => null))
   await Promise.all(writes)
 }
 
@@ -584,6 +678,11 @@ async function runUnit(unit) {
   // the wave ledger so boundary triage sees it even when the unit merges.
   let mismatch = null
   let mismatchEver = null
+  // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
+  // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
+  // diff nobody described. Sticky, and forces the frontier gate — the same compensation
+  // mismatchEver makes, for the same reason (missing signal, high stakes).
+  let reportLostEver = false
   const noteMismatch = (r) => {
     if (!r?.contractMismatch) return
     mismatch = r.contractMismatch
@@ -660,7 +759,7 @@ async function runUnit(unit) {
     `You will implement one unit of a larger roadmap, but first: plan. Read the unit spec at ${spec} and any ` +
     `contract files it references under ${repo}/.roadmap/contracts/ (contracts are frozen — treat them as ` +
     `immutable requirements). Codebase conventions and build/test commands are documented at ${brief}. Explore ` +
-    `the code in ${w} as needed. Produce an implementation plan: your approach, the files you expect to touch, ` +
+    `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan: your approach, the files you expect to touch, ` +
     `and how you will test it. If the spec cannot be satisfied within its contracts, do not force it: set ` +
     `feasible:false and explain the contradiction in \`approach\`. Do not write code yet.`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
@@ -684,7 +783,7 @@ async function runUnit(unit) {
         `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
         `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
         `hunt contradictions within the spec, clauses that contradict ` +
-        `a referenced contract or documented codebase reality, and stale premises. A spec defect is not the ` +
+        `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
         `engineer's to absorb — resolve it now through your verdict. ` +
         `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
         `as-is; "redirect" = the engineer revises the plan per your guidance, then implements (this includes ` +
@@ -707,7 +806,7 @@ async function runUnit(unit) {
         `${JSON.stringify(implPlan)}\n` +
         `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
         `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
-        `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ` +
+        `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
         `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
         `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
         `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
@@ -739,10 +838,10 @@ async function runUnit(unit) {
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
 
   setStage(unit.id, 'implement')
-  const impl = await run(
+  const impl = await runOr(REPORT_LOST,
     `Implement unit ${unit.id} in the worktree at ${w}, following this plan:\n${JSON.stringify(implPlan)}\n` +
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
-    `frozen. ${convClause}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
+    `frozen. ${convClause}${designClause(unit)}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
     `and the tests the spec's acceptance criteria call for. If you consciously defer any imperfection (a shortcut, ` +
     `a thin test, a known-suboptimal structure) rather than fix it now, record it in \`debt\` — do not silently ` +
@@ -752,6 +851,26 @@ async function runUnit(unit) {
     `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
     `your work on the current branch with clear messages. ${REPORT}`,
     { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
+  // The report died. Ask the branch whether the WORK died with it: commits present means the
+  // implementer finished and only its report was lost, so the diff must be judged on its merits by
+  // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
+  // still the right answer. Getting this backwards is what cost two units and two hand-rescues.
+  if (impl.reportLost) {
+    const probe = await runOr({ ok: false, sha: '', detail: 'commit probe agent died' },
+      STRICT + `In the worktree at ${w}: report ok:true if \`git rev-list --count ${base}..HEAD\` is greater ` +
+      `than zero, else ok:false, and sha = HEAD. Report only; change nothing.`,
+      { model: 'haiku', effort: 'low', phase: 'Implement', label: `commit-probe:${unit.id}`, schema: S.ws })
+    if (!probe.ok) {
+      // Nothing was built, so quarantine is right — but runOr swallowed whatever actually went
+      // wrong into the degradation ledger, and a dossier that says only "no commit" sends the next
+      // reader hunting. Carry the real cause into the reason.
+      const why = degradations.filter((d) => d.label === `impl:${unit.id}`).map((d) => d.what).join(' | ')
+      return quarantine(unit,
+        `implementer produced neither a report nor a commit — nothing was built${why ? ` (${why})` : ''}`, probe)
+    }
+    reportLostEver = true
+    log(`${unit.id}: implement report lost but ${probe.sha?.slice(0, 7) ?? 'work'} is committed — judging the branch`)
+  }
   addDebt(unit.id, base, impl.debt, { kind: 'quality' })
   noteMismatch(impl)
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
@@ -775,7 +894,7 @@ async function runUnit(unit) {
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
-      `spec at ${spec} and its contracts. ${convClause}You did not write this code; assume it contains mistakes. Report a ` +
+      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}You did not write this code; assume it contains mistakes. Report a ` +
       `finding as blocking only if it would cause incorrect behavior, violate the spec or a contract, or leave ` +
       `acceptance criteria untested — AND the defect is introduced by this diff. Real issues that predate the ` +
       `diff go in preExisting (they never block). Do not flag style, nitpicks, or anything a linter/formatter/` +
@@ -784,6 +903,8 @@ async function runUnit(unit) {
       `actually wrong — a tautological test (asserting whatever the code currently does) or a test that mocks ` +
       `away the very thing it claims to test is a blocking finding. When unsure, check empirically: introduce a ` +
       `plausible bug in the worktree, run the tests, confirm at least one fails, then restore your change. ` +
+      `${unit.design?.length ? 'Rebuilding from primitives a surface the cited comp already provides is a blocking ' +
+        'finding, not a style note. ' : ''}` +
       `Give each blocking finding a confidence in [0,1]. If the spec or its contracts ` +
       `are internally contradictory or unsatisfiable as written, set unsatisfiable:true. ` +
       `Verification evidence: ${JSON.stringify(verify)}`,
@@ -814,13 +935,14 @@ async function runUnit(unit) {
       mismatch = null   // consumed — one consult per reported mismatch
     }
 
-    const fixed = await run(
+    const fixed = await runOr(REPORT_LOST,
       `Fix unit ${unit.id} in ${w}. Spec: ${spec}. Failing checks (verbatim): ${JSON.stringify(verify.failures)}. ` +
       `Blocking review findings: ${JSON.stringify(blockers)}.` +
-      `${directive ? ` Architect direction: ${directive.guidance}` : ''}` +
+      `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
       `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
+    if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt, { kind: 'quality' })
     noteMismatch(fixed)
   }
@@ -849,12 +971,12 @@ async function runUnit(unit) {
   // all-green tests) is arc-observed value.
   const forceFrontier =
     C.exitGate === 'always-fable' || unit.risk === 'high' ||
-    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver
+    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver || reportLostEver
   // An audit-only force (the sample fired, nothing structural did) is a spot-check of an
   // Opus-approved unit, not a from-scratch re-gate: it runs at the cheaper auditEffort and
   // reads a diet of the diff. Any structural force keeps the full-read gateEffort path.
   const auditOnly = auditPick(unit) && C.exitGate !== 'always-fable' &&
-    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver
+    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver
 
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
@@ -865,16 +987,17 @@ async function runUnit(unit) {
     // acceptance criteria one by one, then approves, self-revises (free), or escalates.
     for (let g = 0; g < C.maxGateRounds; g++) {
       spend.opusGateRounds++
-      const og = await run(
+      const og = await runOr({ verdict: 'escalate', trigger: 'stuck', directives: [], debt: [],
+        notes: 'opus gate produced no report — degraded to the frontier gate' },
         riskTilt(unit.risk) +
         `You are the exit gate for unit ${unit.id} of a roadmap build, standing in for the architect — but you ` +
         `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
-        `${convClause}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
-        `actually wrong are exactly what to hunt. Then choose a verdict: "approve" only if you would merge this ` +
+        `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}Then choose a verdict: "approve" only if you would merge this ` +
         `as-is and personally vouch for it; "revise" if there is a concrete, mechanical fix you can specify and it ` +
         `needs no frontier judgment (give directives — what and why, not code); "escalate" to the frontier ` +
         `architect if you are stuck, if the right choice is a genuinely hard trade-off where every option carries ` +
@@ -887,10 +1010,18 @@ async function runUnit(unit) {
       opusHandoff = og
       if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
       if (og.verdict === 'escalate') break
-      await run(
+      const ogFix = await runOr(REPORT_LOST,
         `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
         `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
         { model: 'opus', effort: 'high', phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
+      if (ogFix.reportLost) {
+        // forceFrontier was computed before this loop, so flagging alone changes nothing here.
+        // Hand the unit to the frontier gate directly: the fix's self-reported evidence is gone and
+        // an Opus round approving on the strength of a missing report is the failure we are closing.
+        reportLostEver = true
+        log(`${unit.id}: opus-gate-fix report lost — escalating to the frontier gate`)
+        break
+      }
       verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
       if (verify.blocked)
         return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
@@ -912,6 +1043,11 @@ async function runUnit(unit) {
     : ''
   // Hand the gate the implementer's own report — forcing the Fable gate and then making it
   // rediscover the deviation from the diff would defeat half the structured channel.
+  const reportLostClause = reportLostEver
+    ? ' A code-writing agent on this unit committed work but its structured report was lost, so the usual ' +
+      'self-reported summary, debt entries and contract-mismatch signal are ABSENT. Judge the diff itself; ' +
+      'do not read the missing report as "nothing to declare".'
+    : ''
   const mismatchClause = mismatchEver
     ? ` The implementer reported deviating from a frozen contract surface: "${mismatchEver}". Adjudicate that ` +
       `deviation explicitly — approve it as recorded debt, direct a revert to the contract as written, or ` +
@@ -931,23 +1067,26 @@ async function runUnit(unit) {
     const gate = await run(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
-      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}Verification evidence: ` +
+      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
       `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
-      `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. If revising, ` +
+      `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
+      `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
+      `If revising, ` +
       `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
-      `than fix in \`debt\`. ${TERSE}${mismatchClause}` +
+      `than fix in \`debt\`. ${TERSE}${mismatchClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     addDebt(unit.id, base, gate.debt)
     if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
-    await run(
+    const gFix = await runOr(REPORT_LOST,
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
       { model: 'opus', effort: 'high', phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
+    if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
       return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
@@ -1046,6 +1185,14 @@ function start(unit) {
   }
   if (seen < plan.units.length)
     throw new Error('plan dependency graph contains a cycle — fix the plan before dispatch')
+  // A design citation naming an authority that does not exist is a plan-pack defect that would
+  // otherwise degrade silently into an empty clause — the exact "invisible to the pipeline"
+  // failure designAuthorities exists to end. Fail loud, like the unknown-edge check above.
+  for (const u of plan.units)
+    for (const cite of u.design ?? [])
+      if (!authOf(cite))
+        throw new Error(`unit ${u.id}: design citation "${cite}" names no authority in plan.designAuthorities ` +
+          `(known ids: ${(plan.designAuthorities ?? []).map((a) => a.id).join(', ') || 'none'})`)
   // A self-referential adopt makes the setup agent's remove-stale-remnants path delete its own
   // source — this destroyed finished work once; refuse at validation.
   for (const u of plan.units)
@@ -1101,6 +1248,26 @@ if (previewStatus === 'pending') {
 
 const inScope = plan.units.filter((u) => u.inScope)
 log(`wave ${serialize().wave}: ${inScope.length} in-scope units, ${C.maxConsults} rescue consults available`)
+
+// `blocked` is a snapshot of one wave's dependency state, NOT a terminal verdict — but nothing
+// ever cleared it: ready() requires 'pending', and the record initializer only fires when a record
+// is absent. So a unit blocked behind a quarantine that was later superseded and merged stayed
+// blocked forever, invisible to arcSummary and undispatchable. 2026-07-18: four in-scope units
+// stranded that way, and the root reset them by hand twice. Re-open at wave start whenever the
+// blocking dependency is gone; ready() still holds them until it actually merges.
+for (let changed = true; changed;) {
+  changed = false
+  for (const u of inScope) {
+    const st = rec(u.id)?.status
+    // `deferred` on an in-scope unit is always stale: it was stamped when the unit was out of
+    // scope (or transiently withheld) and the plan has since said otherwise.
+    if (st === 'deferred' || (st === 'blocked' && !blockedBy(u))) {
+      units.set(u.id, { status: 'pending' })
+      log(`${u.id}: ${st === 'deferred' ? 'in scope again' : 'unblocked (dependency resolved)'} — re-entering dispatch`)
+      changed = true
+    }
+  }
+}
 
 while (true) {
   inScope.filter(ready).forEach(start)

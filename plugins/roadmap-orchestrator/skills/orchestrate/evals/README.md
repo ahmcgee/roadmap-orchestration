@@ -21,12 +21,19 @@ shipping; never ship on an upper rung alone.
    loudly. `harness.test.mjs` locks harness control flow; `conductor.test.mjs` is the conductor's
    acceptance spec — tier routing, the full early-return reason matrix (the paid fixture only ever
    sees `arc-complete`), persist-before-dispatch ordering, and the nesting-level rule.
-   `prompt-hygiene.test.mjs` locks **schema/prompt coherence**: every prompt driving a schema with a
-   `maxLength` must also carry the length contract (the shared `TERSE` const, or `REPORT` for
-   code-writing agents), and no prompt may direct overflow *into* a capped field. A cap the model is
-   never told about is a trap — it overruns, exhausts its schema-retries, dies, and `agent()` returns
-   `null` with no error object. This test exists because that bug cost three paid runs and was
-   misdiagnosed as network flakiness; it catches the same class in milliseconds.
+   `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
+   driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
+   agents); every top-level capped field has its **budget stated** with a real bound expression, not
+   just a generic terseness clause; no prompt points content INTO a capped field without stating that
+   field's budget (checked against the call's own schema, so rephrasing cannot dodge it); and a
+   *sampling* array whose items are capped also caps its count, while completeness ledgers like
+   `debt` are explicitly exempt. A cap the model is never told about is a trap — it overruns,
+   exhausts its schema-retries, dies, and `agent()` returns `null` with no error object. Round 1 of
+   this test cost three paid runs and was misdiagnosed as network flakiness; round 2 (2026-07-18)
+   PASSED while 16 opus calls died, because a generic clause satisfied it and the overflow check
+   encoded round 1's exact wording. Both holes are now closed — but note the standing limit: it
+   verifies a budget is *stated*, never that the stated budget matches the schema or that the named
+   field exists.
    Run: `bash unit/run.sh`. **`unit/` is owned separately by consumers of this skill — if you are
    running an arc, document don't edit. In the skill's own source repo it is yours to extend.**
 
@@ -34,7 +41,7 @@ shipping; never ship on an upper rung alone.
    > regressions in milliseconds, but cannot tell you whether a prompt still elicits the right
    > judgment, whether a model is still pinned to the tier you think, or whether the platform behaves
    > as the fakes pretend. Never ship on sims alone.
-3. **Paid fixtures — prompts + real model behaviour. `$`, 10–25 min.** Two end-state-graded throwaway
+3. **Paid fixtures — prompts + real model behaviour. Budget-consuming, 10–25 min.** Two end-state-graded throwaway
    repos driven by real models: the **harness fixture** (`check.sh`) and the **conductor fixture**
    (`check-conductor.sh`). The only layer that exercises gate judgment, model tiers, and the real
    Workflow runtime. Source of truth; run last.
@@ -85,8 +92,8 @@ suite-green tip with `preview: {status: "live"}`, and spend is within a generous
    (~10–25 min at ~16-way concurrency).
 3. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
-**Cost:** ~3–10 Fable calls (escalated plan-checks + forced/audit gates + possible consults) ≈
-**$0.50–1.50**, plus free-tier Opus/Haiku.
+**Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
+59 Haiku), 10–25 min. See **What a run actually costs** below — the Opus/Haiku bulk is not free.
 
 ---
 
@@ -142,8 +149,18 @@ Workflow({scriptPath: "<skill dir>/conductor.mjs",
 `harnessPath` is **required** — the conductor throws without it. Then
 `bash check-conductor.sh /tmp/roadmap-eval-c`.
 
-**Cost:** ~2–4 Fable calls ≈ **$0.30–0.90**, plus free-tier Opus/Haiku. Both fixtures together stay
-≤ ~$2.5.
+**Cost:** the larger of the two by some margin — it runs the whole harness once per wave, so it
+multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19). **Budget for
+three waves, not the two its expected shape describes.** Tightening `maxWavesPerRun` to 2 to bound
+this was tried and reverted the same day: the fixture plants a blocker (`bash test.sh` exits 1
+without out-of-band provisioning), so a wave-2 boundary can *correctly* admit a draft that fixes it —
+and at a cap of 2 that correct behaviour exhausts the loop, returns `max-waves`, and reds check (d).
+An eval that fails on correct behaviour costs more to disentangle than the extra wave costs to run.
+
+**So `max-waves` here is ambiguous by construction**, and worth reading rather than reflexing on: it
+means the arc still wanted work when the cap hit. Ask whether the cut-line brake should have bitten
+(a real defect) or whether the admitted draft genuinely justified its wave (correct, and the fixture
+shape is simply optimistic).
 
 **A mid-arc return is legitimate, not a failure.** Health drafts are model-authored, and one may
 require touching a frozen contract — the tier-2 triager then correctly escalates and the conductor
@@ -162,6 +179,49 @@ on a model *drafting* work — **(b)** and the respec-disposition half of **(c)*
 is a structural fact about a completed arc and should never flake.
 
 ---
+
+## What a run actually costs
+
+The old figures here priced only Fable calls and called Opus/Haiku "free tier". That was wrong and
+it misleads: it budgets a coffee for something that consumes a meaningful slice of a week.
+
+Everything runs under the Max subscription, so the unit of cost is not dollars — it is **weekly usage
+budget**. Nothing in a fixture run is free:
+
+- **Fable** is included continuously on 20x Max, but may consume at most **50% of the usage budget**,
+  and it burns budget faster per call than any other tier. It is the scarce resource.
+- **Opus / Sonnet / Haiku** draw on the same weekly budget, just far more slowly per call. A run that
+  is "only 3 Fable calls" can still be 1.7M tokens and a real dent.
+
+This is exactly why the skill's economy is shaped the way it is (invariant 2 — frontier never
+generates volume): Fable plans, gates and adjudicates; Opus writes; Haiku runs commands. The
+orchestrated split is not stylistic, it is what keeps an arc inside a weekly budget. The same logic
+applies to the evals themselves — hence the wave cap on the conductor fixture, and the probes below.
+
+**Budget the ladder accordingly.** Tiers 1 and 2 are genuinely free and catch most regressions; run
+them on every edit. Tier 3 consumes real budget and — this is the part worth internalising — mostly
+proves *non-regression on paths you did not change*. It is pre-merge insurance, not a per-edit gate.
+
+## Targeted probes — covering NEW code without a full fixture
+
+A fixture exercises the pipeline it was built for. It gives **zero** coverage to a path that only
+fires under conditions the fixture never creates: a schema death, a lost report, a blocked-then-
+unblocked unit, an `arc-stalled` return, or anything behind `designAuthorities` (neither fixture
+declares any). Discovering that *after* spending is the expensive way to learn it.
+
+So when a change adds a path the fixtures cannot reach, probe it directly instead: dispatch **one**
+agent at the tier the real code uses, with the real prompt and the real schema, against a scratch
+directory. Pennies of budget, minutes of wall clock, and it tests the thing you actually changed.
+
+Probes worth keeping for the current surface:
+
+| Probe | Tier | What it proves |
+|---|---|---|
+| `design:w<N>` prompt + `S.design` against a toy comp dir + a live preview | Opus | The new capped schema validates against real output, and `visionUsed` reports honestly when no screenshot tool is provisioned |
+| `commit-probe:<id>` prompt against a worktree with and without commits | Haiku | The report-loss salvage distinguishes "work landed" from "nothing was built" — the judgement that decides quarantine vs merge |
+| Any prompt whose schema you just capped | its own tier | The budget you stated is one a real model can actually hold to |
+
+Record what you probed and what it returned; a probe nobody wrote down gets re-bought.
 
 ## Interpreting failures
 

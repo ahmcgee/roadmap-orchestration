@@ -63,6 +63,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('health-write:'), () => ({ ok: true })],
+  [(l) => l.startsWith('design-write:'), () => ({ ok: true })],
 
   [(l) => l.startsWith('rescue-dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
@@ -70,6 +71,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('explorer:'), (b) => ({ findings: [], shaObserved: b })],
   [(l) => l.startsWith('health:'), () => ({ findings: [], fixUnits: [] })],
   [(l) => l.startsWith('flake:'), () => ({ runs: 3, flips: [] })],
+  [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
 const verifyOk = () => ({ pass: true, blocked: false, failures: [], contractSurfaceTouched: false })

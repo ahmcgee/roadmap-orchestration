@@ -89,6 +89,22 @@ Read their outputs, then decide:
   freezing: amend the contract to reality, or make the divergence an explicit migration unit with
   the contract as the target state. Never freeze a contradiction silently — the fidelity audit
   below reads *source*, not the repo, so it cannot catch this.
+- **Pull design authorities into the repo before anything forks.** Where the roadmap provides
+  designs — comps, design-system components, interaction patterns — they *bind* the same way a
+  frozen contract binds: a screen that has a comp is never built from primitives, and "matches the
+  design" is not an acceptance criterion a text-only agent can grade. Copy the governing material
+  into the repo (`designAuthorities[].path`) as part of the **plan-pack commit**, so every unit
+  forks with its comp already in the base — a comp the implementer cannot read is a comp it will
+  reinvent. Put *adoptable* component source in the product tree, never under `.roadmap/`: coding
+  agents may not write there and it is archived at close-out, so anything importing from it breaks.
+  Where designs exist, also provision a headless **screenshot** capability and document its command
+  in the brief — without one, both this audit and the per-wave design reconcile silently degrade to
+  reading text, which is the failure that produced this bullet. Cite the binding section on each
+  covered unit (`unit.design`) and in its spec, the way specs cite contracts. Hunt two plan-pack defects before dispatch, because both are an order of
+  magnitude cheaper here than anywhere downstream: a unit whose surface an authority `covers` but
+  whose spec cites no section, and a spec clause that *contradicts* the comp it cites. The second
+  ranks with a contract contradiction — the plan-check redirects or escalates on it rather than
+  letting it surface as a late gate finding or a post-hoc audit.
 - **Classify every dependency edge**: `contract` (the dependent needs only the interface, which
   you just wrote — fully front-loadable) or `contingent` (the dependent's *design* needs the
   dependency's actual results — forces a wave boundary and a replan by you). Be conservative: a
@@ -138,7 +154,11 @@ reports, with citations: requirements or constraints the plan fails to record, c
 between plan and source, and design decisions of pertinence that deserve to be written down. You
 adjudicate every finding — amend the plan, record it in `.roadmap/constraints.md`, or dismiss it
 with a stated reason — and fold anything genuinely ambiguous into the user question batch. The
-audit verifies plan-against-*source*, never plan-against-*repo*.
+audit verifies plan-against-*source*, never plan-against-*repo*. **Where `designAuthorities`
+exist, the comps are source too**: audit the plan against them on the same footing as the written
+roadmap, with auditors that can actually see the renders. A UI spec that has drifted from its comp
+is compression loss of exactly the kind this audit exists to catch, and it is invisible to an
+auditor reading prose alone.
 
 **Record cross-cutting constraints** in `.roadmap/constraints.md` — design decisions and
 constraints from the source that aren't interface contracts (performance budgets, technology
@@ -210,7 +230,11 @@ residue. That residue is **intact** on a terminal boundary; on a continuation bo
 conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on the `reason`:
 
 - **`arc-complete`** — the boundary yielded no further work; the arc is at its cut line. Go to
-  **Session end**. The final wave's boundary evidence rode back untriaged, deliberately.
+  **Session end**. The final wave's boundary evidence rode back untriaged, deliberately. Any `stuck`
+  ids are in-scope units wedged behind an unresolved quarantine — adjudicate them before closing.
+- **`arc-stalled`** — a tier called the arc done while in-scope, dispatchable units remained
+  (`outstanding`). The tier was wrong, not the plan: confirm the units are still wanted and
+  relaunch. Arc-observed — this fired twice before the census existed, caught only by hand.
 - **`contract-amendment`** — a frozen-surface mismatch the ladder may not resolve. Amend the
   contract to reality, or spec the divergence as an explicit migration unit, then relaunch.
 - **`contingent-replan`** — a contingent edge crossed, or withheld dependents are the only work
@@ -219,7 +243,9 @@ conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on 
   `notes`. Get the answer, fold it in, relaunch.
 - **`max-waves` / `agent-budget`** — the run hit its wave cap or its pre-dispatch budget guard
   with work remaining. State is already persisted and consumed; relaunch fresh (a new run resets
-  the per-run agent counter) with nothing to triage.
+  the per-run agent counter). `max-waves` carries the final wave's `boundary` back marked
+  `triaged:true` — read it for context, but its findings are already banked and its feedback
+  already moved, so it is not yours to triage again.
 - **`boundary-degraded`** — the boundary phase was enabled but produced nothing (every job
   failed). Spawn the explorer/health agents yourself, triage their output, then relaunch.
 - **`triage-degraded`** — the boundary evidence is good but the triage agent itself died (a
@@ -236,7 +262,8 @@ plenty.
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
 harness has already *run* the boundary jobs (Opus runtime explorer against the live preview, Opus
 health assessor against the integration tip, Haiku full-suite flake re-runs); their results are in
-the returned state's `boundary` block and in `feedback/{explorer,health}/wave-<n>.md`. If that
+the returned state's `boundary` block and in `feedback/{explorer,health,design}/wave-<n>.md`
+(`design/` appears only on waves that merged a design-cited unit). If that
 block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
 
 - **Quarantines**: read the dossiers in `.roadmap/quarantine/` — the *reason* routes the action.
