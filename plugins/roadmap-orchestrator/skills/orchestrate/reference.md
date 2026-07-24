@@ -454,7 +454,11 @@ persists only `state.json`, with `boundary` and `debt` left **INTACT** — the r
 In **issue mode** these writers also project to GitHub: `bank-debt` creates/updates `roadmap:debt`
 issues (find-or-create by a stable marker) for the wave's un-swept debt instead of writing `debt.md`,
 `move-feedback` closes/comments the triaged `roadmap:feedback` issues instead of moving files, and
-`persist-plan` opens `roadmap:unit` issues for any new fix-unit/respec. All best-effort (`gh-sync`).
+`issue-new` opens a `roadmap:unit` issue for each new fix-unit/respec. All best-effort (`gh-sync`).
+`issue-new` **reports each created issue's number back, and the conductor caches it into
+`plan.units[].issue`** — so a mid-arc unit is a first-class citizen: it appears in the arc-issue
+task-list rollup and its folded per-unit clauses hit the cached number instead of a marker search.
+Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips unknown-number units).
 
 **Return envelope.** Every return carries:
 

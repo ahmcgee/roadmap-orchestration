@@ -278,6 +278,14 @@ const S_boundaryPlan = obj({
 }, ['newUnits', 'journal', 'escalate', 'arcComplete'])
 
 const S = { ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']) }
+// issue-new returns the {id, number} of every unit issue it created or found, so the conductor can
+// cache each number into plan.units[].issue. No maxLength anywhere: the ids are echoed from the units
+// passed in, so there is nothing for the model to overrun (and nothing for prompt-hygiene to require).
+S.newIssues = obj({
+  ok: { type: 'boolean' },
+  opened: { type: 'array', items: obj({ id: { type: 'string' }, number: { type: 'number' } }, ['id', 'number']) },
+  detail: { type: 'string' },
+}, ['ok'])
 
 /* ------------------------------- helpers ------------------------------- */
 // Kebab-sanitize + 60-char cap. Deterministic (no Date/random) so ids are resume-stable.
@@ -716,20 +724,30 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
 
   // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
   // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
-  // wave. One Haiku call, only when there is new work; a no-op / '' path in file mode.
-  if (issueMode && prepared.length)
-    await run(
+  // wave. It reports each unit's issue number back, and we CACHE it into plan.units[].issue: without
+  // that, a mid-arc unit has no cached number, gets dropped from the arc-issue task-list rollup (the
+  // sweep skips unknown-number units), and forces a marker-search fallback in every folded clause.
+  // One Haiku call, only when there is new work; a no-op / '' path in file mode.
+  if (issueMode && prepared.length) {
+    const opened = await run(
       STRICT + GH_BEST_EFFORT +
       `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
       `below: search \`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 ` +
-      `--json number --jq '.[0].number'\`; if one already exists, skip it; otherwise create it with title ` +
-      `"[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
-      `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\`)` : ''}, and a body ` +
+      `--json number --jq '.[0].number'\`; if one already exists, use its number (do NOT create a duplicate); ` +
+      `otherwise create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
+      `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
       `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
       `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
-      `Report ok:true when every unit has an issue; note any gh failure in detail.`,
-      { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.ok },
+      `Report ok:true when every unit has an issue, and in \`opened\` give each unit's {id, number} — the issue ` +
+      `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
+      { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },
     ).catch(() => null)
+    // Cache the numbers so this wave's persisted plan AND next wave's dispatchPlan carry them.
+    for (const o of opened?.opened ?? []) {
+      const u = plan.units.find((x) => x.id === o.id)
+      if (u && Number.isInteger(o.number)) u.issue = o.number
+    }
+  }
 
   // 8. Persist (all awaited before the next dispatch; idempotent by wave-N markers for resume).
   phase('Persist')
