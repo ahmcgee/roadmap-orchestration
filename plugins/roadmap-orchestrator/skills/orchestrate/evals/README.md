@@ -69,16 +69,16 @@ shipping; never ship on an upper rung alone.
 | `harness.mjs` | parse + sims + **both** paid fixtures (the conductor drives the harness) |
 | `conductor.mjs` only | parse + sims + the **conductor** fixture |
 | a prompt/schema in one script | parse + sims + that script's fixture |
-| a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** |
+| a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** (gh mechanics), then the **issue-mode paid arc** as source of truth |
 | `evals/*` plumbing only | parse + sims + a spot-run of the touched fixture |
 
 Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.
 
 ### Issue-mode coverage & the rate-limit envelope
 
-Issue mode is covered by **three cheap layers**, deliberately not by a second paid arc — a full model
-arc in issue mode is the single most rate-limit-intensive thing this repo can do (real `gh` mutation
-volume **plus** model budget), so it is not a routine gate:
+GitHub issues are the primary mode of work, so issue mode is validated at **all three tiers**: the
+cheap layers below on every edit, and a real **issue-mode paid arc** (see "The issue-mode paid arc")
+as the source-of-truth run before shipping a `gh`-path change. The cheap layers:
 
 - **Sims** (`issue-mode.test.mjs`) — file-mode byte-identity (no `gh` text, no sweep), the folded
   clauses on setup/merge/dossier, exactly **one** sync sweep per wave (folded, never fanned out — the
@@ -89,14 +89,13 @@ volume **plus** model budget), so it is not a routine gate:
 - **Byte-identity** — the file-mode paid fixtures prove every `gh` clause is correctly gated to `''`,
   so the gate/model *judgment* they exercise is identical in both modes.
 
-**Rate-limit envelope (why a paid issue-mode arc is not a routine gate).** Every `gh` write is
-best-effort: a rate-limit error records a `gh-sync` degradation and the next sweep reconciles — it
-never gates a unit or wave, so the methodology cannot *break* an arc on rate limits. The volume it can
-*spend* is bounded to **new + changed units per wave** (the sweep no longer re-edits the cumulative set
-— that was an O(all-units) burst growing each wave), plus the one-time Phase-0 bulk `gh issue create`.
-The residual gap the cheap layers cannot close is "does a real model actually execute the folded clause
-and the scoped sweep correctly?" — cover that with a **minimal, opt-in, sequenced** issue-mode arc (1–2
-units, run **alone**, never concurrent with the file-mode fixtures), not a standing part of the ladder.
+**Rate-limit envelope.** Every `gh` write is best-effort: a rate-limit error records a `gh-sync`
+degradation and the next sweep reconciles — it never gates a unit or wave, so the methodology cannot
+*break* an arc on rate limits. The volume it can *spend* is bounded to **new + changed units per wave**
+(the sweep no longer re-edits the cumulative set — that was an O(all-units) burst growing each wave),
+plus the one-time Phase-0 bulk `gh issue create`. `check-arc-issues.sh` reports the gh-sync count so a
+strained limit is visible after a run. Run the issue-mode arc **alone** (never concurrent with another
+paid fixture) so its `gh` and model load isn't compounded.
 
 ---
 
@@ -222,6 +221,44 @@ on a model *drafting* work — **(b)** and the respec-disposition half of **(c)*
 is a structural fact about a completed arc and should never flake.
 
 ---
+
+## The issue-mode paid arc (primary mode of work)
+
+GitHub issues are the primary mode of work, so the paid validation that matters most runs the arc in
+**issue mode** against a real repo — proving the folded `gh` clauses, the delta-scoped sync sweep, and
+the conductor's issue writers behave under real models and stay inside GitHub's rate limits. The
+canned fixtures skip Phase 0, so three helper scripts supply the one-time bootstrap the skill would
+otherwise do, then verify and tear down:
+
+- **`issue-bootstrap.sh <dir> [owner/repo]`** — the Phase-0 stand-in: creates the labels, an arc
+  milestone, the tracking issue (with a `<!-- roadmap:status -->` region), and one `roadmap:unit`
+  issue per in-scope unit (body marker + risk label + milestone), then patches `plan.json` to issue
+  mode (`tracking`/`repoSlug`/`milestone`/`trackingIssue` + each unit's cached `issue`). Writes
+  `.issue-manifest.json`.
+- **`check-arc-issues.sh <dir>`** — after the arc, asserts the projection matches the arc's real end
+  state (`state.json` is the source of truth): merged units' issues **closed** + `status:merged`,
+  quarantines **open** + `status:quarantined`, the tracking issue's status region carries a task list.
+  Prints the **gh-sync degradation count** — the rate-limit signal (a handful is fine and best-effort;
+  a flood means the projection strained a limit). Zero model tokens.
+- **`issue-teardown.sh <dir>`** — sweeps every open `roadmap:*` issue (catches mid-run fix-unit and
+  debt issues the manifest can't know about), deletes the eval milestone and labels.
+
+**Run (conductor, for multi-wave strain — the sweep runs per wave, which is where cumulative `gh`
+volume would bite):**
+
+```
+bash setup-fixture.sh --conductor /tmp/roadmap-eval-c
+RUN_ISSUE_EVAL=1 bash issue-bootstrap.sh /tmp/roadmap-eval-c        # creates issues; patches plan.json
+# read the patched plan + state, launch conductor.mjs ONCE via Workflow (issue mode is now in the plan)
+bash check-conductor.sh /tmp/roadmap-eval-c                        # arc end state (git/state facts)
+bash check-arc-issues.sh /tmp/roadmap-eval-c                       # the GitHub projection + rate-limit signal
+bash issue-teardown.sh /tmp/roadmap-eval-c                         # ALWAYS — leaves the tracker clean
+```
+
+`check-conductor.sh` is unchanged and mode-agnostic — it grades the same git/state facts, so a green
+run in issue mode also confirms the `gh` clauses never altered a unit outcome. Spending GitHub rate
+limits here is acceptable and, run under representative strain, is exactly what proves the methodology
+operates within them. **Always run teardown**, even on failure.
 
 ## What a run actually costs
 

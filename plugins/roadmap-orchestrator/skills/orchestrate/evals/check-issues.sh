@@ -75,6 +75,17 @@ U1=$(gh issue create "${G[@]}" --title "[unit] ${RUN}-u1" \
 happy-path unit" 2>/dev/null | grep -oE '[0-9]+$')
 [ -n "$U1" ] && { CREATED_ISSUES+=("$U1"); pass "unit issue created (#$U1)"; } || flunk "unit issue create"
 
+# 1b. Milestone membership: `gh --milestone` attaches by NAME, so the milestone must be passed by
+# TITLE (plan.milestone is the title, reference.md:71) — a NUMBER silently orphans the issue. This
+# guards the conductor's issue-new milestone path, where feeding the number left mid-run units with
+# no milestone. Only meaningful if the milestone was created.
+if [ -n "${MILESTONE:-}" ]; then
+  MS_OF=$(gh issue view "${G[@]}" "$U1" --json milestone --jq '.milestone.title // ""' 2>/dev/null)
+  [ "$MS_OF" = "roadmap: $RUN" ] \
+    && pass "unit issue is in the arc milestone (--milestone by title attaches)" \
+    || flunk "unit issue NOT in the milestone (got '$MS_OF') — milestone must be passed by title, not number"
+fi
+
 # 2. find-by-marker resolves the number (the harness's cache-absent fallback path).
 FOUND=$(find_by_marker "$UMARK" || true)
 [ "$FOUND" = "$U1" ] && pass "find-by-marker resolves the unit issue" || flunk "find-by-marker (got '$FOUND', want '$U1')"
