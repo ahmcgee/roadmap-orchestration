@@ -21,6 +21,9 @@ shipping; never ship on an upper rung alone.
    loudly. `harness.test.mjs` locks harness control flow; `conductor.test.mjs` is the conductor's
    acceptance spec — tier routing, the full early-return reason matrix (the paid fixture only ever
    sees `arc-complete`), persist-before-dispatch ordering, and the nesting-level rule.
+   `issue-mode.test.mjs` locks the GitHub issue-mode projection — file-mode byte-identity (no `gh`
+   text, no sync sweep), the folded gh clauses on setup/merge/dossier, the single wave-tail sync
+   sweep, and best-effort degradation (a failed sweep records `gh-sync` but never gates a unit).
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not
@@ -44,16 +47,32 @@ shipping; never ship on an upper rung alone.
 3. **Paid fixtures — prompts + real model behaviour. Budget-consuming, 10–25 min.** Two end-state-graded throwaway
    repos driven by real models: the **harness fixture** (`check.sh`) and the **conductor fixture**
    (`check-conductor.sh`). The only layer that exercises gate judgment, model tiers, and the real
-   Workflow runtime. Source of truth; run last.
+   Workflow runtime. Source of truth; run last. Both run in remote-less throwaway repos, i.e. **file
+   mode**, which is exactly what proves the issue-mode code is correctly gated (`plan.tracking`
+   defaults to `files`; every `gh` clause is `''`) — a green fixture is evidence file-mode stayed
+   byte-identical.
+4. **`check-issues.sh` — issue-mode (real `gh`), token-free, opt-in.** The paid fixtures never touch
+   GitHub (they're offline / file mode), so this script closes the real-`gh` gap: it exercises the
+   exact command sequences the harness/conductor emit in issue mode — label + milestone + unit-issue
+   create with the `<!-- roadmap:unit id=… -->` body marker, find-by-marker AND find-by-number, the
+   `status:*` transitions, close-completed, the quarantine comment, debt-issue idempotency, and the
+   feedback census — against a real repo, asserting issue facts (like `check.sh` asserts git facts) at
+   **zero model tokens**. It **mutates the target tracker**, so it is opt-in and self-cleaning:
+   `RUN_ISSUE_EVAL=1 bash check-issues.sh` (optionally `REPO=owner/name`). Every artifact carries a
+   unique per-run marker and is torn down on exit via a trap. Caveat: `gh issue delete` needs elevated
+   scope, so without it teardown *closes* the test issues rather than deleting them — harmless, clearly
+   `eval-`namespaced, closed residue. It does **not** run a full model arc; issue-mode gate/model
+   judgment is still whatever the paid fixtures show in file mode.
 
 | You changed… | Run |
 |---|---|
 | `harness.mjs` | parse + sims + **both** paid fixtures (the conductor drives the harness) |
 | `conductor.mjs` only | parse + sims + the **conductor** fixture |
 | a prompt/schema in one script | parse + sims + that script's fixture |
+| a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** |
 | `evals/*` plumbing only | parse + sims + a spot-run of the touched fixture |
 
-Parse and sims are cheap enough to run on **every** edit; the paid fixtures gate the merge.
+Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.
 
 ---
 

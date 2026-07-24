@@ -61,6 +61,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
   [(l) => l === 'checkpoint', () => ({ ok: true })],
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
+  [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
   [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('health-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('design-write:'), () => ({ ok: true })],

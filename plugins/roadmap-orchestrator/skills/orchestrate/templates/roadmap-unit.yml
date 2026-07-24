@@ -1,0 +1,37 @@
+# Reference copy shipped with the roadmap-orchestrator skill (see roadmap-feedback.yml header).
+# Lets a human propose a unit of work independently. A proposal is roadmap *input* — the architect
+# adjudicates it at the next Phase 0 (adopt / split / defer / decline-with-reason); it is not a spec.
+name: Propose a roadmap unit
+description: Propose a new unit of work for a future roadmap-orchestrator arc. Adjudicated at the next Phase 0 — this is input to planning, not a ready spec.
+title: "[unit] "
+labels: ["roadmap:unit", "status:proposed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A **proposed** unit is input to planning. At the next Phase 0 the architect may adopt it as one or more units, split it, defer it beyond the cut line, or decline it with a reason. Keep it a goal, not a design.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences — what should exist when this is done.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Rough acceptance
+      description: How you'd know it's done. Individually checkable clauses if you can, but rough is fine.
+  - type: input
+    id: area
+    attributes:
+      label: Area / files
+      description: Where in the codebase this lands, if you know.
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Rough risk
+      options:
+        - low
+        - med
+        - high

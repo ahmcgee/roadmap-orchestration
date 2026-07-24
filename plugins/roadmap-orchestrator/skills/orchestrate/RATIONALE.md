@@ -320,3 +320,44 @@ masquerade as binding; and maintainers inherit expired planning clutter.
 The living documents (`constraints.md`, `debt.md`, notes) stay at top level — unresolved debt is a
 first-class input to the next arc's Phase 0, not archived clutter. The absence of a top-level `state.json`
 is the unambiguous "no arc in flight" marker.
+
+## 14. GitHub issue tracking — a projection, not a second source of truth
+
+Issue mode makes GitHub issues the human-facing and cross-arc-durable face of the work. The shape is
+forced by one platform fact and one economic one.
+
+**Forced to be a projection.** Workflow scripts have no network, and issue numbers are
+non-deterministic — either would break the two things the scheduler depends on: reading `state.json`
+in-memory, and `resumeFromRunId` replaying deterministic prompts. So issues cannot be what the
+scheduler reads. They are a Haiku-written *projection* of `state.json`, exactly the green-tip mirror's
+relationship: **observability, never a gate.** Every `gh` write is best-effort; a failure is a
+`gh-sync` degradation, not an arc failure. This is also what keeps the skill universal — no remote →
+`plan.tracking:"files"`, every `gh` clause `''`, behaviour byte-identical to the pre-issues design.
+The offline paid fixtures run this path, which is why they stay green and why a `gh` clause must
+**never** be emitted unconditionally.
+
+**Idempotent by marker, not by number.** Because numbers can't be threaded deterministically, sync
+finds-or-creates by a `<!-- roadmap:unit id=<id> -->` body marker. `unit.issue` is a cache; nothing
+load-bearing reads it. A resumed or re-run wave never double-creates. Same discipline as the harness's
+wave-N section markers.
+
+**Sync folds into agents that already run.** The 1000-agent-per-run cap is real, so flooding the run
+with dedicated sync agents would shorten arc lifetime. Instead the projection rides existing agents:
+the setup agent flips `status:running`, the merge agent closes on a clean merge, the dossier-writer
+posts the quarantine, and the conductor's existing five persistence writers project debt/feedback/new
+units. The one added agent is a single wave-tail reconciliation *sweep* — the backstop that re-derives
+every unit's label from the final map and is the one place unit sync records a `gh-sync` degradation.
+Net cost in issue mode is a few Haiku calls per wave, no new frontier touchpoints.
+
+**Debt intolerance rides the convergence brake, not a new mechanism.** "Sweep even minor debt into the
+next wave" would, taken literally, never terminate — a healthy assessor drafts something every wave
+(§7). The reconciliation is that debt *rides* waves that already exist for planned work but **never
+creates one**: once the plan's own units are terminal, debt banks to `roadmap:debt` issues and the arc
+completes, to be picked up at the next session's Phase 0. That is the existing cut-line brake
+generalized from health drafts to all debt — termination preserved, tolerance lowered.
+
+**Two smaller pins.** Issue templates only activate on the *default branch*, so bootstrapping them is
+a one-time user-merged PR at Phase 0 (the one pre-close-out touch of `main`, and only the user moves
+it — invariant 5 holds). And `skill-feedback.md` stays a file: it is about the *orchestrator*, must
+leave the product repo, and the skill can't assume access to its own repo's tracker from inside a
+consumer's — so it is never a product-repo issue, the one ledger issues do not absorb.

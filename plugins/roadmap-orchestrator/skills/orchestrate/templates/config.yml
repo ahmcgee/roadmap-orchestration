@@ -1,0 +1,7 @@
+# Reference copy shipped with the roadmap-orchestrator skill (see roadmap-feedback.yml header).
+# Keeps ordinary blank issues available alongside the roadmap templates.
+blank_issues_enabled: true
+contact_links:
+  - name: roadmap-orchestrator
+    url: https://github.com/ahmcgee/roadmap-orchestration
+    about: The skill that opens and manages roadmap:* issues in this repo.

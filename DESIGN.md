@@ -1106,3 +1106,62 @@ interrogation), which stays read-heavy and O(U)-cheap. Conveniently, this makes 
 prototype the decisive one: generate plan packs for 2–3 real roadmaps and judge whether
 those specs would have kept past units' gates convergent — no execution machinery needs to
 exist to answer the question that determines whether it's worth building.
+
+---
+
+## 13. GitHub issue tracking (v0.8)
+
+The maintainer's ask: make GitHub issues the canonical human-facing and cross-arc-durable
+work-tracking surface (via `gh`), move user feedback into issues, and lower tolerance for tech
+debt. The design is constrained hard by §1's platform facts and resolved as follows (the full
+decision record is in `RATIONALE.md §14`; shapes in `reference.md`).
+
+**Issues are a projection; `state.json` stays the scheduler's source of truth.** The scheduler
+runs in the sandbox with no network and must stay a deterministic function of its args
+(`resumeFromRunId`), and issue numbers are non-deterministic — so the scheduler cannot and does
+not read `gh`. Issues are a Haiku-written projection with the exact status of the green-tip
+mirror (§7.5): observability, never a gate. This is the same "tracking *logic* is free; tracking
+*persistence* is a few Haiku calls" split from §1 — the persistence target simply gains a `gh`
+back end alongside the file back end.
+
+**Mode is detected at Phase 0** (`plan.tracking ∈ {issues, files}`). `files` is the pre-v0.8
+behaviour byte-for-byte; every `gh` clause the scripts add resolves to `''` there, so file-mode
+prompts are identical to legacy and the offline paid fixtures (§9.1 eval ladder) exercise exactly
+that path unchanged. This is what keeps the skill universal (local-only / non-GitHub repos) and is
+the reason a `gh` clause is never emitted unconditionally.
+
+**Sync folds into already-spawned agents** rather than dedicated per-unit sync agents — the
+1000-agent-per-run ceiling (§1) is a real budget, and per-unit-per-transition sync would spend it
+fast. `status:running` rides the setup agent, `status:merged`+close rides the merge agent,
+`status:quarantined`+dossier rides the quarantine dossier-writer, and the boundary projections
+(debt→`roadmap:debt`, feedback→closes, new units→issues) ride the conductor's existing five
+persistence writers. The one net-new agent is a single wave-tail reconciliation sweep in the
+harness (present on both dispatch paths), which re-derives every unit issue's `status:*` from the
+final map and is the one place unit sync records a `gh-sync` degradation (§9a). Folded clauses are
+best-effort; the sweep is the backstop. Idempotency is by a `<!-- roadmap:unit id=<id> -->` body
+marker, never by a threaded number — so `unit.issue` is a resume-safe cache, not a dependency.
+
+**Kinds and states** (`reference.md` has the label table): `roadmap:unit` (one per unit; quarantine
+is a *state* of it, not a separate issue), `roadmap:debt` (durable, replaces `debt.md`),
+`roadmap:feedback` (user-filed via template), and one `roadmap:arc` tracking issue + a milestone
+per arc (retiring `ROADMAP-STATUS.md`). Beyond-cut-line units are thin `status:backlog` issues;
+users propose units via a `roadmap-unit` template (`status:proposed`, adjudicated at Phase 0). In
+issue mode `debt.md` and `feedback/user/` are dropped (issues canonical); the internal
+explorer/health/design findings stay files, and `skill-feedback.md` stays a file — it must *leave*
+the product repo, so it is never a product-repo issue.
+
+**Tech-debt intolerance is the convergence brake generalized.** The §7/§6.6 brake exists because a
+healthy health-assessor drafts something every wave, so admit-by-default never dries. The v0.8 rule
+extends the same brake from health drafts to *all* debt: while the plan's own units still have work
+to run, tier-2 promotes the wave's debt (even minor) into consolidation fix-units so it is cleaned
+up next wave; but debt **never creates a wave** — once the plan's units are terminal, debt banks to
+`roadmap:debt` issues and the arc completes, picked up at the next session's Phase 0. Low tolerance,
+termination preserved, no new mechanism.
+
+**Feedback and delivery.** Users file `roadmap:feedback` issues (template auto-labels); the census
+lists open ones (`gh issue list`), triage closes/comments them — the batch-at-boundary discipline of
+§7.5 is unchanged, only the store moves from files to issues. The two issue templates are
+bootstrapped by a one-time user-merged PR at Phase 0 (templates only activate on the default branch;
+this is the sole pre-close-out touch of `main`, and only the user's merge moves it — invariant 5
+holds). At session end the arc delivers as one integration PR (`Closes #…`) whose merge is the
+invariant-5 confirmation; file mode keeps the local fast-forward.

@@ -58,6 +58,15 @@ const CC = {
 
 const repo = inPlan.repoPath   // absolute path to the repository (agents read .roadmap/ here)
 
+// GitHub issue projection (issue mode only; reference.md "GitHub issue tracking"). Mirrors harness.mjs:
+// issues are a Haiku-written projection of state, never read by this script's routing. Every gh clause
+// below is '' in file mode, keeping those prompts byte-identical to the legacy path. Best-effort: a gh
+// failure records a `gh-sync` degradation and continues.
+const issueMode = inPlan.tracking === 'issues'
+const ghRepo = inPlan.repoSlug ? `--repo ${inPlan.repoSlug} ` : ''
+const GH_BEST_EFFORT = 'Do the GitHub-issue steps below on a BEST-EFFORT basis: if any gh command errors (no ' +
+  'network, auth, rate limit, missing issue), ignore it and carry on — issue state is observability, never a gate. '
+
 // Working plan — cloned so wave-to-wave mutation (merged units, edges, cut lines) never aliases
 // the caller's object. This is what is persisted and returned; the transient contingent
 // withholding below dispatches a SEPARATE copy so a withheld inScope:false is never mistaken
@@ -410,13 +419,17 @@ async function ret(reason, tier, extra = {}) {
 // Deterministic functions of repo path + wave N + the JSON of in-memory structured data. Both
 // agents read architect-log.md FIRST so successive fresh agents inherit rationale.
 const censusPrompt = (N) => STRICT +
-  `Take a wave-${N} census of a roadmap build's feedback and quarantine folders. Do two directory listings and ` +
-  `report filenames only — read no file contents, change nothing:\n` +
-  `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
-  `in \`pendingUserFeedback\` (empty array if that directory is absent or holds only TEMPLATE.md).\n` +
+  `Take a wave-${N} census of a roadmap build's pending feedback and quarantine dossiers. Report identifiers ` +
+  `only — read no contents, change nothing:\n` +
+  (issueMode
+    ? `1) List open user-feedback issues: \`gh issue list ${ghRepo}--label roadmap:feedback --state open --json number ` +
+      `--jq '.[].number'\` — put each issue NUMBER (as a string) in \`pendingUserFeedback\` (empty array if none ` +
+      `or if gh fails).\n`
+    : `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
+      `in \`pendingUserFeedback\` (empty array if that directory is absent or holds only TEMPLATE.md).\n`) +
   `2) List the *.md files under ${repo}/.roadmap/quarantine/ — put their basenames in \`quarantineDossiers\` ` +
-  `(empty array if absent).\nReport ok:true when both listings completed. Never guess filenames. Keep ` +
-  `\`detail\` to one sentence (max 300 characters). ${TERSE}`
+  `(empty array if absent).\nReport ok:true when both listings completed. Never guess ` +
+  `${issueMode ? 'issue numbers' : 'filenames'}. Keep \`detail\` to one sentence (max 300 characters). ${TERSE}`
 
 // The cut-line brake is load-bearing (arc-observed, RATIONALE §7): a healthy assessor drafts
 // something EVERY wave, so an admit-by-default triage with no brake never dries — one live run
@@ -424,9 +437,9 @@ const censusPrompt = (N) => STRICT +
 const opusTriagePrompt = (N, P) =>
   `You are the wave-${N} boundary triager for a roadmap build, standing in for the architect. Read, in this order: ` +
   `${repo}/.roadmap/architect-log.md FIRST (inherited rationale + dismissal criteria), then ` +
-  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${repo}/.roadmap/debt.md, this wave's feedback at ` +
-  `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus any user notes under ` +
-  `${repo}/.roadmap/feedback/user/, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
+  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`gh issue list ' + ghRepo + '--label roadmap:debt --state open`)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
+  `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
+  `${issueMode ? `the open user-feedback issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
   `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
@@ -434,7 +447,12 @@ const opusTriagePrompt = (N, P) =>
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
-  `\`promote\`. THE CUT LINE BINDS THE DEFAULT — a healthy assessor drafts something every wave, so admitting by ` +
+  `\`promote\`. SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
+  `left to run (a next wave is happening anyway), fold this wave's debt — even minor items — into one or more ` +
+  `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. But debt must ` +
+  `never CREATE a wave: once the plan's own units are all terminal (merged/quarantined), do NOT promote debt — ` +
+  `bank it to \`debtLedger\` and set arcComplete, so it becomes durable tracked debt the next session picks up. ` +
+  `THE CUT LINE BINDS THE DEFAULT — a healthy assessor drafts something every wave, so admitting by ` +
   `default with no brake would extend the arc forever: once the plan's own units are merged, a ` +
   `draft must justify a WAVE, not merely be an improvement — refactors without a defect, ergonomics polish, and ` +
   `marginal coverage on a healthy suite are noise to cut even though they are real; bank them to \`debtLedger\` ` +
@@ -548,7 +566,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     // state.spend already carries conductor calls merged at prior continuations; add only the
     // not-yet-merged remainder so the conductor's own work is never counted twice.
     const runLocalCalls = (sumTiers(state.spend) - initialSpendTotal) + (sumTiers(cSpend) - sumTiers(cMerged))
-    const estimate = 8 + dispatchable.length * CC.perUnitCallEstimate
+    // Issue mode adds a per-wave overhead of a few Haiku calls (the harness's wave-tail issue-sync
+    // sweep + the new-unit issue writer) that fold no work onto individual units — a small fixed bump.
+    const estimate = (issueMode ? 12 : 8) + dispatchable.length * CC.perUnitCallEstimate
     if (runLocalCalls + estimate + CC.agentBudgetReserve > 1000)
       return await ret('agent-budget', null, { nextWaveUnits: dispatchable.map((u) => u.id), estimate })
   }
@@ -693,6 +713,23 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   await Promise.all(reviseList.map((r) => run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
   mergePlan(prepared, cutUnitIds)
 
+  // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
+  // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
+  // wave. One Haiku call, only when there is new work; a no-op / '' path in file mode.
+  if (issueMode && prepared.length)
+    await run(
+      STRICT + GH_BEST_EFFORT +
+      `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
+      `below: search \`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 ` +
+      `--json number --jq '.[0].number'\`; if one already exists, skip it; otherwise create it with title ` +
+      `"[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
+      `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\`)` : ''}, and a body ` +
+      `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
+      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
+      `Report ok:true when every unit has an issue; note any gh failure in detail.`,
+      { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.ok },
+    ).catch(() => null)
+
   // 8. Persist (all awaited before the next dispatch; idempotent by wave-N markers for resume).
   phase('Persist')
   const waveDebt = state.debt ?? []   // captured before the consumed state clears it
@@ -714,16 +751,41 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
   ).catch(() => null)
 
-  // bank-debt: stamp a wave-N section into debt.md ALWAYS (even "no new entries" — ruling 7).
-  const debtLines = [...waveDebt.map(fmtDebt), ...debtLedger.map((s) => `- ${s}`)]
-  const debtBody = debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries`
-  await run(
-    STRICT + `In the file ${repo}/.roadmap/debt.md (create it if missing): ensure exactly one section marked ` +
-    `\`<!-- wave ${N} -->\`. If a section with that exact marker already exists, replace its body; otherwise ` +
-    `append a new one at the end of the file. The section must be exactly:\n<!-- wave ${N} -->\n${debtBody}\n\n` +
-    `Change nothing else in the file.`,
-    { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues
+  // (idempotent by a wave+index marker, since debt text has no stable id). FILE MODE -> a
+  // <!-- wave N --> section in debt.md, ALWAYS stamped (even "no new entries" — ruling 7).
+  const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
+  if (issueMode) {
+    const items = [
+      ...waveDebt.map((d, i) => ({ marker: `roadmap:debt wave=${N} i=${i}`,
+        title: `[debt] ${String(d.what ?? 'debt').slice(0, 70)}`,
+        labels: ['roadmap:debt', `severity:${d.severity === 'major' ? 'major' : 'minor'}`, `debt:${debtKind(d.kind)}`].join(','),
+        body: `${d.what ?? ''}${d.why ? `\n\nWhy: ${d.why}` : ''}${d.unit ? `\n\nUnit: ${d.unit}` : ''}` })),
+      ...debtLedger.map((s, i) => ({ marker: `roadmap:debt wave=${N} L=${i}`,
+        title: `[debt] ${String(s).slice(0, 70)}`, labels: 'roadmap:debt', body: String(s) })),
+    ]
+    if (items.length)
+      await run(
+        STRICT + GH_BEST_EFFORT +
+        `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below: search for an ` +
+        `existing issue whose body carries its marker ` +
+        `(\`gh issue list ${ghRepo}--search '"<marker>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
+        `if one exists, leave it untouched; otherwise create it with title, comma-joined labels, and a body whose ` +
+        `FIRST line is exactly \`<!-- <marker> -->\` followed by the item body. Items:\n${JSON.stringify(items)}\n` +
+        `Report ok:true when every item is present; note any gh failure in detail.`,
+        { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
+      ).catch(() => null)
+  } else {
+    const debtLines = [...waveDebt.map(fmtDebt), ...debtLedger.map((s) => `- ${s}`)]
+    const debtBody = debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries`
+    await run(
+      STRICT + `In the file ${repo}/.roadmap/debt.md (create it if missing): ensure exactly one section marked ` +
+      `\`<!-- wave ${N} -->\`. If a section with that exact marker already exists, replace its body; otherwise ` +
+      `append a new one at the end of the file. The section must be exactly:\n<!-- wave ${N} -->\n${debtBody}\n\n` +
+      `Change nothing else in the file.`,
+      { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
+    ).catch(() => null)
+  }
 
   // log-append: architect journal, ONLY when tier 3 ran (replace-if-header-exists idempotency).
   if (ranTier === 3 && journal)
@@ -735,16 +797,36 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
+  // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user feedback
+  // by closing/commenting the roadmap:feedback ISSUES instead of moving user-note files.
   const consumedFiles = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed').map((f) => f.file)
-  await run(
-    STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
-    `Move these files if they exist — skip any that are missing (this is idempotent): ` +
-    `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-    `${repo}/.roadmap/feedback/design/wave-${N}.md` +
-    `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
-    `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
-    { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  if (issueMode) {
+    const disposed = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed')
+      .map((f) => ({ number: f.file, action: f.action, reason: String(f.reason ?? '').slice(0, 140) }))
+    const deferred = feedbackDispositions.filter((f) => f.action === 'deferred').map((f) => String(f.file))
+    await run(
+      STRICT + `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
+      `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
+      `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md. Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
+      `Then dispose of the triaged user-feedback ISSUES: for each {number, action, reason} below, run ` +
+      `\`gh issue comment ${ghRepo}<number> --body "Triaged wave ${N}: <action> — <reason>"\` then ` +
+      `\`gh issue close ${ghRepo}<number> --reason completed\`: ${JSON.stringify(disposed)}. ` +
+      (deferred.length ? `Leave these deferred issues OPEN, adding the label status:deferred: ${deferred.join(', ')}. ` : '') +
+      `Create no other files and move nothing else.`,
+      { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
+    ).catch(() => null)
+  } else {
+    await run(
+      STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
+      `Move these files if they exist — skip any that are missing (this is idempotent): ` +
+      `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md` +
+      `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
+      `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
+      { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
+    ).catch(() => null)
+  }
 
   // persist-state: the consumed state + conductor block.
   await run(
