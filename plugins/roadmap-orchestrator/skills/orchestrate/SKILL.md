@@ -197,7 +197,8 @@ than guessing.
 **In issue mode, stand up the tracker (Haiku; exact labels/markers in `reference.md`).** Create the
 `roadmap:*`/`status:*`/`risk:*`/`severity:*`/`debt:*` labels (`gh label create`; ignore "already
 exists"), the arc **milestone**, and one arc **tracking issue** (`roadmap:arc` — body: plan summary +
-DAG + a `<!-- roadmap:status -->…<!-- /roadmap:status -->` table region + a session-report
+DAG + a `<!-- roadmap:status -->…<!-- /roadmap:status -->` region the wave-tail sweep fills with a
+unit task list (`- [x]`/`- [ ]`, checked when closed → native progress rollup) + a session-report
 placeholder; record its number in `plan.trackingIssue`). Open one `roadmap:unit` issue per in-scope
 unit (body's first line the `<!-- roadmap:unit id=<id> -->` marker, then the spec) and a thin
 `status:backlog` issue per deferred unit. The unit issue is where the spec is *authored*, but you

@@ -243,8 +243,10 @@ collide):
   (`status:proposed`); Phase 0 adjudicates proposals as roadmap *input* — adopt / split / defer /
   decline-with-reason (close not-planned).
 - **`roadmap:arc`** — one tracking (epic) issue, the human dashboard (retires `ROADMAP-STATUS.md`):
-  plan summary, DAG, a live status table, the session report. Open during the arc, closed at
-  close-out.
+  plan summary, DAG, a live unit **task list**, the session report. Open during the arc, closed at
+  close-out. The wave-tail sweep rewrites only the `<!-- roadmap:status -->…<!-- /roadmap:status -->`
+  region as a GitHub task list (`- [x]`/`- [ ]` per unit, checked when the unit's issue is closed),
+  so GitHub renders a native progress rollup and each item links to its unit issue.
 
 **Sync folds into already-spawned agents — no dedicated per-unit sync agents** (the 1000-agent cap
 is real; flooding it shortens arc lifetime):

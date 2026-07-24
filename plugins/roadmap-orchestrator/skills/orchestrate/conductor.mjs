@@ -482,7 +482,7 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `quarantined unit, set its \`supersedes\` field to that unit's id so the failed unit is retired and its edges ` +
   `repoint to the replacement — never leave a replaced quarantine active; a quarantine you abandon without ` +
   `replacing goes in \`cutUnits\`. Append a concise architect \`journal\` ` +
-  `entry (decisions + rationale + watch-list) so the next fresh boundary agent inherits your reasoning. You may ` +
+  `entry (decisions + rationale + watch-list) so the next fresh boundary agent inherits your rationale. You may ` +
   `NEVER amend a contract or design a contingent dependent: set escalate:true with escalateReason ` +
   `'contract-amendment'/'contingent-replan'/'needs-user' to return to the root, or 'cut-line' when the arc is ` +
   `complete. When escalating 'needs-user', put the exact user-facing question (with the context needed to answer ` +

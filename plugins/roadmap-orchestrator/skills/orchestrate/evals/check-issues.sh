@@ -35,7 +35,7 @@ flunk() { printf 'FAIL  %s\n' "$1"; fail=1; }
 check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else flunk "$d"; fi; }
 
 # Track created artifacts for teardown.
-CREATED_ISSUES=(); LABELS=(roadmap:unit roadmap:debt roadmap:feedback \
+CREATED_ISSUES=(); LABELS=(roadmap:unit roadmap:debt roadmap:feedback roadmap:arc \
   status:pending status:running status:merged status:quarantined \
   risk:low severity:minor debt:structure); MILESTONE=""
 teardown() {
@@ -122,6 +122,25 @@ done
 [ "${CENSUS:-0}" -ge 1 ] && pass "feedback census lists open roadmap:feedback issues" || flunk "feedback census found none"
 gh issue close "${G[@]}" "$F1" --reason completed --comment "Triaged: actioned." >/dev/null 2>&1
 [ "$(state_of "$F1")" = CLOSED ] && pass "feedback triage closes the issue" || flunk "feedback issue not closed"
+
+# 8. arc tracking issue: the wave-tail sweep rewrites only the marked region with a per-unit GitHub
+# task list (`- [x]` closed / `- [ ]` open) so GitHub renders a native progress rollup.
+TRACK=$(gh issue create "${G[@]}" --title "[arc] ${RUN}" --label "roadmap:arc" \
+  --body "roadmap arc ${RUN}
+<!-- roadmap:status -->
+<!-- /roadmap:status -->" 2>/dev/null | grep -oE '[0-9]+$')
+[ -n "$TRACK" ] && CREATED_ISSUES+=("$TRACK")
+gh issue edit "${G[@]}" "$TRACK" --body "roadmap arc ${RUN}
+<!-- roadmap:status -->
+- [x] #${U1} ${RUN}-u1 — merged
+- [ ] #${Q1} ${RUN}-q1 — quarantined
+<!-- /roadmap:status -->" >/dev/null 2>&1
+BODY=$(gh issue view "${G[@]}" "$TRACK" --json body --jq .body 2>/dev/null)
+if printf '%s' "$BODY" | grep -q -- "- \[x\] #${U1}" && printf '%s' "$BODY" | grep -q -- "- \[ \] #${Q1}"; then
+  pass "arc tracking issue renders a unit task list (checked=closed) in the status region"
+else
+  flunk "tracking-issue task list not stored in the status region"
+fi
 
 echo "----"
 [ "$fail" = 0 ] && echo "ALL ISSUE-MODE CHECKS PASSED" || echo "SOME CHECKS FAILED"

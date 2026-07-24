@@ -57,6 +57,11 @@ test('issue mode: folded gh clauses + one sync sweep', async () => {
   const sweeps = calls.filter((c) => c.label.startsWith('issue-sync:'))
   assert.equal(sweeps.length, 1, 'exactly one issue-sync sweep per wave')
   assert.equal(sweeps[0].model, 'haiku')
+  // With a trackingIssue set, the sweep refreshes it as a GitHub task list (native progress rollup),
+  // scoped to the marker region so the rest of the body is untouched.
+  assert.match(sweeps[0].prompt, /task list/)
+  assert.match(sweeps[0].prompt, /\[x\]/)
+  assert.match(sweeps[0].prompt, /roadmap:status/)
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
 })

@@ -724,8 +724,11 @@ async function syncIssues() {
     `whose issue is not found. Units:\n${JSON.stringify(rows)}\n` +
     (plan.trackingIssue
       ? `Then refresh the arc tracking issue #${plan.trackingIssue}: rewrite only the region between the ` +
-        `\`<!-- roadmap:status -->\` and \`<!-- /roadmap:status -->\` markers in its body with a table of these ` +
-        `rows (unit | status), leaving the rest of the body intact. `
+        `\`<!-- roadmap:status -->\` and \`<!-- /roadmap:status -->\` markers in its body with a GitHub task ` +
+        `list — one item per unit, \`- [x] #<n> <id> — <status>\` when that unit's issue is closed (merged or ` +
+        `deferred) and \`- [ ] #<n> <id> — <status>\` while it is still open — so the tracking issue renders a ` +
+        `native progress rollup and each item links to its unit issue. Skip any unit whose issue number is ` +
+        `unknown, and leave the rest of the body intact. `
       : '') +
     `Report ok:true when the sweep completed (even if some individual gh calls failed); put a one-line summary of ` +
     `any failures in detail.`,
