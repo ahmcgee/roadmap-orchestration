@@ -256,16 +256,25 @@ is real; flooding it shortens arc lifetime):
 | `status:running` | the unit's **setup** agent (best-effort clause, after its sha assertion) | live, per unit |
 | `status:merged` + close-completed | the **merge** agent (clean-merge + suite-pass path) | live, common case |
 | `status:quarantined` + dossier comment | the **quarantine dossier-writer** (fires on every quarantine path) | live, per unit |
-| reconcile all unit issues from the map + refresh the tracking-issue table | one **issue-sync sweep** (Haiku) at the harness wave-tail | 1 agent / wave |
+| reconcile the wave's **changed** unit issues + refresh the tracking-issue task list | one **issue-sync sweep** (Haiku) at the harness wave-tail | 1 agent / wave |
 | debt issues, feedback close/comment, new unit/fix-unit issues | the conductor's boundary writers (`bank-debt` → debt issues, `move-feedback` → feedback closes, `persist-plan` → new-unit issues) | boundary |
 | labels/milestone/arc-issue/unit-issue creation, template PR | main loop + one-time Haiku (Phase 0) | once |
 | close issues + milestone + arc issue, open the integration PR | close-out sequence | session end |
 
 The wave-tail **sweep** is the reconciliation backstop: the folded clauses are best-effort, so the
-sweep re-derives every unit issue's `status:*` from the final map (catching a missed running/merged
-flip, `blocked`, transient `merge-ready`) and is the one agent that records `gh-sync` degradations
-for unit sync. It is a single Haiku call per wave, present in **both** dispatch paths (it lives in
-the harness), and a no-op in file mode.
+sweep re-derives `status:*` from the final map (catching a missed running/merged flip, `blocked`,
+transient `merge-ready`) and is the one agent that records `gh-sync` degradations for unit sync. It is
+a single Haiku call per wave, present in **both** dispatch paths (it lives in the harness), and a
+no-op in file mode.
+
+**Rate-limit envelope.** Per-unit label reconciliation is scoped to the wave's **status-delta**, not
+the cumulative unit set — re-editing every unit every wave is an O(all-units) burst of redundant `gh`
+mutations that grows each wave and, on a large arc, risks GitHub's secondary (abuse) rate limit. The
+delta still backstops the wave's own folded clauses; the tracking-issue task list lists all units in a
+single edit. Everything `gh` is best-effort: a rate-limit error records a `gh-sync` degradation and the
+next sweep reconciles — it never gates a unit or wave. The one remaining burst is the **Phase-0 bulk
+issue creation** (one `gh issue create` per in-scope unit); it is one-time, best-effort, and tolerates
+backoff. `gh` volume is therefore bounded by *new + changed* units per wave, never the arc total.
 
 **Bootstrap (one-time).** Labels + milestone + the arc/unit issues are created immediately via `gh`
 API at Phase 0. The **issue templates** (`.github/ISSUE_TEMPLATE/roadmap-feedback.yml`,

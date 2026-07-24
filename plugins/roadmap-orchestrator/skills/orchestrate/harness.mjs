@@ -715,26 +715,36 @@ async function syncIssues() {
   if (!issueMode) return
   const N = (prior.wave ?? 0) + 1
   const issueOf = new Map(plan.units.map((u) => [u.id, u.issue]))
-  const rows = [...units].map(([id, r]) => ({ id, status: r.status, issue: issueOf.get(id) ?? null }))
+  const rowsOf = (entries) => entries.map(([id, r]) => ({ id, status: r.status, issue: issueOf.get(id) ?? null }))
+  const allRows = rowsOf([...units])
+  // Reconcile LABELS only for units whose status CHANGED this wave. Prior waves' units were already
+  // reconciled by the sweep of the wave that moved them, so re-editing all of them every wave only burns
+  // GitHub API quota — an O(all-units) burst of redundant `gh issue edit`s that grows every wave and, on
+  // a large arc, risks the secondary (abuse) rate limit. The delta still backstops THIS wave's folded
+  // clauses (a merged/quarantined unit counts as changed), and the task list still lists ALL units in a
+  // single tracking-issue edit, so the dashboard stays whole. gh rate-limit errors are tolerated anyway.
+  const changed = rowsOf([...units].filter(([id, r]) => r.status !== (prior.units?.[id]?.status ?? 'pending')))
   const r = await run(
     STRICT +
     `In the git repository at ${repo}, reconcile the GitHub issue projection after wave ${N} of this roadmap ` +
-    `build. Best-effort throughout: if a gh command fails, note it and keep going — never error out; issue state ` +
-    `is observability, not a gate. For each unit below, resolve its issue number — use its \`issue\` field if ` +
-    `non-null, else search by body marker ` +
+    `build. Best-effort throughout: if a gh command fails (a rate limit included), note it and keep going — never ` +
+    `error out; issue state is observability, not a gate. For each CHANGED unit below, resolve its issue number — ` +
+    `use its \`issue\` field if non-null, else search by body marker ` +
     `(\`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
     `if found, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
     `and ensure \`wave:${N}\` on any unit that is running or beyond: pending/running/merge-ready/blocked/` +
     `quarantined stay OPEN; merged → add \`status:merged\` then \`gh issue close ${ghRepo}<n> --reason completed\`; ` +
     `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. Skip any unit ` +
-    `whose issue is not found. Units:\n${JSON.stringify(rows)}\n` +
+    `whose issue is not found, and do NOT touch any unit not listed here — they were reconciled in an earlier ` +
+    `wave. Changed units:\n${JSON.stringify(changed)}\n` +
     (plan.trackingIssue
-      ? `Then refresh the arc tracking issue #${plan.trackingIssue}: rewrite only the region between the ` +
-        `\`<!-- roadmap:status -->\` and \`<!-- /roadmap:status -->\` markers in its body with a GitHub task ` +
-        `list — one item per unit, \`- [x] #<n> <id> — <status>\` when that unit's issue is closed (merged or ` +
-        `deferred) and \`- [ ] #<n> <id> — <status>\` while it is still open — so the tracking issue renders a ` +
-        `native progress rollup and each item links to its unit issue. Skip any unit whose issue number is ` +
-        `unknown, and leave the rest of the body intact. `
+      ? `Then refresh the arc tracking issue #${plan.trackingIssue} from the FULL unit list: rewrite only the ` +
+        `region between the \`<!-- roadmap:status -->\` and \`<!-- /roadmap:status -->\` markers in its body with ` +
+        `a GitHub task list — one item per unit, \`- [x] #<n> <id> — <status>\` when that unit's issue is closed ` +
+        `(merged or deferred) and \`- [ ] #<n> <id> — <status>\` while it is still open — so the tracking issue ` +
+        `renders a native progress rollup and each item links to its unit issue. This is one edit of a single ` +
+        `issue, not a per-unit call. Skip any unit whose issue number is unknown, and leave the rest of the body ` +
+        `intact. Full unit list:\n${JSON.stringify(allRows)}\n`
       : '') +
     `Report ok:true when the sweep completed (even if some individual gh calls failed); put a one-line summary of ` +
     `any failures in detail.`,

@@ -74,6 +74,30 @@ shipping; never ship on an upper rung alone.
 
 Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.
 
+### Issue-mode coverage & the rate-limit envelope
+
+Issue mode is covered by **three cheap layers**, deliberately not by a second paid arc — a full model
+arc in issue mode is the single most rate-limit-intensive thing this repo can do (real `gh` mutation
+volume **plus** model budget), so it is not a routine gate:
+
+- **Sims** (`issue-mode.test.mjs`) — file-mode byte-identity (no `gh` text, no sweep), the folded
+  clauses on setup/merge/dossier, exactly **one** sync sweep per wave (folded, never fanned out — the
+  1000-agent cap), best-effort `gh-sync` degradation, and that the sweep scopes per-unit label
+  reconciliation to the wave's **status-delta** while listing all units in one tracking-issue edit.
+- **`check-issues.sh`** (real `gh`, zero model) — the actual command sequences: create/find/transition/
+  close, debt idempotency, feedback census, the tracking-issue task list.
+- **Byte-identity** — the file-mode paid fixtures prove every `gh` clause is correctly gated to `''`,
+  so the gate/model *judgment* they exercise is identical in both modes.
+
+**Rate-limit envelope (why a paid issue-mode arc is not a routine gate).** Every `gh` write is
+best-effort: a rate-limit error records a `gh-sync` degradation and the next sweep reconciles — it
+never gates a unit or wave, so the methodology cannot *break* an arc on rate limits. The volume it can
+*spend* is bounded to **new + changed units per wave** (the sweep no longer re-edits the cumulative set
+— that was an O(all-units) burst growing each wave), plus the one-time Phase-0 bulk `gh issue create`.
+The residual gap the cheap layers cannot close is "does a real model actually execute the folded clause
+and the scoped sweep correctly?" — cover that with a **minimal, opt-in, sequenced** issue-mode arc (1–2
+units, run **alone**, never concurrent with the file-mode fixtures), not a standing part of the ladder.
+
 ---
 
 ## The harness fixture (single wave)

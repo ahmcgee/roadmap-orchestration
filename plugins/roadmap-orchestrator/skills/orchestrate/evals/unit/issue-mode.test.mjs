@@ -62,6 +62,11 @@ test('issue mode: folded gh clauses + one sync sweep', async () => {
   assert.match(sweeps[0].prompt, /task list/)
   assert.match(sweeps[0].prompt, /\[x\]/)
   assert.match(sweeps[0].prompt, /roadmap:status/)
+  // Rate-limit guard: per-unit LABEL reconciliation is scoped to the wave's status-delta (a burst of
+  // O(all-units) redundant gh edits every wave is what risks GitHub's secondary limit); the task list
+  // still renders the FULL unit list in a single tracking-issue edit.
+  assert.match(sweeps[0].prompt, /CHANGED unit/)
+  assert.match(sweeps[0].prompt, /Full unit list/)
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
 })
