@@ -52,6 +52,7 @@ const CC = {
   agentBudgetReserve: 200,     // headroom below the 1000-call cap; the pre-wave guard returns before crossing
   perUnitCallEstimate: 15,     // pre-wave budget estimate per dispatchable unit; corrected by harness spend deltas
   fixUnitAdmit: 'auto',        // 'auto' tier-1 mechanical admit of health drafts | 'triage' force >=Opus veto when drafts present
+  fableEffort: 'high',         // effort for the Fable boundary agent (respec/escalation arbiter) — Fable 5's high default for real adjudication
   ...(inPlan.config?.conductor ?? {}),
   ...(overrides?.conductor ?? {}),
 }
@@ -659,7 +660,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     phase('Triage-fable')
     cSpend.boundaryFables++
     boundaryPlan = await runOr(null, fableBoundaryPrompt(N, P, opusLead),
-      { model: 'fable', effort: 'low', label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
+      { model: 'fable', effort: CC.fableEffort, label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
     if (!boundaryPlan) return await degraded()
     if (boundaryPlan.escalate) {
       const er = boundaryPlan.escalateReason

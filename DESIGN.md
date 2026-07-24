@@ -250,7 +250,7 @@ out-of-scope frontier unit — nearly free while context is hot, valuable later.
 | **Architect plan-check** (every unit by default, pre-implementation) | **Opus-first; Fable on escalation / high-risk / infeasible** | Kills wrong approaches before code exists; Opus checks the plan and escalates to Fable (~0.3–0.8k out) only when the call is structural. |
 | **Architect exit gate** (guaranteed, every unit) | **Fable** | Reads the *actual diff* + evidence, writes directives (~1–2.5k out); the per-unit steering pass. |
 | Dossier compression (logs/transcripts bound for frontier) | Sonnet | Frontier never reads raw logs — but the gate reads the real diff uncompressed (§5). |
-| **Mid-loop rescue consult** (conditional, capped) | **Fable, effort low** | For units stuck before reaching the gate; directive only. |
+| **Mid-loop rescue consult** (conditional, capped) | **Fable, effort high** | For units stuck before reaching the gate; directive only. |
 | Merge-conflict resolution | Opus | Contextual judgment, free; uncertainty routes to the predicate. |
 | Integration bisect (revert-and-retest search) | Code + Haiku | Pure mechanism. |
 | Green-tip mirror advance / preview refresh | Code + Haiku | Pure mechanism; ~1 call per merge (§7.5). |
@@ -312,17 +312,17 @@ async function runUnit(unit, state, config) {
     { model: 'opus', effort: 'high', phase: 'Implement', schema: PLAN });
   if (config.planCheckRisk.includes(unit.risk)) {          // default: every risk tier
     const check = await agent(planCheckPrompt(unit, plan),
-      { model: 'fable', effort: 'low', phase: 'Architect', schema: PLAN_VERDICT });
+      { model: 'fable', effort: 'high', phase: 'Architect', schema: PLAN_VERDICT });
     if (check.verdict === 'redirect')
       plan = await agent(revisePlanPrompt(unit, plan, check.guidance),
-        { model: 'opus', effort: 'high', phase: 'Implement', schema: PLAN });
+        { model: 'opus', effort: 'xhigh', phase: 'Implement', schema: PLAN });
     else if (check.verdict === 'quarantine')
       return quarantine(unit, ws, check);
   }
 
   // (3) IMPLEMENT — Opus, against the approved plan + frozen contracts.
   let impl = await agent(implementPrompt(unit, ws, plan), {
-    model: 'opus', effort: 'high', phase: 'Implement', schema: IMPL_RESULT });
+    model: 'opus', effort: 'xhigh', phase: 'Implement', schema: IMPL_RESULT });
 
   // (4) VERIFY → REVIEW → FIX loop, bounded. The free Opus review filters noise so
   // the metered architect gate below reads a polished candidate, not a first draft.
@@ -341,11 +341,11 @@ async function runUnit(unit, state, config) {
       const dossier = await agent(compressPrompt(unit, verify, review, impl),
         { model: 'sonnet', phase: 'Escalate', schema: DOSSIER });
       directive = await agent(consultPrompt(unit, dossier),   // decision, not code
-        { model: 'fable', effort: 'low', phase: 'Escalate', schema: DIRECTIVE });
+        { model: 'fable', effort: 'high', phase: 'Escalate', schema: DIRECTIVE });
       if (directive.action === 'quarantine') return quarantine(unit, ws, directive);
     }
     impl = await agent(fixPrompt(unit, ws, verify, review, directive),
-      { model: 'opus', effort: 'high', phase: 'Fix', schema: IMPL_RESULT });
+      { model: 'opus', effort: 'xhigh', phase: 'Fix', schema: IMPL_RESULT });
   }
   if (!verify.pass) return quarantine(unit, ws, verify);
 
@@ -360,7 +360,7 @@ async function runUnit(unit, state, config) {
       return { unitId: unit.id, status: 'merge-ready', branch: `unit/${unit.id}` };
     if (gate.verdict === 'quarantine') break;
     await agent(fixPrompt(unit, ws, verify, review, gate),    // Opus applies the directives
-      { model: 'opus', effort: 'high', phase: 'Fix', schema: IMPL_RESULT });
+      { model: 'opus', effort: 'xhigh', phase: 'Fix', schema: IMPL_RESULT });
     verify = await agent(verifyPrompt(unit, ws),
       { model: 'haiku', phase: 'Verify', schema: VERIFY_RESULT });
   }
@@ -484,8 +484,9 @@ config:
   planCheck: 'opus-first',         // 'opus-first' (Opus checks, escalates) | 'always-fable'
   exitGate: 'opus-first',          // 'opus-first' (Opus grades, escalates) | 'always-fable'
   gateAuditRate: 0.10,             // fraction of Opus-approved units still Fable-audited
-  gateEffort: 'medium',            // effort on forced Fable gate calls ('high' for risk:high)
-  auditEffort: 'low',              // effort on audit-only Fable gates (diff-stat-first)
+  fableEffort: 'high',             // Fable frontier judgment (plan-check + consult); Fable 5 default
+  gateEffort: 'high',              // effort on forced Fable gate calls (the frontier gate)
+  auditEffort: 'high',             // audit-only Fable gates; dial to 'medium' to keep the 10% sample cheap
   maxConsults: E = ⌈U/4⌉ }         // mid-loop rescue budget
 ```
 

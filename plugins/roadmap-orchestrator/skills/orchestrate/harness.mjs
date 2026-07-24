@@ -36,10 +36,16 @@ const C = {
   maxGateRounds: 2,
   maxConsults: 3,
   minBlockConfidence: 0.6,
-  gateEffort: 'medium',
+  // Fable is the frontier judgment tier (plan-check, exit gate, mid-loop consult, boundary
+  // triage). Fable 5's guidance makes `high` the default for real adjudication — and these calls
+  // fire only on the hard decisions — so they run there rather than on the floor. `fableEffort`
+  // covers the plan-check + consult; the exit gate has its own `gateEffort`, and the audit
+  // spot-check `auditEffort` can be dialled below a full gate to keep the 10% sample cheap.
+  fableEffort: 'high',
+  gateEffort: 'high',
   // Opus reasoning effort for the code-authoring pipeline — planning, implementing, and every
-  // fix loop. `xhigh` is the Opus 5 starting point for agentic coding; the review/gate/triage
-  // Opus calls stay at their own (lower) efforts on purpose, since review accuracy holds there.
+  // fix loop. `xhigh` is the Opus 5 starting point for agentic coding; the review/gate Opus
+  // calls stay at their own efforts on purpose, since review accuracy holds at lower effort.
   implementEffort: 'xhigh',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
@@ -52,7 +58,7 @@ const C = {
   planCheck: 'opus-first',   // 'opus-first' | 'always-fable'
   exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
   gateAuditRate: 0.10,
-  auditEffort: 'low',
+  auditEffort: 'high',
   boundary: 'on',            // 'on' | 'off' — wave-tail explorer + health assessor inside the
                              //   workflow; 'off' for the arc's final wave (the session
                              //   integration review supersedes it)
@@ -874,7 +880,7 @@ async function runUnit(unit) {
         `not implement at all (e.g. the spec is unsatisfiable or self-contradictory within its contracts, or needs ` +
         `redesign above the engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, ` +
         `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
-        { model: 'fable', effort: 'low', phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
+        { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
     }
 
     let check
@@ -1013,7 +1019,7 @@ async function runUnit(unit) {
         `You are the architect. Unit ${unit.id} is stuck. Dossier: ${JSON.stringify(dossier)} (spec: ${spec} — ` +
         `consult it and the code in ${w} yourself if the dossier is not enough). Decide: redirect with brief ` +
         `guidance, or quarantine for redesign. Do not write code.`,
-        { model: 'fable', effort: 'low', phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
+        { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
       if (directive.action === 'quarantine') return quarantine(unit, 'architect consult', directive)
       mismatch = null   // consumed — one consult per reported mismatch
     }

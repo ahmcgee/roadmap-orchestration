@@ -494,13 +494,14 @@ integration-review material.
 | `maxGateRounds` | 2 | Architect directive→fix→re-check cycles before quarantine |
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `minBlockConfidence` | 0.6 | Review findings below this confidence don't trigger fix rounds — false blockers are the reviewer's main cost |
-| `gateEffort` | `medium` | Effort on forced Fable exit-gate calls; raise to `high` for risky arcs |
-| `implementEffort` | `'xhigh'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement + every fix loop) — the Opus 5 starting point for agentic coding. The review/gate/triage/boundary Opus calls keep their own lower efforts (review accuracy holds there); lower this if a sweep shows quality holds |
+| `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
+| `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
+| `implementEffort` | `'xhigh'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement + every fix loop) — the Opus 5 starting point for agentic coding. The review/gate Opus calls keep their own lower efforts (review accuracy holds there); lower this if a sweep shows quality holds |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
 | `gateAuditRate` | `0.10` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables |
-| `auditEffort` | `'low'` | Effort for audit-*only* Fable gates — these read diff-stat-first; forced gates keep the full-diff read at `gateEffort` |
+| `auditEffort` | `'high'` | Effort for audit-*only* Fable gates (the 10% anti-rubber-stamp sample). Defaults to full effort; these already read diff-stat-first, so dial down (e.g. `'medium'`) to keep the sample cheaper than a forced full gate |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` \| `'wave'` \| `'off'`. Inert without a `plan.preview` block |
 | `boundary` | `'on'` | The wave-tail boundary phase. `'off'` only for a relaunch you know is final |
 | `healthCheck` | `'each-wave'` | The health-assessor half of the boundary phase: `'each-wave'` \| `'off'` |
@@ -515,6 +516,7 @@ integration-review material.
 | `agentBudgetReserve` | `200` | Headroom below the 1000-call cap |
 | `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit |
 | `fixUnitAdmit` | `'auto'` | `'auto'` tier-1 mechanical admit of health drafts · `'triage'` force ≥Opus veto when drafts are present |
+| `fableEffort` | `'high'` | Effort for the Fable boundary agent (the respec/escalation arbiter) — Fable 5's `high` default |
 
 **Spend direction when tuning:** extra frontier budget goes to the **planning side** (spec detail,
 plan-checks, Phase-0 interrogation), never to more mid-flight touchpoints — gate non-convergence is
