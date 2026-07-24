@@ -36,7 +36,17 @@ const C = {
   maxGateRounds: 2,
   maxConsults: 3,
   minBlockConfidence: 0.6,
-  gateEffort: 'medium',
+  // Fable is the frontier judgment tier (plan-check, exit gate, mid-loop consult, boundary
+  // triage). Fable 5's guidance makes `high` the default for real adjudication — and these calls
+  // fire only on the hard decisions — so they run there rather than on the floor. `fableEffort`
+  // covers the plan-check + consult; the exit gate has its own `gateEffort`, and the audit
+  // spot-check `auditEffort` can be dialled below a full gate to keep the 10% sample cheap.
+  fableEffort: 'high',
+  gateEffort: 'high',
+  // Opus reasoning effort for the code-authoring pipeline — planning, implementing, and every
+  // fix loop. `xhigh` is the Opus 5 starting point for agentic coding; the review/gate Opus
+  // calls stay at their own efforts on purpose, since review accuracy holds at lower effort.
+  implementEffort: 'xhigh',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
   // Frontier economy: Fable is the metered tier, so Opus grades first everywhere and escalates
@@ -48,7 +58,7 @@ const C = {
   planCheck: 'opus-first',   // 'opus-first' | 'always-fable'
   exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
   gateAuditRate: 0.10,
-  auditEffort: 'low',
+  auditEffort: 'high',
   boundary: 'on',            // 'on' | 'off' — wave-tail explorer + health assessor inside the
                              //   workflow; 'off' for the arc's final wave (the session
                              //   integration review supersedes it)
@@ -155,6 +165,37 @@ const designClause = (unit) => unit.design?.length
     `A comp binds like a frozen contract: adopt the comp's component and wire it through thin adapters — never ` +
     `rebuild a designed screen from primitives. Partial adoption can be right, but it is a deliberate choice: ` +
     `it must be stated and justified, never left to pass silently. `
+  : ''
+// GitHub issue projection (issue mode only; reference.md "GitHub issue tracking"). Issues MIRROR the
+// work — the scheduler stays on state.json, which the script owns; agents (not the script) run gh.
+// Every clause below is a BEST-EFFORT trailing addendum to an agent whose real job is elsewhere, and
+// resolves to '' in file mode so every prompt stays byte-identical to the legacy path (the property
+// the sims assert and the paid fixtures rely on). Sync is idempotent by a body MARKER, never by a
+// threaded issue number (numbers are non-deterministic and would break resumeFromRunId): a stale or
+// absent unit.issue cache is harmless. A gh failure is swallowed and reconciled by the wave-tail
+// sweep (syncIssues) — no unit or wave outcome may ever depend on issue state.
+const issueMode = plan.tracking === 'issues'
+const ghRepo = plan.repoSlug ? `--repo ${plan.repoSlug} ` : ''
+// Resolve a unit's issue number into $ISS. Prefer the cached number (recorded at Phase 0 — exact and
+// immune to GitHub search-index lag on a just-created issue); fall back to the body marker for resume
+// or when the cache is absent. Either way the semantics are find-by-id, never thread-a-dependency.
+const findIssue = (id, cached) =>
+  cached != null
+    ? `ISS=${cached}; `
+    : `ISS=$(gh issue list ${ghRepo}--search '"roadmap:unit id=${id}" in:body' --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null); `
+const GH_BEST_EFFORT = 'Do the following on a BEST-EFFORT basis, only AFTER the work above is finished and its ' +
+  'result decided: if any gh command errors (no network, auth, rate limit, missing issue), ignore it and carry ' +
+  'on — issue state is observability, never a gate, and a wave-tail sweep reconciles anything missed. '
+const ghRunning = (unit) => issueMode
+  ? `\n${GH_BEST_EFFORT}If and only if you set up a buildable worktree (you reported state 'ready' or 'adopted'), ` +
+    `mark this unit's tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
+    `if $ISS is non-empty, run \`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. `
+  : ''
+const ghMerged = (unit) => issueMode
+  ? `\n${GH_BEST_EFFORT}If and only if the merge LANDED and the full suite PASSED, close this unit's tracking ` +
+    `issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
+    `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:running,status:merge-ready --add-label status:merged\` ` +
+    `then \`gh issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. `
   : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
@@ -535,7 +576,13 @@ async function quarantine(unit, reason, extra) {
   await run(
     `Create the file ${dossierPath} (creating parent directories as needed) with exactly this content:\n` +
     `# ${unit.id} — quarantine dossier\n\nReason: ${reason}\n\n## Attempted\n${dossier.attempted}\n\n` +
-    `## Evidence\n${dossier.evidence}\n\n## Hypothesis\n${dossier.hypothesis}\n`,
+    `## Evidence\n${dossier.evidence}\n\n## Hypothesis\n${dossier.hypothesis}\n` +
+    (issueMode
+      ? `\n${GH_BEST_EFFORT}Then reflect the quarantine on the unit's tracking issue, keeping it OPEN: ` +
+        `${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run \`gh issue edit ${ghRepo}"$ISS" ` +
+        `--remove-label status:running,status:merge-ready --add-label status:quarantined\` and post the dossier ` +
+        `as a comment: \`gh issue comment ${ghRepo}"$ISS" --body-file ${dossierPath}\`. `
+      : ''),
     { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}`, schema: S.ok },
   ).catch(() => null)
   return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
@@ -658,6 +705,57 @@ async function runBoundary() {
   await Promise.all(writes)
 }
 
+// Issue-projection reconciliation sweep (issue mode only): one Haiku pass at the wave tail that
+// re-derives every unit issue's status:* label from the final map — catching a missed folded flip, a
+// `blocked`, or a transient `merge-ready` the live clauses (setup/merge/dossier) don't cover — and
+// refreshes the arc tracking issue's status table. Best-effort, idempotent (find-or-create by
+// marker), and the one place UNIT sync records a gh-sync degradation. A single Haiku call, present on
+// BOTH dispatch paths because it lives here; a no-op in file mode (keeping that path byte-identical).
+async function syncIssues() {
+  if (!issueMode) return
+  const N = (prior.wave ?? 0) + 1
+  const issueOf = new Map(plan.units.map((u) => [u.id, u.issue]))
+  const rowsOf = (entries) => entries.map(([id, r]) => ({ id, status: r.status, issue: issueOf.get(id) ?? null }))
+  const allRows = rowsOf([...units])
+  // Reconcile LABELS only for units whose status CHANGED this wave. Prior waves' units were already
+  // reconciled by the sweep of the wave that moved them, so re-editing all of them every wave only burns
+  // GitHub API quota — an O(all-units) burst of redundant `gh issue edit`s that grows every wave and, on
+  // a large arc, risks the secondary (abuse) rate limit. The delta still backstops THIS wave's folded
+  // clauses (a merged/quarantined unit counts as changed), and the task list still lists ALL units in a
+  // single tracking-issue edit, so the dashboard stays whole. gh rate-limit errors are tolerated anyway.
+  const changed = rowsOf([...units].filter(([id, r]) => r.status !== (prior.units?.[id]?.status ?? 'pending')))
+  const r = await run(
+    STRICT +
+    `In the git repository at ${repo}, reconcile the GitHub issue projection after wave ${N} of this roadmap ` +
+    `build. Best-effort throughout: if a gh command fails (a rate limit included), note it and keep going — never ` +
+    `error out; issue state is observability, not a gate. For each CHANGED unit below, resolve its issue number — ` +
+    `use its \`issue\` field if non-null, else search by body marker ` +
+    `(\`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
+    `if found, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
+    `and ensure \`wave:${N}\` on any unit that is running or beyond: pending/running/merge-ready/blocked/` +
+    `quarantined stay OPEN; merged → add \`status:merged\` then \`gh issue close ${ghRepo}<n> --reason completed\`; ` +
+    `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. Skip any unit ` +
+    `whose issue is not found, and do NOT touch any unit not listed here — they were reconciled in an earlier ` +
+    `wave. Changed units:\n${JSON.stringify(changed)}\n` +
+    (plan.trackingIssue
+      ? `Then refresh the arc tracking issue #${plan.trackingIssue} from the FULL unit list: rewrite only the ` +
+        `region between the \`<!-- roadmap:status -->\` and \`<!-- /roadmap:status -->\` markers in its body with ` +
+        `a GitHub task list — one item per unit, \`- [x] #<n> <id> — <status>\` when that unit's issue is closed ` +
+        `(merged or deferred) and \`- [ ] #<n> <id> — <status>\` while it is still open — so the tracking issue ` +
+        `renders a native progress rollup and each item links to its unit issue. This is one edit of a single ` +
+        `issue, not a per-unit call. Skip any unit whose issue number is unknown, and leave the rest of the body ` +
+        `intact. Full unit list:\n${JSON.stringify(allRows)}\n`
+      : '') +
+    `Report ok:true when the sweep completed (even if some individual gh calls failed); put a one-line summary of ` +
+    `any failures in detail.`,
+    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `issue-sync:w${N}`, schema: S.ok },
+  ).catch(() => null)
+  if (!r?.ok)
+    degrade({ label: `issue-sync:w${N}`, model: 'haiku', phase: 'Boundary', kind: 'gh-sync',
+      what: `wave-tail issue reconciliation did not complete cleanly${r?.detail ? ` — ${r.detail}` : ''} ` +
+        `(issue projection only; state.json is authoritative and the arc is unaffected)` })
+}
+
 /* --------------------------- per-unit pipeline -------------------------- */
 async function runUnit(unit) {
   setStage(unit.id, 'setup')   // status became 'running' in start() before this call
@@ -731,7 +829,8 @@ async function runUnit(unit) {
         `(NO -b, no reset); report ok:true, state:'adopted', sha = the branch tip.\n`
       : `do NOT touch it — delete nothing; report ok:false, state:'has-commits', sha = the branch tip.\n`) +
     `3) Otherwise remove any stale branch/worktree remnants and create a fresh worktree ` +
-    `(git worktree add ${w} -b unit/${unit.id} ${source}); report ok:true, state:'ready', sha = HEAD.`,
+    `(git worktree add ${w} -b unit/${unit.id} ${source}); report ok:true, state:'ready', sha = HEAD.` +
+    ghRunning(unit),
     { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}`, schema: S.setup })
   // Already merged: unblock dependents, re-run nothing (holds even with existingBranch set).
   if (ws.state === 'already-merged')
@@ -762,7 +861,7 @@ async function runUnit(unit) {
     `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan: your approach, the files you expect to touch, ` +
     `and how you will test it. If the spec cannot be satisfied within its contracts, do not force it: set ` +
     `feasible:false and explain the contradiction in \`approach\`. Do not write code yet.`,
-    { model: 'opus', effort: 'high', phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
 
   // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
   // before code exists), but only structural calls (high risk, claimed-infeasible, or the
@@ -791,7 +890,7 @@ async function runUnit(unit) {
         `not implement at all (e.g. the spec is unsatisfiable or self-contradictory within its contracts, or needs ` +
         `redesign above the engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, ` +
         `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
-        { model: 'fable', effort: 'low', phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
+        { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
     }
 
     let check
@@ -830,7 +929,7 @@ async function runUnit(unit) {
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}`,
-        { model: 'opus', effort: 'high', phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
+        { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
     }
   }
   // Never hand an infeasible plan to an implementer — there is no honest way to execute it.
@@ -850,7 +949,7 @@ async function runUnit(unit) {
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
     `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
     `your work on the current branch with clear messages. ${REPORT}`,
-    { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   // The report died. Ask the branch whether the WORK died with it: commits present means the
   // implementer finished and only its report was lost, so the diff must be judged on its merits by
   // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
@@ -930,7 +1029,7 @@ async function runUnit(unit) {
         `You are the architect. Unit ${unit.id} is stuck. Dossier: ${JSON.stringify(dossier)} (spec: ${spec} — ` +
         `consult it and the code in ${w} yourself if the dossier is not enough). Decide: redirect with brief ` +
         `guidance, or quarantine for redesign. Do not write code.`,
-        { model: 'fable', effort: 'low', phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
+        { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
       if (directive.action === 'quarantine') return quarantine(unit, 'architect consult', directive)
       mismatch = null   // consumed — one consult per reported mismatch
     }
@@ -941,7 +1040,7 @@ async function runUnit(unit) {
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
       `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
-      { model: 'opus', effort: 'high', phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt, { kind: 'quality' })
     noteMismatch(fixed)
@@ -1013,7 +1112,7 @@ async function runUnit(unit) {
       const ogFix = await runOr(REPORT_LOST,
         `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
         `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
-        { model: 'opus', effort: 'high', phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
+        { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
       if (ogFix.reportLost) {
         // forceFrontier was computed before this loop, so flagging alone changes nothing here.
         // Hand the unit to the frontier gate directly: the fix's self-reported evidence is gone and
@@ -1085,7 +1184,7 @@ async function runUnit(unit) {
     const gFix = await runOr(REPORT_LOST,
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
-      { model: 'opus', effort: 'high', phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
@@ -1106,7 +1205,7 @@ async function mergeUnit(unit) {
     `(git merge --no-ff unit/${unit.id}). If the merge conflicts, abort it (git merge --abort) and report ` +
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
     `cleanly, run the project's full test suite (commands: ${brief}) and report the result. Report the current ` +
-    `HEAD sha either way.`,
+    `HEAD sha either way.` + ghMerged(unit),
     { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
 
   if (!res.merged) {
@@ -1289,6 +1388,9 @@ if (C.boundary !== 'off') {
   phase('Boundary')
   await runBoundary().catch((e) => log(`boundary phase failed — continuing (${e?.message ?? e})`))
 }
+// Reconcile the GitHub issue projection from the final unit map (issue mode only; no-op otherwise).
+// Best-effort observability — never gates, so a failure only logs/degrades and the wave still returns.
+await syncIssues().catch((e) => log(`issue sync failed — continuing (${e?.message ?? e})`))
 checkpoint()                                        // state.json reflects mirror + boundary
 await checkpointChain
 return serialize()

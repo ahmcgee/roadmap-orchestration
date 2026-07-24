@@ -1,0 +1,45 @@
+# Reference copy shipped with the roadmap-orchestrator skill. At Phase 0 (issue mode) the bootstrap
+# agent copies this into the target repo's .github/ISSUE_TEMPLATE/ and opens a PR the user merges —
+# a GitHub issue template is only active once it lives on the default branch.
+name: Roadmap feedback
+description: Feedback on an in-flight roadmap-orchestrator arc — batched at the next wave boundary, never injected into a running unit.
+title: "[feedback] "
+labels: ["roadmap:feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Your feedback is read at the **next wave boundary** — it never interrupts or reroutes a unit that is currently building. Reference a specific unit with `#<issue-number>` where it helps.
+  - type: textarea
+    id: did
+    attributes:
+      label: What I did
+      description: The steps, command, or URL that led here.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What I observed
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What I expected
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How much it matters
+      options:
+        - blocker
+        - major
+        - minor
+        - idea
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Area / page / unit (e.g. a unit issue like #123).

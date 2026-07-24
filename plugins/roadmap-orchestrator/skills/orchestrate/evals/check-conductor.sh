@@ -197,20 +197,28 @@ else
   flunk "(b) an admitted health fix-unit merged beyond the planted three (rerun-tolerant — depends on the health assessor drafting one)"
 fi
 # The load-bearing signal for (b): the catalogued-helper duplication was consolidated.
-if [ -f "$WT/__integration/stats.js" ]; then
-  if grep -Eq "require\(['\"]\./shared['\"]\)" "$WT/__integration/stats.js" && grep -q "gcd" "$WT/__integration/stats.js"; then
-    pass "(b) integration stats.js now reuses shared.gcd (inline duplication consolidated)"
-  else
-    flunk "(b) integration stats.js reuses shared.gcd (still reimplements gcd inline — rerun-tolerant)"
-  fi
+# The load-bearing signal for (b): the catalogued-helper duplication is GONE. An arc can reach that
+# two valid ways, both leaving a green suite: CONSOLIDATE (keep stats.js, make it reuse shared.gcd) or
+# REMOVE (delete stats.js — it is orphaned bait with no required consumer, and the suite asserted green
+# above proves nothing depended on it). Which one a run picks is model judgment (rerun-tolerant). Only
+# a stats.js that STILL reimplements gcd inline is a real miss — the duplication survived to integration.
+if [ ! -f "$WT/__integration/stats.js" ]; then
+  pass "(b) stats.js removed — inline-gcd duplication eliminated (orphaned bait deleted, suite still green)"
+elif grep -Eq "require\(['\"]\./shared['\"]\)" "$WT/__integration/stats.js" && grep -q "gcd" "$WT/__integration/stats.js"; then
+  pass "(b) integration stats.js now reuses shared.gcd (inline duplication consolidated)"
 else
-  flunk "(b) integration worktree carries stats.js at $WT/__integration/stats.js"
+  flunk "(b) stats.js still reimplements gcd inline — duplication neither consolidated nor removed (rerun-tolerant)"
 fi
 
-# --- (e) debt.md stamped at the wave-1 continuation boundary --------------------
-# Continuation boundaries stamp a `<!-- wave N -->` section (always, even "no new entries");
-# the terminal arc-complete boundary banks nothing — so wave 1 is stamped, wave 2 is not.
-if [ -f "$RM/debt.md" ] && grep -q '<!-- wave 1 -->' "$RM/debt.md"; then
+# --- (e) debt banked at the wave-1 continuation boundary ------------------------
+# Continuation boundaries bank debt; the terminal arc-complete boundary banks nothing. In FILE mode
+# that is a `<!-- wave N -->` section in debt.md. In ISSUE mode debt.md is dropped by design (decision
+# 11) — debt banks to `roadmap:debt` issues instead, which check-arc-issues.sh verifies against the
+# real tracker. So the file assertion does not apply in issue mode.
+TRACKING=$(node -e "try{console.log(require('$RM/plan.json').tracking||'files')}catch{console.log('files')}")
+if [ "$TRACKING" = issues ]; then
+  warn "(e) issue mode: debt banks to roadmap:debt issues, not debt.md — verify with check-arc-issues.sh"
+elif [ -f "$RM/debt.md" ] && grep -q '<!-- wave 1 -->' "$RM/debt.md"; then
   pass "(e) debt.md carries a '<!-- wave 1 -->' section (continuation boundary banked debt)"
 else
   flunk "(e) debt.md carries a '<!-- wave 1 -->' section (debt banking regressed)"

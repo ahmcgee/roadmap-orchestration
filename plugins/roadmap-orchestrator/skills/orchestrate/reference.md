@@ -22,6 +22,7 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   debt.md              # LIVING. Ledger of consciously-deferred technical debt; appended at
                        #   each triage, carries across waves and arcs, read at Phase 0 as
                        #   candidate scope. Distinct from feedback — kept, not consumed.
+                       #   FILE MODE ONLY — issue mode uses roadmap:debt issues instead.
   skill-feedback.md    # LIVING. Defects in the ORCHESTRATOR itself (not the product): every
                        #   degradation the scripts recorded. Written at every persist point so
                        #   it survives a run that dies. Never archived — it belongs to the
@@ -41,8 +42,9 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
     health/*.md        #   per-wave code/test/structure/ergonomics health findings (Opus)
     design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (Opus);
                        #   written only on waves that merged a design-cited unit
-    user/*.md          #   the user drops notes here AT ANY TIME (copying TEMPLATE.md); read
-                       #   at the next boundary — never an input to a running wave
+    user/*.md          #   FILE MODE: the user drops notes here AT ANY TIME (copying TEMPLATE.md);
+                       #   read at the next boundary — never an input to a running wave. ISSUE
+                       #   MODE: users file roadmap:feedback issues instead; this folder is unused.
     triaged/<wave>/    #   consumed items, moved here at triage; never re-triaged
   archive/<arc>/       # closed-out arcs
 ```
@@ -60,12 +62,25 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   "repoPath": "/abs/path/to/repo",            // required
   "worktreeRoot": "/abs/path/OUTSIDE/repo",   // required — e.g. /tmp/<repo>-roadmap
   "cutLine": "milestone-2",
+  "tracking": "issues",            // "issues" | "files" — resolved at Phase 0 by probing for a
+                                   //   usable GitHub remote + gh auth. "files" (the default when
+                                   //   absent) is the legacy filesystem behaviour; every gh side-
+                                   //   effect below is a no-op and every gh prompt clause is ''.
+                                   //   See "GitHub issue tracking" below.
+  "repoSlug": "owner/name",        // issue mode: the gh --repo target (never inferred from cwd)
+  "milestone": "roadmap: <cutline>", // issue mode: arc milestone title (units file under it)
+  "trackingIssue": 42,             // issue mode: the arc tracking (epic) issue number
   "units": [{
     "id": "auth-token-rotation",   // stable kebab slug — prompts and resume key on it; never rename mid-arc
     "title": "...",
     "risk": "high",                // low | med | high — drives plan-check coverage and gate effort
     "kind": "code",                // anything else is yours to handle between waves
     "inScope": true,               // resolved cut line, ancestor-closed
+    "issue": 57,                    // issue mode: CACHE of the unit's issue number. Convenience only —
+                                   //   sync agents find-or-create by the `roadmap:unit id=<id>` body
+                                   //   marker, so correctness never depends on this being present or
+                                   //   fresh. The scheduler never reads it (issue numbers are non-
+                                   //   deterministic; the scheduler stays on state.json).
     "design": ["checkin#opening-chrome"],  // optional in general, REQUIRED where a
                                    //   designAuthority `covers` this unit's surface. Cites the
                                    //   binding comp section(s). Threaded into implement/review/
@@ -159,7 +174,9 @@ Fields the scripts add:
 - **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
   accumulator.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
-  model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw`.
+  model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync`.
+  A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
+  unaffected; the wave-tail sweep reconciles what it can.
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
   `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
   conductor return carries the array, empty when the run was clean.
@@ -175,6 +192,111 @@ dependency is `merged`. While `running` a unit also carries a `stage` field
 (`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
 replaces the whole record. Checkpoints land at every status change **and** every stage transition,
 coalesced latest-wins — the file can trail the newest event by one write.
+
+In **issue mode** `state.units[id].issue` caches the unit's issue number (convenience only; see
+`plan.units[].issue`). `degradations` gains the `gh-sync` kind (below).
+
+## GitHub issue tracking
+
+**Mode.** `plan.tracking` is resolved once at Phase 0: `issues` when the repo has a usable GitHub
+remote + `gh` auth, else `files`. **`files` is the legacy behaviour, byte-for-byte** — every `gh`
+clause the scripts add is `''`, so file-mode prompts are identical to before and the offline paid
+fixtures exercise exactly this path. Everything below applies to **issue mode only**.
+
+**Projection, never source of truth.** The scheduler runs on `state.json`/`plan.json` in-memory —
+it cannot call `gh` (no network in the sandbox), and issue numbers are non-deterministic (they would
+break `resumeFromRunId`). Issues are a Haiku-written *projection*, the same relationship the
+green-tip mirror has: **observability, never a gate.** Every `gh` write is best-effort — a failure
+records a `gh-sync` degradation and continues; no unit or wave outcome ever depends on it.
+
+**Idempotent by marker, not by number.** Every unit issue body opens with a machine marker
+`<!-- roadmap:unit id=<unit-id> -->`. Sync agents **find-or-create** by that marker
+(`gh issue list --search '"roadmap:unit id=<id>"' --state all`), so a stale or absent `unit.issue`
+cache is harmless and a resumed/re-run wave never double-creates. Same discipline as the harness's
+wave-N section markers.
+
+**Labels** (all skill-managed, prefixed so teardown is a prefix sweep and default repo labels never
+collide):
+
+| Group | Values |
+|---|---|
+| kind | `roadmap:unit` · `roadmap:debt` · `roadmap:feedback` · `roadmap:arc` (the tracking issue) |
+| status | `status:pending` · `running` · `merge-ready` · `blocked` · `quarantined` · `backlog` · `proposed` · `deferred` |
+| facets | `wave:N` · `risk:low\|med\|high` · `severity:minor\|major` (feedback: `blocker\|major\|minor\|idea`) · `debt:correctness\|test\|structure\|ergonomics` |
+
+**Kinds and their states:**
+
+- **`roadmap:unit`** — one per unit; body = the `<!-- marker -->` + the spec (issue-canonical: the
+  issue is where the spec is authored, snapshotted to `.roadmap/specs/<id>.md` at Phase 0/dispatch —
+  the building agents read the snapshot, never a live fetch). Open through `pending → running →
+  merge-ready → blocked/quarantined`; **closed-completed** = merged; **closed-not-planned** =
+  deferred/declined. Quarantine is a *state* of this issue (`status:quarantined`, stays open, dossier
+  posted as a comment), never a separate issue. Grouped under `plan.milestone`.
+- **`roadmap:debt`** — durable; replaces `debt.md`. Open = unresolved; closed-completed = fixed (a
+  comment links the fixing unit). Read at the next Phase 0 as candidate scope. `severity` + `debt:`
+  facets; no origin facet.
+- **`roadmap:feedback`** — user-filed via the `roadmap-feedback` issue template (auto-labels the
+  kind). Open = new/untriaged; triage closes with a comment (actioned/dismissed) or labels
+  `status:deferred`. Users reference a unit with `#<n>` in the body.
+- **backlog / proposals** — beyond-cut-line units are thin `roadmap:unit` + `status:backlog` issues
+  (title + one-line intent, no full spec). The `roadmap-unit` template lets a **user** propose units
+  (`status:proposed`); Phase 0 adjudicates proposals as roadmap *input* — adopt / split / defer /
+  decline-with-reason (close not-planned).
+- **`roadmap:arc`** — one tracking (epic) issue, the human dashboard (retires `ROADMAP-STATUS.md`):
+  plan summary, DAG, a live unit **task list**, the session report. Open during the arc, closed at
+  close-out. The wave-tail sweep rewrites only the `<!-- roadmap:status -->…<!-- /roadmap:status -->`
+  region as a GitHub task list (`- [x]`/`- [ ]` per unit, checked when the unit's issue is closed),
+  so GitHub renders a native progress rollup and each item links to its unit issue.
+
+**Sync folds into already-spawned agents — no dedicated per-unit sync agents** (the 1000-agent cap
+is real; flooding it shortens arc lifetime):
+
+| Update | Carried by | Cadence |
+|---|---|---|
+| `status:running` | the unit's **setup** agent (best-effort clause, after its sha assertion) | live, per unit |
+| `status:merged` + close-completed | the **merge** agent (clean-merge + suite-pass path) | live, common case |
+| `status:quarantined` + dossier comment | the **quarantine dossier-writer** (fires on every quarantine path) | live, per unit |
+| reconcile the wave's **changed** unit issues + refresh the tracking-issue task list | one **issue-sync sweep** (Haiku) at the harness wave-tail | 1 agent / wave |
+| debt issues, feedback close/comment, new unit/fix-unit issues | the conductor's boundary writers (`bank-debt` → debt issues, `move-feedback` → feedback closes, `persist-plan` → new-unit issues) | boundary |
+| labels/milestone/arc-issue/unit-issue creation, template PR | main loop + one-time Haiku (Phase 0) | once |
+| close issues + milestone + arc issue, open the integration PR | close-out sequence | session end |
+
+The wave-tail **sweep** is the reconciliation backstop: the folded clauses are best-effort, so the
+sweep re-derives `status:*` from the final map (catching a missed running/merged flip, `blocked`,
+transient `merge-ready`) and is the one agent that records `gh-sync` degradations for unit sync. It is
+a single Haiku call per wave, present in **both** dispatch paths (it lives in the harness), and a
+no-op in file mode.
+
+**Rate-limit envelope.** Per-unit label reconciliation is scoped to the wave's **status-delta**, not
+the cumulative unit set — re-editing every unit every wave is an O(all-units) burst of redundant `gh`
+mutations that grows each wave and, on a large arc, risks GitHub's secondary (abuse) rate limit. The
+delta still backstops the wave's own folded clauses; the tracking-issue task list lists all units in a
+single edit. Everything `gh` is best-effort: a rate-limit error records a `gh-sync` degradation and the
+next sweep reconciles — it never gates a unit or wave. The one remaining burst is the **Phase-0 bulk
+issue creation** (one `gh issue create` per in-scope unit); it is one-time, best-effort, and tolerates
+backoff. `gh` volume is therefore bounded by *new + changed* units per wave, never the arc total.
+
+**Bootstrap (one-time).** Labels + milestone + the arc/unit issues are created immediately via `gh`
+API at Phase 0. The **issue templates** (`.github/ISSUE_TEMPLATE/roadmap-feedback.yml`,
+`roadmap-unit.yml`, `config.yml`) must live on the repo's **default branch** to be active, so if
+absent they are added (reference copies live in this skill's `templates/`) on a branch and opened as a
+small **PR at Phase 0**; planning continues in parallel (the templates are only needed by the first
+wave boundary). The user merges it — one-time
+faff. This user-merged PR predates the arc and is consistent with "main untouched until you confirm"
+(invariant 5): main moves only because the user merges.
+
+**Feedback census (issue mode).** The conductor's census lists open `roadmap:feedback` issues
+(`gh issue list --label roadmap:feedback --state open`) instead of `feedback/user/*.md`; triage
+closes/comments them instead of moving files to `triaged/`.
+
+**Session end.** Issue mode opens one **integration PR** (integration branch → default branch, body
+`Closes #<unit-issue>` for each merged unit) — the user's merge is the invariant-5 confirmation. File
+mode keeps the local fast-forward-on-confirmation.
+
+**Dropped in issue mode:** `debt.md` and `feedback/user/` (issues are canonical). Internal
+explorer/health/design findings stay files (ephemeral working evidence); `constraints.md` stays
+(living); `skill-feedback.md` stays a file — it is about the *orchestrator*, must leave the product
+repo, and is therefore **never** a product-repo issue.
 
 ## `harness.mjs` — the per-unit pipeline (one wave)
 
@@ -289,6 +411,12 @@ free.
   contract, design a contingent dependent, or answer for the user: `quarantine-redesign`/`hard-call`
   hand **down** to tier 3 carrying its assessment as a lead;
   `contract-amendment`/`contingent-replan`/`needs-user` return to the **root**.
+  **Debt sweep (low tolerance):** while the plan's own units still have work to run (a next wave will
+  happen anyway), tier 2 also promotes the wave's debt into consolidation fix-unit(s) so even minor
+  debt is cleaned up next wave rather than accumulating. **Debt never *creates* a wave** — this is the
+  convergence brake generalized: once the plan's own units are all terminal, debt is NOT promoted;
+  it banks (to `roadmap:debt` issues in issue mode, `debt.md` in file mode) and the arc completes. So
+  termination is preserved and outstanding debt is picked up at the next session's Phase 0.
 - **Tier 3 (Fable)** handles quarantine respecs and Opus escalations, routing each quarantine by its
   dossier *reason*, and appends the architect journal. It emits **skeletons only** plus a `journal`
   — never code, never a contract amendment. `supersedes` retires the old unit (`inScope:false`) and
@@ -323,6 +451,14 @@ entries") → `log-append` (a `## Wave N` section in `architect-log.md`, **tier-
 `move-feedback` (this wave's evidence + actioned/dismissed user notes → `feedback/triaged/N/`) →
 `persist-state` (the **consumed** state: `boundary` removed, `debt` cleared). An **early return**
 persists only `state.json`, with `boundary` and `debt` left **INTACT** — the root consumes them.
+In **issue mode** these writers also project to GitHub: `bank-debt` creates/updates `roadmap:debt`
+issues (find-or-create by a stable marker) for the wave's un-swept debt instead of writing `debt.md`,
+`move-feedback` closes/comments the triaged `roadmap:feedback` issues instead of moving files, and
+`issue-new` opens a `roadmap:unit` issue for each new fix-unit/respec. All best-effort (`gh-sync`).
+`issue-new` **reports each created issue's number back, and the conductor caches it into
+`plan.units[].issue`** — so a mid-arc unit is a first-class citizen: it appears in the arc-issue
+task-list rollup and its folded per-unit clauses hit the cached number instead of a marker search.
+Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips unknown-number units).
 
 **Return envelope.** Every return carries:
 
@@ -371,12 +507,14 @@ integration-review material.
 | `maxGateRounds` | 2 | Architect directive→fix→re-check cycles before quarantine |
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `minBlockConfidence` | 0.6 | Review findings below this confidence don't trigger fix rounds — false blockers are the reviewer's main cost |
-| `gateEffort` | `medium` | Effort on forced Fable exit-gate calls; raise to `high` for risky arcs |
+| `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
+| `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
+| `implementEffort` | `'xhigh'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement + every fix loop) — the Opus 5 starting point for agentic coding. The review/gate Opus calls keep their own lower efforts (review accuracy holds there); lower this if a sweep shows quality holds |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
 | `gateAuditRate` | `0.10` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables |
-| `auditEffort` | `'low'` | Effort for audit-*only* Fable gates — these read diff-stat-first; forced gates keep the full-diff read at `gateEffort` |
+| `auditEffort` | `'high'` | Effort for audit-*only* Fable gates (the 10% anti-rubber-stamp sample). Defaults to full effort; these already read diff-stat-first, so dial down (e.g. `'medium'`) to keep the sample cheaper than a forced full gate |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` \| `'wave'` \| `'off'`. Inert without a `plan.preview` block |
 | `boundary` | `'on'` | The wave-tail boundary phase. `'off'` only for a relaunch you know is final |
 | `healthCheck` | `'each-wave'` | The health-assessor half of the boundary phase: `'each-wave'` \| `'off'` |
@@ -391,6 +529,7 @@ integration-review material.
 | `agentBudgetReserve` | `200` | Headroom below the 1000-call cap |
 | `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit |
 | `fixUnitAdmit` | `'auto'` | `'auto'` tier-1 mechanical admit of health drafts · `'triage'` force ≥Opus veto when drafts are present |
+| `fableEffort` | `'high'` | Effort for the Fable boundary agent (the respec/escalation arbiter) — Fable 5's `high` default |
 
 **Spend direction when tuning:** extra frontier budget goes to the **planning side** (spec detail,
 plan-checks, Phase-0 interrogation), never to more mid-flight touchpoints — gate non-convergence is

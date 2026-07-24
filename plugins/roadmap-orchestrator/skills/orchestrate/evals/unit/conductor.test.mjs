@@ -252,6 +252,33 @@ for (const row of routingRows) {
 }
 
 /* ============================================================================== */
+/* 1b. Issue mode: issue-new caches created issue numbers back into the plan       */
+/* ============================================================================== */
+// A mid-arc unit (fix-unit/respec) whose issue number is NOT cached back into plan.units[].issue is
+// orphaned from the arc-issue task-list rollup (the harness sweep skips unknown-number units) and
+// forces a marker-search fallback in every folded clause. issue-new reports the numbers; the conductor
+// must cache them so the NEXT wave's dispatch carries them.
+test('issue mode: issue-new caches new-unit issue numbers into the next wave plan', async () => {
+  const { agent, workflow } = await conduct({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5 }),
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('my-fix')] }) }),
+    agentRules: [
+      { match: /^issue-new:/, result: { ok: true, opened: [{ id: 'my-fix', number: 4242 }] } },
+      ...rules(),
+    ],
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('my-fix')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  assert.ok(hasLabel(agent.calls, /^issue-new:w1\b/), 'issue mode opens an issue for the new fix-unit')
+  assert.equal(workflow.calls.length, 2, 'the admitted draft dispatches a second wave')
+  const newUnit = workflow.calls[1].args.plan.units.find((u) => u.id === 'my-fix')
+  assert.ok(newUnit, 'the new unit is carried into the next wave plan')
+  assert.equal(newUnit.issue, 4242, 'issue-new cached the created issue number into unit.issue')
+})
+
+/* ============================================================================== */
 /* 2. Draft → plan-unit conversion + spec-expand carries acceptance               */
 /* ============================================================================== */
 test('draft is materialized into an in-scope plan unit; spec-expand prompt carries acceptance', async () => {

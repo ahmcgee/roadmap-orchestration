@@ -209,7 +209,9 @@ test('8 audit determinism: rate 1 forces low-effort Fable gate, rate 0 does not'
 
   const runAt = async (rate) => {
     const { fn, calls } = makeAgent()
-    await runWave(fn, makePlan([unit('a')]), makeState(), { gateAuditRate: rate })
+    // Pin auditEffort so the assertion tests the wiring (audit-only gate honours auditEffort,
+    // distinct from gateEffort) independent of whatever the shipped default happens to be.
+    await runWave(fn, makePlan([unit('a')]), makeState(), { gateAuditRate: rate, auditEffort: 'low' })
     return calls
   }
 
@@ -217,7 +219,7 @@ test('8 audit determinism: rate 1 forces low-effort Fable gate, rate 0 does not'
   assert.ok(has(one, 'gate:a'), 'rate 1 forces the Fable gate')
   const g = one.find((c) => c.label.startsWith('gate:a'))
   assert.equal(g.model, 'fable', 'forced audit gate runs on Fable')
-  assert.equal(g.effort, 'low', 'audit-only gate runs at auditEffort (low)')
+  assert.equal(g.effort, 'low', 'audit-only gate runs at auditEffort (pinned low here)')
   assert.ok(!has(one, 'opus-gate:'), 'forced frontier skips the Opus gate')
 
   const zero = await runAt(0)

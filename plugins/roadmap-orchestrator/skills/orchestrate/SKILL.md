@@ -43,12 +43,15 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    quarantine later — ask the user now or decide now. A boundary agent that needs an answer
    early-returns `needs-user` (question in its `notes`) rather than pausing for it.
 8. **Feedback accumulates; it never steers.** Explorer findings, health findings, and user notes
-   land in `.roadmap/feedback/` and wait for the next judgment boundary. Nothing in that
-   directory may interrupt, reroute, or message an in-flight unit. This is about *timing*, not
+   land in `.roadmap/feedback/` (in issue mode user feedback is `roadmap:feedback` issues instead —
+   same timing rule) and wait for the next judgment boundary. Nothing there
+   may interrupt, reroute, or message an in-flight unit. This is about *timing*, not
    *identity*: the conductor's tiers triage on your behalf, but only at the same wave tail you
    would have woken at. **Root-only, always** (a tier early-returns instead): contract
-   amendments, contingent replans, needs-user calls. Deferred technical debt is *durable*, not
-   consumed — un-fixed items land in the living `.roadmap/debt.md` and carry forward.
+   amendments, contingent replans, needs-user calls. Technical debt is swept aggressively: while the
+   arc still has planned work to run, even minor debt folds into the next wave as fix-work — but debt
+   never *creates* a wave, so leftover debt at arc end is *durable* (the living `.roadmap/debt.md`, or
+   `roadmap:debt` issues in issue mode) and carries to the next session's Phase 0.
 
 ## Phase 0 — Plan (interactive; the highest-leverage act in the system)
 
@@ -61,6 +64,16 @@ new worktrees from a dead base). `archive/` and the living documents (`constrain
 `debt.md`, notes) are prior knowledge: constraints carry forward, unresolved debt is candidate
 scope you weigh against the cut line, archived contracts may seed new ones but are *not* binding.
 A fresh arc starts only from a closed-out `.roadmap/`.
+
+**Resolve the tracking mode.** Probe once for a usable GitHub remote and `gh` auth (`gh auth status`,
+`git remote -v`, `gh repo view --json nameWithOwner`). Present → **issue mode**: set
+`plan.tracking: "issues"` and `plan.repoSlug`, and work tracking lives in GitHub issues (the full
+label/kind/state scheme, markers, and sync map are in `reference.md` → "GitHub issue tracking" — don't
+restate them). Absent → set `plan.tracking: "files"` and everything below behaves exactly as the
+filesystem design always has. **Either way the scheduler runs on `state.json`** — issues are a
+projection Haiku maintains, never something the scripts read. In issue mode, read open `roadmap:debt`
+and `status:proposed` unit issues as candidate scope (a user proposal is roadmap *input* to adopt /
+split / defer / decline-with-reason, not a ready spec) in place of reading `debt.md`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -131,6 +144,9 @@ Read their outputs, then decide:
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.
+  (**Issue mode**: skip `feedback/user/` and `TEMPLATE.md` — users file `roadmap:feedback` issues via
+  the template instead — but still create `feedback/{explorer,health,triaged}/` for internal wave
+  evidence.)
   Kill any stale `worktreeRoot/__preview.pid` left by a dead arc: the whole process **group**
   (`kill -TERM -- -$(cat …)`), since a single-pid kill strands its child listeners.
 - **Seed `.roadmap/architect-log.md`** — your handoff brief to the boundary ladder: the decisions
@@ -178,6 +194,21 @@ cannot see, silently; (3) **enumerate gitignored runtime files into `provision.c
 Haiku agent cross-check `.gitignore` against what the build/test commands actually read, rather
 than guessing.
 
+**In issue mode, stand up the tracker (Haiku; exact labels/markers in `reference.md`).** Create the
+`roadmap:*`/`status:*`/`risk:*`/`severity:*`/`debt:*` labels (`gh label create`; ignore "already
+exists"), the arc **milestone**, and one arc **tracking issue** (`roadmap:arc` — body: plan summary +
+DAG + a `<!-- roadmap:status -->…<!-- /roadmap:status -->` region the wave-tail sweep fills with a
+unit task list (`- [x]`/`- [ ]`, checked when closed → native progress rollup) + a session-report
+placeholder; record its number in `plan.trackingIssue`). Open one `roadmap:unit` issue per in-scope
+unit (body's first line the `<!-- roadmap:unit id=<id> -->` marker, then the spec) and a thin
+`status:backlog` issue per deferred unit. The unit issue is where the spec is *authored*, but you
+still **snapshot it into `.roadmap/specs/<id>.md` and commit** — units build from that frozen snapshot,
+never a live issue. If `.github/ISSUE_TEMPLATE/roadmap-feedback.yml` / `roadmap-unit.yml` are absent
+on the default branch, add them (reference copies live in this skill's `templates/`) on a branch and
+open a small **PR the user merges** — planning continues meanwhile; the templates are only needed by
+the first wave boundary. That PR is the only pre-session-end touch of `main`, and only the user's merge
+moves it (invariant 5 intact).
+
 Persist everything under `.roadmap/` (shapes in `reference.md`), then **stop and talk to the
 user**: present the decomposition, contracts, cut-line interpretation, and your questions —
 batched, once. Discipline the questions: only ask what you couldn't resolve yourself, rank by
@@ -186,7 +217,9 @@ mostly confirm. Also tell them two things concretely: where the preview will be 
 (`preview.howToAccess`, plus the fact that their checkout will ride the integration tip detached
 during waves — don't switch branches), and the absolute path of `.roadmap/feedback/user/` — they
 can copy `TEMPLATE.md` there at any time; notes are batched into your next triage, never injected
-mid-run. Get approval before dispatch. If invoked with `--dry-run`, stop here; the plan pack is
+mid-run. (**Issue mode**: instead, point them at the `roadmap-feedback` issue template to file
+feedback and `roadmap-unit` to propose new units — both are read at your next boundary, never injected
+mid-run.) Get approval before dispatch. If invoked with `--dry-run`, stop here; the plan pack is
 itself a deliverable.
 
 ## Phase 1…n — Execute waves
@@ -271,19 +304,22 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   Unsatisfiable-spec → respec or amend the contract. Everything else → redesign: split the unit,
   revise its spec, raise its budget, or mark it for the user. A redesigned unit re-enters as a
   *new* spec; never re-run one under the spec that failed.
-- **Triage the boundary block, the `.roadmap/feedback/` user notes, and the wave's `debt` array
-  together** — once, at this boundary. Fold items into revised specs; cut fix units into the next
+- **Triage the boundary block, the `.roadmap/feedback/` user notes (issue mode: the open
+  `roadmap:feedback` issues), and the wave's `debt` array together** — once, at this boundary. Fold items into revised specs; cut fix units into the next
   wave; treat contract-contradicting feedback as a contract amendment (yours alone); or dismiss
   with a stated reason. **The health assessor's consolidation fix-unit drafts are the default
   action, not a suggestion**: admit them unless you see a reason to cut. Your judgment enters as a
   *veto over noise*, not as authoring each from scratch — that is what keeps cross-unit drift from
   dying unactioned in a folder. They run the identical isolation → gate → merge pipeline as any
   unit, so admitting one costs no safety.
-- **Debt you choose not to fix this wave doesn't vanish** — have Haiku append it to the living
-  `.roadmap/debt.md` ledger; annotate an entry resolved when a fix unit lands. Sonnet-compress the
-  batch first if it's large; findings at a superseded sha are discounted, not re-litigated. Have
-  Haiku move consumed feedback to `feedback/triaged/<wave>/`. Triage silently — contact the user
-  **only** for a critical call you genuinely cannot make.
+- **Debt you choose not to fix this wave doesn't vanish.** With the arc still running planned work,
+  the default is to **fold even minor debt into the next wave** as consolidation fix-work rather than
+  bank it (the debt rule — the conductor's tier-2 does this for you); only genuinely below-the-cut-line
+  debt banks. Banked debt goes to the living `.roadmap/debt.md` ledger (or `roadmap:debt` issues in
+  issue mode); annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
+  it's large; findings at a superseded sha are discounted, not re-litigated. Consumed feedback moves to
+  `feedback/triaged/<wave>/` (issue mode: the `roadmap:feedback` issues are closed with a disposition
+  comment). Triage silently — contact the user **only** for a critical call you genuinely cannot make.
 
 ### When the skill itself misbehaves — `.roadmap/skill-feedback.md`
 
@@ -355,7 +391,10 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/skill-feedback.md` entries, and
    which stage's judgment they cost you**; notes for the next session. Partial completion with
    honest dossiers is a good outcome — a silent one is not.
-3. **Ask the user** before fast-forwarding `main` to the integration branch.
+3. **Deliver for merge.** File mode: ask the user before fast-forwarding `main` to the integration
+   branch. **Issue mode**: open one integration **PR** (integration branch → default branch) whose
+   body summarizes the arc and lists `Closes #<issue>` for every merged unit, so merging it auto-closes
+   those issues; the user's merge of that PR is the invariant-5 confirmation.
 4. **Close out the arc.** `.roadmap/` is arc-scoped working state, not permanent documentation —
    left raw, a later run reads the stale `state.json` and forks worktrees from a dead integration
    tip, and retired "frozen" contracts masquerade as binding. After `main` advances: stop the
@@ -367,5 +406,9 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    first-class input to the next arc's Phase 0, and `skill-feedback.md` belongs to the *skill*, not
    this arc, so archiving it would bury the only record of how the orchestrator failed;
    remove unit worktrees and merged `unit/*` branches (keep quarantined
-   branches — their dossiers point at them); delete the integration branch once merged. The absence
-   of a top-level `state.json` is the unambiguous "no arc in flight" marker the next run keys on.
+   branches — their dossiers point at them); delete the integration branch once merged. **In issue
+   mode also**: post the session report to the arc tracking issue and close it; close the milestone;
+   verify merged-unit issues are closed-completed and deferred ones closed-not-planned (the wave-tail
+   sweep usually did this); and **leave open** the `roadmap:debt` issues and any `status:quarantined`
+   unit issues — they are the next session's inputs, the issue-mode counterpart of the living docs. The
+   absence of a top-level `state.json` is the unambiguous "no arc in flight" marker the next run keys on.
