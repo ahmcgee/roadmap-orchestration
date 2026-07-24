@@ -493,6 +493,7 @@ integration-review material.
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `minBlockConfidence` | 0.6 | Review findings below this confidence don't trigger fix rounds — false blockers are the reviewer's main cost |
 | `gateEffort` | `medium` | Effort on forced Fable exit-gate calls; raise to `high` for risky arcs |
+| `implementEffort` | `'xhigh'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement + every fix loop) — the Opus 5 starting point for agentic coding. The review/gate/triage/boundary Opus calls keep their own lower efforts (review accuracy holds there); lower this if a sweep shows quality holds |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |

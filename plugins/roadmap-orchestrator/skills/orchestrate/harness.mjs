@@ -37,6 +37,10 @@ const C = {
   maxConsults: 3,
   minBlockConfidence: 0.6,
   gateEffort: 'medium',
+  // Opus reasoning effort for the code-authoring pipeline — planning, implementing, and every
+  // fix loop. `xhigh` is the Opus 5 starting point for agentic coding; the review/gate/triage
+  // Opus calls stay at their own (lower) efforts on purpose, since review accuracy holds there.
+  implementEffort: 'xhigh',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
   // Frontier economy: Fable is the metered tier, so Opus grades first everywhere and escalates
@@ -838,7 +842,7 @@ async function runUnit(unit) {
     `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan: your approach, the files you expect to touch, ` +
     `and how you will test it. If the spec cannot be satisfied within its contracts, do not force it: set ` +
     `feasible:false and explain the contradiction in \`approach\`. Do not write code yet.`,
-    { model: 'opus', effort: 'high', phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
 
   // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
   // before code exists), but only structural calls (high risk, claimed-infeasible, or the
@@ -906,7 +910,7 @@ async function runUnit(unit) {
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}`,
-        { model: 'opus', effort: 'high', phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
+        { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
     }
   }
   // Never hand an infeasible plan to an implementer — there is no honest way to execute it.
@@ -926,7 +930,7 @@ async function runUnit(unit) {
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
     `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
     `your work on the current branch with clear messages. ${REPORT}`,
-    { model: 'opus', effort: 'high', phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   // The report died. Ask the branch whether the WORK died with it: commits present means the
   // implementer finished and only its report was lost, so the diff must be judged on its merits by
   // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
@@ -1017,7 +1021,7 @@ async function runUnit(unit) {
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
       `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
-      { model: 'opus', effort: 'high', phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt, { kind: 'quality' })
     noteMismatch(fixed)
@@ -1089,7 +1093,7 @@ async function runUnit(unit) {
       const ogFix = await runOr(REPORT_LOST,
         `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
         `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
-        { model: 'opus', effort: 'high', phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
+        { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
       if (ogFix.reportLost) {
         // forceFrontier was computed before this loop, so flagging alone changes nothing here.
         // Hand the unit to the frontier gate directly: the fix's self-reported evidence is gone and
@@ -1161,7 +1165,7 @@ async function runUnit(unit) {
     const gFix = await runOr(REPORT_LOST,
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
-      { model: 'opus', effort: 'high', phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
