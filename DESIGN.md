@@ -1144,9 +1144,12 @@ marker, never by a threaded number — so `unit.issue` is a resume-safe cache, n
 
 **Kinds and states** (`reference.md` has the label table): `roadmap:unit` (one per unit; quarantine
 is a *state* of it, not a separate issue), `roadmap:debt` (durable, replaces `debt.md`),
-`roadmap:feedback` (user-filed via template), and one `roadmap:arc` tracking issue + a milestone
-per arc (retiring `ROADMAP-STATUS.md`). Beyond-cut-line units are thin `status:backlog` issues;
-users propose units via a `roadmap-unit` template (`status:proposed`, adjudicated at Phase 0). In
+`roadmap:bug` (user-filed defect report via template), and one `roadmap:arc` tracking issue + a
+milestone per arc (retiring `ROADMAP-STATUS.md`). Beyond-cut-line units are thin `status:backlog`
+issues; users propose *new* work via a `roadmap-unit` template (`status:proposed`) and report
+*defects* via the `roadmap-bug` template — both adjudicated at Phase 0 with the same disposition set
+(adopt / split / fold / defer / decline) and parent-issue resolution (1:1 promote-in-place; 1:N
+create children + close parent with links). In
 issue mode `debt.md` and `feedback/user/` are dropped (issues canonical); the internal
 explorer/health/design findings stay files, and `skill-feedback.md` stays a file — it must *leave*
 the product repo, so it is never a product-repo issue.
@@ -1159,9 +1162,13 @@ up next wave; but debt **never creates a wave** — once the plan's units are te
 `roadmap:debt` issues and the arc completes, picked up at the next session's Phase 0. Low tolerance,
 termination preserved, no new mechanism.
 
-**Feedback and delivery.** Users file `roadmap:feedback` issues (template auto-labels); the census
+**Bug reports and delivery.** Users file `roadmap:bug` issues (template auto-labels); the census
 lists open ones (`gh issue list`), triage closes/comments them — the batch-at-boundary discipline of
-§7.5 is unchanged, only the store moves from files to issues. The two issue templates are
+§7.5 is unchanged, only the store moves from files to issues. `roadmap:bug` is **dual-consumed**:
+the same `gh issue list --label roadmap:bug --state open` query is the wave-boundary census *and* the
+Phase-0 candidate-scope read, so a defect filed between sessions is picked up at the next arc — a
+Phase-0 adoption legitimately sets scope and is distinct from the tier-2 debt sweep whose "never
+creates a wave" brake still holds. The two issue templates are
 bootstrapped by a one-time user-merged PR at Phase 0 (templates only activate on the default branch;
 this is the sole pre-close-out touch of `main`, and only the user's merge moves it — invariant 5
 holds). At session end the arc delivers as one integration PR (`Closes #…`) whose merge is the

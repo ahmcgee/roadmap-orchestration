@@ -35,7 +35,7 @@ flunk() { printf 'FAIL  %s\n' "$1"; fail=1; }
 check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else flunk "$d"; fi; }
 
 # Track created artifacts for teardown.
-CREATED_ISSUES=(); LABELS=(roadmap:unit roadmap:debt roadmap:feedback roadmap:arc \
+CREATED_ISSUES=(); LABELS=(roadmap:unit roadmap:debt roadmap:bug roadmap:arc \
   status:pending status:running status:merged status:quarantined \
   risk:low severity:minor debt:structure); MILESTONE=""
 teardown() {
@@ -119,20 +119,24 @@ sleep 2
 EXIST=$(find_by_marker "$DMARK" || true)   # second pass finds it -> the writer would skip re-create
 if [ -n "$EXIST" ]; then pass "bank-debt idempotent (marker found on 2nd pass -> no duplicate)"; else flunk "debt marker not searchable"; fi
 
-# 7. feedback census: an open roadmap:feedback issue is listed by label (immediate list API, not search).
-F1=$(gh issue create "${G[@]}" --title "[feedback] ${RUN}" --label "roadmap:feedback" \
-  --body "user note for $RUN" 2>/dev/null | grep -oE '[0-9]+$')
+# 7. bug census: an open roadmap:bug issue is listed by label (immediate list API, not search). The
+# SAME `gh issue list --label roadmap:bug --state open` query is the boundary census AND the Phase-0
+# candidate-scope read — roadmap:bug is dual-consumed — so one open issue proves both entry points.
+F1=$(gh issue create "${G[@]}" --title "[bug] ${RUN}" --label "roadmap:bug" \
+  --body "user bug report for $RUN" 2>/dev/null | grep -oE '[0-9]+$')
 [ -n "$F1" ] && CREATED_ISSUES+=("$F1")
 # Retry: the list API can lag a just-created issue by a beat. In a real run the census fires at a
 # wave boundary, long after creation, so this retry is an eval-timing concession, not a skill need.
 CENSUS=0
 for _ in 1 2 3 4 5; do
-  CENSUS=$(gh issue list "${G[@]}" --label roadmap:feedback --state open --json number --jq '[.[].number]|length' 2>/dev/null)
+  CENSUS=$(gh issue list "${G[@]}" --label roadmap:bug --state open --json number --jq '[.[].number]|length' 2>/dev/null)
   [ "${CENSUS:-0}" -ge 1 ] && break; sleep 2
 done
-[ "${CENSUS:-0}" -ge 1 ] && pass "feedback census lists open roadmap:feedback issues" || flunk "feedback census found none"
+[ "${CENSUS:-0}" -ge 1 ] && pass "bug census lists open roadmap:bug issues" || flunk "bug census found none"
+# Phase-0 candidate scope reads the identical query — the open bug is visible between sessions too.
+[ "${CENSUS:-0}" -ge 1 ] && pass "open roadmap:bug is Phase-0 candidate scope (same list query)" || flunk "bug not visible as Phase-0 candidate scope"
 gh issue close "${G[@]}" "$F1" --reason completed --comment "Triaged: actioned." >/dev/null 2>&1
-[ "$(state_of "$F1")" = CLOSED ] && pass "feedback triage closes the issue" || flunk "feedback issue not closed"
+[ "$(state_of "$F1")" = CLOSED ] && pass "bug triage closes the issue" || flunk "bug issue not closed"
 
 # 8. arc tracking issue: the wave-tail sweep rewrites only the marked region with a per-unit GitHub
 # task list (`- [x]` closed / `- [ ]` open) so GitHub renders a native progress rollup.

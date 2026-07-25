@@ -428,10 +428,10 @@ async function ret(reason, tier, extra = {}) {
 // Deterministic functions of repo path + wave N + the JSON of in-memory structured data. Both
 // agents read architect-log.md FIRST so successive fresh agents inherit rationale.
 const censusPrompt = (N) => STRICT +
-  `Take a wave-${N} census of a roadmap build's pending feedback and quarantine dossiers. Report identifiers ` +
+  `Take a wave-${N} census of a roadmap build's pending bug reports and quarantine dossiers. Report identifiers ` +
   `only — read no contents, change nothing:\n` +
   (issueMode
-    ? `1) List open user-feedback issues: \`gh issue list ${ghRepo}--label roadmap:feedback --state open --json number ` +
+    ? `1) List open user bug issues: \`gh issue list ${ghRepo}--label roadmap:bug --state open --json number ` +
       `--jq '.[].number'\` — put each issue NUMBER (as a string) in \`pendingUserFeedback\` (empty array if none ` +
       `or if gh fails).\n`
     : `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
@@ -448,7 +448,7 @@ const opusTriagePrompt = (N, P) =>
   `${repo}/.roadmap/architect-log.md FIRST (inherited rationale + dismissal criteria), then ` +
   `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`gh issue list ' + ghRepo + '--label roadmap:debt --state open`)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
   `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
-  `${issueMode ? `the open user-feedback issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
+  `${issueMode ? `the open user bug issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
   `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
@@ -816,8 +816,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
-  // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user feedback
-  // by closing/commenting the roadmap:feedback ISSUES instead of moving user-note files.
+  // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports
+  // by closing/commenting the roadmap:bug ISSUES instead of moving user-note files.
   const consumedFiles = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed').map((f) => f.file)
   if (issueMode) {
     const disposed = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed')
@@ -828,7 +828,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
       `${repo}/.roadmap/feedback/design/wave-${N}.md. Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
-      `Then dispose of the triaged user-feedback ISSUES: for each {number, action, reason} below, run ` +
+      `Then dispose of the triaged user bug ISSUES: for each {number, action, reason} below, run ` +
       `\`gh issue comment ${ghRepo}<number> --body "Triaged wave ${N}: <action> — <reason>"\` then ` +
       `\`gh issue close ${ghRepo}<number> --reason completed\`: ${JSON.stringify(disposed)}. ` +
       (deferred.length ? `Leave these deferred issues OPEN, adding the label status:deferred: ${deferred.join(', ')}. ` : '') +

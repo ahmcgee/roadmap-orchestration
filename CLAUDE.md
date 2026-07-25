@@ -30,5 +30,11 @@ Issue mode (`plan.tracking:"issues"`) mirrors the work into GitHub issues. What 
   Committing them to the integration branch does nothing.
 - **The debt sweep must never let debt *create* a wave** (conductor tier-2): that guarantee is what
   keeps arcs terminating. Debt rides waves that already exist; leftovers become `roadmap:debt` issues.
+- **`roadmap:bug` is dual-consumed** — the same `--label roadmap:bug --state open` list is the wave
+  census *and* the Phase-0 candidate-scope read. A bug adopted at **Phase 0** *creating* a wave is
+  fine and does not contradict the bullet above: Phase 0 is scope-setting; the "never creates a wave"
+  brake is a mid-arc (tier-2) guarantee only. Bugs and proposals share one decomposition mechanic
+  (1:1 promote-in-place; 1:N children + close parent with links) — don't leave a dangling
+  `status:proposed`/`roadmap:bug` parent beside its children.
 - **`skill-feedback.md` is never a product-repo issue** — it's about the orchestrator and must leave
   the product repo.

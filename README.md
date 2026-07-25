@@ -70,11 +70,13 @@ You interact with a running (or future) arc through two issue templates the skil
 first time it runs here (via a small one-time PR you merge — a GitHub issue template only becomes
 active once it's on the default branch):
 
-- **Roadmap feedback** — file a `roadmap:feedback` issue at any time. It's read at the next wave
-  boundary and triaged (actioned / dismissed / deferred), never injected into a unit mid-build.
-- **Propose a roadmap unit** — file a `roadmap:unit` proposal (`status:proposed`) to expand the
-  roadmap yourself; the architect adjudicates it (adopt / split / defer / decline) at the next
-  Phase 0.
+- **Report a bug or problem** — file a `roadmap:bug` issue at any time, including *between sessions*.
+  It's read both at the next wave boundary (during a live arc) and at the next Phase 0 (as candidate
+  scope for a fresh arc), then adjudicated (adopt / split / fold / defer / decline) like any candidate
+  work — never injected into a unit mid-build.
+- **Propose a roadmap unit** — file a `roadmap:unit` proposal (`status:proposed`) to request *new*
+  work or an enhancement; the architect adjudicates it (adopt / split / defer / decline) at the next
+  Phase 0. (Reporting something *broken* goes to the bug template above.)
 
 At session end the arc is delivered as **one pull request** (integration branch → your default
 branch) that closes its unit issues on merge — merging it is your sign-off, and `main` never moves

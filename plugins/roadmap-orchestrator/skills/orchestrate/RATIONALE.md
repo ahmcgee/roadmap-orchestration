@@ -60,6 +60,18 @@ Debt is the exception to "feedback is consumed": it is **durable**. Un-fixed ite
 `debt.md` and carry across waves *and arcs*, because an imperfection nobody chose to fix is not an
 imperfection that stopped existing.
 
+User input splits by **nature, not timing**: a `roadmap:bug` reports something *broken*; a
+`roadmap:unit` proposal asks for something *new*. That split is what lets `roadmap:bug` be
+**dual-consumed** — the boundary census reads it during a live arc, and Phase 0 reads open ones as
+candidate scope — so a defect filed *between sessions* has a first-class home instead of masquerading
+as a proposal. This does not weaken the never-steers rule (a bug still never reaches a running unit)
+nor termination: adopting a bug at **Phase 0** is the architect *setting* scope for a fresh arc, which
+is exactly where scope is supposed to be set. It is categorically distinct from the mid-arc tier-2
+debt sweep, whose "debt never *creates* a wave" brake (§7/§6.6) is what keeps arcs converging and is
+untouched here. Bugs and proposals also share one decomposition mechanic so a large one fans out
+cleanly: adopt (1:1) promotes the source issue in place; split (1:N) opens child unit issues and
+closes the parent with links — never a dangling duplicate beside its children.
+
 ## 4. Opus-first gates — the economics and their limit
 
 Fable is the metered tier, so Opus grades first everywhere and escalates only on a genuinely hard

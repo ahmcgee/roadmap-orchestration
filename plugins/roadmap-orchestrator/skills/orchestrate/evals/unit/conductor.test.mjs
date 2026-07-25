@@ -278,6 +278,24 @@ test('issue mode: issue-new caches new-unit issue numbers into the next wave pla
   assert.equal(newUnit.issue, 4242, 'issue-new cached the created issue number into unit.issue')
 })
 
+// The boundary census lists open user bug issues by the renamed `roadmap:bug` label (v0.8.6). This
+// guards the rename: the census (and, by the same query, Phase-0 candidate scope) must key on
+// roadmap:bug, and the retired roadmap:feedback label must not linger anywhere in the census clause.
+test('issue mode: census lists open roadmap:bug issues (not the retired roadmap:feedback label)', async () => {
+  const { agent } = await conduct({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5 }),
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) }),
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  const census = firstLabel(agent.calls, /^census:/)
+  assert.ok(census, 'census runs in issue mode')
+  assert.match(prompt(census), /--label roadmap:bug --state open/)
+  assert.doesNotMatch(prompt(census), /roadmap:feedback/)
+})
+
 /* ============================================================================== */
 /* 2. Draft → plan-unit conversion + spec-expand carries acceptance               */
 /* ============================================================================== */

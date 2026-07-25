@@ -1,7 +1,7 @@
 {
   "name": "roadmap-orchestration",
   "description": "Autonomous roadmap execution for Claude Code: decompose a roadmap into units, build each in an isolated worktree with frontier architect gates, integrate serially, deliver one merge-ready branch.",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "owner": {
     "name": "Aaron McGee",
     "url": "https://github.com/ahmcgee"
@@ -10,7 +10,7 @@
     {
       "name": "roadmap-orchestrator",
       "description": "Execute a slice of a product roadmap autonomously — economical multi-agent orchestration with Opus-first plan-checks and exit gates that escalate to a Fable architect (guaranteed for high-risk/contract-touching work), Opus implementation, and a zero-token workflow harness. Invoke as /roadmap-orchestrator:orchestrate.",
-      "version": "0.8.5",
+      "version": "0.8.6",
       "source": "./plugins/roadmap-orchestrator",
       "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme"
     }
