@@ -56,8 +56,11 @@ shipping; never ship on an upper rung alone.
    exact command sequences the harness/conductor emit in issue mode — label + milestone + unit-issue
    create with the `<!-- roadmap:unit id=… -->` body marker, find-by-marker AND find-by-number, the
    `status:*` transitions, close-completed, the quarantine comment, debt-issue idempotency, and the
-   feedback census — against a real repo, asserting issue facts (like `check.sh` asserts git facts) at
-   **zero model tokens**. It **mutates the target tracker**, so it is opt-in and self-cleaning:
+   bug census — against a real repo, asserting issue facts (like `check.sh` asserts git facts) at
+   **zero model tokens**. `roadmap:bug` is dual-consumed, so the same `--label roadmap:bug --state open`
+   list check stands in for *both* the wave-boundary census and the Phase-0 candidate-scope read — the
+   Phase-0 reading is architect/main-loop prose (not scheduler code), so no sim can cover it; this paid
+   check plus the between-sessions smoke are its only coverage. It **mutates the target tracker**, so it is opt-in and self-cleaning:
    `RUN_ISSUE_EVAL=1 bash check-issues.sh` (optionally `REPO=owner/name`). Every artifact carries a
    unique per-run marker and is torn down on exit via a trap. Caveat: `gh issue delete` needs elevated
    scope, so without it teardown *closes* the test issues rather than deleting them — harmless, clearly
@@ -85,7 +88,7 @@ as the source-of-truth run before shipping a `gh`-path change. The cheap layers:
   1000-agent cap), best-effort `gh-sync` degradation, and that the sweep scopes per-unit label
   reconciliation to the wave's **status-delta** while listing all units in one tracking-issue edit.
 - **`check-issues.sh`** (real `gh`, zero model) — the actual command sequences: create/find/transition/
-  close, debt idempotency, feedback census, the tracking-issue task list.
+  close, debt idempotency, bug census (= Phase-0 candidate-scope query), the tracking-issue task list.
 - **Byte-identity** — the file-mode paid fixtures prove every `gh` clause is correctly gated to `''`,
   so the gate/model *judgment* they exercise is identical in both modes.
 

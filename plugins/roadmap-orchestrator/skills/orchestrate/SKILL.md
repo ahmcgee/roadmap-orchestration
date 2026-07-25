@@ -43,8 +43,9 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    quarantine later — ask the user now or decide now. A boundary agent that needs an answer
    early-returns `needs-user` (question in its `notes`) rather than pausing for it.
 8. **Feedback accumulates; it never steers.** Explorer findings, health findings, and user notes
-   land in `.roadmap/feedback/` (in issue mode user feedback is `roadmap:feedback` issues instead —
-   same timing rule) and wait for the next judgment boundary. Nothing there
+   land in `.roadmap/feedback/` (in issue mode a user-reported bug is a `roadmap:bug` issue instead —
+   same non-interrupt rule: read at the next boundary, or the next Phase 0 between sessions) and wait
+   for the next judgment boundary. Nothing there
    may interrupt, reroute, or message an in-flight unit. This is about *timing*, not
    *identity*: the conductor's tiers triage on your behalf, but only at the same wave tail you
    would have woken at. **Root-only, always** (a tier early-returns instead): contract
@@ -71,9 +72,17 @@ A fresh arc starts only from a closed-out `.roadmap/`.
 label/kind/state scheme, markers, and sync map are in `reference.md` → "GitHub issue tracking" — don't
 restate them). Absent → set `plan.tracking: "files"` and everything below behaves exactly as the
 filesystem design always has. **Either way the scheduler runs on `state.json`** — issues are a
-projection Haiku maintains, never something the scripts read. In issue mode, read open `roadmap:debt`
-and `status:proposed` unit issues as candidate scope (a user proposal is roadmap *input* to adopt /
-split / defer / decline-with-reason, not a ready spec) in place of reading `debt.md`.
+projection Haiku maintains, never something the scripts read. In issue mode, read open `roadmap:debt`,
+`status:proposed` unit issues, **and open `roadmap:bug` issues** as candidate scope (a user proposal or
+bug is roadmap *input*, not a ready spec) in place of reading `debt.md`. Adjudicate a proposal or bug
+the same way — **adopt / split / fold / defer / decline-with-reason** — and resolve its source issue:
+**adopt (1:1)** promotes the source issue in place (flip its status to `status:pending`, write the
+spec + `<!-- roadmap:unit id=<id> -->` marker, attach milestone + `wave`/`risk`); **split (1:N)**
+opens N child unit issues and closes the parent with a comment linking them; **fold/defer/decline**
+open no new unit (fold into an existing spec, leave open, or close not-planned with a reason). Full
+mechanic in `reference.md` → "backlog / proposals". This is Phase-0 scope-setting, distinct from the
+mid-arc debt sweep — adopting a bug here legitimately plans a wave; the "debt never creates a wave"
+brake is a tier-2 guarantee and is unaffected.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -144,7 +153,7 @@ Read their outputs, then decide:
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.
-  (**Issue mode**: skip `feedback/user/` and `TEMPLATE.md` — users file `roadmap:feedback` issues via
+  (**Issue mode**: skip `feedback/user/` and `TEMPLATE.md` — users file `roadmap:bug` issues via
   the template instead — but still create `feedback/{explorer,health,triaged}/` for internal wave
   evidence.)
   Kill any stale `worktreeRoot/__preview.pid` left by a dead arc: the whole process **group**
@@ -203,7 +212,7 @@ placeholder; record its number in `plan.trackingIssue`). Open one `roadmap:unit`
 unit (body's first line the `<!-- roadmap:unit id=<id> -->` marker, then the spec) and a thin
 `status:backlog` issue per deferred unit. The unit issue is where the spec is *authored*, but you
 still **snapshot it into `.roadmap/specs/<id>.md` and commit** — units build from that frozen snapshot,
-never a live issue. If `.github/ISSUE_TEMPLATE/roadmap-feedback.yml` / `roadmap-unit.yml` are absent
+never a live issue. If `.github/ISSUE_TEMPLATE/roadmap-bug.yml` / `roadmap-unit.yml` are absent
 on the default branch, add them (reference copies live in this skill's `templates/`) on a branch and
 open a small **PR the user merges** — planning continues meanwhile; the templates are only needed by
 the first wave boundary. That PR is the only pre-session-end touch of `main`, and only the user's merge
@@ -217,9 +226,9 @@ mostly confirm. Also tell them two things concretely: where the preview will be 
 (`preview.howToAccess`, plus the fact that their checkout will ride the integration tip detached
 during waves — don't switch branches), and the absolute path of `.roadmap/feedback/user/` — they
 can copy `TEMPLATE.md` there at any time; notes are batched into your next triage, never injected
-mid-run. (**Issue mode**: instead, point them at the `roadmap-feedback` issue template to file
-feedback and `roadmap-unit` to propose new units — both are read at your next boundary, never injected
-mid-run.) Get approval before dispatch. If invoked with `--dry-run`, stop here; the plan pack is
+mid-run. (**Issue mode**: instead, point them at the `roadmap-bug` issue template to report bugs
+and `roadmap-unit` to propose new units — both are read at your next boundary (and open `roadmap:bug`
+issues again at the next Phase 0 between sessions), never injected mid-run.) Get approval before dispatch. If invoked with `--dry-run`, stop here; the plan pack is
 itself a deliverable.
 
 ## Phase 1…n — Execute waves
@@ -305,7 +314,7 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   revise its spec, raise its budget, or mark it for the user. A redesigned unit re-enters as a
   *new* spec; never re-run one under the spec that failed.
 - **Triage the boundary block, the `.roadmap/feedback/` user notes (issue mode: the open
-  `roadmap:feedback` issues), and the wave's `debt` array together** — once, at this boundary. Fold items into revised specs; cut fix units into the next
+  `roadmap:bug` issues), and the wave's `debt` array together** — once, at this boundary. Fold items into revised specs; cut fix units into the next
   wave; treat contract-contradicting feedback as a contract amendment (yours alone); or dismiss
   with a stated reason. **The health assessor's consolidation fix-unit drafts are the default
   action, not a suggestion**: admit them unless you see a reason to cut. Your judgment enters as a
@@ -318,7 +327,7 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   debt banks. Banked debt goes to the living `.roadmap/debt.md` ledger (or `roadmap:debt` issues in
   issue mode); annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
   it's large; findings at a superseded sha are discounted, not re-litigated. Consumed feedback moves to
-  `feedback/triaged/<wave>/` (issue mode: the `roadmap:feedback` issues are closed with a disposition
+  `feedback/triaged/<wave>/` (issue mode: the `roadmap:bug` issues are closed with a disposition
   comment). Triage silently — contact the user **only** for a critical call you genuinely cannot make.
 
 ### When the skill itself misbehaves — `.roadmap/skill-feedback.md`

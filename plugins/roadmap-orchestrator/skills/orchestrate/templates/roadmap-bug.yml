@@ -1,15 +1,15 @@
 # Reference copy shipped with the roadmap-orchestrator skill. At Phase 0 (issue mode) the bootstrap
 # agent copies this into the target repo's .github/ISSUE_TEMPLATE/ and opens a PR the user merges —
 # a GitHub issue template is only active once it lives on the default branch.
-name: Roadmap feedback
-description: Feedback on an in-flight roadmap-orchestrator arc — batched at the next wave boundary, never injected into a running unit.
-title: "[feedback] "
-labels: ["roadmap:feedback"]
+name: Report a bug or problem
+description: Report something that's broken or wrong. Picked up at the next Phase 0 (between sessions) and, during a live arc, at the next wave boundary — never injected into a running unit.
+title: "[bug] "
+labels: ["roadmap:bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Your feedback is read at the **next wave boundary** — it never interrupts or reroutes a unit that is currently building. Reference a specific unit with `#<issue-number>` where it helps.
+        Report a **defect** — something that behaves wrong or is broken. It is read at the **next Phase 0** (so you can file it between sessions) and, if an arc is already running, at the **next wave boundary** — it never interrupts or reroutes a unit that is currently building. The architect adjudicates it like any candidate work: adopt as a fix, fold into an existing unit, defer, or decline with a reason. Reference a specific unit with `#<issue-number>` where it helps. Wanting *new* work rather than reporting a defect? File a **[unit] proposal** instead.
   - type: textarea
     id: did
     attributes:
@@ -35,7 +35,6 @@ body:
         - blocker
         - major
         - minor
-        - idea
     validations:
       required: true
   - type: input

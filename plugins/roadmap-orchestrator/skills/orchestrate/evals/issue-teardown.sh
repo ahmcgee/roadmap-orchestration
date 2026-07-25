@@ -24,7 +24,7 @@ remove_issue() {
 # already closed and drop out of --state open, so this catches quarantines, the tracking issue, banked
 # debt, and any mid-run fix-unit issue the manifest could not know about ahead of time.
 n=0
-for lbl in roadmap:unit roadmap:debt roadmap:feedback roadmap:arc; do
+for lbl in roadmap:unit roadmap:debt roadmap:bug roadmap:arc; do
   for num in $(gh issue list "${G[@]}" --label "$lbl" --state open --json number --jq '.[].number' 2>/dev/null); do
     remove_issue "$num"; n=$((n+1))
   done

@@ -325,10 +325,16 @@ const S = {
   // Optional `notes` on the tight schemas is a pressure-release: with
   // additionalProperties:false and no free-text field, agents with something unusual to
   // report emit extra keys and burn the structured-output retry cap (eval-observed).
+  // Structured/scalar required fields FIRST, the long free-text `approach` LAST (+ the required-array
+  // order matches). An Opus agent that emits a long `approach` first tends to bleed the XML tool-call
+  // syntax (`</approach><parameter name="files">…`) into the JSON on the transition OUT of the
+  // free-text into the next field, dropping every field that follows and burning the structured-output
+  // retry cap — same required-first discipline as S.impl (eval-observed on plan:* at implementEffort
+  // xhigh: 5 invalid outputs, all missing files/testPlan/feasible that trailed the essay).
   plan: obj({
-    approach: { type: 'string' }, files: arr('string'), testPlan: { type: 'string' },
-    feasible: { type: 'boolean' }, notes: { type: 'string' },
-  }, ['approach', 'files', 'testPlan', 'feasible']),
+    feasible: { type: 'boolean' }, files: arr('string'), testPlan: { type: 'string' },
+    approach: { type: 'string' }, notes: { type: 'string' },
+  }, ['feasible', 'files', 'testPlan', 'approach']),
   planVerdict: obj({
     verdict: oneOf(['approve', 'redirect', 'quarantine']), guidance: { type: 'string' }, notes: { type: 'string' },
   }, ['verdict', 'guidance']),
@@ -858,9 +864,12 @@ async function runUnit(unit) {
     `You will implement one unit of a larger roadmap, but first: plan. Read the unit spec at ${spec} and any ` +
     `contract files it references under ${repo}/.roadmap/contracts/ (contracts are frozen — treat them as ` +
     `immutable requirements). Codebase conventions and build/test commands are documented at ${brief}. Explore ` +
-    `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan: your approach, the files you expect to touch, ` +
-    `and how you will test it. If the spec cannot be satisfied within its contracts, do not force it: set ` +
-    `feasible:false and explain the contradiction in \`approach\`. Do not write code yet.`,
+    `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan — return the required fields with the structured ones FIRST and the ` +
+    `free-text last: \`feasible\` (boolean), \`files\` (an array of the file paths you expect to touch), ` +
+    `\`testPlan\` (how you will test it), then \`approach\` (your approach) LAST. Emit each as a real ` +
+    `JSON field — do not fold files/testPlan into the approach prose. If the spec cannot be satisfied ` +
+    `within its contracts, do not force it: set \`feasible\`:false and explain the contradiction in ` +
+    `\`approach\`. Do not write code yet.`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
 
   // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
@@ -928,7 +937,8 @@ async function runUnit(unit) {
     if (check.verdict === 'redirect') {
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
-        `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}`,
+        `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
+        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then \`approach\` last.`,
         { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
     }
   }

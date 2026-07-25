@@ -139,6 +139,42 @@ function pointsInto(prompt, name) {
 // compose: an unbudgeted pointer is the defect.
 const invitesOverflowInto = (prompt, name) => pointsInto(prompt, name) && !statesBudgetFor(prompt, name)
 
+const namesField = (prompt, name) => new RegExp('`?\\b' + esc(name) + '\\b`?', 'i').test(prompt)
+const requiredOf = (schema) => (Array.isArray(schema?.required) ? schema.required : [])
+
+// Short machine-value strings — a git `sha`, an `id`, a `branch`/`base` name — are `type:'string'`
+// but NOT prose: the model writes a token or two, never an essay, so they carry no format-bleed risk
+// and need no prompt gloss. Excluded from the free-text guards (cf. COMPLETENESS_ARRAYS above), which
+// target unbounded PROSE like `approach`/`guidance`.
+const IDENTIFIER_STRINGS = new Set(['sha', 'id', 'branch', 'base', 'runId', 'mergedAt'])
+// A "free-text" field is an UNCAPPED plain string — no `maxLength`, no `enum`, not a known identifier.
+// An enum (`oneOf`) is bounded to its values and a capped string is length-bounded; only unbounded
+// prose carries the format-bleed risk, and it is the one field kind the model cannot emit unless the
+// prompt says what to write there (a scalar/enum/array it can infer from the schema tool-definition).
+const isFreeText = (schema, key) => {
+  const p = schema?.properties?.[key]
+  return !!p && p.type === 'string' && typeof p.maxLength !== 'number' && !Array.isArray(p.enum) && !IDENTIFIER_STRINGS.has(key)
+}
+const freeTextRequired = (schema) => requiredOf(schema).filter((k) => isFreeText(schema, k))
+// Required free-text fields the prompt never names. A prompt that never names its free-text output
+// lets the model omit it or fold it into a neighbour (eval-observed on plan:*, where the free-text
+// `testPlan` — described only as "how you will test it", never named — was dropped until the retry
+// cap blew). TOP-LEVEL required only — naming every nested leaf bloats prompts more than it buys.
+const unnamedFreeTextRequired = (prompt, schema) => freeTextRequired(schema).filter((n) => !namesField(prompt, n))
+
+// A required free-text field must be ordered LAST among the required fields, so the model serializes
+// the structured/scalar required fields before the free-text — the transition OUT of a long free-text
+// into a following field is where Opus bleeds XML tool-call syntax (`</approach><parameter
+// name="files">…`) into the JSON, swallowing every field that trails it (eval-observed: S.plan with
+// `approach` first burned the retry cap; same required-first fix as S.impl). Violation = a required
+// free-text field with a NON-free-text required field still after it.
+function misorderedFreeText(schema) {
+  const props = schema?.properties ? Object.keys(schema.properties) : []
+  const req = new Set(requiredOf(schema))
+  const reqInOrder = props.filter((k) => req.has(k))
+  return reqInOrder.filter((k, i) => isFreeText(schema, k) && reqInOrder.slice(i + 1).some((j) => !isFreeText(schema, j)))
+}
+
 // ---- assertions -------------------------------------------------------------------------
 function assertCapsAreContracted(calls, where) {
   const capped = calls.filter((c) => hasCap(c.schema))
@@ -198,6 +234,39 @@ function assertArraysAreBounded(capped, where) {
     `${where}: these SAMPLING arrays cap their items but not their count. Add maxItems matching ` +
       `the count bound the prompt states (S.explore/S.health already do). If the array is instead a ` +
       `completeness ledger, add it to COMPLETENESS_ARRAYS with a reason — do not cap it.`,
+  )
+}
+
+// `expectFreeText` guards against a refactor silently emptying the test WHERE free-text required
+// fields are known to exist (harness). The conductor legitimately has none — every conductor free-text
+// field is capped or optional — so it passes this rule vacuously and does not assert presence.
+function assertFreeTextRequiredAreNamed(calls, where, expectFreeText = true) {
+  const withFreeText = calls.filter((c) => freeTextRequired(c.schema).length > 0)
+  if (expectFreeText)
+    assert.ok(withFreeText.length > 0, `${where}: no required free-text schemas captured — the test would be vacuous`)
+  const missing = []
+  for (const c of withFreeText)
+    for (const f of unnamedFreeTextRequired(c.prompt, c.schema)) missing.push(`${c.label} -> \`${f}\``)
+
+  assert.deepEqual(
+    [...new Set(missing)].sort(),
+    [],
+    `${where}: these prompts drive a schema with a required free-text field the prompt never names. ` +
+      `The model cannot emit prose it is never asked for — name each required free-text field in the prompt.`,
+  )
+}
+
+function assertFreeTextOrderedLast(calls, where) {
+  const bad = []
+  for (const c of calls)
+    for (const f of misorderedFreeText(c.schema)) bad.push(`${c.label} -> \`${f}\``)
+
+  assert.deepEqual(
+    [...new Set(bad)].sort(),
+    [],
+    `${where}: these schemas place a required free-text (uncapped string) field BEFORE another ` +
+      `required field. Reorder so free-text fields come last (as S.plan/S.impl do) — the model bleeds ` +
+      `XML tool-call syntax out of a long free-text field and swallows the required fields that trail it.`,
   )
 }
 
@@ -378,4 +447,24 @@ test('conductor: no prompt invites overflow into one of its own capped fields', 
 test('conductor: arrays with capped items also cap their count', async () => {
   const calls = await driveConductor()
   assertArraysAreBounded(calls.filter((c) => hasCap(c.schema)), 'conductor')
+})
+
+// =========================================================================================
+// The retry-cap class: a required free-text field must be NAMED in its prompt and ORDERED last in
+// its schema (both eval-observed on plan:*; see the helper comments).
+// =========================================================================================
+test('harness: every required free-text field is named in its prompt', async () => {
+  assertFreeTextRequiredAreNamed(await driveHarness(), 'harness')
+})
+
+test('harness: required free-text fields are ordered last in their schema', async () => {
+  assertFreeTextOrderedLast(await driveHarness(), 'harness')
+})
+
+test('conductor: every required free-text field is named in its prompt', async () => {
+  assertFreeTextRequiredAreNamed(await driveConductor(), 'conductor', false)
+})
+
+test('conductor: required free-text fields are ordered last in their schema', async () => {
+  assertFreeTextOrderedLast(await driveConductor(), 'conductor')
 })

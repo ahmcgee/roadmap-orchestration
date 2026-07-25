@@ -44,7 +44,7 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   written only on waves that merged a design-cited unit
     user/*.md          #   FILE MODE: the user drops notes here AT ANY TIME (copying TEMPLATE.md);
                        #   read at the next boundary — never an input to a running wave. ISSUE
-                       #   MODE: users file roadmap:feedback issues instead; this folder is unused.
+                       #   MODE: users file roadmap:bug issues instead; this folder is unused.
     triaged/<wave>/    #   consumed items, moved here at triage; never re-triaged
   archive/<arc>/       # closed-out arcs
 ```
@@ -220,9 +220,9 @@ collide):
 
 | Group | Values |
 |---|---|
-| kind | `roadmap:unit` · `roadmap:debt` · `roadmap:feedback` · `roadmap:arc` (the tracking issue) |
+| kind | `roadmap:unit` · `roadmap:debt` · `roadmap:bug` · `roadmap:arc` (the tracking issue) |
 | status | `status:pending` · `running` · `merge-ready` · `blocked` · `quarantined` · `backlog` · `proposed` · `deferred` |
-| facets | `wave:N` · `risk:low\|med\|high` · `severity:minor\|major` (feedback: `blocker\|major\|minor\|idea`) · `debt:correctness\|test\|structure\|ergonomics` |
+| facets | `wave:N` · `risk:low\|med\|high` · `severity:minor\|major` (bug: `blocker\|major\|minor`) · `debt:correctness\|test\|structure\|ergonomics` |
 
 **Kinds and their states:**
 
@@ -235,13 +235,25 @@ collide):
 - **`roadmap:debt`** — durable; replaces `debt.md`. Open = unresolved; closed-completed = fixed (a
   comment links the fixing unit). Read at the next Phase 0 as candidate scope. `severity` + `debt:`
   facets; no origin facet.
-- **`roadmap:feedback`** — user-filed via the `roadmap-feedback` issue template (auto-labels the
-  kind). Open = new/untriaged; triage closes with a comment (actioned/dismissed) or labels
-  `status:deferred`. Users reference a unit with `#<n>` in the body.
+- **`roadmap:bug`** — a user-reported defect, filed via the `roadmap-bug` issue template (auto-labels
+  the kind). **Dual-consumed**: the boundary census lists it during a live arc, *and* Phase 0 reads
+  open `roadmap:bug` issues as candidate scope for a fresh arc — so a bug filed between sessions is
+  picked up. Adjudicated like a proposal (adopt / split / fold / defer / decline-with-reason, see
+  below). Open = new/untriaged or `status:deferred`; **closed-completed** = fixed (a comment links the
+  fixing unit); **closed-not-planned** = dismissed/declined. Users reference a unit with `#<n>` in the
+  body. `severity` facet (`blocker|major|minor`).
 - **backlog / proposals** — beyond-cut-line units are thin `roadmap:unit` + `status:backlog` issues
   (title + one-line intent, no full spec). The `roadmap-unit` template lets a **user** propose units
-  (`status:proposed`); Phase 0 adjudicates proposals as roadmap *input* — adopt / split / defer /
-  decline-with-reason (close not-planned).
+  (`status:proposed`); Phase 0 adjudicates proposals and `roadmap:bug` issues as roadmap *input* with
+  the **same disposition set and parent-issue resolution**:
+  - **adopt (1:1)** → promote the source issue *in place*: flip `status:proposed`/untriaged →
+    `status:pending`, write the spec as the body (first line the `<!-- roadmap:unit id=<id> -->`
+    marker), attach the milestone + `wave`/`risk` labels. No duplicate issue (idempotent by marker).
+  - **split (1:N)** → create N child `roadmap:unit`/`status:pending` issues (fresh ids/markers), then
+    **close the parent** with a comment linking the children (a `roadmap:bug` parent closes-completed
+    once the children land; a proposal parent closes not-planned as "split into #…").
+  - **fold** → no new issue; merge the ask into an existing unit's spec. **defer** → leave the source
+    open (`status:deferred`/`status:backlog`). **decline** → close not-planned with a reason.
 - **`roadmap:arc`** — one tracking (epic) issue, the human dashboard (retires `ROADMAP-STATUS.md`):
   plan summary, DAG, a live unit **task list**, the session report. Open during the arc, closed at
   close-out. The wave-tail sweep rewrites only the `<!-- roadmap:status -->…<!-- /roadmap:status -->`
@@ -277,7 +289,7 @@ issue creation** (one `gh issue create` per in-scope unit); it is one-time, best
 backoff. `gh` volume is therefore bounded by *new + changed* units per wave, never the arc total.
 
 **Bootstrap (one-time).** Labels + milestone + the arc/unit issues are created immediately via `gh`
-API at Phase 0. The **issue templates** (`.github/ISSUE_TEMPLATE/roadmap-feedback.yml`,
+API at Phase 0. The **issue templates** (`.github/ISSUE_TEMPLATE/roadmap-bug.yml`,
 `roadmap-unit.yml`, `config.yml`) must live on the repo's **default branch** to be active, so if
 absent they are added (reference copies live in this skill's `templates/`) on a branch and opened as a
 small **PR at Phase 0**; planning continues in parallel (the templates are only needed by the first
@@ -285,9 +297,11 @@ wave boundary). The user merges it — one-time
 faff. This user-merged PR predates the arc and is consistent with "main untouched until you confirm"
 (invariant 5): main moves only because the user merges.
 
-**Feedback census (issue mode).** The conductor's census lists open `roadmap:feedback` issues
-(`gh issue list --label roadmap:feedback --state open`) instead of `feedback/user/*.md`; triage
-closes/comments them instead of moving files to `triaged/`.
+**Bug census (issue mode).** The conductor's census lists open `roadmap:bug` issues
+(`gh issue list --label roadmap:bug --state open`) instead of `feedback/user/*.md`; triage
+closes/comments them instead of moving files to `triaged/`. `roadmap:bug` is **dual-consumed**: the
+census reads it at every wave boundary of a live arc, and Phase 0 reads open `roadmap:bug` issues as
+candidate scope for a fresh arc (see the kind row below) — so a bug filed between sessions is not lost.
 
 **Session end.** Issue mode opens one **integration PR** (integration branch → default branch, body
 `Closes #<unit-issue>` for each merged unit) — the user's merge is the invariant-5 confirmation. File
@@ -453,7 +467,7 @@ entries") → `log-append` (a `## Wave N` section in `architect-log.md`, **tier-
 persists only `state.json`, with `boundary` and `debt` left **INTACT** — the root consumes them.
 In **issue mode** these writers also project to GitHub: `bank-debt` creates/updates `roadmap:debt`
 issues (find-or-create by a stable marker) for the wave's un-swept debt instead of writing `debt.md`,
-`move-feedback` closes/comments the triaged `roadmap:feedback` issues instead of moving files, and
+`move-feedback` closes/comments the triaged `roadmap:bug` issues instead of moving files, and
 `issue-new` opens a `roadmap:unit` issue for each new fix-unit/respec. All best-effort (`gh-sync`).
 `issue-new` **reports each created issue's number back, and the conductor caches it into
 `plan.units[].issue`** — so a mid-arc unit is a first-class citizen: it appears in the arc-issue
