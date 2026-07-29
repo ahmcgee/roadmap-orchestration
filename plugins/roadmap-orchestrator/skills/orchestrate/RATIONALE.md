@@ -373,3 +373,36 @@ a one-time user-merged PR at Phase 0 (the one pre-close-out touch of `main`, and
 it — invariant 5 holds). And `skill-feedback.md` stays a file: it is about the *orchestrator*, must
 leave the product repo, and the skill can't assume access to its own repo's tracker from inside a
 consumer's — so it is never a product-repo issue, the one ledger issues do not absorb.
+
+## 15. The debt pathway hardened — banking is the exception, never a verdict downgrade
+
+A real 54-unit arc (2026-07-29) banked ~350 `roadmap:debt` issues. The user's post-hoc grading —
+borne out by a branch-verification pass — was that most were PR-review-grade corrections a fix
+round would have cleared, and, worse, that per-unit gates had **approved units whose banked residue
+later graded as correctness bugs** at the integration review (a phantom UI-flavour bug, executor
+floor wedges, a missing owner check, a schema-less tool briefing). In each case the gate had the
+finding *in hand* as a debt item and approved anyway: debt classification had become a
+verdict-downgrade path, and `severity: minor` systematically under-weighted hygiene whose absence
+taxes every later unit.
+
+Four rules close it, each enforced by schema or code rather than prompt alone:
+
+1. **Fix-in-unit is the default.** A finding inside the unit's blast radius (a file the diff
+   touches, a test the unit owns) is a revise directive; banking requires a `bankReason` from a
+   closed set — `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched` —
+   schema-required on gate debt and reviewer `nonBlocking` entries. "Minor" alone never banks.
+2. **The next-change test replaces the severity shortcut.** Gates ask "would leaving this raise
+   the cost of the NEXT change to this file?" — if yes it blocks, whatever its severity.
+3. **The implementer's confessions get one `debt-fix` round** while its context is loaded — the
+   cheapest fixer there is. Only what the sweep re-emits with a bankReason reaches the ledger.
+4. **Correctness debt never banks through an approve.** An approve holding a `kind:'correctness'`
+   item is coerced to revise inside the existing `maxGateRounds` (the items become directives); at
+   the cap the Opus gate escalates and the frontier gate banks at `severity:'major'` with a loud
+   `correctness-debt-banked` degradation — bank-with-evidence beats quarantining work the frontier
+   gate judged mergeable, and the bound keeps token cost inside the rounds that already existed.
+
+Volume got the same treatment on the projection side: issue mode now mints **one consolidated
+`roadmap:debt` issue per unit-residue** (marker `wave=<N> unit=<id>`, resume-stable, mixed labels
+take max severity + one facet per kind) instead of one per finding, and a consolidation fix-unit
+names the issues it resolves in `closes` so the merge path retires them. Termination is untouched:
+every rule operates inside the unit pipeline, and §14's "debt never creates a wave" brake stands.

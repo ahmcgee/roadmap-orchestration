@@ -95,3 +95,43 @@ test('issue mode: quarantine dossier-writer carries the gh clause', async () => 
   assert.match(dossier, /roadmap:unit id=a/)
   assert.match(dossier, /status:quarantined/)
 })
+
+// =========================================================================================
+// 5. `closes`: a unit naming the issues it resolves closes them on merge (issue mode only).
+// =========================================================================================
+test('issue mode: a unit with `closes` closes each listed issue on merge, and the sweep carries it', async () => {
+  const { fn, calls } = makeAgent()
+  const plan = ISSUE_PLAN({ units: [unit('a', { closes: [101, 102] })] })
+  const res = await runWave(fn, plan, makeState())
+  assert.equal(res.units.a.status, 'merged')
+  const merge = promptOf(calls, 'merge:')
+  assert.match(merge, /gh issue close --repo o\/r 101/)
+  assert.match(merge, /gh issue close --repo o\/r 102/)
+  assert.match(merge, /Resolved by unit a/)
+  const sweep = promptOf(calls, 'issue-sync:')
+  assert.ok(sweep.includes('"closes":[101,102]'), 'the sweep row carries the closes list as a backstop')
+})
+
+test('issue mode: a unit without `closes` gets no resolve clause', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, ISSUE_PLAN(), makeState())
+  assert.ok(!promptOf(calls, 'merge:').includes('Resolved by'), 'no closes -> no resolve clause')
+})
+
+test('file mode: a `closes` field leaks no gh text anywhere', async () => {
+  const { fn, calls } = makeAgent()
+  const res = await runWave(fn, makePlan({ units: [unit('a', { closes: [101] })] }), makeState())
+  assert.equal(res.units.a.status, 'merged')
+  for (const c of calls)
+    assert.ok(!/gh issue|Resolved by/.test(c.prompt), `file-mode prompt "${c.label}" leaked a closes clause`)
+})
+
+test('validation: malformed `closes` throws before any agent call', async () => {
+  for (const bad of [[0], ['7'], 7]) {
+    const { fn } = makeAgent()
+    await assert.rejects(
+      runWave(fn, makePlan({ units: [unit('a', { closes: bad })] }), makeState()),
+      /closes/,
+    )
+  }
+})

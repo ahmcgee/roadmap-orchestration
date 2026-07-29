@@ -49,10 +49,13 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    may interrupt, reroute, or message an in-flight unit. This is about *timing*, not
    *identity*: the conductor's tiers triage on your behalf, but only at the same wave tail you
    would have woken at. **Root-only, always** (a tier early-returns instead): contract
-   amendments, contingent replans, needs-user calls. Technical debt is swept aggressively: while the
+   amendments, contingent replans, needs-user calls. Technical debt is swept aggressively — and
+   banked reluctantly: fix-in-unit is the default (an implementer's own shortcuts get one in-unit
+   fix round; a banked item needs a stated closed-set `bankReason`, and correctness findings never
+   bank through an approve). While the
    arc still has planned work to run, even minor debt folds into the next wave as fix-work — but debt
    never *creates* a wave, so leftover debt at arc end is *durable* (the living `.roadmap/debt.md`, or
-   `roadmap:debt` issues in issue mode) and carries to the next session's Phase 0.
+   consolidated per-unit `roadmap:debt` issues in issue mode) and carries to the next session's Phase 0.
 
 ## Phase 0 — Plan (interactive; the highest-leverage act in the system)
 
@@ -324,8 +327,13 @@ block is **absent**, every job failed or the phase was off — only then spawn t
 - **Debt you choose not to fix this wave doesn't vanish.** With the arc still running planned work,
   the default is to **fold even minor debt into the next wave** as consolidation fix-work rather than
   bank it (the debt rule — the conductor's tier-2 does this for you); only genuinely below-the-cut-line
-  debt banks. Banked debt goes to the living `.roadmap/debt.md` ledger (or `roadmap:debt` issues in
-  issue mode); annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
+  debt banks — and every banked item carries its closed-set `bankReason`
+  (out-of-scope-file · needs-migration-or-ruling · pre-existing-untouched), because "minor" alone
+  is never a reason to bank and correctness findings can never bank through a gate approve. Banked
+  debt goes to the living `.roadmap/debt.md` ledger (or, in issue mode, ONE consolidated
+  `roadmap:debt` issue per unit-residue, keyed `wave=<N> unit=<id>`; a consolidation fix-unit that
+  resolves specific issues names them in its `closes` field so the merge path closes them);
+  annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
   it's large; findings at a superseded sha are discounted, not re-litigated. Consumed feedback moves to
   `feedback/triaged/<wave>/` (issue mode: the `roadmap:bug` issues are closed with a disposition
   comment). Triage silently — contact the user **only** for a critical call you genuinely cannot make.

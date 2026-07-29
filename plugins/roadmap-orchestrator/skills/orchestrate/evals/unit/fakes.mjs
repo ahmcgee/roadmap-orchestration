@@ -50,6 +50,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('opus-gate:'), () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [] })],
   [(l) => l.startsWith('gate:'), () => ({ verdict: 'approve', directives: [], debt: [] })],
   [(l) => l.startsWith('impl:'), () => implOk()],
+  [(l) => l.startsWith('debt-fix:'), () => implOk()],   // post-impl sweep of the implementer's own debt
   [(l) => l.startsWith('fix:'), () => implOk()],
 
   [(l) => l.startsWith('merge:'), (b) => mergeOk(b)],
@@ -60,6 +61,7 @@ const DEFAULTS = [
   [(l) => l === 'preview-setup', (b) => ({ ok: true, sha: b })],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
   [(l) => l === 'checkpoint', () => ({ ok: true })],
+  [(l) => l === 'skill-feedback', () => ({ ok: true })],   // conductor's degradation-region writer
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
   [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],

@@ -53,6 +53,7 @@ const CC = {
   perUnitCallEstimate: 15,     // pre-wave budget estimate per dispatchable unit; corrected by harness spend deltas
   fixUnitAdmit: 'auto',        // 'auto' tier-1 mechanical admit of health drafts | 'triage' force >=Opus veto when drafts present
   fableEffort: 'high',         // effort for the Fable boundary agent (respec/escalation arbiter) — Fable 5's high default for real adjudication
+  opusEffort: 'medium',        // effort for the Opus tier-2 triager — mirrors the harness's opusEffort knob
   ...(inPlan.config?.conductor ?? {}),
   ...(overrides?.conductor ?? {}),
 }
@@ -202,6 +203,46 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
   'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
   'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
   'unexpected key is rejected as hard as an over-long one. '
+// Verbatim-write prompt for a large JSON payload — mirrored from harness.mjs (keep in sync).
+// A single write's content is echoed as agent OUTPUT and one response caps at ~32k output tokens;
+// below WRITE_CHUNK the prompt is byte-identical to the legacy single-write form, above it the
+// payload is split deterministically and written in staged parts, one tool call per part.
+const WRITE_CHUNK = 24000
+const writeVerbatim = (path, text, extra = '') => {
+  if (text.length <= WRITE_CHUNK)
+    return `Overwrite the file ${path} with exactly this JSON and nothing else${extra}:\n${text}`
+  // Split on line boundaries so a part is an exact run of whole lines and the marker boundary is
+  // unambiguous (pretty-printed JSON keeps every line far below the chunk size — free-text caps
+  // bound the longest value). Reconstruction = parts joined with a single newline.
+  const parts = []
+  let cur = ''
+  for (const line of text.split('\n')) {
+    if (cur && cur.length + line.length + 1 > WRITE_CHUNK) { parts.push(cur); cur = line }
+    else cur = cur ? `${cur}\n${line}` : line
+  }
+  if (cur) parts.push(cur)
+  return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
+    `in order, joined with a single newline between consecutive parts, and nothing else${extra}. The parts ` +
+    `are a mechanical split of one JSON document on line boundaries — never repair, reformat, or re-indent ` +
+    `anything. A single write of the whole document is too large and will be rejected, so write it in ` +
+    `stages: write PART 1 (overwriting any existing file), then APPEND each later part (each preceded by ` +
+    `the joining newline) with its own separate write or append operation — one part per operation, never ` +
+    `the whole document in one call. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
+    `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
+    `themselves.\n` +
+    parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
+}
+// Await a verbatim write and ledger any failure as a `write-failed` degradation — a lost persist
+// is exactly the evidence-destroying silence the degradation ledger exists to catch. Never throws.
+const persistVerbatim = async (path, text, opts, extra = '') => {
+  const r = await run(STRICT + writeVerbatim(path, text, extra), opts)
+    .catch((e) => ({ __threw: String(e?.message ?? e).slice(0, 200) }))
+  if (!r?.ok)
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'write-failed',
+      what: `${path.split('/').pop()} persist did not land (${
+        r?.__threw ?? (r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report')
+      }) — on-disk copy may trail the run` })
+}
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
@@ -225,6 +266,9 @@ const specSkeleton = obj({
   goal: { type: 'string', maxLength: 400 },
   constraints: { type: 'string', maxLength: 600 },
   contractRefs: arr('string'),
+  // Issue mode only: existing issue NUMBERS this unit resolves (typically the consolidated
+  // roadmap:debt issues a sweep fix-unit folds in) — the merge path closes them on landing.
+  closes: { type: 'array', maxItems: 40, items: { type: 'integer', minimum: 1 } },
   acceptance: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 200 } },
   edges: {
     type: 'array', maxItems: 8, items: obj({
@@ -384,13 +428,23 @@ const fmtDegradation = (d) =>
 async function writeSkillFeedback() {
   if (!degradations.length) return
   const body = degradations.map(fmtDegradation).join('\n')
+  // Marker-region replace, never a whole-file overwrite (the debt.md wave-section idiom): the
+  // file also carries HAND-WRITTEN sections — architect/user observations added while a run is
+  // in flight — and a full rewrite silently destroyed one arc's design-feedback section. Only
+  // the delimited region is the renderer's; everything outside it must survive byte-for-byte.
   await run(
-    STRICT + `Overwrite the file ${repo}/.roadmap/skill-feedback.md with exactly this content and nothing else ` +
-    `(create it if missing):\n# Skill feedback — roadmap-orchestrator\n\nDefects in the ORCHESTRATOR itself ` +
-    `(not the product) observed while running this arc. Carry these back to the skill's repository; they are ` +
-    `not product debt and do not belong in debt.md.\n\n## Degradations (${degradations.length})\n\n${body}\n\n` +
-    `Each line names the agent label — find its transcript in the workflow's agent-*.jsonl to see the real ` +
-    `error, which the platform does not expose to the script.\n`,
+    STRICT + `In the file ${repo}/.roadmap/skill-feedback.md: if the file does not exist, create it ` +
+    `starting with this header:\n# Skill feedback — roadmap-orchestrator\n\nDefects in the ORCHESTRATOR ` +
+    `itself (not the product) observed while running this arc. Carry these back to the skill's repository; ` +
+    `they are not product debt and do not belong in debt.md.\n\nThen ensure the file contains exactly one ` +
+    `region delimited by the marker lines \`<!-- roadmap:degradations -->\` and ` +
+    `\`<!-- /roadmap:degradations -->\`: if both markers already exist, replace ONLY the lines between ` +
+    `them; otherwise append the whole delimited region at the end of the file. Everything outside the ` +
+    `markers is hand-written and must survive byte-for-byte — change nothing else in the file. The region, ` +
+    `markers included, is exactly:\n<!-- roadmap:degradations -->\n## Degradations ` +
+    `(${degradations.length})\n\n${body}\n\nEach line names the agent label — find its transcript in the ` +
+    `workflow's agent-*.jsonl to see the real error, which the platform does not expose to the script.\n` +
+    `<!-- /roadmap:degradations -->\n`,
     { model: 'haiku', effort: 'low', label: 'skill-feedback', phase: 'Persist', schema: S.ok },
   ).catch(() => null)
 }
@@ -411,10 +465,8 @@ async function ret(reason, tier, extra = {}) {
   if (degradations.length) st.degradations = degradations
   phase('Persist')
   await writeSkillFeedback()
-  await run(
-    STRICT + `Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${JSON.stringify(st, null, 2)}`,
-    { model: 'haiku', effort: 'low', label: `persist-state:w${st.wave}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  await persistVerbatim(`${repo}/.roadmap/state.json`, JSON.stringify(st, null, 2),
+    { model: 'haiku', effort: 'low', label: `persist-state:w${st.wave}`, phase: 'Persist', schema: S.ok })
   return {
     status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
     spendDelta: deltaSpend(st.spend),
@@ -431,9 +483,11 @@ const censusPrompt = (N) => STRICT +
   `Take a wave-${N} census of a roadmap build's pending bug reports and quarantine dossiers. Report identifiers ` +
   `only — read no contents, change nothing:\n` +
   (issueMode
-    ? `1) List open user bug issues: \`gh issue list ${ghRepo}--label roadmap:bug --state open --json number ` +
-      `--jq '.[].number'\` — put each issue NUMBER (as a string) in \`pendingUserFeedback\` (empty array if none ` +
-      `or if gh fails).\n`
+    ? `1) List open user bug issues: \`gh issue list ${ghRepo}--label roadmap:bug --state open --limit 1000 ` +
+      `--json number --jq '.[].number'\` — put each issue NUMBER (as a string) in \`pendingUserFeedback\` (empty ` +
+      `array if none or if gh fails). gh defaults to 30 results, so always pass the --limit shown; if the ` +
+      `returned count EQUALS the limit the listing is truncated — re-run with the limit doubled until the count ` +
+      `is below it, and note in \`detail\` that paging was needed.\n`
     : `1) List the files directly under ${repo}/.roadmap/feedback/user/, EXCLUDING TEMPLATE.md — put their basenames ` +
       `in \`pendingUserFeedback\` (empty array if that directory is absent or holds only TEMPLATE.md).\n`) +
   `2) List the *.md files under ${repo}/.roadmap/quarantine/ — put their basenames in \`quarantineDossiers\` ` +
@@ -446,7 +500,7 @@ const censusPrompt = (N) => STRICT +
 const opusTriagePrompt = (N, P) =>
   `You are the wave-${N} boundary triager for a roadmap build, standing in for the architect. Read, in this order: ` +
   `${repo}/.roadmap/architect-log.md FIRST (inherited rationale + dismissal criteria), then ` +
-  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`gh issue list ' + ghRepo + '--label roadmap:debt --state open`)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
+  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`gh issue list ' + ghRepo + '--label roadmap:debt --state open --limit 1000` — if exactly 1000 come back the listing is truncated: re-run with a higher limit; never trust a result equal to its limit)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
   `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
   `${issueMode ? `the open user bug issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
@@ -458,7 +512,9 @@ const opusTriagePrompt = (N, P) =>
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
   `\`promote\`. SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
   `left to run (a next wave is happening anyway), fold this wave's debt — even minor items — into one or more ` +
-  `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. But debt must ` +
+  `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. ` +
+  `${issueMode ? 'When a unit you `promote` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
+  `But debt must ` +
   `never CREATE a wave: once the plan's own units are all terminal (merged/quarantined), do NOT promote debt — ` +
   `bank it to \`debtLedger\` and set arcComplete, so it becomes durable tracked debt the next session picks up. ` +
   `THE CUT LINE BINDS THE DEFAULT — a healthy assessor drafts something every wave, so admitting by ` +
@@ -487,7 +543,9 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
   `quarantined id. Emit new work as full skeletons in \`newUnits\` (each with a NEW kebab id), spec adjustments in ` +
-  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. Whenever a \`newUnit\` REPLACES a ` +
+  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ` +
+  `${issueMode ? 'When a `newUnit` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
+  `Whenever a \`newUnit\` REPLACES a ` +
   `quarantined unit, set its \`supersedes\` field to that unit's id so the failed unit is retired and its edges ` +
   `repoint to the replacement — never leave a replaced quarantine active; a quarantine you abandon without ` +
   `replacing goes in \`cutUnits\`. Append a concise architect \`journal\` ` +
@@ -545,7 +603,11 @@ function mergePlan(prepared, cutIds) {
       if (oldU) oldU.inScope = false
       for (const e of plan.edges) { if (e.from === oldId) e.from = s.id; if (e.to === oldId) e.to = s.id }
     }
-    plan.units.push({ id: s.id, title: (s.title ?? s.id).slice(0, 120), risk: s.risk ?? 'low', kind: s.kind ?? 'code', inScope: true })
+    plan.units.push({ id: s.id, title: (s.title ?? s.id).slice(0, 120), risk: s.risk ?? 'low', kind: s.kind ?? 'code', inScope: true,
+      // The push is a whitelist — an unlisted skeleton field is dropped here, so `closes` must be
+      // carried explicitly or the merge path never sees it.
+      ...(Array.isArray(s.closes) && s.closes.length
+        ? { closes: s.closes.filter((n) => Number.isInteger(n) && n > 0) } : {}) })
   }
   for (const s of prepared) for (const e of s.edges ?? []) {
     const from = kebab(e.from)
@@ -556,7 +618,8 @@ function mergePlan(prepared, cutIds) {
 
 const fmtDebt = (d) => typeof d === 'string'
   ? `- ${d}`
-  : `- [${d.kind ?? 'quality'}/${d.severity ?? 'minor'}] ${d.what ?? ''}${d.why ? ` — ${d.why}` : ''}${d.unit ? ` (${d.unit})` : ''}`
+  : `- [${d.kind ?? 'structure'}/${d.severity ?? 'minor'}] ${d.what ?? ''}${d.why ? ` — ${d.why}` : ''}` +
+    `${d.bankReason ? ` [bank: ${d.bankReason}]` : ''}${d.unit ? ` (${d.unit})` : ''}`
 
 /* ------------------------------ main loop ------------------------------ */
 for (let w = 0; w < CC.maxWavesPerRun; w++) {
@@ -585,12 +648,16 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // 3. Dispatch the wave through the harness. Config is passed UNTOUCHED; boundary:'off' is never
   //    set here (ruling 1). The returned state threads forward (units/spend/wave accumulate).
   phase('Wave')
+  const sentDegradations = state.degradations?.length ?? 0
   state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath })
   wavesRun++
   const N = state.wave
-  // Absorb the wave's skill defects into the arc-cumulative ledger (the harness reports per-wave).
-  for (const d of state.degradations ?? []) degradations.push(d)
-  if (state.degradations?.length) log(`wave ${N}: ${state.degradations.length} harness degradation(s) recorded`)
+  // The harness returns prior+wave degradations (arc-cumulative); absorb only the wave's delta —
+  // the seed at construction already carries what was dispatched, so pushing the full array here
+  // would double-count every prior entry.
+  const newDegradations = (state.degradations ?? []).slice(sentDegradations)
+  for (const d of newDegradations) degradations.push(d)
+  if (newDegradations.length) log(`wave ${N}: ${newDegradations.length} harness degradation(s) recorded`)
 
   // 4. Census (Haiku) — feedback + quarantine folder listing. A dead census degrades to an empty
   // one rather than killing the run: the authoritative boundary evidence is the in-memory state,
@@ -648,7 +715,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     phase('Triage-opus')
     cSpend.boundaryTriages++
     triageResult = await runOr(null, opusTriagePrompt(N, P),
-      { model: 'opus', effort: 'high', label: `triage:w${N}`, phase: 'Triage-opus', schema: S_triage })
+      { model: 'opus', effort: CC.opusEffort, label: `triage:w${N}`, phase: 'Triage-opus', schema: S_triage })
     if (!triageResult) return await degraded()
     if (triageResult.escalate) {
       const er = triageResult.escalateReason
@@ -765,23 +832,34 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   await writeSkillFeedback()
 
   // persist-plan: overwrite plan.json with the merged plan.
-  await run(
-    STRICT + `Overwrite the file ${repo}/.roadmap/plan.json with exactly this JSON and nothing else (create parent directories if needed):\n${JSON.stringify(plan, null, 2)}`,
+  await persistVerbatim(`${repo}/.roadmap/plan.json`, JSON.stringify(plan, null, 2),
     { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+    ' (create parent directories if needed)')
 
-  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues
-  // (idempotent by a wave+index marker, since debt text has no stable id). FILE MODE -> a
-  // <!-- wave N --> section in debt.md, ALWAYS stamped (even "no new entries" — ruling 7).
+  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
+  // ONE consolidated issue per unit-with-residue, keyed wave+unit (arc-observed: per-finding minting
+  // produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered resume — the
+  // wave+unit key is a pure function of stable ids). FILE MODE -> a <!-- wave N --> section in
+  // debt.md, ALWAYS stamped (even "no new entries" — ruling 7); per-finding lines are fine there,
+  // the volume problem was issues, so the file branch is deliberately untouched.
   const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
   if (issueMode) {
+    const byUnit = new Map()
+    for (const d of waveDebt) {
+      const k = d.unit ?? 'general'
+      if (!byUnit.has(k)) byUnit.set(k, [])
+      byUnit.get(k).push(d)
+    }
     const items = [
-      ...waveDebt.map((d, i) => ({ marker: `roadmap:debt wave=${N} i=${i}`,
-        title: `[debt] ${String(d.what ?? 'debt').slice(0, 70)}`,
-        labels: ['roadmap:debt', `severity:${d.severity === 'major' ? 'major' : 'minor'}`, `debt:${debtKind(d.kind)}`].join(','),
-        body: `${d.what ?? ''}${d.why ? `\n\nWhy: ${d.why}` : ''}${d.unit ? `\n\nUnit: ${d.unit}` : ''}` })),
-      ...debtLedger.map((s, i) => ({ marker: `roadmap:debt wave=${N} L=${i}`,
-        title: `[debt] ${String(s).slice(0, 70)}`, labels: 'roadmap:debt', body: String(s) })),
+      ...[...byUnit].map(([uid, ds]) => ({ marker: `roadmap:debt wave=${N} unit=${uid}`,
+        title: `[debt] ${uid}: ${ds.length} deferred item${ds.length === 1 ? '' : 's'} (wave ${N})`,
+        labels: ['roadmap:debt',
+          `severity:${ds.some((d) => d.severity === 'major') ? 'major' : 'minor'}`,
+          ...new Set(ds.map((d) => `debt:${debtKind(d.kind)}`))].join(','),
+        body: ds.map(fmtDebt).join('\n') })),
+      ...(debtLedger.length ? [{ marker: `roadmap:debt wave=${N} ledger`,
+        title: `[debt] wave ${N} triage ledger (${debtLedger.length} item${debtLedger.length === 1 ? '' : 's'})`,
+        labels: 'roadmap:debt', body: debtLedger.map((s) => `- ${s}`).join('\n') }] : []),
     ]
     if (items.length)
       await run(
@@ -848,10 +926,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   }
 
   // persist-state: the consumed state + conductor block.
-  await run(
-    STRICT + `Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${JSON.stringify(consumed, null, 2)}`,
-    { model: 'haiku', effort: 'low', label: `persist-state:w${N}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  await persistVerbatim(`${repo}/.roadmap/state.json`, JSON.stringify(consumed, null, 2),
+    { model: 'haiku', effort: 'low', label: `persist-state:w${N}`, phase: 'Persist', schema: S.ok })
 
   state = consumed   // thread the consumed state into the next wave
 }

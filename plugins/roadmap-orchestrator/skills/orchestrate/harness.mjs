@@ -43,10 +43,14 @@ const C = {
   // spot-check `auditEffort` can be dialled below a full gate to keep the 10% sample cheap.
   fableEffort: 'high',
   gateEffort: 'high',
-  // Opus reasoning effort for the code-authoring pipeline — planning, implementing, and every
-  // fix loop. `xhigh` is the Opus 5 starting point for agentic coding; the review/gate Opus
-  // calls stay at their own efforts on purpose, since review accuracy holds at lower effort.
-  implementEffort: 'xhigh',
+  // Opus reasoning effort, two knobs. `implementEffort` covers the code-authoring pipeline —
+  // planning, implementing, and every fix loop (incl. the post-impl debt-fix round);
+  // `opusEffort` covers every other Opus call (boundary assessors, review, opus-first
+  // plan-check/gate, merge resolution, conductor triage). Opus 5 holds review and coding
+  // quality at `medium` at a fraction of the tokens; raise per-arc via plan.config if a
+  // workload proves effort-sensitive.
+  implementEffort: 'medium',
+  opusEffort: 'medium',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
   // Frontier economy: Fable is the metered tier, so Opus grades first everywhere and escalates
@@ -125,6 +129,18 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
   'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
   'Respect every character budget named below exactly, keep each finding to a sentence or two, and emit no ' +
   'field the schema does not define — an unexpected key is rejected as hard as an over-long one. '
+// The banking bar, shared by both exit gates. Arc-observed failure shape: per-unit gates approved
+// units whose banked "minor" residue later graded as correctness bugs at the integration review —
+// classification-as-debt must never be a verdict-downgrade path, and hygiene whose absence taxes
+// every later unit is not "minor". The closed bankReason set is the whole space of legitimate
+// deferrals; everything else is a revise directive.
+const DEBT_DISCIPLINE = 'Debt discipline: an imperfection inside this unit\'s blast radius (a file this ' +
+  'diff touches, a test this unit owns) is a revise directive, not debt — ask of each one: would leaving ' +
+  'it raise the cost of the NEXT change to that file? If yes it blocks, whatever its severity; "minor" is ' +
+  'never by itself a reason to bank. Record in `debt` (what, why, severity, kind, bankReason) ONLY what is ' +
+  'genuinely not this unit\'s to fix, with bankReason one of: out-of-scope-file | needs-migration-or-ruling ' +
+  '| pre-existing-untouched. A correctness-kind item is never bankable — you may not approve while one ' +
+  'exists; revise or escalate instead. '
 // `contractMismatch` is a TRIGGER, not a notes field: its mere PRESENCE fires the architect consult,
 // forces the (metered) Fable exit gate, banks a kind:'contract' debt entry, and bounces the whole run
 // back to the root for a contract amendment. The model must be told that, or it uses the field as a
@@ -195,7 +211,13 @@ const ghMerged = (unit) => issueMode
   ? `\n${GH_BEST_EFFORT}If and only if the merge LANDED and the full suite PASSED, close this unit's tracking ` +
     `issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
     `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:running,status:merge-ready --add-label status:merged\` ` +
-    `then \`gh issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. `
+    `then \`gh issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. ` +
+    (unit.closes?.length
+      ? `Under the same condition (merge landed, suite passed), also close each issue this unit RESOLVES: ` +
+        unit.closes.map((n) =>
+          `\`gh issue close ${ghRepo}${n} --reason completed --comment "Resolved by unit ${unit.id} (merged into ${intBranch})."\``).join('; ') +
+        ` — skip any already closed. `
+      : '')
   : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
@@ -208,18 +230,32 @@ for (const [k, v] of Object.entries(prior.spend ?? {}))
 // the exit gates, or the implementer. Returned in the wave state; the architect triages it
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
 const debtLog = []
+// Normalized against the schema enums: an out-of-enum kind (the old 'quality' default was one)
+// rode into state.json and collapsed unpredictably downstream. 'contract' is legal here — the
+// mismatch pathway stamps it directly and the conductor routes on it.
+const DEBT_KINDS = ['correctness', 'test', 'structure', 'ergonomics', 'contract']
+const DEBT_BANK_REASONS = ['out-of-scope-file', 'needs-migration-or-ruling', 'pre-existing-untouched']
 const addDebt = (unitId, sha, items, defaults = {}) => {
   for (const d of items ?? []) {
     if (!d) continue
     const o = typeof d === 'string' ? { what: d } : d
+    const kind = [o.kind, defaults.kind].find((k) => DEBT_KINDS.includes(k)) ?? 'structure'
+    const bankReason = [o.bankReason, defaults.bankReason].find((r) => DEBT_BANK_REASONS.includes(r))
     debtLog.push({
-      unit: unitId, sha,
-      kind: o.kind ?? defaults.kind ?? 'quality',
+      unit: unitId, sha, kind,
       severity: o.severity ?? defaults.severity ?? 'minor',
-      what: o.what ?? '', why: o.why ?? '',
+      what: o.what ?? o.summary ?? '', why: o.why ?? '',
+      ...(bankReason ? { bankReason } : {}),
     })
   }
 }
+// Gate coercion helpers: a gate that APPROVES while holding a correctness-kind debt item is the
+// verdict-downgrade path the debt discipline forbids — the items become revise directives instead.
+const correctnessDebt = (items) => (items ?? []).filter((d) => d && typeof d === 'object' && d.kind === 'correctness')
+const asDirectives = (items) => items.map((d) => ({
+  what: `Fix now (correctness debt is not bankable): ${d.what}`,
+  why: d.why || 'a correctness-kind finding blocks approval; banking it would ship a known bug',
+}))
 // Skill-defect ledger for THIS wave: every time the ORCHESTRATOR's own machinery misbehaves — an
 // agent dies without a report, a schema-retry fires, a salvage rescues a null — record it here
 // instead of silently swallowing it. Rides back in the wave state; the root renders it into
@@ -306,11 +342,19 @@ const obj = (properties, required) => ({ type: 'object', additionalProperties: f
 const arr = (t) => ({ type: 'array', items: { type: t } })
 const oneOf = (vals) => ({ type: 'string', enum: vals })
 // Deferred-imperfection items — consciously accepted, not blocking. Collected into the
-// wave's debt ledger. `what` is the only hard requirement; the rest classify for triage.
-const debtArr = { type: 'array', items: obj({
+// wave's debt ledger. Banking is not free-form: `bankReason` is the closed set of legitimate
+// grounds for deferring instead of fixing (arc-observed: ~350 banked items in one arc, most of
+// them fix-in-unit corrections — "minor" alone is never a reason to bank). The code-writing
+// schemas leave it optional (their debt is a confession that triggers a fix round, not a bank
+// request); the exit-gate schemas REQUIRE it — an approve is where banking actually happens.
+const BANK_REASONS = ['out-of-scope-file', 'needs-migration-or-ruling', 'pre-existing-untouched']
+const debtItem = (req) => obj({
   what: { type: 'string', maxLength: 400 }, why: { type: 'string', maxLength: 400 },
   severity: oneOf(['minor', 'major']), kind: oneOf(['correctness', 'test', 'structure', 'ergonomics']),
-}, ['what']) }
+  bankReason: oneOf(BANK_REASONS),
+}, req)
+const debtArr = { type: 'array', items: debtItem(['what']) }
+const gateDebtArr = { type: 'array', items: debtItem(['what', 'bankReason']) }
 const directiveArr = { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) }
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
@@ -329,8 +373,9 @@ const S = {
   // order matches). An Opus agent that emits a long `approach` first tends to bleed the XML tool-call
   // syntax (`</approach><parameter name="files">…`) into the JSON on the transition OUT of the
   // free-text into the next field, dropping every field that follows and burning the structured-output
-  // retry cap — same required-first discipline as S.impl (eval-observed on plan:* at implementEffort
-  // xhigh: 5 invalid outputs, all missing files/testPlan/feasible that trailed the essay).
+  // retry cap — same required-first discipline as S.impl (eval-observed on plan:* at the
+  // then-default implementEffort 'xhigh': 5 invalid outputs, all missing files/testPlan/feasible
+  // that trailed the essay).
   plan: obj({
     feasible: { type: 'boolean' }, files: arr('string'), testPlan: { type: 'string' },
     approach: { type: 'string' }, notes: { type: 'string' },
@@ -361,7 +406,7 @@ const S = {
   opusGate: obj({
     verdict: oneOf(['approve', 'revise', 'escalate']),
     trigger: oneOf(['stuck', 'hard-tradeoff', 'foundational', 'oversight', 'none']),
-    directives: directiveArr, debt: debtArr, notes: { type: 'string' },
+    directives: directiveArr, debt: gateDebtArr, notes: { type: 'string' },
   }, ['verdict']),
   // `blocked` = the tooling itself could not run (env/deps/config) — a third outcome,
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
@@ -376,12 +421,16 @@ const S = {
         ['summary', 'confidence']),
     },
     preExisting: arr('string'),          // real issues the diff did NOT introduce — never block, flow to dossier
-    nonBlocking: arr('string'),
+    // Deferrable findings need a stated ground from the closed set — anything in this diff's
+    // blast radius belongs in `blocking` instead (deliberately uncapped: review stays free).
+    nonBlocking: { type: 'array', items: obj({
+      summary: { type: 'string' }, bankReason: oneOf(BANK_REASONS),
+    }, ['summary', 'bankReason']) },
     unsatisfiable: { type: 'boolean' },  // spec/contract contradictory as written — quarantine now, don't grind
   }, ['blocking', 'preExisting', 'nonBlocking', 'unsatisfiable']),
   gate: obj({
     verdict: oneOf(['approve', 'revise', 'quarantine']),
-    directives: directiveArr, debt: debtArr,
+    directives: directiveArr, debt: gateDebtArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
   directive: obj({ action: oneOf(['redirect', 'quarantine']), guidance: { type: 'string' } }, ['action', 'guidance']),
@@ -485,19 +534,57 @@ const serialize = () => ({
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
-  // Skill defects surfaced THIS wave — the orchestrator misbehaving, not the product. The root
-  // renders these into .roadmap/skill-feedback.md and carries them back to the skill's repo.
-  ...(degradations.length ? { degradations } : {}),
+  // Skill defects — the orchestrator misbehaving, not the product. Arc-cumulative like spend:
+  // prior entries carry forward, this wave's append (without the concat, per-wave direct-harness
+  // runs erased the arc's degradation history each wave). The conductor renders these into
+  // .roadmap/skill-feedback.md and absorbs only the delta past what it dispatched.
+  ...(((prior.degradations?.length ?? 0) + degradations.length)
+    ? { degradations: [...(prior.degradations ?? []), ...degradations] } : {}),
   ...(boundary ? { boundary } : {}),
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
 const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 
+// Verbatim-write prompt for a large JSON payload. A single write's content is echoed as agent
+// OUTPUT, and one response caps at ~32k output tokens (arc-observed: a 54-unit arc's state killed
+// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK the prompt is byte-identical to
+// the legacy single-write form; above it, the payload is split deterministically (a pure function
+// of the text — resumeFromRunId-safe) and written in staged parts, one tool call per part, each
+// comfortably under the cap. Mirrored in conductor.mjs — keep the two in sync.
+const WRITE_CHUNK = 24000
+const writeVerbatim = (path, text, extra = '') => {
+  if (text.length <= WRITE_CHUNK)
+    return `Overwrite the file ${path} with exactly this JSON and nothing else${extra}:\n${text}`
+  // Split on line boundaries so a part is an exact run of whole lines and the marker boundary is
+  // unambiguous (pretty-printed JSON keeps every line far below the chunk size — free-text caps
+  // bound the longest value). Reconstruction = parts joined with a single newline.
+  const parts = []
+  let cur = ''
+  for (const line of text.split('\n')) {
+    if (cur && cur.length + line.length + 1 > WRITE_CHUNK) { parts.push(cur); cur = line }
+    else cur = cur ? `${cur}\n${line}` : line
+  }
+  if (cur) parts.push(cur)
+  return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
+    `in order, joined with a single newline between consecutive parts, and nothing else${extra}. The parts ` +
+    `are a mechanical split of one JSON document on line boundaries — never repair, reformat, or re-indent ` +
+    `anything. A single write of the whole document is too large and will be rejected, so write it in ` +
+    `stages: write PART 1 (overwriting any existing file), then APPEND each later part (each preceded by ` +
+    `the joining newline) with its own separate write or append operation — one part per operation, never ` +
+    `the whole document in one call. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
+    `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
+    `themselves.\n` +
+    parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
+}
+
 // Crash-safety checkpoint of the whole wave state. Coalesced latest-wins (same idiom as the
 // preview mirror below): a burst of status changes collapses to a single Haiku write, since
 // only the newest snapshot matters for recovery. The final `await checkpointChain` still
 // guarantees the last state lands — the last queued segment observes the final target.
+// A failed write is LOUD: it lands in the degradation ledger (arc-observed silent losses hid a
+// window where a crash would have dropped the wave), but never blocks the wave — the next
+// successful checkpoint heals it.
 let checkpointTarget = null
 let checkpointWritten = null
 function checkpoint() {
@@ -506,8 +593,14 @@ function checkpoint() {
     if (checkpointTarget === checkpointWritten) return   // coalesce: latest already written
     const snap = checkpointTarget
     checkpointWritten = snap
-    await run(`Overwrite the file ${repo}/.roadmap/state.json with exactly this JSON and nothing else:\n${snap}`,
-      { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok }).catch(() => null)
+    const r = await run(writeVerbatim(`${repo}/.roadmap/state.json`, snap),
+      { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok })
+      .catch((e) => ({ __threw: String(e?.message ?? e).slice(0, 200) }))
+    if (!r?.ok)   // covers threw, agent-died-null, and an explicit ok:false alike
+      degrade({ label: 'checkpoint', model: 'haiku', phase: 'Setup', kind: 'write-failed',
+        what: `state.json checkpoint did not land (${
+          r?.__threw ?? (r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report')
+        }) — on-disk state may trail the run; the next successful checkpoint heals it` })
   }).catch(() => null)
 }
 
@@ -624,7 +717,7 @@ async function runBoundary() {
       `edits, no restarts. At most 10 findings — severity, exact repro, observed vs expected; an empty report ` +
       `is legitimate and better than manufactured findings. Hold \`notes\` to a short paragraph (max 500 ` +
       `characters). ${TERSE}Report shaObserved: ${explSha}.`,
-      { model: 'opus', effort: 'high', phase: 'Boundary', label: `explorer:w${waveN}`, schema: S.explore }
+      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `explorer:w${waveN}`, schema: S.explore }
     ).catch(() => null),
     !doHealth ? null : run(
       `You are the wave-${waveN} codebase-health assessor for a roadmap build. In the integration worktree at ` +
@@ -638,7 +731,7 @@ async function runBoundary() {
       `each finding worth fixing, also return a ready-to-dispatch fix-unit draft (id, goal, files, acceptance ` +
       `criteria as individually checkable clauses). Read-only — change nothing. An empty report is legitimate. ` +
       `Hold \`notes\` to a short paragraph (max 500 characters). ` + TERSE,
-      { model: 'opus', effort: 'high', phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
+      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
     ).catch(() => null),
     !(doHealth && C.flakeReruns > 0) ? null : run(
       STRICT +
@@ -664,7 +757,7 @@ async function runBoundary() {
       `goal, files, acceptance criteria as individually checkable clauses). Change nothing — no commits, no ` +
       `edits. An empty report is legitimate. Hold \`notes\` to a short paragraph (max 500 characters). ` +
       `${TERSE}Report shaObserved: ${explSha}.`,
-      { model: 'opus', effort: 'high', phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
+      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
     ).catch(() => null),
   ])
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
@@ -721,7 +814,9 @@ async function syncIssues() {
   if (!issueMode) return
   const N = (prior.wave ?? 0) + 1
   const issueOf = new Map(plan.units.map((u) => [u.id, u.issue]))
-  const rowsOf = (entries) => entries.map(([id, r]) => ({ id, status: r.status, issue: issueOf.get(id) ?? null }))
+  const closesOf = new Map(plan.units.filter((u) => u.closes?.length).map((u) => [u.id, u.closes]))
+  const rowsOf = (entries) => entries.map(([id, r]) => ({ id, status: r.status, issue: issueOf.get(id) ?? null,
+    ...(closesOf.has(id) ? { closes: closesOf.get(id) } : {}) }))
   const allRows = rowsOf([...units])
   // Reconcile LABELS only for units whose status CHANGED this wave. Prior waves' units were already
   // reconciled by the sweep of the wave that moved them, so re-editing all of them every wave only burns
@@ -740,7 +835,10 @@ async function syncIssues() {
     `if found, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
     `and ensure \`wave:${N}\` on any unit that is running or beyond: pending/running/merge-ready/blocked/` +
     `quarantined stay OPEN; merged → add \`status:merged\` then \`gh issue close ${ghRepo}<n> --reason completed\`; ` +
-    `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. Skip any unit ` +
+    `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. For any ` +
+    `changed unit whose row carries a \`closes\` array and whose status is merged, also ensure each listed issue ` +
+    `number is closed (\`gh issue close ${ghRepo}<n> --reason completed --comment "Resolved by unit <id>."\`) — ` +
+    `skip numbers already closed. Skip any unit ` +
     `whose issue is not found, and do NOT touch any unit not listed here — they were reconciled in an earlier ` +
     `wave. Changed units:\n${JSON.stringify(changed)}\n` +
     (plan.trackingIssue
@@ -921,7 +1019,7 @@ async function runUnit(unit) {
         `call is clearly within your authority); "escalate" = hand to the frontier architect when the call turns ` +
         `on contract interpretation, a spec contradiction you cannot resolve yourself, architectural foundations, ` +
         `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.`,
-        { model: 'opus', effort: 'high', phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
+        { model: 'opus', effort: C.opusEffort, phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
       if (oc.verdict === 'escalate') {
         const lead = ` A first-pass Opus plan-check could not clear this itself` +
           `${oc.trigger && oc.trigger !== 'none' ? ` (escalation trigger "${oc.trigger}")` : ''}; use its assessment ` +
@@ -952,9 +1050,13 @@ async function runUnit(unit) {
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
     `frozen. ${convClause}${designClause(unit)}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
-    `and the tests the spec's acceptance criteria call for. If you consciously defer any imperfection (a shortcut, ` +
-    `a thin test, a known-suboptimal structure) rather than fix it now, record it in \`debt\` — do not silently ` +
-    `leave it. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
+    `and the tests the spec's acceptance criteria call for. Deliver what the spec asks, at the scope it ` +
+    `intends: make routine judgment calls yourself and finish the whole task — only report done when it is ` +
+    `fully done; if something genuinely cannot be finished, do the rest and state plainly what is missing. ` +
+    `Prefer fixing an imperfection now over deferring it: a shortcut, thin test, or known-suboptimal structure ` +
+    `in a file you are already touching is yours to fix in this unit. If you must defer one anyway, record it ` +
+    `in \`debt\` with why — never silently; it will be handed back to you for one fix round before this unit ` +
+    `can pass its gate. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
     `choose the deviation you judge correct, keep building, and describe it in the structured \`contractMismatch\` ` +
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
     `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
@@ -980,8 +1082,26 @@ async function runUnit(unit) {
     reportLostEver = true
     log(`${unit.id}: implement report lost but ${probe.sha?.slice(0, 7) ?? 'work'} is committed — judging the branch`)
   }
-  addDebt(unit.id, base, impl.debt, { kind: 'quality' })
   noteMismatch(impl)
+  // The implementer's own debt confessions ("shortcuts taken") get ONE fix round while the
+  // context is still loaded — the cheapest fixer there is (arc-observed: routing them straight
+  // to the ledger banked hundreds of items a review-time fix would have cleared in minutes).
+  // Only what the sweep re-emits WITH a bankReason reaches the ledger; a lost sweep report
+  // banks the original confession rather than losing it. Exactly one round — the normal
+  // verify → review loop below re-checks the commit either way.
+  if (!impl.reportLost && impl.debt?.length) {
+    setStage(unit.id, 'debt-fix')
+    const swept = await runOr(REPORT_LOST,
+      `You are finishing unit ${unit.id} in the worktree at ${w} (spec: ${spec}). The implementation just ` +
+      `landed, but these imperfections were consciously deferred:\n${JSON.stringify(impl.debt)}\n` +
+      `Fix them NOW — you have the unit's context loaded, and a deferred fix costs far more later. Re-emit in ` +
+      `\`debt\` ONLY what is genuinely not this unit's to fix, each with a \`bankReason\` from: ` +
+      `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched — "minor" alone is never a ` +
+      `reason to defer. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `debt-fix:${unit.id}`, schema: S.impl })
+    if (swept.reportLost) { reportLostEver = true; addDebt(unit.id, base, impl.debt) }
+    else { addDebt(unit.id, base, swept.debt); noteMismatch(swept) }
+  }
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
 
   // Free-tier polish loop: verify → adversarial review → fix, bounded.
@@ -1003,10 +1123,16 @@ async function runUnit(unit) {
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
-      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}You did not write this code; assume it contains mistakes. Report a ` +
-      `finding as blocking only if it would cause incorrect behavior, violate the spec or a contract, or leave ` +
-      `acceptance criteria untested — AND the defect is introduced by this diff. Real issues that predate the ` +
-      `diff go in preExisting (they never block). Do not flag style, nitpicks, or anything a linter/formatter/` +
+      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}You did not write this code; assume it contains mistakes. Report ` +
+      `every defect you find, including ones you are uncertain about — your job is coverage; a downstream ` +
+      `confidence filter discards weak findings, so under-reporting loses real bugs while over-reporting costs ` +
+      `nothing. A finding is blocking if it is introduced by this diff AND it would cause incorrect behavior, ` +
+      `violate the spec or a contract, leave acceptance criteria untested, or leave a file this diff touches in ` +
+      `a state that raises the cost of the next change to it. "Minor" is not a reason to withhold or downgrade ` +
+      `a finding. Real issues the diff did NOT introduce go in preExisting (they never block). \`nonBlocking\` ` +
+      `is ONLY for defects that are genuinely not this unit's to fix — each entry needs a bankReason from: ` +
+      `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched; anything in this diff's blast ` +
+      `radius goes in \`blocking\` instead. Do not report pure style or anything a linter/formatter/` +
       `typechecker would catch. The tests are part of the diff under review, and a green check is evidence only ` +
       `if the test could fail: for each new or modified test, ask whether it would fail if the behaviour were ` +
       `actually wrong — a tautological test (asserting whatever the code currently does) or a test that mocks ` +
@@ -1014,10 +1140,11 @@ async function runUnit(unit) {
       `plausible bug in the worktree, run the tests, confirm at least one fails, then restore your change. ` +
       `${unit.design?.length ? 'Rebuilding from primitives a surface the cited comp already provides is a blocking ' +
         'finding, not a style note. ' : ''}` +
-      `Give each blocking finding a confidence in [0,1]. If the spec or its contracts ` +
+      `Give each blocking finding a confidence in [0,1] — report low-confidence findings rather than dropping ` +
+      `them; the filter is downstream. If the spec or its contracts ` +
       `are internally contradictory or unsatisfiable as written, set unsatisfiable:true. ` +
       `Verification evidence: ${JSON.stringify(verify)}`,
-      { model: 'opus', effort: 'high', phase: 'Review', label: `review:${unit.id}#${round}`, schema: S.review })
+      { model: 'opus', effort: C.opusEffort, phase: 'Review', label: `review:${unit.id}#${round}`, schema: S.review })
     if (review.unsatisfiable)
       return quarantine(unit, 'spec/contract unsatisfiable as written — needs respec, not retry', review)
 
@@ -1049,10 +1176,13 @@ async function runUnit(unit) {
       `Blocking review findings: ${JSON.stringify(blockers)}.` +
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
+      `Any \`debt\` you emit follows the implementer's rule: fix in-unit first; defer only what is genuinely ` +
+      `not this unit's to fix, with a \`bankReason\` (out-of-scope-file | needs-migration-or-ruling | ` +
+      `pre-existing-untouched). ` +
       `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     if (fixed.reportLost) reportLostEver = true
-    addDebt(unit.id, base, fixed.debt, { kind: 'quality' })
+    addDebt(unit.id, base, fixed.debt)
     noteMismatch(fixed)
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
@@ -1060,8 +1190,8 @@ async function runUnit(unit) {
   // Any deferred imperfection the reviewer surfaced but did not block on is real debt —
   // bank it whichever gate approves, so it is never silently lost.
   const bankReviewDebt = () => {
-    addDebt(unit.id, base, review?.nonBlocking, { kind: 'quality' })
-    addDebt(unit.id, base, review?.preExisting, { kind: 'quality', severity: 'major' })
+    addDebt(unit.id, base, review?.nonBlocking, { kind: 'structure' })   // items carry their own bankReason
+    addDebt(unit.id, base, review?.preExisting, { kind: 'structure', severity: 'major', bankReason: 'pre-existing-untouched' })
   }
   const gateReverify = (label) => run(
     STRICT +
@@ -1111,10 +1241,26 @@ async function runUnit(unit) {
         `needs no frontier judgment (give directives — what and why, not code); "escalate" to the frontier ` +
         `architect if you are stuck, if the right choice is a genuinely hard trade-off where every option carries ` +
         `a substantive drawback, if the increment is architecturally foundational to the wider solution, or if ` +
-        `you have found an oversight you are not confident you can resolve. Name the escalation trigger. Record ` +
-        `any imperfection you consciously ship rather than fix in \`debt\` (what, why, severity, kind). ${TERSE}` +
+        `you have found an oversight you are not confident you can resolve. Name the escalation trigger. ` +
+        `${DEBT_DISCIPLINE}${TERSE}` +
         `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
-        { model: 'opus', effort: 'high', phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
+        { model: 'opus', effort: C.opusEffort, phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
+      // Approve-with-correctness-debt is the verdict-downgrade path the discipline forbids: the
+      // items become revise directives (rounds remaining) or force the frontier gate (round cap).
+      // Coercion consumes the EXISTING gate rounds, so token cost stays bounded by maxGateRounds.
+      const ogCd = correctnessDebt(og.debt)
+      if (og.verdict === 'approve' && ogCd.length) {
+        og.debt = og.debt.filter((d) => !ogCd.includes(d))
+        og.directives = [...(og.directives ?? []), ...asDirectives(ogCd)]
+        if (g < C.maxGateRounds - 1) {
+          og.verdict = 'revise'
+          log(`${unit.id}: opus-gate approved with correctness debt in hand — coerced to revise`)
+        } else {
+          og.verdict = 'escalate'
+          og.trigger = 'oversight'
+          log(`${unit.id}: opus-gate approved with correctness debt at the round cap — escalating to the frontier gate`)
+        }
+      }
       addDebt(unit.id, base, og.debt)
       opusHandoff = og
       if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
@@ -1123,6 +1269,7 @@ async function runUnit(unit) {
         `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
         `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
         { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
+      addDebt(unit.id, base, ogFix.debt)   // was silently dropped — a fix round's confessions are debt too
       if (ogFix.reportLost) {
         // forceFrontier was computed before this loop, so flagging alone changes nothing here.
         // Hand the unit to the frontier gate directly: the fix's self-reported evidence is gone and
@@ -1184,10 +1331,26 @@ async function runUnit(unit) {
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
       `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
       `If revising, ` +
-      `give specific directives: what and why, not code. Record any imperfection you consciously approve rather ` +
-      `than fix in \`debt\`. ${TERSE}${mismatchClause}${reportLostClause}` +
+      `give specific directives: what and why, not code. ${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
+    // Same coercion as the Opus gate — but this IS the frontier, so at the round cap the items
+    // bank at severity:major with a LOUD degradation instead of quarantining work the frontier
+    // gate judged mergeable (banking + evidence beats destroying an approved unit).
+    const gCd = correctnessDebt(gate.debt)
+    if (gate.verdict === 'approve' && gCd.length) {
+      if (g < C.maxGateRounds - 1) {
+        gate.verdict = 'revise'
+        gate.debt = gate.debt.filter((d) => !gCd.includes(d))
+        gate.directives = [...(gate.directives ?? []), ...asDirectives(gCd)]
+        log(`${unit.id}: frontier gate approved with correctness debt in hand — coerced to revise`)
+      } else {
+        for (const d of gCd) d.severity = 'major'
+        degrade({ label: `gate:${unit.id}#${g}`, model: 'fable', phase: 'Architect', kind: 'correctness-debt-banked',
+          what: `frontier gate approved ${unit.id} at the round cap with ${gCd.length} correctness-kind debt ` +
+            `item(s) still banked — banked at severity:major; the boundary triage must treat these as bugs, not hygiene` })
+      }
+    }
     addDebt(unit.id, base, gate.debt)
     if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
@@ -1195,6 +1358,7 @@ async function runUnit(unit) {
       `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
+    addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked)
@@ -1225,7 +1389,7 @@ async function mergeUnit(unit) {
       `under ${repo}/.roadmap/specs/, and the contracts under ${repo}/.roadmap/contracts/ to decide each ` +
       `resolution. Then run the full test suite. If you are genuinely unsure a resolution is semantically right, ` +
       `abort the merge and report merged:false rather than guessing. Report the HEAD sha and suite result.`,
-      { model: 'opus', effort: 'high', phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge })
+      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge })
     if (!res.merged) return quarantine(unit, 'unresolvable merge conflicts', res)
   }
 
@@ -1236,7 +1400,7 @@ async function mergeUnit(unit) {
       `diagnose and fix on ${intBranch} — this may be a cross-unit interaction; the specs of all units live under ` +
       `${repo}/.roadmap/specs/. Re-run the suite. If you cannot make it pass, revert the merge commit ` +
       `(git revert -m 1 HEAD, keeping the branch intact for later redesign) and report suitePass:false.`,
-      { model: 'opus', effort: 'high', phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge })
+      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge })
     if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res)
   }
 
@@ -1304,6 +1468,12 @@ function start(unit) {
           `(known ids: ${(plan.designAuthorities ?? []).map((a) => a.id).join(', ') || 'none'})`)
   // A self-referential adopt makes the setup agent's remove-stale-remnants path delete its own
   // source — this destroyed finished work once; refuse at validation.
+  // `closes` names existing issue numbers the merge path closes — a malformed entry would ride
+  // silently into merge/sweep prompts as garbage gh commands. Fail loud, like the checks above.
+  for (const u of plan.units)
+    if (u.closes !== undefined && (!Array.isArray(u.closes) ||
+        u.closes.some((n) => !Number.isInteger(n) || n <= 0)))
+      throw new Error(`unit ${u.id}: \`closes\` must be an array of positive integer issue numbers — fix the plan`)
   for (const u of plan.units)
     if (u.existingBranch && u.existingBranch === `unit/${u.id}`)
       throw new Error(`unit ${u.id}: existingBranch is the unit's own branch unit/${u.id} — setup could delete ` +

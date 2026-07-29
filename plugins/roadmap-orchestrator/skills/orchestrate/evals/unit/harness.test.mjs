@@ -232,6 +232,32 @@ test('8 audit determinism: rate 1 forces low-effort Fable gate, rate 0 does not'
 })
 
 // =========================================================================================
+// 8b. Opus effort wiring: implementEffort drives the code-authoring calls, opusEffort drives
+//     every other Opus call; both default to 'medium' and both honour a config override.
+// =========================================================================================
+test('8b opus effort wiring: implementEffort and opusEffort defaults + overrides', async () => {
+  const effortOf = (calls, prefix) => calls.find((c) => c.label.startsWith(prefix))?.effort
+
+  const defaults = await (async () => {
+    const { fn, calls } = makeAgent()
+    await runWave(fn, makePlan([unit('a')]), makeState())
+    return calls
+  })()
+  assert.equal(effortOf(defaults, 'impl:a'), 'medium', 'implementEffort defaults to medium')
+  assert.equal(effortOf(defaults, 'opus-gate:a'), 'medium', 'opusEffort defaults to medium (gate)')
+  assert.equal(effortOf(defaults, 'health:w'), 'medium', 'opusEffort defaults to medium (boundary)')
+
+  const overridden = await (async () => {
+    const { fn, calls } = makeAgent()
+    await runWave(fn, makePlan([unit('a')]), makeState(), { implementEffort: 'xhigh', opusEffort: 'low' })
+    return calls
+  })()
+  assert.equal(effortOf(overridden, 'impl:a'), 'xhigh', 'implementEffort override carried to impl')
+  assert.equal(effortOf(overridden, 'opus-gate:a'), 'low', 'opusEffort override carried to the Opus gate')
+  assert.equal(effortOf(overridden, 'health:w'), 'low', 'opusEffort override carried to the boundary assessor')
+})
+
+// =========================================================================================
 // 9. Debt banking from every producer, with correct kind/severity.
 // =========================================================================================
 test('9 debt banking: every producer, contract mismatch -> kind contract / major', async () => {
@@ -242,16 +268,19 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
         ? { pass: false, blocked: false, failures: ['boom'], contractSurfaceTouched: false }
         : { pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
   })()
-  const { fn } = makeAgent([
-    // unit a: impl debt, a forced fix round (fix debt), review non/pre debt, opus-gate debt.
+  const { fn, calls } = makeAgent([
+    // unit a: impl debt (swept by the debt-fix round; only the re-emitted residue banks), a
+    // forced fix round (fix debt), review non/pre debt, opus-gate debt (with bankReason).
     { match: /^impl:a/, result: () => ({ summary: 'done', filesChanged: [], debt: [{ what: 'impl-shortcut', kind: 'test', severity: 'minor' }] }) },
+    { match: /^debt-fix:a/, result: () => ({ summary: 'swept', filesChanged: [], debt: [{ what: 'impl-shortcut-residue', kind: 'test', severity: 'minor', bankReason: 'out-of-scope-file' }] }) },
     { match: /^verify:a/, result: verifyA },
     { match: /^fix:a/, result: () => ({ summary: 'done', filesChanged: [], debt: [{ what: 'fix-shortcut', kind: 'structure', severity: 'minor' }] }) },
-    { match: /^review:a/, result: () => ({ blocking: [], preExisting: ['pre'], nonBlocking: ['nb'], unsatisfiable: false }) },
-    { match: /^opus-gate:a/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [{ what: 'gate-defer', kind: 'ergonomics', severity: 'minor' }] }) },
-    // unit b: contract mismatch (banks contract/major), forces the Fable gate (gate debt).
+    { match: /^review:a/, result: () => ({ blocking: [], preExisting: ['pre'], nonBlocking: [{ summary: 'nb', bankReason: 'out-of-scope-file' }], unsatisfiable: false }) },
+    { match: /^opus-gate:a/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [{ what: 'gate-defer', kind: 'ergonomics', severity: 'minor', bankReason: 'needs-migration-or-ruling' }] }) },
+    // unit b: contract mismatch (banks contract/major), forces the Fable gate (gate debt —
+    // non-correctness, so the approve stands; the correctness case has its own test below).
     { match: /^impl:b/, result: () => ({ summary: 'done', filesChanged: [], contractMismatch: 'auth surface expects a field reality lacks' }) },
-    { match: /^gate:b/, result: () => ({ verdict: 'approve', directives: [], debt: [{ what: 'gate-defer-b', kind: 'correctness', severity: 'minor' }] }) },
+    { match: /^gate:b/, result: () => ({ verdict: 'approve', directives: [], debt: [{ what: 'gate-defer-b', kind: 'structure', severity: 'minor', bankReason: 'needs-migration-or-ruling' }] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
   const debt = state.debt
@@ -259,13 +288,76 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
 
   assert.equal(state.units.a.status, 'merged')
   assert.equal(state.units.b.status, 'merged')
+  assert.ok(calls.some((c) => c.label === 'debt-fix:a'), 'implementer debt triggers exactly one sweep round')
+  assert.equal(calls.filter((c) => c.label.startsWith('debt-fix:')).length, 1, 'one sweep, no spiral')
   assert.ok(find((d) => d.kind === 'contract' && d.severity === 'major' && /contract mismatch/i.test(d.what)), 'contract mismatch -> contract/major')
-  assert.ok(find((d) => d.kind === 'test' && d.what === 'impl-shortcut'), 'impl debt kept its kind')
+  assert.ok(!find((d) => d.what === 'impl-shortcut'), 'the raw impl confession never reaches the ledger')
+  assert.ok(find((d) => d.kind === 'test' && d.what === 'impl-shortcut-residue' && d.bankReason === 'out-of-scope-file'),
+    'only the sweep\'s re-emitted residue banks, with its bankReason')
   assert.ok(find((d) => d.kind === 'structure' && d.what === 'fix-shortcut'), 'fix-round debt banked')
   assert.ok(find((d) => d.kind === 'ergonomics' && d.what === 'gate-defer'), 'opus-gate debt banked')
-  assert.ok(find((d) => d.kind === 'correctness' && d.what === 'gate-defer-b'), 'fable-gate debt banked')
-  assert.ok(find((d) => d.kind === 'quality' && d.severity === 'major' && d.what === 'pre'), 'preExisting -> quality/major')
-  assert.ok(find((d) => d.kind === 'quality' && d.severity === 'minor' && d.what === 'nb'), 'nonBlocking -> quality/minor')
+  assert.ok(find((d) => d.kind === 'structure' && d.what === 'gate-defer-b'), 'fable-gate debt banked')
+  assert.ok(find((d) => d.kind === 'structure' && d.severity === 'major' && d.what === 'pre' && d.bankReason === 'pre-existing-untouched'),
+    'preExisting -> structure/major with the pre-existing bankReason stamped')
+  assert.ok(find((d) => d.kind === 'structure' && d.severity === 'minor' && d.what === 'nb' && d.bankReason === 'out-of-scope-file'),
+    'nonBlocking -> banked with its own bankReason, summary as what')
+})
+
+test('9b no implementer debt -> no debt-fix round', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.ok(!calls.some((c) => c.label.startsWith('debt-fix:')), 'a clean impl skips the sweep')
+})
+
+// Debt classification must never be a verdict-downgrade path for correctness findings: a gate
+// that approves while holding a kind:'correctness' debt item is coerced to revise (rounds
+// remaining) and, at the round cap, escalates (Opus) or banks loudly at severity:major (Fable).
+test('9c fable gate approve+correctness debt: coerced revise, then banks loudly at the cap', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^gate:a/, result: () => ({ verdict: 'approve', directives: [],
+      debt: [{ what: 'phantom-flavour-bug', kind: 'correctness', severity: 'minor', bankReason: 'needs-migration-or-ruling' }] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable' })
+
+  assert.equal(state.units.a.status, 'merged', 'frontier-approved work is banked-loud, never quarantined')
+  assert.ok(calls.some((c) => c.label === 'gate-fix:a#0'), 'round 0 approve was coerced to a revise round')
+  assert.ok(calls.some((c) => c.label === 'gate:a#1'), 'the unit was re-gated after the coerced fix')
+  const banked = state.debt.find((d) => d.what === 'phantom-flavour-bug')
+  assert.ok(banked, 'at the round cap the item banks rather than quarantining approved work')
+  assert.equal(banked.severity, 'major', 'correctness debt banked at the cap is promoted to major')
+  assert.ok(state.degradations.some((d) => d.kind === 'correctness-debt-banked'),
+    'the cap-bank is LOUD — it lands in the skill-feedback ledger')
+})
+
+test('9d opus gate approve+correctness debt: coerced revise, then escalates to the frontier gate', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^opus-gate:a/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [],
+      debt: [{ what: 'owner-check-missing', kind: 'correctness', severity: 'minor', bankReason: 'out-of-scope-file' }] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'merged')
+  assert.ok(calls.some((c) => c.label === 'opus-gate-fix:a#0'), 'round 0 approve was coerced to a revise round')
+  assert.ok(calls.some((c) => c.label.startsWith('gate:a#')), 'at the cap the unit escalates to the Fable gate')
+  assert.ok(!state.debt.some((d) => d.what === 'owner-check-missing'),
+    'the correctness item became directives, never a ledger entry')
+})
+
+test('9e gate-fix debt is banked (was silently dropped)', async () => {
+  const gateA = (() => {
+    let n = 0
+    return () => n++ === 0
+      ? { verdict: 'revise', directives: [{ what: 'tighten the assertion', why: 'weak test' }], debt: [] }
+      : { verdict: 'approve', directives: [], debt: [] }
+  })()
+  const { fn } = makeAgent([
+    { match: /^gate:a/, result: gateA },
+    { match: /^gate-fix:a/, result: () => ({ summary: 'done', filesChanged: [],
+      debt: [{ what: 'gatefix-shortcut', kind: 'test', severity: 'minor' }] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable' })
+  assert.equal(state.units.a.status, 'merged')
+  assert.ok(state.debt.some((d) => d.what === 'gatefix-shortcut'), 'a gate-fix round\'s confession reaches the ledger')
 })
 
 // =========================================================================================
@@ -361,6 +453,50 @@ test('13 checkpoint coalescing: fewer writes than status changes, last write equ
   assert.equal(ret.spend.haiku, emb.spend.haiku + 1, 'only the final checkpoint write postdates the snapshot')
   emb.spend.haiku = ret.spend.haiku
   assert.deepEqual(emb, ret, 'final checkpoint payload equals the returned state (modulo its own write)')
+})
+
+// A 54-unit arc's state exceeded one response's ~32k output-token cap and killed 5 checkpoint
+// agents silently. Large states must be written in staged line-boundary chunks (each far under
+// the cap), losslessly; small states must keep the legacy single-write prompt byte shape.
+test('13b large-state checkpoint: staged parts, each bounded, lossless reassembly', async () => {
+  const bigUnits = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { fn, calls } = makeAgent()
+  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, units: bigUnits }))
+
+  const cps = calls.filter((c) => c.label === 'checkpoint')
+  const last = cps[cps.length - 1]
+  assert.match(last.prompt, /<<<PART 1\/\d+>>>/, 'a large state takes the chunked form')
+
+  const marker = /^<<<PART \d+\/\d+>>>$/m
+  const chunkStart = last.prompt.search(marker)
+  const parts = last.prompt.slice(chunkStart).split(/^<<<PART \d+\/\d+>>>\n/m).slice(1)
+  // The split leaves each part carrying the joining newline before the next marker — strip it.
+  const bodies = parts.map((p, i) => (i < parts.length - 1 ? p.slice(0, -1) : p))
+  for (const b of bodies) assert.ok(b.length <= 24000 + 500, `part stays near the chunk bound (${b.length})`)
+
+  const reassembled = JSON.parse(bodies.join('\n'))
+  const ret = JSON.parse(JSON.stringify(state))
+  assert.equal(ret.spend.haiku, reassembled.spend.haiku + 1, 'same final-write accounting as test 13')
+  reassembled.spend.haiku = ret.spend.haiku
+  assert.deepEqual(reassembled, ret, 'chunked payload reassembles to the returned state')
+})
+
+test('13c small-state checkpoint keeps the legacy single-write prompt', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const last = calls.filter((c) => c.label === 'checkpoint').pop()
+  assert.ok(last.prompt.startsWith('Overwrite the file /repo/.roadmap/state.json with exactly this JSON and nothing else:\n'),
+    'below the chunk threshold the prompt is byte-identical to the legacy form')
+  assert.ok(!last.prompt.includes('<<<PART'), 'no chunk markers on a small state')
+})
+
+test('13d a failed checkpoint write degrades loudly but never blocks the wave', async () => {
+  const { fn } = makeAgent([{ match: /^checkpoint$/, result: { ok: false, detail: 'disk full' } }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'merged', 'the wave completes despite the failed write')
+  assert.ok(state.degradations.some((d) => d.label === 'checkpoint' && d.kind === 'write-failed'),
+    'the loss is ledgered, not silent')
 })
 
 // =========================================================================================
@@ -508,4 +644,25 @@ test('21 a stale `deferred` stamp on an in-scope unit is cleared at wave start',
   const state = await runWave(fn, makePlan([unit('a')]),
     makeState({ wave: 1, units: { a: { status: 'deferred' } } }))
   assert.equal(state.units.a.status, 'merged', 'a unit the plan says is in scope must be dispatched')
+})
+
+// Degradations are arc-cumulative like spend: a per-wave direct-harness run must extend the prior
+// record, never erase it (arc-observed: serialize() dropped prior.degradations, so each wave's
+// state.json write destroyed the previous waves' skill-defect evidence).
+test('22 degradations carry forward: prior entries survive serialize, fresh ones append', async () => {
+  const PRIOR = { script: 'harness', wave: 1, label: 'old:x', model: 'haiku', kind: 'no-report', what: 'w1 loss' }
+
+  // A wave that adds a fresh degradation (lost impl report, commits present — the test-18 shape).
+  const { fn } = makeAgent([
+    { match: /^impl:a/, result: () => { throw structuredOutputError() } },
+    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, degradations: [PRIOR] }))
+  assert.deepEqual(state.degradations[0], PRIOR, 'prior entry survives verbatim, first')
+  assert.ok(state.degradations.some((d) => d.label === 'impl:a'), 'the fresh loss is appended after it')
+
+  // A clean wave: the prior record alone still round-trips.
+  const { fn: fn2 } = makeAgent()
+  const clean = await runWave(fn2, makePlan([unit('a')]), makeState({ wave: 1, degradations: [PRIOR] }))
+  assert.deepEqual(clean.degradations, [PRIOR], 'a clean wave neither drops nor duplicates the record')
 })
