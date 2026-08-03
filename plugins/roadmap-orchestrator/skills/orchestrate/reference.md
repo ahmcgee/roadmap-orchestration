@@ -144,6 +144,12 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
   "conventions": "…",              // optional; path to the standing conventions contract.
                                    //   Present → threaded into every implement/review/gate.
+  "prefixUniqueGlobs": ["migrations/*"],  // optional. Repos with numbered artifact sequences:
+                                   //   the merge agent extracts each matching filename's leading
+                                   //   digit run and REFUSES a merge introducing a duplicate
+                                   //   (quarantine, never a silent renumber). Absent → clause is
+                                   //   '' and merge prompts are byte-identical to before. The
+                                   //   conventions contract must pre-allocate numbers per unit.
   "config": { }                    // optional overrides — knobs below
 }
 ```
@@ -165,9 +171,17 @@ Fields the scripts add:
 - **`preview`** — `{ sha, status: "live" | "failed" | "none" }`, the green-tip mirror's position.
   `failed` never affects any unit outcome.
 - **`boundary`** — present when the wave-tail boundary phase ran anything:
-  `{ explorer, health, flake }`. Either half is `null` when its job was off or failed; the whole
+  `{ explorer, health, flake, design }`. Any job is `null` when it was off or failed; the whole
   block is **omitted** when no job ran or every job failed — its absence is the signal to run the
   explorer/health agents yourself.
+- **`owed`** — boundary jobs that were DUE but did not run (skipped on a broken precondition, or
+  died): `{job: explorer|health|flake|design, wave, why, count, units?}` per entry (`units` names
+  the design-cited units an owed reconcile still must cover; `count` = consecutive boundaries
+  owed). Discharged automatically when the job next succeeds; carried with `count+1` otherwise.
+  The conductor's tiers may not silently drop one — `count >= 2` forces the Fable tier, which
+  alone may waive (`waiveOwed`, justification journaled). Non-empty `owed` on a terminal return
+  is yours: discharge it (run the job) or waive it explicitly in the architect log before
+  close-out.
 - **`conductor`** — `{ reason, wavesRun, boundaries: [{ wave, tier, escalated }] }`. `reason` is
   `null` in flight and the frozen return reason on return; `tier` is the ladder rung that handled
   each boundary; `escalated` is the reason a tier handed up/out, else `null`. `boundaries` is
@@ -183,12 +197,14 @@ Fields the scripts add:
   accumulator.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
-  write-failed`.
+  write-failed | preview-failed | correctness-debt-banked`.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
   checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
   write heals it (large payloads are written in staged `<<<PART k/n>>>` chunks to stay under the
-  per-response output cap).
+  per-response output cap). A `preview-failed` entry means the mirror never came up — the entry
+  carries the porcelain diagnosis and exact operator guidance (carried-modification vs real local
+  edits), and the boundary records owed explorer/design markers instead of silently no-opping.
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
   `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
   conductor return carries the array, empty when the run was clean.
@@ -201,7 +217,8 @@ Fields the scripts add:
 **Unit statuses**: `pending → running → merge-ready → merged`, or `quarantined` / `blocked`
 (dependency quarantined) / `deferred` (beyond cut line). Dependents launch only when every
 dependency is `merged`. While `running` a unit also carries a `stage` field
-(`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
+(`setup | plan | implement | debt-fix | polish | gate | merge-queue`, plus `chain-implement |
+link-pipeline` on warm-lane links) for crash forensics; a terminal status
 replaces the whole record. Checkpoints land at every status change **and** every stage transition,
 coalesced latest-wins — the file can trail the newest event by one write.
 
@@ -330,6 +347,18 @@ Every ready unit runs: worktree setup → Opus implementation plan → **plan-ch
 → verify/review/fix loop (bounded, free-tier) → **exit gate** → serial merge onto the integration
 branch with the full suite as the gate. Then, at the wave tail, the **boundary phase**.
 
+**Warm lanes** (`warmLanes`, default on). A strict linear chain of `contract` edges among fresh
+pending units gains nothing from isolation — so the scheduler hands the whole chain to ONE warm
+Opus session: one plan call covering every link (each link still gets the normal per-link
+plan-check), one implement call that commits per link and pins `unit/<id>` per link, then each
+link runs the **unchanged cold pipeline** — verify → adversarial review → exit gate (all force
+rules per link) → serial merge — diffed against its recorded predecessor tip. The plan pass's
+`evidence` manifest (keyFiles/signatures/seams) rides to the implementer and, as a reading list
+only, to the reviewer. Chains cap at `maxChainLength` (longer ones split); contingent edges,
+`existingBranch` units, and crash residue never chain; any lane-infrastructure failure **demotes**
+the remaining links to ordinary cold dispatch — the lane is an optimization, never a new way to
+lose work. Gate/review coldness is epistemic and survives the lane by construction.
+
 - **Plan-check** (before any code exists — the cheapest place to redirect). Its charter is the
   spec as much as the plan: it hunts contradictions *within* the spec, clauses that contradict a
   referenced contract or documented codebase reality, and stale premises. **Opus-first**: Opus
@@ -354,7 +383,11 @@ branch with the full suite as the gate. Then, at the wave tail, the **boundary p
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
   enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
   `provision` block.
-- **Merge & quarantine.** Serial queue: Haiku `merge --no-ff` → conflicts go to Opus (which aborts
+- **Merge & quarantine.** Serial queue: Haiku checks the unit diff for `.roadmap/` paths (a hit
+  refuses the merge, a strip commit restores the paths to the merge base — content preserved in
+  branch history — and a `kind:'contract'` debt entry routes adjudication to you: NOROADMAP made
+  mechanical) and for `prefixUniqueGlobs` collisions (refused → quarantine, never a silent
+  renumber) → `merge --no-ff` → conflicts go to Opus (which aborts
   rather than guessing when semantically unsure) → full suite → on failure, one Opus diagnose/fix
   attempt (checking first whether the failure predates the merge) → else revert the merge,
   quarantine the unit, continue the queue. Quarantined units keep their branch and worktree and
@@ -367,6 +400,14 @@ branch with the full suite as the gate. Then, at the wave tail, the **boundary p
   channel). A report fires the mid-loop architect consult, **forces the Fable exit gate** with the
   report text in its prompt, and banks a `kind: 'contract'` debt entry — which routes the boundary
   straight back to you, because the amendment is yours alone.
+- **`specGap` — the implementer-pulled consult.** A decision the spec does not settle, where
+  reasonable engineers would diverge, reported through this structured field. Its presence fires a
+  **Fable consult even on an all-green unit** (`confirm` = stands as built; `redirect` = one fix
+  round applies the ruling; `quarantine` = the gap invalidates the premise), riding the same
+  `maxConsults` budget as the mid-loop rescue. If the budget is spent, the unadjudicated gap
+  **forces the Fable exit gate** instead. Evidence for the channel: the mechanical rescue triggers
+  fired zero times in 92 units while every real failure was a silent design decision under a spec
+  that didn't cover it.
 - **Boundary phase** (wave tail, strictly after every merge and mirror advance; gates nothing). In
   parallel: the **Opus runtime explorer** against the live preview (drives it via
   `preview.howToAccess`; ≤10 findings with severity, exact repro, observed vs expected; an empty
@@ -558,6 +599,8 @@ integration-review material.
 | `boundary` | `'on'` | The wave-tail boundary phase. `'off'` only for a relaunch you know is final |
 | `healthCheck` | `'each-wave'` | The health-assessor half of the boundary phase: `'each-wave'` \| `'off'` |
 | `flakeReruns` | `3` | Full-suite re-runs hunting intermittents; `0` disables |
+| `warmLanes` | `true` | Strict linear contract-edge chains get ONE warm plan+implement call with per-link pinned branches; every link still runs the unchanged cold verify/review/gate/merge. `false` restores per-link cold builds (byte-identical prompts) |
+| `maxChainLength` | `5` | Longest chain one warm implement call may own; longer chains split into consecutive lanes |
 
 ### Conductor knobs (under `plan.config.conductor` / `config.conductor` — `config` wins; inert on a direct harness launch)
 

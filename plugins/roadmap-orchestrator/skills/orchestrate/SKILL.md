@@ -414,7 +414,10 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    tier-3 respec and boundary dismissal the ladder made in your stead), and **the final wave's
    untriaged boundary evidence** in hand, read the integrated diff on the integration branch and
    judge cross-unit coherence — the one thing no per-unit gate could see. Hand any findings to
-   Opus fixers as directives.
+   Opus fixers as directives. If the final state carries a non-empty **`owed`** array, those
+   boundary jobs never ran: discharge each (run the job yourself against the final tip) or waive
+   it explicitly in the architect log — an owed job silently dropped at close-out is exactly the
+   skipped-reconcile failure the marker exists to prevent.
 2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
    ledger's state; gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
