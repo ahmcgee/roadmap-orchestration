@@ -6,6 +6,17 @@ with an arc. **Cleared 2026-07-29 of everything predating 0.8.6; cleared 2026-08
 of everything resolved by 0.9.0 and the 0.10.0 combined-hardening branch** (see
 "Resolved" below). Only the still-open remainder follows.
 
+## Verify on the next run (not a defect — a pending confirmation)
+
+- **Preview porcelain fix under conductor persist dirt.** The 0.10.0 paid cycle caught the
+  new dirty-primary check refusing on the conductor's own `.roadmap/` artifacts (waves 2–3
+  preview dead; all structural probes still passed). Fixed with `':(exclude).roadmap'`
+  scoping, regression-pinned in sims, and probe-validated against the real failed state —
+  but not yet confirmed by a clean multi-wave paid run. **On the next conductor run (fixture
+  or real arc): check `state.json` for `preview.status: "live"` on waves ≥ 2, zero
+  `preview-failed` degradations, and no owed explorer/design markers.** If it recurs, the
+  degradation entry carries the exact porcelain output — diagnose from that, not the network.
+
 ## Still open (value order)
 
 1. **A living codebase primer as a wave-tail product** (method item 3). The health
