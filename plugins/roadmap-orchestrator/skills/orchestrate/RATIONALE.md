@@ -406,3 +406,57 @@ Volume got the same treatment on the projection side: issue mode now mints **one
 take max severity + one facet per kind) instead of one per finding, and a consolidation fix-unit
 names the issues it resolves in `closes` so the merge path retires them. Termination is untouched:
 every rule operates inside the unit pipeline, and §14's "debt never creates a wave" brake stands.
+
+## 16. The 0.10.0 hardening batch — warm lanes, owed markers, pulled consults, merge fences
+
+One batch, one organizing idea: **spend warmth where it is only re-reading cost, and keep
+coldness exactly where it is epistemic** (the method split identified 2026-07-29).
+
+**Warm lanes.** On a strict linear chain, isolation buys zero parallelism — yet each link used to
+pay a full cold start, worktree, provision, and re-exploration. The platform constraint that
+shaped the design: `agent()` is one-shot, so a literally-continuing implementer cannot exist.
+The warm lane is therefore ONE plan call and ONE implement call covering the whole chain
+(per-link commits, per-link pinned `unit/<id>` branches), after which every link runs the
+byte-identical cold pipeline through runUnit's adoption entry, diffed against its recorded
+predecessor tip. Three deliberate conservatisms: per-link plan-checks survive (the spec-defect
+bookend must fire before code exists, per link); every gate force rule (risk, mismatch, specGap,
+audit sample) is computed per link; and any lane-infrastructure failure **demotes** the remaining
+links to ordinary cold dispatch rather than inventing new failure semantics — the lane is an
+optimization, never a new way to lose work. The diff base for link i+1 is link i's PINNED tip
+(pre-fix), probed read-only, so fix commits on an earlier link never pollute a later link's
+review diff; the three-way merge reconciles them at the queue.
+
+**Owed markers.** A skipped boundary job used to vanish (arc-observed: a preview-down wave
+silently skipped the design reconcile over five design-cited units and only the root's manual
+attention caught it). The fix is a machine-readable debt: due-but-unrun jobs write `owed`
+entries that discharge only when the job next succeeds, repeat offenders force the Fable tier,
+only Fable may waive (journaled), and a terminal return surfaces the leftovers as the root's
+close-out duty. The design job additionally re-folds owed units into its due set, so the debt is
+paid, not merely remembered.
+
+**Implementer-pulled consults (`specGap`).** The mid-loop rescue's mechanical triggers fired
+zero times in 92 units while every real failure was a silent design decision under a spec that
+didn't cover it. The pull channel inverts the direction: the implementer reports the unsettled
+decision, a Fable consult adjudicates it even when every test is green (`confirm` costs no fix
+round), and an unconsulted gap (budget spent) forces the Fable exit gate — same
+missing-signal/high-stakes logic as `mismatchEver`. The same scratchpad-abuse discipline as
+`contractMismatch` applies, because an FYI in a trigger field costs a frontier consult.
+
+**Merge fences.** NOROADMAP was advisory; now the merge queue enforces it (refuse → strip commit
+preserving content in branch history → `kind:'contract'` debt → root adjudication — the exact
+disposition the observed incident got by hand), and `prefixUniqueGlobs` makes numbered-sequence
+collisions a refusal instead of a silent CHECK-erasing merge. Both clauses are '' when their
+precondition is absent, keeping fixture prompts byte-identical.
+
+**Preview loudness.** A dead mirror silently no-ops the explorer and the design reconcile for a
+whole wave, so setup failure is now a `preview-failed` degradation carrying a porcelain diagnosis
+that distinguishes the carried-modification case (local content byte-identical to the target tip
+— a stale detach point's residue, safe to re-detach) from real local edits (the operator's, never
+the harness's to stash). The owed markers are the boundary-level half of the same fix.
+
+**Cache-aligned preambles — deliberately scoped down.** The feedback asked for byte-identical
+prefix-positioned preambles across a wave's prompts. What shipped: drift guards asserting the
+cross-script shared constants stay identical, and prefix-aligned preambles on the NEW chain
+prompts only. Restructuring every load-bearing prompt's opening for an offline-unverifiable
+caching gain, immediately before a single paid validation cycle, risks the gate-teeth wording
+for a benefit that cannot be measured this side of the run. Revisit with its own paid cycle.

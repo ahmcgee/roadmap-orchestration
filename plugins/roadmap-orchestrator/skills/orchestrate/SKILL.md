@@ -106,6 +106,13 @@ Read their outputs, then decide:
   Its reach is bounded, though: it binds work against the surface that exists *now*, so it can't
   stop two concurrent units from independently adding the same new helper — that case is caught
   reactively by the between-wave health check.
+  Where the repo carries a **numbered artifact sequence** (schema migrations, ordered codegen
+  steps — anything whose filenames start with an allocated number), the conventions contract must
+  **pre-allocate explicit numbers per unit** at Phase 0 and say so per spec; "next free number at
+  dispatch" is a collision generator under parallelism (arc-observed: two duplicate-prefix pairs
+  in one arc, one of which silently erased a CHECK constraint at merge). Set
+  `plan.prefixUniqueGlobs` (e.g. `["migrations/*"]`) so the merge path refuses a duplicate prefix
+  mechanically instead of trusting the allocation held.
 - **Cross-check contracts against code before freezing.** Where a frozen surface already exists
   in code (skip only if every frozen surface is greenfield), have a **Haiku** agent (Sonnet where
   signatures are subtle) list the surfaces each drafted contract freezes — endpoints, CLI verbs,
@@ -190,7 +197,14 @@ auditor reading prose alone.
 
 **Record cross-cutting constraints** in `.roadmap/constraints.md` — design decisions and
 constraints from the source that aren't interface contracts (performance budgets, technology
-choices, compliance rules, explicit non-goals). Each spec cites the constraints that bind it.
+choices, compliance rules, explicit non-goals). The file is a **numbered rulings ledger**, not
+free prose: each entry is `C-<nn> — <one-line rule>` followed by one provenance line (who ruled,
+when, why). Ids are stable forever — never renumbered, never reused; superseding a ruling is a
+*new* ruling that names the old one. Specs cite the rulings that bind them by id, your
+architect-log dismissal criteria reference them by id, and the boundary tiers check asks against
+them mechanically — settled questions stay settled across sessions only if the id they were
+settled under cannot drift. (Arc-observed: an improvised C-nn ledger became the most load-bearing
+document of a multi-week arc; this shape is now mandatory, not emergent.)
 
 Two mechanical outputs matter more than they look: persist the recon **brief**
 (`.roadmap/brief.md` — commands and conventions; the harness feeds it to every per-unit agent so
@@ -400,7 +414,10 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    tier-3 respec and boundary dismissal the ladder made in your stead), and **the final wave's
    untriaged boundary evidence** in hand, read the integrated diff on the integration branch and
    judge cross-unit coherence — the one thing no per-unit gate could see. Hand any findings to
-   Opus fixers as directives.
+   Opus fixers as directives. If the final state carries a non-empty **`owed`** array, those
+   boundary jobs never ran: discharge each (run the job yourself against the final tip) or waive
+   it explicitly in the architect log — an owed job silently dropped at close-out is exactly the
+   skipped-reconcile failure the marker exists to prevent.
 2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
    ledger's state; gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
@@ -408,6 +425,13 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/skill-feedback.md` entries, and
    which stage's judgment they cost you**; notes for the next session. Partial completion with
    honest dossiers is a good outcome — a silent one is not.
+   **Census every continuation brief before you trust it.** Next-session notes, a continuation
+   brief, an architect-log summary — any hand-compressed handoff is subject to the same silent
+   loss the fidelity audit exists for, and small errors there (a stale tip sha, an off-by-one
+   unit count — both arc-observed) cost real friction at resume. After writing one, dispatch a
+   single Haiku census: compare the brief's claimed integration tip, unit counts, unit ids, and
+   pending/quarantined sets against `plan.json`/`state.json`, and report every mismatch. Fix the
+   brief (or the state) before ending the session — mechanical, one call, catches the class.
 3. **Deliver for merge.** File mode: ask the user before fast-forwarding `main` to the integration
    branch. **Issue mode**: open one integration **PR** (integration branch → default branch) whose
    body summarizes the arc and lists `Closes #<issue>` for every merged unit, so merging it auto-closes

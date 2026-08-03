@@ -68,6 +68,13 @@ const C = {
                              //   integration review supersedes it)
   healthCheck: 'each-wave',  // 'each-wave' | 'off' — the health-assessor half of the boundary
   flakeReruns: 3,            // full-suite re-runs hunting intermittents; 0 disables
+  // Warm lanes: strict linear dependency chains are implemented by ONE warm Opus call (one
+  // plan call, one implement call, per-link commits + pinned branches) instead of a cold
+  // start per link — isolation buys zero parallelism on a chain, but each link still runs
+  // the UNCHANGED cold verify → review → gate → merge pipeline (the coldness that is
+  // epistemic stays; only the re-reading cost goes). false restores per-link cold builds.
+  warmLanes: true,
+  maxChainLength: 5,         // longer chains split into consecutive lanes (one implement call's scope cap)
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
 }
@@ -109,7 +116,8 @@ const STRICT = 'Start by `cd` to the exact absolute path named in this task — 
 // every capped field names its budget rather than betting on one.
 const REPORT = 'Commit your work BEFORE emitting the structured report — the commit is the deliverable. Then keep ' +
   'every free-text field terse and inside its budget: `summary` 2–3 short sentences (max 700 characters); ' +
-  '`contractMismatch` one or two sentences (max 300 characters), left empty unless it truly applies; each `debt` ' +
+  '`contractMismatch` one or two sentences (max 300 characters), left empty unless it truly applies; `specGap` ' +
+  'likewise one or two sentences (max 300 characters), left empty unless it truly applies; each `debt` ' +
   "entry's `what` and `why` a sentence or two (max 400 characters each); `notes` at most a short paragraph " +
   '(max 2000 characters). An oversized report fails validation and can kill this unit even though the work is done. '
 // .roadmap/ belongs to the orchestrator, never to a coding agent. Arc-observed: an
@@ -154,6 +162,16 @@ const MISMATCH_IS_A_TRIGGER =
   'not a notes field: merely filling it in escalates to the frontier architect and returns the whole run for a ' +
   'contract amendment. Never write "none" or an FYI there — observations, caveats and things you merely want ' +
   'flagged go in `notes` or `debt`. '
+// The pull-channel to the architect (feedback 10a). Evidence for its existence: the mechanical
+// rescue triggers fired ZERO times in 92 units, while every real failure was a silent design
+// decision under a spec that didn't cover it. The same scratchpad-abuse discipline as
+// MISMATCH_IS_A_TRIGGER applies — an FYI here costs a frontier consult.
+const GAP_IS_A_TRIGGER =
+  'Separately, `specGap` is your pull-channel to the architect: fill it ONLY when you made (or must make) a ' +
+  'decision the spec does not settle and reasonable engineers would diverge — one or two sentences stating the ' +
+  'decision you took and the alternative. It is a trigger: its mere presence consults the frontier architect, who ' +
+  'may redirect the work. Routine judgment calls you are confident in, observations, and deferrals do not belong ' +
+  'there — those go in `notes` or `debt`. '
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
@@ -356,6 +374,11 @@ const debtItem = (req) => obj({
 const debtArr = { type: 'array', items: debtItem(['what']) }
 const gateDebtArr = { type: 'array', items: debtItem(['what', 'bankReason']) }
 const directiveArr = { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) }
+const EVIDENCE = obj({
+  keyFiles: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 200 } },
+  signatures: { type: 'array', maxItems: 15, items: { type: 'string', maxLength: 300 } },
+  seams: { type: 'array', maxItems: 10, items: { type: 'string', maxLength: 400 } },
+})
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
   ws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' }, detail: { type: 'string' } }, ['ok', 'sha']),
@@ -378,8 +401,38 @@ const S = {
   // that trailed the essay).
   plan: obj({
     feasible: { type: 'boolean' }, files: arr('string'), testPlan: { type: 'string' },
+    // Evidence manifest — the plan pass already explored the code; hand that context forward
+    // instead of making the implementer re-acquire it (feedback item: the plan should carry
+    // context, not just intentions). Optional so pre-0.10 plans and resumes stay valid. The
+    // implementer gets it whole (the plan JSON is threaded in); the reviewer gets keyFiles
+    // ONLY, as a reading list — its fresh-eyes judgment must stay its own.
+    evidence: EVIDENCE,
     approach: { type: 'string' }, notes: { type: 'string' },
   }, ['feasible', 'files', 'testPlan', 'approach']),
+  // Warm-lane schemas. chainPlan/chainImpl carry one entry per link, in chain order; caps
+  // mirror S.plan/S.impl so the per-link budgets the prompts state stay truthful.
+  chainPlan: obj({
+    links: { type: 'array', maxItems: 8, items: obj({
+      id: { type: 'string' }, feasible: { type: 'boolean' }, files: arr('string'),
+      testPlan: { type: 'string' }, evidence: EVIDENCE, approach: { type: 'string' },
+    }, ['id', 'feasible', 'files', 'testPlan', 'approach']) },
+    notes: { type: 'string' },
+  }, ['links']),
+  chainImpl: obj({
+    links: { type: 'array', maxItems: 8, items: obj({
+      id: { type: 'string' }, done: { type: 'boolean' }, filesChanged: arr('string'),
+      summary: { type: 'string', maxLength: 700 },
+      contractMismatch: { type: 'string', maxLength: 300 },
+      specGap: { type: 'string', maxLength: 300 },
+      debt: debtArr,
+    }, ['id', 'done', 'filesChanged', 'summary']) },
+    notes: { type: 'string', maxLength: 2000 },
+  }, ['links']),
+  chainTips: obj({
+    ok: { type: 'boolean' },
+    tips: { type: 'array', maxItems: 8, items: obj({ id: { type: 'string' }, sha: { type: 'string' } }, ['id', 'sha']) },
+    detail: { type: 'string' },
+  }, ['ok', 'tips']),
   planVerdict: obj({
     verdict: oneOf(['approve', 'redirect', 'quarantine']), guidance: { type: 'string' }, notes: { type: 'string' },
   }, ['verdict', 'guidance']),
@@ -399,6 +452,10 @@ const S = {
     // untouchable, so contractSurfaceTouched can never see this case — arc-observed).
     // Presence fires the mid-loop architect consult and forces the Fable exit gate.
     contractMismatch: { type: 'string', maxLength: 300 },
+    // Implementer-pulled consult (10a): a decision the spec does not settle. Presence fires a
+    // Fable consult even on an all-green unit (the silent-design-decision class); if the
+    // consult budget is spent, it forces the Fable exit gate instead.
+    specGap: { type: 'string', maxLength: 300 },
     debt: debtArr, notes: { type: 'string', maxLength: 2000 },
   }, ['summary', 'filesChanged']),
   // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
@@ -433,12 +490,18 @@ const S = {
     directives: directiveArr, debt: gateDebtArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
-  directive: obj({ action: oneOf(['redirect', 'quarantine']), guidance: { type: 'string' } }, ['action', 'guidance']),
+  // 'confirm' exists for the specGap consult (the decision stands as built — no fix round);
+  // the stuck-rescue consult never offers it and its prompt is unchanged.
+  directive: obj({ action: oneOf(['redirect', 'quarantine', 'confirm']), guidance: { type: 'string' } }, ['action', 'guidance']),
   dossier: obj({ attempted: { type: 'string' }, evidence: { type: 'string' }, hypothesis: { type: 'string' } },
     ['attempted', 'evidence', 'hypothesis']),
   merge: obj({
     merged: { type: 'boolean' }, suitePass: { type: 'boolean' },
     head: { type: 'string' }, detail: { type: 'string' },
+    // Refusal channels, both optional and empty on a clean merge: unit diffs touching the
+    // orchestrator's directory (NOROADMAP made mechanical — the merge strips and surfaces),
+    // and duplicate numeric prefixes under plan.prefixUniqueGlobs (quarantined, never repaired).
+    roadmapPaths: arr('string'), prefixCollision: arr('string'),
   }, ['merged', 'suitePass', 'head', 'detail']),
   // Boundary results — capped hard: these ride in state.json and the platform's
   // schema-retry resends over-long payloads verbatim (the H-1 failure mode).
@@ -506,6 +569,13 @@ let previewSha = null
 let previewTarget = null
 let previewChain = Promise.resolve()
 let boundary = null
+// Owed boundary jobs — a job that was DUE but did not run (skipped or died) leaves a
+// machine-readable marker the next boundary trips over, instead of silently vanishing
+// (arc-observed: a preview-down wave skipped the design reconcile over five design-cited
+// units and nothing re-queued it — the root had to notice by hand). Seeded from the prior
+// wave; discharged when the job next runs successfully; carried with count+1 otherwise.
+// The conductor escalates entries owed two boundaries running to the Fable tier.
+let owed = (prior.owed ?? []).map((o) => ({ ...o }))
 
 const rec = (id) => units.get(id)
 // Per-unit forensic breadcrumb: stamp the pipeline stage onto a running record and checkpoint.
@@ -540,6 +610,7 @@ const serialize = () => ({
   // .roadmap/skill-feedback.md and absorbs only the delta past what it dispatched.
   ...(((prior.degradations?.length ?? 0) + degradations.length)
     ? { degradations: [...(prior.degradations ?? []), ...degradations] } : {}),
+  ...(owed.length ? { owed } : {}),
   ...(boundary ? { boundary } : {}),
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
@@ -703,8 +774,11 @@ async function runBoundary() {
   // a designed surface without citing it is the plan-pack defect Phase 0 hunts, and papering over
   // it here would hide exactly what we want surfaced. Needs the preview: the green-tip mirror is
   // the only place a browsable, integrated surface is guaranteed to exist.
-  const designUnits = plan.units.filter((u) => u.design?.length &&
-    rec(u.id)?.status === 'merged' && prior.units?.[u.id]?.status !== 'merged')
+  // Owed design units from a prior skipped/dead reconcile re-enter the due set (still merged,
+  // still design-cited) so the debt is paid, not merely remembered.
+  const owedDesignIds = new Set(owed.filter((o) => o.job === 'design').flatMap((o) => o.units ?? []))
+  const designUnits = plan.units.filter((u) => u.design?.length && rec(u.id)?.status === 'merged' &&
+    (prior.units?.[u.id]?.status !== 'merged' || owedDesignIds.has(u.id)))
   const doDesign = designUnits.length > 0 && previewStatus === 'live'
   const [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
@@ -760,13 +834,34 @@ async function runBoundary() {
       { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
     ).catch(() => null),
   ])
+  // Settle the owed ledger BEFORE any early return: a job that was DUE but produced nothing is
+  // owed whether it was skipped (precondition down) or died; a successful run discharges its
+  // entries; a job not due this wave carries its prior entry untouched. `count` = consecutive
+  // boundaries owed — the conductor escalates repeat offenders to the Fable tier.
+  const settleOwed = (job, due, ok, why, unitIds) => {
+    const prevEntry = owed.find((o) => o.job === job)
+    owed = owed.filter((o) => o.job !== job)
+    if (ok) return
+    if (!due) { if (prevEntry) owed.push(prevEntry); return }
+    owed.push({ job, wave: prevEntry?.wave ?? waveN, why, count: (prevEntry?.count ?? 0) + 1,
+      ...(unitIds?.length ? { units: unitIds } : {}) })
+  }
+  const previewWhy = previewStatus === 'failed' ? 'preview failed at setup — fix the primary checkout and relaunch'
+    : 'no live preview this wave'
+  settleOwed('explorer', previewStatus !== 'none', !!expl,
+    doExplore ? 'explorer agent produced no report' : previewWhy)
+  settleOwed('health', doHealth, !!hlth, 'health assessor produced no report')
+  settleOwed('flake', doHealth && C.flakeReruns > 0, !!flk, 'flake re-runs produced no report')
+  settleOwed('design', designUnits.length > 0, !!dsgn,
+    doDesign ? 'design reconcile produced no report' : previewWhy,
+    designUnits.map((u) => u.id))
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
   if (!expl && !hlth && !flk && !dsgn) return
   if (designUnits.length && !dsgn)
     degrade({ label: `design:w${waveN}`, model: 'opus', phase: 'Boundary', kind: 'no-report',
       what: `design reconcile did not report for ${designUnits.map((u) => u.id).join(', ')} ` +
-        `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave ` +
-        `and are not revisited automatically. Re-run the reconcile against them before close-out.` })
+        `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave. ` +
+        `An owed marker re-queues them at the next boundary; they must be reconciled or explicitly waived before close-out.` })
   boundary = { explorer: expl, health: hlth, flake: flk, design: dsgn }
   // Persist narratives via Haiku verbatim-writers (investigators flake on side effects;
   // verbatim writers don't — same idiom as the quarantine dossier). Rendering is a pure
@@ -860,19 +955,79 @@ async function syncIssues() {
         `(issue projection only; state.json is authoritative and the arc is unaffected)` })
 }
 
+// Opus-first plan-check ladder, shared by the per-unit pipeline and the warm-lane per-link
+// checks. Returns {verdict: approve|redirect|quarantine, guidance, notes}. The Fable pass fires
+// on high risk, claimed-infeasible, always-fable policy, or an Opus escalation.
+// Charter note (arc-observed, RATIONALE §4): 11 plan-checks in one arc never fired on plan
+// PLAUSIBILITY but approved past spec-internal contradictions the implementer then had to
+// reconcile ad hoc. Hence the spec-interrogation clause in both prompts — don't drop it.
+async function runPlanCheck(unit, implPlan, spec) {
+  // The Fable plan-check — the frontier pass. `lead` carries an Opus escalation's assessment
+  // so the architect confirms/overturns a concrete concern rather than re-deriving it; '' when
+  // reached directly, keeping that prompt byte-identical to before.
+  const fablePlanCheck = (lead = '') => {
+    spend.planChecks++
+    return run(
+      `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
+      `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
+      `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
+      `hunt contradictions within the spec, clauses that contradict ` +
+      `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
+      `engineer's to absorb — resolve it now through your verdict. ` +
+      `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
+      `as-is; "redirect" = the engineer revises the plan per your guidance, then implements (this includes ` +
+      `naming the explicit resolution of a spec contradiction when the right call is clear); "quarantine" = do ` +
+      `not implement at all (e.g. the spec is unsatisfiable or self-contradictory within its contracts, or needs ` +
+      `redesign above the engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, ` +
+      `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
+      { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
+  }
+  if (unit.risk === 'high' || !implPlan.feasible || C.planCheck === 'always-fable')
+    return fablePlanCheck()
+  spend.opusPlanChecks++
+  const oc = await run(
+    `You are an Opus plan-checker standing in for the architect on unit ${unit.id} of a roadmap build — but ` +
+    `killing a unit is frontier-only, so you may approve or redirect the plan yourself, never quarantine. Read ` +
+    `the spec at ${spec} and the contracts it references, then judge this plan against them:\n` +
+    `${JSON.stringify(implPlan)}\n` +
+    `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
+    `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
+    `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
+    `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
+    `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
+    `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
+    `call is clearly within your authority); "escalate" = hand to the frontier architect when the call turns ` +
+    `on contract interpretation, a spec contradiction you cannot resolve yourself, architectural foundations, ` +
+    `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.`,
+    { model: 'opus', effort: C.opusEffort, phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
+  if (oc.verdict === 'escalate') {
+    const lead = ` A first-pass Opus plan-check could not clear this itself` +
+      `${oc.trigger && oc.trigger !== 'none' ? ` (escalation trigger "${oc.trigger}")` : ''}; use its assessment ` +
+      `as a lead to confirm or overturn — not as ground truth: ` +
+      `${JSON.stringify({ guidance: oc.guidance, notes: oc.notes })}.`
+    return fablePlanCheck(lead)
+  }
+  // approve/redirect map straight onto the shared verdict handling at the call sites.
+  return { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
+}
+
 /* --------------------------- per-unit pipeline -------------------------- */
-async function runUnit(unit) {
+// laneCtx (warm-lane links only): { base, report, evidence, reportLost } — the link enters at
+// verify via the adoption path, diffed against its recorded predecessor tip, consuming the
+// warm implement call's per-link report exactly as a fresh build would consume its own.
+async function runUnit(unit, laneCtx) {
   setStage(unit.id, 'setup')   // status became 'running' in start() before this call
   const spec = specOf(unit)
   const w = wtOf(unit)
-  const base = integrationTip // diff base: the freshest integrated tip we know
+  const base = laneCtx?.base ?? integrationTip // diff base: the freshest integrated tip we know
   // unit.existingBranch adopts pre-written work (a hand-authored branch, or an eval
   // fixture): skip plan/implement and run it through the same verify → review → gate.
   const source = unit.existingBranch ?? base
   // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
   // the record with {status:'running'} before us). A unit that was 'running' in the last
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
-  const adopt = !!unit.existingBranch || prior.units?.[unit.id]?.status === 'running'
+  const adopt = !!unit.existingBranch || !!laneCtx ||
+    ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status)
 
   // H-7: implementer-reported deviation from a frozen surface. `mismatch` is consumable
   // (one consult per report, respecting the consult budget); `mismatchEver` sticks — carrying
@@ -880,11 +1035,25 @@ async function runUnit(unit) {
   // the wave ledger so boundary triage sees it even when the unit merges.
   let mismatch = null
   let mismatchEver = null
+  // The approved plan's evidence manifest (fresh builds only) — threaded to the reviewer as a
+  // reading list. Adopted/existing branches have no plan pass, so the clause stays '' there.
+  let planEvidence = null
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
   // diff nobody described. Sticky, and forces the frontier gate — the same compensation
   // mismatchEver makes, for the same reason (missing signal, high stakes).
   let reportLostEver = false
+  // 10a pull-channel state: `gap` is consumable (one consult per report), `gapEver` sticks.
+  // An unconsulted gap (budget spent) forces the Fable exit gate — an unadjudicated
+  // spec-silence decision is exactly the missing-signal/high-stakes case mismatchEver covers.
+  let gap = null
+  let gapEver = null
+  let gapConsulted = false
+  const noteGap = (r) => {
+    if (!r?.specGap || r.reportLost) return
+    gap = r.specGap
+    gapEver = r.specGap
+  }
   const noteMismatch = (r) => {
     if (!r?.contractMismatch) return
     mismatch = r.contractMismatch
@@ -892,6 +1061,20 @@ async function runUnit(unit) {
     debtLog.push({ unit: unit.id, sha: base, kind: 'contract', severity: 'major',
       what: `implementer-reported contract mismatch: ${r.contractMismatch}`,
       why: 'frozen surface contradicts reality — needs architect adjudication' })
+  }
+  // One debt-fix sweep of an implement report's confessions (fresh build or warm-lane link).
+  const sweepConfessions = async (confessed) => {
+    setStage(unit.id, 'debt-fix')
+    const swept = await runOr(REPORT_LOST,
+      `You are finishing unit ${unit.id} in the worktree at ${w} (spec: ${spec}). The implementation just ` +
+      `landed, but these imperfections were consciously deferred:\n${JSON.stringify(confessed)}\n` +
+      `Fix them NOW — you have the unit's context loaded, and a deferred fix costs far more later. Re-emit in ` +
+      `\`debt\` ONLY what is genuinely not this unit's to fix, each with a \`bankReason\` from: ` +
+      `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched — "minor" alone is never a ` +
+      `reason to defer. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `debt-fix:${unit.id}`, schema: S.impl })
+    if (swept.reportLost) { reportLostEver = true; addDebt(unit.id, base, confessed) }
+    else { addDebt(unit.id, base, swept.debt); noteMismatch(swept); noteGap(swept) }
   }
 
   // The sha assertion below must never trust the SAME agent that could have recreated the branch
@@ -965,7 +1148,12 @@ async function runUnit(unit) {
     `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan — return the required fields with the structured ones FIRST and the ` +
     `free-text last: \`feasible\` (boolean), \`files\` (an array of the file paths you expect to touch), ` +
     `\`testPlan\` (how you will test it), then \`approach\` (your approach) LAST. Emit each as a real ` +
-    `JSON field — do not fold files/testPlan into the approach prose. If the spec cannot be satisfied ` +
+    `JSON field — do not fold files/testPlan into the approach prose. Also return \`evidence\`, the context ` +
+    `manifest your exploration already earned — the implementer starts from it instead of re-exploring, and ` +
+    `the reviewer gets its file list as a reading list: \`keyFiles\` (at most 20, one line each: path plus a ` +
+    `one-phrase why), \`signatures\` (at most 15, each one line: an exact signature/type the work builds ` +
+    `against, quoted), \`seams\` (at most 10, each a sentence or two: where the change hooks in, with a short ` +
+    `quoted anchor). ${TERSE}If the spec cannot be satisfied ` +
     `within its contracts, do not force it: set \`feasible\`:false and explain the contradiction in ` +
     `\`approach\`. Do not write code yet.`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
@@ -975,74 +1163,22 @@ async function runUnit(unit) {
   // always-fable policy) pay the Fable architect up front. Everything else gets a free Opus
   // plan-check that escalates to Fable only when the call turns frontier.
   if (C.planCheckRisk.includes(unit.risk) || !implPlan.feasible) {
-    // The Fable plan-check — the frontier pass. `lead` carries an Opus escalation's assessment
-    // so the architect confirms/overturns a concrete concern rather than re-deriving it; '' when
-    // reached directly, keeping that prompt byte-identical to before.
-    // Charter note (arc-observed, RATIONALE §4): 11 plan-checks in one arc never fired on plan
-    // PLAUSIBILITY but approved past spec-internal contradictions the implementer then had to
-    // reconcile ad hoc. Hence the spec-interrogation clause below — don't drop it. (Kept as a
-    // comment, not prompt text: the agent is not the maintainer.)
-    const fablePlanCheck = (lead = '') => {
-      spend.planChecks++
-      return run(
-        `You are the architect of a roadmap build. A capable engineer proposes this implementation plan for unit ` +
-        `${unit.id} — read the spec at ${spec} and its contracts yourself, then judge it:\n${JSON.stringify(implPlan)}\n` +
-        `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
-        `hunt contradictions within the spec, clauses that contradict ` +
-        `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
-        `engineer's to absorb — resolve it now through your verdict. ` +
-        `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
-        `as-is; "redirect" = the engineer revises the plan per your guidance, then implements (this includes ` +
-        `naming the explicit resolution of a spec contradiction when the right call is clear); "quarantine" = do ` +
-        `not implement at all (e.g. the spec is unsatisfiable or self-contradictory within its contracts, or needs ` +
-        `redesign above the engineer's pay grade). Approve unless something is meaningfully wrong. If redirecting, ` +
-        `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
-        { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
-    }
-
-    let check
-    if (unit.risk === 'high' || !implPlan.feasible || C.planCheck === 'always-fable') {
-      check = await fablePlanCheck()
-    } else {
-      spend.opusPlanChecks++
-      const oc = await run(
-        `You are an Opus plan-checker standing in for the architect on unit ${unit.id} of a roadmap build — but ` +
-        `killing a unit is frontier-only, so you may approve or redirect the plan yourself, never quarantine. Read ` +
-        `the spec at ${spec} and the contracts it references, then judge this plan against them:\n` +
-        `${JSON.stringify(implPlan)}\n` +
-        `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
-        `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
-        `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
-        `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
-        `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
-        `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
-        `call is clearly within your authority); "escalate" = hand to the frontier architect when the call turns ` +
-        `on contract interpretation, a spec contradiction you cannot resolve yourself, architectural foundations, ` +
-        `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.`,
-        { model: 'opus', effort: C.opusEffort, phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
-      if (oc.verdict === 'escalate') {
-        const lead = ` A first-pass Opus plan-check could not clear this itself` +
-          `${oc.trigger && oc.trigger !== 'none' ? ` (escalation trigger "${oc.trigger}")` : ''}; use its assessment ` +
-          `as a lead to confirm or overturn — not as ground truth: ` +
-          `${JSON.stringify({ guidance: oc.guidance, notes: oc.notes })}.`
-        check = await fablePlanCheck(lead)
-      } else {
-        // approve/redirect map straight onto the shared verdict handling below.
-        check = { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
-      }
-    }
+    const check = await runPlanCheck(unit, implPlan, spec)
     if (check.verdict === 'quarantine') return quarantine(unit, 'plan rejected by architect', check)
     if (check.verdict === 'redirect') {
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
-        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then \`approach\` last.`,
+        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
+        `\`approach\` last — and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line ` +
+        `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
         { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
     }
   }
   // Never hand an infeasible plan to an implementer — there is no honest way to execute it.
   if (!implPlan.feasible)
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
+  planEvidence = implPlan.evidence ?? null
 
   setStage(unit.id, 'implement')
   const impl = await runOr(REPORT_LOST,
@@ -1059,7 +1195,7 @@ async function runUnit(unit) {
     `can pass its gate. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
     `choose the deviation you judge correct, keep building, and describe it in the structured \`contractMismatch\` ` +
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
-    `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
+    `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
     `your work on the current branch with clear messages. ${REPORT}`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   // The report died. Ask the branch whether the WORK died with it: commits present means the
@@ -1083,29 +1219,35 @@ async function runUnit(unit) {
     log(`${unit.id}: implement report lost but ${probe.sha?.slice(0, 7) ?? 'work'} is committed — judging the branch`)
   }
   noteMismatch(impl)
+  noteGap(impl)
   // The implementer's own debt confessions ("shortcuts taken") get ONE fix round while the
   // context is still loaded — the cheapest fixer there is (arc-observed: routing them straight
   // to the ledger banked hundreds of items a review-time fix would have cleared in minutes).
   // Only what the sweep re-emits WITH a bankReason reaches the ledger; a lost sweep report
   // banks the original confession rather than losing it. Exactly one round — the normal
   // verify → review loop below re-checks the commit either way.
-  if (!impl.reportLost && impl.debt?.length) {
-    setStage(unit.id, 'debt-fix')
-    const swept = await runOr(REPORT_LOST,
-      `You are finishing unit ${unit.id} in the worktree at ${w} (spec: ${spec}). The implementation just ` +
-      `landed, but these imperfections were consciously deferred:\n${JSON.stringify(impl.debt)}\n` +
-      `Fix them NOW — you have the unit's context loaded, and a deferred fix costs far more later. Re-emit in ` +
-      `\`debt\` ONLY what is genuinely not this unit's to fix, each with a \`bankReason\` from: ` +
-      `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched — "minor" alone is never a ` +
-      `reason to defer. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
-      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `debt-fix:${unit.id}`, schema: S.impl })
-    if (swept.reportLost) { reportLostEver = true; addDebt(unit.id, base, impl.debt) }
-    else { addDebt(unit.id, base, swept.debt); noteMismatch(swept) }
-  }
+  if (!impl.reportLost && impl.debt?.length) await sweepConfessions(impl.debt)
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
+
+  // Warm-lane entry: the chain implement call already reported for this link — consume its
+  // report exactly as a fresh build consumes its own (mismatch/gap triggers, evidence for the
+  // reviewer's reading list, one debt-fix sweep of its confessions, lost-report compensation).
+  if (laneCtx) {
+    planEvidence = laneCtx.evidence ?? null
+    if (laneCtx.reportLost) reportLostEver = true
+    if (laneCtx.report) {
+      noteMismatch(laneCtx.report)
+      noteGap(laneCtx.report)
+      if (laneCtx.report.debt?.length) await sweepConfessions(laneCtx.report.debt)
+    }
+  }
 
   // Free-tier polish loop: verify → adversarial review → fix, bounded.
   setStage(unit.id, 'polish')
+  const readingListClause = planEvidence?.keyFiles?.length
+    ? `The planner judged these files central — a reading list to orient you, never a boundary on your read ` +
+      `(judge the whole diff): ${planEvidence.keyFiles.join('; ')}. `
+    : ''
   let verify, review
   for (let round = 0; round <= C.maxFixRounds; round++) {
     verify = await run(
@@ -1113,7 +1255,8 @@ async function runUnit(unit) {
       `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
       `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
       `Do NOT run the full project suite — that happens at merge. Also check whether ` +
-      `\`git diff ${base}..HEAD\` touches any path under .roadmap/contracts/. Report failures with the exact ` +
+      `\`git diff ${base}..HEAD\` touches any path under .roadmap/ (report that as contractSurfaceTouched — ` +
+      `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
       `verbatim error output, never paraphrased. If the tooling itself cannot run (missing dependency, broken ` +
       `command, environment failure) — as opposed to an assertion failing — report blocked:true and stop. ` +
       `Do not fix anything.`,
@@ -1123,7 +1266,7 @@ async function runUnit(unit) {
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
-      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}You did not write this code; assume it contains mistakes. Report ` +
+      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}${readingListClause}You did not write this code; assume it contains mistakes. Report ` +
       `every defect you find, including ones you are uncertain about — your job is coverage; a downstream ` +
       `confidence filter discards weak findings, so under-reporting loses real bugs while over-reporting costs ` +
       `nothing. A finding is blocking if it is introduced by this diff AND it would cause incorrect behavior, ` +
@@ -1153,14 +1296,15 @@ async function runUnit(unit) {
 
     // Mid-loop rescue: fired by code over objective signals only, and capped.
     let directive = null
-    const stuck = (!verify.pass && round >= C.maxFixRounds) || verify.contractSurfaceTouched || !!mismatch
+    const stuck = (!verify.pass && round >= C.maxFixRounds) || verify.contractSurfaceTouched || !!mismatch || !!gap
     if (stuck && consultsUsed < C.maxConsults) {
       consultsUsed++
       const dossier = await run(
         `Distill a brief dossier for an architect about unit ${unit.id}, which is stuck. Read the spec at ${spec}; ` +
         `summarize what was attempted (branch unit/${unit.id}, worktree ${w}), the strongest failure evidence, and ` +
         `the most plausible root cause. Verify: ${JSON.stringify(verify)}. Review: ${JSON.stringify(review)}` +
-        ` Implementer-reported contract mismatch: ${mismatch ?? 'none'}.`,
+        ` Implementer-reported contract mismatch: ${mismatch ?? 'none'}.` +
+        ` Implementer-reported spec gap (a decision the spec does not settle): ${gap ?? 'none'}.`,
         { model: 'sonnet', phase: 'Escalate', label: `rescue-dossier:${unit.id}`, schema: S.dossier })
       directive = await run(
         `You are the architect. Unit ${unit.id} is stuck. Dossier: ${JSON.stringify(dossier)} (spec: ${spec} — ` +
@@ -1169,6 +1313,7 @@ async function runUnit(unit) {
         { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
       if (directive.action === 'quarantine') return quarantine(unit, 'architect consult', directive)
       mismatch = null   // consumed — one consult per reported mismatch
+      if (gap) { gap = null; gapConsulted = true }   // the dossier carried it; the architect saw it
     }
 
     const fixed = await runOr(REPORT_LOST,
@@ -1179,11 +1324,12 @@ async function runUnit(unit) {
       `Any \`debt\` you emit follows the implementer's rule: fix in-unit first; defer only what is genuinely ` +
       `not this unit's to fix, with a \`bankReason\` (out-of-scope-file | needs-migration-or-ruling | ` +
       `pre-existing-untouched). ` +
-      `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
+      `${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt)
     noteMismatch(fixed)
+    noteGap(fixed)
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
 
@@ -1200,6 +1346,37 @@ async function runUnit(unit) {
     `run. Fix nothing.`,
     { model: 'haiku', phase: 'Verify', label, schema: S.verify })
 
+  // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
+  // adjudication — the polish loop's rescue only fires on failure signals, and the class this
+  // closes is precisely the silent design decision under an all-green suite. One consult per
+  // reported gap, riding the same maxConsults budget; an unconsulted gap forces the Fable gate.
+  if (gap && !gapConsulted && consultsUsed < C.maxConsults) {
+    consultsUsed++
+    gapConsulted = true
+    const gd = await run(
+      `You are the architect. The engineer on unit ${unit.id} made a decision the spec does not settle and pulled ` +
+      `you in: "${gap}". Read the spec at ${spec} and the contracts it references, and \`git diff ${base}..HEAD\` ` +
+      `in ${w} as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
+      `(or a better alternative) must be steered — the engineer applies your guidance as one fix round; ` +
+      `"quarantine" only if the unsettled decision invalidates the unit's premise. Do not write code.`,
+      { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `gap-consult:${unit.id}`, schema: S.directive })
+    gap = null
+    if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
+    if (gd.action === 'redirect') {
+      const gFix = await runOr(REPORT_LOST,
+        `Apply the architect's direction on unit ${unit.id} in ${w} (spec: ${spec}). The spec left a decision ` +
+        `unsettled; you reported it, and the architect ruled: ${gd.guidance}\nApply that ruling. ` +
+        `${NOROADMAP}Commit your changes. ${REPORT}`,
+        { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gap-fix:${unit.id}`, schema: S.impl })
+      addDebt(unit.id, base, gFix.debt)
+      if (gFix.reportLost) reportLostEver = true
+      noteMismatch(gFix)
+      verify = await gateReverify(`gap-verify:${unit.id}`)
+      if (verify.blocked)
+        return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+    }
+  }
+
   // Exit gate — Opus-first, escalating to the Fable architect only when the call is
   // genuinely hard. High-risk units, contract-touching diffs, and a deterministic audit
   // sample skip straight to the guaranteed Fable gate: Opus cannot reliably self-detect the
@@ -1210,12 +1387,14 @@ async function runUnit(unit) {
   // all-green tests) is arc-observed value.
   const forceFrontier =
     C.exitGate === 'always-fable' || unit.risk === 'high' ||
-    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver || reportLostEver
+    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver || reportLostEver ||
+    (gapEver && !gapConsulted)   // an unadjudicated spec-silence decision — same missing-signal logic
   // An audit-only force (the sample fired, nothing structural did) is a spot-check of an
   // Opus-approved unit, not a from-scratch re-gate: it runs at the cheaper auditEffort and
   // reads a diet of the diff. Any structural force keeps the full-read gateEffort path.
   const auditOnly = auditPick(unit) && C.exitGate !== 'always-fable' &&
-    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver
+    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver &&
+    !(gapEver && !gapConsulted)
 
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
@@ -1304,6 +1483,11 @@ async function runUnit(unit) {
       'self-reported summary, debt entries and contract-mismatch signal are ABSENT. Judge the diff itself; ' +
       'do not read the missing report as "nothing to declare".'
     : ''
+  const gapClause = gapEver
+    ? ` The implementer reported a decision the spec does not settle: "${gapEver}"` +
+      `${gapConsulted ? ' (already adjudicated by an architect consult)' : ' (NOT yet adjudicated — the consult budget was spent)'}. ` +
+      `Judge that decision explicitly against the spec's intent.`
+    : ''
   const mismatchClause = mismatchEver
     ? ` The implementer reported deviating from a frozen contract surface: "${mismatchEver}". Adjudicate that ` +
       `deviation explicitly — approve it as recorded debt, direct a revert to the contract as written, or ` +
@@ -1331,7 +1515,7 @@ async function runUnit(unit) {
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
       `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
       `If revising, ` +
-      `give specific directives: what and why, not code. ${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${reportLostClause}` +
+      `give specific directives: what and why, not code. ${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${gapClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     // Same coercion as the Opus gate — but this IS the frontier, so at the round cap the items
@@ -1369,27 +1553,79 @@ async function runUnit(unit) {
 
 /* --------------------- serial merge queue + suite gate ------------------ */
 async function mergeUnit(unit) {
-  let res = await run(
+  // NOROADMAP made mechanical: the merge is the last place a unit diff can smuggle
+  // orchestrator-state edits in (arc-observed: a unit edited a frozen contract from its
+  // worktree and the queue accepted it — content sound, channel wrong). Refusal is checked
+  // by the merge agent, the strip preserves the content in branch history, and the
+  // kind:'contract' debt entry routes adjudication to the architect (root return).
+  const roadmapCheck =
+    `check \`git diff --name-only $(git merge-base HEAD unit/${unit.id})..unit/${unit.id} -- .roadmap/\` — if it ` +
+    `lists ANY path, do NOT merge; touch nothing and report merged:false with those exact paths in \`roadmapPaths\`. `
+  // Plan-driven prefix-uniqueness guard, '' when unset so the prompt stays byte-identical on
+  // plans without numbered sequences (arc-observed: next-free-at-dispatch numbering collided
+  // twice in one arc; one collision silently erased a CHECK constraint at merge).
+  const prefixClause = plan.prefixUniqueGlobs?.length
+    ? ` Then, before the suite: for each of these globs — ${plan.prefixUniqueGlobs.join(', ')} — list the merged ` +
+      `tree's matching filenames and extract each filename's leading digit run; if two or more files share the ` +
+      `same digit run, the merge is REFUSED: undo it with \`git reset --hard ORIG_HEAD\` and report merged:false ` +
+      `with every colliding filename in \`prefixCollision\`.`
+    : ''
+  const mergePromptText =
     STRICT +
     `In the integration worktree at ${intWt} (branch ${intBranch}): first, if a merge is already in progress ` +
     `(a MERGE_HEAD exists), clear it with \`git merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
     `of HEAD (\`git merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
     `already landed), skip the merge but still run the project's full test suite (commands: ${brief}) and report ` +
-    `merged:true with the current HEAD sha. Otherwise merge branch unit/${unit.id} ` +
+    `merged:true with the current HEAD sha. Otherwise ${roadmapCheck}Only if it lists nothing, merge branch ` +
+    `unit/${unit.id} ` +
     `(git merge --no-ff unit/${unit.id}). If the merge conflicts, abort it (git merge --abort) and report ` +
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
-    `cleanly, run the project's full test suite (commands: ${brief}) and report the result. Report the current ` +
-    `HEAD sha either way.` + ghMerged(unit),
-    { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
+    `cleanly, run the project's full test suite (commands: ${brief}) and report the result.${prefixClause} ` +
+    `Report the current HEAD sha either way.` + ghMerged(unit)
+  let res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
+
+  if (!res.merged && res.roadmapPaths?.length) {
+    log(`${unit.id}: unit diff touches orchestrator-owned .roadmap/ (${res.roadmapPaths.join(', ')}) — stripping before merge`)
+    const strip = await run(
+      STRICT +
+      `In the worktree at ${wtOf(unit)} (branch unit/${unit.id}): restore every path under .roadmap/ to its state ` +
+      `at the merge base. Run \`BASE=$(git merge-base ${intBranch} HEAD)\`; then \`git checkout "$BASE" -- .roadmap/\` ` +
+      `(restores modified and deleted paths), and \`git rm -f\` each path listed by ` +
+      `\`git diff --name-only --diff-filter=A "$BASE"..HEAD -- .roadmap/\` (files the branch added; remove any ` +
+      `directories left empty). Commit the result with message "strip .roadmap/ — orchestrator-owned; original ` +
+      `content preserved in prior commits". Touch nothing outside .roadmap/. Report ok plus the new HEAD sha.`,
+      { model: 'haiku', phase: 'Merge', label: `strip-roadmap:${unit.id}`, schema: S.ws },
+    ).catch(() => null)
+    debtLog.push({ unit: unit.id, sha: res.head, kind: 'contract', severity: 'major',
+      what: `unit diff touched orchestrator-owned .roadmap/ paths, stripped before merge: ${res.roadmapPaths.join(', ')}`,
+      why: 'units may never write .roadmap/; the stripped content survives in the branch history — adjudicate ' +
+        'whether it belongs in a contract amendment (the channel it should have used)' })
+    if (!strip?.ok)
+      return quarantine(unit, `unit diff touches .roadmap/ (${res.roadmapPaths.join(', ')}) and the strip commit ` +
+        `failed — nothing merged; the branch is intact`, res)
+    res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge })
+    if (!res.merged && res.roadmapPaths?.length)
+      return quarantine(unit, 'unit diff still touches .roadmap/ after a strip commit — nothing merged', res)
+  }
+  if (!res.merged && res.prefixCollision?.length)
+    return quarantine(unit, `numbered-prefix collision at merge (${res.prefixCollision.join(', ')}) — pre-allocate ` +
+      `explicit numbers in the conventions contract and respec; never renumber silently`, res)
 
   if (!res.merged) {
     res = await run(
       `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id}, resolving ` +
-      `conflicts. Both sides are intentional work — consult ${specOf(unit)}, the specs of recently merged units ` +
+      `conflicts. First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
+      `recently merged units ` +
       `under ${repo}/.roadmap/specs/, and the contracts under ${repo}/.roadmap/contracts/ to decide each ` +
-      `resolution. Then run the full test suite. If you are genuinely unsure a resolution is semantically right, ` +
+      `resolution. Then run the full test suite.${prefixClause} If you are genuinely unsure a resolution is ` +
+      `semantically right, ` +
       `abort the merge and report merged:false rather than guessing. Report the HEAD sha and suite result.`,
       { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge })
+    if (!res.merged && res.roadmapPaths?.length)
+      return quarantine(unit, 'unit diff touches .roadmap/ at conflict resolution — nothing merged', res)
+    if (!res.merged && res.prefixCollision?.length)
+      return quarantine(unit, `numbered-prefix collision at merge (${res.prefixCollision.join(', ')}) — pre-allocate ` +
+        `explicit numbers in the conventions contract and respec; never renumber silently`, res)
     if (!res.merged) return quarantine(unit, 'unresolvable merge conflicts', res)
   }
 
@@ -1434,6 +1670,200 @@ function start(unit) {
     checkpoint()
     notifySettle()
   })()
+}
+
+/* ------------------------------ warm lanes ------------------------------ */
+// One warm Opus session implements a strict linear chain (per-link commits, per-link pinned
+// branches); every link then runs the UNCHANGED cold pipeline via runUnit's adoption entry,
+// diffed against its recorded predecessor tip, and merges through the same serial queue.
+// Failure semantics: any lane-infrastructure failure DEMOTES the remaining links to ordinary
+// cold dispatch (chainOf entries removed, statuses back to pending) — the lane is an
+// optimization, never a new way to lose work. A link that fails ITS OWN pipeline quarantines
+// exactly as it would have cold, and the tail blocks behind it exactly as ready()/blockedBy
+// would have held it.
+function startChain(chain) {
+  inFlight++
+  for (const u of chain) units.set(u.id, { status: 'running', stage: 'chain-implement' })
+  checkpoint()
+  ;(async () => {
+    try { await runChain(chain) }
+    catch (e) {
+      for (const u of chain) {
+        if (rec(u.id)?.status !== 'running') continue
+        const q = await quarantine(u, `warm-lane pipeline error: ${e?.message ?? e}`)
+          .catch(() => ({ status: 'quarantined', reason: `warm-lane pipeline error: ${e?.message ?? e}` }))
+        units.set(u.id, q)
+        log(`${u.id}: ${q.status}`)
+      }
+    }
+    inFlight--
+    checkpoint()
+    notifySettle()
+  })()
+}
+
+async function runChain(chain) {
+  const head = chain[0]
+  const ids = chain.map((u) => u.id)
+  const w = wtOf(head)
+  const laneBase = integrationTip
+  const specsList = chain.map((u) => `${u.id}: ${specOf(u)}`).join('; ')
+  log(`warm lane ${ids.join(' → ')}: one plan + one implement call, cold gates per link`)
+  const demote = (why, fromIdx = 0) => {
+    log(`warm lane ${head.id}: ${why} — demoting ${ids.slice(fromIdx).join(', ')} to cold dispatch`)
+    for (const u of chain.slice(fromIdx)) { chainOf.delete(u.id); units.set(u.id, { status: 'pending' }) }
+    checkpoint()
+  }
+
+  // Lane worktree: DETACHED at the tip — never on a unit branch. The per-link pins below are
+  // `git branch unit/<id> HEAD`, which only bound link boundaries if no checked-out branch is
+  // advancing with the commits: a lane on unit/<head> would swallow the whole chain into the
+  // head's branch (head pin collides, later links' diffs collapse to empty — eval-observed by
+  // the sim work before it could reach a paid run). Detached, every pin including the head's
+  // is a fresh branch create, and removing the lane worktree later destroys nothing pinned.
+  // Crash residue never reaches here — chain detection excludes units whose passed state says
+  // running/merge-ready, so a link with committed work re-enters through ordinary dispatch.
+  const ws = await runOr({ ok: false, sha: '', state: 'ready', detail: 'lane setup agent died without a report' },
+    STRICT +
+    `In the git repository at ${repo}, set up the DETACHED chain worktree at ${w} for a warm lane headed by ` +
+    `unit ${head.id} (fork base ${laneBase}): if a stale worktree occupies ${w}, clear the WORKTREE ONLY ` +
+    `(\`git worktree remove --force ${w}\`, then \`git worktree prune\`; if the directory still exists, delete ` +
+    `it) — never delete any branch. Then \`git worktree add --detach ${w} ${laneBase}\`; report ok:true, ` +
+    `state:'ready', sha = HEAD.` +
+    ghRunning(head),
+    { model: 'haiku', phase: 'Setup', label: `lane-setup:${head.id}`, schema: S.setup })
+  if (!ws.ok || !sameSha(ws.sha, laneBase)) return demote(`lane setup failed (${ws.detail ?? ws.sha ?? 'no sha'})`)
+  const prov = await provision(w, `provision:${head.id}`)
+  if (!prov.ok) return demote(`lane provisioning failed (${prov.detail ?? ''})`)
+
+  // One plan call covering every link, then the SAME per-link plan-check ladder a cold build
+  // gets — the bookend that catches spec defects before code exists survives the warm lane.
+  const cPlan = await runOr(null,
+    `You will implement a CHAIN of ${chain.length} dependent units of a larger roadmap in one continuous ` +
+    `session — each link builds on the previous link's committed result, in order: ${ids.join(' → ')}. First: ` +
+    `plan every link. Read each unit's spec (${specsList}) and any contract files referenced under ` +
+    `${repo}/.roadmap/contracts/ (contracts are frozen — treat them as immutable requirements). Codebase ` +
+    `conventions and build/test commands are documented at ${brief}. Explore the code in ${w} as needed. ` +
+    `Return in \`links\` one entry PER UNIT, in chain order, each with the structured fields FIRST and the ` +
+    `free-text last: \`id\`, \`feasible\`, \`files\`, \`testPlan\`, \`evidence\` (\`keyFiles\` at most 20, one ` +
+    `line each: path plus a one-phrase why; \`signatures\` at most 15, each one line, quoted exactly; ` +
+    `\`seams\` at most 10, each a sentence or two with a short quoted anchor), then \`approach\` LAST. A link ` +
+    `that cannot be satisfied within its contracts gets feasible:false and the contradiction in its approach — ` +
+    `do not force it. ${TERSE}Do not write code yet.`,
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `chain-plan:${head.id}`, schema: S.chainPlan })
+  if (!cPlan) return demote('chain plan produced no report')
+  const planOf = new Map((cPlan.links ?? []).map((l) => [l.id, l]))
+  if (!ids.every((id) => planOf.has(id))) return demote('chain plan missed a link')
+
+  const approved = []
+  for (let i = 0; i < chain.length; i++) {
+    const u = chain[i]
+    const l = planOf.get(u.id)
+    let lp = { feasible: l.feasible, files: l.files ?? [], testPlan: l.testPlan, approach: l.approach,
+      ...(l.evidence ? { evidence: l.evidence } : {}) }
+    if (C.planCheckRisk.includes(u.risk) || !lp.feasible) {
+      const check = await runPlanCheck(u, lp, specOf(u))
+      if (check.verdict === 'quarantine') {
+        units.set(u.id, await quarantine(u, 'plan rejected by architect', check))
+        log(`${u.id}: quarantined at chain plan-check`)
+        for (const t of chain.slice(i + 1)) { units.set(t.id, { status: 'blocked' }); log(`${t.id}: blocked (chain predecessor ${u.id})`) }
+        checkpoint()
+        break
+      }
+      if (check.verdict === 'redirect')
+        lp = await run(
+          `Revise your implementation plan for unit ${u.id} (spec: ${specOf(u)}) — one link of the chain ` +
+          `${ids.join(' → ')} you just planned. Your previous plan for this link:\n${JSON.stringify(lp)}\n` +
+          `The architect's direction: ${check.guidance}. ` +
+          `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
+          `\`approach\` last — and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line ` +
+          `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
+          { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${u.id}`, schema: S.plan })
+    }
+    if (!lp.feasible) {
+      units.set(u.id, await quarantine(u, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', lp))
+      log(`${u.id}: quarantined (infeasible at chain planning)`)
+      for (const t of chain.slice(i + 1)) { units.set(t.id, { status: 'blocked' }); log(`${t.id}: blocked (chain predecessor ${u.id})`) }
+      checkpoint()
+      break
+    }
+    approved.push([u, lp])
+  }
+  if (!approved.length) return
+
+  // One implement call for the approved prefix: per-link commit + pinned branch, in order.
+  const designClauses = approved.map(([u]) => designClause(u)).join('')
+  const cImpl = await runOr({ links: [], reportLost: true },
+    `Implement this CHAIN of ${approved.length} dependent units in the worktree at ${w}, IN ORDER — each link ` +
+    `builds on the previous link's committed result: ${approved.map(([u]) => u.id).join(' → ')}. The approved ` +
+    `per-link plans:\n${JSON.stringify(approved.map(([u, lp]) => ({ id: u.id, ...lp })))}\n` +
+    `Each unit's spec and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
+    `frozen (specs: ${specsList}). ${convClause}${designClauses}Conventions and commands are documented at ` +
+    `${brief}. Before writing new code, search the codebase for existing implementations or symbols to reuse. ` +
+    `For EACH link, in order — the FIRST link included: implement it fully (the code and the tests its ` +
+    `acceptance criteria call for), run ` +
+    `the link-scoped tests, COMMIT with clear messages, then pin the link boundary with ` +
+    `\`git branch unit/<that link's id> HEAD\` (the worktree is on a detached HEAD, so each pin is a fresh ` +
+    `branch create — if it collides, something is wrong: stop and report that link done:false rather than ` +
+    `forcing or deleting), and only then start the next link. Never amend, rebase, or ` +
+    `revisit an earlier link's commits once its branch is pinned — a later improvement to an earlier link ` +
+    `belongs in the later link's commits. Deliver each link at the scope its spec intends; a link you genuinely ` +
+    `cannot finish gets done:false (leave it uncommitted and unpinned, and stop the chain there — do not start ` +
+    `later links on top of an unfinished one). Report per link in \`links\` (in chain order): \`id\`, \`done\`, ` +
+    `\`filesChanged\`, \`summary\`, and its own \`contractMismatch\`/\`specGap\`/\`debt\` exactly as a ` +
+    `single-unit report would carry them. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Work only ` +
+    `inside ${w}. ${REPORT}`,
+    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `chain-impl:${head.id}`, schema: S.chainImpl })
+
+  // Pre-captured read-only tips: the diff base for link i+1 is link i's PINNED tip (pre-fix),
+  // and the probe never trusts the implement agent's own report for it.
+  const tips = await runOr({ ok: false, tips: [] },
+    STRICT +
+    `In the git repository at ${repo}: for each of these refs, report {id, sha} in \`tips\` if the ref ` +
+    `resolves, where id is the unit id without the unit/ prefix: ${approved.map(([u]) => `unit/${u.id}`).join(', ')}. ` +
+    `Skip refs that do not resolve. Read-only — change nothing, create nothing.`,
+    { model: 'haiku', effort: 'low', phase: 'Implement', label: `chain-tips:${head.id}`, schema: S.chainTips })
+  const tipOf = new Map((tips.tips ?? []).map((t) => [t.id, t.sha]))
+  const reportOf = new Map((cImpl.links ?? []).map((r) => [r.id, r]))
+
+  // Per-link cold pipeline, in order: adoption entry at the recorded base, merge before the
+  // next link's pipeline starts (so gates always judge against a settled predecessor).
+  let prevTip = laneBase
+  let broken = null
+  for (let i = 0; i < approved.length; i++) {
+    const [u, lp] = approved[i]
+    if (broken) {
+      units.set(u.id, { status: 'blocked' })
+      log(`${u.id}: blocked (chain predecessor ${broken})`)
+      checkpoint()
+      continue
+    }
+    if (!tipOf.get(u.id)) {
+      // No pinned branch: the warm call never finished this link. Demote it and the tail to
+      // cold dispatch — the scheduler picks them up once the predecessor merges.
+      demote(`link ${u.id} has no pinned branch (${reportOf.get(u.id)?.done === false ? 'reported done:false' : 'missing from the report'})`, i)
+      return
+    }
+    const r = reportOf.get(u.id)
+    setStage(u.id, 'link-pipeline')
+    let result = await runUnit(u, { base: prevTip, report: r ?? null, evidence: planOf.get(u.id)?.evidence ?? lp.evidence, reportLost: !r || !!cImpl.reportLost })
+      .catch(async (e) => quarantine(u, `pipeline error: ${e?.message ?? e}`)
+        .catch(() => ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
+    if (result.status === 'merge-ready') {
+      units.set(u.id, { ...result, stage: 'merge-queue' })
+      checkpoint()
+      const segment = mergeChain.then(() => mergeUnit(u)).catch((e) =>
+        quarantine(u, `merge pipeline error: ${e?.message ?? e}`))
+      mergeChain = segment.then(() => null, () => null)
+      result = await segment
+    }
+    units.set(u.id, result)
+    log(`${u.id}: ${result.status}`)
+    checkpoint()
+    notifySettle()   // a mid-lane merge can unblock non-chained dependents — wake the scheduler
+    if (result.status !== 'merged') { broken = u.id; continue }
+    prevTip = tipOf.get(u.id)
+  }
 }
 
 // Fail loudly on a malformed graph — a bad edge reference or a cycle otherwise strands
@@ -1510,8 +1940,15 @@ if (previewStatus === 'pending') {
     STRICT +
     `Set up the arc's preview mirror: cd to the PRIMARY repository checkout at ${repo} and stay there for ` +
     `every git command. Then, ${previewStopCmd} (the pidfile lives OUTSIDE the repo). ` +
-    `Then run \`git checkout --detach ${integrationTip}\` — if git refuses (for example locally-modified ` +
-    `files), report ok:false with the exact error; never stash, reset, or force. ` +
+    `Then run \`git status --porcelain -- ':(exclude).roadmap'\` — .roadmap/ is the orchestrator's own working ` +
+    `state, EXPECTED to be dirty mid-arc; it carries across detaches and must never block the mirror ` +
+    `(eval-observed: gating on it killed the preview on every wave after the first). If that command reports ` +
+    `ANY entries — real local edits outside .roadmap/ — do NOT detach: report ok:false, and in ` +
+    `\`detail\` give the exact porcelain output plus, for each modified tracked path, whether ` +
+    `\`git diff ${integrationTip} -- <path>\` is empty (empty means the local content is byte-identical to the ` +
+    `target tip — a carried modification left by a stale detach point; non-empty means real local edits). ` +
+    `If it reports nothing, run \`git checkout --detach ${integrationTip}\` — if git refuses, report ok:false ` +
+    `with the exact error. Either way never stash, reset, or force. ` +
     (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
     (p.start ? `Then start the preview from inside ${repo} with ${previewStartCmd(p.start)}. ${previewSweepRetry}` : '') +
     previewHealth() +
@@ -1521,7 +1958,15 @@ if (previewStatus === 'pending') {
   if (ps?.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
   else {
     previewStatus = 'failed'
-    log(`preview setup failed — continuing without a mirror (${ps?.detail ?? ps?.sha ?? 'agent error'})`)
+    // Loud, not a log line: a dead mirror silently no-ops the explorer AND the design reconcile
+    // for the whole wave (arc-observed) — the boundary's owed markers re-queue those jobs, and
+    // this entry tells the operator exactly what to do with the primary checkout.
+    degrade({ label: 'preview-setup', model: 'haiku', phase: 'Preview', kind: 'preview-failed',
+      what: `preview mirror never came up (${String(ps?.detail ?? ps?.sha ?? 'agent died without a report').slice(0, 300)}) ` +
+        `— the wave runs without runtime observability and the boundary will record owed explorer/design markers. ` +
+        `Operator: if the diagnosis shows modified paths byte-identical to the target tip (a carried modification ` +
+        `from a stale detach point), a plain \`git checkout --detach ${integrationTip}\` in the primary checkout is ` +
+        `safe; real local edits are yours to commit or stash — the harness never will.` })
   }
 }
 
@@ -1540,16 +1985,66 @@ for (let changed = true; changed;) {
     const st = rec(u.id)?.status
     // `deferred` on an in-scope unit is always stale: it was stamped when the unit was out of
     // scope (or transiently withheld) and the plan has since said otherwise.
-    if (st === 'deferred' || (st === 'blocked' && !blockedBy(u))) {
+    // `running`/`merge-ready` at wave START are crash residue — the script just started, so
+    // nothing can actually be running. Without this reset the adopt guard in runUnit
+    // (prior.units status running) was unreachable on a relaunch and crashed units stranded
+    // exactly like the 'blocked' class this loop already heals: ready() requires 'pending',
+    // and nothing ever restored it. Reset re-enters dispatch; setup then auto-adopts any
+    // committed branch work (rung-3 recovery as documented, now actually mechanical).
+    if (st === 'deferred' || st === 'running' || st === 'merge-ready' || (st === 'blocked' && !blockedBy(u))) {
       units.set(u.id, { status: 'pending' })
-      log(`${u.id}: ${st === 'deferred' ? 'in scope again' : 'unblocked (dependency resolved)'} — re-entering dispatch`)
+      log(`${u.id}: ${st === 'deferred' ? 'in scope again'
+        : st === 'blocked' ? 'unblocked (dependency resolved)'
+        : `crash residue (was ${st}) — committed work auto-adopts`} — re-entering dispatch`)
       changed = true
     }
   }
 }
 
+/* ------------------------- warm-lane chain detection --------------------- */
+// Strict linear segments of contract edges among pending, fresh, in-scope units: each hop's
+// FROM has exactly one live dependent and its TO exactly one unmerged dependency (contingent
+// edges never chain — the conductor may withhold or replan the dependent). Units with crash
+// residue (passed state running/merge-ready) or an existingBranch never chain: their committed
+// work re-enters through ordinary dispatch and adoption. warmLanes:false leaves this map empty
+// and the wave byte-identical to the cold design.
+const chainOf = new Map()
+if (C.warmLanes !== false && C.maxChainLength >= 2) {
+  const cand = new Set(inScope.filter((u) => rec(u.id).status === 'pending' && !u.existingBranch &&
+    !['running', 'merge-ready'].includes(prior.units?.[u.id]?.status)).map((u) => u.id))
+  const live = (id) => !['merged', 'deferred'].includes(rec(id)?.status ?? 'pending')
+  const nextOf = (id) => {
+    const outs = plan.edges.filter((e) => e.from === id && live(e.to))
+    if (outs.length !== 1 || outs[0].mode === 'contingent' || !cand.has(outs[0].to)) return null
+    const v = outs[0].to
+    const ins = plan.edges.filter((e) => e.to === v && rec(e.from)?.status !== 'merged')
+    if (ins.length !== 1 || ins[0].from !== id) return null
+    return v
+  }
+  const byId = new Map(plan.units.map((u) => [u.id, u]))
+  for (const u of inScope) {
+    if (!cand.has(u.id) || chainOf.has(u.id)) continue
+    if (plan.edges.some((e) => e.to === u.id && cand.has(e.from) && nextOf(e.from) === u.id)) continue // not a head
+    const seq = [u.id]
+    for (let n = nextOf(u.id); n && !chainOf.has(n); n = nextOf(n)) seq.push(n)
+    for (let i = 0; i < seq.length; i += C.maxChainLength) {
+      const chunk = seq.slice(i, i + C.maxChainLength)
+      if (chunk.length < 2) continue
+      const chainUnits = chunk.map((id) => byId.get(id))
+      for (const id of chunk) chainOf.set(id, chainUnits)
+    }
+  }
+  if (chainOf.size) log(`warm lanes: ${[...new Set([...chainOf.values()])].map((c) => c.map((u) => u.id).join(' → ')).join(' | ')}`)
+}
+
 while (true) {
-  inScope.filter(ready).forEach(start)
+  for (const u of inScope.filter(ready)) {
+    const ch = chainOf.get(u.id)
+    if (!ch) start(u)
+    else if (ch[0].id === u.id) startChain(ch)
+    // A chained non-head member is only ever ready after its predecessor merges, and by then
+    // the lane already owns it (status running) — ready() cannot double-start it.
+  }
   for (const u of inScope) {
     if (rec(u.id).status === 'pending' && blockedBy(u)) {
       units.set(u.id, { status: 'blocked' })

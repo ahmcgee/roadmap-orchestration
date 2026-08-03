@@ -57,6 +57,15 @@ const DEFAULTS = [
   [(l) => l.startsWith('resolve:'), (b) => mergeOk(b)],
   [(l) => l.startsWith('integration-fix:'), (b) => mergeOk(b)],
 
+  // Warm-lane defaults: lane setup succeeds, but the default chain-plan reports no links —
+  // the harness then DEMOTES the chain to per-link cold dispatch, so every legacy test that
+  // happens to contain a strict contract-edge chain keeps its cold-path semantics (and stays
+  // free of degradation noise). Chain tests override these with real per-link rules.
+  [(l) => l.startsWith('lane-setup:'), (b) => ({ ok: true, sha: b, state: 'ready' })],
+  [(l) => l.startsWith('chain-plan:'), () => ({ links: [] })],
+  [(l) => l.startsWith('chain-impl:'), () => ({ links: [] })],
+  [(l) => l.startsWith('chain-tips:'), () => ({ ok: true, tips: [] })],
+
   [(l) => l.startsWith('mirror:'), (b) => ({ ok: true, sha: b })],
   [(l) => l === 'preview-setup', (b) => ({ ok: true, sha: b })],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],

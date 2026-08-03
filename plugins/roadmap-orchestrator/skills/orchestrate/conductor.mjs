@@ -314,6 +314,9 @@ const S_boundaryPlan = obj({
   reviseSpecs: { type: 'array', maxItems: 8, items: obj({ id: { type: 'string', maxLength: 60 }, goal: { type: 'string', maxLength: 400 }, acceptance: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 200 } }, constraints: { type: 'string', maxLength: 600 } }, ['id']) },
   cutUnits: strArr(12, 60),
   debtLedger: strArr(24, 400),
+  // Explicit waiver of owed boundary jobs (job names, e.g. 'design') — Fable-tier only, and
+  // only with the justification journaled; anything not waived rides forward.
+  waiveOwed: strArr(8, 30),
   journal: { type: 'string', maxLength: 1500 },
   escalate: { type: 'boolean' },
   escalateReason: oneOf(['contract-amendment', 'contingent-replan', 'needs-user', 'cut-line', 'none']),
@@ -403,8 +406,12 @@ function predicates(census, withheldIds) {
   const healthFixUnits = [...(health.fixUnits ?? []), ...(design.fixUnits ?? [])]
   const flakeFlips = flake.flips ?? []
   const userFeedback = census.pendingUserFeedback ?? []
-  const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0
-  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, anyJudgment }
+  // Owed boundary jobs (harness-written): due jobs that did not run. Non-empty is a judgment
+  // signal — a tier must consciously ride them forward, act on the broken precondition, or
+  // (Fable only) waive them; entries owed two boundaries running force tier 3.
+  const owedJobs = state.owed ?? []
+  const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0 || owedJobs.length > 0
+  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
 }
 
 // A health-assessor fix-unit draft {id, goal, files, acceptance} -> a default skeleton
@@ -448,6 +455,19 @@ async function writeSkillFeedback() {
     { model: 'haiku', effort: 'low', label: 'skill-feedback', phase: 'Persist', schema: S.ok },
   ).catch(() => null)
 }
+// log-append: architect journal, tier-3 only (replace-if-header-exists idempotency). A helper
+// because it must fire on TERMINAL tier-3 paths too (cut-line, arc-complete) — the persist
+// section sits past those returns, and a journal that dies with a terminal boundary takes the
+// owed-waiver justifications down with it.
+async function writeJournal(N, journal) {
+  if (!journal) return
+  await run(
+    STRICT + `In the file ${repo}/.roadmap/architect-log.md (create it if missing): ensure exactly one section ` +
+    `headed \`## Wave ${N}\`. If that exact header already exists, replace its body; otherwise append it at the ` +
+    `end. The section body is:\n${journal}\n\nChange nothing else in the file.`,
+    { model: 'haiku', effort: 'low', label: `log-append:w${N}`, phase: 'Persist', schema: S.ok },
+  ).catch(() => null)
+}
 const arcSummary = (census) => {
   const u = state.units ?? {}
   const ids = (s) => Object.entries(u).filter(([, r]) => r?.status === s).map(([id]) => id)
@@ -472,6 +492,9 @@ async function ret(reason, tier, extra = {}) {
     spendDelta: deltaSpend(st.spend),
     // Always present (empty when clean) so the root never has to wonder whether the run was healthy.
     degradations,
+    // Owed boundary jobs surface on every return — on a terminal one they are the root's to
+    // discharge (or explicitly waive in the architect log) before close-out.
+    ...(st.owed?.length ? { owed: st.owed } : {}),
     ...extra,
   }
 }
@@ -504,9 +527,15 @@ const opusTriagePrompt = (N, P) =>
   `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
   `${issueMode ? `the open user bug issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
-  `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback })}\n` +
+  `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback, owed: P.owedJobs })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
   `fix-unit DRAFTS to admit. ` +
+  (P.owedJobs.length
+    ? `The \`owed\` list names boundary jobs that were DUE but did not run (count = consecutive boundaries owed). ` +
+      `They discharge automatically when the job next succeeds — never silently ignore one: if its precondition is ` +
+      `broken (e.g. the preview is down), that is itself a finding to act on, and only the Fable tier may waive an ` +
+      `owed job outright — escalate 'hard-call' if you believe one should be. `
+    : '') +
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
@@ -538,7 +567,14 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `dossiers of the quarantined units named here (${JSON.stringify(P.quarantined)}) under ` +
   `${repo}/.roadmap/quarantine/, then ${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, this wave's feedback ` +
   `under ${repo}/.roadmap/feedback/, and ${repo}/.roadmap/debt.md. Structured evidence:\n` +
-  `${JSON.stringify({ quarantined: P.quarantined, findings: P.findings, drafts: P.healthFixUnits, debt: P.nonContractDebt })}\n` +
+  `${JSON.stringify({ quarantined: P.quarantined, findings: P.findings, drafts: P.healthFixUnits, debt: P.nonContractDebt, owed: P.owedJobs })}\n` +
+  (P.owedJobs.length
+    ? `The \`owed\` list names boundary jobs that were DUE but did not run (count = consecutive boundaries owed); ` +
+      `they discharge automatically when the job next succeeds. For each, either act on the broken precondition ` +
+      `(e.g. a fix unit or journal instruction for a downed preview) or — if the job is genuinely moot for this ` +
+      `arc — waive it explicitly by putting its job name in \`waiveOwed\` and justifying the waiver in your ` +
+      `journal. An owed job you neither act on nor waive rides forward and forces this tier again. `
+    : '') +
   `Route each quarantined unit by its dossier REASON: environment/tooling-blocked -> re-run as-is (prefer ` +
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
@@ -696,7 +732,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   if (CC.boundaryTriage === 'root') return await ret('root-triage', 4, { pendingFeedback: census.pendingUserFeedback ?? [], quarantined: P.quarantined.map((id) => ({ id })) })
 
   let tier
-  if (P.quarantined.length || (CC.boundaryTriage === 'always-fable' && P.anyJudgment)) tier = 3
+  if (P.quarantined.length || P.owedJobs.some((o) => (o.count ?? 1) >= 2) ||
+      (CC.boundaryTriage === 'always-fable' && P.anyJudgment)) tier = 3
   else if (P.anyJudgment || (CC.fixUnitAdmit === 'triage' && P.drafts.length)) tier = 2
   else tier = 1
 
@@ -737,11 +774,27 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     boundaryPlan = await runOr(null, fableBoundaryPrompt(N, P, opusLead),
       { model: 'fable', effort: CC.fableEffort, label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
     if (!boundaryPlan) return await degraded()
+    // Apply owed-job waivers HERE, at capture — not at persist. The terminal returns below
+    // (cut-line, and arc-complete when the plan yields nothing new) are exactly the shape a
+    // waiver usually takes ("this job is moot for this arc" comes with no new units), and
+    // applying late silently discarded it: the same dead job then re-forced a paid Fable
+    // boundary on every relaunch, forever, since only a successful run discharges a marker
+    // (eval-observed). Waiving into `state` means every downstream path — finish()/ret()
+    // envelope, consumed threading, persisted state.json — inherits it.
+    if (boundaryPlan.waiveOwed?.length && state.owed?.length) {
+      const owedLeft = state.owed.filter((o) => !boundaryPlan.waiveOwed.includes(o.job))
+      state = { ...state }
+      if (owedLeft.length) state.owed = owedLeft
+      else delete state.owed
+      log(`wave ${N}: fable tier waived owed job(s): ${boundaryPlan.waiveOwed.join(', ')}`)
+    }
     if (boundaryPlan.escalate) {
       const er = boundaryPlan.escalateReason
       if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user')
         return await ret(er, 3, briefFor(er, P, N, triageResult, boundaryPlan, census))
-      if (er === 'cut-line') return await finish(3)
+      // The journal (waiver justifications included) must survive a terminal boundary — the
+      // persist-section writer sits past this return and used to drop it.
+      if (er === 'cut-line') { await writeJournal(N, boundaryPlan.journal); return await finish(3) }
     }
   }
   const ranTier = tier
@@ -779,9 +832,13 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
 
   // Arc complete: a tier said so, or the boundary produced no new units and no spec revisions.
-  // Routed through finish(), which refuses to close over dispatchable work.
-  if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0))
+  // Routed through finish(), which refuses to close over dispatchable work. A tier-3 journal
+  // still lands first — this terminal return used to jump the persist-section writer and drop
+  // it (waiver justifications with it).
+  if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0)) {
+    if (ranTier === 3) await writeJournal(N, journal)
     return await finish(ranTier)
+  }
 
   // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
   phase('Spec-expand')
@@ -884,14 +941,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
   }
 
-  // log-append: architect journal, ONLY when tier 3 ran (replace-if-header-exists idempotency).
-  if (ranTier === 3 && journal)
-    await run(
-      STRICT + `In the file ${repo}/.roadmap/architect-log.md (create it if missing): ensure exactly one section ` +
-      `headed \`## Wave ${N}\`. If that exact header already exists, replace its body; otherwise append it at the ` +
-      `end. The section body is:\n${journal}\n\nChange nothing else in the file.`,
-      { model: 'haiku', effort: 'low', label: `log-append:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
+  // log-append: architect journal, ONLY when tier 3 ran (terminal tier-3 paths write it
+  // before their own returns — see writeJournal).
+  if (ranTier === 3) await writeJournal(N, journal)
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
   // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports
