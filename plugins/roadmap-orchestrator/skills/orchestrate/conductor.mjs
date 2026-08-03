@@ -455,6 +455,19 @@ async function writeSkillFeedback() {
     { model: 'haiku', effort: 'low', label: 'skill-feedback', phase: 'Persist', schema: S.ok },
   ).catch(() => null)
 }
+// log-append: architect journal, tier-3 only (replace-if-header-exists idempotency). A helper
+// because it must fire on TERMINAL tier-3 paths too (cut-line, arc-complete) — the persist
+// section sits past those returns, and a journal that dies with a terminal boundary takes the
+// owed-waiver justifications down with it.
+async function writeJournal(N, journal) {
+  if (!journal) return
+  await run(
+    STRICT + `In the file ${repo}/.roadmap/architect-log.md (create it if missing): ensure exactly one section ` +
+    `headed \`## Wave ${N}\`. If that exact header already exists, replace its body; otherwise append it at the ` +
+    `end. The section body is:\n${journal}\n\nChange nothing else in the file.`,
+    { model: 'haiku', effort: 'low', label: `log-append:w${N}`, phase: 'Persist', schema: S.ok },
+  ).catch(() => null)
+}
 const arcSummary = (census) => {
   const u = state.units ?? {}
   const ids = (s) => Object.entries(u).filter(([, r]) => r?.status === s).map(([id]) => id)
@@ -761,11 +774,27 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     boundaryPlan = await runOr(null, fableBoundaryPrompt(N, P, opusLead),
       { model: 'fable', effort: CC.fableEffort, label: `boundary:w${N}`, phase: 'Triage-fable', schema: S_boundaryPlan })
     if (!boundaryPlan) return await degraded()
+    // Apply owed-job waivers HERE, at capture — not at persist. The terminal returns below
+    // (cut-line, and arc-complete when the plan yields nothing new) are exactly the shape a
+    // waiver usually takes ("this job is moot for this arc" comes with no new units), and
+    // applying late silently discarded it: the same dead job then re-forced a paid Fable
+    // boundary on every relaunch, forever, since only a successful run discharges a marker
+    // (eval-observed). Waiving into `state` means every downstream path — finish()/ret()
+    // envelope, consumed threading, persisted state.json — inherits it.
+    if (boundaryPlan.waiveOwed?.length && state.owed?.length) {
+      const owedLeft = state.owed.filter((o) => !boundaryPlan.waiveOwed.includes(o.job))
+      state = { ...state }
+      if (owedLeft.length) state.owed = owedLeft
+      else delete state.owed
+      log(`wave ${N}: fable tier waived owed job(s): ${boundaryPlan.waiveOwed.join(', ')}`)
+    }
     if (boundaryPlan.escalate) {
       const er = boundaryPlan.escalateReason
       if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user')
         return await ret(er, 3, briefFor(er, P, N, triageResult, boundaryPlan, census))
-      if (er === 'cut-line') return await finish(3)
+      // The journal (waiver justifications included) must survive a terminal boundary — the
+      // persist-section writer sits past this return and used to drop it.
+      if (er === 'cut-line') { await writeJournal(N, boundaryPlan.journal); return await finish(3) }
     }
   }
   const ranTier = tier
@@ -777,7 +806,6 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   let cutUnitIds = []
   let journal = null
   let arcCompleteFlag = false
-  let waiveOwedList = []
   let feedbackDispositions = triageResult?.feedback ?? []
   let debtLedger = []
 
@@ -798,16 +826,19 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     cutUnitIds = boundaryPlan.cutUnits ?? []
     journal = boundaryPlan.journal
     debtLedger = boundaryPlan.debtLedger ?? []
-    waiveOwedList = boundaryPlan.waiveOwed ?? []
   }
 
   // Assign final ids up front so spec files and plan units agree.
   const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
 
   // Arc complete: a tier said so, or the boundary produced no new units and no spec revisions.
-  // Routed through finish(), which refuses to close over dispatchable work.
-  if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0))
+  // Routed through finish(), which refuses to close over dispatchable work. A tier-3 journal
+  // still lands first — this terminal return used to jump the persist-section writer and drop
+  // it (waiver justifications with it).
+  if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0)) {
+    if (ranTier === 3) await writeJournal(N, journal)
     return await finish(ranTier)
+  }
 
   // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
   phase('Spec-expand')
@@ -850,13 +881,6 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   if (state.boundary) { lastBoundary = state.boundary; lastBoundaryWave = N }
   delete consumed.boundary
   consumed.debt = []
-  // Fable-authorized owed-job waivers (justification is in the journal). Everything not waived
-  // rides forward in `owed` untouched — the harness owns discharge, the conductor only waives.
-  if (waiveOwedList.length && consumed.owed?.length) {
-    consumed.owed = consumed.owed.filter((o) => !waiveOwedList.includes(o.job))
-    if (!consumed.owed.length) delete consumed.owed
-    log(`wave ${N}: fable tier waived owed job(s): ${waiveOwedList.join(', ')}`)
-  }
   mergeConductorSpend(consumed)
   boundaries.push({ wave: N, tier: ranTier, escalated: null })
   consumed.conductor = { reason: null, wavesRun, boundaries }
@@ -917,14 +941,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
   }
 
-  // log-append: architect journal, ONLY when tier 3 ran (replace-if-header-exists idempotency).
-  if (ranTier === 3 && journal)
-    await run(
-      STRICT + `In the file ${repo}/.roadmap/architect-log.md (create it if missing): ensure exactly one section ` +
-      `headed \`## Wave ${N}\`. If that exact header already exists, replace its body; otherwise append it at the ` +
-      `end. The section body is:\n${journal}\n\nChange nothing else in the file.`,
-      { model: 'haiku', effort: 'low', label: `log-append:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
+  // log-append: architect journal, ONLY when tier 3 ran (terminal tier-3 paths write it
+  // before their own returns — see writeJournal).
+  if (ranTier === 3) await writeJournal(N, journal)
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
   // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports

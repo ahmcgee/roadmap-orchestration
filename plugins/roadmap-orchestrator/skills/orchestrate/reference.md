@@ -179,7 +179,10 @@ Fields the scripts add:
   the design-cited units an owed reconcile still must cover; `count` = consecutive boundaries
   owed). Discharged automatically when the job next succeeds; carried with `count+1` otherwise.
   The conductor's tiers may not silently drop one — `count >= 2` forces the Fable tier, which
-  alone may waive (`waiveOwed`, justification journaled). Non-empty `owed` on a terminal return
+  alone may waive (`waiveOwed`, justification journaled). A marker whose precondition is later
+  REMOVED from the plan (the preview block dropped, the citing unit cut) carries at a frozen
+  count rather than clearing — removing a capability is not discharging the debt; the waive is
+  the sanctioned exit. Non-empty `owed` on a terminal return
   is yours: discharge it (run the job) or waive it explicitly in the architect log before
   close-out.
 - **`conductor`** — `{ reason, wavesRun, boundaries: [{ wave, tier, escalated }] }`. `reason` is

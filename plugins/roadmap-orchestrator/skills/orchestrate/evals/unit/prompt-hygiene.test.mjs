@@ -381,6 +381,56 @@ test('harness: arrays with capped items also cap their count', async () => {
 })
 
 // =========================================================================================
+// Warm lanes carry two capped schemas `driveHarness` can never reach: S.chainPlan (nested
+// evidence caps) and S.chainImpl (`summary`/`contractMismatch`/`specGap`/`debt` item caps plus
+// a top-level `notes` cap). A capped schema no drive reaches is a new trap of exactly the class
+// this file exists to catch, and the per-link budgets these prompts state must stay truthful
+// against the caps the schemas actually carry.
+//
+// The lane only forms on a strict contract-edge chain of pending, fresh, in-scope units, and the
+// fakes' built-in chain-plan default reports no links (which DEMOTES to cold dispatch and emits
+// no chain-impl at all) — so the per-link rules below are what makes the drive non-vacuous.
+// =========================================================================================
+const CHAIN_TIP = { a: '11111111111111111111111111111111111111aa', b: '2222222222222222222222222222222222222bbb' }
+
+async function driveChainWave() {
+  const perLink = (make) => ['a', 'b'].map(make)
+  const { fn, calls } = makeAgent([
+    { match: /^chain-plan:a$/, result: () => ({
+      links: perLink((id) => ({ id, feasible: true, files: [`${id}.js`], testPlan: 'unit tests', approach: 'x' })) }) },
+    { match: /^chain-impl:a$/, result: () => ({
+      links: perLink((id) => ({ id, done: true, filesChanged: [`${id}.js`], summary: 'done' })) }) },
+    { match: /^chain-tips:a$/, result: () => ({ ok: true, tips: perLink((id) => ({ id, sha: CHAIN_TIP[id] })) }) },
+    // The warm call committed and pinned each link, so per-link setup ADOPTS rather than rebuilds.
+    { match: /^setup:a$/, result: () => ({ ok: true, sha: CHAIN_TIP.a, state: 'adopted' }) },
+    { match: /^setup:b$/, result: () => ({ ok: true, sha: CHAIN_TIP.b, state: 'adopted' }) },
+    ...FIX_ROUNDS,
+  ])
+  const runner = await loadScript(HARNESS)
+  await runner({
+    args: {
+      plan: makePlan([unit('a'), unit('b')], { edges: [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }] }),
+      state: makeState(),
+      config: { gateAuditRate: 0 },
+    },
+    agent: fn,
+  })
+  return calls
+}
+
+test('harness chain prompts: capped schemas state the length contract', async () => {
+  const lane = (await driveChainWave()).filter((c) => /^(lane-setup:|chain-)/.test(c.label))
+  for (const required of ['chain-plan:a', 'chain-impl:a'])
+    assert.ok(lane.some((c) => c.label === required),
+      `harness warm lane: expected the drive to reach '${required}' — the lane demoted and this test would be ` +
+        `vacuous; saw ${JSON.stringify(lane.map((c) => c.label))}`)
+
+  const capped = assertCapsAreContracted(lane, 'harness warm lane')
+  assertBudgetsAreStated(capped, 'harness warm lane')
+  assertArraysAreBounded(capped, 'harness warm lane')
+})
+
+// =========================================================================================
 // conductor.mjs — capped schemas are S_census, S_triage (tier 2) and S_boundaryPlan (tier 3).
 // Two waves: wave 1 has an in-scope quarantine (forces tier 3), wave 2 has findings only
 // (forces tier 2). Tier 3's newUnit ends the arc on wave 2 via arcComplete.

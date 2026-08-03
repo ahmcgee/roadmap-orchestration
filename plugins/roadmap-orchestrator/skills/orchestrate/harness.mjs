@@ -1715,14 +1715,21 @@ async function runChain(chain) {
     checkpoint()
   }
 
-  // Lane worktree: the head's branch, fresh from the tip. Crash residue never reaches here —
-  // chain detection excludes units whose passed state says running/merge-ready, so a link with
-  // committed work re-enters through ordinary dispatch and adoption, never a lane rebuild.
+  // Lane worktree: DETACHED at the tip — never on a unit branch. The per-link pins below are
+  // `git branch unit/<id> HEAD`, which only bound link boundaries if no checked-out branch is
+  // advancing with the commits: a lane on unit/<head> would swallow the whole chain into the
+  // head's branch (head pin collides, later links' diffs collapse to empty — eval-observed by
+  // the sim work before it could reach a paid run). Detached, every pin including the head's
+  // is a fresh branch create, and removing the lane worktree later destroys nothing pinned.
+  // Crash residue never reaches here — chain detection excludes units whose passed state says
+  // running/merge-ready, so a link with committed work re-enters through ordinary dispatch.
   const ws = await runOr({ ok: false, sha: '', state: 'ready', detail: 'lane setup agent died without a report' },
     STRICT +
-    `In the git repository at ${repo}, set up the worktree for unit ${head.id} at ${w} on branch unit/${head.id} ` +
-    `(fork base ${laneBase}): remove any stale branch/worktree remnants and create a fresh worktree ` +
-    `(git worktree add ${w} -b unit/${head.id} ${laneBase}); report ok:true, state:'ready', sha = HEAD.` +
+    `In the git repository at ${repo}, set up the DETACHED chain worktree at ${w} for a warm lane headed by ` +
+    `unit ${head.id} (fork base ${laneBase}): if a stale worktree occupies ${w}, clear the WORKTREE ONLY ` +
+    `(\`git worktree remove --force ${w}\`, then \`git worktree prune\`; if the directory still exists, delete ` +
+    `it) — never delete any branch. Then \`git worktree add --detach ${w} ${laneBase}\`; report ok:true, ` +
+    `state:'ready', sha = HEAD.` +
     ghRunning(head),
     { model: 'haiku', phase: 'Setup', label: `lane-setup:${head.id}`, schema: S.setup })
   if (!ws.ok || !sameSha(ws.sha, laneBase)) return demote(`lane setup failed (${ws.detail ?? ws.sha ?? 'no sha'})`)
@@ -1793,9 +1800,12 @@ async function runChain(chain) {
     `Each unit's spec and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
     `frozen (specs: ${specsList}). ${convClause}${designClauses}Conventions and commands are documented at ` +
     `${brief}. Before writing new code, search the codebase for existing implementations or symbols to reuse. ` +
-    `For EACH link, in order: implement it fully (the code and the tests its acceptance criteria call for), run ` +
+    `For EACH link, in order — the FIRST link included: implement it fully (the code and the tests its ` +
+    `acceptance criteria call for), run ` +
     `the link-scoped tests, COMMIT with clear messages, then pin the link boundary with ` +
-    `\`git branch unit/<that link's id> HEAD\`, and only then start the next link. Never amend, rebase, or ` +
+    `\`git branch unit/<that link's id> HEAD\` (the worktree is on a detached HEAD, so each pin is a fresh ` +
+    `branch create — if it collides, something is wrong: stop and report that link done:false rather than ` +
+    `forcing or deleting), and only then start the next link. Never amend, rebase, or ` +
     `revisit an earlier link's commits once its branch is pinned — a later improvement to an earlier link ` +
     `belongs in the later link's commits. Deliver each link at the scope its spec intends; a link you genuinely ` +
     `cannot finish gets done:false (leave it uncommitted and unpinned, and stop the chain there — do not start ` +
