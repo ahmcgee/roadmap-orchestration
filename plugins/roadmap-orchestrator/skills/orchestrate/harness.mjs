@@ -439,6 +439,10 @@ const S = {
   merge: obj({
     merged: { type: 'boolean' }, suitePass: { type: 'boolean' },
     head: { type: 'string' }, detail: { type: 'string' },
+    // Refusal channels, both optional and empty on a clean merge: unit diffs touching the
+    // orchestrator's directory (NOROADMAP made mechanical — the merge strips and surfaces),
+    // and duplicate numeric prefixes under plan.prefixUniqueGlobs (quarantined, never repaired).
+    roadmapPaths: arr('string'), prefixCollision: arr('string'),
   }, ['merged', 'suitePass', 'head', 'detail']),
   // Boundary results — capped hard: these ride in state.json and the platform's
   // schema-retry resends over-long payloads verbatim (the H-1 failure mode).
@@ -1145,7 +1149,8 @@ async function runUnit(unit) {
       `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
       `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
       `Do NOT run the full project suite — that happens at merge. Also check whether ` +
-      `\`git diff ${base}..HEAD\` touches any path under .roadmap/contracts/. Report failures with the exact ` +
+      `\`git diff ${base}..HEAD\` touches any path under .roadmap/ (report that as contractSurfaceTouched — ` +
+      `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
       `verbatim error output, never paraphrased. If the tooling itself cannot run (missing dependency, broken ` +
       `command, environment failure) — as opposed to an assertion failing — report blocked:true and stop. ` +
       `Do not fix anything.`,
@@ -1401,27 +1406,79 @@ async function runUnit(unit) {
 
 /* --------------------- serial merge queue + suite gate ------------------ */
 async function mergeUnit(unit) {
-  let res = await run(
+  // NOROADMAP made mechanical: the merge is the last place a unit diff can smuggle
+  // orchestrator-state edits in (arc-observed: a unit edited a frozen contract from its
+  // worktree and the queue accepted it — content sound, channel wrong). Refusal is checked
+  // by the merge agent, the strip preserves the content in branch history, and the
+  // kind:'contract' debt entry routes adjudication to the architect (root return).
+  const roadmapCheck =
+    `check \`git diff --name-only $(git merge-base HEAD unit/${unit.id})..unit/${unit.id} -- .roadmap/\` — if it ` +
+    `lists ANY path, do NOT merge; touch nothing and report merged:false with those exact paths in \`roadmapPaths\`. `
+  // Plan-driven prefix-uniqueness guard, '' when unset so the prompt stays byte-identical on
+  // plans without numbered sequences (arc-observed: next-free-at-dispatch numbering collided
+  // twice in one arc; one collision silently erased a CHECK constraint at merge).
+  const prefixClause = plan.prefixUniqueGlobs?.length
+    ? ` Then, before the suite: for each of these globs — ${plan.prefixUniqueGlobs.join(', ')} — list the merged ` +
+      `tree's matching filenames and extract each filename's leading digit run; if two or more files share the ` +
+      `same digit run, the merge is REFUSED: undo it with \`git reset --hard ORIG_HEAD\` and report merged:false ` +
+      `with every colliding filename in \`prefixCollision\`.`
+    : ''
+  const mergePromptText =
     STRICT +
     `In the integration worktree at ${intWt} (branch ${intBranch}): first, if a merge is already in progress ` +
     `(a MERGE_HEAD exists), clear it with \`git merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
     `of HEAD (\`git merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
     `already landed), skip the merge but still run the project's full test suite (commands: ${brief}) and report ` +
-    `merged:true with the current HEAD sha. Otherwise merge branch unit/${unit.id} ` +
+    `merged:true with the current HEAD sha. Otherwise ${roadmapCheck}Only if it lists nothing, merge branch ` +
+    `unit/${unit.id} ` +
     `(git merge --no-ff unit/${unit.id}). If the merge conflicts, abort it (git merge --abort) and report ` +
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
-    `cleanly, run the project's full test suite (commands: ${brief}) and report the result. Report the current ` +
-    `HEAD sha either way.` + ghMerged(unit),
-    { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
+    `cleanly, run the project's full test suite (commands: ${brief}) and report the result.${prefixClause} ` +
+    `Report the current HEAD sha either way.` + ghMerged(unit)
+  let res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
+
+  if (!res.merged && res.roadmapPaths?.length) {
+    log(`${unit.id}: unit diff touches orchestrator-owned .roadmap/ (${res.roadmapPaths.join(', ')}) — stripping before merge`)
+    const strip = await run(
+      STRICT +
+      `In the worktree at ${wtOf(unit)} (branch unit/${unit.id}): restore every path under .roadmap/ to its state ` +
+      `at the merge base. Run \`BASE=$(git merge-base ${intBranch} HEAD)\`; then \`git checkout "$BASE" -- .roadmap/\` ` +
+      `(restores modified and deleted paths), and \`git rm -f\` each path listed by ` +
+      `\`git diff --name-only --diff-filter=A "$BASE"..HEAD -- .roadmap/\` (files the branch added; remove any ` +
+      `directories left empty). Commit the result with message "strip .roadmap/ — orchestrator-owned; original ` +
+      `content preserved in prior commits". Touch nothing outside .roadmap/. Report ok plus the new HEAD sha.`,
+      { model: 'haiku', phase: 'Merge', label: `strip-roadmap:${unit.id}`, schema: S.ws },
+    ).catch(() => null)
+    debtLog.push({ unit: unit.id, sha: res.head, kind: 'contract', severity: 'major',
+      what: `unit diff touched orchestrator-owned .roadmap/ paths, stripped before merge: ${res.roadmapPaths.join(', ')}`,
+      why: 'units may never write .roadmap/; the stripped content survives in the branch history — adjudicate ' +
+        'whether it belongs in a contract amendment (the channel it should have used)' })
+    if (!strip?.ok)
+      return quarantine(unit, `unit diff touches .roadmap/ (${res.roadmapPaths.join(', ')}) and the strip commit ` +
+        `failed — nothing merged; the branch is intact`, res)
+    res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge })
+    if (!res.merged && res.roadmapPaths?.length)
+      return quarantine(unit, 'unit diff still touches .roadmap/ after a strip commit — nothing merged', res)
+  }
+  if (!res.merged && res.prefixCollision?.length)
+    return quarantine(unit, `numbered-prefix collision at merge (${res.prefixCollision.join(', ')}) — pre-allocate ` +
+      `explicit numbers in the conventions contract and respec; never renumber silently`, res)
 
   if (!res.merged) {
     res = await run(
       `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id}, resolving ` +
-      `conflicts. Both sides are intentional work — consult ${specOf(unit)}, the specs of recently merged units ` +
+      `conflicts. First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
+      `recently merged units ` +
       `under ${repo}/.roadmap/specs/, and the contracts under ${repo}/.roadmap/contracts/ to decide each ` +
-      `resolution. Then run the full test suite. If you are genuinely unsure a resolution is semantically right, ` +
+      `resolution. Then run the full test suite.${prefixClause} If you are genuinely unsure a resolution is ` +
+      `semantically right, ` +
       `abort the merge and report merged:false rather than guessing. Report the HEAD sha and suite result.`,
       { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge })
+    if (!res.merged && res.roadmapPaths?.length)
+      return quarantine(unit, 'unit diff touches .roadmap/ at conflict resolution — nothing merged', res)
+    if (!res.merged && res.prefixCollision?.length)
+      return quarantine(unit, `numbered-prefix collision at merge (${res.prefixCollision.join(', ')}) — pre-allocate ` +
+        `explicit numbers in the conventions contract and respec; never renumber silently`, res)
     if (!res.merged) return quarantine(unit, 'unresolvable merge conflicts', res)
   }
 
