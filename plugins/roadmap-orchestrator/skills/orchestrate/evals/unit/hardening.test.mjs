@@ -81,6 +81,12 @@ test('1 owed: a preview-down wave owes explorer and design (and degrades preview
   assert.ok(!has(calls, 'design:'), 'no live preview -> no design reconcile call')
   assert.ok(state.degradations.some((d) => d.label === 'preview-setup' && d.kind === 'preview-failed'),
     'the dead mirror is a skill defect with operator instructions, not a log line')
+  // Regression pin (paid-eval-observed, fixed 2026-08-03): the dirty-primary check must EXCLUDE
+  // .roadmap/ — the conductor's own persist writers dirty it every boundary, and an unscoped
+  // porcelain gate killed the preview on every wave after the first in the conductor fixture.
+  const ps = calls.find((c) => c.label === 'preview-setup')
+  assert.ok(ps.prompt.includes(":(exclude).roadmap"),
+    'the porcelain pre-check is scoped to real user edits — orchestrator-owned dirt never blocks the mirror')
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
 })

@@ -1940,11 +1940,14 @@ if (previewStatus === 'pending') {
     STRICT +
     `Set up the arc's preview mirror: cd to the PRIMARY repository checkout at ${repo} and stay there for ` +
     `every git command. Then, ${previewStopCmd} (the pidfile lives OUTSIDE the repo). ` +
-    `Then run \`git status --porcelain\` — if it reports ANY entries, do NOT detach: report ok:false, and in ` +
+    `Then run \`git status --porcelain -- ':(exclude).roadmap'\` — .roadmap/ is the orchestrator's own working ` +
+    `state, EXPECTED to be dirty mid-arc; it carries across detaches and must never block the mirror ` +
+    `(eval-observed: gating on it killed the preview on every wave after the first). If that command reports ` +
+    `ANY entries — real local edits outside .roadmap/ — do NOT detach: report ok:false, and in ` +
     `\`detail\` give the exact porcelain output plus, for each modified tracked path, whether ` +
     `\`git diff ${integrationTip} -- <path>\` is empty (empty means the local content is byte-identical to the ` +
     `target tip — a carried modification left by a stale detach point; non-empty means real local edits). ` +
-    `If the tree is clean, run \`git checkout --detach ${integrationTip}\` — if git refuses, report ok:false ` +
+    `If it reports nothing, run \`git checkout --detach ${integrationTip}\` — if git refuses, report ok:false ` +
     `with the exact error. Either way never stash, reset, or force. ` +
     (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
     (p.start ? `Then start the preview from inside ${repo} with ${previewStartCmd(p.start)}. ${previewSweepRetry}` : '') +

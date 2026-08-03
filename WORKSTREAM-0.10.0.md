@@ -169,3 +169,23 @@ partially-addressed; revisit with its own paid cycle.
   add-multiply→add-divide chain on the happy path; gate-bad/gate-convention keep the teeth
   probes). README rerun discipline applies; a red bisects via `warmLanes:false` for diagnosis
   only, never to ship around.
+
+## Paid-cycle record (2026-08-03)
+
+- **Harness fixture: ALL CHECKS PASSED** (run wf_75bdc627-c72, 93 agents, ~1.82M tokens,
+  spend 3 fable / 23 opus / 3 sonnet / 63 haiku — inside envelope). Warm lane confirmed live
+  (detached lane-setup, one chain-plan, one chain-impl in the transcripts); both chain links
+  merged in order; gate-bad/gate-convention caught; gate-good merged; mirror live.
+- **Conductor fixture: every structural probe PASSED** (run wf_0c5cfbe7-af6, 154 agents,
+  ~3.06M tokens, spend in envelope; 3 waves, tiers 3/2/3, quarantine + in-contract respec +
+  4 health fix-units merged, debt stamped, feedback triaged, owed-marker escalation exercised
+  live). **Three preview probes FAILED** — root cause was a 0.10.0 regression, not the
+  methodology: the new porcelain pre-check refused on the conductor's own .roadmap/ persist
+  artifacts (expected dirt; RATIONALE §12 relies on it carrying across detaches). Wave 1
+  (clean repo) had a live preview; waves 2–3 refused. The owed/degradation machinery reported
+  it perfectly.
+- **Fix**: porcelain check scoped with `':(exclude).roadmap'`; regression-pinned in
+  hardening.test.mjs test 1; validated by a targeted Haiku probe running the regenerated real
+  prompt against the actual failed eval-c primary — detached cleanly to the target tip.
+- **Remaining before PR**: one clean conductor-fixture re-run (fresh dir) after the usage
+  reset, as the recorded source-of-truth for the preview path. Everything else is validated.
