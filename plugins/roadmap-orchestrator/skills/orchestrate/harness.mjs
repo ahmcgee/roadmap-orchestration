@@ -935,7 +935,7 @@ async function runUnit(unit) {
   // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
   // the record with {status:'running'} before us). A unit that was 'running' in the last
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
-  const adopt = !!unit.existingBranch || prior.units?.[unit.id]?.status === 'running'
+  const adopt = !!unit.existingBranch || ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status)
 
   // H-7: implementer-reported deviation from a frozen surface. `mismatch` is consumable
   // (one consult per report, respecting the consult budget); `mismatchEver` sticks — carrying
@@ -1736,9 +1736,17 @@ for (let changed = true; changed;) {
     const st = rec(u.id)?.status
     // `deferred` on an in-scope unit is always stale: it was stamped when the unit was out of
     // scope (or transiently withheld) and the plan has since said otherwise.
-    if (st === 'deferred' || (st === 'blocked' && !blockedBy(u))) {
+    // `running`/`merge-ready` at wave START are crash residue — the script just started, so
+    // nothing can actually be running. Without this reset the adopt guard in runUnit
+    // (prior.units status running) was unreachable on a relaunch and crashed units stranded
+    // exactly like the 'blocked' class this loop already heals: ready() requires 'pending',
+    // and nothing ever restored it. Reset re-enters dispatch; setup then auto-adopts any
+    // committed branch work (rung-3 recovery as documented, now actually mechanical).
+    if (st === 'deferred' || st === 'running' || st === 'merge-ready' || (st === 'blocked' && !blockedBy(u))) {
       units.set(u.id, { status: 'pending' })
-      log(`${u.id}: ${st === 'deferred' ? 'in scope again' : 'unblocked (dependency resolved)'} — re-entering dispatch`)
+      log(`${u.id}: ${st === 'deferred' ? 'in scope again'
+        : st === 'blocked' ? 'unblocked (dependency resolved)'
+        : `crash residue (was ${st}) — committed work auto-adopts`} — re-entering dispatch`)
       changed = true
     }
   }
