@@ -1542,8 +1542,12 @@ if (previewStatus === 'pending') {
     STRICT +
     `Set up the arc's preview mirror: cd to the PRIMARY repository checkout at ${repo} and stay there for ` +
     `every git command. Then, ${previewStopCmd} (the pidfile lives OUTSIDE the repo). ` +
-    `Then run \`git checkout --detach ${integrationTip}\` — if git refuses (for example locally-modified ` +
-    `files), report ok:false with the exact error; never stash, reset, or force. ` +
+    `Then run \`git status --porcelain\` — if it reports ANY entries, do NOT detach: report ok:false, and in ` +
+    `\`detail\` give the exact porcelain output plus, for each modified tracked path, whether ` +
+    `\`git diff ${integrationTip} -- <path>\` is empty (empty means the local content is byte-identical to the ` +
+    `target tip — a carried modification left by a stale detach point; non-empty means real local edits). ` +
+    `If the tree is clean, run \`git checkout --detach ${integrationTip}\` — if git refuses, report ok:false ` +
+    `with the exact error. Either way never stash, reset, or force. ` +
     (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
     (p.start ? `Then start the preview from inside ${repo} with ${previewStartCmd(p.start)}. ${previewSweepRetry}` : '') +
     previewHealth() +
@@ -1553,7 +1557,15 @@ if (previewStatus === 'pending') {
   if (ps?.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
   else {
     previewStatus = 'failed'
-    log(`preview setup failed — continuing without a mirror (${ps?.detail ?? ps?.sha ?? 'agent error'})`)
+    // Loud, not a log line: a dead mirror silently no-ops the explorer AND the design reconcile
+    // for the whole wave (arc-observed) — the boundary's owed markers re-queue those jobs, and
+    // this entry tells the operator exactly what to do with the primary checkout.
+    degrade({ label: 'preview-setup', model: 'haiku', phase: 'Preview', kind: 'preview-failed',
+      what: `preview mirror never came up (${String(ps?.detail ?? ps?.sha ?? 'agent died without a report').slice(0, 300)}) ` +
+        `— the wave runs without runtime observability and the boundary will record owed explorer/design markers. ` +
+        `Operator: if the diagnosis shows modified paths byte-identical to the target tip (a carried modification ` +
+        `from a stale detach point), a plain \`git checkout --detach ${integrationTip}\` in the primary checkout is ` +
+        `safe; real local edits are yours to commit or stash — the harness never will.` })
   }
 }
 
