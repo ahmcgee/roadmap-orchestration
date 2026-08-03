@@ -59,7 +59,7 @@ fi
 # Debt projection (informational): issue mode banks tech debt to roadmap:debt issues (debt.md is
 # dropped, decision 11). A continuation boundary that banked debt shows up here.
 echo "-- debt projection --"
-DEBTS=$(gh issue list "${G[@]}" --label roadmap:debt --state open --json number,title --jq '.[]|"  #\(.number) \(.title)"' 2>/dev/null)
+DEBTS=$(gh issue list "${G[@]}" --label roadmap:debt --state open --limit 1000 --json number,title --jq '.[]|"  #\(.number) \(.title)"' 2>/dev/null)
 [ -n "$DEBTS" ] && printf 'open roadmap:debt issues:\n%s\n' "$DEBTS" || echo "no open roadmap:debt issues"
 
 # Rate-limit signal: gh-sync degradations are best-effort misses. A handful is fine; a flood means the

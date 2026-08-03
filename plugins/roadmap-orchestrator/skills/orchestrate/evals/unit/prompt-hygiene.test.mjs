@@ -283,6 +283,10 @@ const makeState = (extra = {}) => ({
 // 19 observed production failures. These rules fail each gate exactly once so every fix path is
 // walked, then approve so the wave still terminates.
 const FIX_ROUNDS = [
+  // impl confesses one deferred item -> the post-impl `debt-fix:` sweep prompt (capped S.impl)
+  { match: /^impl:happy$/, result: {
+    summary: 'done', filesChanged: [],
+    debt: [{ what: 'thin test on the edge case', kind: 'test', severity: 'minor' }] } },
   // review blocks on round 0 only -> the in-loop `fix:` prompt
   { match: /^review:.*#0$/, result: {
     blocking: [{ summary: 'a real defect', file: 'a.js', confidence: 1 }],
@@ -332,7 +336,7 @@ test('harness: every capped-schema prompt states the length contract', async () 
 
   // Guard against a future refactor quietly narrowing what this test sees.
   const seen = new Set(capped.map((c) => c.label.split(':')[0].split('#')[0]))
-  for (const required of ['impl', 'fix', 'gate-fix', 'opus-gate-fix', 'opus-gate', 'gate', 'explorer', 'health', 'flake', 'design'])
+  for (const required of ['impl', 'debt-fix', 'fix', 'gate-fix', 'opus-gate-fix', 'opus-gate', 'gate', 'explorer', 'health', 'flake', 'design'])
     assert.ok(seen.has(required), `harness: expected to exercise a capped '${required}' prompt; saw ${[...seen]}`)
 })
 

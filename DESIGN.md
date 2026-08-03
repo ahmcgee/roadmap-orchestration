@@ -309,20 +309,20 @@ async function runUnit(unit, state, config) {
 
   // (2) PLAN → ARCHITECT PLAN-CHECK — catch wrong-approach before any code exists.
   let plan = await agent(planPrompt(unit, ws),
-    { model: 'opus', effort: 'high', phase: 'Implement', schema: PLAN });
+    { model: 'opus', effort: 'medium', phase: 'Implement', schema: PLAN });
   if (config.planCheckRisk.includes(unit.risk)) {          // default: every risk tier
     const check = await agent(planCheckPrompt(unit, plan),
       { model: 'fable', effort: 'high', phase: 'Architect', schema: PLAN_VERDICT });
     if (check.verdict === 'redirect')
       plan = await agent(revisePlanPrompt(unit, plan, check.guidance),
-        { model: 'opus', effort: 'xhigh', phase: 'Implement', schema: PLAN });
+        { model: 'opus', effort: 'medium', phase: 'Implement', schema: PLAN });
     else if (check.verdict === 'quarantine')
       return quarantine(unit, ws, check);
   }
 
   // (3) IMPLEMENT — Opus, against the approved plan + frozen contracts.
   let impl = await agent(implementPrompt(unit, ws, plan), {
-    model: 'opus', effort: 'xhigh', phase: 'Implement', schema: IMPL_RESULT });
+    model: 'opus', effort: 'medium', phase: 'Implement', schema: IMPL_RESULT });
 
   // (4) VERIFY → REVIEW → FIX loop, bounded. The free Opus review filters noise so
   // the metered architect gate below reads a polished candidate, not a first draft.
@@ -331,7 +331,7 @@ async function runUnit(unit, state, config) {
     verify = await agent(verifyPrompt(unit, ws),              // run tests/lint/build
       { model: 'haiku', phase: 'Verify', schema: VERIFY_RESULT });
     review = await agent(reviewPrompt(unit, ws, verify),      // fresh context, adversarial
-      { model: 'opus', effort: 'high', phase: 'Review', schema: REVIEW_RESULT });
+      { model: 'opus', effort: 'medium', phase: 'Review', schema: REVIEW_RESULT });
     if (verify.pass && review.blocking.length === 0) break;
 
     // (E) MID-LOOP RESCUE — conditional; pure code over objective signals. §6.
@@ -345,7 +345,7 @@ async function runUnit(unit, state, config) {
       if (directive.action === 'quarantine') return quarantine(unit, ws, directive);
     }
     impl = await agent(fixPrompt(unit, ws, verify, review, directive),
-      { model: 'opus', effort: 'xhigh', phase: 'Fix', schema: IMPL_RESULT });
+      { model: 'opus', effort: 'medium', phase: 'Fix', schema: IMPL_RESULT });
   }
   if (!verify.pass) return quarantine(unit, ws, verify);
 
@@ -360,7 +360,7 @@ async function runUnit(unit, state, config) {
       return { unitId: unit.id, status: 'merge-ready', branch: `unit/${unit.id}` };
     if (gate.verdict === 'quarantine') break;
     await agent(fixPrompt(unit, ws, verify, review, gate),    // Opus applies the directives
-      { model: 'opus', effort: 'xhigh', phase: 'Fix', schema: IMPL_RESULT });
+      { model: 'opus', effort: 'medium', phase: 'Fix', schema: IMPL_RESULT });
     verify = await agent(verifyPrompt(unit, ws),
       { model: 'haiku', phase: 'Verify', schema: VERIFY_RESULT });
   }
@@ -487,6 +487,8 @@ config:
   fableEffort: 'high',             // Fable frontier judgment (plan-check + consult); Fable 5 default
   gateEffort: 'high',              // effort on forced Fable gate calls (the frontier gate)
   auditEffort: 'high',             // audit-only Fable gates; dial to 'medium' to keep the 10% sample cheap
+  implementEffort: 'medium',       // Opus code-authoring pipeline (plan/impl/debt-fix/fix rounds)
+  opusEffort: 'medium',            // every other Opus call (review, Opus-first checks/gates, boundary)
   maxConsults: E = ⌈U/4⌉ }         // mid-loop rescue budget
 ```
 
@@ -1160,7 +1162,12 @@ extends the same brake from health drafts to *all* debt: while the plan's own un
 to run, tier-2 promotes the wave's debt (even minor) into consolidation fix-units so it is cleaned
 up next wave; but debt **never creates a wave** — once the plan's units are terminal, debt banks to
 `roadmap:debt` issues and the arc completes, picked up at the next session's Phase 0. Low tolerance,
-termination preserved, no new mechanism.
+termination preserved, no new mechanism. Upstream of the boundary, banking itself is hardened
+(RATIONALE §15): fix-in-unit is the default, a banked item needs a closed-set `bankReason`
+("minor" alone never banks), the implementer's confessions get one in-unit `debt-fix` round, a
+gate approve holding correctness-kind debt is coerced to revise within the existing rounds, and
+issue mode mints one consolidated `roadmap:debt` issue per unit-residue (marker
+`wave=<N> unit=<id>`) whose resolving fix-unit names it in `closes`.
 
 **Bug reports and delivery.** Users file `roadmap:bug` issues (template auto-labels); the census
 lists open ones (`gh issue list`), triage closes/comments them — the batch-at-boundary discipline of

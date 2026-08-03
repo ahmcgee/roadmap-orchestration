@@ -116,6 +116,7 @@ function rules({ census, triage, boundary } = {}) {
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
   list.push({ match: /^spec-(expand|revise):/, result: OK })
   list.push({ match: /^(persist-plan|persist-state|bank-debt|log-append|move-feedback):/, result: OK })
+  list.push({ match: /^skill-feedback$/, result: OK })
   return list
 }
 
@@ -294,6 +295,35 @@ test('issue mode: census lists open roadmap:bug issues (not the retired roadmap:
   assert.ok(census, 'census runs in issue mode')
   assert.match(prompt(census), /--label roadmap:bug --state open/)
   assert.doesNotMatch(prompt(census), /roadmap:feedback/)
+  // Census discipline: gh silently caps at --limit (default 30) — every census must pass an
+  // explicit limit and must never trust a result equal to it (arc-observed: a 333-issue debt
+  // ledger silently truncated to 100).
+  assert.match(prompt(census), /--limit 1000/, 'the census passes an explicit high limit')
+  assert.match(prompt(census), /EQUALS the limit/i, 'and is told a full page means truncation')
+})
+
+// Every gh listing embedded in any issue-mode prompt must carry an explicit --limit — a census-
+// style listing without one silently truncates at 30. (--limit 1 marker lookups satisfy this.)
+test('issue mode: every embedded `gh issue list` carries an explicit --limit', async () => {
+  const { agent } = await conduct({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5 }),
+    state: mkState({
+      debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }],
+      boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }),
+    }),
+    agentRules: rules({ triage: triageAdmit(['a-fix'], { debtLedger: ['leftover'] }) }),
+    waveHandler: waves(
+      mkState({
+        debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }],
+        boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }),
+      }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  for (const c of agent.calls) {
+    for (const m of c.prompt.matchAll(/`(gh issue list[^`]*)`/g))
+      assert.match(m[1], /--limit \d+/, `unbounded listing in ${c.label}: ${m[1]}`)
+  }
 })
 
 /* ============================================================================== */
@@ -643,6 +673,100 @@ test('debt item text appears in bank-debt:w1 and is not re-sent at wave 2', asyn
   assert.ok(!prompt(bank2).includes(marker), 'wave-1 debt is not re-banked at wave 2')
 })
 
+// Issue mode mints ONE consolidated roadmap:debt issue per unit-with-residue, keyed wave+unit
+// (arc-observed: one-issue-per-finding produced 650+ issues; index-keyed markers duplicated on a
+// reordered resume). The ledger gets a single wave-level issue.
+const CONSOLIDATION_DEBT = () => [
+  { unit: 'u1', kind: 'test', severity: 'minor', what: 'W1_THIN_TEST', why: '' },
+  { unit: 'u1', kind: 'structure', severity: 'major', what: 'W2_DUP_HELPER', why: '' },
+  { unit: 'u2', kind: 'test', severity: 'minor', what: 'W3_WEAK_ASSERT', why: '' },
+]
+const consolidationConduct = (debtItems) => conduct({
+  plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5 }),
+  state: mkState({ debt: debtItems, boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) }),
+  agentRules: [
+    { match: /^issue-new:/, result: { ok: true, opened: [] } },
+    ...rules({ triage: triageAdmit(['a-fix'], { debtLedger: ['LEDGE_LEFTOVER'] }) }),
+  ],
+  waveHandler: waves(
+    mkState({ debt: debtItems, boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) }),
+    mkState({ wave: 2, boundary: boundaryBlock() }),
+  ),
+})
+
+test('issue mode: bank-debt consolidates one issue per unit-residue plus one ledger issue', async () => {
+  const { agent } = await consolidationConduct(CONSOLIDATION_DEBT())
+  const bank = firstLabel(agent.calls, /^bank-debt:w1\b/)
+  assert.ok(bank, 'bank-debt fires')
+  const p = prompt(bank)
+  assert.ok(p.includes('roadmap:debt wave=1 unit=u1'), 'u1 residue keyed wave+unit')
+  assert.ok(p.includes('roadmap:debt wave=1 unit=u2'), 'u2 residue keyed wave+unit')
+  assert.ok(p.includes('roadmap:debt wave=1 ledger'), 'triage-ledger leftovers get one wave issue')
+  assert.doesNotMatch(p, /wave=1 (i|L)=\d/, 'index-keyed markers are gone')
+
+  const items = JSON.parse(p.slice(p.indexOf('Items:\n') + 'Items:\n'.length, p.lastIndexOf('\nReport ok:true')))
+  assert.equal(items.length, 3, 'three issues, not four findings')
+  const u1 = items.find((i) => i.marker.endsWith('unit=u1'))
+  assert.ok(u1.labels.includes('severity:major'), 'a mixed group takes the max severity')
+  assert.ok(u1.labels.includes('debt:test') && u1.labels.includes('debt:structure'), 'one kind facet per distinct kind')
+  assert.ok(u1.body.includes('W1_THIN_TEST') && u1.body.includes('W2_DUP_HELPER'), 'both findings in the one body')
+  assert.ok(items.find((i) => i.marker.endsWith('ledger')).body.includes('LEDGE_LEFTOVER'))
+})
+
+test('issue mode: consolidation markers are stable under a reordered debt array (resume-safe)', async () => {
+  const markersOf = ({ agent }) => {
+    const p = prompt(firstLabel(agent.calls, /^bank-debt:w1\b/))
+    return JSON.parse(p.slice(p.indexOf('Items:\n') + 'Items:\n'.length, p.lastIndexOf('\nReport ok:true')))
+      .map((i) => i.marker).sort()
+  }
+  const forward = markersOf(await consolidationConduct(CONSOLIDATION_DEBT()))
+  const reversed = markersOf(await consolidationConduct(CONSOLIDATION_DEBT().reverse()))
+  assert.deepStrictEqual(reversed, forward, 'the marker set is a function of stable ids, not array order')
+})
+
+// A promoted skeleton's `closes` list must survive the mergePlan whitelist into the next wave's
+// plan (the push drops unlisted fields), and the triage prompt teaches the field in issue mode
+// only — file mode stays byte-identical.
+test('issue mode: a promoted skeleton\'s `closes` survives into the next wave plan', async () => {
+  const { agent, workflow } = await conduct({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5 }),
+    state: mkState({
+      debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }],
+      boundary: boundaryBlock(),
+    }),
+    agentRules: [
+      { match: /^issue-new:/, result: { ok: true, opened: [{ id: 'debt-sweep', number: 77 }] } },
+      ...rules({ triage: { ...TRIAGE_OK, promote: [skeleton('debt-sweep', { closes: [7, 8] })] } }),
+    ],
+    waveHandler: waves(
+      mkState({ debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }], boundary: boundaryBlock() }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  const triage = firstLabel(agent.calls, /^triage:w1\b/)
+  assert.match(prompt(triage), /`closes`/, 'issue-mode triage prompt teaches the closes field')
+  assert.equal(workflow.calls.length, 2, 'the promoted unit dispatches a second wave')
+  const promoted = workflow.calls[1].args.plan.units.find((u) => u.id === 'debt-sweep')
+  assert.ok(promoted, 'promoted skeleton lands in the next plan')
+  assert.deepStrictEqual(promoted.closes, [7, 8], 'closes survives the whitelist push')
+})
+
+test('file mode: the triage prompt never mentions the closes field', async () => {
+  const { agent } = await conduct({
+    state: mkState({
+      debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }],
+      boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }),
+    }),
+    agentRules: rules({ triage: triageAdmit(['a-fix']) }),
+    waveHandler: waves(
+      mkState({ debt: [{ unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'w', why: '' }], boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  assert.doesNotMatch(prompt(firstLabel(agent.calls, /^triage:w1\b/)), /closes/,
+    'file-mode triage prompt is byte-identical to legacy')
+})
+
 /* ============================================================================== */
 /* 11. Feedback move to triaged/<wave>/                                            */
 /* ============================================================================== */
@@ -693,6 +817,53 @@ test('the returned state is threaded to the next wave, boundary/debt consumed', 
   assert.ok(threaded.spend.opus >= 7, 'arc-cumulative spend preserved (conductor may add its own tally)')
   assert.ok(!threaded.boundary, 'consumed boundary removed before re-dispatch')
   assert.deepStrictEqual(threaded.debt, [], 'consumed debt cleared before re-dispatch')
+})
+
+// The harness now returns prior+wave degradations (arc-cumulative); the conductor must absorb
+// only the delta past what it dispatched — seeding from inState AND pushing the full returned
+// array would double-count every prior entry at each wave.
+test('degradations absorb the wave delta only — no duplication across waves', async () => {
+  const SEED = { script: 'harness', wave: 1, label: 'old:x', model: 'haiku', kind: 'no-report', what: 'seeded' }
+  const NEW = { script: 'harness', wave: 2, label: 'impl:y', model: 'opus', kind: 'threw', what: 'fresh' }
+  const { result } = await conduct({
+    state: mkState({
+      degradations: [SEED],
+      boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }),
+    }),
+    agentRules: rules({ triage: triageAdmit(['consolidate-gcd']) }),
+    // Mimic the fixed harness contract: wave 1 returns cumulative (dispatched + its own new
+    // entry); wave 2 returns its cumulative input untouched (a clean wave).
+    waveHandler: (args, i) => (i === 0
+      ? mkState({ wave: 1, boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }),
+          degradations: [...(args.state.degradations ?? []), NEW] })
+      : mkState({ wave: 2, boundary: boundaryBlock(),
+          degradations: args.state.degradations ?? [] })),
+  })
+  assert.deepStrictEqual(result.degradations, [SEED, NEW],
+    'exactly seed + delta, each once — neither dropped nor double-counted')
+})
+
+// skill-feedback.md carries hand-written sections alongside the rendered degradations; the
+// writer must replace ONLY its marker-delimited region, never the whole file (arc-observed:
+// a full-file overwrite destroyed a user's design-feedback section mid-run).
+test('skill-feedback writes only its marker region, preserving the rest of the file', async () => {
+  const { agent } = await conduct({
+    state: mkState({ degradations: [{ script: 'harness', wave: 1, label: 'impl:x', model: 'opus', kind: 'no-report', what: 'MARKER_WHAT' }] }),
+  })
+  const sf = firstLabel(agent.calls, /^skill-feedback$/)
+  assert.ok(sf, 'a degradation-carrying run writes skill-feedback')
+  assert.equal(sf.model, 'haiku')
+  assert.ok(sf.prompt.includes('<!-- roadmap:degradations -->'), 'opening marker present')
+  assert.ok(sf.prompt.includes('<!-- /roadmap:degradations -->'), 'closing marker present')
+  assert.ok(sf.prompt.includes('MARKER_WHAT'), 'the rendered entry is in the region')
+  assert.match(sf.prompt, /replace ONLY the lines between/, 'replace-region instruction present')
+  assert.ok(!/Overwrite the file [^\n]*skill-feedback\.md with exactly/.test(sf.prompt),
+    'the clobbering whole-file form is gone')
+})
+
+test('a clean run never writes skill-feedback', async () => {
+  const { agent } = await conduct()
+  assert.equal(hasLabel(agent.calls, /^skill-feedback$/), false, 'no degradations -> no write')
 })
 
 /* ============================================================================== */

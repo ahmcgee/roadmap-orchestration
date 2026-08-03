@@ -23,10 +23,17 @@ remove_issue() {
 # Sweep every OPEN issue carrying a roadmap kind label (unit/debt/feedback/arc). Merged units are
 # already closed and drop out of --state open, so this catches quarantines, the tracking issue, banked
 # debt, and any mid-run fix-unit issue the manifest could not know about ahead of time.
+# gh issue list silently caps at its --limit (default 30) — an arc can bank far more debt issues than
+# that, so loop until a listing comes back empty: each removal drains the open set, making the loop
+# itself the pagination. The seq bound is a runaway brake, not a page count.
 n=0
 for lbl in roadmap:unit roadmap:debt roadmap:bug roadmap:arc; do
-  for num in $(gh issue list "${G[@]}" --label "$lbl" --state open --json number --jq '.[].number' 2>/dev/null); do
-    remove_issue "$num"; n=$((n+1))
+  for _ in $(seq 1 20); do
+    nums=$(gh issue list "${G[@]}" --label "$lbl" --state open --limit 100 --json number --jq '.[].number' 2>/dev/null)
+    [ -z "$nums" ] && break
+    for num in $nums; do
+      remove_issue "$num"; n=$((n+1))
+    done
   done
 done
 # Also remove any manifest issues that are CLOSED (merged units) so no marker residue lingers.

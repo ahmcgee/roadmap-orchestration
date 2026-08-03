@@ -81,6 +81,12 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   marker, so correctness never depends on this being present or
                                    //   fresh. The scheduler never reads it (issue numbers are non-
                                    //   deterministic; the scheduler stays on state.json).
+    "closes": [61, 62],            // issue mode, optional: EXISTING issue numbers this unit RESOLVES
+                                   //   (typically the consolidated roadmap:debt issues a sweep
+                                   //   fix-unit folds in, or a roadmap:bug it fixes). On merge, the
+                                   //   merge agent closes each with a comment naming the unit, and
+                                   //   the wave-tail sweep backstops it. Best-effort projection —
+                                   //   ignored in file mode; validated as positive integers.
     "design": ["checkin#opening-chrome"],  // optional in general, REQUIRED where a
                                    //   designAuthority `covers` this unit's surface. Cites the
                                    //   binding comp section(s). Threaded into implement/review/
@@ -174,9 +180,13 @@ Fields the scripts add:
 - **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
   accumulator.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
-  model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync`.
+  model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
+  write-failed`.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
-  unaffected; the wave-tail sweep reconciles what it can.
+  unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
+  checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
+  write heals it (large payloads are written in staged `<<<PART k/n>>>` chunks to stay under the
+  per-response output cap).
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
   `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
   conductor return carries the array, empty when the run was clean.
@@ -373,12 +383,24 @@ siblings never see each other), and ergonomics. For each finding worth fixing it
 those drafts **default into the next wave** unless cut.
 
 **The debt ledger.** Producers emit structured `debt` items
-`{what, why, severity: minor|major, kind: correctness|test|structure|ergonomics}`: the implementer
-(shortcuts taken), the reviewer (its `nonBlocking` / `preExisting` findings), both exit gates
-(imperfections approved rather than fixed), the fix rounds, and the health assessor. The harness
-collects the wave's items into the returned state's `debt` array; at the boundary they are promoted
-into fix units or appended to `debt.md`. Debt is durable where feedback is consumed; a resolved
-item is annotated, not deleted.
+`{what, why, severity: minor|major, kind: correctness|test|structure|ergonomics, bankReason}`: the
+implementer (shortcuts taken), the reviewer (its `nonBlocking` / `preExisting` findings), both exit
+gates, and the fix rounds (incl. the gate-fix rounds) — plus the health assessor. **Fix-in-unit is
+the default; banking is the exception** (arc-observed: ~350 banked items in one arc, most of them
+PR-review-grade corrections a fix round would have cleared). The rules, enforced by schema and
+code, not just prompt:
+- `bankReason` is a closed set — `out-of-scope-file | needs-migration-or-ruling |
+  pre-existing-untouched` — REQUIRED on gate debt and reviewer `nonBlocking` entries ("minor" is
+  never by itself a reason to bank); the code stamps `preExisting` with `pre-existing-untouched`.
+- The implementer's own confessions get ONE `debt-fix:<id>` sweep round while its context is
+  loaded; only what the sweep re-emits WITH a bankReason reaches the ledger.
+- **Correctness debt never banks through an approve.** A gate that approves while holding a
+  `kind:'correctness'` item is coerced to `revise` (the items become directives) within the
+  existing `maxGateRounds`; at the cap the Opus gate escalates to the frontier gate, and the
+  frontier gate banks at `severity:'major'` with a loud `correctness-debt-banked` degradation.
+The harness collects the wave's items into the returned state's `debt` array; at the boundary they
+are promoted into fix units or appended to `debt.md`. Debt is durable where feedback is consumed;
+a resolved item is annotated, not deleted.
 
 **The green-tip mirror.** When `plan.preview` exists, the harness detaches the *primary checkout*
 at the integration tip and, after each suite-green merge, has Haiku advance it (coalescing
@@ -523,7 +545,8 @@ integration-review material.
 | `minBlockConfidence` | 0.6 | Review findings below this confidence don't trigger fix rounds — false blockers are the reviewer's main cost |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
 | `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
-| `implementEffort` | `'xhigh'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement + every fix loop) — the Opus 5 starting point for agentic coding. The review/gate Opus calls keep their own lower efforts (review accuracy holds there); lower this if a sweep shows quality holds |
+| `implementEffort` | `'medium'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement, the post-impl debt-fix sweep, + every fix loop). Opus 5 holds coding quality at `medium` at a fraction of the tokens (its `low`/`medium` punch well above prior models'); raise per-arc via `plan.config` if a workload proves effort-sensitive |
+| `opusEffort` | `'medium'` | Effort for every other Opus call — boundary assessors (explorer/health/design), the adversarial review, the Opus-first plan-check and exit gate, and merge-conflict/integration fixes. Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
