@@ -378,6 +378,16 @@ const S = {
   // that trailed the essay).
   plan: obj({
     feasible: { type: 'boolean' }, files: arr('string'), testPlan: { type: 'string' },
+    // Evidence manifest — the plan pass already explored the code; hand that context forward
+    // instead of making the implementer re-acquire it (feedback item: the plan should carry
+    // context, not just intentions). Optional so pre-0.10 plans and resumes stay valid. The
+    // implementer gets it whole (the plan JSON is threaded in); the reviewer gets keyFiles
+    // ONLY, as a reading list — its fresh-eyes judgment must stay its own.
+    evidence: obj({
+      keyFiles: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 200 } },
+      signatures: { type: 'array', maxItems: 15, items: { type: 'string', maxLength: 300 } },
+      seams: { type: 'array', maxItems: 10, items: { type: 'string', maxLength: 400 } },
+    }),
     approach: { type: 'string' }, notes: { type: 'string' },
   }, ['feasible', 'files', 'testPlan', 'approach']),
   planVerdict: obj({
@@ -916,6 +926,9 @@ async function runUnit(unit) {
   // the wave ledger so boundary triage sees it even when the unit merges.
   let mismatch = null
   let mismatchEver = null
+  // The approved plan's evidence manifest (fresh builds only) — threaded to the reviewer as a
+  // reading list. Adopted/existing branches have no plan pass, so the clause stays '' there.
+  let planEvidence = null
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
   // diff nobody described. Sticky, and forces the frontier gate — the same compensation
@@ -1001,7 +1014,12 @@ async function runUnit(unit) {
     `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan — return the required fields with the structured ones FIRST and the ` +
     `free-text last: \`feasible\` (boolean), \`files\` (an array of the file paths you expect to touch), ` +
     `\`testPlan\` (how you will test it), then \`approach\` (your approach) LAST. Emit each as a real ` +
-    `JSON field — do not fold files/testPlan into the approach prose. If the spec cannot be satisfied ` +
+    `JSON field — do not fold files/testPlan into the approach prose. Also return \`evidence\`, the context ` +
+    `manifest your exploration already earned — the implementer starts from it instead of re-exploring, and ` +
+    `the reviewer gets its file list as a reading list: \`keyFiles\` (at most 20, one line each: path plus a ` +
+    `one-phrase why), \`signatures\` (at most 15, each one line: an exact signature/type the work builds ` +
+    `against, quoted), \`seams\` (at most 10, each a sentence or two: where the change hooks in, with a short ` +
+    `quoted anchor). ${TERSE}If the spec cannot be satisfied ` +
     `within its contracts, do not force it: set \`feasible\`:false and explain the contradiction in ` +
     `\`approach\`. Do not write code yet.`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
@@ -1072,13 +1090,16 @@ async function runUnit(unit) {
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
-        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then \`approach\` last.`,
+        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
+        `\`approach\` last — and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line ` +
+        `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
         { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
     }
   }
   // Never hand an infeasible plan to an implementer — there is no honest way to execute it.
   if (!implPlan.feasible)
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
+  planEvidence = implPlan.evidence ?? null
 
   setStage(unit.id, 'implement')
   const impl = await runOr(REPORT_LOST,
@@ -1142,6 +1163,10 @@ async function runUnit(unit) {
 
   // Free-tier polish loop: verify → adversarial review → fix, bounded.
   setStage(unit.id, 'polish')
+  const readingListClause = planEvidence?.keyFiles?.length
+    ? `The planner judged these files central — a reading list to orient you, never a boundary on your read ` +
+      `(judge the whole diff): ${planEvidence.keyFiles.join('; ')}. `
+    : ''
   let verify, review
   for (let round = 0; round <= C.maxFixRounds; round++) {
     verify = await run(
@@ -1160,7 +1185,7 @@ async function runUnit(unit) {
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
-      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}You did not write this code; assume it contains mistakes. Report ` +
+      `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}${readingListClause}You did not write this code; assume it contains mistakes. Report ` +
       `every defect you find, including ones you are uncertain about — your job is coverage; a downstream ` +
       `confidence filter discards weak findings, so under-reporting loses real bugs while over-reporting costs ` +
       `nothing. A finding is blocking if it is introduced by this diff AND it would cause incorrect behavior, ` +
