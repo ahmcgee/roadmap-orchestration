@@ -506,6 +506,13 @@ let previewSha = null
 let previewTarget = null
 let previewChain = Promise.resolve()
 let boundary = null
+// Owed boundary jobs — a job that was DUE but did not run (skipped or died) leaves a
+// machine-readable marker the next boundary trips over, instead of silently vanishing
+// (arc-observed: a preview-down wave skipped the design reconcile over five design-cited
+// units and nothing re-queued it — the root had to notice by hand). Seeded from the prior
+// wave; discharged when the job next runs successfully; carried with count+1 otherwise.
+// The conductor escalates entries owed two boundaries running to the Fable tier.
+let owed = (prior.owed ?? []).map((o) => ({ ...o }))
 
 const rec = (id) => units.get(id)
 // Per-unit forensic breadcrumb: stamp the pipeline stage onto a running record and checkpoint.
@@ -540,6 +547,7 @@ const serialize = () => ({
   // .roadmap/skill-feedback.md and absorbs only the delta past what it dispatched.
   ...(((prior.degradations?.length ?? 0) + degradations.length)
     ? { degradations: [...(prior.degradations ?? []), ...degradations] } : {}),
+  ...(owed.length ? { owed } : {}),
   ...(boundary ? { boundary } : {}),
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
@@ -703,8 +711,11 @@ async function runBoundary() {
   // a designed surface without citing it is the plan-pack defect Phase 0 hunts, and papering over
   // it here would hide exactly what we want surfaced. Needs the preview: the green-tip mirror is
   // the only place a browsable, integrated surface is guaranteed to exist.
-  const designUnits = plan.units.filter((u) => u.design?.length &&
-    rec(u.id)?.status === 'merged' && prior.units?.[u.id]?.status !== 'merged')
+  // Owed design units from a prior skipped/dead reconcile re-enter the due set (still merged,
+  // still design-cited) so the debt is paid, not merely remembered.
+  const owedDesignIds = new Set(owed.filter((o) => o.job === 'design').flatMap((o) => o.units ?? []))
+  const designUnits = plan.units.filter((u) => u.design?.length && rec(u.id)?.status === 'merged' &&
+    (prior.units?.[u.id]?.status !== 'merged' || owedDesignIds.has(u.id)))
   const doDesign = designUnits.length > 0 && previewStatus === 'live'
   const [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
@@ -760,13 +771,34 @@ async function runBoundary() {
       { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
     ).catch(() => null),
   ])
+  // Settle the owed ledger BEFORE any early return: a job that was DUE but produced nothing is
+  // owed whether it was skipped (precondition down) or died; a successful run discharges its
+  // entries; a job not due this wave carries its prior entry untouched. `count` = consecutive
+  // boundaries owed — the conductor escalates repeat offenders to the Fable tier.
+  const settleOwed = (job, due, ok, why, unitIds) => {
+    const prevEntry = owed.find((o) => o.job === job)
+    owed = owed.filter((o) => o.job !== job)
+    if (ok) return
+    if (!due) { if (prevEntry) owed.push(prevEntry); return }
+    owed.push({ job, wave: prevEntry?.wave ?? waveN, why, count: (prevEntry?.count ?? 0) + 1,
+      ...(unitIds?.length ? { units: unitIds } : {}) })
+  }
+  const previewWhy = previewStatus === 'failed' ? 'preview failed at setup — fix the primary checkout and relaunch'
+    : 'no live preview this wave'
+  settleOwed('explorer', previewStatus !== 'none', !!expl,
+    doExplore ? 'explorer agent produced no report' : previewWhy)
+  settleOwed('health', doHealth, !!hlth, 'health assessor produced no report')
+  settleOwed('flake', doHealth && C.flakeReruns > 0, !!flk, 'flake re-runs produced no report')
+  settleOwed('design', designUnits.length > 0, !!dsgn,
+    doDesign ? 'design reconcile produced no report' : previewWhy,
+    designUnits.map((u) => u.id))
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
   if (!expl && !hlth && !flk && !dsgn) return
   if (designUnits.length && !dsgn)
     degrade({ label: `design:w${waveN}`, model: 'opus', phase: 'Boundary', kind: 'no-report',
       what: `design reconcile did not report for ${designUnits.map((u) => u.id).join(', ')} ` +
-        `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave ` +
-        `and are not revisited automatically. Re-run the reconcile against them before close-out.` })
+        `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave. ` +
+        `An owed marker re-queues them at the next boundary; they must be reconciled or explicitly waived before close-out.` })
   boundary = { explorer: expl, health: hlth, flake: flk, design: dsgn }
   // Persist narratives via Haiku verbatim-writers (investigators flake on side effects;
   // verbatim writers don't — same idiom as the quarantine dossier). Rendering is a pure

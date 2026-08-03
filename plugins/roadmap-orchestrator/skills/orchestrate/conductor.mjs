@@ -314,6 +314,9 @@ const S_boundaryPlan = obj({
   reviseSpecs: { type: 'array', maxItems: 8, items: obj({ id: { type: 'string', maxLength: 60 }, goal: { type: 'string', maxLength: 400 }, acceptance: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 200 } }, constraints: { type: 'string', maxLength: 600 } }, ['id']) },
   cutUnits: strArr(12, 60),
   debtLedger: strArr(24, 400),
+  // Explicit waiver of owed boundary jobs (job names, e.g. 'design') — Fable-tier only, and
+  // only with the justification journaled; anything not waived rides forward.
+  waiveOwed: strArr(8, 30),
   journal: { type: 'string', maxLength: 1500 },
   escalate: { type: 'boolean' },
   escalateReason: oneOf(['contract-amendment', 'contingent-replan', 'needs-user', 'cut-line', 'none']),
@@ -403,8 +406,12 @@ function predicates(census, withheldIds) {
   const healthFixUnits = [...(health.fixUnits ?? []), ...(design.fixUnits ?? [])]
   const flakeFlips = flake.flips ?? []
   const userFeedback = census.pendingUserFeedback ?? []
-  const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0
-  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, anyJudgment }
+  // Owed boundary jobs (harness-written): due jobs that did not run. Non-empty is a judgment
+  // signal — a tier must consciously ride them forward, act on the broken precondition, or
+  // (Fable only) waive them; entries owed two boundaries running force tier 3.
+  const owedJobs = state.owed ?? []
+  const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0 || owedJobs.length > 0
+  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
 }
 
 // A health-assessor fix-unit draft {id, goal, files, acceptance} -> a default skeleton
@@ -472,6 +479,9 @@ async function ret(reason, tier, extra = {}) {
     spendDelta: deltaSpend(st.spend),
     // Always present (empty when clean) so the root never has to wonder whether the run was healthy.
     degradations,
+    // Owed boundary jobs surface on every return — on a terminal one they are the root's to
+    // discharge (or explicitly waive in the architect log) before close-out.
+    ...(st.owed?.length ? { owed: st.owed } : {}),
     ...extra,
   }
 }
@@ -504,9 +514,15 @@ const opusTriagePrompt = (N, P) =>
   `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
   `${issueMode ? `the open user bug issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
-  `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback })}\n` +
+  `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback, owed: P.owedJobs })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
   `fix-unit DRAFTS to admit. ` +
+  (P.owedJobs.length
+    ? `The \`owed\` list names boundary jobs that were DUE but did not run (count = consecutive boundaries owed). ` +
+      `They discharge automatically when the job next succeeds — never silently ignore one: if its precondition is ` +
+      `broken (e.g. the preview is down), that is itself a finding to act on, and only the Fable tier may waive an ` +
+      `owed job outright — escalate 'hard-call' if you believe one should be. `
+    : '') +
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
@@ -538,7 +554,14 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `dossiers of the quarantined units named here (${JSON.stringify(P.quarantined)}) under ` +
   `${repo}/.roadmap/quarantine/, then ${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, this wave's feedback ` +
   `under ${repo}/.roadmap/feedback/, and ${repo}/.roadmap/debt.md. Structured evidence:\n` +
-  `${JSON.stringify({ quarantined: P.quarantined, findings: P.findings, drafts: P.healthFixUnits, debt: P.nonContractDebt })}\n` +
+  `${JSON.stringify({ quarantined: P.quarantined, findings: P.findings, drafts: P.healthFixUnits, debt: P.nonContractDebt, owed: P.owedJobs })}\n` +
+  (P.owedJobs.length
+    ? `The \`owed\` list names boundary jobs that were DUE but did not run (count = consecutive boundaries owed); ` +
+      `they discharge automatically when the job next succeeds. For each, either act on the broken precondition ` +
+      `(e.g. a fix unit or journal instruction for a downed preview) or — if the job is genuinely moot for this ` +
+      `arc — waive it explicitly by putting its job name in \`waiveOwed\` and justifying the waiver in your ` +
+      `journal. An owed job you neither act on nor waive rides forward and forces this tier again. `
+    : '') +
   `Route each quarantined unit by its dossier REASON: environment/tooling-blocked -> re-run as-is (prefer ` +
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
@@ -696,7 +719,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   if (CC.boundaryTriage === 'root') return await ret('root-triage', 4, { pendingFeedback: census.pendingUserFeedback ?? [], quarantined: P.quarantined.map((id) => ({ id })) })
 
   let tier
-  if (P.quarantined.length || (CC.boundaryTriage === 'always-fable' && P.anyJudgment)) tier = 3
+  if (P.quarantined.length || P.owedJobs.some((o) => (o.count ?? 1) >= 2) ||
+      (CC.boundaryTriage === 'always-fable' && P.anyJudgment)) tier = 3
   else if (P.anyJudgment || (CC.fixUnitAdmit === 'triage' && P.drafts.length)) tier = 2
   else tier = 1
 
@@ -753,6 +777,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   let cutUnitIds = []
   let journal = null
   let arcCompleteFlag = false
+  let waiveOwedList = []
   let feedbackDispositions = triageResult?.feedback ?? []
   let debtLedger = []
 
@@ -773,6 +798,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     cutUnitIds = boundaryPlan.cutUnits ?? []
     journal = boundaryPlan.journal
     debtLedger = boundaryPlan.debtLedger ?? []
+    waiveOwedList = boundaryPlan.waiveOwed ?? []
   }
 
   // Assign final ids up front so spec files and plan units agree.
@@ -824,6 +850,13 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   if (state.boundary) { lastBoundary = state.boundary; lastBoundaryWave = N }
   delete consumed.boundary
   consumed.debt = []
+  // Fable-authorized owed-job waivers (justification is in the journal). Everything not waived
+  // rides forward in `owed` untouched — the harness owns discharge, the conductor only waives.
+  if (waiveOwedList.length && consumed.owed?.length) {
+    consumed.owed = consumed.owed.filter((o) => !waiveOwedList.includes(o.job))
+    if (!consumed.owed.length) delete consumed.owed
+    log(`wave ${N}: fable tier waived owed job(s): ${waiveOwedList.join(', ')}`)
+  }
   mergeConductorSpend(consumed)
   boundaries.push({ wave: N, tier: ranTier, escalated: null })
   consumed.conductor = { reason: null, wavesRun, boundaries }
