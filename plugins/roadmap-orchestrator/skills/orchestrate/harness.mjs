@@ -109,7 +109,8 @@ const STRICT = 'Start by `cd` to the exact absolute path named in this task — 
 // every capped field names its budget rather than betting on one.
 const REPORT = 'Commit your work BEFORE emitting the structured report — the commit is the deliverable. Then keep ' +
   'every free-text field terse and inside its budget: `summary` 2–3 short sentences (max 700 characters); ' +
-  '`contractMismatch` one or two sentences (max 300 characters), left empty unless it truly applies; each `debt` ' +
+  '`contractMismatch` one or two sentences (max 300 characters), left empty unless it truly applies; `specGap` ' +
+  'likewise one or two sentences (max 300 characters), left empty unless it truly applies; each `debt` ' +
   "entry's `what` and `why` a sentence or two (max 400 characters each); `notes` at most a short paragraph " +
   '(max 2000 characters). An oversized report fails validation and can kill this unit even though the work is done. '
 // .roadmap/ belongs to the orchestrator, never to a coding agent. Arc-observed: an
@@ -154,6 +155,16 @@ const MISMATCH_IS_A_TRIGGER =
   'not a notes field: merely filling it in escalates to the frontier architect and returns the whole run for a ' +
   'contract amendment. Never write "none" or an FYI there — observations, caveats and things you merely want ' +
   'flagged go in `notes` or `debt`. '
+// The pull-channel to the architect (feedback 10a). Evidence for its existence: the mechanical
+// rescue triggers fired ZERO times in 92 units, while every real failure was a silent design
+// decision under a spec that didn't cover it. The same scratchpad-abuse discipline as
+// MISMATCH_IS_A_TRIGGER applies — an FYI here costs a frontier consult.
+const GAP_IS_A_TRIGGER =
+  'Separately, `specGap` is your pull-channel to the architect: fill it ONLY when you made (or must make) a ' +
+  'decision the spec does not settle and reasonable engineers would diverge — one or two sentences stating the ' +
+  'decision you took and the alternative. It is a trigger: its mere presence consults the frontier architect, who ' +
+  'may redirect the work. Routine judgment calls you are confident in, observations, and deferrals do not belong ' +
+  'there — those go in `notes` or `debt`. '
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
@@ -409,6 +420,10 @@ const S = {
     // untouchable, so contractSurfaceTouched can never see this case — arc-observed).
     // Presence fires the mid-loop architect consult and forces the Fable exit gate.
     contractMismatch: { type: 'string', maxLength: 300 },
+    // Implementer-pulled consult (10a): a decision the spec does not settle. Presence fires a
+    // Fable consult even on an all-green unit (the silent-design-decision class); if the
+    // consult budget is spent, it forces the Fable exit gate instead.
+    specGap: { type: 'string', maxLength: 300 },
     debt: debtArr, notes: { type: 'string', maxLength: 2000 },
   }, ['summary', 'filesChanged']),
   // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
@@ -443,7 +458,9 @@ const S = {
     directives: directiveArr, debt: gateDebtArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
-  directive: obj({ action: oneOf(['redirect', 'quarantine']), guidance: { type: 'string' } }, ['action', 'guidance']),
+  // 'confirm' exists for the specGap consult (the decision stands as built — no fix round);
+  // the stuck-rescue consult never offers it and its prompt is unchanged.
+  directive: obj({ action: oneOf(['redirect', 'quarantine', 'confirm']), guidance: { type: 'string' } }, ['action', 'guidance']),
   dossier: obj({ attempted: { type: 'string' }, evidence: { type: 'string' }, hypothesis: { type: 'string' } },
     ['attempted', 'evidence', 'hypothesis']),
   merge: obj({
@@ -934,6 +951,17 @@ async function runUnit(unit) {
   // diff nobody described. Sticky, and forces the frontier gate — the same compensation
   // mismatchEver makes, for the same reason (missing signal, high stakes).
   let reportLostEver = false
+  // 10a pull-channel state: `gap` is consumable (one consult per report), `gapEver` sticks.
+  // An unconsulted gap (budget spent) forces the Fable exit gate — an unadjudicated
+  // spec-silence decision is exactly the missing-signal/high-stakes case mismatchEver covers.
+  let gap = null
+  let gapEver = null
+  let gapConsulted = false
+  const noteGap = (r) => {
+    if (!r?.specGap || r.reportLost) return
+    gap = r.specGap
+    gapEver = r.specGap
+  }
   const noteMismatch = (r) => {
     if (!r?.contractMismatch) return
     mismatch = r.contractMismatch
@@ -1116,7 +1144,7 @@ async function runUnit(unit) {
     `can pass its gate. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
     `choose the deviation you judge correct, keep building, and describe it in the structured \`contractMismatch\` ` +
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
-    `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
+    `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
     `your work on the current branch with clear messages. ${REPORT}`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `impl:${unit.id}`, schema: S.impl })
   // The report died. Ask the branch whether the WORK died with it: commits present means the
@@ -1140,6 +1168,7 @@ async function runUnit(unit) {
     log(`${unit.id}: implement report lost but ${probe.sha?.slice(0, 7) ?? 'work'} is committed — judging the branch`)
   }
   noteMismatch(impl)
+  noteGap(impl)
   // The implementer's own debt confessions ("shortcuts taken") get ONE fix round while the
   // context is still loaded — the cheapest fixer there is (arc-observed: routing them straight
   // to the ledger banked hundreds of items a review-time fix would have cleared in minutes).
@@ -1154,10 +1183,10 @@ async function runUnit(unit) {
       `Fix them NOW — you have the unit's context loaded, and a deferred fix costs far more later. Re-emit in ` +
       `\`debt\` ONLY what is genuinely not this unit's to fix, each with a \`bankReason\` from: ` +
       `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched — "minor" alone is never a ` +
-      `reason to defer. ${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
+      `reason to defer. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `debt-fix:${unit.id}`, schema: S.impl })
     if (swept.reportLost) { reportLostEver = true; addDebt(unit.id, base, impl.debt) }
-    else { addDebt(unit.id, base, swept.debt); noteMismatch(swept) }
+    else { addDebt(unit.id, base, swept.debt); noteMismatch(swept); noteGap(swept) }
   }
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
 
@@ -1215,14 +1244,15 @@ async function runUnit(unit) {
 
     // Mid-loop rescue: fired by code over objective signals only, and capped.
     let directive = null
-    const stuck = (!verify.pass && round >= C.maxFixRounds) || verify.contractSurfaceTouched || !!mismatch
+    const stuck = (!verify.pass && round >= C.maxFixRounds) || verify.contractSurfaceTouched || !!mismatch || !!gap
     if (stuck && consultsUsed < C.maxConsults) {
       consultsUsed++
       const dossier = await run(
         `Distill a brief dossier for an architect about unit ${unit.id}, which is stuck. Read the spec at ${spec}; ` +
         `summarize what was attempted (branch unit/${unit.id}, worktree ${w}), the strongest failure evidence, and ` +
         `the most plausible root cause. Verify: ${JSON.stringify(verify)}. Review: ${JSON.stringify(review)}` +
-        ` Implementer-reported contract mismatch: ${mismatch ?? 'none'}.`,
+        ` Implementer-reported contract mismatch: ${mismatch ?? 'none'}.` +
+        ` Implementer-reported spec gap (a decision the spec does not settle): ${gap ?? 'none'}.`,
         { model: 'sonnet', phase: 'Escalate', label: `rescue-dossier:${unit.id}`, schema: S.dossier })
       directive = await run(
         `You are the architect. Unit ${unit.id} is stuck. Dossier: ${JSON.stringify(dossier)} (spec: ${spec} — ` +
@@ -1231,6 +1261,7 @@ async function runUnit(unit) {
         { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `consult:${unit.id}`, schema: S.directive })
       if (directive.action === 'quarantine') return quarantine(unit, 'architect consult', directive)
       mismatch = null   // consumed — one consult per reported mismatch
+      if (gap) { gap = null; gapConsulted = true }   // the dossier carried it; the architect saw it
     }
 
     const fixed = await runOr(REPORT_LOST,
@@ -1241,11 +1272,12 @@ async function runUnit(unit) {
       `Any \`debt\` you emit follows the implementer's rule: fix in-unit first; defer only what is genuinely ` +
       `not this unit's to fix, with a \`bankReason\` (out-of-scope-file | needs-migration-or-ruling | ` +
       `pre-existing-untouched). ` +
-      `${MISMATCH_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
+      `${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Commit your fixes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `fix:${unit.id}#${round}`, schema: S.impl })
     if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt)
     noteMismatch(fixed)
+    noteGap(fixed)
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
 
@@ -1262,6 +1294,37 @@ async function runUnit(unit) {
     `run. Fix nothing.`,
     { model: 'haiku', phase: 'Verify', label, schema: S.verify })
 
+  // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
+  // adjudication — the polish loop's rescue only fires on failure signals, and the class this
+  // closes is precisely the silent design decision under an all-green suite. One consult per
+  // reported gap, riding the same maxConsults budget; an unconsulted gap forces the Fable gate.
+  if (gap && !gapConsulted && consultsUsed < C.maxConsults) {
+    consultsUsed++
+    gapConsulted = true
+    const gd = await run(
+      `You are the architect. The engineer on unit ${unit.id} made a decision the spec does not settle and pulled ` +
+      `you in: "${gap}". Read the spec at ${spec} and the contracts it references, and \`git diff ${base}..HEAD\` ` +
+      `in ${w} as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
+      `(or a better alternative) must be steered — the engineer applies your guidance as one fix round; ` +
+      `"quarantine" only if the unsettled decision invalidates the unit's premise. Do not write code.`,
+      { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `gap-consult:${unit.id}`, schema: S.directive })
+    gap = null
+    if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
+    if (gd.action === 'redirect') {
+      const gFix = await runOr(REPORT_LOST,
+        `Apply the architect's direction on unit ${unit.id} in ${w} (spec: ${spec}). The spec left a decision ` +
+        `unsettled; you reported it, and the architect ruled: ${gd.guidance}\nApply that ruling. ` +
+        `${NOROADMAP}Commit your changes. ${REPORT}`,
+        { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gap-fix:${unit.id}`, schema: S.impl })
+      addDebt(unit.id, base, gFix.debt)
+      if (gFix.reportLost) reportLostEver = true
+      noteMismatch(gFix)
+      verify = await gateReverify(`gap-verify:${unit.id}`)
+      if (verify.blocked)
+        return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+    }
+  }
+
   // Exit gate — Opus-first, escalating to the Fable architect only when the call is
   // genuinely hard. High-risk units, contract-touching diffs, and a deterministic audit
   // sample skip straight to the guaranteed Fable gate: Opus cannot reliably self-detect the
@@ -1272,12 +1335,14 @@ async function runUnit(unit) {
   // all-green tests) is arc-observed value.
   const forceFrontier =
     C.exitGate === 'always-fable' || unit.risk === 'high' ||
-    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver || reportLostEver
+    verify.contractSurfaceTouched || auditPick(unit) || mismatchEver || reportLostEver ||
+    (gapEver && !gapConsulted)   // an unadjudicated spec-silence decision — same missing-signal logic
   // An audit-only force (the sample fired, nothing structural did) is a spot-check of an
   // Opus-approved unit, not a from-scratch re-gate: it runs at the cheaper auditEffort and
   // reads a diet of the diff. Any structural force keeps the full-read gateEffort path.
   const auditOnly = auditPick(unit) && C.exitGate !== 'always-fable' &&
-    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver
+    unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver &&
+    !(gapEver && !gapConsulted)
 
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
@@ -1366,6 +1431,11 @@ async function runUnit(unit) {
       'self-reported summary, debt entries and contract-mismatch signal are ABSENT. Judge the diff itself; ' +
       'do not read the missing report as "nothing to declare".'
     : ''
+  const gapClause = gapEver
+    ? ` The implementer reported a decision the spec does not settle: "${gapEver}"` +
+      `${gapConsulted ? ' (already adjudicated by an architect consult)' : ' (NOT yet adjudicated — the consult budget was spent)'}. ` +
+      `Judge that decision explicitly against the spec's intent.`
+    : ''
   const mismatchClause = mismatchEver
     ? ` The implementer reported deviating from a frozen contract surface: "${mismatchEver}". Adjudicate that ` +
       `deviation explicitly — approve it as recorded debt, direct a revert to the contract as written, or ` +
@@ -1393,7 +1463,7 @@ async function runUnit(unit) {
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
       `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
       `If revising, ` +
-      `give specific directives: what and why, not code. ${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${reportLostClause}` +
+      `give specific directives: what and why, not code. ${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${gapClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     // Same coercion as the Opus gate — but this IS the frontier, so at the round cap the items
