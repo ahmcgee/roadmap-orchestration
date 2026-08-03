@@ -16,9 +16,11 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   plan.conventions): shared-utility catalog units must reuse +
                        #   naming/error/pattern conventions units must follow. Threaded by
                        #   the harness into every unit's implement/review/gate.
-  constraints.md       # LIVING. Cross-cutting design constraints from the source material
-                       #   that aren't interface contracts (perf budgets, tech choices,
-                       #   compliance, non-goals); specs cite the ones that bind them.
+  constraints.md       # LIVING. Numbered rulings ledger: `C-<nn> — <rule>` + one provenance
+                       #   line each. Ids stable forever (never renumbered/reused; supersede
+                       #   with a NEW ruling naming the old). Cross-cutting constraints that
+                       #   aren't interface contracts (perf budgets, tech choices, compliance,
+                       #   non-goals); specs + dismissal criteria cite rulings by id.
   debt.md              # LIVING. Ledger of consciously-deferred technical debt; appended at
                        #   each triage, carries across waves and arcs, read at Phase 0 as
                        #   candidate scope. Distinct from feedback — kept, not consumed.
