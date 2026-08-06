@@ -352,6 +352,21 @@ test('draft is materialized into an in-scope plan unit; spec-expand prompt carri
   assert.ok(prompt(spec).includes(acc), 'the spec-expand prompt carries the acceptance text')
 })
 
+test('bounded-v1 materialization preserves a health draft files set as consolidation allowedPaths', async () => {
+  const d = draft('bounded-health')
+  const { workflow } = await conduct({
+    plan: mkPlan({ methodology: { scopePolicy: 'bounded-v1' } }),
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [d] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  const materialized = workflow.calls[1].args.plan.units.find((u) => u.id === 'bounded-health')
+  assert.equal(materialized.scopeMode, 'consolidation')
+  assert.deepEqual(materialized.allowedPaths, d.files)
+  assert.equal(workflow.calls[1].args.plan.methodology.scopePolicy, 'bounded-v1')
+})
+
 /* ============================================================================== */
 /* 3. Persist-before-dispatch ordering (seq monotonic across fakes)               */
 /* ============================================================================== */
@@ -722,6 +737,32 @@ test('issue mode: consolidation markers are stable under a reordered debt array 
   const forward = markersOf(await consolidationConduct(CONSOLIDATION_DEBT()))
   const reversed = markersOf(await consolidationConduct(CONSOLIDATION_DEBT().reverse()))
   assert.deepStrictEqual(reversed, forward, 'the marker set is a function of stable ids, not array order')
+})
+
+test('bounded issue debt keeps per-fact identities, consolidates by unit, and rechecks resolution', async () => {
+  const facts = [
+    { unit: 'u1', debtKey: 'cache-expiry', file: 'src/cache.ts', anchor: 'Cache.get()',
+      kind: 'correctness', severity: 'major', claim: 'expired entry visible', probe: 'npm test -- cache-expiry',
+      observed: 'assertion fails', recheck: 'rerun cache-expiry', bankReason: 'needs-migration-or-ruling' },
+    { unit: 'u1', debtKey: 'cache-race', file: 'src/cache.ts', anchor: 'Cache.put()',
+      kind: 'correctness', severity: 'major', claim: 'write race', probe: 'npm test -- cache-race',
+      observed: 'assertion fails', recheck: 'rerun cache-race', bankReason: 'needs-migration-or-ruling' },
+  ]
+  const plan = mkPlan({ tracking: 'issues', repoSlug: 'o/r', milestone: 'roadmap: eval', trackingIssue: 5,
+    methodology: { scopePolicy: 'bounded-v1' } })
+  const state = mkState({ debt: facts, boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) })
+  const { agent } = await conduct({ plan, state,
+    agentRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } },
+      ...rules({ triage: triageAdmit(['a-fix']) })],
+    waveHandler: waves(state, mkState({ wave: 2, boundary: boundaryBlock() })) })
+  const p = prompt(firstLabel(agent.calls, /^bank-debt:w1\b/))
+  assert.match(p, /roadmap:debt-fact key=cache-expiry/)
+  assert.match(p, /roadmap:debt-fact key=cache-race/)
+  assert.match(p, /no longer reproduces[\s\S]*RESOLVED/)
+  const records = JSON.parse(p.slice(p.indexOf('Records:\n') + 'Records:\n'.length,
+    p.lastIndexOf('\nReport ok:true')))
+  assert.equal(records.length, 1, 'two facts in one file/unit stay in one consolidated issue')
+  assert.equal(records[0].facts.length, 2, 'distinct reproducible facts do not collapse by file')
 })
 
 // A promoted skeleton's `closes` list must survive the mergePlan whitelist into the next wave's

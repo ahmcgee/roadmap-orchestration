@@ -1,0 +1,19 @@
+{
+  "name": "@roadmap-orchestrator/codex-runtime",
+  "version": "0.11.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "roadmap-codex": "./bin/roadmap-codex.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.146.1",
+    "ajv": "8.20.0"
+  }
+}

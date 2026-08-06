@@ -45,7 +45,7 @@ const owedFor = (state, job) => (state.owed ?? []).find((o) => o.job === job)
 // Canned shapes the built-in fake defaults do not cover (the harness labels below are newer than
 // the DEFAULTS table in fakes.mjs, which is a frozen surface this file must not edit).
 const IMPL_OK = { summary: 'done', filesChanged: [] }
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
+const VERIFY_OK = { head: BASE_SHA, changedPaths: [], pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
 const MERGE_REFUSAL = (extra) => ({ merged: false, suitePass: false, head: BASE_SHA, detail: '', ...extra })
 
 // A design authority + preview block: the design reconcile is the owed ledger's most load-bearing

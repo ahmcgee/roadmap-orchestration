@@ -348,3 +348,27 @@ test('9 crash residue: a `running` link is excluded from chaining and re-enters 
   assert.equal(state.units.a.status, 'merged')
   assert.equal(state.units.b.status, 'merged')
 })
+
+// =========================================================================================
+// 10. bounded-v1 applies the path budget to each warm link independently. A path leak in b must
+//     not be hidden by the lane-wide implementation call or attributed to a's authorized diff.
+// =========================================================================================
+test('10 bounded warm lane enforces scope independently for every link', async () => {
+  const verify = (head, changedPaths) => ({ head, changedPaths, pass: true, blocked: false,
+    failures: [], contractSurfaceTouched: false })
+  const rules = [
+    ...liveLane('a', ['a', 'b']),
+    { match: /^verify:a#0$/, result: () => verify(TIP.a, ['a.js']) },
+    { match: /^verify:b#0$/, result: () => verify(TIP.b, ['b.js', 'shared-temptation.js']) },
+    { match: /^scope-expand:b/, result: () => ({ action: 'quarantine', paths: ['shared-temptation.js'],
+      guidance: 'changes the link premise', basis: 'not required by b acceptance' }) },
+  ]
+  const { fn, calls } = makeAgent(rules)
+  const scoped = (id) => unit(id, { scopeMode: 'surgical', allowedPaths: [`${id}.js`] })
+  const state = await runWave(fn, makePlan([scoped('a'), scoped('b')], [contract('a', 'b')],
+    { methodology: { scopePolicy: 'bounded-v1' } }), makeState())
+  assert.equal(state.units.a.status, 'merged')
+  assert.equal(state.units.b.status, 'quarantined')
+  assert.ok(has(calls, 'scope-expand:b'))
+  assert.ok(!has(calls, 'scope-expand:a'))
+})

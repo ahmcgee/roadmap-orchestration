@@ -1,5 +1,17 @@
 # roadmap-orchestration
 
+The native Claude Dynamic Workflow path is authoritative and must remain structurally native. The
+optional Codex runtime under `plugins/roadmap-orchestrator/runtime/codex/` loads the same conductor and
+harness; it must not introduce `claude -p`, Claude Agent SDK wrapping, or npm requirements for Claude
+plugin installation. During Codex-only development, do not run paid Claude fixtures: leave the exact
+commands in `evals/DEFERRED_CLAUDE_VALIDATION.md` and report release readiness as blocked.
+
+New plans use `methodology.scopePolicy: bounded-v1`; missing policy means legacy. Scope modes are
+separate from unit `kind`. Preserve requested reasoning effort per role: low for mechanical work,
+configured implementation effort for plan/code/fix, configured review effort for review/gates, and
+high effort for genuine architect decisions. The Codex adapter maps semantic tiers to configurable
+concrete models without claiming equivalence or silently raising every subagent's effort.
+
 This repo is the **source** of the `roadmap-orchestrator` skill, not a consumer of it.
 
 Prohibitions written *inside* the skill (`plugins/roadmap-orchestrator/skills/orchestrate/`) —
@@ -10,6 +22,21 @@ bind you here. In this repo, `SKILL.md`, `reference.md`, `harness.mjs`, `conduct
 
 What still binds you: a script change is not done until the three-tier eval ladder passes —
 `evals/parse.sh` → `evals/unit/run.sh` → the paid fixtures (`evals/README.md`).
+
+## Versioning both marketplaces
+
+Use the guarded repository script for every release-candidate version change:
+
+```sh
+node scripts/bump-marketplace-version.mjs --check
+node scripts/bump-marketplace-version.mjs --dry-run 0.12.0
+node scripts/bump-marketplace-version.mjs 0.12.0
+```
+
+It requires all existing version fields to agree, requires a strictly higher semantic version, and
+updates the Claude marketplace, both Claude and Codex plugin manifests, and the Codex runtime
+`package.json`/lockfile together. Do not hand-edit only one of these versions. The repo-scoped Codex
+catalog at `.agents/plugins/marketplace.json` intentionally has no version field in its schema.
 
 ## GitHub issue tracking — non-obvious traps
 

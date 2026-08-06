@@ -401,9 +401,9 @@ Four rules close it, each enforced by schema or code rather than prompt alone:
    `correctness-debt-banked` degradation — bank-with-evidence beats quarantining work the frontier
    gate judged mergeable, and the bound keeps token cost inside the rounds that already existed.
 
-Volume got the same treatment on the projection side: issue mode now mints **one consolidated
-`roadmap:debt` issue per unit-residue** (marker `wave=<N> unit=<id>`, resume-stable, mixed labels
-take max severity + one facet per kind) instead of one per finding, and a consolidation fix-unit
+Volume got the same treatment on the projection side: issue mode maintains **one consolidated
+`roadmap:debt` issue per unit**, with a stable marker per reproducible fact (resume-stable; mixed labels
+take max severity + one facet per kind), instead of one issue per finding, and a consolidation fix-unit
 names the issues it resolves in `closes` so the merge path retires them. Termination is untouched:
 every rule operates inside the unit pipeline, and §14's "debt never creates a wave" brake stands.
 
@@ -460,3 +460,27 @@ cross-script shared constants stay identical, and prefix-aligned preambles on th
 prompts only. Restructuring every load-bearing prompt's opening for an offline-unverifiable
 caching gain, immediately before a single paid validation cycle, risks the gate-teeth wording
 for a benefit that cannot be measured this side of the run. Revisit with its own paid cycle.
+
+## 17. Bounded scope and host portability
+
+The touched-file boy-scout rule created a positive-feedback ratchet: touching a file made every
+imperfection in it the unit's responsibility; each fix widened the diff; review then found more touched
+surface to repair. `bounded-v1` replaces that with causal scope. Work is required when introduced by the
+unit or necessary for an acceptance criterion. Adjacent discovery remains useful, but routes to an
+observation or an evidence-bearing debt fact instead of silently enlarging the correction loop.
+
+This is versioned because changing an in-flight arc's semantics mid-wave is worse than preserving the old
+rule temporarily. New plans select it. Legacy plans upgrade only at a persisted boundary with explicit
+scope modes and authorizations. Git-derived path sets make the outer budget mechanical; evidence-first
+review still guards unrelated hunks inside an authorized file. Corrections may shrink or edit their
+existing path set but may grow it only after an architect approve decision; revert and quarantine are
+first-class alternatives.
+
+Durable debt is intentionally costly: a stable identity derives from file plus fact/probe identity, and
+the record carries enough evidence for another agent to reproduce or resolve it. Observations are not a
+shadow debt ledger. This prevents review noise from merely moving into hundreds of issues.
+
+The same plan policy runs under two independent hosts. Native Claude and the Codex SDK sidecar have
+different authentication, journals, progress events, and replay semantics, so pretending their journals
+are portable would be dishonest. Git and roadmap checkpoints are portable. That smaller common recovery
+layer is sufficient because the harness already knows how to adopt committed in-flight branches.

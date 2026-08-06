@@ -1,0 +1,4 @@
+interface:
+  display_name: "Roadmap Orchestrate"
+  short_description: "Run roadmap arcs with the Codex SDK sidecar"
+  default_prompt: "Use $roadmap-orchestrate to continue this roadmap arc through the Codex SDK sidecar."

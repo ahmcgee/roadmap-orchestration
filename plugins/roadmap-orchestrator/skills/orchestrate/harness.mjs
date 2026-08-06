@@ -78,6 +78,45 @@ const C = {
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
 }
+// Scope semantics are plan-versioned, never inferred from the execution host. A plan with no
+// methodology.scopePolicy is deliberately legacy-compatible; bounded-v1 is opt-in for an existing
+// arc and the Phase-0 default for new plans.
+const scopePolicy = plan.methodology?.scopePolicy ?? 'legacy'
+if (!['legacy', 'bounded-v1'].includes(scopePolicy))
+  throw new Error(`unsupported methodology.scopePolicy: ${scopePolicy}`)
+const boundedScope = scopePolicy === 'bounded-v1'
+const SCOPE_MODES = ['feature', 'surgical', 'mechanical', 'consolidation']
+const scopeModeOf = (u) => u.scopeMode ?? (boundedScope && u.kind === 'code' ? 'feature' : 'legacy')
+const normalizedPaths = (paths = []) => [...new Set(paths.filter((p) => typeof p === 'string' && p.length))].sort()
+const pathGrowth = (before, after) => {
+  const allowed = new Set(normalizedPaths(before))
+  return normalizedPaths(after).filter((p) => !allowed.has(p))
+}
+const FIX_BOUNDARY = 'This is a bounded correction turn. Address only the supplied failing checks, accepted ' +
+  'blocking findings, or architect directives. Do not fix additional issues you discover. If the correction ' +
+  'requires a new path, report a scope expansion rather than silently broadening the unit. '
+const scopeClause = (u) => !boundedScope ? '' : (() => {
+  const mode = scopeModeOf(u)
+  const universal = 'Fix imperfections introduced by this unit or strictly necessary to implement its acceptance ' +
+    'criteria. Merely discovering a pre-existing imperfection in a touched file does not make it part of the unit. ' +
+    'Do not opportunistically refactor, rename, reformat, modernize, reorganize, harden, update dependencies or ' +
+    'documentation, strengthen unrelated tests, or repair adjacent defects. Routine judgment inside the causal ' +
+    'scope remains yours; necessary expansion must be explicit. Stop when the acceptance criteria pass and the ' +
+    'diff introduces no regression. '
+  const strict = ['surgical', 'mechanical'].includes(mode)
+    ? `Report adjacent or pre-existing imperfections through the structured observations channel, but do not fix ` +
+      `them. The unit's allowed path set is its edit boundary: ${normalizedPaths(u.allowedPaths).join(', ')}. `
+    : ''
+  const mechanical = mode === 'mechanical' ? 'Perform only the exact requested operation; no discretionary cleanup. ' : ''
+  const consolidation = mode === 'consolidation'
+    ? `Breadth is permitted only where the spec and allowedPaths explicitly authorize it: ${normalizedPaths(u.allowedPaths).join(', ')}. ` : ''
+  return `Scope mode: ${mode}. ${universal}${strict}${mechanical}${consolidation}`
+})()
+const implementationDebtClause = boundedScope
+  ? 'If you encounter a reproducible problem outside causal scope, report it with evidence; do not fix it. '
+  : 'Prefer fixing an imperfection now over deferring it: a shortcut, thin test, or known-suboptimal structure ' +
+    'in a file you are already touching is yours to fix in this unit. If you must defer one anyway, record it ' +
+    'in `debt` with why — never silently; it will be handed back to you for one fix round before this unit can pass its gate. '
 const repo = plan.repoPath          // absolute path to the repository
 const wtRoot = plan.worktreeRoot    // absolute path OUTSIDE the repository
 const intBranch = prior.integrationBranch
@@ -142,13 +181,18 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
 // classification-as-debt must never be a verdict-downgrade path, and hygiene whose absence taxes
 // every later unit is not "minor". The closed bankReason set is the whole space of legitimate
 // deferrals; everything else is a revise directive.
-const DEBT_DISCIPLINE = 'Debt discipline: an imperfection inside this unit\'s blast radius (a file this ' +
-  'diff touches, a test this unit owns) is a revise directive, not debt — ask of each one: would leaving ' +
-  'it raise the cost of the NEXT change to that file? If yes it blocks, whatever its severity; "minor" is ' +
-  'never by itself a reason to bank. Record in `debt` (what, why, severity, kind, bankReason) ONLY what is ' +
-  'genuinely not this unit\'s to fix, with bankReason one of: out-of-scope-file | needs-migration-or-ruling ' +
-  '| pre-existing-untouched. A correctness-kind item is never bankable — you may not approve while one ' +
-  'exists; revise or escalate instead. '
+const DEBT_DISCIPLINE = boundedScope
+  ? 'Debt discipline: an imperfection inside this unit\'s blast radius (a file this diff introduced or that is ' +
+    'strictly necessary for an acceptance criterion is a revise directive, not debt. A pre-existing imperfection ' +
+    'does not become blocking merely because its file was touched. Record durable debt ONLY for a reproducible ' +
+    'fact outside this unit\'s causal scope, with file, claim, evidence (probe, exact anchor+observed condition, ' +
+    'or a precise acceptance/contract citation), ' +
+    'recheck, and bankReason. "Minor" and aesthetic preference are never enough. A correctness-kind item is never ' +
+    'bankable through approve — revise or escalate instead. '
+  : 'Debt discipline: an imperfection inside this unit\'s blast radius (a file this diff touches, a test this ' +
+    'unit owns) is a revise directive, not debt — ask of each one: would leaving it raise the cost of the NEXT ' +
+    'change to that file? If yes it blocks, whatever its severity; "minor" is never by itself a reason to bank. ' +
+    'Record in `debt` ONLY what is genuinely not this unit\'s to fix. A correctness-kind item is never bankable. '
 // `contractMismatch` is a TRIGGER, not a notes field: its mere PRESENCE fires the architect consult,
 // forces the (metered) Fable exit gate, banks a kind:'contract' debt entry, and bounces the whole run
 // back to the root for a contract amendment. The model must be told that, or it uses the field as a
@@ -248,23 +292,46 @@ for (const [k, v] of Object.entries(prior.spend ?? {}))
 // the exit gates, or the implementer. Returned in the wave state; the architect triages it
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
 const debtLog = []
+const observationsLog = []
+const addObservation = (unitId, sha, item, routeReason) => {
+  const o = typeof item === 'string' ? { summary: item } : item
+  const fact = { unit: unitId, sha, summary: o.summary ?? o.claim ?? '', file: o.file ?? '',
+    confidence: o.confidence ?? 1, evidence: o.evidence ?? o.observed ?? '', routeReason }
+  const key = `${fact.unit}\u0000${fact.file}\u0000${fact.summary}\u0000${routeReason}`
+  if (!observationsLog.some((x) => `${x.unit}\u0000${x.file}\u0000${x.summary}\u0000${x.routeReason}` === key)) observationsLog.push(fact)
+}
 // Normalized against the schema enums: an out-of-enum kind (the old 'quality' default was one)
 // rode into state.json and collapsed unpredictably downstream. 'contract' is legal here — the
 // mismatch pathway stamps it directly and the conductor routes on it.
 const DEBT_KINDS = ['correctness', 'test', 'structure', 'ergonomics', 'contract']
 const DEBT_BANK_REASONS = ['out-of-scope-file', 'needs-migration-or-ruling', 'pre-existing-untouched']
+const debtHash = (text) => { let h = 2166136261; for (const ch of text) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) } return (h >>> 0).toString(16).padStart(8, '0') }
+const debtEvidence = (o) => !!o.file && !!(o.claim ?? o.what) &&
+  (!!o.probe || (!!o.anchor && !!o.observed) || !!o.contract)
 const addDebt = (unitId, sha, items, defaults = {}) => {
   for (const d of items ?? []) {
     if (!d) continue
     const o = typeof d === 'string' ? { what: d } : d
     const kind = [o.kind, defaults.kind].find((k) => DEBT_KINDS.includes(k)) ?? 'structure'
     const bankReason = [o.bankReason, defaults.bankReason].find((r) => DEBT_BANK_REASONS.includes(r))
-    debtLog.push({
+    const fact = {
       unit: unitId, sha, kind,
       severity: o.severity ?? defaults.severity ?? 'minor',
-      what: o.what ?? o.summary ?? '', why: o.why ?? '',
+      what: o.what ?? o.summary ?? o.claim ?? '', why: o.why ?? '',
       ...(bankReason ? { bankReason } : {}),
-    })
+      ...Object.fromEntries(['file', 'anchor', 'claim', 'probe', 'observed', 'recheck', 'contract']
+        .filter((k) => o[k]).map((k) => [k, o[k]])),
+    }
+    if (boundedScope && kind !== 'contract' && !debtEvidence(fact)) {
+      addObservation(unitId, sha, { summary: fact.what, file: fact.file ?? '', confidence: o.confidence ?? 1,
+        evidence: fact.observed ?? fact.why ?? '' }, 'insufficient-durable-evidence')
+      continue
+    }
+    fact.debtKey = o.debtKey ?? `${debtHash(`${fact.file ?? ''}\u0000${fact.anchor ?? ''}\u0000${fact.probe ?? fact.contract ?? fact.claim ?? fact.what}`)}`
+    fact.lastSeenSha = sha
+    const priorFact = debtLog.find((d) => d.debtKey === fact.debtKey)
+    if (priorFact) Object.assign(priorFact, fact)
+    else debtLog.push(fact)
   }
 }
 // Gate coercion helpers: a gate that APPROVES while holding a correctness-kind debt item is the
@@ -370,6 +437,9 @@ const debtItem = (req) => obj({
   what: { type: 'string', maxLength: 400 }, why: { type: 'string', maxLength: 400 },
   severity: oneOf(['minor', 'major']), kind: oneOf(['correctness', 'test', 'structure', 'ergonomics']),
   bankReason: oneOf(BANK_REASONS),
+  file: { type: 'string' }, anchor: { type: 'string' }, claim: { type: 'string' },
+  probe: { type: 'string' }, observed: { type: 'string' }, recheck: { type: 'string' },
+  contract: { type: 'string' },
 }, req)
 const debtArr = { type: 'array', items: debtItem(['what']) }
 const gateDebtArr = { type: 'array', items: debtItem(['what', 'bankReason']) }
@@ -456,7 +526,9 @@ const S = {
     // Fable consult even on an all-green unit (the silent-design-decision class); if the
     // consult budget is spent, it forces the Fable exit gate instead.
     specGap: { type: 'string', maxLength: 300 },
-    debt: debtArr, notes: { type: 'string', maxLength: 2000 },
+    debt: debtArr,
+    scopeExpansion: obj({ paths: arr('string'), reason: { type: 'string' } }, ['paths', 'reason']),
+    notes: { type: 'string', maxLength: 2000 },
   }, ['summary', 'filesChanged']),
   // Opus exit gate: approve as-is, revise (a mechanical fix Opus can specify itself), or
   // escalate to the Fable architect — trigger names the reason frontier judgment is needed.
@@ -468,23 +540,30 @@ const S = {
   // `blocked` = the tooling itself could not run (env/deps/config) — a third outcome,
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
   verify: obj({
-    pass: { type: 'boolean' }, blocked: { type: 'boolean' },
+    changedPaths: arr('string'), pass: { type: 'boolean' }, blocked: { type: 'boolean' },
     failures: arr('string'), contractSurfaceTouched: { type: 'boolean' }, notes: { type: 'string' },
-  }, ['pass', 'blocked', 'failures', 'contractSurfaceTouched']),
+    head: { type: 'string' },
+  }, ['changedPaths', 'pass', 'blocked', 'failures', 'contractSurfaceTouched', 'head']),
   review: obj({
     blocking: {
-      type: 'array',
-      items: obj({ summary: { type: 'string' }, file: { type: 'string' }, confidence: { type: 'number' } },
-        ['summary', 'confidence']),
+      type: 'array', maxItems: 20,
+      items: obj({ summary: { type: 'string' }, file: { type: 'string' }, confidence: { type: 'number' },
+        evidence: { type: 'string' }, basis: { type: 'string' } },
+        ['summary', 'confidence', 'evidence', 'basis']),
     },
-    preExisting: arr('string'),          // real issues the diff did NOT introduce — never block, flow to dossier
-    // Deferrable findings need a stated ground from the closed set — anything in this diff's
-    // blast radius belongs in `blocking` instead (deliberately uncapped: review stays free).
-    nonBlocking: { type: 'array', items: obj({
-      summary: { type: 'string' }, bankReason: oneOf(BANK_REASONS),
-    }, ['summary', 'bankReason']) },
+    observations: { type: 'array', maxItems: 20, items: obj({ summary: { type: 'string' }, file: { type: 'string' },
+      confidence: { type: 'number' }, evidence: { type: 'string' } }, ['summary', 'confidence']) },
+    preExisting: { type: 'array', maxItems: 20, items: obj({ summary: { type: 'string' }, file: { type: 'string' },
+      anchor: { type: 'string' }, claim: { type: 'string' }, probe: { type: 'string' },
+      observed: { type: 'string' }, recheck: { type: 'string' }, confidence: { type: 'number' },
+      contract: { type: 'string' }, evidence: { type: 'string' }, basis: { type: 'string' } },
+      ['summary', 'file', 'confidence']) },
     unsatisfiable: { type: 'boolean' },  // spec/contract contradictory as written — quarantine now, don't grind
-  }, ['blocking', 'preExisting', 'nonBlocking', 'unsatisfiable']),
+  }, ['blocking', 'observations', 'preExisting', 'unsatisfiable']),
+  scopeDecision: obj({
+    action: oneOf(['approve', 'revert', 'quarantine']), paths: arr('string'),
+    guidance: { type: 'string' }, basis: { type: 'string' },
+  }, ['action', 'paths', 'guidance', 'basis']),
   gate: obj({
     verdict: oneOf(['approve', 'revise', 'quarantine']),
     directives: directiveArr, debt: gateDebtArr,
@@ -592,6 +671,7 @@ const ready = (u) => rec(u.id).status === 'pending' && depsOf(u.id).every((d) =>
 const blockedBy = (u) => depsOf(u.id).some((d) => ['quarantined', 'blocked'].includes(rec(d)?.status))
 const serialize = () => ({
   integrationBranch: intBranch, integrationTip, consultsUsed, spend,
+  methodology: { scopePolicy },
   // Run identity ({runId, scriptPath}) set by the architect at launch — carried through so
   // same-session resume is mechanical and crash forensics are one `cat` of state.json.
   ...(prior.run ? { run: prior.run } : {}),
@@ -604,6 +684,7 @@ const serialize = () => ({
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
+  ...(observationsLog.length ? { observations: observationsLog } : {}),
   // Skill defects — the orchestrator misbehaving, not the product. Arc-cumulative like spend:
   // prior entries carry forward, this wave's append (without the concat, per-wave direct-harness
   // runs erased the arc's degradation history each wave). The conductor renders these into
@@ -1038,6 +1119,9 @@ async function runUnit(unit, laneCtx) {
   // The approved plan's evidence manifest (fresh builds only) — threaded to the reviewer as a
   // reading list. Adopted/existing branches have no plan pass, so the clause stays '' there.
   let planEvidence = null
+  let expectedPaths = normalizedPaths(scopeModeOf(unit) === 'feature' ? (unit.allowedPaths ?? []) : unit.allowedPaths)
+  const scopeExpansions = []
+  let debtFixBaseline = null
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
   // diff nobody described. Sticky, and forces the frontier gate — the same compensation
@@ -1064,9 +1148,24 @@ async function runUnit(unit, laneCtx) {
   }
   // One debt-fix sweep of an implement report's confessions (fresh build or warm-lane link).
   const sweepConfessions = async (confessed) => {
+    // bounded-v1 implementers are told to report only facts outside causal scope. Sending those
+    // reports straight back as fixes would recreate the scope ratchet; evidence-bearing facts bank,
+    // and everything else remains an observation. A confession with no bankReason still means the
+    // implementer knowingly left causal-scope work incomplete, so that subset retains one bounded sweep.
+    if (boundedScope) {
+      const outside = confessed.filter((d) => d?.bankReason)
+      addDebt(unit.id, base, outside)
+      confessed = confessed.filter((d) => !d?.bankReason)
+      if (!confessed.length) return
+    }
     setStage(unit.id, 'debt-fix')
+    if (boundedScope) debtFixBaseline = await run(
+      STRICT + `In ${w}, obtain head from \`git rev-parse HEAD\` and changedPaths from ` +
+      `\`git diff --name-only ${base}..HEAD\` (sorted, exact paths). This is a read-only pre-fix diff snapshot. ` +
+      `Set pass:true, blocked:false, failures:[], and contractSurfaceTouched according to whether .roadmap/ appears.`,
+      { model: 'haiku', effort: 'low', phase: 'Verify', label: `debt-fix-snapshot:${unit.id}`, schema: S.verify })
     const swept = await runOr(REPORT_LOST,
-      `You are finishing unit ${unit.id} in the worktree at ${w} (spec: ${spec}). The implementation just ` +
+      `${FIX_BOUNDARY}You are finishing unit ${unit.id} in the worktree at ${w} (spec: ${spec}). The implementation just ` +
       `landed, but these imperfections were consciously deferred:\n${JSON.stringify(confessed)}\n` +
       `Fix them NOW — you have the unit's context loaded, and a deferred fix costs far more later. Re-emit in ` +
       `\`debt\` ONLY what is genuinely not this unit's to fix, each with a \`bankReason\` from: ` +
@@ -1145,7 +1244,10 @@ async function runUnit(unit, laneCtx) {
     `You will implement one unit of a larger roadmap, but first: plan. Read the unit spec at ${spec} and any ` +
     `contract files it references under ${repo}/.roadmap/contracts/ (contracts are frozen — treat them as ` +
     `immutable requirements). Codebase conventions and build/test commands are documented at ${brief}. Explore ` +
-    `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan — return the required fields with the structured ones FIRST and the ` +
+    `the code in ${w} as needed. ${scopeClause(unit)}The plan must return the smallest sufficient expected files set, map ` +
+    `its approach to the acceptance criteria, distinguish required edits from optional improvements, and exclude ` +
+    `cleanup that is merely convenient. Surface a contradiction or genuine expansion need instead of laundering ` +
+    `it into the plan. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}Produce an implementation plan — return the required fields with the structured ones FIRST and the ` +
     `free-text last: \`feasible\` (boolean), \`files\` (an array of the file paths you expect to touch), ` +
     `\`testPlan\` (how you will test it), then \`approach\` (your approach) LAST. Emit each as a real ` +
     `JSON field — do not fold files/testPlan into the approach prose. Also return \`evidence\`, the context ` +
@@ -1157,6 +1259,13 @@ async function runUnit(unit, laneCtx) {
     `within its contracts, do not force it: set \`feasible\`:false and explain the contradiction in ` +
     `\`approach\`. Do not write code yet.`,
     { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
+
+  if (boundedScope && ['surgical', 'mechanical', 'consolidation'].includes(scopeModeOf(unit))) {
+    const outside = pathGrowth(unit.allowedPaths, implPlan.files)
+    if (outside.length)
+      return quarantine(unit, `implementation plan exceeds ${scopeModeOf(unit)} allowedPaths — scope expansion requires architect approval before implementation`,
+        { plannedFiles: implPlan.files, allowedPaths: unit.allowedPaths, outside })
+  }
 
   // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
   // before code exists), but only structural calls (high risk, claimed-infeasible, or the
@@ -1179,20 +1288,18 @@ async function runUnit(unit, laneCtx) {
   if (!implPlan.feasible)
     return quarantine(unit, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', implPlan)
   planEvidence = implPlan.evidence ?? null
+  expectedPaths = normalizedPaths(scopeModeOf(unit) === 'feature' ? implPlan.files : unit.allowedPaths)
 
   setStage(unit.id, 'implement')
   const impl = await runOr(REPORT_LOST,
     `Implement unit ${unit.id} in the worktree at ${w}, following this plan:\n${JSON.stringify(implPlan)}\n` +
     `The spec at ${spec} and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
-    `frozen. ${convClause}${designClause(unit)}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
+    `frozen. ${convClause}${designClause(unit)}${scopeClause(unit)}Conventions and commands are documented at ${brief}. Before writing new code, search the codebase ` +
     `for existing implementations or symbols to reuse — do not duplicate what already exists. Write the code ` +
     `and the tests the spec's acceptance criteria call for. Deliver what the spec asks, at the scope it ` +
     `intends: make routine judgment calls yourself and finish the whole task — only report done when it is ` +
     `fully done; if something genuinely cannot be finished, do the rest and state plainly what is missing. ` +
-    `Prefer fixing an imperfection now over deferring it: a shortcut, thin test, or known-suboptimal structure ` +
-    `in a file you are already touching is yours to fix in this unit. If you must defer one anyway, record it ` +
-    `in \`debt\` with why — never silently; it will be handed back to you for one fix round before this unit ` +
-    `can pass its gate. If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
+    `${implementationDebtClause}If a frozen contract contradicts code that already exists or cannot be implemented as written, ` +
     `choose the deviation you judge correct, keep building, and describe it in the structured \`contractMismatch\` ` +
     `field (one or two sentences: which surface, how reality differs) — never amend the contract file and never ` +
     `note the deviation only in code comments. ${MISMATCH_IS_A_TRIGGER}${GAP_IS_A_TRIGGER}${NOROADMAP}Work only inside ${w}. Commit ` +
@@ -1234,6 +1341,7 @@ async function runUnit(unit, laneCtx) {
   // reviewer's reading list, one debt-fix sweep of its confessions, lost-report compensation).
   if (laneCtx) {
     planEvidence = laneCtx.evidence ?? null
+    if (scopeModeOf(unit) === 'feature') expectedPaths = normalizedPaths(laneCtx.expectedPaths ?? [])
     if (laneCtx.reportLost) reportLostEver = true
     if (laneCtx.report) {
       noteMismatch(laneCtx.report)
@@ -1248,34 +1356,84 @@ async function runUnit(unit, laneCtx) {
     ? `The planner judged these files central — a reading list to orient you, never a boundary on your read ` +
       `(judge the whole diff): ${planEvidence.keyFiles.join('; ')}. `
     : ''
+  const verifyUnit = (label) => run(
+    STRICT +
+    `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
+    `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
+    `Do NOT run the full project suite — that happens at merge. Obtain \`head\` from \`git rev-parse HEAD\` and ` +
+    `obtain \`changedPaths\` mechanically from \`git diff --name-only ${base}..HEAD\` (sorted, exact paths) — ` +
+    `never from recollection. Also check whether that diff touches any path under .roadmap/ (report that as ` +
+    `contractSurfaceTouched — the whole directory is the orchestrator's, not just contracts/). Report failures ` +
+    `with exact verbatim output. If tooling itself cannot run, report blocked:true and stop. Do not fix anything.`,
+    { model: 'haiku', phase: 'Verify', label, schema: S.verify })
+  const enforceScope = async (candidate, allowedBefore, context, restoreHead) => {
+    if (!boundedScope) return { verify: candidate }
+    const expansion = pathGrowth(allowedBefore, candidate.changedPaths)
+    if (!expansion.length) return { verify: candidate }
+    const decision = await run(
+      `You are the architect deciding an explicit scope expansion for unit ${unit.id} (${scopeModeOf(unit)}). ` +
+      `Acceptance criteria are in ${spec}. During ${context}, Git reports new paths beyond the authorised set: ` +
+      `${JSON.stringify(expansion)}. Authorised before: ${JSON.stringify(normalizedPaths(allowedBefore))}. Current ` +
+      `changed paths: ${JSON.stringify(candidate.changedPaths)}. Decide: approve only when every new path is strictly ` +
+      `necessary for a named acceptance criterion; revert when legitimate corrections can remain while these paths ` +
+      `return to their ${restoreHead} state; quarantine when expansion changes the unit's premise and needs redesign. ` +
+      `Green tests do not permit silent expansion. Write no code.`,
+      { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `scope-expand:${unit.id}#${scopeExpansions.length}`, schema: S.scopeDecision })
+    scopeExpansions.push({ context, requested: expansion, ...decision })
+    if (decision.action === 'quarantine') return { verify: candidate, quarantine: decision }
+    if (decision.action === 'approve') {
+      expectedPaths = normalizedPaths([...expectedPaths, ...expansion])
+      return { verify: candidate }
+    }
+    const reverted = await runOr(REPORT_LOST,
+      `${FIX_BOUNDARY}In ${w}, restore ONLY these newly introduced paths to their exact state at pre-change HEAD ` +
+      `${restoreHead}: ${JSON.stringify(expansion)}. Retain legitimate corrections in all previously changed paths. ` +
+      `For a path absent at ${restoreHead}, remove it; otherwise restore its bytes from that commit. ` +
+      `${NOROADMAP}Commit the bounded revert. ${REPORT}`,
+      { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `scope-revert:${unit.id}#${scopeExpansions.length - 1}`, schema: S.impl })
+    if (reverted.reportLost) reportLostEver = true
+    const checked = await verifyUnit(`scope-revert-verify:${unit.id}#${scopeExpansions.length - 1}`)
+    const stillOutside = pathGrowth(allowedBefore, checked.changedPaths)
+    if (stillOutside.length) return { verify: checked, quarantine: { action: 'quarantine', paths: stillOutside,
+      guidance: 'scope revert failed to restore new paths', basis: 'mechanical path-set check' } }
+    return { verify: checked }
+  }
+
   let verify, review
+  let pendingRatchet = debtFixBaseline ? { head: debtFixBaseline.head, paths: normalizedPaths(debtFixBaseline.changedPaths) } : null
   for (let round = 0; round <= C.maxFixRounds; round++) {
-    verify = await run(
-      STRICT +
-      `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
-      `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
-      `Do NOT run the full project suite — that happens at merge. Also check whether ` +
-      `\`git diff ${base}..HEAD\` touches any path under .roadmap/ (report that as contractSurfaceTouched — ` +
-      `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
-      `verbatim error output, never paraphrased. If the tooling itself cannot run (missing dependency, broken ` +
-      `command, environment failure) — as opposed to an assertion failing — report blocked:true and stop. ` +
-      `Do not fix anything.`,
-      { model: 'haiku', phase: 'Verify', label: `verify:${unit.id}#${round}`, schema: S.verify })
+    verify = await verifyUnit(`verify:${unit.id}#${round}`)
+    // Always enforce the unit's approved initial budget. If a debt sweep happened before this first
+    // verification, enforce its narrower pre/post ratchet separately so the snapshot cannot mask an
+    // already-out-of-plan implementation path.
+    const initialScoped = await enforceScope(verify, expectedPaths, 'initial implementation', base)
+    verify = initialScoped.verify
+    if (initialScoped.quarantine) return quarantine(unit, 'scope expansion quarantined by architect', initialScoped.quarantine)
+    if (pendingRatchet) {
+      const fixScoped = await enforceScope(verify, pendingRatchet.paths, `fix round ${round}`, pendingRatchet.head)
+      verify = fixScoped.verify
+      if (fixScoped.quarantine) return quarantine(unit, 'scope expansion quarantined by architect', fixScoped.quarantine)
+    }
+    pendingRatchet = null
     if (verify.blocked)
       return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
     review = await run(
       riskTilt(unit.risk) +
       `Adversarially review unit ${unit.id}: in ${w}, read \`git diff ${base}..HEAD\` and judge it against the ` +
       `spec at ${spec} and its contracts. ${convClause}${designClause(unit)}${readingListClause}You did not write this code; assume it contains mistakes. Report ` +
-      `every defect you find, including ones you are uncertain about — your job is coverage; a downstream ` +
-      `confidence filter discards weak findings, so under-reporting loses real bugs while over-reporting costs ` +
-      `nothing. A finding is blocking if it is introduced by this diff AND it would cause incorrect behavior, ` +
-      `violate the spec or a contract, leave acceptance criteria untested, or leave a file this diff touches in ` +
-      `a state that raises the cost of the next change to it. "Minor" is not a reason to withhold or downgrade ` +
-      `a finding. Real issues the diff did NOT introduce go in preExisting (they never block). \`nonBlocking\` ` +
-      `is ONLY for defects that are genuinely not this unit's to fix — each entry needs a bankReason from: ` +
-      `out-of-scope-file | needs-migration-or-ruling | pre-existing-untouched; anything in this diff's blast ` +
-      `radius goes in \`blocking\` instead. Do not report pure style or anything a linter/formatter/` +
+      `${boundedScope
+        ? `findings evidence-first: discovery is useful, but every item consumes review and triage capacity. A finding ` +
+          `is blocking only when the diff introduced it, it violates an acceptance criterion or frozen contract, it ` +
+          `leaves required behavior untested, it is a regression caused by the implementation, or it identifies ` +
+          `unrequested work already present in the diff. `
+        : `every material defect you find. Under this legacy plan, a diff-touched file that remains harder to change ` +
+          `may still be blocking even when the defect predated the unit. `}` +
+      `Each blocking item needs exact file/path where applicable, confidence, concrete evidence, and the ` +
+      `criterion/contract/failing command/diff fact that makes it blocking (put that in basis). Plausible but ` +
+      `insufficiently established concerns go in observations. Real issues the diff did NOT introduce go in ` +
+      `preExisting${boundedScope ? ' and never block merely because their file was touched' : ' unless the legacy touched-file rule makes them blocking'}. ` +
+      `Return at most 20 items in each of blocking, observations, and preExisting. ` +
+      `${scopeClause(unit)}Do not report pure style or anything a linter/formatter/` +
       `typechecker would catch. The tests are part of the diff under review, and a green check is evidence only ` +
       `if the test could fail: for each new or modified test, ask whether it would fail if the behaviour were ` +
       `actually wrong — a tautological test (asserting whatever the code currently does) or a test that mocks ` +
@@ -1292,6 +1450,10 @@ async function runUnit(unit, laneCtx) {
       return quarantine(unit, 'spec/contract unsatisfiable as written — needs respec, not retry', review)
 
     const blockers = review.blocking.filter((b) => (b.confidence ?? 1) >= C.minBlockConfidence)
+    for (const item of review.blocking.filter((b) => (b.confidence ?? 1) < C.minBlockConfidence))
+      addObservation(unit.id, verify.head, item, 'below-minBlockConfidence')
+    for (const item of review.observations ?? []) addObservation(unit.id, verify.head, item, 'review-observation')
+    for (const item of review.preExisting ?? []) addObservation(unit.id, verify.head, item, 'pre-existing')
     if (verify.pass && blockers.length === 0) break
 
     // Mid-loop rescue: fired by code over objective signals only, and capped.
@@ -1316,8 +1478,9 @@ async function runUnit(unit, laneCtx) {
       if (gap) { gap = null; gapConsulted = true }   // the dossier carried it; the architect saw it
     }
 
+    const beforeFix = { head: verify.head, paths: normalizedPaths(verify.changedPaths) }
     const fixed = await runOr(REPORT_LOST,
-      `Fix unit ${unit.id} in ${w}. Spec: ${spec}. Failing checks (verbatim): ${JSON.stringify(verify.failures)}. ` +
+      `${FIX_BOUNDARY}Fix unit ${unit.id} in ${w}. Spec: ${spec}. Failing checks (verbatim): ${JSON.stringify(verify.failures)}. ` +
       `Blocking review findings: ${JSON.stringify(blockers)}.` +
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\`. ` +
@@ -1330,21 +1493,28 @@ async function runUnit(unit, laneCtx) {
     addDebt(unit.id, base, fixed.debt)
     noteMismatch(fixed)
     noteGap(fixed)
+    pendingRatchet = beforeFix
   }
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
 
   // Any deferred imperfection the reviewer surfaced but did not block on is real debt —
   // bank it whichever gate approves, so it is never silently lost.
   const bankReviewDebt = () => {
-    addDebt(unit.id, base, review?.nonBlocking, { kind: 'structure' })   // items carry their own bankReason
-    addDebt(unit.id, base, review?.preExisting, { kind: 'structure', severity: 'major', bankReason: 'pre-existing-untouched' })
+    if (!boundedScope) {
+      addDebt(unit.id, base, review?.nonBlocking, { kind: 'structure' })
+      addDebt(unit.id, base, review?.preExisting, { kind: 'structure', severity: 'major', bankReason: 'pre-existing-untouched' })
+      return
+    }
+    const reproducible = (review?.preExisting ?? []).map((item) => ({ ...item, what: item.summary,
+      kind: 'structure', severity: 'major', bankReason: 'pre-existing-untouched' })).filter(debtEvidence)
+    addDebt(unit.id, verify.head, reproducible)
   }
-  const gateReverify = (label) => run(
-    STRICT +
-    `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
-    `from ${spec} (commands: ${brief}). Report failures verbatim. blocked:true if the tooling itself cannot ` +
-    `run. Fix nothing.`,
-    { model: 'haiku', phase: 'Verify', label, schema: S.verify })
+  const gateReverify = (label) => verifyUnit(label)
+  const unitForensics = () => ({
+    ...(scopeExpansions.length ? { scopeExpansions } : {}),
+    ...((observationsLog.filter((o) => o.unit === unit.id).length)
+      ? { observations: observationsLog.filter((o) => o.unit === unit.id) } : {}),
+  })
 
   // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
   // adjudication — the polish loop's rescue only fires on failure signals, and the class this
@@ -1363,8 +1533,9 @@ async function runUnit(unit, laneCtx) {
     gap = null
     if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
     if (gd.action === 'redirect') {
+      const beforeGapFix = { head: verify.head, paths: normalizedPaths(verify.changedPaths) }
       const gFix = await runOr(REPORT_LOST,
-        `Apply the architect's direction on unit ${unit.id} in ${w} (spec: ${spec}). The spec left a decision ` +
+        `${FIX_BOUNDARY}Apply the architect's direction on unit ${unit.id} in ${w} (spec: ${spec}). The spec left a decision ` +
         `unsettled; you reported it, and the architect ruled: ${gd.guidance}\nApply that ruling. ` +
         `${NOROADMAP}Commit your changes. ${REPORT}`,
         { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gap-fix:${unit.id}`, schema: S.impl })
@@ -1372,6 +1543,9 @@ async function runUnit(unit, laneCtx) {
       if (gFix.reportLost) reportLostEver = true
       noteMismatch(gFix)
       verify = await gateReverify(`gap-verify:${unit.id}`)
+      const scopedGap = await enforceScope(verify, beforeGapFix.paths, 'spec-gap fix', beforeGapFix.head)
+      verify = scopedGap.verify
+      if (scopedGap.quarantine) return quarantine(unit, 'scope expansion quarantined by architect', scopedGap.quarantine)
       if (verify.blocked)
         return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
     }
@@ -1412,7 +1586,9 @@ async function runUnit(unit, laneCtx) {
         `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}${scopeClause(unit)}Require every substantive hunk to trace to an acceptance ` +
+        `criterion or explicit directive; unrequested work already present in the diff is a blocking scope violation. ` +
+        `Never revise for optional hygiene outside causal scope. Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}Then choose a verdict: "approve" only if you would merge this ` +
@@ -1442,10 +1618,11 @@ async function runUnit(unit, laneCtx) {
       }
       addDebt(unit.id, base, og.debt)
       opusHandoff = og
-      if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
+      if (og.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base, ...unitForensics() } }
       if (og.verdict === 'escalate') break
+      const beforeGateFix = { head: verify.head, paths: normalizedPaths(verify.changedPaths) }
       const ogFix = await runOr(REPORT_LOST,
-        `Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
+        `${FIX_BOUNDARY}Address the exit gate's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
         `${JSON.stringify(og.directives)}\nCommit your changes. ${REPORT}`,
         { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `opus-gate-fix:${unit.id}#${g}`, schema: S.impl })
       addDebt(unit.id, base, ogFix.debt)   // was silently dropped — a fix round's confessions are debt too
@@ -1458,6 +1635,9 @@ async function runUnit(unit, laneCtx) {
         break
       }
       verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
+      const scopedGate = await enforceScope(verify, beforeGateFix.paths, `Opus gate fix ${g}`, beforeGateFix.head)
+      verify = scopedGate.verify
+      if (scopedGate.quarantine) return quarantine(unit, 'scope expansion quarantined by architect', scopedGate.quarantine)
       if (verify.blocked)
         return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
     }
@@ -1507,7 +1687,10 @@ async function runUnit(unit, laneCtx) {
     const gate = await run(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
-      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
+      `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}${scopeClause(unit)}` +
+      `Require every substantive hunk to trace to an acceptance criterion or explicit directive; unrequested work ` +
+      `already in the diff is a blocking scope violation. Never issue a revision for optional hygiene outside causal ` +
+      `scope. Verification evidence: ` +
       `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
@@ -1536,15 +1719,19 @@ async function runUnit(unit, laneCtx) {
       }
     }
     addDebt(unit.id, base, gate.debt)
-    if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base } }
+    if (gate.verdict === 'approve') { bankReviewDebt(); return { status: 'merge-ready', branch: `unit/${unit.id}`, base, ...unitForensics() } }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
+    const beforeFrontierFix = { head: verify.head, paths: normalizedPaths(verify.changedPaths) }
     const gFix = await runOr(REPORT_LOST,
-      `Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
+      `${FIX_BOUNDARY}Address the architect's directives on unit ${unit.id} in ${w} (spec: ${spec}):\n` +
       `${JSON.stringify(gate.directives)}\nCommit your changes. ${REPORT}`,
       { model: 'opus', effort: C.implementEffort, phase: 'Fix', label: `gate-fix:${unit.id}#${g}`, schema: S.impl })
     addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
+    const scopedFrontier = await enforceScope(verify, beforeFrontierFix.paths, `frontier gate fix ${g}`, beforeFrontierFix.head)
+    verify = scopedFrontier.verify
+    if (scopedFrontier.quarantine) return quarantine(unit, 'scope expansion quarantined by architect', scopedFrontier.quarantine)
     if (verify.blocked)
       return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
   }
@@ -1552,7 +1739,7 @@ async function runUnit(unit, laneCtx) {
 }
 
 /* --------------------- serial merge queue + suite gate ------------------ */
-async function mergeUnit(unit) {
+async function mergeUnit(unit, unitResult = {}) {
   // NOROADMAP made mechanical: the merge is the last place a unit diff can smuggle
   // orchestrator-state edits in (arc-observed: a unit edited a frozen contract from its
   // worktree and the queue accepted it — content sound, channel wrong). Refusal is checked
@@ -1630,19 +1817,69 @@ async function mergeUnit(unit) {
   }
 
   if (!res.suitePass) {
+    const integrationBefore = boundedScope ? await run(
+      STRICT + `In ${intWt}, obtain head from \`git rev-parse HEAD\` and changedPaths from ` +
+      `\`git diff --name-only ${res.head}^1..HEAD\` (sorted, exact paths). This is a read-only pre-fix snapshot. ` +
+      `Set pass:false, blocked:false, failures:[${JSON.stringify(res.detail)}], and contractSurfaceTouched based on .roadmap/.`,
+      { model: 'haiku', effort: 'low', phase: 'Merge', label: `integration-fix-snapshot:${unit.id}`, schema: S.verify })
+      : null
     res = await run(
-      `The integrated test suite fails after merging unit/${unit.id} into ${intBranch} (worktree ${intWt}). ` +
+      `${FIX_BOUNDARY}The integrated test suite fails after merging unit/${unit.id} into ${intBranch} (worktree ${intWt}). ` +
       `Evidence: ${res.detail}. First check whether the failure predates this merge. If the merge caused it, ` +
       `diagnose and fix on ${intBranch} — this may be a cross-unit interaction; the specs of all units live under ` +
       `${repo}/.roadmap/specs/. Re-run the suite. If you cannot make it pass, revert the merge commit ` +
       `(git revert -m 1 HEAD, keeping the branch intact for later redesign) and report suitePass:false.`,
       { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge })
     if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res)
+    if (boundedScope) {
+      let integrationAfter = await run(
+        STRICT + `In ${intWt}, obtain head from \`git rev-parse HEAD\` and changedPaths from ` +
+        `\`git diff --name-only ${integrationBefore.head}^1..HEAD\` (sorted, exact paths). Run no tests and change ` +
+        `nothing; set pass:true, blocked:false, failures:[], and report contractSurfaceTouched mechanically.`,
+        { model: 'haiku', effort: 'low', phase: 'Merge', label: `integration-fix-verify:${unit.id}`, schema: S.verify })
+      const expansion = pathGrowth(integrationBefore.changedPaths, integrationAfter.changedPaths)
+      if (expansion.length) {
+        const decision = await run(
+          `You are the architect deciding an integration-fix scope expansion for unit ${unit.id}. The bounded ` +
+          `correction added paths ${JSON.stringify(expansion)} beyond the pre-fix integrated diff ` +
+          `${JSON.stringify(integrationBefore.changedPaths)}. Approve only if each path is necessary for the supplied ` +
+          `suite failure or an acceptance criterion; revert if it can return to pre-fix HEAD ` +
+          `${integrationBefore.head}; quarantine if the cross-unit interaction changes the unit premise.`,
+          { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `integration-scope-expand:${unit.id}`, schema: S.scopeDecision })
+        const record = { context: 'integration fix', requested: expansion, ...decision }
+        unitResult.scopeExpansions = [...(unitResult.scopeExpansions ?? []), record]
+        if (decision.action === 'quarantine') {
+          await run(
+            `${FIX_BOUNDARY}In ${intWt}, back out the integration-fix commits after ${integrationBefore.head} with ` +
+            `non-destructive git revert commits, then revert merge commit ${integrationBefore.head} with ` +
+            `\`git revert -m 1\`. Do not delete unit/${unit.id} or any worktree. Run the suite and report the head/result.`,
+            { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-scope-quarantine:${unit.id}`, schema: S.merge }).catch(() => null)
+          return quarantine(unit, 'integration fix scope expansion quarantined by architect', decision)
+        }
+        if (decision.action === 'revert') {
+          res = await run(
+            `${FIX_BOUNDARY}In ${intWt}, restore ONLY ${JSON.stringify(expansion)} to their exact state at ` +
+            `${integrationBefore.head}; remove a path if absent there. Retain the legitimate integration fix in the ` +
+            `existing path set, commit the bounded revert, run the full suite, and report the head/result.`,
+            { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-scope-revert:${unit.id}`, schema: S.merge })
+          if (!res.suitePass) return quarantine(unit, 'integration scope revert broke the suite', res)
+          integrationAfter = await run(
+            STRICT + `In ${intWt}, report head and sorted changedPaths from ` +
+            `\`git diff --name-only ${integrationBefore.head}^1..HEAD\`; change nothing; set pass:true, ` +
+            `blocked:false, failures:[], and report contractSurfaceTouched mechanically.`,
+            { model: 'haiku', effort: 'low', phase: 'Merge', label: `integration-scope-revert-verify:${unit.id}`, schema: S.verify })
+          if (pathGrowth(integrationBefore.changedPaths, integrationAfter.changedPaths).length)
+            return quarantine(unit, 'integration scope revert did not restore the pre-fix path budget', integrationAfter)
+        }
+      }
+    }
   }
 
   integrationTip = res.head
   if (C.previewRefresh === 'merge') refreshMirror()
-  return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: res.head }
+  return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: res.head,
+    ...(unitResult.scopeExpansions ? { scopeExpansions: unitResult.scopeExpansions } : {}),
+    ...(unitResult.observations ? { observations: unitResult.observations } : {}) }
 }
 
 /* ------------------------------- scheduler ------------------------------ */
@@ -1659,7 +1896,7 @@ function start(unit) {
       // this transient record is overwritten by the terminal result below, so no stale stage survives.
       units.set(unit.id, { ...result, stage: 'merge-queue' })
       checkpoint()
-      const segment = mergeChain.then(() => mergeUnit(unit)).catch((e) =>
+      const segment = mergeChain.then(() => mergeUnit(unit, result)).catch((e) =>
         quarantine(unit, `merge pipeline error: ${e?.message ?? e}`))
       mergeChain = segment.then(() => null, () => null)
       result = await segment
@@ -1744,6 +1981,8 @@ async function runChain(chain) {
     `plan every link. Read each unit's spec (${specsList}) and any contract files referenced under ` +
     `${repo}/.roadmap/contracts/ (contracts are frozen — treat them as immutable requirements). Codebase ` +
     `conventions and build/test commands are documented at ${brief}. Explore the code in ${w} as needed. ` +
+    `For each link, return the smallest sufficient expected files set, map the approach to acceptance criteria, ` +
+    `exclude convenient cleanup, and surface contradictions or genuine expansion needs explicitly. ` +
     `Return in \`links\` one entry PER UNIT, in chain order, each with the structured fields FIRST and the ` +
     `free-text last: \`id\`, \`feasible\`, \`files\`, \`testPlan\`, \`evidence\` (\`keyFiles\` at most 20, one ` +
     `line each: path plus a one-phrase why; \`signatures\` at most 15, each one line, quoted exactly; ` +
@@ -1780,6 +2019,16 @@ async function runChain(chain) {
           `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
           { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${u.id}`, schema: S.plan })
     }
+    if (boundedScope && ['surgical', 'mechanical', 'consolidation'].includes(scopeModeOf(u))) {
+      const outside = pathGrowth(u.allowedPaths, lp.files)
+      if (outside.length) {
+        units.set(u.id, await quarantine(u, `chain plan exceeds ${scopeModeOf(u)} allowedPaths — scope expansion requires architect approval`,
+          { plannedFiles: lp.files, allowedPaths: u.allowedPaths, outside }))
+        for (const t of chain.slice(i + 1)) units.set(t.id, { status: 'blocked' })
+        checkpoint()
+        break
+      }
+    }
     if (!lp.feasible) {
       units.set(u.id, await quarantine(u, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', lp))
       log(`${u.id}: quarantined (infeasible at chain planning)`)
@@ -1793,13 +2042,14 @@ async function runChain(chain) {
 
   // One implement call for the approved prefix: per-link commit + pinned branch, in order.
   const designClauses = approved.map(([u]) => designClause(u)).join('')
+  const scopeClauses = approved.map(([u]) => `${u.id}: ${scopeClause(u)}`).join(' ')
   const cImpl = await runOr({ links: [], reportLost: true },
     `Implement this CHAIN of ${approved.length} dependent units in the worktree at ${w}, IN ORDER — each link ` +
     `builds on the previous link's committed result: ${approved.map(([u]) => u.id).join(' → ')}. The approved ` +
     `per-link plans:\n${JSON.stringify(approved.map(([u, lp]) => ({ id: u.id, ...lp })))}\n` +
     `Each unit's spec and its contracts under ${repo}/.roadmap/contracts/ are the requirements; contracts are ` +
     `frozen (specs: ${specsList}). ${convClause}${designClauses}Conventions and commands are documented at ` +
-    `${brief}. Before writing new code, search the codebase for existing implementations or symbols to reuse. ` +
+    `${brief}. ${scopeClauses}Before writing new code, search the codebase for existing implementations or symbols to reuse. ` +
     `For EACH link, in order — the FIRST link included: implement it fully (the code and the tests its ` +
     `acceptance criteria call for), run ` +
     `the link-scoped tests, COMMIT with clear messages, then pin the link boundary with ` +
@@ -1846,13 +2096,14 @@ async function runChain(chain) {
     }
     const r = reportOf.get(u.id)
     setStage(u.id, 'link-pipeline')
-    let result = await runUnit(u, { base: prevTip, report: r ?? null, evidence: planOf.get(u.id)?.evidence ?? lp.evidence, reportLost: !r || !!cImpl.reportLost })
+    let result = await runUnit(u, { base: prevTip, report: r ?? null, evidence: planOf.get(u.id)?.evidence ?? lp.evidence,
+      expectedPaths: lp.files ?? [], reportLost: !r || !!cImpl.reportLost })
       .catch(async (e) => quarantine(u, `pipeline error: ${e?.message ?? e}`)
         .catch(() => ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
     if (result.status === 'merge-ready') {
       units.set(u.id, { ...result, stage: 'merge-queue' })
       checkpoint()
-      const segment = mergeChain.then(() => mergeUnit(u)).catch((e) =>
+      const segment = mergeChain.then(() => mergeUnit(u, result)).catch((e) =>
         quarantine(u, `merge pipeline error: ${e?.message ?? e}`))
       mergeChain = segment.then(() => null, () => null)
       result = await segment
@@ -1870,6 +2121,14 @@ async function runChain(chain) {
 // units as silently-pending: ready() never fires, no error is raised, the wave just ends.
 {
   const ids = new Set(plan.units.map((u) => u.id))
+  for (const u of plan.units) {
+    const mode = scopeModeOf(u)
+    if (mode !== 'legacy' && !SCOPE_MODES.includes(mode))
+      throw new Error(`unit ${u.id}: unsupported scopeMode ${mode}`)
+    if (boundedScope && ['surgical', 'mechanical', 'consolidation'].includes(mode) &&
+        (!Array.isArray(u.allowedPaths) || !u.allowedPaths.length))
+      throw new Error(`unit ${u.id}: scopeMode ${mode} requires a non-empty allowedPaths array`)
+  }
   for (const e of plan.edges)
     if (!ids.has(e.from) || !ids.has(e.to))
       throw new Error(`plan edge references unknown unit: ${e.from} -> ${e.to}`)

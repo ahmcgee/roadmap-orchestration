@@ -359,3 +359,26 @@ Record what you probed and what it returned; a probe nobody wrote down gets re-b
 - **Not yet built:** a `contract-stale` unit exercising the `contractMismatch` channel end-to-end (frozen
   surface contradicting live code → mid-loop consult → forced Fable gate → `kind:'contract'` debt). It
   needs a real Fable consult, so it adds cost and nondeterminism the current fixtures deliberately avoid.
+
+## Codex runtime and scope-canary validation
+
+The isolated adapter tests are zero-token and offline:
+
+```sh
+npm test --prefix ../../../runtime/codex
+```
+
+The real Codex canary is opt-in and visibly charged to the active Codex allowance:
+
+```sh
+RUN_CODEX_SCOPE_EVAL=1 bash check-codex-scope.sh /tmp/roadmap-codex-scope
+```
+
+It refuses to launch unless `doctor --require-chatgpt-auth` verifies ChatGPT-managed authentication. The
+fixture contains adjacent dead code, inconsistent formatting, an unrelated bug/failure, an old dependency,
+optional documentation, and a broader-refactor temptation. Its checker requires the requested behavior,
+an exact one-path Git diff, byte-identical canaries, no observation-driven fix call, and no duplicate or
+evidence-free durable debt.
+
+Native Claude behavior remains the release gate. When allowance prevents those paid calls, follow
+[DEFERRED_CLAUDE_VALIDATION.md](DEFERRED_CLAUDE_VALIDATION.md) and report them as pending—not passed.

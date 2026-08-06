@@ -119,7 +119,7 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
 // =========================================================================================
 test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], contractSurfaceTouched: false }) },
+    { match: /^verify:a/, result: () => ({ head: BASE_SHA, changedPaths: [], pass: false, blocked: true, failures: [], contractSurfaceTouched: false }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.units.a.status, 'quarantined')
@@ -265,8 +265,8 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
     let n = 0
     return () =>
       n++ === 0
-        ? { pass: false, blocked: false, failures: ['boom'], contractSurfaceTouched: false }
-        : { pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
+        ? { head: BASE_SHA, changedPaths: [], pass: false, blocked: false, failures: ['boom'], contractSurfaceTouched: false }
+        : { head: BASE_SHA, changedPaths: [], pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
   })()
   const { fn, calls } = makeAgent([
     // unit a: impl debt (swept by the debt-fix round; only the re-emitted residue banks), a
@@ -275,7 +275,7 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
     { match: /^debt-fix:a/, result: () => ({ summary: 'swept', filesChanged: [], debt: [{ what: 'impl-shortcut-residue', kind: 'test', severity: 'minor', bankReason: 'out-of-scope-file' }] }) },
     { match: /^verify:a/, result: verifyA },
     { match: /^fix:a/, result: () => ({ summary: 'done', filesChanged: [], debt: [{ what: 'fix-shortcut', kind: 'structure', severity: 'minor' }] }) },
-    { match: /^review:a/, result: () => ({ blocking: [], preExisting: ['pre'], nonBlocking: [{ summary: 'nb', bankReason: 'out-of-scope-file' }], unsatisfiable: false }) },
+    { match: /^review:a/, result: () => ({ blocking: [], observations: [], preExisting: ['pre'], nonBlocking: [{ summary: 'nb', bankReason: 'out-of-scope-file' }], unsatisfiable: false }) },
     { match: /^opus-gate:a/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [{ what: 'gate-defer', kind: 'ergonomics', severity: 'minor', bankReason: 'needs-migration-or-ruling' }] }) },
     // unit b: contract mismatch (banks contract/major), forces the Fable gate (gate debt —
     // non-correctness, so the approve stands; the correctness case has its own test below).
@@ -369,8 +369,8 @@ test('10 contract mismatch: consult + forced Fable gate carrying the mismatch te
     let n = 0
     return () =>
       n++ === 0
-        ? { pass: false, blocked: false, failures: ['x'], contractSurfaceTouched: false }
-        : { pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
+        ? { head: BASE_SHA, changedPaths: [], pass: false, blocked: false, failures: ['x'], contractSurfaceTouched: false }
+        : { head: BASE_SHA, changedPaths: [], pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
   })()
   const { fn, calls } = makeAgent([
     { match: /^impl:a/, result: () => ({ summary: 'done', filesChanged: [], contractMismatch: MISMATCH }) },
@@ -606,7 +606,7 @@ test('19 blocked units re-enter dispatch once the blocking dependency resolves',
 
   // Wave 1: dep quarantines, so `blocked` is stamped blocked.
   const { fn } = makeAgent([{ match: /^review:dep/, result: {
-    blocking: [], preExisting: [], nonBlocking: [], unsatisfiable: true } }])
+    blocking: [], observations: [], preExisting: [], nonBlocking: [], unsatisfiable: true } }])
   const w1 = await runWave(fn, plan, makeState())
   assert.equal(w1.units.dep.status, 'quarantined')
   assert.equal(w1.units.blocked.status, 'blocked')
@@ -625,7 +625,7 @@ test('20 a lost FIX report also forces the frontier gate', async () => {
   const { fn, calls } = makeAgent([
     { match: /^review:a#0$/, result: {
       blocking: [{ summary: 'real defect', file: 'a.js', confidence: 1 }],
-      preExisting: [], nonBlocking: [], unsatisfiable: false } },
+      observations: [], preExisting: [], nonBlocking: [], unsatisfiable: false } },
     { match: /^fix:a/, result: () => { throw structuredOutputError() } },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())

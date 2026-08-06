@@ -1,7 +1,8 @@
 # roadmap-orchestration
 
-A Claude Code **plugin marketplace** carrying one plugin: **roadmap-orchestrator** — an
-autonomous roadmap-execution skill. Give it a roadmap (prose, checklist, tracker export,
+A dual-host roadmap orchestration plugin. Its primary path remains the native Claude Code plugin
+and Dynamic Workflow runtime; an optional local Node sidecar runs the same workflow scripts through
+the official Codex SDK. Give it a roadmap (prose, checklist, tracker export,
 RFC — any format), a cut line ("build up to milestone X"), and a codebase; it decomposes
 the slice into independently verifiable units, builds each in an isolated git worktree via
 a multi-agent workflow, and delivers one tested, reviewed, merge-ready integration branch.
@@ -20,6 +21,40 @@ Then, in the repo you want to build in:
 ```
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
+
+The repository also carries an independent Codex marketplace. From a Codex-enabled shell:
+
+```sh
+codex plugin marketplace add ahmcgee/roadmap-orchestration
+codex plugin add roadmap-orchestrator@roadmap-orchestration
+```
+
+For local candidate testing, replace the first source with the absolute repository path.
+
+Codex reads `.agents/plugins/marketplace.json` and `.codex-plugin/plugin.json`; Claude continues to
+read `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json`. Neither catalog is generated
+from or installed through the other.
+
+### Optional Codex sidecar
+
+The Codex adapter is local and dependency-isolated; installing the Claude plugin never runs npm.
+
+```sh
+cd plugins/roadmap-orchestrator/runtime/codex
+npm ci --ignore-scripts
+node bin/roadmap-codex.mjs doctor --repo /abs/target/repo --require-chatgpt-auth
+node bin/roadmap-codex.mjs run --repo /abs/target/repo --profile parity --require-chatgpt-auth
+```
+
+A live browser view starts by default at `http://0.0.0.0:8787` (phase, call status, model/effort,
+replay, failures, usage, and workflow logs). It intentionally excludes prompts, results, credentials,
+and journal contents. The promiscuous default suits devcontainers but exposes operational metadata to
+any host that can reach the port; use `--dashboard-host 127.0.0.1`, choose another port, or pass
+`--no-dashboard` when appropriate.
+
+`doctor` makes no paid model call and does not read or print credential files. Cached ChatGPT sign-in
+uses the user's Codex/ChatGPT allowance; API-key sign-in uses API billing and is refused unless the
+operator explicitly passes `--allow-api-key-auth`. The sidecar journal lives outside all Git worktrees.
 
 ## What it does
 
@@ -90,9 +125,16 @@ state never gates the build. (Ordinary non-`roadmap:*` issues in the repo are ig
 ## Layout
 
 ```
-.claude-plugin/marketplace.json          # this marketplace
+.agents/plugins/marketplace.json         # Codex repository marketplace
+.claude-plugin/marketplace.json          # Claude repository marketplace
 plugins/roadmap-orchestrator/            # the plugin
   .claude-plugin/plugin.json
+  .codex-plugin/plugin.json
+  skills/codex-orchestrate/SKILL.md       # thin Codex host entry point
+  runtime/
+    workflow-loader.mjs                  # production injected-global workflow loader
+    scope-policy.mjs                     # shared deterministic scope/debt helpers
+    codex/                                # isolated pinned SDK sidecar + tests
   skills/orchestrate/
     SKILL.md                             # goals + invariants for the executing architect
     harness.mjs                          # generic zero-token wave executor (dynamic workflow)
@@ -116,3 +158,6 @@ until the three-tier eval ladder passes — `evals/parse.sh` (syntax) → `evals
 which run offline in **file mode**. Issue-mode (real `gh`) behaviour has its own opt-in integration
 eval, `evals/check-issues.sh`, which runs a mini-arc against this repo and tears its issues down
 afterwards. See `plugins/roadmap-orchestrator/skills/orchestrate/evals/README.md`.
+
+The current dual-host work is a local candidate, not a release: native Claude paid fixtures remain
+the final behavior gate. Do not publish, tag, or claim host parity until that deferred checklist passes.

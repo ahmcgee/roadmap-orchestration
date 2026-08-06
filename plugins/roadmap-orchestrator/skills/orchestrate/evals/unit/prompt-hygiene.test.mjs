@@ -290,7 +290,7 @@ const FIX_ROUNDS = [
   // review blocks on round 0 only -> the in-loop `fix:` prompt
   { match: /^review:.*#0$/, result: {
     blocking: [{ summary: 'a real defect', file: 'a.js', confidence: 1 }],
-    preExisting: [], nonBlocking: [], unsatisfiable: false } },
+    observations: [], preExisting: [], nonBlocking: [], unsatisfiable: false } },
   // opus exit gate revises once -> `opus-gate-fix:`
   { match: /^opus-gate:.*#0$/, result: {
     verdict: 'revise', trigger: 'none',

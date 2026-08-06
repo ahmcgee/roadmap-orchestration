@@ -1166,8 +1166,8 @@ termination preserved, no new mechanism. Upstream of the boundary, banking itsel
 (RATIONALE §15): fix-in-unit is the default, a banked item needs a closed-set `bankReason`
 ("minor" alone never banks), the implementer's confessions get one in-unit `debt-fix` round, a
 gate approve holding correctness-kind debt is coerced to revise within the existing rounds, and
-issue mode mints one consolidated `roadmap:debt` issue per unit-residue (marker
-`wave=<N> unit=<id>`) whose resolving fix-unit names it in `closes`.
+issue mode maintains one consolidated `roadmap:debt` issue per unit with stable per-fact markers,
+whose resolving fix-unit names it in `closes`.
 
 **Bug reports and delivery.** Users file `roadmap:bug` issues (template auto-labels); the census
 lists open ones (`gh issue list`), triage closes/comments them — the batch-at-boundary discipline of
@@ -1180,3 +1180,29 @@ bootstrapped by a one-time user-merged PR at Phase 0 (templates only activate on
 this is the sole pre-close-out touch of `main`, and only the user's merge moves it — invariant 5
 holds). At session end the arc delivers as one integration PR (`Closes #…`) whose merge is the
 invariant-5 confirmation; file mode keeps the local fast-forward.
+
+## 10. Dual execution hosts and bounded scope
+
+The workflow scripts are host-neutral source. Claude executes them only through the native plugin and
+native Dynamic `Workflow(...)`; the local Codex adapter compiles the same source with the documented
+injected globals and maps each `agent()` call to a fresh official Codex SDK thread. The adapter shares
+one semaphore, call ceiling, event sink, and journal across the exact conductor→harness nesting level.
+It is not a Claude emulator, and Codex turn replay is not equivalent to `resumeFromRunId`.
+
+The portability boundary is intentionally lower than either host journal: committed unit branches,
+external worktrees, `.roadmap/plan.json`, and `.roadmap/state.json`. A host switch starts a fresh
+conductor and lets the existing recovery guards adopt committed work. `state.run.host` identifies
+forensics; journals are never consumed across hosts.
+
+Scope behavior is data, not host policy. New Phase-0 plans select `bounded-v1`; missing policy keeps a
+live legacy arc stable. `scopeMode` is independent of `kind`. Feature units have an expected file budget
+with explicit expansion; surgical/mechanical units have hard `allowedPaths`; consolidation is broad only
+inside its spec and authorized set. Every correction compares Git-derived paths before and after and
+routes growth through approve/revert/quarantine. Review still polices unrelated hunks inside a permitted
+file.
+
+The Codex prompt profile is versioned and role-specific, but wraps rather than replaces the workflow
+prompt. Semantic model tiers map through configurable parity/economy profiles, and workflow effort is
+preserved where supported. These mappings are operating hypotheses, not claims of model equivalence.
+The local progress dashboard is on by default at `0.0.0.0:8787` (explicitly disable with
+`--no-dashboard`) and exposes only whitelisted operational events, never prompts or results.

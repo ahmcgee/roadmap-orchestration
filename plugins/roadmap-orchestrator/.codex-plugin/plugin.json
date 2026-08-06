@@ -1,0 +1,26 @@
+{
+  "name": "roadmap-orchestrator",
+  "version": "0.11.0",
+  "description": "Run checkpointed roadmap arcs through the Codex SDK sidecar while preserving the native Claude workflow path.",
+  "author": {
+    "name": "Aaron McGee",
+    "url": "https://github.com/ahmcgee"
+  },
+  "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme",
+  "repository": "https://github.com/ahmcgee/roadmap-orchestration",
+  "license": "MIT",
+  "keywords": ["roadmap", "orchestration", "codex", "worktree", "checkpoint"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Roadmap Orchestrator",
+    "shortDescription": "Run checkpointed roadmap arcs with Codex",
+    "longDescription": "Create or continue roadmap arcs using the local Codex SDK sidecar, shared workflow scripts, and Git checkpoint recovery.",
+    "developerName": "Aaron McGee",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/ahmcgee/roadmap-orchestration",
+    "defaultPrompt": [
+      "Continue this roadmap arc with Codex from its persisted checkpoint."
+    ]
+  }
+}

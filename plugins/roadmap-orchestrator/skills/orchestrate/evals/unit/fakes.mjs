@@ -42,8 +42,18 @@ const DEFAULTS = [
 
   [(l) => l.startsWith('opus-gate-verify:'), () => verifyOk()],
   [(l) => l.startsWith('gate-verify:'), () => verifyOk()],
+  [(l) => l.startsWith('gap-verify:'), () => verifyOk()],
+  [(l) => l.startsWith('scope-revert-verify:'), () => verifyOk()],
+  [(l) => l.startsWith('debt-fix-snapshot:'), () => verifyOk()],
+  [(l) => l.startsWith('integration-fix-snapshot:'), () => verifyOk()],
+  [(l) => l.startsWith('integration-fix-verify:'), () => verifyOk()],
+  [(l) => l.startsWith('integration-scope-revert-verify:'), () => verifyOk()],
   [(l) => l.startsWith('verify:'), () => verifyOk()],
-  [(l) => l.startsWith('review:'), () => ({ blocking: [], preExisting: [], nonBlocking: [], unsatisfiable: false })],
+  [(l) => l.startsWith('review:'), () => ({ blocking: [], observations: [], preExisting: [], unsatisfiable: false })],
+
+  [(l) => l.startsWith('scope-expand:'), () => ({ action: 'approve', paths: [], guidance: '', basis: 'acceptance criterion' })],
+  [(l) => l.startsWith('integration-scope-expand:'), () => ({ action: 'approve', paths: [], guidance: '', basis: 'suite failure' })],
+  [(l) => l.startsWith('scope-revert:'), () => implOk()],
 
   [(l) => l.startsWith('opus-gate-fix:'), () => implOk()],
   [(l) => l.startsWith('gate-fix:'), () => implOk()],
@@ -56,6 +66,8 @@ const DEFAULTS = [
   [(l) => l.startsWith('merge:'), (b) => mergeOk(b)],
   [(l) => l.startsWith('resolve:'), (b) => mergeOk(b)],
   [(l) => l.startsWith('integration-fix:'), (b) => mergeOk(b)],
+  [(l) => l.startsWith('integration-scope-revert:'), (b) => mergeOk(b)],
+  [(l) => l.startsWith('integration-scope-quarantine:'), (b) => mergeOk(b)],
 
   // Warm-lane defaults: lane setup succeeds, but the default chain-plan reports no links —
   // the harness then DEMOTES the chain to per-link cold dispatch, so every legacy test that
@@ -86,7 +98,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
-const verifyOk = () => ({ pass: true, blocked: false, failures: [], contractSurfaceTouched: false })
+const verifyOk = (b = BASE_SHA) => ({ head: b, changedPaths: [], pass: true, blocked: false, failures: [], contractSurfaceTouched: false })
 const implOk = () => ({ summary: 'done', filesChanged: [] })
 const mergeOk = (b) => ({ merged: true, suitePass: true, head: b, detail: '' })
 

@@ -64,6 +64,8 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   "repoPath": "/abs/path/to/repo",            // required
   "worktreeRoot": "/abs/path/OUTSIDE/repo",   // required — e.g. /tmp/<repo>-roadmap
   "cutLine": "milestone-2",
+  "methodology": { "scopePolicy": "bounded-v1" }, // required for new plans. Missing means legacy;
+                                   // upgrade an existing arc explicitly at a wave boundary only.
   "tracking": "issues",            // "issues" | "files" — resolved at Phase 0 by probing for a
                                    //   usable GitHub remote + gh auth. "files" (the default when
                                    //   absent) is the legacy filesystem behaviour; every gh side-
@@ -77,6 +79,12 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
     "title": "...",
     "risk": "high",                // low | med | high — drives plan-check coverage and gate effort
     "kind": "code",                // anything else is yours to handle between waves
+    "scopeMode": "feature",        // feature | surgical | mechanical | consolidation; separate
+                                   //   from kind. Missing code-unit mode under bounded-v1 => feature.
+    "allowedPaths": ["src/auth.ts"], // REQUIRED hard boundary for surgical/mechanical and explicit
+                                   //   authorization set for consolidation. Feature uses its approved
+                                   //   implementation plan files as the expected set; expansions are
+                                   //   explicit architect decisions.
     "inScope": true,               // resolved cut line, ancestor-closed
     "issue": 57,                    // issue mode: CACHE of the unit's issue number. Convenience only —
                                    //   sync agents find-or-create by the `roadmap:unit id=<id>` body
@@ -160,14 +168,17 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 { "integrationBranch": "roadmap/session-<date>",
   "integrationTip": "<sha to fork from — usually main's HEAD>",
   "consultsUsed": 0, "wave": 0, "units": {},
-  "run": { "runId": "<id>", "scriptPath": "<session-persisted script path>" } }
+  "run": { "host": "claude", "runId": "<id>",
+           "scriptPath": "<session-persisted script path>", "journalPath": "<codex-only optional>" } }
 ```
 
 Fields the scripts add:
 
-- **`run`** — optional passthrough you record at launch (from the Workflow tool result). On a
-  conductor run it identifies the whole multi-wave run, making same-session `resumeFromRunId`
-  mechanical and forensics one `cat`.
+- **`run`** — optional host-tagged launch metadata. Claude uses its native run ID for same-session
+  `resumeFromRunId`; Codex uses an external `journalPath` and deterministic-prefix replay. Journals
+  are host-private and never portable. Git commits/worktrees plus plan/state are the cross-host layer.
+- **`methodology`** — records the plan-selected `scopePolicy` in state forensics. The host never
+  chooses scope semantics.
 - **`preview`** — `{ sha, status: "live" | "failed" | "none" }`, the green-tip mirror's position.
   `failed` never affects any unit outcome.
 - **`boundary`** — present when the wave-tail boundary phase ran anything:
@@ -196,8 +207,13 @@ Fields the scripts add:
   passed state and accumulates across relaunches, so a single wave's delta is the difference
   between two successive checkpoints. This is the session report's "where did frontier attention
   go" table.
-- **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
-  accumulator.
+- **`observations`** — bounded, deduplicated review concerns that never enter fix prompts and never
+  become durable debt automatically. Boundary judgment may later promote one only with evidence.
+- **`debt`** — reproducible facts surfaced this wave. Under `bounded-v1`, each non-contract item
+  carries file, claim, a probe, exact anchor+observed condition, or precise acceptance/contract
+  citation, plus recheck, bankReason, deterministic
+  `debtKey`, and last-seen SHA. Identical keys update; distinct facts in one file remain distinct;
+  facts that no longer reproduce are marked resolved. Contract mismatch remains a special route.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
   write-failed | preview-failed | correctness-debt-banked`.

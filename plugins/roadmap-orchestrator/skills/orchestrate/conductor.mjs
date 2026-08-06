@@ -59,6 +59,10 @@ const CC = {
 }
 
 const repo = inPlan.repoPath   // absolute path to the repository (agents read .roadmap/ here)
+const scopePolicy = inPlan.methodology?.scopePolicy ?? 'legacy'
+if (!['legacy', 'bounded-v1'].includes(scopePolicy))
+  throw new Error(`unsupported methodology.scopePolicy: ${scopePolicy}`)
+const boundedScope = scopePolicy === 'bounded-v1'
 
 // GitHub issue projection (issue mode only; reference.md "GitHub issue tracking"). Mirrors harness.mjs:
 // issues are a Haiku-written projection of state, never read by this script's routing. Every gh clause
@@ -262,6 +266,8 @@ const specSkeleton = obj({
   title: { type: 'string', maxLength: 120 },
   risk: oneOf(['low', 'med', 'high']),
   kind: { type: 'string', maxLength: 30 },
+  scopeMode: oneOf(['feature', 'surgical', 'mechanical', 'consolidation']),
+  allowedPaths: { type: 'array', maxItems: 80, items: { type: 'string', maxLength: 300 } },
   supersedes: { type: 'string', maxLength: 60 },
   goal: { type: 'string', maxLength: 400 },
   constraints: { type: 'string', maxLength: 600 },
@@ -414,10 +420,12 @@ function predicates(census, withheldIds) {
   return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
 }
 
-// A health-assessor fix-unit draft {id, goal, files, acceptance} -> a default skeleton
-// (risk 'low', kind 'code'). `files` rides along for the spec prompt only.
+// A health-assessor fix-unit draft is deliberately bounded structural/health work. Its `files`
+// become the persisted allowedPaths instead of disappearing after spec expansion.
 const draftSkeleton = (d) => ({
   id: d.id, title: (d.goal ?? d.id).slice(0, 120), risk: 'low', kind: 'code',
+  scopeMode: boundedScope ? 'consolidation' : undefined,
+  allowedPaths: boundedScope ? [...new Set(d.files ?? [])] : undefined,
   goal: d.goal ?? '', constraints: '', contractRefs: [], acceptance: d.acceptance ?? [], edges: [], files: d.files ?? [],
 })
 
@@ -480,6 +488,7 @@ const arcSummary = (census) => {
 async function ret(reason, tier, extra = {}) {
   if (tier != null) boundaries.push({ wave: state.wave, tier, escalated: reason })
   const st = { ...state, spend: { ...(state.spend ?? {}) } }   // tier-4 handoff: boundary + debt stay INTACT (the root consumes them)
+  st.methodology = { ...(st.methodology ?? {}), scopePolicy }
   mergeConductorSpend(st)
   st.conductor = { reason, wavesRun, boundaries }
   if (degradations.length) st.degradations = degradations
@@ -530,6 +539,11 @@ const opusTriagePrompt = (N, P) =>
   `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback, owed: P.owedJobs })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
   `fix-unit DRAFTS to admit. ` +
+  (boundedScope
+    ? `Use scopeMode consolidation for admitted structural/health work and carry the draft's exact files into ` +
+      `allowedPaths. New feature work uses feature. Surgical/mechanical work requires an explicit non-empty ` +
+      `allowedPaths set. Breadth is never implicit. `
+    : '') +
   (P.owedJobs.length
     ? `The \`owed\` list names boundary jobs that were DUE but did not run (count = consecutive boundaries owed). ` +
       `They discharge automatically when the job next succeeds — never silently ignore one: if its precondition is ` +
@@ -590,6 +604,10 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `'contract-amendment'/'contingent-replan'/'needs-user' to return to the root, or 'cut-line' when the arc is ` +
   `complete. When escalating 'needs-user', put the exact user-facing question (with the context needed to answer ` +
   `it) in \`notes\` — that text IS what reaches the user. ` +
+  (boundedScope
+    ? `Every new code unit must name its scopeMode. A surgical, mechanical, or consolidation unit must carry a ` +
+      `non-empty allowedPaths list; feature units should omit it unless an explicit authorization is useful. `
+    : '') +
   `Return skeletons and journal only — write no code and no files. Hold \`journal\` to one short paragraph ` +
   `(max 1500 characters) and \`notes\` to a few (max 2000 characters). ${TERSE}${lead}`
 
@@ -598,7 +616,10 @@ const specExpandPrompt = (skel) => SPECWRITE +
   `other file. Skeleton:\n${JSON.stringify(skel)}\nThe spec must contain: a Goal section (from \`goal\`), a ` +
   `Constraints section (from \`constraints\`), a Contract references section (from \`contractRefs\`), and an ` +
   `Acceptance criteria section written as individually gradeable clauses (from \`acceptance\`) — the exit gate ` +
-  `grades them one by one. Render the skeleton's content faithfully; invent no requirements. Report ok:false with ` +
+  `grades them one by one. ${boundedScope ? `Add a Scope section recording scopeMode=${skel.scopeMode ?? 'feature'} ` +
+    `and allowedPaths=${JSON.stringify(skel.allowedPaths ?? [])}; this scope metadata is authoritative plan data, ` +
+    `not permission to invent additional requirements. ` : ''}` +
+  `Render the skeleton's content faithfully; invent no requirements. Report ok:false with ` +
   `the exact error if the path cannot be written.`
 
 const specRevisePrompt = (rev) => SPECWRITE +
@@ -639,7 +660,13 @@ function mergePlan(prepared, cutIds) {
       if (oldU) oldU.inScope = false
       for (const e of plan.edges) { if (e.from === oldId) e.from = s.id; if (e.to === oldId) e.to = s.id }
     }
+    const scopeMode = s.scopeMode ?? (boundedScope && (s.kind ?? 'code') === 'code' ? 'feature' : undefined)
+    const allowedPaths = Array.isArray(s.allowedPaths) ? [...new Set(s.allowedPaths)]
+      : (boundedScope && scopeMode === 'consolidation' && Array.isArray(s.files) ? [...new Set(s.files)] : undefined)
+    if (boundedScope && ['surgical', 'mechanical', 'consolidation'].includes(scopeMode) && !allowedPaths?.length)
+      throw new Error(`new ${scopeMode} unit ${s.id} requires allowedPaths`)
     plan.units.push({ id: s.id, title: (s.title ?? s.id).slice(0, 120), risk: s.risk ?? 'low', kind: s.kind ?? 'code', inScope: true,
+      ...(scopeMode ? { scopeMode } : {}), ...(allowedPaths?.length ? { allowedPaths } : {}),
       // The push is a whitelist — an unlisted skeleton field is dropped here, so `closes` must be
       // carried explicitly or the merge path never sees it.
       ...(Array.isArray(s.closes) && s.closes.length
@@ -654,8 +681,12 @@ function mergePlan(prepared, cutIds) {
 
 const fmtDebt = (d) => typeof d === 'string'
   ? `- ${d}`
-  : `- [${d.kind ?? 'structure'}/${d.severity ?? 'minor'}] ${d.what ?? ''}${d.why ? ` — ${d.why}` : ''}` +
-    `${d.bankReason ? ` [bank: ${d.bankReason}]` : ''}${d.unit ? ` (${d.unit})` : ''}`
+  : `- [${d.kind ?? 'structure'}/${d.severity ?? 'minor'}] ${d.claim ?? d.what ?? ''}${d.why ? ` — ${d.why}` : ''}` +
+    `${d.file ? ` [file: ${d.file}${d.anchor ? `#${d.anchor}` : ''}]` : ''}` +
+    `${d.probe ? ` [probe: ${d.probe}]` : ''}${d.observed ? ` [observed: ${d.observed}]` : ''}` +
+    `${d.contract ? ` [contract: ${d.contract}]` : ''}` +
+    `${d.recheck ? ` [recheck: ${d.recheck}]` : ''}${d.bankReason ? ` [bank: ${d.bankReason}]` : ''}` +
+    `${d.lastSeenSha ? ` [last-seen: ${d.lastSeenSha}]` : ''}${d.unit ? ` (${d.unit})` : ''}`
 
 /* ------------------------------ main loop ------------------------------ */
 for (let w = 0; w < CC.maxWavesPerRun; w++) {
@@ -877,7 +908,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   phase('Persist')
   const waveDebt = state.debt ?? []   // captured before the consumed state clears it
   // Consumed continuation state: boundary removed + debt cleared (folded), conductor.reason null.
-  const consumed = { ...state, spend: { ...(state.spend ?? {}) } }
+  const consumed = { ...state, methodology: { ...(state.methodology ?? {}), scopePolicy }, spend: { ...(state.spend ?? {}) } }
   if (state.boundary) { lastBoundary = state.boundary; lastBoundaryWave = N }
   delete consumed.boundary
   consumed.debt = []
@@ -886,6 +917,11 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   consumed.conductor = { reason: null, wavesRun, boundaries }
   // Skill defects are NOT consumed like debt — they are arc-cumulative and outlive the arc.
   if (degradations.length) consumed.degradations = degradations
+  if (boundedScope && debtLedger.length) consumed.observations = [
+    ...(consumed.observations ?? []),
+    ...debtLedger.map((summary) => ({ unit: 'boundary', sha: state.integrationTip ?? '', summary,
+      confidence: 1, evidence: '', routeReason: 'boundary-ledger-without-reproducible-evidence' })),
+  ]
   await writeSkillFeedback()
 
   // persist-plan: overwrite plan.json with the merged plan.
@@ -893,14 +929,55 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
     ' (create parent directories if needed)')
 
-  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
-  // ONE consolidated issue per unit-with-residue, keyed wave+unit (arc-observed: per-finding minting
-  // produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered resume — the
-  // wave+unit key is a pure function of stable ids). FILE MODE -> a <!-- wave N --> section in
-  // debt.md, ALWAYS stamped (even "no new entries" — ruling 7); per-finding lines are fine there,
-  // the volume problem was issues, so the file branch is deliberately untouched.
+  // bank-debt: the durable technical-debt record. bounded-v1 uses a stable identity per reproducible fact,
+  // consolidated into one issue per unit in issue mode or one marker region per fact in file mode. This keeps
+  // distinct facts in one file while avoiding one issue per raw finding. Legacy plans retain their wave records.
   const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
-  if (issueMode) {
+  const durableFacts = boundedScope ? waveDebt.filter((d) => d && typeof d === 'object' && d.debtKey && d.file &&
+    (d.claim ?? d.what) && (d.probe || (d.anchor && d.observed) || d.contract)) : waveDebt
+  if (boundedScope) {
+    const byUnit = new Map()
+    for (const d of durableFacts) {
+      const k = d.unit ?? 'general'
+      if (!byUnit.has(k)) byUnit.set(k, [])
+      byUnit.get(k).push(d)
+    }
+    if (issueMode && durableFacts.length) {
+      const records = [...byUnit].map(([uid, facts]) => ({
+        unit: uid, issueMarker: `roadmap:debt unit=${uid}`,
+        labels: ['roadmap:debt', `severity:${facts.some((d) => d.severity === 'major') ? 'major' : 'minor'}`,
+          ...new Set(facts.map((d) => `debt:${debtKind(d.kind)}`))].join(','),
+        facts: facts.map((d) => ({ marker: `roadmap:debt-fact key=${d.debtKey}`, debtKey: d.debtKey,
+          text: fmtDebt(d), probe: d.probe ?? '', recheck: d.recheck ?? '', lastSeenSha: d.lastSeenSha ?? d.sha ?? '' })),
+      }))
+      await run(
+        STRICT + GH_BEST_EFFORT +
+        `Update the consolidated GitHub debt records below. There is at most one issue per unit, identified by ` +
+        `its stable issueMarker; each independent fact has its own stable marker inside that issue. Find an issue ` +
+        `with the unit marker using \`gh issue list ${ghRepo}--search '"<issueMarker>" in:body' --state all --limit 1\`. ` +
+        `Create it only if absent; otherwise update only the marked fact regions. An identical debtKey updates its ` +
+        `evidence and last-seen SHA, never duplicates. Different keys in one file remain distinct. Before banking, ` +
+        `run the fact's probe/recheck when supplied. If it no longer reproduces at the current integration tip, mark ` +
+        `that fact's region RESOLVED and do not re-bank it as open. Never create one issue per raw finding. Records:\n` +
+        `${JSON.stringify(records)}\nReport ok:true when projection is complete; note any gh failure in detail.`,
+        { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
+      ).catch(() => null)
+    } else if (!issueMode) {
+      const facts = durableFacts.map((d) => ({ marker: `debt:${d.debtKey}`, text: fmtDebt(d),
+        probe: d.probe ?? '', recheck: d.recheck ?? '', lastSeenSha: d.lastSeenSha ?? d.sha ?? '' }))
+      await run(
+        STRICT + `In ${repo}/.roadmap/debt.md (create it if missing), maintain one stable delimited region per ` +
+        `fact below using \`<!-- debt:<debtKey> -->\` and \`<!-- /debt:<debtKey> -->\`. Re-run the supplied ` +
+        `probe/recheck at the current integration tip before banking. If it reproduces, create or replace that exact ` +
+        `region with the supplied text (identical keys update; different keys remain distinct). If it no longer ` +
+        `reproduces, retain the region but mark it RESOLVED. Never create durable debt for an item absent from ` +
+        `this evidence-bearing facts list. Also ensure the compatibility marker \`<!-- wave ${N} -->\` exists ` +
+        `(its body may say \`bounded-v1: ${facts.length} evidence-bearing fact(s) considered\`). Facts:\n` +
+        `${JSON.stringify(facts)}\nChange nothing outside debt marker regions and the compatibility wave section.`,
+        { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
+      ).catch(() => null)
+    }
+  } else if (issueMode) {
     const byUnit = new Map()
     for (const d of waveDebt) {
       const k = d.unit ?? 'general'

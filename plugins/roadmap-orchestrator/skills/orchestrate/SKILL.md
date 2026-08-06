@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Execute a slice of a product roadmap autonomously — decompose it into independently verifiable units, build each in an isolated git worktree via a multi-agent workflow with architect gates, integrate serially, and deliver one merge-ready branch. Use when the user provides a roadmap / target architecture (any format) and asks to build up to a milestone or cut line.
+description: Execute a slice of a product roadmap autonomously — decompose it into independently verifiable units, build each in an isolated git worktree via a multi-agent workflow with architect gates, integrate serially, and deliver one merge-ready branch. Use when the user provides a roadmap / target architecture and asks to build to a milestone. In Claude Code dispatch native Dynamic Workflow; in Codex route execution to the bundled roadmap-codex SDK sidecar.
 ---
 
 # Roadmap Orchestrator
@@ -18,6 +18,17 @@ launch per-wave yourself. Neither is rewritten per run.
 This file is what to achieve. Data shapes, config knobs, and the harness/conductor internals
 are in `reference.md` — **read it before Phase 0**. Design rationale, where you want it, is in
 `RATIONALE.md`; you don't need it to operate.
+
+## Select the execution host before dispatch
+
+- **Claude Code:** follow the native `Workflow(...)` Phase 1 instructions below.
+- **Codex:** read [the Codex host skill](../codex-orchestrate/SKILL.md) before Phase 0. Keep this
+  file as the shared methodology, but follow the Codex skill for preparation, authentication,
+  dispatch, replay, and progress. Never invoke native `Workflow(...)`, `resumeFromRunId`,
+  `claude -p`, or a Claude wrapper from Codex.
+
+This routing choice affects only the host mechanism. Scope semantics always come from the persisted
+plan, and cross-host recovery always comes from Git, worktrees, `plan.json`, and `state.json`.
 
 ## Invariants — never break these; everything else is judgment
 
@@ -178,6 +189,12 @@ Read their outputs, then decide:
   merge gate runs them.
 - **Resolve the cut line** into an explicit in-scope set (ancestor-closed under the DAG), and jot
   next-session notes for what falls beyond it while the context is hot.
+- **Version the scope methodology.** Every new plan writes
+  `"methodology": {"scopePolicy": "bounded-v1"}`. Give each ordinary code unit a separate
+  `scopeMode` (`feature` by default; `surgical`, `mechanical`, or `consolidation` when appropriate).
+  Surgical, mechanical, and consolidation units require explicit `allowedPaths`; a health draft's
+  proposed `files` become consolidation `allowedPaths`. Do not overload `kind`. A plan with no policy
+  is a legacy in-flight arc and must not be changed silently.
 
 **Fidelity audit — proportionate to the source material.** Your plan pack is built from
 compressed extractions, and compression loss is silent: a dropped constraint resurfaces later as
@@ -250,6 +267,9 @@ itself a deliverable.
 
 ## Phase 1…n — Execute waves
 
+The commands in this section are Claude-host commands. A Codex agent must use the sidecar commands
+in `../codex-orchestrate/SKILL.md` instead.
+
 Read `.roadmap/plan.json` and `.roadmap/state.json`, then launch the **conductor** in the
 background and stay quiet — it notifies you when the whole run finishes, not each wave.
 
@@ -264,6 +284,11 @@ cannot resolve it otherwise. Record the returned `runId` and `scriptPath` into `
 optional `run` field at launch: that `runId` identifies the whole multi-wave run, so a
 same-session `resumeFromRunId` replays every completed wave and crash forensics are one `cat`
 away.
+
+This is the **Claude host path**: native plugin, native `Workflow(...)`, and same-session native
+`resumeFromRunId`. Never substitute `claude -p`, an Agent SDK wrapper, or an external process acting
+as the Claude workflow host. The optional Codex sidecar has its own skill and journal; it starts a
+fresh conductor from these same plan/state and Git checkpoints.
 
 **Do not** pass `config: { boundary: 'off' }` to end the arc — arc-completeness is detected
 post-hoc, and the final wave's untriaged boundary evidence is handed to you deliberately as
@@ -406,6 +431,14 @@ is wrong across sessions; the journal does not survive the host process). Work t
 
 Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group**
 (`kill -TERM -- -$(cat …)`), not just the leader.
+
+**Switching hosts.** Establish that the old host is stopped and prefer a wave boundary. A Claude
+journal cannot resume in Codex and a Codex journal cannot resume in Claude. Start a fresh conductor
+under the new host from the current committed branches/worktrees plus `.roadmap/plan.json` and
+`.roadmap/state.json`; let setup/adoption guards recover committed in-flight work and never delete
+another host's branches or worktrees. To upgrade a legacy arc, do it only at a boundary: checkpoint,
+add `bounded-v1`, assign scope modes/allowed paths to all remaining units, journal the ruling, and
+start a fresh host run. Never resume an old journal across that plan change.
 
 ## Session end
 
