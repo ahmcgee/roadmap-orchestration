@@ -695,6 +695,14 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   for (const d of newDegradations) degradations.push(d)
   if (newDegradations.length) log(`wave ${N}: ${newDegradations.length} harness degradation(s) recorded`)
 
+  // Codex hard stop (Codex is the only implementer — there is no lane to fall back to). The
+  // harness already halted dispatch and parked in-flight units; no census/triage spend against a
+  // wave the root must hand to the human anyway (re-auth, or wait out the usage-limit window,
+  // then relaunch — state and parked units resume cleanly).
+  if (state.codex?.halt)
+    return await ret(state.codex.halt, 4, { parked: Object.entries(state.units ?? {})
+      .filter(([, u]) => u.parked).map(([id]) => id) })
+
   // 4. Census (Haiku) — feedback + quarantine folder listing. A dead census degrades to an empty
   // one rather than killing the run: the authoritative boundary evidence is the in-memory state,
   // and an empty census only means user-feedback files go untriaged this boundary (they persist

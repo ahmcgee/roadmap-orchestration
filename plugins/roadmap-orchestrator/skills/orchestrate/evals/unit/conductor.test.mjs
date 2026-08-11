@@ -824,7 +824,7 @@ test('the returned state is threaded to the next wave, boundary/debt consumed', 
 // array would double-count every prior entry at each wave.
 test('degradations absorb the wave delta only — no duplication across waves', async () => {
   const SEED = { script: 'harness', wave: 1, label: 'old:x', model: 'haiku', kind: 'no-report', what: 'seeded' }
-  const NEW = { script: 'harness', wave: 2, label: 'impl:y', model: 'opus', kind: 'threw', what: 'fresh' }
+  const NEW = { script: 'harness', wave: 2, label: 'codex-build:y', model: 'haiku', kind: 'threw', what: 'fresh' }
   const { result } = await conduct({
     state: mkState({
       degradations: [SEED],
@@ -848,7 +848,7 @@ test('degradations absorb the wave delta only — no duplication across waves', 
 // a full-file overwrite destroyed a user's design-feedback section mid-run).
 test('skill-feedback writes only its marker region, preserving the rest of the file', async () => {
   const { agent } = await conduct({
-    state: mkState({ degradations: [{ script: 'harness', wave: 1, label: 'impl:x', model: 'opus', kind: 'no-report', what: 'MARKER_WHAT' }] }),
+    state: mkState({ degradations: [{ script: 'harness', wave: 1, label: 'codex-build:x', model: 'haiku', kind: 'no-report', what: 'MARKER_WHAT' }] }),
   })
   const sf = firstLabel(agent.calls, /^skill-feedback$/)
   assert.ok(sf, 'a degradation-carrying run writes skill-feedback')

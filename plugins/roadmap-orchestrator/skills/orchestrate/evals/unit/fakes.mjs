@@ -43,15 +43,25 @@ const DEFAULTS = [
   [(l) => l.startsWith('opus-gate-verify:'), () => verifyOk()],
   [(l) => l.startsWith('gate-verify:'), () => verifyOk()],
   [(l) => l.startsWith('verify:'), () => verifyOk()],
-  [(l) => l.startsWith('review:'), () => ({ blocking: [], preExisting: [], nonBlocking: [], unsatisfiable: false })],
 
-  [(l) => l.startsWith('opus-gate-fix:'), () => implOk()],
-  [(l) => l.startsWith('gate-fix:'), () => implOk()],
   [(l) => l.startsWith('opus-gate:'), () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [] })],
   [(l) => l.startsWith('gate:'), () => ({ verdict: 'approve', directives: [], debt: [] })],
-  [(l) => l.startsWith('impl:'), () => implOk()],
-  [(l) => l.startsWith('debt-fix:'), () => implOk()],   // post-impl sweep of the implementer's own debt
-  [(l) => l.startsWith('fix:'), () => implOk()],
+
+  // Codex lane: the steering agent's report = S.impl + process metadata. The default is a clean
+  // one-commit run; tests probing failure axes (exit!=0, no commits, limitHit, timeout) override
+  // with their own `codex` block.
+  [(l) => l.startsWith('codex-probe:'), () => ({ ok: true })],
+  // The cross-model spec critique fires on EVERY fresh build whose risk is in planCheckRisk
+  // (the shipped default is all three tiers), so it needs a default or every wave records four
+  // spurious degradations. Clean-and-silent: ok with nothing to say, so the plan-check prompt
+  // stays byte-identical to the no-critique form.
+  [(l) => l.startsWith('codex-spec-review:'), () => ({ ok: true, questions: [], risks: [], notes: '' })],
+  [(l) => l.startsWith('codex-build-retry:'), () => implCodexOk()],
+  [(l) => l.startsWith('codex-build:'), () => implCodexOk()],
+  [(l) => l.startsWith('codex-fix:'), () => implCodexOk()],
+  [(l) => l.startsWith('codex-gap-fix:'), () => implCodexOk()],
+  [(l) => l.startsWith('codex-opus-gate-fix:'), () => implCodexOk()],
+  [(l) => l.startsWith('codex-gate-fix:'), () => implCodexOk()],
 
   [(l) => l.startsWith('merge:'), (b) => mergeOk(b)],
   [(l) => l.startsWith('resolve:'), (b) => mergeOk(b)],
@@ -63,7 +73,9 @@ const DEFAULTS = [
   // free of degradation noise). Chain tests override these with real per-link rules.
   [(l) => l.startsWith('lane-setup:'), (b) => ({ ok: true, sha: b, state: 'ready' })],
   [(l) => l.startsWith('chain-plan:'), () => ({ links: [] })],
-  [(l) => l.startsWith('chain-impl:'), () => ({ links: [] })],
+  // codex-chain: replaces the removed chain-impl: — one codex session over the whole approved
+  // prefix, reported by the steering agent (S.chainImplCodex = S.chainImpl + the codex meta).
+  [(l) => l.startsWith('codex-chain:'), () => ({ links: [], notes: '', codex: codexMetaOk() })],
   [(l) => l.startsWith('chain-tips:'), () => ({ ok: true, tips: [] })],
 
   [(l) => l.startsWith('mirror:'), (b) => ({ ok: true, sha: b })],
@@ -86,8 +98,11 @@ const DEFAULTS = [
   [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
-const verifyOk = () => ({ pass: true, blocked: false, failures: [], contractSurfaceTouched: false })
+const verifyOk = () => ({ pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] })
 const implOk = () => ({ summary: 'done', filesChanged: [] })
+export const codexMetaOk = () => ({ exitCode: 0, commits: 1, turns: 1, inputTokens: 0, outputTokens: 0,
+  timedOut: false, doneMarker: true, limitHit: false, sessionCaptured: true, error: '' })
+export const implCodexOk = () => ({ ...implOk(), codex: codexMetaOk() })
 const mergeOk = (b) => ({ merged: true, suitePass: true, head: b, detail: '' })
 
 const defaultFor = (label, baseSha) => {

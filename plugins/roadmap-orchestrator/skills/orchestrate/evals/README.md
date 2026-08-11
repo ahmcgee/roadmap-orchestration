@@ -107,10 +107,19 @@ paid fixture) so its `gh` and model load isn't compounded.
 `setup-fixture.sh <dir>` builds a throwaway repo (a tiny dependency-free Node calculator) with a
 complete canned plan pack — no Phase-0 planning runs, so the eval isolates the *execution* machinery.
 
+**Codex is required** (the CLI is the sole implementer): run with the `codex` CLI installed and
+logged in, and export `CODEX_HOME` before `setup-fixture.sh` if auth lives in a non-default home
+(the value is baked into `plan.codex.home`). Fixture runs now spend BOTH Claude and OpenAI quota
+— the fresh-implement units run real `codex exec` builds; the adopted gate probes never reach an
+implementer and keep validating the Claude gates alone. `check.sh` additionally asserts the
+`__codex/<unit>/build/` artifacts (clean exit, events stream, session id), that no codex artifact
+ever entered git history, and the **runaway-loop ceilings** (per-unit `rounds` + debt volume —
+the spiral, made measurable; `gate-good` needing any fix round is the noise tripwire).
+
 | Unit | Probes | Expected end state |
 |---|---|---|
-| `add-multiply` | Happy path: plan → plan-check → implement → verify → review → gate → merge | `merged` |
-| `add-divide` | Dependency scheduling (contract edge); contract compliance (RangeError clause) | `merged`, after multiply |
+| `add-multiply` | Happy path: plan → spec-critique → plan-check → codex build → verify → gate → merge | `merged` |
+| `add-divide` | Dependency scheduling (contract edge); contract compliance (RangeError clause); med-risk ⇒ Fable plan-check | `merged`, after multiply |
 | `impossible-cache` | Unsatisfiable fast-exit: the spec sincerely demands cross-process persistence the frozen contract forbids | `quarantined`, never merged |
 | `gate-good` | **Over-blocking probe**: a clean pre-baked branch (`existingBranch`) adopted straight into verify→review→gate | `merged`, low gate friction |
 | `gate-bad` | **Rubber-stamp probe**: a pre-baked branch that passes every runnable acceptance command but violates the spec's prose (Math.round vs round-half-away-from-zero; the negative-half case is deliberately untested) | `quarantined`, **or** `merged` with the violation fixed — never merged as-is |
@@ -305,6 +314,47 @@ Probes worth keeping for the current surface:
 | Any prompt whose schema you just capped | its own tier | The budget you stated is one a real model can actually hold to |
 
 Record what you probed and what it returned; a probe nobody wrote down gets re-bought.
+
+### P1 — `codex-probe.sh` (the Codex CLI facts, pinned 2026-08-11 on codex-cli 0.147.0)
+
+Opt-in (`RUN_CODEX_EVAL=1`, spends OpenAI quota, zero Claude tokens). Ran fully green;
+what it pinned, which the codex executor lane's design depends on:
+
+- **`--output-schema` is OpenAI strict mode**: `required` must list EVERY key in
+  `properties`, or the turn 400s (`invalid_json_schema`) and the run dies with events
+  `error` + `turn.failed{error.message}`. Optional-by-meaning fields must still be
+  required (emitted as `""`/`[]`/`false`).
+- **Event vocabulary** (`--json`, JSONL): `thread.started{thread_id}` first, then
+  `turn.started`, `item.*`, `turn.completed{usage:{input_tokens,output_tokens,...}}`;
+  failures add `error` + `turn.failed`.
+- **`codex exec` flag surface**: `-C <dir>`, `-s workspace-write`, `-o`, `--output-schema`,
+  `--json`, `--skip-git-repo-check`, `-c key=value`. There is **no `-a` on exec** —
+  approvals never fire in exec mode.
+- **`codex exec resume <sid>`** keeps `-o/--output-schema/--json/-m/-c/--skip-git-repo-check`
+  but has **no `-C`** (cwd = the invoking shell's cwd, which also scopes its session
+  lookup) and **no `-s`** (use `-c sandbox_mode="workspace-write"`).
+- **Resume retains the original brief's constraints**: a standing rule stated once in the
+  build brief was still honored on a later `resume` turn (refused a rule-violating request,
+  emitted the agreed token). Scope discipline survives fix rounds without restating.
+- **`workspace-write` write-bar holds**: writes inside cwd succeed, an attempted write
+  outside cwd is blocked.
+- **Untrusted paths** run cleanly with `-c 'projects."<path>".trust_level="trusted"'` —
+  no interactive trust prompt, no sandbox downgrade observed.
+- **Poll idiom**: `timeout 90 tail --pid=$(cat pidfile) -f /dev/null` in a loop over the
+  `exit-code` marker file works; the `echo $? > exit-code` inside the backgrounded
+  `sh -c` is the disk-verified done signal.
+
+### P2 — Haiku steering a real codex build (pinned 2026-08-11)
+
+One real Haiku agent was handed the harness's ACTUAL emitted `codex-build:` steering prompt
+(captured by driving the sims against a real scratch repo, so every path was live) and ran it:
+launched `codex exec` in the background per the invocation shape, polled sleep-free, killed
+nothing (clean 6.5-minute run), disk-verified, and reported. Codex delivered a correct commit,
+green tests, the `DONE` marker, and even performed the brief's mutation self-check on its own
+tests. Verdict: **`codexSteerModel: 'haiku'` suffices** — the steering job is mechanical, as
+designed. (The probe ran without platform schema enforcement, so the meta block arrived via
+the agent's tool trace rather than a validated report; the real platform's S.implCodex schema
+forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k output tokens.
 
 ## Interpreting failures
 

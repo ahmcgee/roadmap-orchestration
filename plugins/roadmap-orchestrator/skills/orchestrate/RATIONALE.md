@@ -460,3 +460,70 @@ cross-script shared constants stay identical, and prefix-aligned preambles on th
 prompts only. Restructuring every load-bearing prompt's opening for an offline-unverifiable
 caching gain, immediately before a single paid validation cycle, risks the gate-teeth wording
 for a benefit that cannot be measured this side of the run. Revisit with its own paid cycle.
+
+## 17. The Codex executor — one implementer, and the review spiral named
+
+The largest revision since the conductor. Codex (the OpenAI CLI) became the ONLY implementer;
+Claude keeps every judgment surface. Driven by economics (Claude weekly limits are the scarce
+resource; an idle OpenAI subscription was the workhorse budget) and by comparative advantage:
+Fable/Opus for orchestration, taste and architectural judgment; Codex as an effective, cheap,
+instruction-following builder that needs tight scoping and fails at open-ended steering. Rulings,
+each deliberate:
+
+- **No dual lane.** An earlier draft kept a Claude implementation lane behind an `executor` flag
+  with byte-identity guarantees. Rejected by the maintainer as complexity beyond what is worth
+  maintaining. Consequences accepted with it: the offline fixtures are no longer
+  Claude-lane regression evidence (they are acceptance evidence for the new design), and codex
+  unavailability is a HARD STOP — the per-wave probe or a usage-limit observation halts dispatch,
+  parks in-flight units (`status:'pending', parked:true` → re-entry by adoption), and
+  early-returns `codex-unavailable`/`codex-usage-limit` to the root. Auth is a human act; the
+  orchestrator never routes around a halt with a substitute implementer.
+- **The review spiral, named.** Three prompt clauses compounded: (1) "an imperfection in a file
+  you are already touching is yours to fix" made the eligible-fix set a function of the diff's
+  own growth; (2) "over-reporting costs nothing" licensed unbounded findings; (3) findings became
+  fix directives with no cap on files touched. Each fix widened the diff, each widening gave the
+  next pass more surface. GPT-family models followed the licence most literally, but §15's ~350
+  banked items show the same loop taxing Claude arcs. The fix is structural, not hortatory: a
+  **pinned scope envelope** computed once per unit (plan files / diff-at-entry / link files) and
+  never recomputed from the live diff; `verify.diffFiles` makes growth an objective code-side
+  signal (`scope-growth` degradation + a gate adjudication clause); gates report at most
+  `maxBlockingFindings` directives in four evidence-quoted categories, overflow banked;
+  DEBT_DISCIPLINE inverts to banking-by-default outside the envelope. This knowingly re-creates
+  §15's volume symptom and trades it for diff discipline: a banked item costs one triage read; a
+  widened diff costs re-review every round and raises regression odds. The tier-2 "debt never
+  creates a wave" brake still bounds the ledger.
+- **No standalone review stage.** The codex build runs its own implement→test→fix loop; a
+  separate adversarial review was a free pass generating directives against a diff the exit gate
+  re-reads with authority anyway — one more diff-widening mechanism. The gates absorbed the
+  review's hunting clauses (tautological-test check, comp adoption, the four categories).
+- **S.impl is the seam.** The steering agent emits the same report shape the pipeline always
+  consumed; verify/gates/consults/merge and every trigger (specGap/contractMismatch/debt) are
+  untouched and nothing downstream knows who wrote the code. This is what made the swap tractable
+  in one batch.
+- **Stop-don't-improvise, an intentional asymmetry.** The old Claude implementer was told to
+  choose a deviation and keep building (a one-shot agent; stopping wasted the turn). Codex is
+  told to STOP (≤1 per dispatch, commit finished work, `stopped-spec-gap`/
+  `stopped-contract-mismatch`) because `codex exec resume` makes a stop cheap: the Fable consult
+  rules, and the ruling returns into the same session with context intact. P1 pinned that a
+  resumed session still honors the original brief's constraints.
+- **Resume for fixing, never for judging.** Every judge (plan-check, verify, gates, consults) is
+  a fresh agent reading `git diff` cold — coldness is epistemic and survives by construction. The
+  one resume-bias mitigation needed: the LAST gate-fix round runs a FRESH codex session
+  (anchoring after two failed rounds). `codex exec review` is deliberately unused — review is
+  judgment; judgment stays Claude.
+- **Judgment moved upstream.** The maintainer's steer: "the biggest lever is the pre-codex-run
+  gate" — better judgment up front means less wasted effort and less review noise. Fable now
+  plan-checks every chain and every med/high unit with an explicit taste charter
+  (overengineering, complexity that doesn't earn its keep, structure that taxes the next change,
+  missed reuse, closed doors), and a read-only cross-model `codex-spec-review` feeds the check —
+  GPT and Claude miss different things, so disagreement there is signal.
+- **Steering is mechanical, so it is Haiku.** Launch/poll/kill/disk-verify/copy — no judgment.
+  The report's budgets mirror S.impl's caps EXACTLY so read-back is a copy, never a compression
+  (a mismatch would reintroduce §9's StructuredOutput death class across the process boundary).
+  Codex's own strict-mode output schema (every property required — P1-pinned 400 otherwise) is
+  generated by `strictify()` from the same literals.
+- **What P1 pinned** (evals/codex-probe.sh; run it before changing invocation shape): strict-mode
+  `--output-schema`; the `--json` event vocabulary; no `-a` on exec (approvals never fire); no
+  `-C`/`-s` on `exec resume` (cwd + `-c sandbox_mode=` instead); workspace-write's write-bar;
+  trust-level override for untrusted worktree paths; the sleep-free `timeout … tail --pid` poll;
+  constraint persistence across resume.

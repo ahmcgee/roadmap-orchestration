@@ -15,6 +15,8 @@
 # Usage: setup-fixture.sh [--conductor] <target-dir>   (target must not already exist)
 set -euo pipefail
 MODE=default
+# Codex home for the plan pack (the harness prefixes CODEX_HOME= on every codex command).
+CODEX_HOME_JSON=$([ -n "${CODEX_HOME:-}" ] && printf '"%s"' "$CODEX_HOME" || printf 'null')
 TARGET=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -411,6 +413,7 @@ if [ "$MODE" = default ]; then
 cat > .roadmap/plan.json <<EOF
 {
   "repoPath": "$REPO",
+  "codex": { "home": $CODEX_HOME_JSON },
   "worktreeRoot": "$WT",
   "cutLine": "eval",
   "units": [
@@ -451,6 +454,7 @@ else
 cat > .roadmap/plan.json <<EOF
 {
   "repoPath": "$REPO",
+  "codex": { "home": $CODEX_HOME_JSON },
   "worktreeRoot": "$WT",
   "cutLine": "eval",
   "units": [
