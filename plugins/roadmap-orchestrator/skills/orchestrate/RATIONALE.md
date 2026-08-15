@@ -412,7 +412,14 @@ every rule operates inside the unit pipeline, and §14's "debt never creates a w
 One batch, one organizing idea: **spend warmth where it is only re-reading cost, and keep
 coldness exactly where it is epistemic** (the method split identified 2026-07-29).
 
-**Warm lanes.** On a strict linear chain, isolation buys zero parallelism — yet each link used to
+**Warm lanes.** *(Superseded in 0.11.0 — removed entirely. Kept here because the reasoning is what
+explains the removal: warm lanes amortized a fixed cold start across a chain of units too small to
+absorb it individually. Once units are sized by what can be specified rather than by duration, a
+unit absorbs its own cold start and the chain IS the unit, so the mechanism was paying a large
+maintenance surface — per-link pinning, demotion, lane quarantine semantics — for a saving that had
+collapsed. One dispatch path is the canonical way now.)*
+
+On a strict linear chain, isolation buys zero parallelism — yet each link used to
 pay a full cold start, worktree, provision, and re-exploration. The platform constraint that
 shaped the design: `agent()` is one-shot, so a literally-continuing implementer cannot exist.
 The warm lane is therefore ONE plan call and ONE implement call covering the whole chain
@@ -460,3 +467,124 @@ cross-script shared constants stay identical, and prefix-aligned preambles on th
 prompts only. Restructuring every load-bearing prompt's opening for an offline-unverifiable
 caching gain, immediately before a single paid validation cycle, risks the gate-teeth wording
 for a benefit that cannot be measured this side of the run. Revisit with its own paid cycle.
+
+## 17. The Codex executor — one implementer, and the review spiral named
+
+The largest revision since the conductor. Codex (the OpenAI CLI) became the ONLY implementer;
+Claude keeps every judgment surface. Driven by economics (Claude weekly limits are the scarce
+resource; an idle OpenAI subscription was the workhorse budget) and by comparative advantage:
+Fable/Opus for orchestration, taste and architectural judgment; Codex as an effective, cheap,
+instruction-following builder that needs tight scoping and fails at open-ended steering. Rulings,
+each deliberate:
+
+- **No dual lane.** An earlier draft kept a Claude implementation lane behind an `executor` flag
+  with byte-identity guarantees. Rejected by the maintainer as complexity beyond what is worth
+  maintaining. Consequences accepted with it: the offline fixtures are no longer
+  Claude-lane regression evidence (they are acceptance evidence for the new design), and codex
+  unavailability is a HARD STOP — the per-wave probe or a usage-limit observation halts dispatch,
+  parks in-flight units (`status:'pending', parked:true` → re-entry by adoption), and
+  early-returns `codex-unavailable`/`codex-usage-limit` to the root. Auth is a human act; the
+  orchestrator never routes around a halt with a substitute implementer.
+- **The review spiral, named.** Three prompt clauses compounded: (1) "an imperfection in a file
+  you are already touching is yours to fix" made the eligible-fix set a function of the diff's
+  own growth; (2) "over-reporting costs nothing" licensed unbounded findings; (3) findings became
+  fix directives with no cap on files touched. Each fix widened the diff, each widening gave the
+  next pass more surface. GPT-family models followed the licence most literally, but §15's ~350
+  banked items show the same loop taxing Claude arcs. The fix is structural, not hortatory: a
+  **pinned scope envelope** computed once per unit (plan files / diff-at-entry / link files) and
+  never recomputed from the live diff; `verify.diffFiles` makes growth an objective code-side
+  signal (`scope-growth` degradation + a gate adjudication clause); gates report at most
+  `maxBlockingFindings` directives in four evidence-quoted categories, overflow banked;
+  DEBT_DISCIPLINE inverts to banking-by-default outside the envelope. This knowingly re-creates
+  §15's volume symptom and trades it for diff discipline: a banked item costs one triage read; a
+  widened diff costs re-review every round and raises regression odds. The tier-2 "debt never
+  creates a wave" brake still bounds the ledger.
+- **No standalone review stage.** The codex build runs its own implement→test→fix loop; a
+  separate adversarial review was a free pass generating directives against a diff the exit gate
+  re-reads with authority anyway — one more diff-widening mechanism. The gates absorbed the
+  review's hunting clauses (tautological-test check, comp adoption, the four categories).
+- **S.impl is the seam.** The steering agent emits the same report shape the pipeline always
+  consumed; verify/gates/consults/merge and every trigger (specGap/contractMismatch/debt) are
+  untouched and nothing downstream knows who wrote the code. This is what made the swap tractable
+  in one batch.
+- **Stop-don't-improvise, an intentional asymmetry.** The old Claude implementer was told to
+  choose a deviation and keep building (a one-shot agent; stopping wasted the turn). Codex is
+  told to STOP (≤1 per dispatch, commit finished work, `stopped-spec-gap`/
+  `stopped-contract-mismatch`) because `codex exec resume` makes a stop cheap: the Fable consult
+  rules, and the ruling returns into the same session with context intact. P1 pinned that a
+  resumed session still honors the original brief's constraints.
+- **Resume for fixing, never for judging.** Every judge (plan-check, verify, gates, consults) is
+  a fresh agent reading `git diff` cold — coldness is epistemic and survives by construction. The
+  one resume-bias mitigation needed: the LAST gate-fix round runs a FRESH codex session
+  (anchoring after two failed rounds). `codex exec review` is deliberately unused — review is
+  judgment; judgment stays Claude.
+- **Judgment moved upstream.** The maintainer's steer: "the biggest lever is the pre-codex-run
+  gate" — better judgment up front means less wasted effort and less review noise. Fable now
+  plan-checks every med/high unit with an explicit taste charter
+  (overengineering, complexity that doesn't earn its keep, structure that taxes the next change,
+  missed reuse, closed doors), and a read-only cross-model `codex-spec-review` feeds the check —
+  GPT and Claude miss different things, so disagreement there is signal.
+- **Steering is mechanical, so it is Haiku.** Launch/poll/kill/disk-verify/copy — no judgment.
+  The report's budgets mirror S.impl's caps EXACTLY so read-back is a copy, never a compression
+  (a mismatch would reintroduce §9's StructuredOutput death class across the process boundary).
+  Codex's own strict-mode output schema (every property required — P1-pinned 400 otherwise) is
+  generated by `strictify()` from the same literals.
+- **What P1 pinned** (evals/codex-probe.sh; run it before changing invocation shape): strict-mode
+  `--output-schema`; the `--json` event vocabulary; no `-a` on exec (approvals never fire); no
+  `-C`/`-s` on `exec resume` (cwd + `-c sandbox_mode=` instead); the write-bar;
+  trust-level override for untrusted worktree paths; the sleep-free `timeout … tail --pid` poll;
+  constraint persistence across resume.
+- **P1.7 is environment-dependent, and that was learned the hard way.** Codex's OS sandbox is
+  bubblewrap, which needs an unprivileged user namespace. Where the container runtime's seccomp
+  profile blocks that syscall, `workspace-write` cannot be built and degrades *silently* to no
+  enforcement — probe-observed here: a write to an absolute path outside the worktree succeeded,
+  while stderr carried only a handful of recoverable `bwrap: No permissions to create new
+  namespace` lines from the `apply_patch` verification helper. The lane therefore defaults to
+  `danger-full-access`: an unenforceable guard that still costs retries is worse than an honest
+  absence of one. Sibling-worktree containment is an accepted risk in such an environment, not a
+  guarantee. Re-run P1.7 in any new environment before assuming otherwise.
+
+## 18. Long-horizon units — what was measured, and what it killed
+
+0.11.0 resized units by what can be *specified* rather than by duration, moved Codex onto a
+multi-hour horizon, and replaced the one-stop-per-run cap with an escalation ladder. Two throwaway
+probes (since deleted — they had served their purpose) produced the evidence; these are their
+findings, kept because every one of them still constrains a future change.
+
+**The checkpointing hedge was rejected on evidence, not on taste.** The starting worry was that
+Codex's compaction would degrade brief-carried guardrails to a vague gist, and the proposed fix was
+a disk-based checkpoint convention. Two runs migrated 40 legacy modules onto four conventions stated
+ONCE in milestone 1 and never restated — three of them pure convention with no behavioural payoff
+(a `meta` export, module-prefixed error codes, an accumulating registry file), i.e. exactly what a
+compacted context should drop first. Compliance was measured per module by migration position, so
+decay would appear as a tail. **Zero decay, both runs** — the second with auto-compaction forced
+down to a 40k trigger. What carries the load is per-milestone commits (git is the progress ledger)
+plus re-reading the brief file at each milestone boundary, both of which are fresh tool calls rather
+than recall. Do not add a checkpoint convention without a decay curve that has an actual tail in it.
+
+**Compaction is not observable from `--json`.** There is no event for it. An early probe reported
+"compaction occurred" because a bare `grep -i compact` matched the word *compacted* in our own brief
+echoed back in the event stream. The context window is 272k with auto-compaction at ~95%
+(`codex debug models`), and `model_auto_compact_token_limit` is an accepted config override — which
+is the cheap way to reach the regime deliberately instead of paying for a run long enough to fill
+258k naturally. Also note: realistically-shaped units *stream* (read a module, write it, move on),
+so they may simply never accumulate enough context to compact.
+
+**The escalation valve fires deep, not just early.** Two gaps were planted, at migration positions 8
+and 30. Both produced stops, the second two sessions in, with the reasoning intact ("the spec
+explicitly leaves LRU versus oldest-inserted undecidable, so neither was selected"). A valve that
+only worked before compaction would not be a valve. Neither run stopped for the deliberately
+*buried but settled* condition — evidence that the ladder's cheap `cited` tier is triage, not a
+rubber stamp on Codex's judgment.
+
+**A resume brief with no termination condition does not idle — it invents work.** Probe-observed: a
+resumed session finished every specified milestone, then continued into self-directed `Audit:`
+commits, expanding a spec line asking only that `restore(snapshot(s))` round-trip into a custom
+serializer for cyclic references, BigInt and NaN, plus an exported internals hook to test it with.
+That is production code, not test bloat. The build brief was protected by its DONE-WHEN; the fix
+brief was not, and inherited no stopping rule. `codexFixBrief` now restates DONE-WHEN and explicitly
+bars inventing follow-up work. Any new resume path must do the same.
+
+**Test quality was not the failure mode.** The generated suites were sound — exact Result-shape
+assertions, negative paths, a table of invalid inputs — under a brief that had *weakened* the
+mutation-check clause. The degenerate behaviour to design against is unbounded scope, not slop.

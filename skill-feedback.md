@@ -17,6 +17,29 @@ of everything resolved by 0.9.0 and the 0.10.0 combined-hardening branch** (see
   `preview-failed` degradations, and no owed explorer/design markers.** If it recurs, the
   degradation entry carries the exact porcelain output — diagnose from that, not the network.
 
+## Deferred from 0.11.0 (the codex-executor batch) — revisit with evidence from real arcs
+
+- **`codexScope: 'plan+implement'`**: let a read-only codex phase draft the unit plan too
+  (feeding the unchanged Claude plan-check), then resume the same session to build. The resume
+  plumbing already exists; deferred so v1 keeps the Opus plan pass as the brief-authoring
+  anchor. Worth a probe once a few real arcs show how often plans get redirected.
+- **Generated per-worktree AGENTS.md**: standing constraints moved out of the brief into
+  Codex's native instruction file. Deferred: the brief must carry the load-bearing guardrails
+  anyway (a truncated AGENTS.md may not remove one), and an untracked AGENTS.md in the
+  worktree pollutes porcelain/diff surfaces. Revisit only if codex demonstrably underweights
+  in-prompt constraints on long runs.
+- **Sonnet pre-gate filter**: a bounded four-category Sonnet review between verify and the
+  exit gate, if real arcs show the gates carrying too much first-pass load. Deliberately
+  absent in v1 — the standalone review stage was a spiral mechanism.
+- **`notify` completion hook** instead of disk polling: writes to shared `$CODEX_HOME`
+  config, which the orchestrator has no business mutating. Reconsider only if polling proves
+  expensive.
+- **`gateAuditRate` calibration**: 0.10 carried over; the design memo suggested ~0.25 while
+  trust in the new executor builds. Tune on the per-tier `spend` evidence, not vibes.
+- **Usage-limit pause/resume UX**: a `codex-usage-limit` return currently ends the run for a
+  human relaunch; an auto-scheduled retry at the limit-window boundary would make it fully
+  autonomous.
+
 ## Still open (value order)
 
 1. **A living codebase primer as a wave-tail product** (method item 3). The health
@@ -46,6 +69,18 @@ of everything resolved by 0.9.0 and the 0.10.0 combined-hardening branch** (see
    validation cycle; it needs its own cycle with cache-hit measurement.
 
 ## Resolved (for the record — remove entries once shipped in a tagged release)
+
+- **0.11.0 branch (codex executor)**: the review spiral, named and killed (pinned scope
+  envelope, `diffFiles` growth signal, four-category capped gate policy, banking-by-default
+  debt discipline); the standalone review stage removed; Codex CLI as the sole implementer
+  with Haiku steering, chain sessions, resume-based fix rounds, hard-stop parking on
+  unavailability/usage limits; Fable plan-checks for chains + med/high units with the taste
+  charter; cross-model spec critique; per-unit `rounds` counters + fixture ceilings (the
+  runaway-loop class is now measurable); plus two latent defects found by the paid cycle:
+  the commit-probe quarantine reason filtered degradations by a dead label, and the
+  `prefixCollision` merge fence fired on scratchpad reports with no `prefixUniqueGlobs`
+  configured (a plain conflict quarantined before the resolver ran) — both fixed and
+  sim-pinned.
 
 - **0.9.0**: checkpoint-32k death class (staged verbatim writes + `write-failed`
   degradations); item 10c and beyond (correctness debt never banks through an

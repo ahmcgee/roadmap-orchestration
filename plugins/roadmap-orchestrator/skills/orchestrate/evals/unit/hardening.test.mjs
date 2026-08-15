@@ -1,6 +1,6 @@
 // Zero-token control-flow simulation of the 0.10.0 hardening pathways in harness.mjs: the owed
 // boundary ledger, the two merge fences (.roadmap/ strip, numbered-prefix collision), the specGap
-// pull channel, the plan's evidence manifest as a reviewer reading list, and crash-residue reopen.
+// pull channel, the plan's evidence manifest handed to the implementer, and crash-residue reopen.
 //
 // Same contract as harness.test.mjs: the UNMODIFIED harness is the source of truth — any red here
 // is a fake/assumption bug in this file, never a licence to edit the harness. Every test names the
@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from './load.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
+import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -42,10 +42,11 @@ const has = (calls, prefix) => calls.some((c) => c.label === prefix || c.label.s
 const promptFor = (calls, label) => calls.find((c) => c.label === label)?.prompt ?? ''
 const owedFor = (state, job) => (state.owed ?? []).find((o) => o.job === job)
 
-// Canned shapes the built-in fake defaults do not cover (the harness labels below are newer than
-// the DEFAULTS table in fakes.mjs, which is a frozen surface this file must not edit).
-const IMPL_OK = { summary: 'done', filesChanged: [] }
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false }
+// Canned shapes the built-in fake defaults do not cover. The implementer is Codex now, so a
+// code-writing report is the steering agent's S.implCodex shape (S.impl + the `codex` process
+// meta) — `implCodexOk()` builds a fresh clean one per call.
+const IMPL_OK = () => implCodexOk()
+const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
 const MERGE_REFUSAL = (extra) => ({ merged: false, suitePass: false, head: BASE_SHA, detail: '', ...extra })
 
 // A design authority + preview block: the design reconcile is the owed ledger's most load-bearing
@@ -217,25 +218,123 @@ test('7 merge prompt: the prefix clause appears only when plan.prefixUniqueGlobs
 // =========================================================================================
 // 8. specGap pull channel on an ALL-GREEN unit. The polish loop's rescue consult only fires on
 //    failure signals, so the class this closes is precisely a silent design decision under a
-//    green suite. A 'confirm' means the decision stands as built: no fix round, and — because the
-//    gap WAS adjudicated — no frontier force either (the unit keeps the cheap Opus gate).
+//    green suite. Opus triages first; only a boundary-crossing escalation reaches Fable, where a
+//    'confirm' means the decision stands as built: no fix round, and — because the gap WAS
+//    adjudicated — no frontier force either (the unit keeps the cheap Opus gate).
 // =========================================================================================
-test('8 spec gap: a green unit pulls a Fable consult; confirm merges with no fix and no forced gate', async () => {
+test('8 spec gap: Opus triage escalates, Fable confirms, and the unit merges with no fix and no forced gate', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^impl:a$/, result: () => ({ ...IMPL_OK, specGap: 'chose soft-delete; spec silent' }) },
-    { match: /^gap-consult:a$/, result: () => ({ action: 'confirm', guidance: 'stands' }) },
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'chose soft-delete; spec silent' }) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'escalate', boundary: 'contract', guidance: 'contract forbids it' }) },
+    { match: /^gap-consult:a#1$/, result: () => ({ action: 'confirm', guidance: 'stands' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
-  const consult = calls.find((c) => c.label === 'gap-consult:a')
-  assert.ok(consult, 'the gap pulls the architect in even with everything green')
-  assert.equal(consult.model, 'fable', 'spec-silence adjudication is a frontier call')
-  assert.ok(consult.prompt.includes('chose soft-delete; spec silent'), 'the architect is given the actual decision')
-  assert.ok(!has(calls, 'gap-fix:a'), 'confirm means the decision stands as built — no fix round')
+  const triage = calls.find((c) => c.label === 'adjudicate:a#1')
+  assert.ok(triage, 'the gap is triaged before it reaches the frontier')
+  assert.equal(triage.model, 'opus', 'first-line adjudication is an Opus call, not a frontier one')
+  assert.ok(triage.prompt.includes('chose soft-delete; spec silent'), 'the adjudicator is given the actual decision')
+  const consult = calls.find((c) => c.label === 'gap-consult:a#1')
+  assert.ok(consult, 'an escalated gap still pulls the architect in with everything green')
+  assert.equal(consult.model, 'fable', 'boundary-crossing adjudication is a frontier call')
+  assert.ok(consult.prompt.includes('contract'), 'the architect is told which boundary was crossed')
+  assert.ok(!has(calls, 'codex-gap-fix:a#1'), 'confirm means the decision stands as built — no fix round')
   assert.equal(state.units.a.status, 'merged')
   assert.ok(has(calls, 'opus-gate:a#0'), 'an ADJUDICATED gap leaves the cheap Opus-first gate in place')
   assert.ok(!has(calls, 'gate:a#0'), 'nothing here forces the frontier gate')
-  assert.equal(state.consultsUsed, 1, 'the gap consult rides the shared consult budget')
+  assert.equal(state.consultsUsed, 1, 'only the ESCALATION rides the shared consult budget')
+})
+
+// =========================================================================================
+// 8b. Opus triage that resolves the stop itself never reaches Fable and never spends the consult
+//     budget. This is the common case on generously sized units — a decision the spec DOES settle
+//     that the implementer failed to read — and charging it to maxConsults would let three
+//     misreads starve the rescue channel.
+// =========================================================================================
+test('8b spec gap: a cited stop is answered by Opus alone, costs no consult budget, and still fixes', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'chose soft-delete; spec silent' }) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'cited', boundary: 'none', guidance: 'spec §4 says hard delete' }) },
+    { match: /^codex-gap-fix:a#1$/, result: () => IMPL_OK() },
+    { match: /^gap-verify:a#1$/, result: () => VERIFY_OK },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.ok(!has(calls, 'gap-consult:a#1'), 'a citable stop never reaches the frontier')
+  assert.equal(state.consultsUsed, 0, 'triage is free — it must not ride the rescue budget')
+  assert.ok(promptFor(calls, 'codex-gap-fix:a#1').includes('spec §4 says hard delete'), 'the citation is carried back')
+  assert.ok(!has(calls, 'spec-append:a#1'), 'a citation settles nothing new — the spec is not amended')
+  assert.ok(has(calls, 'opus-gate:a#0'), 'an adjudicated gap leaves the cheap gate in place')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+// =========================================================================================
+// 8c. A 'decided' ruling settles something the spec did not, so it must land IN the spec. The
+//     implementer's own context may compact before the unit ends, and review, the gate and every
+//     later reader see the spec — never the resume prompt that carried the ruling.
+// =========================================================================================
+test('8c spec gap: a decided ruling is appended to the spec, not just fed back to the implementer', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'chose soft-delete; spec silent' }) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'decided', boundary: 'none', guidance: 'soft-delete stands; add tombstone' }) },
+    { match: /^spec-append:a#1$/, result: () => ({ ok: true }) },
+    { match: /^codex-gap-fix:a#1$/, result: () => IMPL_OK() },
+    { match: /^gap-verify:a#1$/, result: () => VERIFY_OK },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  const append = calls.find((c) => c.label === 'spec-append:a#1')
+  assert.ok(append, 'a decision the spec did not settle is written back into the spec')
+  assert.ok(append.prompt.includes('soft-delete stands; add tombstone'), 'the ruling is recorded verbatim')
+  assert.ok(append.prompt.includes('chose soft-delete; spec silent'), 'so is the question it answered')
+  assert.equal(state.consultsUsed, 0, 'deciding inside the unit envelope is not a frontier consult')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+// =========================================================================================
+// 8d. Three strikes. Repeated stops on one unit are evidence the UNIT is specified wrongly, not
+//     that each decision is hard — so the third stop skips triage entirely and is Fable's.
+// =========================================================================================
+test('8d spec gap: the third stop on a unit bypasses Opus triage and goes straight to Fable', async () => {
+  const gapAgain = (n) => ({ ...IMPL_OK(), specGap: `gap ${n}` })
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => gapAgain(1) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'cited', boundary: 'none', guidance: 'see §4' }) },
+    { match: /^codex-gap-fix:a#1$/, result: () => gapAgain(2) },
+    { match: /^gap-verify:a#1$/, result: () => VERIFY_OK },
+    { match: /^adjudicate:a#2$/, result: () => ({ tier: 'cited', boundary: 'none', guidance: 'see §5' }) },
+    { match: /^codex-gap-fix:a#2$/, result: () => gapAgain(3) },
+    { match: /^gap-verify:a#2$/, result: () => VERIFY_OK },
+    { match: /^gap-consult:a#3$/, result: () => ({ action: 'confirm', guidance: 'stands' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.ok(has(calls, 'adjudicate:a#1') && has(calls, 'adjudicate:a#2'), 'the first two stops are triaged cheaply')
+  assert.ok(!has(calls, 'adjudicate:a#3'), 'the third stop is not triaged — it is escalated by rule')
+  const consult = calls.find((c) => c.label === 'gap-consult:a#3')
+  assert.ok(consult, 'the third stop reaches the architect')
+  assert.equal(consult.model, 'fable')
+  assert.ok(consult.prompt.includes('third stop'), 'the architect is told this is a repeat, not an isolated decision')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+// =========================================================================================
+// 8e. The ladder terminates. A unit that stops on every fix round must hit the maxStops brake and
+//     still reach a gate — an escalation valve that can loop forever is the review spiral again.
+// =========================================================================================
+test('8e spec gap: an endlessly stopping unit is capped by maxStops and still gates', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'never settled' }) },
+    { match: /^adjudicate:a#\d+$/, result: () => ({ tier: 'cited', boundary: 'none', guidance: 'see §4' }) },
+    { match: /^gap-consult:a#\d+$/, result: () => ({ action: 'redirect', guidance: 'do it this way' }) },
+    { match: /^codex-gap-fix:a#\d+$/, result: () => ({ ...IMPL_OK(), specGap: 'still not settled' }) },
+    { match: /^gap-verify:a#\d+$/, result: () => VERIFY_OK },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { maxStops: 3 })
+
+  assert.equal(calls.filter((c) => /^codex-gap-fix:a#\d+$/.test(c.label)).length, 3, 'the brake caps the rounds')
+  assert.ok(!has(calls, 'codex-gap-fix:a#4'), 'and nothing runs past it')
+  assert.ok(has(calls, 'gate:a#0') || has(calls, 'opus-gate:a#0'), 'the unit still reaches a gate')
 })
 
 // =========================================================================================
@@ -245,18 +344,22 @@ test('8 spec gap: a green unit pulls a Fable consult; confirm merges with no fix
 // =========================================================================================
 test('9 spec gap: redirect applies one fix round and re-verifies, and the unit still merges', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^impl:a$/, result: () => ({ ...IMPL_OK, specGap: 'chose soft-delete; spec silent' }) },
-    { match: /^gap-consult:a$/, result: () => ({ action: 'redirect', guidance: 'use hard delete' }) },
-    { match: /^gap-fix:a$/, result: () => IMPL_OK },
-    { match: /^gap-verify:a$/, result: () => VERIFY_OK },
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'chose soft-delete; spec silent' }) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'escalate', boundary: 'contract', guidance: 'contract forbids it' }) },
+    { match: /^gap-consult:a#1$/, result: () => ({ action: 'redirect', guidance: 'use hard delete' }) },
+    { match: /^codex-gap-fix:a#1$/, result: () => IMPL_OK() },
+    { match: /^gap-verify:a#1$/, result: () => VERIFY_OK },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
-  assert.ok(has(calls, 'gap-fix:a'), 'a redirect is applied as a fix round')
-  assert.ok(promptFor(calls, 'gap-fix:a').includes('use hard delete'), 'the ruling is carried into the fix')
-  assert.ok(has(calls, 'gap-verify:a'), 'the post-ruling tree is re-verified before the gate')
+  assert.ok(has(calls, 'codex-gap-fix:a#1'), 'a redirect is applied as a fix round')
+  assert.ok(promptFor(calls, 'codex-gap-fix:a#1').includes('use hard delete'), 'the ruling is carried into the fix')
+  assert.ok(has(calls, 'gap-verify:a#1'), 'the post-ruling tree is re-verified before the gate')
   assert.equal(state.units.a.status, 'merged')
-  assert.equal(calls.filter((c) => c.label === 'gap-fix:a').length, 1, 'exactly one round — the gap channel never loops')
+  // The channel DOES loop by design now (8d/8e cover that); what must not happen is a second
+  // round for a stop that was already answered and not re-reported.
+  assert.equal(calls.filter((c) => /^codex-gap-fix:a#\d+$/.test(c.label)).length, 1,
+    'one round per reported stop — a settled gap does not re-fire')
 })
 
 // =========================================================================================
@@ -266,11 +369,13 @@ test('9 spec gap: redirect applies one fix round and re-verifies, and the unit s
 // =========================================================================================
 test('10 spec gap: with the consult budget spent, the gap forces the Fable exit gate', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^impl:a$/, result: () => ({ ...IMPL_OK, specGap: 'chose soft-delete; spec silent' }) },
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'chose soft-delete; spec silent' }) },
+    // Triage escalates, so the stop genuinely NEEDS the frontier — and the budget is gone.
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'escalate', boundary: 'contract', guidance: 'contract forbids it' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { maxConsults: 0 })
 
-  assert.ok(!has(calls, 'gap-consult:a'), 'no budget -> no consult')
+  assert.ok(!has(calls, 'gap-consult:a#1'), 'no budget -> no consult')
   const gate = calls.find((c) => c.label === 'gate:a#0')
   assert.ok(gate, 'an unadjudicated gap forces the frontier gate')
   assert.equal(gate.model, 'fable')
@@ -279,11 +384,13 @@ test('10 spec gap: with the consult budget spent, the gap forces the Fable exit 
 })
 
 // =========================================================================================
-// 11. Plan evidence -> reviewer reading list. The plan pass already paid to explore the code; the
-//     reviewer gets keyFiles ONLY (its fresh-eyes judgment stays its own). With no evidence the
-//     clause must be exactly absent — pre-0.10 plans and adopted branches have no plan pass.
+// 11. Plan evidence -> the implementer's starting context. The plan pass already paid to explore
+//     the code; that manifest must be handed FORWARD instead of re-acquired. The adversarial
+//     reviewer that used to receive keyFiles as a reading list is gone, so the surviving consumer
+//     is the Codex build brief, which inlines the approved plan whole. With no evidence the brief
+//     must invent nothing — pre-0.10 plans and adopted branches have no plan pass.
 // =========================================================================================
-test('11 plan evidence: keyFiles reach the reviewer as a reading list; absent evidence adds nothing', async () => {
+test('11 plan evidence: the planner\'s manifest reaches the implementer; absent evidence adds nothing', async () => {
   const withEvidence = await (async () => {
     const { fn, calls } = makeAgent([
       { match: /^plan:a$/, result: () => ({
@@ -291,17 +398,18 @@ test('11 plan evidence: keyFiles reach the reviewer as a reading list; absent ev
         evidence: { keyFiles: ['src/x.js — the seam'] } }) },
     ])
     await runWave(fn, makePlan([unit('a')]), makeState())
-    return promptFor(calls, 'review:a#0')
+    return promptFor(calls, 'codex-build:a')
   })()
-  assert.ok(withEvidence.includes('reading list'), 'the reviewer is handed the planner\'s reading list')
+  assert.ok(withEvidence.includes('already planned this unit'), 'the brief hands the approved plan forward')
+  assert.ok(withEvidence.includes('keyFiles'), 'including the evidence manifest the plan pass earned')
   assert.ok(withEvidence.includes('src/x.js'), 'with the actual key files in it')
 
   const withoutEvidence = await (async () => {
     const { fn, calls } = makeAgent()
     await runWave(fn, makePlan([unit('a')]), makeState())
-    return promptFor(calls, 'review:a#0')
+    return promptFor(calls, 'codex-build:a')
   })()
-  assert.ok(!withoutEvidence.includes('reading list'), 'no evidence -> no clause at all')
+  assert.ok(!withoutEvidence.includes('keyFiles'), 'no evidence -> no manifest in the brief')
   assert.ok(!withoutEvidence.includes('src/x.js'), 'and certainly no invented file list')
 })
 
@@ -322,7 +430,142 @@ test('12 crash residue: running/merge-ready reopen at wave start and adopt their
     assert.ok(has(calls, 'setup:a'), `${residue} residue re-enters dispatch`)
     assert.equal(state.units.a.status, 'merged', `${residue} residue runs to completion`)
     assert.ok(!has(calls, 'plan:a'), `${residue}: adopted work is never re-planned`)
-    assert.ok(!has(calls, 'impl:a'), `${residue}: adopted work is never re-implemented`)
-    assert.ok(has(calls, 'verify:a#0'), `${residue}: it still runs the unchanged verify -> review -> gate pipeline`)
+    assert.ok(!has(calls, 'codex-build:a'), `${residue}: adopted work is never re-implemented`)
+    assert.ok(!has(calls, 'codex-spec-review:a'), `${residue}: no plan pass means no cross-model spec critique either`)
+    assert.ok(has(calls, 'verify:a#0'), `${residue}: it still runs the unchanged verify -> gate pipeline`)
   }
+})
+
+// =========================================================================================
+// 13. The prefixCollision fence is CONFIG-gated. Paid-run-observed (2026-08-11): a merge
+//     agent facing an ordinary textual conflict filled `prefixCollision` with the conflicting
+//     paths as a scratchpad, and the unguarded check quarantined the unit before the Opus
+//     resolver ever ran — on a plan with NO prefixUniqueGlobs at all. Without configured
+//     globs there is no prefix policy to violate: the conflict must route to `resolve:`.
+// =========================================================================================
+test('13 merge fence: prefixCollision is ignored when the plan sets no prefixUniqueGlobs', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^merge:a$/, result: () => MERGE_REFUSAL({ detail: 'conflict in calc.js', prefixCollision: ['calc.js', 'test.js'] }) },
+    // The resolver clears it — the historical behaviour for a plain positional conflict.
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.ok(has(calls, 'resolve:a'), 'the conflict routed to the Opus resolver, not a prefix quarantine')
+  assert.equal(state.units.a.status, 'merged', 'the resolved merge lands')
+})
+
+test('13b merge fence: prefixCollision still quarantines when prefixUniqueGlobs IS configured', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^merge:a$/, result: () => MERGE_REFUSAL({ prefixCollision: ['migrations/007_x.sql'] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')], [], { prefixUniqueGlobs: ['migrations/*'] }), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  assert.match(state.units.a.reason, /numbered-prefix collision/)
+  assert.ok(!has(calls, 'resolve:a'), 'a real prefix collision never reaches the resolver — it is respec business')
+})
+
+// =========================================================================================
+// 13. state.json must survive an agent TRANSCRIBING it. Agent-authored report text can carry raw
+//     control characters (arc-observed: an explorer `repro` quoting a \x01 test input).
+//     JSON.stringify escapes them correctly as \u0001 — but the checkpoint is written by a Haiku
+//     agent copying the document, and that transcription decoded the escape back into a raw byte,
+//     leaving a state.json no parser would read. An unresumable arc is far worse than a lossy
+//     repro string, and a control character in a report is never load-bearing.
+// =========================================================================================
+test('13 checkpoint: control characters never reach the state.json payload', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(),
+      // A confessed debt entry DOES reach state.json — that is the path that corrupted it.
+      debt: [{ what: 'repro: f("a\x01b")', why: 'control chars in a quoted repro, arc-observed "\x1f"' }] }) },
+  ])
+  await runWave(fn, makePlan([unit('a')]), makeState())
+
+  const writes = calls.filter((c) => c.label === 'checkpoint')
+  assert.ok(writes.length, 'the wave checkpoints at least once')
+  for (const w of writes) {
+    assert.ok(!/[\x01\x1f]/.test(w.prompt),
+      'no raw control character may appear in the document handed to the transcriber')
+    assert.ok(!/\\u0001/.test(w.prompt),
+      'nor an escape a transcriber could decode back into one')
+  }
+  const payload = writes.at(-1).prompt
+  assert.ok(payload.includes('<0x01>') && payload.includes('<0x1f>'),
+    'they are replaced with a printable token, so the evidence survives in readable form')
+})
+
+// =========================================================================================
+// 14. The empty-trigger artifact. Codex emits the two-character string `""` when it means "nothing
+//     to report" (arc-observed) — truthy, so it fired the contractMismatch AND specGap triggers,
+//     summoned an adjudicator for a stop with no content, and banked a bogus `major` debt entry.
+//     A trigger whose content is empty once quote characters are stripped IS an empty trigger.
+// =========================================================================================
+test('14 empty triggers: a literal double-quote pair is not a report', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: '""', contractMismatch: '""' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.ok(!has(calls, 'adjudicate:a#1'), 'an empty gap summons no adjudicator')
+  assert.ok(!has(calls, 'gap-consult:a#1'), 'and certainly no frontier consult')
+  assert.equal(state.consultsUsed, 0)
+  assert.deepEqual(state.escalations ?? [], [], 'nothing is recorded in the escalation ledger')
+  assert.ok(!(state.debt ?? []).some((d) => /contract mismatch/.test(d.what ?? '')),
+    'and no bogus contract-mismatch debt is banked')
+  assert.ok(has(calls, 'opus-gate:a#0'), 'an empty trigger does not force the frontier gate either')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+// =========================================================================================
+// 15. The arc's DIRECTION reaches judgment, and only judgment. architect-log.md was previously
+//     read by the conductor's boundary agents alone, so plan-check, the exit gate and the
+//     escalation adjudicator ruled with no sense of where the codebase was heading — arc-observed
+//     (horizon fixture, run 3): a named open decision with two defensible answers and nothing to
+//     choose by. The hard half of this invariant is the ABSENCE: a target state in an
+//     implementer's prompt is an invitation to build the end state instead of the unit.
+// =========================================================================================
+test('15 direction: threaded into every judgment surface, and into no implementer brief', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(), specGap: 'two defensible shapes; spec silent' }) },
+    { match: /^adjudicate:a#1$/, result: () => ({ tier: 'decided', boundary: 'none', guidance: 'the direction prefers the loud one' }) },
+    { match: /^spec-append:a#1$/, result: () => ({ ok: true }) },
+    { match: /^codex-gap-fix:a#1$/, result: () => IMPL_OK() },
+    { match: /^gap-verify:a#1$/, result: () => VERIFY_OK },
+  ])
+  await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
+
+  const LOG = '/repo/.roadmap/architect-log.md'
+  for (const label of ['plan-check:a', 'adjudicate:a#1', 'gate:a#0']) {
+    const p = promptFor(calls, label)
+    assert.ok(p, `${label} fired`)
+    assert.ok(p.includes(LOG) && p.includes('## Direction'),
+      `${label} must be told where the arc is heading`)
+    assert.ok(/subordinate to the spec/i.test(p),
+      `${label} must be told direction never overrides a spec or a frozen contract`)
+  }
+  for (const label of ['codex-build:a', 'codex-gap-fix:a#1']) {
+    assert.ok(!promptFor(calls, label).includes(LOG),
+      `${label} is an IMPLEMENTER brief — the arc's target state must never reach it`)
+  }
+})
+
+// =========================================================================================
+// 16. Two adjudication paths, one ledger. The plan-check may name the resolution of a spec
+//     contradiction (its charter says so) — so it must record that ruling where the escalation
+//     ladder records its own. Arc-observed (horizon fixture, run 3): it resolved a named open
+//     decision, twelve modules were built on it, and the exit gate — reading an EMPTY ledger —
+//     correctly judged the ruling fabricated and demanded an escalation that had already
+//     happened. The unit quarantined with its retry budget spent. The gate was right.
+// =========================================================================================
+test('16 plan-check rulings are recorded in the same ledger the ladder writes to', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^plan-check:a$/, result: () => ({ verdict: 'redirect', guidance: 'resolve the open decision as a loud failure', notes: '' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
+
+  const entry = (state.escalations ?? []).find((e) => e.by === 'plan-check')
+  assert.ok(entry, 'a plan-check redirect is an adjudication and must leave a trace')
+  assert.equal(entry.unit, 'a')
+  assert.equal(entry.tier, 'decided')
+  assert.ok(/loud failure/.test(entry.gap), 'the ruling itself is recorded, not just that one happened')
+  assert.ok(has(calls, 'spec-append:a#plan'),
+    'and it lands in the spec, which outlives the prompt that carried it')
 })

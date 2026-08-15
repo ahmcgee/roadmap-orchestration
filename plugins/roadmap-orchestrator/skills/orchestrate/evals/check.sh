@@ -126,6 +126,50 @@ else
   flunk "integration worktree exists at $WT/__integration"
 fi
 
+# --- codex executor lane (the implementer is `codex exec`; steering leaves artifacts) ----
+# Fresh-implement units (add-multiply, add-divide) must have been built by a real codex run.
+# The contract edge between them makes a warm lane: when it forms, ONE codex chain session
+# builds both and the artifacts live under the HEAD's chain/ dir; when it demotes, each unit
+# gets its own build/ dir. Either evidence satisfies the check.
+for id in add-multiply add-divide; do
+  D="$WT/__codex/$id/build"
+  [ -f "$D/exit-code" ] || D="$WT/__codex/add-multiply/chain"
+  if [ -f "$D/exit-code" ] && [ "$(cat "$D/exit-code")" = "0" ]; then
+    pass "$id codex build ran to a clean exit ($D)"
+  else
+    flunk "$id codex build exit-code is 0 (got: $(cat "$D/exit-code" 2>/dev/null || echo absent))"
+  fi
+  expect "$id codex events stream captured" test -s "$D/events.jsonl"
+  expect "$id codex session id captured" test -s "$D/session-id"
+done
+# The write-bar, end to end: no codex artifact may ever enter git history.
+if git -C "$REPO" log --all --name-only --format= 2>/dev/null | grep -q "__codex"; then
+  flunk "no __codex artifact in any commit (write-bar breached)"
+else
+  pass "no __codex artifact in any commit (write-bar held)"
+fi
+
+# --- runaway-loop ceilings (the spiral, made measurable) -------------------------
+# units[id].rounds tallies fix/gate rounds; the config bounds them at 2 apiece, and a healthy
+# run sits well below. gate-good is the sharpest probe: a clean adopted branch must not need a
+# single fix round. Debt volume per unit is bounded by the brief's consolidation cap.
+node -e "
+const s = require('$STATE'); let bad = 0
+const r = (id) => (s.units[id] || {}).rounds || { fix: 0, opusGate: 0, gate: 0 }
+for (const id of ['add-multiply', 'add-divide', 'gate-good']) {
+  const x = r(id)
+  if (x.fix > 2 || (x.opusGate + x.gate) > 4) { console.log('FAIL  ' + id + ' round ceiling: ' + JSON.stringify(x)); bad = 1 }
+  else console.log('PASS  ' + id + ' rounds within ceiling: ' + JSON.stringify(x))
+}
+if (r('gate-good').fix > 0) console.log('WARN  gate-good needed ' + r('gate-good').fix + ' fix round(s) on a clean branch — gate/verify noise')
+const perUnit = {}
+for (const d of (s.debt || [])) perUnit[d.unit] = (perUnit[d.unit] || 0) + 1
+for (const [id, n] of Object.entries(perUnit))
+  if (n > 8) { console.log('FAIL  ' + id + ' banked ' + n + ' debt items (> 8 — the consolidation cap is not holding)'); bad = 1 }
+console.log('debt per unit: ' + JSON.stringify(perUnit))
+process.exit(bad)
+" || fail=1
+
 # --- spend sanity (informational thresholds, generous by design) ---------------
 # The wave-tail boundary phase adds ~2 Opus (explorer + health) + ~2-3 Haiku (flake re-run +
 # verbatim writers) per wave; the envelope below bounds fable/gateRounds/consults only, none
@@ -134,6 +178,8 @@ node -e "
 const s = require('$STATE'); const sp = s.spend || {}
 console.log('spend:', JSON.stringify(sp))
 console.log('plan-checks: opus=' + (sp.opusPlanChecks ?? 0) + ' fable=' + (sp.planChecks ?? 0))
+console.log('codex: runs=' + (sp.codexRuns ?? 0) + ' in=' + (sp.codexInputTokens ?? 0) + ' out=' + (sp.codexOutputTokens ?? 0))
+if ((sp.codexRuns ?? 0) < 2) console.log('WARN  fewer than 2 codex runs recorded for 2 fresh-implement units')
 const merged = Object.values(s.units).filter(u => u.status === 'merged').length
 let warn = ''
 if ((sp.gateRounds ?? 0) > merged * 2 + 2) warn += 'gate rounds high relative to merged units (convergence?); '

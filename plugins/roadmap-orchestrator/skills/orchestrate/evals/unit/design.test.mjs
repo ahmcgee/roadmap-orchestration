@@ -49,15 +49,21 @@ test('design: a citing unit gets the clause; a non-citing sibling is untouched',
     { designAuthorities: AUTH }), makeState())
 
   const promptFor = (l) => calls.find((c) => c.label === l)?.prompt ?? ''
-  for (const label of ['plan:ui', 'impl:ui', 'review:ui#0', 'opus-plan-check:ui'])
+  // The implementer is now Codex, briefed through the steering agent's `codex-build:` prompt (the
+  // brief is embedded verbatim in it), and the adversarial review stage is gone — the exit gate is
+  // where reimplementation is now judged. Both still have to carry the clause.
+  for (const label of ['plan:ui', 'codex-build:ui', 'opus-gate:ui#0', 'opus-plan-check:ui'])
     assert.match(promptFor(label), /design authorities/i, `${label} must carry the design clause`)
   // The authority PATH must be named, not just the citation — an implementer that cannot open the
   // comp is an implementer that reinvents it, which is the original failure.
-  assert.match(promptFor('impl:ui'), /apps\/web\/src\/design\/checkin\//, 'impl prompt names the authority path')
-  assert.match(promptFor('review:ui#0'), /Rebuilding from primitives/i, 'review treats reimplementation as blocking')
+  assert.match(promptFor('codex-build:ui'), /apps\/web\/src\/design\/checkin\//, 'the codex brief names the authority path')
+  assert.match(promptFor('codex-build:ui'), /never rebuild a designed screen from primitives/i,
+    'the implementer is told adoption is the default, not reimplementation')
+  assert.match(promptFor('opus-gate:ui#0'), /grade conformance against the comp SOURCE/,
+    'the exit gate — which replaced the review stage — grades fidelity against the comp, not a jsdom presence test')
   assert.match(promptFor('plan:ui'), /feasible:false/, 'a missing comp in the fork base is an early quarantine')
 
-  for (const label of ['plan:plain', 'impl:plain', 'review:plain#0'])
+  for (const label of ['plan:plain', 'codex-build:plain', 'opus-gate:plain#0'])
     assert.doesNotMatch(promptFor(label), /design authorities/i, `${label} must be untouched`)
 })
 

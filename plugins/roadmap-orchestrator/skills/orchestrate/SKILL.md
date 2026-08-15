@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Execute a slice of a product roadmap autonomously — decompose it into independently verifiable units, build each in an isolated git worktree via a multi-agent workflow with architect gates, integrate serially, and deliver one merge-ready branch. Use when the user provides a roadmap / target architecture (any format) and asks to build up to a milestone or cut line.
+description: Execute a slice of a product roadmap autonomously — decompose it into independently verifiable units, build each in an isolated git worktree via the Codex CLI (the sole implementer) under Claude architect gates and steering, integrate serially, and deliver one merge-ready branch. Requires an authenticated `codex` CLI. Use when the user provides a roadmap / target architecture (any format) and asks to build up to a milestone or cut line.
 ---
 
 # Roadmap Orchestrator
@@ -24,9 +24,12 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
 1. **Every delegation names its model explicitly.** The scripts already do. Any agent *you*
    spawn must too — and never a typed agent (Explore, Plan, …) without a pinned model: they
    inherit *your* model and silently bill recon sweeps at frontier prices.
-2. **Frontier never generates volume.** You, and every `fable` agent, produce plans, contracts,
-   specs, directives, verdicts, reports — never code, never bulk text. Opus writes code and
-   fixes; Sonnet extracts and compresses; Haiku runs commands.
+2. **Frontier never generates volume — and Claude never implements.** You, and every `fable`
+   agent, produce plans, contracts, specs, directives, verdicts, reports — never code, never
+   bulk text. The Codex CLI writes ALL implementation and fixes (steered by Haiku agents);
+   Opus plans units and judges; Sonnet extracts and compresses; Haiku runs commands. A codex
+   outage is a hard stop to surface to the user, never a licence for a Claude agent to
+   implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
    outcome that feeds redesign, not a failure to retry around.
@@ -49,10 +52,11 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    may interrupt, reroute, or message an in-flight unit. This is about *timing*, not
    *identity*: the conductor's tiers triage on your behalf, but only at the same wave tail you
    would have woken at. **Root-only, always** (a tier early-returns instead): contract
-   amendments, contingent replans, needs-user calls. Technical debt is swept aggressively — and
-   banked reluctantly: fix-in-unit is the default (an implementer's own shortcuts get one in-unit
-   fix round; a banked item needs a stated closed-set `bankReason`, and correctness findings never
-   bank through an approve). While the
+   amendments, contingent replans, needs-user calls. Technical debt follows the pinned scope
+   envelope: in-scope correctness is fixed in-unit and never banks through an approve; anything
+   outside the unit's declared scope BANKS by default with a stated closed-set `bankReason` —
+   a directive that widens a diff beyond its scope costs more than the imperfection it removes
+   (this inversion is deliberate; it is what killed the review spiral). While the
    arc still has planned work to run, even minor debt folds into the next wave as fix-work — but debt
    never *creates* a wave, so leftover debt at arc end is *durable* (the living `.roadmap/debt.md`, or
    consolidated per-unit `roadmap:debt` issues in issue mode) and carries to the next session's Phase 0.
@@ -87,15 +91,33 @@ mechanic in `reference.md` → "backlog / proposals". This is Phase-0 scope-sett
 mid-arc debt sweep — adopting a bug here legitimately plans a wave; the "debt never creates a wave"
 brake is a tier-2 guarantee and is unaffected.
 
+**Codex preflight (REQUIRED — refuse to dispatch without it).** The implementer for every unit
+is the `codex` CLI, launched by cheap steering agents inside unit worktrees; there is no Claude
+implementation lane. Probe once: `command -v codex && codex --version && codex login status`
+(prefix `CODEX_HOME=<home>` if the environment uses a non-default home — check `$CODEX_HOME`).
+Logged in → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
+logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
+`codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Auth is
+a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
+early-returns `codex-unavailable` / `codex-usage-limit` with state checkpointed; both are
+resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
+route around by re-implementing with Claude.
+
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
 codebase brief — module map, build/test commands, conventions, test-suite strength, hot files.
 Read their outputs, then decide:
 
 - **Decompose** into units that are independently *verifiable* — each builds, its tests pass, and
-  "done" is a crisp, runnable check; roughly 0.5–2 focused agent-hours. Cut along interfaces, not
-  features. Minimize file overlap between units that could run concurrently. If "done" isn't
-  checkable, the unit is too big or under-specified.
+  "done" is a crisp, runnable check. **Size generously**: a unit is as large as you can specify
+  with no open questions left (the grilling bar below). Every unit pays a fixed cost — plan,
+  plan-check, verify, review, gate, merge, plus the executor's cold start — no matter how little
+  work it carries, so fragmenting multiplies machinery rather than buying safety. The bounds are
+  structural, not durational: each unit needs its own branch/gate/merge slot and a diff one
+  reviewer could hold in their head. Stop growing a unit where recovery cost overtakes the saving —
+  a bigger diff makes gate rejection more expensive and the pinned fix envelope less precise. Cut
+  along interfaces, not features. Minimize file overlap between units that could run concurrently.
+  If "done" isn't checkable, the unit is too big or under-specified.
 - **Freeze contracts** — the interfaces shared between units (types, signatures, schemas,
   conventions) — into `.roadmap/contracts/` before anything builds. This is your main weapon
   against cross-unit incompatibility; the merge gate only catches what it can't prevent.
@@ -144,17 +166,37 @@ Read their outputs, then decide:
   costs one cheap replan.
 - **Write specs** that state goal, constraints, contract references, and acceptance criteria —
   not step-by-step instructions. The implementer is capable; over-specification degrades its work
-  exactly the way it would degrade yours. Acceptance criteria are the one place to be exacting:
-  each an individually checkable clause ("X returns Y under Z"), because the exit gate grades
-  them one by one and vague criteria grade noisily. Resolve spec-internal contradictions at
-  authoring time — the plan-check interrogates the spec itself, and what it finds late surfaces
-  as a redirect or a quarantine.
+  exactly the way it would degrade yours. But it **cannot ask you anything**: the bar is that a
+  competent engineer could build the unit without a single question. Interrogate each spec
+  against that bar before dispatch — a question with a look-up-able answer is yours to resolve
+  now (dispatch an agent for the fact); a question that is a genuine *decision* is a spec defect,
+  settled by you and written down or put to the user. Beyond the goal, each spec therefore
+  carries:
+  - **Done-when** — the acceptance criteria, each an individually checkable clause ("X returns Y
+    under Z"), because the exit gate grades them one by one and vague criteria grade noisily.
+    At least one must be a *runnable command with an expected exit status* — it is also the
+    implementer's inner-loop signal; a criterion judgeable only by reading is fine, but never
+    the only one.
+  - **Scope** — the files the unit is expected to touch, and an explicit **out-of-scope list**
+    (the adjacent mess it must leave alone, the migration that is a different unit). The harness
+    pins scope before the first fix round and banks out-of-scope imperfections as debt rather
+    than fixing them; what you do not scope, the implementer will either omit or wander into.
+  - **Test seams, pre-agreed** — where the unit's tests hook in. As few as possible; one is
+    ideal. Implementers left to choose seams restructure production code to create them.
+  - **What must be preserved** — for anything refactor-shaped, the behaviour that must not
+    change. A refactor spec without a preserve-list is an invitation to rewrite.
+  - **Which decisions are open** — the decisions deliberately left to the implementer, so that
+    everything *else* unsettled is a stop-and-escalate, never a silent judgment call.
+  Resolve spec-internal contradictions at authoring time — the codex spec-critique and the
+  plan-check interrogate the spec itself, and what they find late surfaces as a redirect or a
+  quarantine.
 - **Plan each unit's self-validation as part of the unit.** Think ahead to everything the unit
   needs not just to *do* the work but to *evaluate its own output* — runnable acceptance checks,
   the provisioned environment to run them in, the commands in the brief, runtime evidence for
   behavior-sensitive work. Your feedback enters at the beginning (plan-check) and the end (gate);
-  in between, the unit must check itself. A unit that cannot self-validate isn't ready to
-  dispatch — that's a spec defect, not an execution risk.
+  in between, the unit must check itself — the runnable check IS the autonomous implementer's
+  own iterate-until-green signal, so a unit that cannot self-validate isn't ready to dispatch —
+  that's a spec defect, not an execution risk.
 - **Plan the arc's preview.** Decide how the integrated result is exercised — dev server, built
   CLI, or, for a library-only arc, driving the public API/REPL (`kind: api`, almost always
   possible) — and fill the plan's `preview` block. The harness keeps the primary checkout riding
@@ -173,6 +215,15 @@ Read their outputs, then decide:
   as noise a lower tier may drop without you). Opus drafts it from your Phase-0 reasoning; it
   commits with the plan pack. The conductor's fresh boundary agents inherit your steering *only*
   through this file, so what isn't written here doesn't reach them.
+  It must open with a **`## Direction`** section: where this codebase is deliberately heading, and
+  the preferences that break ties. Every judgment surface reads it — plan-check, the exit gate and
+  the escalation adjudicator — so it is how your taste reaches decisions you will never see. Write
+  it to **discriminate**, not to inspire: preference orderings on the axes where units actually
+  diverge ("prefer fewer public surfaces over more", "prefer explicit over inferred", "when a
+  choice trades short-term speed for a closed door, take the door") plus explicit **non-goals**.
+  "Fast and elegant" steers nothing and costs a slice of every judgment prompt. It is a tie-breaker
+  only: it never overrides a spec or a frozen contract, and never licenses widening scope — which
+  is also why it is deliberately absent from the implementer's brief.
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance tests
   targeting the *seams* between units. You plan them; schedule an early unit to write them; the
   merge gate runs them.
@@ -447,7 +498,10 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    first-class input to the next arc's Phase 0, and `skill-feedback.md` belongs to the *skill*, not
    this arc, so archiving it would bury the only record of how the orchestrator failed;
    remove unit worktrees and merged `unit/*` branches (keep quarantined
-   branches — their dossiers point at them); delete the integration branch once merged. **In issue
+   branches — their dossiers point at them), and sweep `worktreeRoot/__codex/` with them — the
+   codex briefs/events/session artifacts are per-arc forensics whose value ends at close-out
+   (keep a quarantined unit's `__codex/<unit>/` alongside its branch if its dossier cites it);
+   delete the integration branch once merged. **In issue
    mode also**: post the session report to the arc tracking issue and close it; close the milestone;
    verify merged-unit issues are closed-completed and deferred ones closed-not-planned (the wave-tail
    sweep usually did this); and **leave open** the `roadmap:debt` issues and any `status:quarantined`
