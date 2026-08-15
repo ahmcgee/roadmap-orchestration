@@ -134,7 +134,11 @@ Read their outputs, then decide:
   dispatch" is a collision generator under parallelism (arc-observed: two duplicate-prefix pairs
   in one arc, one of which silently erased a CHECK constraint at merge). Set
   `plan.prefixUniqueGlobs` (e.g. `["migrations/*"]`) so the merge path refuses a duplicate prefix
-  mechanically instead of trusting the allocation held.
+  mechanically instead of trusting the allocation held. The check compares the pre-merge tip
+  against the merged tree and refuses only a duplicate the merge *introduces* — a repo whose
+  history already holds grandfathered duplicate pairs (sealed by its own migration-number seal)
+  is safe to guard. Still grep the tree at Phase 0 and record any pre-existing duplicates in the
+  conventions contract, so no unit "fixes" them by renumbering.
 - **Cross-check contracts against code before freezing.** Where a frozen surface already exists
   in code (skip only if every frozen surface is greenfield), have a **Haiku** agent (Sonnet where
   signatures are subtle) list the surfaces each drafted contract freezes — endpoints, CLI verbs,

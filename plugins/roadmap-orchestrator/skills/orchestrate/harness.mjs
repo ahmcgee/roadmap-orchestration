@@ -765,7 +765,11 @@ const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 // 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK the prompt is byte-identical to
 // the legacy single-write form; above it, the payload is split deterministically (a pure function
 // of the text — resumeFromRunId-safe) and written in staged parts, one tool call per part, each
-// comfortably under the cap. Mirrored in conductor.mjs — keep the two in sync.
+// comfortably under the cap. Each part goes through a single-quoted here-doc and the result is
+// checked by byte count (arc-observed: five `write-failed` checkpoints in one wave when the
+// writer's append step mangled JSON escape sequences — an unquoted shell path or an edit tool
+// re-interpreting `\n` — and nothing verified the file). Mirrored in conductor.mjs — keep the
+// two in sync.
 const WRITE_CHUNK = 24000
 const writeVerbatim = (path, text, extra = '') => {
   if (text.length <= WRITE_CHUNK)
@@ -780,15 +784,22 @@ const writeVerbatim = (path, text, extra = '') => {
     else cur = cur ? `${cur}\n${line}` : line
   }
   if (cur) parts.push(cur)
+  // Expected on-disk size: UTF-8 bytes of the document plus the trailing newline every here-doc
+  // leaves after its last line. Hand-counted (no Buffer/TextEncoder in the workflow sandbox).
+  let bytes = 1
+  for (const ch of text) { const c = ch.codePointAt(0); bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
   return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
-    `in order, joined with a single newline between consecutive parts, and nothing else${extra}. The parts ` +
-    `are a mechanical split of one JSON document on line boundaries — never repair, reformat, or re-indent ` +
-    `anything. A single write of the whole document is too large and will be rejected, so write it in ` +
-    `stages: write PART 1 (overwriting any existing file), then APPEND each later part (each preceded by ` +
-    `the joining newline) with its own separate write or append operation — one part per operation, never ` +
-    `the whole document in one call. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
+    `in order, each part followed by a single newline, and nothing else${extra}. The parts are a mechanical ` +
+    `split of one JSON document on line boundaries — never repair, reformat, re-indent, or re-escape anything ` +
+    `(escape sequences such as \\n and \\" inside JSON string values are literal characters to copy, not ` +
+    `instructions). A single write of the whole document is too large and will be rejected, so write it in ` +
+    `stages, ONE part per Bash tool call, each through a single-quoted here-doc so the shell interprets ` +
+    `nothing — never echo, printf, or a file-write/edit tool: for PART 1 run \`cat > ${path} <<'ROADMAP_PART'\` ` +
+    `followed by the part's lines and a closing \`ROADMAP_PART\` line; for every later part run the same with ` +
+    `\`cat >> ${path} <<'ROADMAP_PART'\`. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
     `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
-    `themselves.\n` +
+    `themselves. When every part is written, verify: \`wc -c < ${path}\` must print exactly ${bytes}; if it ` +
+    `prints anything else, report ok:false with the observed count in detail.\n` +
     parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
 }
 
@@ -1379,6 +1390,16 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
       `> ${dir}/events.jsonl 2> ${dir}/stderr.log; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid\n` +
       `COMMAND F: `
     : `use this launch command:\n`
+  // Resume-collision rule (arc-observed: one gate-fix resume died at once with "thread already
+  // has a…" because a live codex process still held the session — a transient, not a verdict on
+  // the unit). One timed retry of the resume, then a cold session on the same self-contained brief.
+  const collisionRule = resumeDir
+    ? ` If you launched COMMAND R and ${dir}/exit-code appears within 2 minutes with a non-zero value while ` +
+      `\`grep -qi 'thread already' ${dir}/stderr.log\` matches, the session is still held by another live codex ` +
+      `process: run \`sleep 60\`, \`rm -f ${dir}/exit-code ${dir}/codex.pid\`, and relaunch COMMAND R once; if it ` +
+      `fails the same way again, \`rm -f ${dir}/exit-code ${dir}/codex.pid\` and launch COMMAND F instead. Say ` +
+      `in \`notes\` which of these happened.`
+    : ''
   const execCmd =
     `${codexHome}setsid nohup sh -c 'codex exec -C ${w} -s ${C.codexSandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
@@ -1395,7 +1416,7 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `write is rejected as too large, write it in consecutive appended parts). Write the file ` +
     `${dir}/schema.json with exactly this one-line JSON: ${outSchema ?? CODEX_OUT}\n` +
     `2) Record launch facts: \`date +%s > ${dir}/launched-at\` and \`printf '%s' "${w}" > ${dir}/cwd\`.\n` +
-    `3) Launch Codex in the background — ${launch}${execCmd}\n` +
+    `3) Launch Codex in the background — ${launch}${execCmd}${collisionRule}\n` +
     `4) Wait, sleep-free: repeat \`timeout 540 tail --pid=$(cat ${dir}/codex.pid) -f /dev/null\`, each time ` +
     `setting your Bash tool's own timeout to its 600000 ms maximum so the call is not cut short (a 124 exit ` +
     `just means still running). Runs here are long — hours, not minutes — so expect many such waits and never ` +
@@ -1408,7 +1429,7 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `   - \`head -c 8000 ${dir}/last-message.txt\` (the schema-constrained final report; may be absent),\n` +
     `   - \`grep -m1 -o '"thread_id":"[^"]*"' ${dir}/events.jsonl\` — write the bare id to ${dir}/session-id,\n` +
     `   - \`grep '"turn.completed"' ${dir}/events.jsonl | tail -1\` (usage: input/output tokens, turn count),\n` +
-    `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429' ${dir}/events.jsonl ` +
+    `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429|thread already' ${dir}/events.jsonl ` +
     `${dir}/stderr.log | tail -5 | cut -c1-300\` (errors; also decides \`limitHit\`),\n` +
     `   - git truth in ${w}: \`git rev-list --count ${base}..HEAD\`, \`git diff --name-only ${base}..HEAD\`, ` +
     `\`git status --porcelain\`, \`git rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
@@ -2140,12 +2161,19 @@ async function mergeUnit(unit) {
     `lists ANY path, do NOT merge; touch nothing and report merged:false with those exact paths in \`roadmapPaths\`. `
   // Plan-driven prefix-uniqueness guard, '' when unset so the prompt stays byte-identical on
   // plans without numbered sequences (arc-observed: next-free-at-dispatch numbering collided
-  // twice in one arc; one collision silently erased a CHECK constraint at merge).
+  // twice in one arc; one collision silently erased a CHECK constraint at merge). The check is
+  // a DIFF of duplicate sets, pre-merge tip (HEAD^1 of the --no-ff merge commit) vs merged tree:
+  // only a duplicate the merge INTRODUCES refuses. Twice arc-observed: a global-uniqueness check
+  // on a repo whose history already held grandfathered duplicate pairs refused every merge in a
+  // wave — 8 gate-approved units quarantined, zero merges, ~5h burned.
   const prefixClause = plan.prefixUniqueGlobs?.length
-    ? ` Then, before the suite: for each of these globs — ${plan.prefixUniqueGlobs.join(', ')} — list the merged ` +
-      `tree's matching filenames and extract each filename's leading digit run; if two or more files share the ` +
-      `same digit run, the merge is REFUSED: undo it with \`git reset --hard ORIG_HEAD\` and report merged:false ` +
-      `with every colliding filename in \`prefixCollision\`.`
+    ? ` Then, if you performed the merge, before the suite: for each of these globs — ${plan.prefixUniqueGlobs.join(', ')} — ` +
+      `list the matching filenames in the PRE-MERGE tip (\`git ls-tree -r --name-only HEAD^1 -- '<glob>'\`) and in ` +
+      `the MERGED tree (same command with HEAD), extract each filename's leading digit run, and compute the set of ` +
+      `digit runs shared by two or more files in each list. Digit runs already duplicated in the pre-merge tip are ` +
+      `grandfathered and never refuse. If the merged tree has a duplicated digit run that the pre-merge tip did ` +
+      `NOT already have, the merge is REFUSED: undo it with \`git reset --hard ORIG_HEAD\` and report merged:false ` +
+      `with every filename of the NEW collision(s) in \`prefixCollision\`.`
     : ''
   const mergePromptText =
     STRICT +

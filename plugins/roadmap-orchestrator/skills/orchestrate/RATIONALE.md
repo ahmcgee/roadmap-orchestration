@@ -452,8 +452,10 @@ missing-signal/high-stakes logic as `mismatchEver`. The same scratchpad-abuse di
 **Merge fences.** NOROADMAP was advisory; now the merge queue enforces it (refuse → strip commit
 preserving content in branch history → `kind:'contract'` debt → root adjudication — the exact
 disposition the observed incident got by hand), and `prefixUniqueGlobs` makes numbered-sequence
-collisions a refusal instead of a silent CHECK-erasing merge. Both clauses are '' when their
-precondition is absent, keeping fixture prompts byte-identical.
+collisions a refusal instead of a silent CHECK-erasing merge. The prefix check diffs duplicate
+sets pre-merge vs merged — a global-uniqueness check refused two whole waves on grandfathered
+duplicate pairs the repo had already sealed. Both clauses are '' when their precondition is
+absent, keeping fixture prompts byte-identical.
 
 **Preview loudness.** A dead mirror silently no-ops the explorer and the design reconcile for a
 whole wave, so setup failure is now a `preview-failed` degradation carrying a porcelain diagnosis

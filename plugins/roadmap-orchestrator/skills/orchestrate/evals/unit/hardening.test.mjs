@@ -213,6 +213,11 @@ test('7 merge prompt: the prefix clause appears only when plan.prefixUniqueGlobs
   assert.ok(withGlobs.includes('digit run'), 'globs -> the merge agent is told how to detect a collision')
   assert.ok(withGlobs.includes('prefixCollision'), 'globs -> and which channel to refuse through')
   assert.ok(withGlobs.includes('migrations/*'), 'the globs themselves are named')
+  // Twice arc-observed: a GLOBAL uniqueness check refused every merge in a wave on duplicate
+  // pairs the repo's history already held. The check must diff pre-merge tip vs merged tree.
+  assert.ok(withGlobs.includes('git ls-tree -r --name-only HEAD^1'), 'the pre-merge tip is the comparison base')
+  assert.ok(withGlobs.includes('grandfathered and never refuse'), 'pre-existing duplicates are grandfathered')
+  assert.ok(withGlobs.includes('NOT already have'), 'only a duplicate the merge introduces refuses')
 })
 
 // =========================================================================================
