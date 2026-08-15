@@ -293,6 +293,9 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
     // unit b: contract mismatch (banks contract/major), forces the Fable gate (gate debt —
     // non-correctness, so the approve stands; the correctness case has its own test below).
     { match: /^codex-build:b/, result: () => ({ ...implCodexOk(), contractMismatch: 'auth surface expects a field reality lacks' }) },
+    // A contract mismatch now ALSO rides the escalation ladder (tier-2 by construction: only the
+    // architect may rule on a frozen surface), so unit b takes a consult before its gate.
+    { match: /^gap-consult:b#1/, result: () => ({ action: 'confirm', guidance: 'the surface stands as frozen' }) },
     { match: /^gate:b/, result: () => ({ verdict: 'approve', directives: [], debt: [{ what: 'gate-defer-b', kind: 'structure', severity: 'minor', bankReason: 'needs-migration-or-ruling' }] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
@@ -301,6 +304,12 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
 
   assert.equal(state.units.a.status, 'merged')
   assert.equal(state.units.b.status, 'merged')
+  // The mismatch reached the architect rather than only the gate, and it skipped cheap triage.
+  assert.ok(calls.some((c) => c.label === 'gap-consult:b#1'), 'a contract mismatch pulls the architect in')
+  assert.ok(!calls.some((c) => c.label === 'adjudicate:b#1'),
+    'and skips Opus triage — no adjudicator confined to this unit may rule on a surface binding every unit')
+  assert.equal((state.escalations ?? []).find((e) => e.unit === 'b')?.boundary, 'contract',
+    'the ledger records which boundary was crossed')
   // The post-implement debt-fix sweep is gone with the Claude lane: the Codex brief's SCOPE
   // already demands in-scope fixing before the run reports done, so a surviving confession is
   // out-of-scope BY DECLARATION and goes straight to the ledger. A sweep round here would only

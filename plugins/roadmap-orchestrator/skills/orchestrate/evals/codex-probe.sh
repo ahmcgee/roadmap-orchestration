@@ -184,7 +184,16 @@ fi
 
 # ---- P1.7 write-bar ---------------------------------------------------------
 if [ -f "$OUTSIDE/escape.txt" ]; then
-  bad "P1.7 workspace-write allowed a write OUTSIDE cwd ($OUTSIDE/escape.txt exists)"
+  # Not a Codex defect and not necessarily a FAIL: bubblewrap needs an unprivileged user namespace,
+  # and where the container runtime blocks that syscall the sandbox cannot be built and enforces
+  # nothing — silently. That is why the lane defaults to danger-full-access (RATIONALE, P1.7 note):
+  # once the guard is known not to hold, pretending otherwise is the only real hazard.
+  if unshare --user --map-root-user true 2>/dev/null; then
+    bad "P1.7 workspace-write allowed a write OUTSIDE cwd ($OUTSIDE/escape.txt) despite working user namespaces"
+  else
+    info "P1.7 write-bar NOT enforced here — user namespaces are blocked, so bubblewrap cannot build"
+    info "P1.7 a sandbox. Expected in this container; codexSandbox is danger-full-access by design."
+  fi
 elif [ -f "$W/hello.txt" ]; then
   ok "P1.7 write outside cwd blocked; write inside cwd succeeded"
 else

@@ -34,6 +34,8 @@ const C = {
   maxFixRounds: 2,
   maxGateRounds: 2,
   maxConsults: 3,
+  maxStops: 5,               // escalation-ladder rounds per unit. Generous units mean several
+                             //   stops are normal; this is a runaway brake, not a rationing rule.
   // Reporting cap on a single adversarial pass (gate directives per revise round). A cap on
   // REPORTING, never on reading — overflow past it is banked as debt, not dropped. Enforced
   // code-side, never as schema maxItems (a schema rejection burns the retry cap and kills the
@@ -71,13 +73,6 @@ const C = {
                              //   integration review supersedes it)
   healthCheck: 'each-wave',  // 'each-wave' | 'off' — the health-assessor half of the boundary
   flakeReruns: 3,            // full-suite re-runs hunting intermittents; 0 disables
-  // Warm lanes: strict linear dependency chains are implemented by ONE warm Opus call (one
-  // plan call, one implement call, per-link commits + pinned branches) instead of a cold
-  // start per link — isolation buys zero parallelism on a chain, but each link still runs
-  // the UNCHANGED cold verify → review → gate → merge pipeline (the coldness that is
-  // epistemic stays; only the re-reading cost goes). false restores per-link cold builds.
-  warmLanes: true,
-  maxChainLength: 5,         // longer chains split into consecutive lanes (one implement call's scope cap)
   /* ---- Codex executor lane (Codex is REQUIRED — there is no Claude implementation lane).
      The implementer is `codex exec`, launched as a background process by a cheap steering
      agent inside the unit worktree; Claude keeps every judgment surface (plan, plan-check,
@@ -87,12 +82,25 @@ const C = {
   codexEffort: 'high',        // -c model_reasoning_effort= — under-provisioned effort is the
                               //   top documented cause of bad Codex output; xhigh for hard arcs
   codexFixEffort: 'medium',   // resume/fix rounds are narrower work than the build
-  codexSandbox: 'workspace-write',  // never danger-full-access without a deliberate override:
-                              //   exec has NO approval prompts anyway, and full access would let
-                              //   a wandering run write into SIBLING unit worktrees
+  codexSandbox: 'danger-full-access',  // DELIBERATE, and measured rather than assumed. Codex's OS
+                              //   sandbox is built with bubblewrap, which needs an unprivileged
+                              //   user namespace. A devcontainer whose runtime seccomp profile
+                              //   blocks that syscall (`unshare --user` -> EPERM, even with
+                              //   kernel.unprivileged_userns_clone=1) cannot build one, so
+                              //   'workspace-write' degrades SILENTLY to no enforcement at all:
+                              //   probe-observed, Codex wrote to an absolute path outside its
+                              //   worktree under that setting. It was therefore buying zero
+                              //   protection while still costing reliability — every apply_patch
+                              //   went through a bwrap verification helper that failed and
+                              //   retried. Sibling-worktree containment is accepted as a RISK
+                              //   here, not enforced. Set back to 'workspace-write' in any
+                              //   environment that permits user namespaces, where it is real.
   codexNetwork: false,        // -c sandbox_workspace_write.network_access=true when true
-  codexTimeoutMin: 45,        // build/chain deadline before kill-and-assess
-  codexFixTimeoutMin: 20,     // resume-round deadline
+  codexTimeoutMin: 240,       // build deadline before kill-and-assess. This knob — not the
+                              //   Phase-0 sizing prose — is the binding constraint on unit size:
+                              //   units are sized by what we can specify, and Codex runs the
+                              //   horizon. Per-milestone commits are what make a kill survivable.
+  codexFixTimeoutMin: 45,     // resume-round deadline (fix rounds and adjudicated resumes)
   codexSteerModel: 'haiku',   // steering tier; 'sonnet' if Haiku proves unable to drive it (P2)
   codexMaxConcurrent: 4,      // semaphore on concurrent codex processes (one OpenAI account)
   codexProfile: null,         // -p <profile> ($CODEX_HOME/<name>.config.toml) when set
@@ -187,8 +195,8 @@ const DEBT_DISCIPLINE = 'Debt discipline: banking is the DEFAULT for anything ou
   'approve while one exists; revise or escalate instead. '
 // The pinned scope envelope, stated to every code-writing agent (the Codex brief's Constraints
 // block; FIX_SCOPE is the fix-round counterpart). Scope is computed ONCE per unit before the
-// first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry;
-// chain link: that link's planned files — and NEVER recomputed from the live diff. Pinning is the
+// first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry
+// — and NEVER recomputed from the live diff. Pinning is the
 // mechanism, not the membership rule: the spiral's first clause defined the eligible-fix set as
 // "files you are already touching", i.e. as a function of the diff the fix rounds themselves grow.
 // Do not "simplify" this back to the live diff.
@@ -256,6 +264,23 @@ const GAP_IS_A_TRIGGER =
   'decision you took and the alternative. It is a trigger: its mere presence consults the frontier architect, who ' +
   'may redirect the work. Routine judgment calls you are confident in, observations, and deferrals do not belong ' +
   'there — those go in `notes` or `debt`. '
+// The arc's DIRECTION — the architect's steering, threaded into JUDGMENT surfaces only.
+// architect-log.md already exists and is already seeded at Phase 0, but until now it reached the
+// conductor's boundary agents alone: plan-check, the exit gate and the escalation adjudicator saw
+// spec + contracts + conventions, which say what must be TRUE and never what the arc is aiming at.
+// That left the ladder's `decided` tier picking between defensible options on local reasoning —
+// arc-observed (horizon fixture, run 3): a named open decision with two defensible answers and no
+// principle available to choose by. Direction is a TIE-BREAKER, strictly subordinate: it steers
+// where the spec and the contracts are silent, and it never overrides either. It is deliberately
+// absent from every Codex brief — a target state in an implementer's prompt is an invitation to
+// build the end state instead of the unit.
+const architectLog = plan.architectLog ?? `${repo}/.roadmap/architect-log.md`
+const directionClause = plan.direction === false ? '' :
+  `The arc's DIRECTION — where this codebase is deliberately heading, and the preferences to break ties ` +
+  `by — is the "## Direction" section of ${architectLog}; read it before you rule. It is subordinate to the ` +
+  `spec and the frozen contracts: where they settle a question it does not apply, and it never licenses ` +
+  `widening scope. Where they are silent and two answers are both defensible, prefer the one the direction ` +
+  `leans toward, and say which preference decided it. `
 const sameSha = (a, b) => !!a && !!b && (a.trim().startsWith(b.trim()) || b.trim().startsWith(a.trim()))
 const brief = plan.briefPath ?? `${repo}/.roadmap/brief.md`   // Phase-0 codebase brief: commands + conventions
 // Optional standing cross-cutting conventions contract (shared-utility catalog + naming/
@@ -334,6 +359,13 @@ for (const [k, v] of Object.entries(prior.spend ?? {}))
 // the exit gates, or the implementer. Returned in the wave state; the architect triages it
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
 const debtLog = []
+// Escalation ledger. Every ruling on an implementer stop, arc-cumulative: which tier answered it,
+// which boundary it crossed, and who ruled. Two consumers beyond forensics — the three-strikes
+// rule needs a count that survives a unit re-entering in a LATER wave (the in-pipeline counter
+// resets), and escalation-rate-per-unit is the calibration signal that replaced the old
+// self-estimated "0.5-2 agent-hours" sizing heuristic. A unit that stopped five times was
+// under-specified; one that never stopped could have been sized larger.
+const escalationLog = [...(prior.escalations ?? [])]
 // Normalized against the schema enums: an out-of-enum kind (the old 'quality' default was one)
 // rode into state.json and collapsed unpredictably downstream. 'contract' is legal here — the
 // mismatch pathway stamps it directly and the conductor routes on it.
@@ -506,34 +538,6 @@ const S = {
     evidence: EVIDENCE,
     approach: { type: 'string' }, notes: { type: 'string' },
   }, ['feasible', 'files', 'testPlan', 'approach']),
-  // Warm-lane schemas. chainPlan/chainImpl carry one entry per link, in chain order; caps
-  // mirror S.plan/S.impl so the per-link budgets the prompts state stay truthful.
-  chainPlan: obj({
-    links: { type: 'array', maxItems: 8, items: obj({
-      id: { type: 'string' }, feasible: { type: 'boolean' }, files: arr('string'),
-      testPlan: { type: 'string' }, evidence: EVIDENCE, approach: { type: 'string' },
-    }, ['id', 'feasible', 'files', 'testPlan', 'approach']) },
-    notes: { type: 'string' },
-  }, ['links']),
-  chainImpl: obj({
-    links: { type: 'array', maxItems: 8, items: obj({
-      id: { type: 'string' }, done: { type: 'boolean' }, filesChanged: arr('string'),
-      summary: { type: 'string', maxLength: 700 },
-      contractMismatch: { type: 'string', maxLength: 300 },
-      specGap: { type: 'string', maxLength: 300 },
-      debt: debtArr,
-    }, ['id', 'done', 'filesChanged', 'summary']) },
-    notes: { type: 'string', maxLength: 2000 },
-  }, ['links']),
-  // Chain analogue of implCodex: one codex session's report over N links, plus process metadata.
-  get chainImplCodex() {
-    return obj({ ...this.chainImpl.properties, codex: CODEX_META }, [...this.chainImpl.required, 'codex'])
-  },
-  chainTips: obj({
-    ok: { type: 'boolean' },
-    tips: { type: 'array', maxItems: 8, items: obj({ id: { type: 'string' }, sha: { type: 'string' } }, ['id', 'sha']) },
-    detail: { type: 'string' },
-  }, ['ok', 'tips']),
   planVerdict: obj({
     verdict: oneOf(['approve', 'redirect', 'quarantine']), guidance: { type: 'string' }, notes: { type: 'string' },
   }, ['verdict', 'guidance']),
@@ -601,6 +605,14 @@ const S = {
   // 'confirm' exists for the specGap consult (the decision stands as built — no fix round);
   // the stuck-rescue consult never offers it and its prompt is unchanged.
   directive: obj({ action: oneOf(['redirect', 'quarantine', 'confirm']), guidance: { type: 'string' } }, ['action', 'guidance']),
+  // The escalation ladder's cheap tier (see the ladder in the unit pipeline). `boundary` is a
+  // CLOSED enum on purpose: it is the only thing standing between "Opus triages escalations" and
+  // "Opus forwards everything to the frontier", so difficulty must not be expressible as a reason.
+  adjudication: obj({
+    tier: oneOf(['cited', 'decided', 'escalate']),
+    boundary: oneOf(['none', 'contract', 'scope-envelope', 'other-unit', 'plan-of-record', 'mis-specified']),
+    guidance: { type: 'string' },
+  }, ['tier', 'boundary', 'guidance']),
   dossier: obj({ attempted: { type: 'string' }, evidence: { type: 'string' }, hypothesis: { type: 'string' } },
     ['attempted', 'evidence', 'hypothesis']),
   merge: obj({
@@ -730,6 +742,7 @@ const serialize = () => ({
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
+  escalations: escalationLog,
   // Skill defects — the orchestrator misbehaving, not the product. Arc-cumulative like spend:
   // prior entries carry forward, this wave's append (without the concat, per-wave direct-harness
   // runs erased the arc's degradation history each wave). The conductor renders these into
@@ -786,10 +799,22 @@ const writeVerbatim = (path, text, extra = '') => {
 // A failed write is LOUD: it lands in the degradation ledger (arc-observed silent losses hid a
 // window where a crash would have dropped the wave), but never blocks the wave — the next
 // successful checkpoint heals it.
+// Agent-authored report text can carry raw control characters (an explorer's `repro` string
+// quoting a \x01 test input, arc-observed). JSON.stringify escapes those correctly as \u0001 —
+// but state.json is written by a Haiku agent transcribing the document, and the transcription
+// DECODES the escape back into a raw byte, producing a state.json that no JSON parser will read.
+// An unresumable arc is a far worse outcome than a lossy repro string, and a control character in
+// a human-readable report is never load-bearing — so they are replaced with a printable token
+// BEFORE serialization, leaving no escape for a transcriber to get wrong. \t/\n/\r are left
+// alone: JSON gives them short escapes that agents reproduce reliably.
+const CTRL_UNSAFE = /[\u0000-\u0007\u000b\u000e-\u001f\u007f]/g
+const scrubCtrl = (v) => (typeof v === 'string'
+  ? v.replace(CTRL_UNSAFE, (c) => `<0x${c.charCodeAt(0).toString(16).padStart(2, '0')}>`)
+  : v)
 let checkpointTarget = null
 let checkpointWritten = null
 function checkpoint() {
-  checkpointTarget = JSON.stringify(serialize(), null, 2)
+  checkpointTarget = JSON.stringify(serialize(), (_k, v) => scrubCtrl(v), 2)
   checkpointChain = checkpointChain.then(async () => {
     if (checkpointTarget === checkpointWritten) return   // coalesce: latest already written
     const snap = checkpointTarget
@@ -1091,10 +1116,10 @@ async function syncIssues() {
 // Charter note (arc-observed, RATIONALE §4): 11 plan-checks in one arc never fired on plan
 // PLAUSIBILITY but approved past spec-internal contradictions the implementer then had to
 // reconcile ad hoc. Hence the spec-interrogation clause in both prompts — don't drop it.
-async function runPlanCheck(unit, implPlan, spec, { critique = null, chain = false } = {}) {
+async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   // The pre-dispatch gate is THE highest-leverage judgment point in the codex lane (better
   // judgment up front means less wasted implementation, fewer findings, fewer fix rounds), so
-  // Fable takes every chain and every med/high-risk unit — only low-risk singles ride Opus-first.
+  // Fable takes every med/high-risk unit — only low-risk singles ride Opus-first.
   // `critique` threads the cross-model spec review (codex-spec-review) in as adjudication input.
   const critiqueClause = critique?.questions?.length || critique?.risks?.length
     ? ` A second engineer from a different model family reviewed the spec and this plan read-only before you. ` +
@@ -1119,7 +1144,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null, chain = fal
       `so what you wave through is what the codebase becomes: overengineering and complexity that does not earn ` +
       `its keep, structure that makes the NEXT change harder, missed reuse or a simpler shape for the same ` +
       `outcome, and decisions that quietly close doors the roadmap needs open. A plan can be technically ` +
-      `correct and still deserve redirection on those grounds.${critiqueClause} ` +
+      `correct and still deserve redirection on those grounds.${critiqueClause} ${directionClause}` +
       `Your verdict controls what happens next — use it precisely: "approve" = proceed to IMPLEMENT this plan ` +
       `as-is; "redirect" = the engineer revises the plan per your guidance, then implements (this includes ` +
       `naming the explicit resolution of a spec contradiction when the right call is clear); "quarantine" = do ` +
@@ -1128,7 +1153,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null, chain = fal
       `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
       { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
   }
-  if (chain || unit.risk !== 'low' || !implPlan.feasible || C.planCheck === 'always-fable')
+  if (unit.risk !== 'low' || !implPlan.feasible || C.planCheck === 'always-fable')
     return fablePlanCheck()
   spend.opusPlanChecks++
   const oc = await run(
@@ -1144,7 +1169,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null, chain = fal
     `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
     `call is clearly within your authority); "escalate" = hand to the frontier architect when the call turns ` +
     `on contract interpretation, a spec contradiction you cannot resolve yourself, architectural foundations, ` +
-    `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.${critiqueClause}`,
+    `genuine uncertainty, or the unit looks unbuildable. Name the escalation trigger.${critiqueClause} ${directionClause}`,
     { model: 'opus', effort: C.opusEffort, phase: 'Implement', label: `opus-plan-check:${unit.id}`, schema: S.opusPlanVerdict })
   if (oc.verdict === 'escalate') {
     const lead = ` A first-pass Opus plan-check could not clear this itself` +
@@ -1198,9 +1223,6 @@ const specCritique = async (unit, w, implPlan) => {
 }
 
 /* --------------------------- per-unit pipeline -------------------------- */
-// laneCtx (warm-lane links only): { base, report, evidence, reportLost } — the link enters at
-// verify via the adoption path, diffed against its recorded predecessor tip, consuming the
-// warm implement call's per-link report exactly as a fresh build would consume its own.
 /* --------------------------- codex executor lane ---------------------------
  * Codex (the OpenAI CLI) is THE implementer — there is no Claude implementation lane. A unit's
  * whole implement→test→fix inner loop is one background `codex exec` in the unit worktree,
@@ -1274,13 +1296,23 @@ const codexBuildBrief = (unit, w, dir, base, implPlan) =>
   `${SCOPE(implPlan.files)}${NOROADMAP}Never run git rebase, git reset --hard, or git push, and never ` +
   `delete a branch. Work only inside ${w}.\n\n` +
   `# METHOD\n` +
-  `1. Read the spec and its contracts. 2. For each acceptance criterion that admits a test, write the test ` +
+  `1. Read the spec and its contracts, then split the unit into ordered MILESTONES — the smallest slices that ` +
+  `each leave the branch green and committable. Work one at a time; do not start the next until the current ` +
+  `one is committed. 2. For each acceptance criterion that admits a test, write the test ` +
   `FIRST, at the seams the plan's testPlan names — do not invent new seams and do not restructure production ` +
   `code to create one. 3. Implement until it passes. 4. Run the unit-scoped tests and lint/typecheck ` +
   `(commands: ${brief}). 5. Iterate until green — never report done with a failing check. 6. A test that ` +
   `would still pass if the behaviour were wrong is a failed task, not a pass: for each test you add, break ` +
-  `the behaviour it claims to test, confirm the test fails, then restore. 7. Commit on the current branch ` +
-  `with clear messages.\n\n` +
+  `the behaviour it claims to test, confirm the test fails, then restore. NEVER write or amend a test to ` +
+  `assert behaviour you believe is wrong, and never narrow one to dodge a case that fails — if correct ` +
+  `behaviour needs a change you are not allowed to make, that is a STOP (see ESCALATION), not something to ` +
+  `encode as intended. A green suite that documents a defect is the worst outcome available to you. 7. Commit at the end of EVERY ` +
+  `milestone, not only at the end of the unit, naming the milestone in the message — this run has a deadline ` +
+  `and uncommitted work does not survive it.\n` +
+  `8. At each milestone boundary, before starting the next, re-read ${dir}/brief.txt and run ` +
+  `\`git log --oneline ${base}..HEAD\`. This run is long enough that your own context may be compacted along ` +
+  `the way; those two are the authoritative record of your instructions and of what you have actually landed, ` +
+  `and re-reading them is a fresh tool call, not a memory. Trust them over your recollection.\n\n` +
   `# DONE-WHEN (each is checked on disk after you exit; your claim is not the check)\n` +
   `- Every acceptance criterion in ${specOf(unit)} demonstrably holds.\n` +
   `- The unit-scoped tests and lint/typecheck exit 0.\n` +
@@ -1292,7 +1324,9 @@ const codexBuildBrief = (unit, w, dir, base, implPlan) =>
   `# ESCALATION — stop, do not improvise\n` +
   `Stop only if you cannot proceed without making a decision that the spec, the contracts, the conventions ` +
   `and the code do not settle AND a competent engineer could reasonably decide the other way. A question you ` +
-  `can answer by reading is not a stop. At most one stop per run. When you stop: commit everything already ` +
+  `can answer by reading is not a stop — read the spec, the contracts and the code first, every time. There is ` +
+  `no cap on stops across this unit: an adjudicator answers and resumes you, so a second genuine decision is a ` +
+  `second stop, never a licence to improvise. When you stop: commit everything already ` +
   `finished, set \`status\` to "stopped-spec-gap" (a decision the spec leaves unsettled) or ` +
   `"stopped-contract-mismatch" (a frozen contract contradicts code that exists, or cannot be implemented as ` +
   `written), fill \`specGap\` or \`contractMismatch\` with one or two sentences (max 300 characters: which ` +
@@ -1309,6 +1343,24 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
   `spec: ${specOf(unit)}).\n\n${payload}\n\n` +
   `${FIX_SCOPE(envelope)}Run the unit-scoped tests and lint/typecheck (commands: ${brief}) until green — ` +
   `never report done with a failing check. ${NOROADMAP}Commit your fixes on the current branch.\n\n` +
+  // A resume brief with no termination condition does not idle — it invents work. Probe-observed
+  // (codex-horizon-probe.sh): a resumed session finished every specified milestone, then kept
+  // going into self-directed "Audit:" commits, expanding a spec line that asked only for
+  // `restore(snapshot(s))` to round-trip into a custom serializer for cyclic references, BigInt
+  // and NaN, plus an exported internals hook to test it with. The build brief is protected by its
+  // DONE-WHEN; every resume needs the same stopping rule restated or it inherits none.
+  `# ESCALATION — the same rule as your original brief\n` +
+  `A decision the spec, the contracts and the code do not settle is still a STOP, not yours to make — including ` +
+  `any decision the spec explicitly names as open, and any point where a frozen contract contradicts what you ` +
+  `must build. Never write or amend a test to assert behaviour you believe is wrong. Set \`status\` to ` +
+  `"stopped-spec-gap" or "stopped-contract-mismatch", fill the matching field, commit what is finished, and exit; ` +
+  `an adjudicator answers and resumes you. Arc-observed: fix rounds silently decided a decision the spec had ` +
+  `marked escalate-only, in twelve modules at once, because this brief did not repeat the rule.\n\n` +
+  `# DONE-WHEN\n` +
+  `The repairs above are made, the checks are green, and your work is committed. Then STOP and report. ` +
+  `Do not add requirements the spec does not state, do not harden or refactor beyond the repairs, and do not ` +
+  `invent follow-up work — finishing early is correct, and anything past the repairs is scope creep the gate ` +
+  `will reject.\n\n` +
   `# FINAL MESSAGE\n${CODEX_BUDGETS}\n`
 // The steering prompt: launch codex in the background (the preview-process idiom: setsid +
 // pidfile + group kill), poll sleep-free, kill at the deadline, verify the work ON DISK, read
@@ -1344,8 +1396,10 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `${dir}/schema.json with exactly this one-line JSON: ${outSchema ?? CODEX_OUT}\n` +
     `2) Record launch facts: \`date +%s > ${dir}/launched-at\` and \`printf '%s' "${w}" > ${dir}/cwd\`.\n` +
     `3) Launch Codex in the background — ${launch}${execCmd}\n` +
-    `4) Wait, sleep-free: repeat \`timeout 90 tail --pid=$(cat ${dir}/codex.pid) -f /dev/null\` (a 124 exit ` +
-    `just means still running) until ${dir}/exit-code exists. If \`$(date +%s)\` minus the value in ` +
+    `4) Wait, sleep-free: repeat \`timeout 540 tail --pid=$(cat ${dir}/codex.pid) -f /dev/null\`, each time ` +
+    `setting your Bash tool's own timeout to its 600000 ms maximum so the call is not cut short (a 124 exit ` +
+    `just means still running). Runs here are long — hours, not minutes — so expect many such waits and never ` +
+    `conclude from a 124 that anything is wrong. Repeat until ${dir}/exit-code exists. If \`$(date +%s)\` minus the value in ` +
     `${dir}/launched-at ever exceeds ${timeoutMin * 60}, the run is TIMED OUT: kill the process group with ` +
     `\`kill -TERM -- -$(cat ${dir}/codex.pid)\`, wait ~5 seconds, \`kill -KILL -- -$(cat ${dir}/codex.pid)\`, ` +
     `then treat whatever is on disk as the result.\n` +
@@ -1453,95 +1507,18 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
   noteCodexMeta(unit, r, dir, label)
   return r
 }
-// One codex chain step: the warm lane's implement call, executor swapped. One long codex
-// session builds every approved link in order (per-link commit + `git branch unit/<id> HEAD`
-// pin); everything downstream — the read-only chain-tips probe, per-link cold pipeline entry,
-// serial merge — is unchanged, and per-link judgment stays cold and Claude-side.
-const CHAIN_OUT = JSON.stringify(strictify(obj({
-  links: { type: 'array', maxItems: 8, items: obj({
-    id: { type: 'string' }, done: { type: 'boolean' }, filesChanged: arr('string'),
-    summary: { type: 'string', maxLength: 700 },
-    contractMismatch: { type: 'string', maxLength: 300 },
-    specGap: { type: 'string', maxLength: 300 },
-    debt: debtArr,
-  }, []) },
-  notes: { type: 'string', maxLength: 2000 },
-}, [])))
-const codexChainBrief = (approved, w, dir, laneBase, specsList) => {
-  const ids = approved.map(([u]) => u.id)
-  const designClauses = approved.map(([u]) => designClause(u)).join('')
-  return `# GOAL\n` +
-  `Implement a CHAIN of ${approved.length} dependent units in the git worktree at ${w} (detached HEAD, fork ` +
-  `base ${laneBase}), IN ORDER — each link builds on the previous link's committed result: ` +
-  `${ids.join(' → ')}. You own each link's whole loop: write it, test it, fix it, commit it, pin it.\n\n` +
-  `# CONTEXT\n` +
-  `- Each unit's spec is authoritative (specs: ${specsList}); frozen contracts live under ` +
-  `${repo}/.roadmap/contracts/ — immutable requirements. ${convClause}${designClauses}\n` +
-  `- Codebase conventions and build/test commands: ${brief}.\n` +
-  `- Approved per-link plans (follow each; a wrong plan is a STOP for that link, not a licence to improvise): ` +
-  `${JSON.stringify(approved.map(([u, lp]) => ({ id: u.id, ...lp })))}\n\n` +
-  `# CONSTRAINTS\n` +
-  `Each link's scope is its own plan's \`files\` list — the same rule per link: ${SCOPE([])}${NOROADMAP}` +
-  `Never run git rebase, git reset --hard, or git push, and never delete a branch.\n\n` +
-  `# METHOD (per link, in order — the FIRST link included)\n` +
-  `Write the link's acceptance tests first at its plan's seams, implement until green, run the link-scoped ` +
-  `tests and lint/typecheck, COMMIT with clear messages, then pin the link boundary with ` +
-  `\`git branch unit/<that link's id> HEAD\` (detached HEAD, so each pin is a fresh branch create — if it ` +
-  `collides, something is wrong: stop and report that link done:false rather than forcing or deleting), and ` +
-  `only then start the next link. Never amend, rebase, or revisit an earlier link's commits once its branch ` +
-  `is pinned — a later improvement to an earlier link belongs in the later link's commits. A link you ` +
-  `genuinely cannot finish gets done:false: leave it uncommitted and unpinned, stop the chain there, and do ` +
-  `not start later links on top of an unfinished one.\n\n` +
-  `# DONE-WHEN (checked on disk after you exit; your claim is not the check)\n` +
-  `- Every link reported done:true has a pinned unit/<id> branch and green link-scoped checks.\n` +
-  `- \`git status --porcelain\` is clean.\n` +
-  `- Only if EVERY link is done:true, write the single line \`DONE ${ids[0]}\` to ${dir}/done.txt.\n\n` +
-  `# ESCALATION — stop, do not improvise\n` +
-  `The same stop rule as any unit: a decision the specs, contracts, conventions and code do not settle, where ` +
-  `a competent engineer could reasonably decide the other way, stops the CHAIN at that link — commit what is ` +
-  `finished, mark that link done:false, put one or two sentences (max 300 characters) in that link's ` +
-  `\`specGap\` or \`contractMismatch\` entry, and exit. Never amend a contract. Otherwise leave those fields ` +
-  `as empty strings — they are triggers that summon the architect, never notes fields.\n\n` +
-  `# FINAL MESSAGE\n` +
-  `Only a JSON object matching your output schema, every field required (empty strings/arrays where you have ` +
-  `nothing). Report per link in \`links\`, in chain order: \`id\`, \`done\`, \`filesChanged\` (from ` +
-  `\`git diff --name-only\` across that link's commits — read, not recalled), \`summary\` 2-3 short sentences ` +
-  `(max 700 characters), \`contractMismatch\`/\`specGap\` one or two sentences (max 300 characters) or empty, ` +
-  `and \`debt\` (each entry's \`what\`/\`why\` a sentence or two, max 400 characters each, at most 8 entries ` +
-  `per link). \`notes\` at most a short paragraph (max 2000 characters).\n`
-}
-async function chainBuildStep(approved, w, laneBase, specsList) {
-  if (codexHalt) return { parked: true }
-  const head = approved[0][0]
-  const dir = codexDir(head.id, 'chain')
-  const briefText = codexChainBrief(approved, w, dir, laneBase, specsList)
-  const r = await withCodexSlot(() => runOr({ links: [], reportLost: true },
-    steerCodex({ unit: head, w, dir, base: laneBase, briefText, effort: C.codexEffort,
-      timeoutMin: C.codexTimeoutMin, outSchema: CHAIN_OUT,
-      reportInstr:
-        `Emit the structured report: copy \`links\` and \`notes\` through from the final report VERBATIM — ` +
-        `never summarize, expand, reorder or re-grade the entries; the budgets already match your schema ` +
-        `(per link: \`summary\` max 700 characters, \`contractMismatch\`/\`specGap\` max 300 characters each, ` +
-        `debt \`what\`/\`why\` max 400 characters each; \`notes\` max 2000 characters). If the final report ` +
-        `is absent or unparseable, report \`links\` as an empty array and say so in \`notes\` (one sentence) ` +
-        `— the pinned branches on disk are the ground truth a separate probe reads. ` }),
-    { model: C.codexSteerModel, effort: 'low', phase: 'Implement', label: `codex-chain:${head.id}`, schema: S.chainImplCodex }))
-  noteCodexMeta(head, r, dir, `codex-chain:${head.id}`)
-  return r
-}
-
-async function runUnit(unit, laneCtx) {
+async function runUnit(unit) {
   setStage(unit.id, 'setup')   // status became 'running' in start() before this call
   const spec = specOf(unit)
   const w = wtOf(unit)
-  const base = laneCtx?.base ?? integrationTip // diff base: the freshest integrated tip we know
+  const base = integrationTip   // diff base: the freshest integrated tip we know
   // unit.existingBranch adopts pre-written work (a hand-authored branch, or an eval
   // fixture): skip plan/implement and run it through the same verify → review → gate.
   const source = unit.existingBranch ?? base
   // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
   // the record with {status:'running'} before us). A unit that was 'running' in the last
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
-  const adopt = !!unit.existingBranch || !!laneCtx ||
+  const adopt = !!unit.existingBranch ||
     ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status) ||
     !!prior.units?.[unit.id]?.parked   // parked mid-pipeline (codex halt): its commits are its own progress
 
@@ -1570,17 +1547,21 @@ async function runUnit(unit, laneCtx) {
   let gap = null
   let gapEver = null
   let gapConsulted = false
+  // Codex emits the two-character string `""` when it means "nothing to report" (arc-observed) —
+  // truthy, so it fires the trigger with an empty payload and banks a bogus major debt entry.
+  // A trigger whose content is empty once quote characters are stripped IS an empty trigger.
+  const triggerText = (v) => (typeof v === 'string' ? v.replace(/^["'\s]+|["'\s]+$/g, '') : '')
   const noteGap = (r) => {
-    if (!r?.specGap || r.reportLost) return
-    gap = r.specGap
-    gapEver = r.specGap
+    if (!triggerText(r?.specGap) || r.reportLost) return
+    gap = triggerText(r.specGap)
+    gapEver = gap
   }
   const noteMismatch = (r) => {
-    if (!r?.contractMismatch) return
-    mismatch = r.contractMismatch
-    mismatchEver = r.contractMismatch
+    if (!triggerText(r?.contractMismatch)) return
+    mismatch = triggerText(r.contractMismatch)
+    mismatchEver = mismatch
     debtLog.push({ unit: unit.id, sha: base, kind: 'contract', severity: 'major',
-      what: `implementer-reported contract mismatch: ${r.contractMismatch}`,
+      what: `implementer-reported contract mismatch: ${mismatch}`,
       why: 'frozen surface contradicts reality — needs architect adjudication' })
   }
   // No debt-fix sweep in the codex lane: the brief's SCOPE already demands in-scope fixing
@@ -1681,8 +1662,34 @@ async function runUnit(unit, laneCtx) {
   if (C.planCheckRisk.includes(unit.risk) || !implPlan.feasible) {
     const critique = await specCritique(unit, w, implPlan)
     const check = await runPlanCheck(unit, implPlan, spec, { critique })
+    // An agent that DIED returns null (API error, safeguard refusal, retry exhaustion), and reading
+    // `.verdict` off it took the whole unit pipeline down with a TypeError — arc-observed when a
+    // plan-check tripped a provider safeguard. A missing verdict is an infrastructure failure, not
+    // a plan defect: quarantine with that said plainly rather than blaming the unit.
+    if (!check?.verdict)
+      return quarantine(unit, 'plan-check produced no verdict (agent died or was refused) — infrastructure, not the plan', check)
     if (check.verdict === 'quarantine') return quarantine(unit, 'plan rejected by architect', check)
     if (check.verdict === 'redirect') {
+      // The plan-check is an ADJUDICATION path too — its charter explicitly lets it name the
+      // resolution of a spec contradiction, including a decision the spec marked escalate-only.
+      // It must therefore write to the same ledger the escalation ladder does. Arc-observed
+      // (horizon fixture, run 3): a plan-check legitimately resolved a named open decision, the
+      // build brief cited "the architect ruled", twelve modules were pinned to it — and the exit
+      // gate, reading an EMPTY escalations ledger, correctly judged the ruling fabricated and
+      // demanded an escalation that had already happened. The unit quarantined with its retry
+      // budget spent. Two adjudication paths and one ledger is the defect; the gate was right.
+      escalationLog.push({ unit: unit.id, stop: 0, tier: 'decided', boundary: 'none',
+        by: 'plan-check', gap: `plan-check redirect: ${check.guidance}` })
+      // And the ruling lands in the spec for the same reason a tier-1 ladder ruling does: the
+      // prompt that carried it does not outlive the session, but every later reader — review,
+      // gate, the next unit — reads the spec.
+      await run(
+        STRICT +
+        `Append to the spec file ${spec} — do not modify anything already in it. Add a section titled ` +
+        `"## Adjudicated during implementation" if it is not already present, then one bullet recording ` +
+        `this ruling verbatim: the architect redirected the plan for unit ${unit.id} with "${check.guidance}". ` +
+        `Report ok.`,
+        { model: 'haiku', effort: 'low', phase: 'Escalate', label: `spec-append:${unit.id}#plan`, schema: S.ok })
       implPlan = await run(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
@@ -1730,19 +1737,6 @@ async function runUnit(unit, laneCtx) {
   // reporting done, so what remains is out-of-scope by declaration — ledger, not fix round.
   if (!impl.reportLost) addDebt(unit.id, base, impl.debt)
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
-
-  // Warm-lane entry: the chain implement call already reported for this link — consume its
-  // report exactly as a fresh build consumes its own (mismatch/gap triggers, evidence for the
-  // mismatch/gap triggers, confessed debt banked directly, lost-report compensation).
-  if (laneCtx) {
-    envelope = laneCtx.files?.length ? [...laneCtx.files] : null
-    if (laneCtx.reportLost) reportLostEver = true
-    if (laneCtx.report) {
-      noteMismatch(laneCtx.report)
-      noteGap(laneCtx.report)
-      addDebt(unit.id, base, laneCtx.report.debt)
-    }
-  }
 
   // Mechanical polish loop: verify → codex fix, bounded. There is deliberately NO adversarial
   // review stage here: Codex's build already ran its own implement→test→fix loop, and a
@@ -1829,30 +1823,110 @@ async function runUnit(unit, laneCtx) {
   // adjudication — the polish loop's rescue only fires on failure signals, and the class this
   // closes is precisely the silent design decision under an all-green suite. One consult per
   // reported gap, riding the same maxConsults budget; an unconsulted gap forces the Fable gate.
-  if (gap && !gapConsulted && consultsUsed < C.maxConsults) {
-    consultsUsed++
-    gapConsulted = true
-    const gd = await run(
-      `You are the architect. The engineer on unit ${unit.id} made a decision the spec does not settle and pulled ` +
-      `you in: "${gap}". Read the spec at ${spec} and the contracts it references, and \`git diff ${base}..HEAD\` ` +
-      `in ${w} as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
-      `(or a better alternative) must be steered — the engineer applies your guidance as one fix round; ` +
-      `"quarantine" only if the unsettled decision invalidates the unit's premise. Do not write code.`,
-      { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `gap-consult:${unit.id}`, schema: S.directive })
-    gap = null
-    if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
-    if (gd.action === 'redirect') {
-      const gFix = await fixStep(unit, w, base, envelope, { step: 'gap-fix', label: `codex-gap-fix:${unit.id}` },
-        `The spec left a decision unsettled; you reported it, and the architect ruled: ${gd.guidance}\n` +
-        `Apply that ruling.`)
-      if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gap-fix: ${codexHalt}` }
-      addDebt(unit.id, base, gFix.debt)
-      if (gFix.reportLost) reportLostEver = true
-      noteMismatch(gFix)
-      verify = await gateReverify(`gap-verify:${unit.id}`)
-      if (verify.blocked)
-        return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+  // Units are sized by what we can specify, not by duration, so stops are the release valve and
+  // several per unit are normal. Most are nonsense — a decision the spec DOES settle that the
+  // implementer failed to read — so Opus triages first and only genuine boundary-crossings reach
+  // the frontier. Triage is free by design: charging it to maxConsults would let three misreads
+  // starve the rescue channel. Three strikes goes straight to Fable regardless of content —
+  // at that point the finding is not the decision, it is that the unit was specified wrong.
+  let stops = 0
+  while ((gap || mismatch) && stops < C.maxStops) {
+    stops++
+    // A contract mismatch is tier-2 BY CONSTRUCTION and skips triage: "a frozen contract is wrong
+    // or cannot be implemented as written" is the first entry in the boundary enum, and no
+    // adjudicator confined to this unit can rule on a surface that binds every other one. Only the
+    // architect may amend a contract. Arc-observed (horizon fixture, run 2): with the ladder wired
+    // to specGap alone, a unit that stopped with `stopped-contract-mismatch` — naming its own fix
+    // in the report — got no ruling at all, went to the gate twice and quarantined as
+    // "did not converge". That is the most important stop type, and it was the one that could not
+    // reach an architect.
+    const isMismatch = !!mismatch
+    const reported = isMismatch ? mismatch : gap
+    if (isMismatch) mismatch = null
+    else gap = null
+    let guidance = null                 // set only when a ruling must be applied as a fix round
+    const pinned = envelope?.length ? envelope.join(', ') : 'the files this unit already touches'
+    const priorStops = escalationLog.filter((e) => e.unit === unit.id).length
+    const v = (isMismatch || priorStops >= 2) ? null : await run(
+      `You are adjudicating an implementer escalation on unit ${unit.id}. The implementer stopped and reported a ` +
+      `decision it says the spec does not settle: "${reported}". Read the spec at ${spec}, the contracts it ` +
+      `references, and \`git diff ${base}..HEAD\` in ${w} as needed. Rule with \`tier\`:\n` +
+      `- "cited" — the spec, a contract, the conventions or the existing code DOES settle this and the ` +
+      `implementer missed it. Most escalations are this. Put the exact location and the answer in \`guidance\`.\n` +
+      `- "decided" — a genuine gap, but the decision stays inside this unit's pinned scope (${pinned}) and is ` +
+      `recoverable. Put the decision and the reasoning behind it in \`guidance\`.\n` +
+      `- "escalate" — the decision leaks past what you can see from this unit alone. Name the boundary and put ` +
+      `the question for the architect in \`guidance\`.\n` +
+      `\`boundary\` is "none" for cited and decided. For escalate it is exactly one of: "contract" (a frozen ` +
+      `contract is wrong or cannot be implemented as written), "scope-envelope" (the pinned scope must widen), ` +
+      `"other-unit" (another unit's spec or the dependency order is implicated), "plan-of-record" (the approved ` +
+      `implementation plan is itself wrong), "mis-specified" (the unit is wrong in shape — Phase-0 territory). ` +
+      `Difficulty is NOT a boundary: a hard decision that stays inside this unit is "decided", not "escalate". ` +
+      `${directionClause}Do not write code.`,
+      { model: 'opus', effort: 'high', phase: 'Escalate', label: `adjudicate:${unit.id}#${stops}`, schema: S.adjudication })
+    if (v && v.tier !== 'escalate') {
+      gapConsulted = true
+      guidance = v.guidance
+      escalationLog.push({ unit: unit.id, stop: stops, tier: v.tier, boundary: v.boundary, by: 'opus', gap: reported })
+      // A "decided" ruling settles something the spec did not. It has to land IN the spec: the
+      // implementer's own context may compact before the unit ends, and review, the gate and any
+      // later reader see the spec, never this resume prompt.
+      if (v.tier === 'decided')
+        await run(
+          STRICT +
+          `Append to the spec file ${spec} — do not modify anything already in it. Add a section titled ` +
+          `"## Adjudicated during implementation" if it is not already present, then one bullet recording ` +
+          `this ruling verbatim: the question was "${reported}"; the ruling is "${v.guidance}". Report ok.`,
+          { model: 'haiku', effort: 'low', phase: 'Escalate', label: `spec-append:${unit.id}#${stops}`, schema: S.ok })
+    } else if (consultsUsed < C.maxConsults) {
+      consultsUsed++
+      gapConsulted = true
+      const gd = await run(
+        `You are the architect on unit ${unit.id}. ` +
+        (isMismatch
+          ? `The engineer reports that a FROZEN CONTRACT contradicts what this unit must build: "${reported}". ` +
+            `You own the contracts and the engineer may not amend one, so this is yours alone. Rule on the ` +
+            `CONTRACT, not just this unit: confirm the engineer's reading and direct the lawful implementation ` +
+            `under the surface as frozen, redirect with the amendment you are making and what it now requires, ` +
+            `or quarantine if the unit cannot exist under it. Weigh that the surface binds every other unit too.\n`
+          : `The engineer made a decision the spec does not settle and pulled you in: "${reported}". ` +
+            (v ? `A first-line adjudicator escalated it because it crosses a boundary it could not see past: ` +
+                 `${v.boundary}. Its reading: ${v.guidance}\n`
+               : `This is the third stop on this unit — the earlier ones were adjudicated below you. Weigh whether ` +
+                 `the unit itself is specified wrongly, not just this decision.\n`)) +
+        `Read the spec at ${spec} and the contracts it references, and \`git diff ${base}..HEAD\` ` +
+        `in ${w} as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
+        `(or a better alternative) must be steered — the engineer applies your guidance as one fix round; ` +
+        `"quarantine" only if the unsettled decision invalidates the unit's premise. Do not write code.`,
+        { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `gap-consult:${unit.id}#${stops}`, schema: S.directive })
+      // Same dead-agent class as the plan-check guard: a null consult must not be dereferenced.
+      // Leaving the trigger unconsumed is the conservative outcome — mismatchEver/gapEver still
+      // force the frontier gate, so the decision is adjudicated there instead of being lost.
+      if (!gd?.action) break
+      escalationLog.push({ unit: unit.id, stop: stops, tier: 'escalate',
+        boundary: isMismatch ? 'contract' : (v?.boundary ?? 'three-strikes'),
+        by: 'fable', action: gd.action, gap: reported })
+      if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
+      if (gd.action === 'redirect') guidance = gd.guidance
+    } else {
+      break   // budget spent: the gap stays unadjudicated, which forces the Fable exit gate below
     }
+    if (!guidance) continue   // "confirm" / a citation with nothing to change — no fix round
+    const gFix = await fixStep(unit, w, base, envelope, { step: `gap-fix-${stops}`, label: `codex-gap-fix:${unit.id}#${stops}` },
+      (isMismatch
+        ? `You reported that a frozen contract contradicts this unit, and the architect ruled: ${guidance}\n`
+        : `The spec left a decision unsettled; you reported it, and the ruling is: ${guidance}\n`) +
+      `Apply that ruling.`)
+    if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gap-fix: ${codexHalt}` }
+    addDebt(unit.id, base, gFix.debt)
+    if (gFix.reportLost) reportLostEver = true
+    noteMismatch(gFix)
+    // A stop DURING the fix round re-enters the ladder rather than being dropped — the whole
+    // point of the release valve is that it can fire more than once on a long unit.
+    noteGap(gFix)
+    verify = await gateReverify(`gap-verify:${unit.id}#${stops}`)
+    if (verify.blocked)
+      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
   }
 
   // Exit gate — Opus-first, escalating to the Fable architect only when the call is
@@ -1913,7 +1987,7 @@ async function runUnit(unit, laneCtx) {
         `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
-        `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause}Then choose a verdict: "approve" only if you would merge this ` +
+        `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
         `as-is and personally vouch for it; "revise" if there is a concrete, mechanical fix you can specify and it ` +
         `needs no frontier judgment (give at most ${C.maxBlockingFindings} directives, worst first — what and ` +
         `why, not code); "escalate" to the frontier ` +
@@ -2015,7 +2089,7 @@ async function runUnit(unit, laneCtx) {
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
       `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
-      `${FINDING_BAR('revise directive')}${scopeCreepClause}If revising, ` +
+      `${FINDING_BAR('revise directive')}${scopeCreepClause}${directionClause}If revising, ` +
       `give at most ${C.maxBlockingFindings} specific directives, worst first: what and why, not code. ` +
       `${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${gapClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
@@ -2182,185 +2256,6 @@ function start(unit) {
   })()
 }
 
-/* ------------------------------ warm lanes ------------------------------ */
-// One warm Opus session implements a strict linear chain (per-link commits, per-link pinned
-// branches); every link then runs the UNCHANGED cold pipeline via runUnit's adoption entry,
-// diffed against its recorded predecessor tip, and merges through the same serial queue.
-// Failure semantics: any lane-infrastructure failure DEMOTES the remaining links to ordinary
-// cold dispatch (chainOf entries removed, statuses back to pending) — the lane is an
-// optimization, never a new way to lose work. A link that fails ITS OWN pipeline quarantines
-// exactly as it would have cold, and the tail blocks behind it exactly as ready()/blockedBy
-// would have held it.
-function startChain(chain) {
-  inFlight++
-  for (const u of chain) units.set(u.id, { status: 'running', stage: 'chain-implement' })
-  checkpoint()
-  ;(async () => {
-    try { await runChain(chain) }
-    catch (e) {
-      for (const u of chain) {
-        if (rec(u.id)?.status !== 'running') continue
-        const q = await quarantine(u, `warm-lane pipeline error: ${e?.message ?? e}`)
-          .catch(() => ({ status: 'quarantined', reason: `warm-lane pipeline error: ${e?.message ?? e}` }))
-        units.set(u.id, q)
-        log(`${u.id}: ${q.status}`)
-      }
-    }
-    inFlight--
-    checkpoint()
-    notifySettle()
-  })()
-}
-
-async function runChain(chain) {
-  const head = chain[0]
-  const ids = chain.map((u) => u.id)
-  const w = wtOf(head)
-  const laneBase = integrationTip
-  const specsList = chain.map((u) => `${u.id}: ${specOf(u)}`).join('; ')
-  log(`warm lane ${ids.join(' → ')}: one plan + one implement call, cold gates per link`)
-  const demote = (why, fromIdx = 0) => {
-    log(`warm lane ${head.id}: ${why} — demoting ${ids.slice(fromIdx).join(', ')} to cold dispatch`)
-    // Under a codex halt the demoted links carry `parked` so next wave's setup ADOPTS any
-    // pinned/committed link work instead of refusing it as unexplained has-commits.
-    for (const u of chain.slice(fromIdx)) { chainOf.delete(u.id); units.set(u.id, { status: 'pending', ...(codexHalt ? { parked: true } : {}) }) }
-    checkpoint()
-  }
-
-  // Lane worktree: DETACHED at the tip — never on a unit branch. The per-link pins below are
-  // `git branch unit/<id> HEAD`, which only bound link boundaries if no checked-out branch is
-  // advancing with the commits: a lane on unit/<head> would swallow the whole chain into the
-  // head's branch (head pin collides, later links' diffs collapse to empty — eval-observed by
-  // the sim work before it could reach a paid run). Detached, every pin including the head's
-  // is a fresh branch create, and removing the lane worktree later destroys nothing pinned.
-  // Crash residue never reaches here — chain detection excludes units whose passed state says
-  // running/merge-ready, so a link with committed work re-enters through ordinary dispatch.
-  const ws = await runOr({ ok: false, sha: '', state: 'ready', detail: 'lane setup agent died without a report' },
-    STRICT +
-    `In the git repository at ${repo}, set up the DETACHED chain worktree at ${w} for a warm lane headed by ` +
-    `unit ${head.id} (fork base ${laneBase}): if a stale worktree occupies ${w}, clear the WORKTREE ONLY ` +
-    `(\`git worktree remove --force ${w}\`, then \`git worktree prune\`; if the directory still exists, delete ` +
-    `it) — never delete any branch. Then \`git worktree add --detach ${w} ${laneBase}\`; report ok:true, ` +
-    `state:'ready', sha = HEAD.` +
-    ghRunning(head),
-    { model: 'haiku', phase: 'Setup', label: `lane-setup:${head.id}`, schema: S.setup })
-  if (!ws.ok || !sameSha(ws.sha, laneBase)) return demote(`lane setup failed (${ws.detail ?? ws.sha ?? 'no sha'})`)
-  const prov = await provision(w, `provision:${head.id}`)
-  if (!prov.ok) return demote(`lane provisioning failed (${prov.detail ?? ''})`)
-
-  // One plan call covering every link, then the SAME per-link plan-check ladder a cold build
-  // gets — the bookend that catches spec defects before code exists survives the warm lane.
-  const cPlan = await runOr(null,
-    `You will implement a CHAIN of ${chain.length} dependent units of a larger roadmap in one continuous ` +
-    `session — each link builds on the previous link's committed result, in order: ${ids.join(' → ')}. First: ` +
-    `plan every link. Read each unit's spec (${specsList}) and any contract files referenced under ` +
-    `${repo}/.roadmap/contracts/ (contracts are frozen — treat them as immutable requirements). Codebase ` +
-    `conventions and build/test commands are documented at ${brief}. Explore the code in ${w} as needed. ` +
-    `Return in \`links\` one entry PER UNIT, in chain order, each with the structured fields FIRST and the ` +
-    `free-text last: \`id\`, \`feasible\`, \`files\`, \`testPlan\`, \`evidence\` (\`keyFiles\` at most 20, one ` +
-    `line each: path plus a one-phrase why; \`signatures\` at most 15, each one line, quoted exactly; ` +
-    `\`seams\` at most 10, each a sentence or two with a short quoted anchor), then \`approach\` LAST. A link ` +
-    `that cannot be satisfied within its contracts gets feasible:false and the contradiction in its approach — ` +
-    `do not force it. ${TERSE}Do not write code yet.`,
-    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `chain-plan:${head.id}`, schema: S.chainPlan })
-  if (!cPlan) return demote('chain plan produced no report')
-  const planOf = new Map((cPlan.links ?? []).map((l) => [l.id, l]))
-  if (!ids.every((id) => planOf.has(id))) return demote('chain plan missed a link')
-
-  const approved = []
-  for (let i = 0; i < chain.length; i++) {
-    const u = chain[i]
-    const l = planOf.get(u.id)
-    let lp = { feasible: l.feasible, files: l.files ?? [], testPlan: l.testPlan, approach: l.approach,
-      ...(l.evidence ? { evidence: l.evidence } : {}) }
-    if (C.planCheckRisk.includes(u.risk) || !lp.feasible) {
-      const check = await runPlanCheck(u, lp, specOf(u), { chain: true })
-      if (check.verdict === 'quarantine') {
-        units.set(u.id, await quarantine(u, 'plan rejected by architect', check))
-        log(`${u.id}: quarantined at chain plan-check`)
-        for (const t of chain.slice(i + 1)) { units.set(t.id, { status: 'blocked' }); log(`${t.id}: blocked (chain predecessor ${u.id})`) }
-        checkpoint()
-        break
-      }
-      if (check.verdict === 'redirect')
-        lp = await run(
-          `Revise your implementation plan for unit ${u.id} (spec: ${specOf(u)}) — one link of the chain ` +
-          `${ids.join(' → ')} you just planned. Your previous plan for this link:\n${JSON.stringify(lp)}\n` +
-          `The architect's direction: ${check.guidance}. ` +
-          `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
-          `\`approach\` last — and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line ` +
-          `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
-          { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${u.id}`, schema: S.plan })
-    }
-    if (!lp.feasible) {
-      units.set(u.id, await quarantine(u, 'spec unsatisfiable at planning (architect-confirmed) — needs respec, not retry', lp))
-      log(`${u.id}: quarantined (infeasible at chain planning)`)
-      for (const t of chain.slice(i + 1)) { units.set(t.id, { status: 'blocked' }); log(`${t.id}: blocked (chain predecessor ${u.id})`) }
-      checkpoint()
-      break
-    }
-    approved.push([u, lp])
-  }
-  if (!approved.length) return
-
-  // One codex session for the approved prefix: per-link commit + pinned branch, in order.
-  const cImpl = await chainBuildStep(approved, w, laneBase, specsList)
-  if (cImpl.parked) return demote(`codex dispatch halted (${codexHalt}) — links repark as pending for the next wave`)
-
-  // Pre-captured read-only tips: the diff base for link i+1 is link i's PINNED tip (pre-fix),
-  // and the probe never trusts the implement agent's own report for it.
-  const tips = await runOr({ ok: false, tips: [] },
-    STRICT +
-    `In the git repository at ${repo}: for each of these refs, report {id, sha} in \`tips\` if the ref ` +
-    `resolves, where id is the unit id without the unit/ prefix: ${approved.map(([u]) => `unit/${u.id}`).join(', ')}. ` +
-    `Skip refs that do not resolve. Read-only — change nothing, create nothing.`,
-    { model: 'haiku', effort: 'low', phase: 'Implement', label: `chain-tips:${head.id}`, schema: S.chainTips })
-  const tipOf = new Map((tips.tips ?? []).map((t) => [t.id, t.sha]))
-  const reportOf = new Map((cImpl.links ?? []).map((r) => [r.id, r]))
-
-  // Per-link cold pipeline, in order: adoption entry at the recorded base, merge before the
-  // next link's pipeline starts (so gates always judge against a settled predecessor).
-  let prevTip = laneBase
-  let broken = null
-  for (let i = 0; i < approved.length; i++) {
-    const [u, lp] = approved[i]
-    if (broken) {
-      units.set(u.id, { status: 'blocked' })
-      log(`${u.id}: blocked (chain predecessor ${broken})`)
-      checkpoint()
-      continue
-    }
-    if (!tipOf.get(u.id)) {
-      // No pinned branch: the warm call never finished this link. Demote it and the tail to
-      // cold dispatch — the scheduler picks them up once the predecessor merges.
-      demote(`link ${u.id} has no pinned branch (${reportOf.get(u.id)?.done === false ? 'reported done:false' : 'missing from the report'})`, i)
-      return
-    }
-    const r = reportOf.get(u.id)
-    setStage(u.id, 'link-pipeline')
-    let result = await runUnit(u, { base: prevTip, report: r ?? null, files: lp.files ?? null,
-      evidence: planOf.get(u.id)?.evidence ?? lp.evidence, reportLost: !r || !!cImpl.reportLost })
-      .catch(async (e) => quarantine(u, `pipeline error: ${e?.message ?? e}`)
-        .catch(() => ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
-    // Same round-tally carry-over as start() — terminal results replace the record wholesale.
-    const rounds = units.get(u.id)?.rounds
-    if (result.status === 'merge-ready') {
-      units.set(u.id, { ...(rounds ? { rounds } : {}), ...result, stage: 'merge-queue' })
-      checkpoint()
-      const segment = mergeChain.then(() => mergeUnit(u)).catch((e) =>
-        quarantine(u, `merge pipeline error: ${e?.message ?? e}`))
-      mergeChain = segment.then(() => null, () => null)
-      result = await segment
-    }
-    units.set(u.id, { ...(rounds ? { rounds } : {}), ...result })
-    log(`${u.id}: ${result.status}`)
-    checkpoint()
-    notifySettle()   // a mid-lane merge can unblock non-chained dependents — wake the scheduler
-    if (result.status !== 'merged') { broken = u.id; continue }
-    prevTip = tipOf.get(u.id)
-  }
-}
-
 // Fail loudly on a malformed graph — a bad edge reference or a cycle otherwise strands
 // units as silently-pending: ready() never fires, no error is raised, the wave just ends.
 {
@@ -2518,50 +2413,9 @@ for (let changed = true; changed;) {
   }
 }
 
-/* ------------------------- warm-lane chain detection --------------------- */
-// Strict linear segments of contract edges among pending, fresh, in-scope units: each hop's
-// FROM has exactly one live dependent and its TO exactly one unmerged dependency (contingent
-// edges never chain — the conductor may withhold or replan the dependent). Units with crash
-// residue (passed state running/merge-ready) or an existingBranch never chain: their committed
-// work re-enters through ordinary dispatch and adoption. warmLanes:false leaves this map empty
-// and the wave byte-identical to the cold design.
-const chainOf = new Map()
-if (C.warmLanes !== false && C.maxChainLength >= 2) {
-  const cand = new Set(inScope.filter((u) => rec(u.id).status === 'pending' && !u.existingBranch &&
-    !['running', 'merge-ready'].includes(prior.units?.[u.id]?.status) &&
-    !prior.units?.[u.id]?.parked).map((u) => u.id))   // parked links have committed work — adoption, not re-chaining
-  const live = (id) => !['merged', 'deferred'].includes(rec(id)?.status ?? 'pending')
-  const nextOf = (id) => {
-    const outs = plan.edges.filter((e) => e.from === id && live(e.to))
-    if (outs.length !== 1 || outs[0].mode === 'contingent' || !cand.has(outs[0].to)) return null
-    const v = outs[0].to
-    const ins = plan.edges.filter((e) => e.to === v && rec(e.from)?.status !== 'merged')
-    if (ins.length !== 1 || ins[0].from !== id) return null
-    return v
-  }
-  const byId = new Map(plan.units.map((u) => [u.id, u]))
-  for (const u of inScope) {
-    if (!cand.has(u.id) || chainOf.has(u.id)) continue
-    if (plan.edges.some((e) => e.to === u.id && cand.has(e.from) && nextOf(e.from) === u.id)) continue // not a head
-    const seq = [u.id]
-    for (let n = nextOf(u.id); n && !chainOf.has(n); n = nextOf(n)) seq.push(n)
-    for (let i = 0; i < seq.length; i += C.maxChainLength) {
-      const chunk = seq.slice(i, i + C.maxChainLength)
-      if (chunk.length < 2) continue
-      const chainUnits = chunk.map((id) => byId.get(id))
-      for (const id of chunk) chainOf.set(id, chainUnits)
-    }
-  }
-  if (chainOf.size) log(`warm lanes: ${[...new Set([...chainOf.values()])].map((c) => c.map((u) => u.id).join(' → ')).join(' | ')}`)
-}
-
 while (true) {
   for (const u of inScope.filter(ready)) {
-    const ch = chainOf.get(u.id)
-    if (!ch) start(u)
-    else if (ch[0].id === u.id) startChain(ch)
-    // A chained non-head member is only ever ready after its predecessor merges, and by then
-    // the lane already owns it (status running) — ready() cannot double-start it.
+    start(u)
   }
   for (const u of inScope) {
     if (rec(u.id).status === 'pending' && blockedBy(u)) {

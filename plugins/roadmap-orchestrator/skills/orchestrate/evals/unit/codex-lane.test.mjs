@@ -119,7 +119,13 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
     '-o ',                    // the final message lands in a file, never in the steering context
     '--output-schema',        // the report is schema-constrained at the codex end too
     '-C ',                    // run IN the unit worktree
-    '-s workspace-write',     // the sandbox, pinned
+    '-s danger-full-access',  // the sandbox mode, pinned. NOT a relaxation for convenience:
+                              //   bubblewrap needs an unprivileged user namespace, and where the
+                              //   container blocks that syscall `workspace-write` builds no
+                              //   sandbox and enforces nothing SILENTLY (probe-observed: a write
+                              //   outside the worktree succeeded) while still failing every
+                              //   apply_patch verification. See RATIONALE's P1.7 note. Flip this
+                              //   back with the config wherever namespaces actually work.
     'tail --pid',             // sleep-free polling (a bare sleep loop burns steering turns)
   ]) assert.ok(p.includes(required), `the steering prompt must pin \`${required}\``)
 
@@ -130,9 +136,10 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
 
   // Sandbox-widening flags. `-a` is checked as a token so a word like "-analysis" cannot mask it;
   // the brief legitimately discusses .roadmap contracts, so only the ARTIFACT paths are policed.
-  assert.ok(!p.includes('--dangerously-bypass'), 'never bypass the sandbox')
+  // The sandbox MODE is a measured environment decision (above), but these two are not: they widen
+  // risk without buying anything back, in any environment.
+  assert.ok(!p.includes('--dangerously-bypass'), 'never the bypass flag — the mode is set explicitly by -s')
   assert.ok(!/(^|\s)-a(\s|=)/.test(p), 'no approval-policy flag: exec has no approval prompts, so `-a` only widens risk')
-  assert.ok(!p.includes('danger-full-access'), 'full access would let a wandering run write into sibling worktrees')
 
   // The brief is delivered by file, not by argv, and the steering agent is told never to read the
   // transcript — that read-back discipline IS the economics of the lane.
@@ -295,52 +302,6 @@ test('g fix rounds: resume by session-id FILE, and the last gate round starts co
   assert.ok(!last.includes('codex exec resume'), 'the LAST gate round starts a fresh session, not a resume')
   assert.ok(!last.includes('COMMAND R'), 'and therefore carries no resume branch at all')
   assert.ok(last.includes('use this launch command'), 'it takes the plain exec launch')
-})
-
-// =========================================================================================
-// h. Warm lane: the chain implement call is ONE codex session (`codex-chain:<head>`) over the
-//    approved prefix; everything downstream — the read-only tips probe, the per-link cold
-//    pipeline, the serial merge — is unchanged, and per-link judgment stays Claude-side.
-// =========================================================================================
-const CHAIN_TIP = { a: '11111111111111111111111111111111111111aa', b: '2222222222222222222222222222222222222bbb' }
-
-test('h chain: one codex session over the prefix, per-link Claude pipeline unchanged, both merge', async () => {
-  const perLink = (make) => ['a', 'b'].map(make)
-  const { fn, calls } = makeAgent([
-    { match: /^chain-plan:a$/, result: () => ({
-      links: perLink((id) => ({ id, feasible: true, files: [`${id}.js`], testPlan: 'unit tests', approach: 'x' })) }) },
-    { match: /^codex-chain:a$/, result: () => ({
-      links: perLink((id) => ({ id, done: true, filesChanged: [`${id}.js`], summary: 'done' })),
-      notes: '', codex: codexMetaOk() }) },
-    { match: /^chain-tips:a$/, result: () => ({ ok: true, tips: perLink((id) => ({ id, sha: CHAIN_TIP[id] })) }) },
-    // The warm session committed and pinned each link, so per-link setup ADOPTS rather than rebuilds.
-    { match: /^setup:a$/, result: () => ({ ok: true, sha: CHAIN_TIP.a, state: 'adopted' }) },
-    { match: /^setup:b$/, result: () => ({ ok: true, sha: CHAIN_TIP.b, state: 'adopted' }) },
-  ])
-  const state = await runWave(fn, makePlan([unit('a'), unit('b')],
-    [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }]), makeState())
-
-  assert.equal(calls.filter((c) => c.label.startsWith('codex-chain:')).length, 1, 'exactly one codex session for the chain')
-  assert.ok(has(calls, 'codex-chain:a'), 'keyed on the chain head')
-  assert.ok(has(calls, 'chain-tips:a'), 'the pinned tips are read by a probe, never trusted from the report')
-  assert.ok(!has(calls, 'chain-impl:'), 'chain-impl: is a removed label')
-  for (const gone of ['codex-build:a', 'codex-build:b', 'plan:a', 'plan:b'])
-    assert.ok(!has(calls, gone), `${gone} must not fire — the lane already planned/implemented it`)
-
-  // Per-link judgment is unchanged and stays cold.
-  for (const id of ['a', 'b']) {
-    assert.ok(has(calls, `verify:${id}#0`), `${id} runs its own verify`)
-    assert.ok(has(calls, `opus-gate:${id}#0`), `${id} runs its own exit gate`)
-    assert.ok(has(calls, `merge:${id}`), `${id} merges through the serial queue`)
-  }
-  assert.equal(state.units.a.status, 'merged')
-  assert.equal(state.units.b.status, 'merged')
-
-  // The lane's steering prompt is the same shape as a single unit's, in the lane worktree.
-  const chain = promptOf(calls, 'codex-chain:a')
-  assert.ok(chain.includes(`${WT}/__codex/a/chain`), 'the chain run has its own artifact dir')
-  assert.ok(chain.includes('CHAIN of 2 dependent units'), 'the brief states the chain length')
-  assert.ok(!chain.includes('codex exec resume'), 'a chain build is always a fresh session')
 })
 
 // =========================================================================================

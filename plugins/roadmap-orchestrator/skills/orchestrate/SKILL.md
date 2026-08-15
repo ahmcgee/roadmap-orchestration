@@ -109,9 +109,15 @@ codebase brief — module map, build/test commands, conventions, test-suite stre
 Read their outputs, then decide:
 
 - **Decompose** into units that are independently *verifiable* — each builds, its tests pass, and
-  "done" is a crisp, runnable check; roughly 0.5–2 focused agent-hours. Cut along interfaces, not
-  features. Minimize file overlap between units that could run concurrently. If "done" isn't
-  checkable, the unit is too big or under-specified.
+  "done" is a crisp, runnable check. **Size generously**: a unit is as large as you can specify
+  with no open questions left (the grilling bar below). Every unit pays a fixed cost — plan,
+  plan-check, verify, review, gate, merge, plus the executor's cold start — no matter how little
+  work it carries, so fragmenting multiplies machinery rather than buying safety. The bounds are
+  structural, not durational: each unit needs its own branch/gate/merge slot and a diff one
+  reviewer could hold in their head. Stop growing a unit where recovery cost overtakes the saving —
+  a bigger diff makes gate rejection more expensive and the pinned fix envelope less precise. Cut
+  along interfaces, not features. Minimize file overlap between units that could run concurrently.
+  If "done" isn't checkable, the unit is too big or under-specified.
 - **Freeze contracts** — the interfaces shared between units (types, signatures, schemas,
   conventions) — into `.roadmap/contracts/` before anything builds. This is your main weapon
   against cross-unit incompatibility; the merge gate only catches what it can't prevent.
@@ -209,6 +215,15 @@ Read their outputs, then decide:
   as noise a lower tier may drop without you). Opus drafts it from your Phase-0 reasoning; it
   commits with the plan pack. The conductor's fresh boundary agents inherit your steering *only*
   through this file, so what isn't written here doesn't reach them.
+  It must open with a **`## Direction`** section: where this codebase is deliberately heading, and
+  the preferences that break ties. Every judgment surface reads it — plan-check, the exit gate and
+  the escalation adjudicator — so it is how your taste reaches decisions you will never see. Write
+  it to **discriminate**, not to inspire: preference orderings on the axes where units actually
+  diverge ("prefer fewer public surfaces over more", "prefer explicit over inferred", "when a
+  choice trades short-term speed for a closed door, take the door") plus explicit **non-goals**.
+  "Fast and elegant" steers nothing and costs a slice of every judgment prompt. It is a tie-breaker
+  only: it never overrides a spec or a frozen contract, and never licenses widening scope — which
+  is also why it is deliberately absent from the implementer's brief.
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance tests
   targeting the *seams* between units. You plan them; schedule an early unit to write them; the
   merge gate runs them.
