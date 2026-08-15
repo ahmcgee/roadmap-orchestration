@@ -154,8 +154,10 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   Present → threaded into every implement/review/gate.
   "prefixUniqueGlobs": ["migrations/*"],  // optional. Repos with numbered artifact sequences:
                                    //   the merge agent extracts each matching filename's leading
-                                   //   digit run and REFUSES a merge introducing a duplicate
-                                   //   (quarantine, never a silent renumber). Absent → clause is
+                                   //   digit run, pre-merge tip vs merged tree, and REFUSES a
+                                   //   merge that INTRODUCES a duplicate (quarantine, never a
+                                   //   silent renumber). Duplicates already in the tree are
+                                   //   grandfathered — they never refuse. Absent → clause is
                                    //   '' and merge prompts are byte-identical to before. The
                                    //   conventions contract must pre-allocate numbers per unit.
   "config": { }                    // optional overrides — knobs below

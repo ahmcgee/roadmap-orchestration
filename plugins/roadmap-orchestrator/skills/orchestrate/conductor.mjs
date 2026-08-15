@@ -221,15 +221,22 @@ const writeVerbatim = (path, text, extra = '') => {
     else cur = cur ? `${cur}\n${line}` : line
   }
   if (cur) parts.push(cur)
+  // Expected on-disk size: UTF-8 bytes of the document plus the trailing newline every here-doc
+  // leaves after its last line. Hand-counted (no Buffer/TextEncoder in the workflow sandbox).
+  let bytes = 1
+  for (const ch of text) { const c = ch.codePointAt(0); bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
   return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
-    `in order, joined with a single newline between consecutive parts, and nothing else${extra}. The parts ` +
-    `are a mechanical split of one JSON document on line boundaries — never repair, reformat, or re-indent ` +
-    `anything. A single write of the whole document is too large and will be rejected, so write it in ` +
-    `stages: write PART 1 (overwriting any existing file), then APPEND each later part (each preceded by ` +
-    `the joining newline) with its own separate write or append operation — one part per operation, never ` +
-    `the whole document in one call. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
+    `in order, each part followed by a single newline, and nothing else${extra}. The parts are a mechanical ` +
+    `split of one JSON document on line boundaries — never repair, reformat, re-indent, or re-escape anything ` +
+    `(escape sequences such as \\n and \\" inside JSON string values are literal characters to copy, not ` +
+    `instructions). A single write of the whole document is too large and will be rejected, so write it in ` +
+    `stages, ONE part per Bash tool call, each through a single-quoted here-doc so the shell interprets ` +
+    `nothing — never echo, printf, or a file-write/edit tool: for PART 1 run \`cat > ${path} <<'ROADMAP_PART'\` ` +
+    `followed by the part's lines and a closing \`ROADMAP_PART\` line; for every later part run the same with ` +
+    `\`cat >> ${path} <<'ROADMAP_PART'\`. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
     `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
-    `themselves.\n` +
+    `themselves. When every part is written, verify: \`wc -c < ${path}\` must print exactly ${bytes}; if it ` +
+    `prints anything else, report ok:false with the observed count in detail.\n` +
     parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
 }
 // Await a verbatim write and ledger any failure as a `write-failed` degradation — a lost persist

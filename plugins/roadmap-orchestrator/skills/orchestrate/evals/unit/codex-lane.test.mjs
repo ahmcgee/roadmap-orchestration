@@ -294,6 +294,11 @@ test('g fix rounds: resume by session-id FILE, and the last gate round starts co
     assert.ok(p.includes(`$(cat ${buildDir}/session-id)`), `${label} reads the session id from disk, never a literal`)
     assert.ok(p.includes(`[ -f ${buildDir}/session-id ]`), `${label} guards the resume on the file existing`)
     assert.ok(p.includes(`"$(cat ${buildDir}/cwd)" = "${WT}/a"`), `${label} refuses to resume into a different checkout`)
+    // Arc-observed: a resume collided with a live session ("thread already has a…") and died at
+    // once — a transient. The steering prompt carries a retry-then-cold rule for exactly that.
+    assert.ok(p.includes(`grep -qi 'thread already'`), `${label} carries the resume-collision retry rule`)
+    assert.ok(p.includes('relaunch COMMAND R once') && p.includes('launch COMMAND F instead'),
+      `${label} retries the resume once, then falls back to a cold session`)
   }
 
   // maxGateRounds defaults to 2, so g === 1 is the last round: no resume conditional at all.
@@ -301,6 +306,7 @@ test('g fix rounds: resume by session-id FILE, and the last gate round starts co
   assert.ok(last, 'the second gate round fired')
   assert.ok(!last.includes('codex exec resume'), 'the LAST gate round starts a fresh session, not a resume')
   assert.ok(!last.includes('COMMAND R'), 'and therefore carries no resume branch at all')
+  assert.ok(!last.includes("grep -qi 'thread already'"), 'nor the resume-collision rule')
   assert.ok(last.includes('use this launch command'), 'it takes the plain exec launch')
 })
 

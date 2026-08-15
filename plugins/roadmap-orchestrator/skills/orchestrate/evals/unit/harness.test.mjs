@@ -485,7 +485,17 @@ test('13b large-state checkpoint: staged parts, each bounded, lossless reassembl
   const bodies = parts.map((p, i) => (i < parts.length - 1 ? p.slice(0, -1) : p))
   for (const b of bodies) assert.ok(b.length <= 24000 + 500, `part stays near the chunk bound (${b.length})`)
 
-  const reassembled = JSON.parse(bodies.join('\n'))
+  // Each part is written through a single-quoted here-doc (one Bash call per part) and the file
+  // is byte-count-verified afterwards — the two rules that remove the mangled-append class
+  // (arc-observed: five write-failed checkpoints in one wave, JSON escapes re-interpreted).
+  assert.ok(last.prompt.includes(`cat > /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'part 1 via a quoted here-doc')
+  assert.ok(last.prompt.includes(`cat >> /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'later parts append via the same')
+  const joined = bodies.join('\n')
+  const expectedBytes = Buffer.byteLength(joined, 'utf8') + 1   // + the here-doc's trailing newline
+  assert.match(last.prompt, new RegExp(`wc -c < /repo/.roadmap/state.json\\\` must print exactly ${expectedBytes};`),
+    'the writer is told the exact byte count of the assembled file')
+
+  const reassembled = JSON.parse(joined)
   const ret = JSON.parse(JSON.stringify(state))
   assert.equal(ret.spend.haiku, reassembled.spend.haiku + 1, 'same final-write accounting as test 13')
   reassembled.spend.haiku = ret.spend.haiku
