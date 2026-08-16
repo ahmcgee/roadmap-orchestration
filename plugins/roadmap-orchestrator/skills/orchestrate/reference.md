@@ -158,6 +158,13 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   (quarantine, never a silent renumber). Absent → clause is
                                    //   '' and merge prompts are byte-identical to before. The
                                    //   conventions contract must pre-allocate numbers per unit.
+  "scopeAllow": ["docs/evidence/**", "**/*.test.*"],  // optional globs (`**/` = any dirs, `*` =
+                                   //   no `/`). Files matching are in every unit's scope by
+                                   //   convention: named to the implementer beside the pinned
+                                   //   files and NEVER counted as scope-growth, so that signal
+                                   //   stays real. Absent → clause is '' and the scope text is
+                                   //   byte-identical to before. Excludes from the growth check;
+                                   //   does not widen the pinned envelope.
   "config": { }                    // optional overrides — knobs below
 }
 ```
