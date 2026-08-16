@@ -13,6 +13,7 @@ import {
   assertSchemasPresent,
   structuredOutputError,
   implCodexOk,
+  assertCksumVerified,
 } from './fakes.mjs'
 
 // Codex is the only implementer: the code-writing labels are `codex-build:`/`codex-fix:` and
@@ -454,7 +455,7 @@ test('13 checkpoint coalescing: fewer writes than status changes, last write equ
   assert.ok(cps.length < 17, `expected coalescing below 17 writes, saw ${cps.length}`)
 
   const last = cps[cps.length - 1]
-  const embedded = last.prompt.slice(last.prompt.indexOf('\n') + 1)
+  const embedded = last.prompt.slice(last.prompt.indexOf('<<<DOCUMENT>>>\n') + '<<<DOCUMENT>>>\n'.length)
   const emb = JSON.parse(embedded)
   const ret = JSON.parse(JSON.stringify(state))
   // The final checkpoint (harness.mjs ~L1034) snapshots serialize() and THEN its own haiku
@@ -466,49 +467,144 @@ test('13 checkpoint coalescing: fewer writes than status changes, last write equ
 })
 
 // A 54-unit arc's state exceeded one response's ~32k output-token cap and killed 5 checkpoint
-// agents silently. Large states must be written in staged line-boundary chunks (each far under
-// the cap), losslessly; small states must keep the legacy single-write prompt byte shape.
-test('13b large-state checkpoint: staged parts, each bounded, lossless reassembly', async () => {
-  const bigUnits = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
-    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+// agents silently; the staged single-writer that replaced it then failed ~28 checkpoints in two
+// waves once state reached 3–6 parts ("cannot complete within token budget"). Large states must
+// FAN OUT: one writer per line-boundary part (each ≤ ~WRITE_CHUNK of output), then one assembler
+// that runs only after every part landed; small states get one here-doc writer. Every writer is cksum-verified (13c).
+const bigState = () => makeState({ wave: 1, units: Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+  [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }])) })
+const HERE_DOC = (file) => `cat > ${file} <<'ROADMAP_PART'`
+
+test('13b large-state checkpoint: fan-out — one bounded writer per part, assembler last, lossless', async () => {
   const { fn, calls } = makeAgent()
-  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, units: bigUnits }))
+  const state = await runWave(fn, makePlan([unit('a')]), bigState())
 
-  const cps = calls.filter((c) => c.label === 'checkpoint')
-  const last = cps[cps.length - 1]
-  assert.match(last.prompt, /<<<PART 1\/\d+>>>/, 'a large state takes the chunked form')
+  assert.ok(!calls.some((c) => c.label === 'checkpoint' && c.prompt.includes('<<<PART')),
+    'no single agent is ever handed the whole multi-part document')
+  // The last checkpoint is the fan-out for the final state: its assembler is the last agent call
+  // and its part writers are the contiguous run of `checkpoint:partK` calls before it.
+  const asm = calls[calls.length - 1]
+  assert.equal(asm.label, 'checkpoint:assemble', 'the assembler is the final call of the wave')
+  let i = calls.length - 2
+  while (i >= 0 && calls[i].label.startsWith('checkpoint:part')) i--
+  const writers = calls.slice(i + 1, calls.length - 1)
+  const n = writers.length
+  assert.ok(n >= 3, `a ~100 KB state fans out to several writers (saw ${n})`)
+  assert.deepEqual(writers.map((w) => w.label), Array.from({ length: n }, (_, k) => `checkpoint:part${k + 1}`),
+    'writers are labelled checkpoint:part1..N in order')
+  for (const w of [...writers, asm]) {
+    assert.equal(w.model, 'haiku', `${w.label} runs on haiku`)
+    assert.ok(w.hasSchema && w.schema.required?.includes('ok'), `${w.label} reports through S.ok`)
+  }
 
-  const marker = /^<<<PART \d+\/\d+>>>$/m
-  const chunkStart = last.prompt.search(marker)
-  const parts = last.prompt.slice(chunkStart).split(/^<<<PART \d+\/\d+>>>\n/m).slice(1)
-  // The split leaves each part carrying the joining newline before the next marker — strip it.
-  const bodies = parts.map((p, i) => (i < parts.length - 1 ? p.slice(0, -1) : p))
-  for (const b of bodies) assert.ok(b.length <= 24000 + 500, `part stays near the chunk bound (${b.length})`)
+  const bodies = writers.map((w, k) => {
+    const marker = `<<<PART ${k + 1}/${n}>>>\n`
+    const at = w.prompt.indexOf(marker)
+    assert.ok(at > 0, `writer ${k + 1} carries its own part marker`)
+    const body = w.prompt.slice(at + marker.length)
+    assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1}'s whole prompt stays near the chunk bound (${w.prompt.length})`)
+    assert.ok(body.length <= 24000 + 500, `part ${k + 1} stays near the chunk bound (${body.length})`)
+    // Each writer: ONE quoted here-doc into ITS OWN part file, its own byte count, and no other file.
+    const file = `/repo/.roadmap/state.json.part${k + 1}`
+    assert.ok(w.prompt.includes(HERE_DOC(file)), `part ${k + 1} is written via a quoted here-doc to ${file}`)
+    assert.ok(!w.prompt.includes(`cat > /repo/.roadmap/state.json <<`) && !w.prompt.includes('cat >>'),
+      `part ${k + 1} never touches state.json itself, and never appends`)
+    // Verified by cksum of the part file (its text + the here-doc's trailing newline), never byte count.
+    assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)
+    return body
+  })
 
-  // Each part is written through a single-quoted here-doc (one Bash call per part) and the file
-  // is byte-count-verified afterwards — the two rules that remove the mangled-append class
-  // (arc-observed: five write-failed checkpoints in one wave, JSON escapes re-interpreted).
-  assert.ok(last.prompt.includes(`cat > /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'part 1 via a quoted here-doc')
-  assert.ok(last.prompt.includes(`cat >> /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'later parts append via the same')
+  // The assembler: cats the parts IN ORDER into state.json, checks the total, removes the parts.
+  const files = Array.from({ length: n }, (_, k) => `/repo/.roadmap/state.json.part${k + 1}`)
+  assert.ok(asm.prompt.includes(`cat ${files.join(' ')} > /repo/.roadmap/state.json`), 'assembler cats the parts in order')
+  assert.ok(asm.prompt.includes('On success run `rm -f /repo/.roadmap/state.json.part*`'),
+    'assembler removes the part files on success by glob — stale parts from an earlier fan-out with a different count go too')
+  assert.match(asm.prompt, /On a mismatch leave the part files in place/, 'a failed assembly leaves the parts for inspection')
   const joined = bodies.join('\n')
-  const expectedBytes = Buffer.byteLength(joined, 'utf8') + 1   // + the here-doc's trailing newline
-  assert.match(last.prompt, new RegExp(`wc -c < /repo/.roadmap/state.json\\\` must print exactly ${expectedBytes};`),
-    'the writer is told the exact byte count of the assembled file')
+  // The assembled file is the cat of the parts = the document + one trailing newline; verified by cksum.
+  assertCksumVerified(asm.prompt, '/repo/.roadmap/state.json', `${joined}\n`, 'the assembler')
+  assert.ok(!asm.prompt.includes('<<<PART'), 'the assembler is never handed the document itself')
 
   const reassembled = JSON.parse(joined)
   const ret = JSON.parse(JSON.stringify(state))
-  assert.equal(ret.spend.haiku, reassembled.spend.haiku + 1, 'same final-write accounting as test 13')
+  // Same accounting as test 13, but the final write is n writers + 1 assembler after the snapshot.
+  assert.equal(ret.spend.haiku, reassembled.spend.haiku + n + 1, 'only the final fan-out postdates the snapshot')
   reassembled.spend.haiku = ret.spend.haiku
-  assert.deepEqual(reassembled, ret, 'chunked payload reassembles to the returned state')
+  assert.deepEqual(reassembled, ret, 'the parts reassemble to the returned state')
 })
 
-test('13c small-state checkpoint keeps the legacy single-write prompt', async () => {
+test('13e a part lost twice: retried once by a fresh agent, no assembler, write-failed names it', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^checkpoint:part2$/, result: { ok: false, detail: 'wc printed 24071' } },
+    { match: /^checkpoint:part2#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), bigState())
+  assert.equal(state.units.a.status, 'merged', 'the wave completes despite the failed write')
+  assert.ok(calls.some((c) => c.label === 'checkpoint:part1'), 'the fan-out fired')
+  // Every checkpoint of the wave loses part 2 (the rule is label-keyed): each one retries part 2
+  // exactly once and retries nothing else.
+  const retries = calls.filter((c) => c.label.endsWith('#retry'))
+  assert.ok(retries.length >= 1, 'the lost part is retried')
+  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried — never a part that landed')
+  assert.equal(retries.length, calls.filter((c) => c.label === 'checkpoint:part2').length, 'one retry per loss, never a second')
+  assert.ok(!calls.some((c) => c.label === 'checkpoint:assemble'), 'a lost part means NO assembler — never a partial state.json')
+  const d = state.degradations.filter((x) => x.label === 'checkpoint' && x.kind === 'write-failed')
+  assert.ok(d.length >= 1, 'the loss is ledgered under the top-level label')
+  assert.match(d[0].what, /part 2\/\d+: cksum printed 9 24071/, 'the degradation names the failed part with the RETRY\'s reason')
+  assert.ok(!d[0].what.includes('wc printed 24071'), 'the first attempt\'s reason is superseded by the retry\'s')
+  assert.match(d[0].what, /assembly skipped, previous file left intact/, 'and says what that means on disk')
+})
+
+// A mis-transcription is per-sample stochastic (live: 2 of 16 part writes, a fresh sample of the same
+// part succeeded), so one lost part costs one more writer, not the whole checkpoint.
+test('13f a part lost once: the fresh-agent retry lands, the assembler runs, nothing is ledgered', async () => {
+  const { fn, calls } = makeAgent([{ match: /^checkpoint:part2$/, result: { ok: false, detail: 'cksum printed 9 24071' } }])
+  const state = await runWave(fn, makePlan([unit('a')]), bigState())
+  assert.equal(state.units.a.status, 'merged')
+  const retries = calls.filter((c) => c.label.endsWith('#retry'))
+  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried')
+  assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
+  // Same shape as 13b: the final checkpoint is the last run of `checkpoint:part*` calls (the retry
+  // among them, after every first-pass writer) closed by the assembler.
+  const asm = calls[calls.length - 1]
+  assert.equal(asm.label, 'checkpoint:assemble', 'the assembler runs once every part has landed')
+  let i = calls.length - 2
+  while (i >= 0 && calls[i].label.startsWith('checkpoint:part')) i--
+  const run = calls.slice(i + 1, calls.length - 1)
+  const writers = run.filter((c) => !c.label.endsWith('#retry'))
+  const n = writers.length
+  assert.deepEqual(run.map((w) => w.label),
+    [...Array.from({ length: n }, (_, k) => `checkpoint:part${k + 1}`), 'checkpoint:part2#retry'],
+    'first pass in order, then the single retry, then the assembler')
+  const p2 = writers.find((c) => c.label === 'checkpoint:part2')
+  assert.equal(run[run.length - 1].prompt, p2.prompt, 'the retry is handed the identical part prompt')
+  // Spend: the recovered checkpoint is n writers + 1 retry + 1 assembler, every call tallied. (13b's
+  // snapshot-relative arithmetic is not repeated here: an earlier checkpoint's retry+assembler can
+  // still be in flight when the final target is serialized, so its offset is timing-dependent.)
+  assert.equal(run.length + 1, n + 2, 'the fan-out costs n + 2 Haiku calls')
+  assert.equal(state.spend.haiku, calls.filter((c) => c.model === 'haiku').length, 'the retry is tallied like any writer')
+})
+
+// The single-write path is one Haiku writer copying the whole document through the SAME quoted
+// here-doc as a part writer, cksum-verified. It used to be an unverified "Overwrite the file … with
+// exactly this JSON" — and a file-write tool de-escaped \" inside string values, arc-observed.
+test('13c small-state checkpoint: one here-doc writer, cksum-verified, no fan-out', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState())
   const last = calls.filter((c) => c.label === 'checkpoint').pop()
-  assert.ok(last.prompt.startsWith('Overwrite the file /repo/.roadmap/state.json with exactly this JSON and nothing else:\n'),
-    'below the chunk threshold the prompt is byte-identical to the legacy form')
+  assert.ok(last.prompt.startsWith('Write the file /repo/.roadmap/state.json so its content is EXACTLY the JSON document below'),
+    'below the chunk threshold one writer is handed the whole document')
   assert.ok(!last.prompt.includes('<<<PART'), 'no chunk markers on a small state')
+  assert.ok(!calls.some((c) => c.label.startsWith('checkpoint:')), 'no part writers or assembler')
+  assert.ok(last.prompt.includes(HERE_DOC('/repo/.roadmap/state.json')), 'written through a single-quoted here-doc')
+  assert.match(last.prompt, /never echo, printf, or a file-write\/edit tool \(a file-write tool re-interprets escapes\)/,
+    'the writer is told why a file-write tool is forbidden')
+  const marker = '<<<DOCUMENT>>>\n'
+  const at = last.prompt.indexOf(marker)
+  assert.ok(at > 0, 'the document follows a marker line')
+  const body = last.prompt.slice(at + marker.length)
+  JSON.parse(body)   // the embedded document is the state itself, intact
+  assertCksumVerified(last.prompt, '/repo/.roadmap/state.json', `${body}\n`, 'the single writer')
 })
 
 test('13d a failed checkpoint write degrades loudly but never blocks the wave', async () => {

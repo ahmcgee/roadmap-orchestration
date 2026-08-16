@@ -139,6 +139,13 @@ Read their outputs, then decide:
   history already holds grandfathered duplicate pairs (sealed by its own migration-number seal)
   is safe to guard. Still grep the tree at Phase 0 and record any pre-existing duplicates in the
   conventions contract, so no unit "fixes" them by renumbering.
+- **Set `plan.scopeAllow` for the repo's evidence/test conventions** (e.g.
+  `["docs/evidence/**", "**/test/**", "**/*.test.*"]`). Every unit's pinned scope envelope is stated
+  to the implementer and diff files beyond it raise `scope-growth` for the exit gate to adjudicate.
+  Files matching `scopeAllow` are in scope by convention and never counted as growth — otherwise a
+  unit's own evidence screenshots, transcripts and sibling test files raise the signal on every wave
+  (arc-observed: 7 `scope-growth` degradations in one wave, nearly all noise) and drown the real one
+  (a unit reaching into another area's source).
 - **Cross-check contracts against code before freezing.** Where a frozen surface already exists
   in code (skip only if every frozen surface is greenfield), have a **Haiku** agent (Sonnet where
   signatures are subtle) list the surfaces each drafted contract freezes — endpoints, CLI verbs,

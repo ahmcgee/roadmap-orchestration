@@ -12,6 +12,7 @@
 // don't). Every fake result is shallow-checked against the call's own schema so a fake that
 // drifts from the harness's schema fails loudly rather than silently feeding a bad shape.
 import assert from 'node:assert/strict'
+import { execSync } from 'node:child_process'
 
 // A plausible-looking 40-char sha used as the default base/integration tip everywhere. Tests
 // that probe sha-dependent logic (reconciliation, adopt-tip mismatch) inject their own
@@ -24,6 +25,25 @@ export const INT_SHA = 'b0a9f8e7d6c5b4a3d2e1f0d9c8b7a6f5e4d3c2b1'
 // both fakes can assert cross-fake ordering (e.g. persist-before-dispatch).
 let __seq = 0
 export const nextSeq = () => __seq++
+
+// The `<crc> <bytes>` line coreutils `cksum` prints for stdin — what a verbatim writer is told to
+// expect. Computed by the REAL system tool so every run cross-validates the scripts' in-script
+// cksumOf (which the workflow sandbox needs because it has no crypto) against coreutils.
+export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'utf8' }).trim()
+
+// A verbatim writer prompt (single, partK, or assembler) must verify its file by cksum against the
+// system-computed pair for `content` and must never repair a mismatch. Byte count alone was gamed
+// live (un-escaped JSON, tail padded to the expected count, ok:true, unparseable state.json).
+export function assertCksumVerified(prompt, file, content, who) {
+  const pair = sysCksum(content)
+  assert.match(pair, /^\d+ \d+$/, 'coreutils cksum prints "<crc> <bytes>" for stdin')
+  assert.ok(prompt.includes(`\`cksum < ${file}\` must print exactly \`${pair}\``),
+    `${who} is told the exact system cksum pair (${pair}) of ${file}`)
+  assert.ok(!/wc -c/.test(prompt), `${who} no longer verifies by byte count`)
+  assert.match(prompt, /NEVER edit, pad, trim, or rewrite the file/, `${who} is forbidden from repairing a mismatch`)
+  assert.match(prompt, /a mismatch is reported, not repaired/, `${who} reports rather than repairs`)
+  assert.match(prompt, /Retry the write at most once/, `${who} is capped at one retry`)
+}
 
 // ---- built-in default results, keyed by harness label prefix ---------------------------
 // Each entry: [labelMatches(label) -> bool, (baseSha) -> freshResultObject]. Colons in the
@@ -72,6 +92,10 @@ const DEFAULTS = [
   [(l) => l === 'preview-setup', (b) => ({ ok: true, sha: b })],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
   [(l) => l === 'checkpoint', () => ({ ok: true })],
+  // Large-payload fan-out: `<label>:partK` writers, their one-shot `<label>:partK#retry` re-runs,
+  // and `<label>:assemble` (harness checkpoint and the conductor's persist-state/persist-plan
+  // alike; the conductor labels are matched by prefix in conductor.test.mjs's rules()).
+  [(l) => l.startsWith('checkpoint:part') || l === 'checkpoint:assemble', () => ({ ok: true })],
   [(l) => l === 'skill-feedback', () => ({ ok: true })],   // conductor's degradation-region writer
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep

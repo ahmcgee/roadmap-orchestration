@@ -203,17 +203,69 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
   'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
   'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
   'unexpected key is rejected as hard as an over-long one. '
-// Verbatim-write prompt for a large JSON payload — mirrored from harness.mjs (keep in sync).
-// A single write's content is echoed as agent OUTPUT and one response caps at ~32k output tokens;
-// below WRITE_CHUNK the prompt is byte-identical to the legacy single-write form, above it the
-// payload is split deterministically and written in staged parts, one tool call per part.
+// Verbatim-write prompts for a large JSON payload — mirrored from harness.mjs (keep in sync;
+// shared-consts.test.mjs enforces it). A single write's content is echoed as agent OUTPUT and one
+// response caps at ~32k output tokens; below WRITE_CHUNK one writer copies the document through a
+// quoted here-doc, above it the payload is split deterministically and FANNED OUT — one Haiku
+// writer per part (`<path>.partK`) and one assembler (runVerbatim). Every writer verifies its file
+// by `cksum` (in-script cksumOf), not byte count — a byte count was gamed live (un-escaped values,
+// tail padded to the expected size, ok:true, unparseable state.json).
 const WRITE_CHUNK = 24000
+// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
+// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
+const CK_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i << 24
+    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
+    t[i] = c >>> 0
+  }
+  return t
+})()
+const cksumOf = (s) => {
+  let crc = 0, len = 0
+  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
+  for (const ch of s) {
+    const c = ch.codePointAt(0)
+    if (c < 0x80) feed(c)
+    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
+    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+  }
+  const bytes = len
+  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
+  return { crc: (~crc) >>> 0, bytes }
+}
 const writeVerbatim = (path, text, extra = '') => {
-  if (text.length <= WRITE_CHUNK)
-    return `Overwrite the file ${path} with exactly this JSON and nothing else${extra}:\n${text}`
-  // Split on line boundaries so a part is an exact run of whole lines and the marker boundary is
-  // unambiguous (pretty-printed JSON keeps every line far below the chunk size — free-text caps
-  // bound the longest value). Reconstruction = parts joined with a single newline.
+  // Every writer (single, part, assembler) verifies its file by CONTENT HASH — `cksum` (POSIX,
+  // coreutils, present in every sandbox) prints `<crc> <bytes>` for stdin — computed here by
+  // cksumOf. Byte count alone was gamed live: a part-writer un-escaped `\"`/`\\` inside string
+  // values (losing bytes) and then PADDED the tail with lines copied from the next record until
+  // the count matched, reporting ok:true; the assembled state.json did not parse. A CRC cannot be
+  // iterated toward, so the writer's only honest move on a mismatch is to report it.
+  const check = (file, ck) => `Then verify: \`cksum < ${file}\` must print exactly \`${ck.crc} ${ck.bytes}\`; if it ` +
+    `prints anything else, report ok:false with the observed output in detail. NEVER edit, pad, trim, or rewrite the ` +
+    `file to make the numbers match — a mismatch is reported, not repaired (padding to hit the count once produced an ` +
+    `unparseable state.json). Retry the write at most once.`
+  // Shared body of the copy instruction: a quoted here-doc in ONE Bash call, because a file-write
+  // tool re-interprets escapes (arc-observed: `\"` → `"` inside JSON string values).
+  const copy = (file, what) => `never repair, reformat, re-indent, or re-escape anything (escape sequences such as \\n ` +
+    `and \\" inside JSON string values are literal characters to copy, not instructions). Write it in ONE Bash tool ` +
+    `call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit ` +
+    `tool (a file-write tool re-interprets escapes): run \`cat > ${file} <<'ROADMAP_PART'\` followed by ${what} ` +
+    `and a closing \`ROADMAP_PART\` line.`
+  if (text.length <= WRITE_CHUNK) {
+    const ck = cksumOf(`${text}\n`)   // the here-doc leaves one trailing newline
+    return {
+      single: `Write the file ${path} so its content is EXACTLY the JSON document below, and nothing else${extra} — ` +
+        `${copy(path, "the document's lines")} The document is every line after the <<<DOCUMENT>>> marker line to the ` +
+        `end of this message, excluding the marker line. ${check(path, ck)}\n<<<DOCUMENT>>>\n${text}`,
+    }
+  }
+  // Split on line boundaries so a part is an exact run of whole lines (pretty-printed JSON keeps
+  // every line far below the chunk size — free-text caps bound the longest value). Every part file
+  // ends in the newline its here-doc leaves, so a plain `cat` of the part files, in order, IS the
+  // document (plus one trailing newline — the same shape the single write leaves).
   const parts = []
   let cur = ''
   for (const line of text.split('\n')) {
@@ -221,34 +273,60 @@ const writeVerbatim = (path, text, extra = '') => {
     else cur = cur ? `${cur}\n${line}` : line
   }
   if (cur) parts.push(cur)
-  // Expected on-disk size: UTF-8 bytes of the document plus the trailing newline every here-doc
-  // leaves after its last line. Hand-counted (no Buffer/TextEncoder in the workflow sandbox).
-  let bytes = 1
-  for (const ch of text) { const c = ch.codePointAt(0); bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
-  return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
-    `in order, each part followed by a single newline, and nothing else${extra}. The parts are a mechanical ` +
-    `split of one JSON document on line boundaries — never repair, reformat, re-indent, or re-escape anything ` +
-    `(escape sequences such as \\n and \\" inside JSON string values are literal characters to copy, not ` +
-    `instructions). A single write of the whole document is too large and will be rejected, so write it in ` +
-    `stages, ONE part per Bash tool call, each through a single-quoted here-doc so the shell interprets ` +
-    `nothing — never echo, printf, or a file-write/edit tool: for PART 1 run \`cat > ${path} <<'ROADMAP_PART'\` ` +
-    `followed by the part's lines and a closing \`ROADMAP_PART\` line; for every later part run the same with ` +
-    `\`cat >> ${path} <<'ROADMAP_PART'\`. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
-    `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
-    `themselves. When every part is written, verify: \`wc -c < ${path}\` must print exactly ${bytes}; if it ` +
-    `prints anything else, report ok:false with the observed count in detail.\n` +
-    parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
+  const n = parts.length
+  const partPath = (k) => `${path}.part${k}`
+  const cks = parts.map((p) => cksumOf(`${p}\n`))   // each part file: its text + the here-doc's newline
+  const whole = cksumOf(`${text}\n`)                // the cat of the parts, in order
+  return {
+    parts: parts.map((p, i) => ({
+      k: i + 1,
+      prompt: `Write the file ${partPath(i + 1)} so its content is EXACTLY part ${i + 1} of ${n} below, and nothing ` +
+        `else${extra}. It is a mechanical slice of one JSON document on line boundaries — ` +
+        `${copy(partPath(i + 1), "the part's lines")} The part's content is every line after the ` +
+        `<<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line. ` +
+        `${check(partPath(i + 1), cks[i])}\n<<<PART ${i + 1}/${n}>>>\n${p}`,
+    })),
+    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and cksum-verified${extra}: ` +
+      `run \`cat ${parts.map((_, i) => partPath(i + 1)).join(' ')} > ${path}\` in exactly that order — never open, ` +
+      `edit, or reformat any of them. ${check(path, whole)} On a mismatch leave the part files in place. On success ` +
+      `run \`rm -f ${path}.part*\` (the glob also clears stale parts left by an earlier fan-out with a different ` +
+      `part count) and report ok:true.`,
+  }
+}
+// Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
+// in `parallel` (each echoes ~WRITE_CHUNK of output — the shape that fits one response), then ONE
+// assembler, dispatched only when every part landed: a failed part means no assembly, so the file on
+// disk stays the previous complete document rather than becoming a partial. A part that fails is
+// re-run ONCE, by a fresh agent (`<label>:partK#retry`), before that verdict: a mis-transcription is
+// per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed, caught by cksum;
+// a fresh sample of the same part succeeded), and with five parts a checkpoint that dies on any one
+// first-try loss dies far too often. The assembler is never retried — a bad `cat` is not
+// stochastic. `prefix` is prepended to every prompt (the conductor's STRICT). Resolves { ok, detail }
+// and never throws — `detail` names the part(s) that failed BOTH attempts (with the retry's reason)
+// or the assembler. Mirrored in both scripts.
+const runVerbatim = async (plan, opts, prefix = '') => {
+  const call = (prompt, label) => run(prefix + prompt, { ...opts, label })
+    .then((r) => (r?.ok ? { ok: true }   // covers agent-died-null and an explicit ok:false alike
+      : { ok: false, detail: r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report' }))
+    .catch((e) => ({ ok: false, detail: String(e?.message ?? e).slice(0, 200) }))
+  if (plan.single) return call(plan.single, opts.label)
+  const results = await parallel(plan.parts.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}`)))
+  const lost = plan.parts.filter((_, i) => !results[i]?.ok)
+  const retried = await parallel(lost.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}#retry`)))
+  const failed = lost
+    .map((p, i) => (retried[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${retried[i]?.detail ?? 'writer died'}`))
+    .filter(Boolean)
+  if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
+  const a = await call(plan.assemble, `${opts.label}:assemble`)
+  return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
 }
 // Await a verbatim write and ledger any failure as a `write-failed` degradation — a lost persist
 // is exactly the evidence-destroying silence the degradation ledger exists to catch. Never throws.
 const persistVerbatim = async (path, text, opts, extra = '') => {
-  const r = await run(STRICT + writeVerbatim(path, text, extra), opts)
-    .catch((e) => ({ __threw: String(e?.message ?? e).slice(0, 200) }))
-  if (!r?.ok)
+  const r = await runVerbatim(writeVerbatim(path, text, extra), opts, STRICT)
+  if (!r.ok)
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'write-failed',
-      what: `${path.split('/').pop()} persist did not land (${
-        r?.__threw ?? (r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report')
-      }) — on-disk copy may trail the run` })
+      what: `${path.split('/').pop()} persist did not land (${r.detail}) — on-disk copy may trail the run` })
 }
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +

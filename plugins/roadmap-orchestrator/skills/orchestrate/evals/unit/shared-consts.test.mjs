@@ -10,7 +10,9 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) WRITE_CHUNK + writeVerbatim — byte-identical value and byte-identical function source
+//   (b) WRITE_CHUNK + CK_TABLE + cksumOf + writeVerbatim + runVerbatim — byte-identical value and
+//                      byte-identical source (the in-script cksum, the split AND the fan-out that
+//                      executes it)
 //   (c) TERSE        — same FIRST SENTENCE only (the tails legitimately diverge: the harness copy
 //                      adds a findings-specific clause that has no analogue in the conductor)
 //
@@ -65,13 +67,14 @@ function constValue(file, name) {
 }
 
 // The full source text of a top-level arrow function, from its declaration line through the
-// closing brace at the SAME indent. `writeVerbatim` is declared identically in both files:
+// closing brace at the SAME indent. Each guarded function is declared identically in both files:
 //   const writeVerbatim = (path, text, extra = '') => {
-// ... so the declaration line itself is the anchor; the terminator is the first later line that is
-// exactly the declaration's indent followed by `}`.
-function fnSource(file, name) {
+//   const runVerbatim = async (plan, opts, prefix = '') => {
+// ... so the declaration line (with `sig`, the exact parameter list) is the anchor; the terminator is
+// the first later line that is exactly the declaration's indent followed by `}`.
+function fnSource(file, name, sig) {
   const lines = SRC[file].split('\n')
-  const declRe = new RegExp(`^(\\s*)const ${name} = \\(path, text, extra = ''\\) => \\{\\s*$`)
+  const declRe = new RegExp(`^(\\s*)const ${name} = ${sig.replace(/[()]/g, '\\$&')} => \\{\\s*$`)
   let start = -1
   let indent = ''
   for (let i = 0; i < lines.length; i++) {
@@ -79,7 +82,7 @@ function fnSource(file, name) {
     if (m) { start = i; indent = m[1]; break }
   }
   assert.notEqual(start, -1,
-    `could not find the \`const ${name} = (path, text, extra = '') => {\` declaration in ${file} — ` +
+    `could not find the \`const ${name} = ${sig} => {\` declaration in ${file} — ` +
     `if the signature changed in one file it must change in the other, and this anchor must be updated`)
   const close = `${indent}}`
   for (let i = start + 1; i < lines.length; i++)
@@ -135,14 +138,44 @@ test('WRITE_CHUNK is the same threshold in both scripts', () => {
   assert.ok(h > 1000 && h < 32000, 'WRITE_CHUNK sits below the ~32k output-token response cap')
 })
 
+// The in-script POSIX cksum. `CK_TABLE` is an IIFE (`const CK_TABLE = (() => {` … `})()`), so it
+// is sliced by its own anchors rather than fnSource; cksumOf is a plain arrow and uses fnSource.
+function ckTableSource(file) {
+  const lines = SRC[file].split('\n')
+  const start = lines.findIndex((l) => l === 'const CK_TABLE = (() => {')
+  assert.notEqual(start, -1, `no \`const CK_TABLE = (() => {\` in ${file}`)
+  const end = lines.findIndex((l, i) => i > start && l === '})()')
+  assert.notEqual(end, -1, `no closing \`})()\` for CK_TABLE in ${file}`)
+  return lines.slice(start, end + 1).join('\n')
+}
+
+test('cksumOf (the in-script POSIX cksum) has byte-identical source in both scripts', () => {
+  const [ht, ct] = FILES.map(ckTableSource)
+  assertInSync('The CK_TABLE CRC table', ht, ct)
+  const [h, c] = FILES.map((f) => fnSource(f, 'cksumOf', '(s)'))
+  assert.ok(h.includes('0x04C11DB7') || ht.includes('0x04C11DB7'), 'the POSIX cksum polynomial')
+  assert.ok(h.includes('return { crc: (~crc) >>> 0, bytes }'), 'returns the crc/bytes pair the writer prompts quote')
+  assertInSync('The cksumOf function source', h, c)
+})
+
 test('writeVerbatim has byte-identical source in both scripts', () => {
-  const [h, c] = FILES.map((f) => fnSource(f, 'writeVerbatim'))
+  const [h, c] = FILES.map((f) => fnSource(f, 'writeVerbatim', "(path, text, extra = '')"))
   assert.ok(h.includes('<<<PART'), 'the chunked branch is present')
-  assert.ok(h.includes('Overwrite the file ${path} with exactly this JSON and nothing else${extra}'),
-    'the sub-threshold branch is still byte-identical to the legacy single-write form')
+  assert.ok(h.includes('<<<DOCUMENT>>>'), 'the sub-threshold branch hands one writer the whole document')
+  assert.ok(h.includes('cksum < ${file}'), 'every writer verifies by cksum')
+  assert.ok(!h.includes('wc -c'), 'no writer verifies by byte count (gamed live)')
   // Comments included, deliberately: they are part of what the two copies must keep in sync, and a
   // reader who updates one rationale without the other has already half-forked the function.
   assertInSync('The writeVerbatim function source (comments included)', h, c)
+})
+
+test('runVerbatim (the fan-out executor) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'runVerbatim', "async (plan, opts, prefix = '')"))
+  assert.ok(h.includes('parallel('), 'part writers fan out through the platform `parallel` primitive')
+  assert.ok(h.includes(':assemble') && h.includes(':part'), 'sub-agent labels derive from the caller label')
+  // The two scripts must fail the same way: a lost part skips assembly (previous file left intact)
+  // in both, or a resume could see a partial file from one script and a complete one from the other.
+  assertInSync('The runVerbatim function source (comments included)', h, c)
 })
 
 test('TERSE opens with the same first sentence in both scripts', () => {
@@ -170,6 +203,6 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK'])
+    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK', 'CK_TABLE', 'cksumOf'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

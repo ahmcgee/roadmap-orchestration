@@ -30,7 +30,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, assertAllModelsPinned } from './fakes.mjs'
+import { makeAgent, makeWorkflow, assertAllModelsPinned, assertCksumVerified } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -937,6 +937,92 @@ test('a tier-1 continuation persists state with boundary removed and debt cleare
   const p = prompt(ps)
   assert.ok(!p.includes('"boundary"'), 'the consumed boundary block is stripped from the persisted state')
   assert.match(p, /"debt"\s*:\s*\[\s*\]/, 'consumed debt is persisted as an empty array')
+})
+
+// A large state fans out exactly as the harness checkpoint does (shared-consts pins the two
+// executors byte-identical; this pins the conductor actually ROUTING through it): one STRICT-
+// prefixed Haiku writer per `.partK`, then one assembler under the same top-level label.
+test('persist-state of a large state fans out to part writers + one assembler, STRICT-prefixed', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent } = await conduct({ state: mkState({ units }) })
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1$/), 'no single agent is handed the whole document')
+  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
+  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
+  assert.ok(writers.length >= 3, `several part writers (saw ${writers.length})`)
+  assert.equal(asm.length, 1, 'exactly one assembler')
+  assert.ok(asm[0].seq > Math.max(...writers.map((w) => w.seq)), 'the assembler is dispatched after every writer')
+  for (const c of [...writers, asm[0]]) {
+    assert.ok(c.prompt.startsWith('Start by `cd`'), `${c.label} carries the STRICT location discipline`)
+    assert.equal(c.model, 'haiku')
+  }
+  const bodies = writers.map((w, k) => {
+    const file = `/repo/.roadmap/state.json.part${k + 1}`
+    assert.ok(w.prompt.includes(`cat > ${file} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
+    assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
+    const marker = `<<<PART ${k + 1}/${writers.length}>>>\n`
+    const body = w.prompt.slice(w.prompt.indexOf(marker) + marker.length)
+    assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)
+    return body
+  })
+  assert.ok(asm[0].prompt.includes(`cat ${writers.map((_, k) => `/repo/.roadmap/state.json.part${k + 1}`).join(' ')} > /repo/.roadmap/state.json`),
+    'the assembler cats the parts in order')
+  assertCksumVerified(asm[0].prompt, '/repo/.roadmap/state.json', `${bodies.join('\n')}\n`, 'the assembler')
+  assert.ok(asm[0].prompt.includes('On success run `rm -f /repo/.roadmap/state.json.part*`'), 'the assembler clears parts by glob')
+})
+
+test('persist-state of a small state: one STRICT-prefixed here-doc writer, cksum-verified', async () => {
+  const { agent } = await conduct()
+  const ps = labeled(agent.calls, /^persist-state:w1$/)
+  assert.equal(ps.length, 1, 'one single writer, no fan-out')
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:/), 'no part writers or assembler')
+  const p = ps[0].prompt
+  assert.ok(p.startsWith('Start by `cd`'), 'STRICT-prefixed')
+  assert.ok(p.includes(`cat > /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'written through a quoted here-doc')
+  const marker = '<<<DOCUMENT>>>\n'
+  const body = p.slice(p.indexOf(marker) + marker.length)
+  JSON.parse(body)
+  assertCksumVerified(p, '/repo/.roadmap/state.json', `${body}\n`, 'the persist-state writer')
+})
+
+test('persist-state: a part lost twice is retried once, then skips the assembler and ledgers write-failed', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent, result } = await conduct({
+    state: mkState({ units }),
+    agentRules: [
+      { match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'wc printed 9' } },
+      { match: /^persist-state:w1:part1#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
+      ...rules(),
+    ],
+  })
+  const retries = labeled(agent.calls, /#retry$/)
+  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'the lost part is retried once, by a fresh agent, and nothing else is')
+  assert.ok(retries[0].prompt.startsWith('Start by `cd`'), 'the retry carries the STRICT prefix like every writer')
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:assemble$/), 'no assembler after a part lost twice')
+  const d = result.degradations.find((x) => x.label === 'persist-state:w1' && x.kind === 'write-failed')
+  assert.ok(d, 'the loss is ledgered under the top-level persist label')
+  assert.match(d.what, /part 1\/\d+: cksum printed 9 24071/, 'the failed part is named with the retry\'s reason')
+  assert.ok(!d.what.includes('wc printed 9'), 'the first attempt\'s reason is superseded')
+})
+
+test('persist-state: a part lost once is recovered by its retry — assembler runs, nothing ledgered', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent, result } = await conduct({
+    state: mkState({ units }),
+    agentRules: [{ match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'cksum printed 9 24071' } }, ...rules()],
+  })
+  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
+  const retries = labeled(agent.calls, /#retry$/)
+  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
+  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'only the lost part is retried, once')
+  assert.equal(retries[0].prompt, writers[0].prompt, 'the retry is handed the identical part prompt')
+  assert.ok(retries[0].seq > Math.max(...writers.map((w) => w.seq)), 'the retry follows the first pass')
+  assert.equal(asm.length, 1, 'the assembler runs once the retry lands')
+  assert.ok(asm[0].seq > retries[0].seq, 'and follows the retry')
+  assert.ok(!result.degradations.some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
+  assert.equal(labeled(agent.calls, /^persist-state:w1/).length, writers.length + 2, 'spend: n writers + 1 retry + 1 assembler')
 })
 
 /* ============================================================================== */

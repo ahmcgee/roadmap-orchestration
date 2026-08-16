@@ -200,9 +200,24 @@ const DEBT_DISCIPLINE = 'Debt discipline: banking is the DEFAULT for anything ou
 // mechanism, not the membership rule: the spiral's first clause defined the eligible-fix set as
 // "files you are already touching", i.e. as a function of the diff the fix rounds themselves grow.
 // Do not "simplify" this back to the live diff.
+// `plan.scopeAllow` (optional globs — evidence dirs, test files, rehearsal transcripts) names files
+// the repo's conventions put in EVERY unit's scope: they are stated to the implementer alongside the
+// pinned files and never counted as scope growth, so `scope-growth` stays a real signal instead of
+// re-adjudicating the unit's own screenshots at every gate. Absent → the clause is '' and the
+// SCOPE/FIX_SCOPE text is byte-identical to before (the paid fixtures depend on that). This is an
+// exclusion from the growth CHECK, not a widening of the pinned envelope.
+const scopeAllow = plan.scopeAllow ?? []
+// Minimal glob → RegExp (no Node APIs here): `**/` = zero or more directories, `**` = anything,
+// `*` = any run without `/`. Matched against the diff's repo-relative paths.
+const globRe = (g) => new RegExp('^' + g.split('**/').map((part) => part.split('**').map((seg) =>
+  seg.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')).join('(?:.*/)?') + '$')
+const scopeAllowRes = scopeAllow.map(globRe)
+const scopeAllowed = (f) => scopeAllowRes.some((re) => re.test(f))
+const scopeAllowClause = scopeAllow.length
+  ? `, plus by repo convention any file matching: ${scopeAllow.join(', ')}` : ''
 const SCOPE = (files) =>
   `Scope is fixed before you start and does not grow as you work. In scope: ${
-    files?.length ? files.join(', ') : "the files this unit's diff already touches"}, plus any file you must ` +
+    files?.length ? files.join(', ') : "the files this unit's diff already touches"}${scopeAllowClause}, plus any file you must ` +
   `change to make an acceptance criterion pass — name each such extra file in \`notes\` with a one-line ` +
   `reason (\`notes\` is at most a short paragraph, max 2000 characters). Inside that scope, finish the job ` +
   `properly: wrong behaviour, a missing acceptance test, or a test that would still pass if the behaviour ` +
@@ -219,7 +234,7 @@ const SCOPE = (files) =>
 // directive-driven work, threaded into every prompt that hands findings/directives to a fixer.
 const FIX_SCOPE = (files) =>
   `Fix exactly what is listed above and nothing else. The files you may touch are: ${
-    files?.length ? files.join(', ') : "this unit's declared scope"}, plus any file named in the findings or ` +
+    files?.length ? files.join(', ') : "this unit's declared scope"}${scopeAllowClause}, plus any file named in the findings or ` +
   `directives you are addressing. Touching anything outside that set is a scope violation, not initiative — ` +
   `if a listed fix truly cannot be made without it, make the minimal necessary change and name the file and ` +
   `the reason in \`notes\` (at most a short paragraph, max 2000 characters). Do not refactor, rename, ` +
@@ -760,23 +775,77 @@ const serialize = () => ({
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
 const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 
-// Verbatim-write prompt for a large JSON payload. A single write's content is echoed as agent
+// Verbatim-write prompts for a large JSON payload. A single write's content is echoed as agent
 // OUTPUT, and one response caps at ~32k output tokens (arc-observed: a 54-unit arc's state killed
-// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK the prompt is byte-identical to
-// the legacy single-write form; above it, the payload is split deterministically (a pure function
-// of the text — resumeFromRunId-safe) and written in staged parts, one tool call per part, each
-// comfortably under the cap. Each part goes through a single-quoted here-doc and the result is
-// checked by byte count (arc-observed: five `write-failed` checkpoints in one wave when the
-// writer's append step mangled JSON escape sequences — an unquoted shell path or an edit tool
-// re-interpreting `\n` — and nothing verified the file). Mirrored in conductor.mjs — keep the
-// two in sync.
+// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK one Haiku writer copies the whole
+// document through a single-quoted here-doc; above it, the payload is split deterministically (a
+// pure function of the text — resumeFromRunId-safe) and FANNED OUT: one Haiku writer per part, each
+// writing only its own `<path>.partK`, then one assembler that `cat`s the parts together and
+// removes them (runVerbatim below). EVERY writer verifies its file with `cksum` (content hash +
+// length, computed in-script by cksumOf), not a byte count: byte count was gamed live — a part
+// writer un-escaped JSON string values, padded the tail with fabricated lines until `wc -c`
+// matched, and reported ok:true; the assembled state.json did not parse. The single-write path had
+// no verification at all and showed the same de-escaping. Arc-observed before that, twice: a single
+// writer told to stage 3–6 parts itself (75–145 KB of output) failed ~28 checkpoints in two waves —
+// "cannot complete within token budget" — and gave up in prose on 5 more. One agent emitting 145 KB
+// is the wrong shape; one agent per ~24 KB part is not. Mirrored in conductor.mjs — keep the two in
+// sync (shared-consts.test.mjs enforces it, cksumOf included).
 const WRITE_CHUNK = 24000
+// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
+// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
+const CK_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i << 24
+    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
+    t[i] = c >>> 0
+  }
+  return t
+})()
+const cksumOf = (s) => {
+  let crc = 0, len = 0
+  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
+  for (const ch of s) {
+    const c = ch.codePointAt(0)
+    if (c < 0x80) feed(c)
+    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
+    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+  }
+  const bytes = len
+  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
+  return { crc: (~crc) >>> 0, bytes }
+}
 const writeVerbatim = (path, text, extra = '') => {
-  if (text.length <= WRITE_CHUNK)
-    return `Overwrite the file ${path} with exactly this JSON and nothing else${extra}:\n${text}`
-  // Split on line boundaries so a part is an exact run of whole lines and the marker boundary is
-  // unambiguous (pretty-printed JSON keeps every line far below the chunk size — free-text caps
-  // bound the longest value). Reconstruction = parts joined with a single newline.
+  // Every writer (single, part, assembler) verifies its file by CONTENT HASH — `cksum` (POSIX,
+  // coreutils, present in every sandbox) prints `<crc> <bytes>` for stdin — computed here by
+  // cksumOf. Byte count alone was gamed live: a part-writer un-escaped `\"`/`\\` inside string
+  // values (losing bytes) and then PADDED the tail with lines copied from the next record until
+  // the count matched, reporting ok:true; the assembled state.json did not parse. A CRC cannot be
+  // iterated toward, so the writer's only honest move on a mismatch is to report it.
+  const check = (file, ck) => `Then verify: \`cksum < ${file}\` must print exactly \`${ck.crc} ${ck.bytes}\`; if it ` +
+    `prints anything else, report ok:false with the observed output in detail. NEVER edit, pad, trim, or rewrite the ` +
+    `file to make the numbers match — a mismatch is reported, not repaired (padding to hit the count once produced an ` +
+    `unparseable state.json). Retry the write at most once.`
+  // Shared body of the copy instruction: a quoted here-doc in ONE Bash call, because a file-write
+  // tool re-interprets escapes (arc-observed: `\"` → `"` inside JSON string values).
+  const copy = (file, what) => `never repair, reformat, re-indent, or re-escape anything (escape sequences such as \\n ` +
+    `and \\" inside JSON string values are literal characters to copy, not instructions). Write it in ONE Bash tool ` +
+    `call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit ` +
+    `tool (a file-write tool re-interprets escapes): run \`cat > ${file} <<'ROADMAP_PART'\` followed by ${what} ` +
+    `and a closing \`ROADMAP_PART\` line.`
+  if (text.length <= WRITE_CHUNK) {
+    const ck = cksumOf(`${text}\n`)   // the here-doc leaves one trailing newline
+    return {
+      single: `Write the file ${path} so its content is EXACTLY the JSON document below, and nothing else${extra} — ` +
+        `${copy(path, "the document's lines")} The document is every line after the <<<DOCUMENT>>> marker line to the ` +
+        `end of this message, excluding the marker line. ${check(path, ck)}\n<<<DOCUMENT>>>\n${text}`,
+    }
+  }
+  // Split on line boundaries so a part is an exact run of whole lines (pretty-printed JSON keeps
+  // every line far below the chunk size — free-text caps bound the longest value). Every part file
+  // ends in the newline its here-doc leaves, so a plain `cat` of the part files, in order, IS the
+  // document (plus one trailing newline — the same shape the single write leaves).
   const parts = []
   let cur = ''
   for (const line of text.split('\n')) {
@@ -784,23 +853,52 @@ const writeVerbatim = (path, text, extra = '') => {
     else cur = cur ? `${cur}\n${line}` : line
   }
   if (cur) parts.push(cur)
-  // Expected on-disk size: UTF-8 bytes of the document plus the trailing newline every here-doc
-  // leaves after its last line. Hand-counted (no Buffer/TextEncoder in the workflow sandbox).
-  let bytes = 1
-  for (const ch of text) { const c = ch.codePointAt(0); bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
-  return `Overwrite the file ${path} so its final content is EXACTLY the ${parts.length} parts below, ` +
-    `in order, each part followed by a single newline, and nothing else${extra}. The parts are a mechanical ` +
-    `split of one JSON document on line boundaries — never repair, reformat, re-indent, or re-escape anything ` +
-    `(escape sequences such as \\n and \\" inside JSON string values are literal characters to copy, not ` +
-    `instructions). A single write of the whole document is too large and will be rejected, so write it in ` +
-    `stages, ONE part per Bash tool call, each through a single-quoted here-doc so the shell interprets ` +
-    `nothing — never echo, printf, or a file-write/edit tool: for PART 1 run \`cat > ${path} <<'ROADMAP_PART'\` ` +
-    `followed by the part's lines and a closing \`ROADMAP_PART\` line; for every later part run the same with ` +
-    `\`cat >> ${path} <<'ROADMAP_PART'\`. A part's content is the lines between its <<<PART k/${parts.length}>>> ` +
-    `marker line and the next marker line (or the end of this message), excluding the marker lines ` +
-    `themselves. When every part is written, verify: \`wc -c < ${path}\` must print exactly ${bytes}; if it ` +
-    `prints anything else, report ok:false with the observed count in detail.\n` +
-    parts.map((p, i) => `<<<PART ${i + 1}/${parts.length}>>>\n${p}`).join('\n')
+  const n = parts.length
+  const partPath = (k) => `${path}.part${k}`
+  const cks = parts.map((p) => cksumOf(`${p}\n`))   // each part file: its text + the here-doc's newline
+  const whole = cksumOf(`${text}\n`)                // the cat of the parts, in order
+  return {
+    parts: parts.map((p, i) => ({
+      k: i + 1,
+      prompt: `Write the file ${partPath(i + 1)} so its content is EXACTLY part ${i + 1} of ${n} below, and nothing ` +
+        `else${extra}. It is a mechanical slice of one JSON document on line boundaries — ` +
+        `${copy(partPath(i + 1), "the part's lines")} The part's content is every line after the ` +
+        `<<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line. ` +
+        `${check(partPath(i + 1), cks[i])}\n<<<PART ${i + 1}/${n}>>>\n${p}`,
+    })),
+    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and cksum-verified${extra}: ` +
+      `run \`cat ${parts.map((_, i) => partPath(i + 1)).join(' ')} > ${path}\` in exactly that order — never open, ` +
+      `edit, or reformat any of them. ${check(path, whole)} On a mismatch leave the part files in place. On success ` +
+      `run \`rm -f ${path}.part*\` (the glob also clears stale parts left by an earlier fan-out with a different ` +
+      `part count) and report ok:true.`,
+  }
+}
+// Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
+// in `parallel` (each echoes ~WRITE_CHUNK of output — the shape that fits one response), then ONE
+// assembler, dispatched only when every part landed: a failed part means no assembly, so the file on
+// disk stays the previous complete document rather than becoming a partial. A part that fails is
+// re-run ONCE, by a fresh agent (`<label>:partK#retry`), before that verdict: a mis-transcription is
+// per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed, caught by cksum;
+// a fresh sample of the same part succeeded), and with five parts a checkpoint that dies on any one
+// first-try loss dies far too often. The assembler is never retried — a bad `cat` is not
+// stochastic. `prefix` is prepended to every prompt (the conductor's STRICT). Resolves { ok, detail }
+// and never throws — `detail` names the part(s) that failed BOTH attempts (with the retry's reason)
+// or the assembler. Mirrored in both scripts.
+const runVerbatim = async (plan, opts, prefix = '') => {
+  const call = (prompt, label) => run(prefix + prompt, { ...opts, label })
+    .then((r) => (r?.ok ? { ok: true }   // covers agent-died-null and an explicit ok:false alike
+      : { ok: false, detail: r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report' }))
+    .catch((e) => ({ ok: false, detail: String(e?.message ?? e).slice(0, 200) }))
+  if (plan.single) return call(plan.single, opts.label)
+  const results = await parallel(plan.parts.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}`)))
+  const lost = plan.parts.filter((_, i) => !results[i]?.ok)
+  const retried = await parallel(lost.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}#retry`)))
+  const failed = lost
+    .map((p, i) => (retried[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${retried[i]?.detail ?? 'writer died'}`))
+    .filter(Boolean)
+  if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
+  const a = await call(plan.assemble, `${opts.label}:assemble`)
+  return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
 }
 
 // Crash-safety checkpoint of the whole wave state. Coalesced latest-wins (same idiom as the
@@ -830,14 +928,14 @@ function checkpoint() {
     if (checkpointTarget === checkpointWritten) return   // coalesce: latest already written
     const snap = checkpointTarget
     checkpointWritten = snap
-    const r = await run(writeVerbatim(`${repo}/.roadmap/state.json`, snap),
+    // The fan-out (part writers in parallel, then the assembler) runs INSIDE this chain segment, so
+    // a later checkpoint never races a half-assembled earlier one.
+    const r = await runVerbatim(writeVerbatim(`${repo}/.roadmap/state.json`, snap),
       { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok })
-      .catch((e) => ({ __threw: String(e?.message ?? e).slice(0, 200) }))
-    if (!r?.ok)   // covers threw, agent-died-null, and an explicit ok:false alike
+    if (!r.ok)
       degrade({ label: 'checkpoint', model: 'haiku', phase: 'Setup', kind: 'write-failed',
-        what: `state.json checkpoint did not land (${
-          r?.__threw ?? (r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report')
-        }) — on-disk state may trail the run; the next successful checkpoint heals it` })
+        what: `state.json checkpoint did not land (${r.detail}) — on-disk state may trail the run; ` +
+          'the next successful checkpoint heals it' })
   }).catch(() => null)
 }
 
@@ -1193,11 +1291,17 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   return { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
 }
 
-// Cross-model spec critique (best-effort, read-only): a short foreground `codex exec -s
-// read-only` interrogates the spec + plan from the OTHER model family's perspective before the
-// plan-check adjudicates. GPT and Claude miss different things; the plan-check gets the
-// questions as input, never as verdicts. Failure skips with a degradation — this pass gates
-// nothing.
+// Cross-model spec critique (best-effort, read-only by INTENT): a short foreground `codex exec`
+// interrogates the spec + plan from the OTHER model family's perspective before the plan-check
+// adjudicates. GPT and Claude miss different things; the plan-check gets the questions as
+// input, never as verdicts. Failure skips with a degradation — this pass gates nothing.
+// "Read-only" lives in the brief ("change nothing"), NOT in the sandbox flag: it runs under
+// C.codexSandbox exactly like the build lane, because `-s read-only` needs the same bwrap
+// namespace that fails in this devcontainer (arc-observed: the critique was skipped for a bwrap
+// EPERM while merely reading the spec). The steerer's Haiku is told two more things it
+// otherwise improvises wrongly on: the cd target is the unit worktree `w` (the artifact dir is
+// scratch, not a git checkout), and an entry the schema cut mid-sentence at its cap is a
+// valid entry, not a failure.
 const specCritique = async (unit, w, implPlan) => {
   const dir = codexDir(unit.id, 'spec-review')
   const critBrief =
@@ -1212,18 +1316,23 @@ const specCritique = async (unit, w, implPlan) => {
     `two sentences (max 500 characters).`
   const r = await withCodexSlot(() => runOr({ ok: false, questions: [] },
     STRICT +
-    `Run a short read-only Codex critique for unit ${unit.id}. 1) \`mkdir -p ${dir}\`; write ${dir}/brief.txt ` +
+    `Run a short Codex critique for unit ${unit.id}. Your cd target is the unit worktree ${w} (a git ` +
+    `checkout). ${dir} is a scratch artifact directory, NOT a git checkout — create it with mkdir -p and ` +
+    `never cd into it or judge it; Codex is pointed at the worktree by -C. ` +
+    `1) \`mkdir -p ${dir}\`; write ${dir}/brief.txt ` +
     `with EXACTLY the content between the <<<BRIEF>>> markers below (excluding the marker lines); write ` +
     `${dir}/schema.json with exactly this one-line JSON: ${CRITIQUE_OUT}\n` +
-    `2) Run, blocking: \`timeout 900 ${codexHome}codex exec -C ${w} -s read-only ` +
+    `2) Run, blocking: \`timeout 900 ${codexHome}codex exec -C ${w} -s ${C.codexSandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
     `-c projects."${w}".trust_level="trusted" --skip-git-repo-check --output-schema ${dir}/schema.json ` +
     `-o ${dir}/last-message.txt --json - < ${dir}/brief.txt > ${dir}/events.jsonl 2> ${dir}/stderr.log\`\n` +
     `3) Read ONLY \`head -c 4000 ${dir}/last-message.txt\` — never open ${dir}/events.jsonl or any transcript.\n` +
     `4) Report ok:true with \`questions\` (at most 8) and \`risks\` (at most 5) copied VERBATIM from the ` +
     `critique (each already one or two sentences, max 300 characters — never expand them), and \`notes\` one ` +
-    `or two sentences (max 500 characters) only if something needs saying. If the command failed or the ` +
-    `output is missing/unparseable, report ok:false with a one-sentence \`notes\` saying what happened. ` +
+    `or two sentences (max 500 characters) only if something needs saying. An entry the schema cut off ` +
+    `mid-sentence at its 300-character cap is still a valid entry: copy it through as-is and report ok:true ` +
+    `— truncation is never a failure. If the command failed or the output is missing/unparseable, report ` +
+    `ok:false with a one-sentence \`notes\` saying what happened. ` +
     `${TERSE}\n<<<BRIEF>>>\n${critBrief}\n<<<BRIEF>>>`,
     { model: C.codexSteerModel, effort: 'low', phase: 'Implement', label: `codex-spec-review:${unit.id}`, schema: S.specReview }))
   if (!r.ok)
@@ -1279,7 +1388,7 @@ const CODEX_BUDGETS =
   `characters); \`contractMismatch\` and \`specGap\` one or two sentences each (max 300 characters); each ` +
   `\`debt\` entry's \`what\` and \`why\` a sentence or two (max 400 characters each), at most 8 debt entries ` +
   `(consolidate related items); \`notes\` at most a short paragraph (max 2000 characters).`
-// What the read-only spec critique reports (strict mode, same P1 rule as CODEX_OUT).
+// What the spec critique reports (strict mode, same P1 rule as CODEX_OUT).
 const CRITIQUE_OUT = JSON.stringify(strictify(obj({
   questions: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 300 } },
   risks: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 300 } },
@@ -1787,7 +1896,7 @@ async function runUnit(unit) {
     if (!envelope && verify.diffFiles?.length) envelope = [...verify.diffFiles]
     else if (envelope && verify.diffFiles) {
       const env = new Set(envelope)
-      const grew = verify.diffFiles.filter((f) => !env.has(f))
+      const grew = verify.diffFiles.filter((f) => !env.has(f) && !scopeAllowed(f))   // scopeAllow: never growth
       if (grew.length && grew.join('\n') !== scopeGrew.join('\n'))
         degrade({ label: `verify:${unit.id}#${round}`, model: 'haiku', phase: 'Verify', kind: 'scope-growth',
           what: `unit ${unit.id}'s diff reaches ${grew.length} file(s) outside its pinned scope: ` +

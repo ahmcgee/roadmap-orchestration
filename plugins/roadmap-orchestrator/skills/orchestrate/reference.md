@@ -160,6 +160,13 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   grandfathered — they never refuse. Absent → clause is
                                    //   '' and merge prompts are byte-identical to before. The
                                    //   conventions contract must pre-allocate numbers per unit.
+  "scopeAllow": ["docs/evidence/**", "**/*.test.*"],  // optional globs (`**/` = any dirs, `*` =
+                                   //   no `/`). Files matching are in every unit's scope by
+                                   //   convention: named to the implementer beside the pinned
+                                   //   files and NEVER counted as scope-growth, so that signal
+                                   //   stays real. Absent → clause is '' and the scope text is
+                                   //   byte-identical to before. Excludes from the growth check;
+                                   //   does not widen the pinned envelope.
   "config": { }                    // optional overrides — knobs below
 }
 ```
@@ -220,8 +227,12 @@ Fields the scripts add:
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
   checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
-  write heals it (large payloads are written in staged `<<<PART k/n>>>` chunks to stay under the
-  per-response output cap). A `preview-failed` entry means the mirror never came up — the entry
+  write heals it. Every verbatim write goes through a single-quoted here-doc and is verified by
+  `cksum` (content hash + length, never a bare byte count — a byte count was gamed live); a payload
+  over ~24 KB is split on line boundaries and fanned out — one Haiku writer per `<file>.partK`, then
+  one assembler that `cat`s the parts, cksum-checks the whole, and `rm -f`s the parts; a lost part
+  or a mismatch skips assembly / leaves the parts, so the entry names the part and the previous file
+  stays intact. A `preview-failed` entry means the mirror never came up — the entry
   carries the porcelain diagnosis and exact operator guidance (carried-modification vs real local
   edits), and the boundary records owed explorer/design markers instead of silently no-opping.
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
@@ -407,8 +418,9 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   clauses that contradict a referenced contract or documented codebase reality, stale premises —
   **plus the frontier-only grounds**: overengineering and complexity that does not earn its keep,
   structure that makes the next change harder, missed reuse or a simpler shape, doors quietly
-  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, read-only codex, best-effort)
-  runs first; its questions/risks feed the plan-check as adjudication input — cross-model
+  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort; read-only by brief
+  — "change nothing" — not by sandbox: it runs under `codexSandbox` like the build lane, because
+  `-s read-only` needs the bwrap namespace the devcontainer cannot build) runs first; its questions/risks feed the plan-check as adjudication input — cross-model
   disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
   unit** (plus infeasible plans and `planCheck:'always-fable'`); only low-risk units ride
   **Opus-first** (`approve`/`redirect`/`escalate`; Opus may not quarantine — kill decisions are

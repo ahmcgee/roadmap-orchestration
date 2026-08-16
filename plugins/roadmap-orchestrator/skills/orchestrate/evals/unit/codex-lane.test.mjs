@@ -385,7 +385,7 @@ test('i2 the brief carries the guardrails that must survive a half-read: scope, 
 })
 
 // =========================================================================================
-// Cross-model spec critique. A short read-only `codex exec` interrogates the spec + plan from the
+// Cross-model spec critique. A short read-only-by-brief `codex exec` interrogates the spec + plan from the
 // OTHER model family's perspective BEFORE the plan-check adjudicates — GPT and Claude miss
 // different things, and the pre-dispatch gate is the highest-leverage judgment point in this lane.
 // The plan-check gets the questions as INPUT, never as verdicts, and the pass gates nothing.
@@ -401,7 +401,23 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   const review = calls.find((c) => c.label === 'codex-spec-review:a')
   assert.ok(review, 'the critique fires on a fresh build whose risk is in planCheckRisk')
   assert.equal(review.model, 'haiku', 'it is steered at codexSteerModel like every other codex step')
-  assert.ok(review.prompt.includes('-s read-only'), 'the critique run changes nothing — read-only sandbox')
+  // Sandbox: NOT `-s read-only` — that needs the bwrap namespace this devcontainer cannot build
+  // (arc-observed EPERM while reading the spec). It runs under C.codexSandbox like the build lane;
+  // "change nothing" is carried by the brief text.
+  assert.ok(review.prompt.includes('-s danger-full-access'), 'the critique honours codexSandbox like the build lane')
+  assert.ok(!review.prompt.includes('-s read-only'), 'and never hardcodes the read-only sandbox')
+  assert.ok(review.prompt.includes('change nothing'), 'read-only intent lives in the brief')
+  // Location: STRICT makes the steerer cd to the first path named; that must be the unit worktree,
+  // and the __codex artifact dir must be marked as scratch (arc-observed: Haiku cd'd to wtRoot and
+  // refused because it "is not a git repository").
+  const cdIdx = review.prompt.indexOf('Your cd target is the unit worktree')
+  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/a/spec-review'),
+    'the worktree is named as the cd target before the artifact dir')
+  assert.ok(/scratch artifact directory, NOT a git checkout/.test(review.prompt), 'the artifact dir is marked scratch')
+  // Schema hard-cut: an entry truncated at the 300-char cap is a valid entry (arc-observed: Haiku
+  // reported ok:false and the critique was thrown away).
+  assert.ok(/cut off mid-sentence at its 300-character cap is still a valid entry/.test(review.prompt) &&
+    /truncation is never a failure/.test(review.prompt), 'a hard-cut entry is copied through, not failed')
 
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check.includes('A second engineer from a different model family'),
@@ -479,6 +495,46 @@ test('k2 an in-envelope diff produces no growth signal and leaves the gate promp
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'scope-growth'), 'no growth, no signal')
   assert.ok(!promptOf(calls, 'opus-gate:a#0').includes('outside the unit'), 'and no clause at all in the gate prompt')
+})
+
+// plan.scopeAllow: files the repo's conventions put in every unit's scope (evidence, tests) are
+// excluded from the growth CHECK — never counted, never adjudicated — while a real wander still is.
+// The pinned envelope itself is untouched. Absent, SCOPE/FIX_SCOPE text is byte-identical (the paid
+// fixtures carry no scopeAllow, so an unconditional clause would silently change every brief).
+test('k3 scopeAllow: matching files are never growth; non-matching still are; absent -> byte-identical scope text', async () => {
+  const setup = () => makeAgent([
+    { match: /^plan:a$/, result: () => ({ approach: 'x', files: ['src/a.js'], testPlan: 'x', feasible: true }) },
+    { match: /^verify:a/, result: (() => { let n = 0; return () => ({ ...(n++ === 0 ? VERIFY_FAIL() : VERIFY_OK),
+      diffFiles: ['src/a.js', 'docs/evidence/a/shot.png', 'src/a.test.js', 'src/wandered.js'] }) })() },
+  ])
+  const allow = ['docs/evidence/**', '**/*.test.*']
+
+  const { fn, calls } = setup()
+  const state = await runWave(fn, makePlan([unit('a')], [], { scopeAllow: allow }), makeState())
+  const d = state.degradations.find((x) => x.kind === 'scope-growth')
+  assert.ok(d, 'the non-matching wander is still a recorded signal')
+  assert.ok(d.what.includes('1 file(s)') && d.what.includes('src/wandered.js'), 'and only that file is counted')
+  assert.ok(!d.what.includes('shot.png') && !d.what.includes('a.test.js'), 'allowed files are not growth')
+  const gate = promptOf(calls, 'opus-gate:a#0')
+  const clause = gate.match(/This diff touches .*?outside the unit's pinned scope: .*?\. Adjudicate/)?.[0] ?? ''
+  assert.ok(clause.includes("1 file(s) outside the unit's pinned scope: src/wandered.js."), 'the gate clause carries only the wander')
+  assert.ok(!clause.includes('shot.png') && !clause.includes('a.test.js'), 'and never the allowed files')
+  const { brief } = schemaAndBriefOf(promptOf(calls, 'codex-build:a'))
+  assert.ok(brief.includes('In scope: src/a.js, plus by repo convention any file matching: docs/evidence/**, **/*.test.*, plus any file'),
+    'the implementer is told the convention globs are in scope beside the pinned files')
+  const { brief: fix } = schemaAndBriefOf(promptOf(calls, 'codex-fix:a#0'))
+  assert.ok(fix.includes('The files you may touch are: src/a.js, plus by repo convention any file matching: docs/evidence/**, **/*.test.*, plus any file named'),
+    'FIX_SCOPE carries the same convention clause')
+
+  const { fn: fn2, calls: calls2 } = setup()
+  const state2 = await runWave(fn2, makePlan([unit('a')]), makeState())
+  const d2 = state2.degradations.find((x) => x.kind === 'scope-growth')
+  assert.ok(d2.what.includes('3 file(s)'), 'without scopeAllow, all three are growth')
+  const { brief: brief2 } = schemaAndBriefOf(promptOf(calls2, 'codex-build:a'))
+  assert.ok(brief2.includes("In scope: src/a.js, plus any file you must"), 'no scopeAllow -> no convention clause')
+  assert.ok(!brief2.includes('repo convention'), 'byte-identical: the clause is absent, not empty-listed')
+  const { brief: fix2 } = schemaAndBriefOf(promptOf(calls2, 'codex-fix:a#0'))
+  assert.ok(fix2.includes('The files you may touch are: src/a.js, plus any file named'), 'and FIX_SCOPE is unchanged too')
 })
 
 // The directive cap is a cap on REPORTING, never on reading: overflow past C.maxBlockingFindings

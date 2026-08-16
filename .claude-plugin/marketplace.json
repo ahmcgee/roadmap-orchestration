@@ -1,7 +1,7 @@
 {
   "name": "roadmap-orchestration",
   "description": "Autonomous roadmap execution for Claude Code: decompose a roadmap into units, build each in an isolated worktree with frontier architect gates, integrate serially, deliver one merge-ready branch.",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "owner": {
     "name": "Aaron McGee",
     "url": "https://github.com/ahmcgee"
@@ -10,7 +10,7 @@
     {
       "name": "roadmap-orchestrator",
       "description": "Execute a slice of a product roadmap autonomously \u2014 decompose into independently verifiable units, build each in an isolated git worktree via the Codex CLI under Claude architect gates and steering, integrate serially, deliver one merge-ready branch. Requires an authenticated `codex` CLI. Invoke as /roadmap-orchestrator:orchestrate.",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "source": "./plugins/roadmap-orchestrator",
       "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme"
     }
