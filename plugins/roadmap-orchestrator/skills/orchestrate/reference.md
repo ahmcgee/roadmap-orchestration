@@ -227,10 +227,12 @@ Fields the scripts add:
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
   checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
-  write heals it (a payload over ~24 KB is split on line boundaries and fanned out — one Haiku
-  writer per `<file>.partK` via a quoted here-doc, each byte-checked, then one assembler that `cat`s
-  the parts and checks the total; a lost part skips assembly, so the entry names the part and the
-  previous file stays intact). A `preview-failed` entry means the mirror never came up — the entry
+  write heals it. Every verbatim write goes through a single-quoted here-doc and is verified by
+  `cksum` (content hash + length, never a bare byte count — a byte count was gamed live); a payload
+  over ~24 KB is split on line boundaries and fanned out — one Haiku writer per `<file>.partK`, then
+  one assembler that `cat`s the parts, cksum-checks the whole, and `rm -f`s the parts; a lost part
+  or a mismatch skips assembly / leaves the parts, so the entry names the part and the previous file
+  stays intact. A `preview-failed` entry means the mirror never came up — the entry
   carries the porcelain diagnosis and exact operator guidance (carried-modification vs real local
   edits), and the boundary records owed explorer/design markers instead of silently no-opping.
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to

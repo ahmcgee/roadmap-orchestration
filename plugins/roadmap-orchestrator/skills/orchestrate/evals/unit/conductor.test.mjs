@@ -30,7 +30,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, assertAllModelsPinned } from './fakes.mjs'
+import { makeAgent, makeWorkflow, assertAllModelsPinned, assertCksumVerified } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -956,12 +956,33 @@ test('persist-state of a large state fans out to part writers + one assembler, S
     assert.ok(c.prompt.startsWith('Start by `cd`'), `${c.label} carries the STRICT location discipline`)
     assert.equal(c.model, 'haiku')
   }
-  writers.forEach((w, k) => {
-    assert.ok(w.prompt.includes(`cat > /repo/.roadmap/state.json.part${k + 1} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
+  const bodies = writers.map((w, k) => {
+    const file = `/repo/.roadmap/state.json.part${k + 1}`
+    assert.ok(w.prompt.includes(`cat > ${file} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
     assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
+    const marker = `<<<PART ${k + 1}/${writers.length}>>>\n`
+    const body = w.prompt.slice(w.prompt.indexOf(marker) + marker.length)
+    assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)
+    return body
   })
   assert.ok(asm[0].prompt.includes(`cat ${writers.map((_, k) => `/repo/.roadmap/state.json.part${k + 1}`).join(' ')} > /repo/.roadmap/state.json`),
     'the assembler cats the parts in order')
+  assertCksumVerified(asm[0].prompt, '/repo/.roadmap/state.json', `${bodies.join('\n')}\n`, 'the assembler')
+  assert.ok(asm[0].prompt.includes('On success run `rm -f /repo/.roadmap/state.json.part*`'), 'the assembler clears parts by glob')
+})
+
+test('persist-state of a small state: one STRICT-prefixed here-doc writer, cksum-verified', async () => {
+  const { agent } = await conduct()
+  const ps = labeled(agent.calls, /^persist-state:w1$/)
+  assert.equal(ps.length, 1, 'one single writer, no fan-out')
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:/), 'no part writers or assembler')
+  const p = ps[0].prompt
+  assert.ok(p.startsWith('Start by `cd`'), 'STRICT-prefixed')
+  assert.ok(p.includes(`cat > /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'written through a quoted here-doc')
+  const marker = '<<<DOCUMENT>>>\n'
+  const body = p.slice(p.indexOf(marker) + marker.length)
+  JSON.parse(body)
+  assertCksumVerified(p, '/repo/.roadmap/state.json', `${body}\n`, 'the persist-state writer')
 })
 
 test('persist-state: a failed part writer skips the assembler and ledgers write-failed naming the part', async () => {

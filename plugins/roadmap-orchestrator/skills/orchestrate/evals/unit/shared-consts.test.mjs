@@ -10,8 +10,9 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) WRITE_CHUNK + writeVerbatim + runVerbatim — byte-identical value and byte-identical
-//                      function source (the split AND the fan-out that executes it)
+//   (b) WRITE_CHUNK + CK_TABLE + cksumOf + writeVerbatim + runVerbatim — byte-identical value and
+//                      byte-identical source (the in-script cksum, the split AND the fan-out that
+//                      executes it)
 //   (c) TERSE        — same FIRST SENTENCE only (the tails legitimately diverge: the harness copy
 //                      adds a findings-specific clause that has no analogue in the conductor)
 //
@@ -137,11 +138,32 @@ test('WRITE_CHUNK is the same threshold in both scripts', () => {
   assert.ok(h > 1000 && h < 32000, 'WRITE_CHUNK sits below the ~32k output-token response cap')
 })
 
+// The in-script POSIX cksum. `CK_TABLE` is an IIFE (`const CK_TABLE = (() => {` … `})()`), so it
+// is sliced by its own anchors rather than fnSource; cksumOf is a plain arrow and uses fnSource.
+function ckTableSource(file) {
+  const lines = SRC[file].split('\n')
+  const start = lines.findIndex((l) => l === 'const CK_TABLE = (() => {')
+  assert.notEqual(start, -1, `no \`const CK_TABLE = (() => {\` in ${file}`)
+  const end = lines.findIndex((l, i) => i > start && l === '})()')
+  assert.notEqual(end, -1, `no closing \`})()\` for CK_TABLE in ${file}`)
+  return lines.slice(start, end + 1).join('\n')
+}
+
+test('cksumOf (the in-script POSIX cksum) has byte-identical source in both scripts', () => {
+  const [ht, ct] = FILES.map(ckTableSource)
+  assertInSync('The CK_TABLE CRC table', ht, ct)
+  const [h, c] = FILES.map((f) => fnSource(f, 'cksumOf', '(s)'))
+  assert.ok(h.includes('0x04C11DB7') || ht.includes('0x04C11DB7'), 'the POSIX cksum polynomial')
+  assert.ok(h.includes('return { crc: (~crc) >>> 0, bytes }'), 'returns the crc/bytes pair the writer prompts quote')
+  assertInSync('The cksumOf function source', h, c)
+})
+
 test('writeVerbatim has byte-identical source in both scripts', () => {
   const [h, c] = FILES.map((f) => fnSource(f, 'writeVerbatim', "(path, text, extra = '')"))
   assert.ok(h.includes('<<<PART'), 'the chunked branch is present')
-  assert.ok(h.includes('Overwrite the file ${path} with exactly this JSON and nothing else${extra}'),
-    'the sub-threshold branch is still byte-identical to the legacy single-write form')
+  assert.ok(h.includes('<<<DOCUMENT>>>'), 'the sub-threshold branch hands one writer the whole document')
+  assert.ok(h.includes('cksum < ${file}'), 'every writer verifies by cksum')
+  assert.ok(!h.includes('wc -c'), 'no writer verifies by byte count (gamed live)')
   // Comments included, deliberately: they are part of what the two copies must keep in sync, and a
   // reader who updates one rationale without the other has already half-forked the function.
   assertInSync('The writeVerbatim function source (comments included)', h, c)
@@ -181,6 +203,6 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK'])
+    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK', 'CK_TABLE', 'cksumOf'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

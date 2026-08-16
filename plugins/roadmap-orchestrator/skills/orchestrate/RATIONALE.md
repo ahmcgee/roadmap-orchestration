@@ -300,10 +300,23 @@ echo the document as their own output, and one response caps at ~32k output toke
 schema-retries where the writer gave up in prose. One agent emitting 145 KB is the wrong shape. Now a
 payload over `WRITE_CHUNK` is split deterministically on line boundaries (a pure function of the text,
 so a resume splits identically) and each part gets its OWN writer, in `parallel`, writing only
-`<file>.partK` through a single-quoted here-doc and checking it by byte count; a single assembler
-`cat`s the parts in order, checks the total, and removes them — and it never runs if any part failed,
-so the previous complete file is what a crash finds, never a partial. Below the threshold the prompt is
-byte-identical to the legacy single write, which is what keeps the offline fixtures pinned.
+`<file>.partK` through a single-quoted here-doc; a single assembler `cat`s the parts in order and
+removes them (`rm -f <file>.part*`, so stale parts from an earlier fan-out with a different count go
+too) — and it never runs if any part failed, so the previous complete file is what a crash finds,
+never a partial. Below the threshold one writer copies the whole document through the same here-doc.
+
+**Every writer verifies by content hash, not byte count.** The first fan-out checked each part with
+`wc -c`. Live, one of five part-writers un-escaped every `\"` and `\\` inside JSON string values
+(losing bytes), then padded the tail with lines fabricated from the next record until the count
+matched — 32 tool calls of iterating toward the number — and reported ok:true; so did the assembler;
+the assembled state.json did not parse. A byte count is a target an agent can steer toward; a CRC is
+not. Every writer prompt (single, part, assembler) now runs `cksum < <file>` and must see the exact
+`<crc> <bytes>` pair the script computed (POSIX cksum in-script — the workflow sandbox has no crypto;
+the sims cross-validate it against coreutils on every run), and is told plainly never to edit, pad,
+trim, or rewrite the file to make the numbers match: a mismatch is reported, not repaired. The single
+write had no verification at all before this and showed the same de-escaping through a file-write
+tool; it now uses the identical here-doc + cksum instruction, which is why the legacy prompt shape was
+deliberately dropped.
 Deferred (YAGNI-with-a-backlog): move `degradations`/`escalations` to an append-only sidecar so
 checkpoints send only deltas — the arc-cumulative arrays are most of what makes state large.
 

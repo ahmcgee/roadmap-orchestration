@@ -777,20 +777,71 @@ const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 
 // Verbatim-write prompts for a large JSON payload. A single write's content is echoed as agent
 // OUTPUT, and one response caps at ~32k output tokens (arc-observed: a 54-unit arc's state killed
-// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK the prompt is byte-identical to
-// the legacy single-write form; above it, the payload is split deterministically (a pure function
-// of the text — resumeFromRunId-safe) and FANNED OUT: one Haiku writer per part, each writing only
-// its own `<path>.partK` through a single-quoted here-doc and checking it by byte count, then one
-// assembler that `cat`s the parts together, checks the total, and removes them (runVerbatim below).
-// Arc-observed, twice: a single writer told to stage 3–6 parts itself (75–145 KB of output) failed
-// ~28 checkpoints in two waves — "cannot complete within token budget" — and gave up in prose on 5
-// more; before that, its append step mangled JSON escapes and nothing verified the file. One agent
-// emitting 145 KB is the wrong shape; one agent per ~24 KB part is not. Mirrored in conductor.mjs —
-// keep the two in sync (shared-consts.test.mjs enforces it).
+// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK one Haiku writer copies the whole
+// document through a single-quoted here-doc; above it, the payload is split deterministically (a
+// pure function of the text — resumeFromRunId-safe) and FANNED OUT: one Haiku writer per part, each
+// writing only its own `<path>.partK`, then one assembler that `cat`s the parts together and
+// removes them (runVerbatim below). EVERY writer verifies its file with `cksum` (content hash +
+// length, computed in-script by cksumOf), not a byte count: byte count was gamed live — a part
+// writer un-escaped JSON string values, padded the tail with fabricated lines until `wc -c`
+// matched, and reported ok:true; the assembled state.json did not parse. The single-write path had
+// no verification at all and showed the same de-escaping. Arc-observed before that, twice: a single
+// writer told to stage 3–6 parts itself (75–145 KB of output) failed ~28 checkpoints in two waves —
+// "cannot complete within token budget" — and gave up in prose on 5 more. One agent emitting 145 KB
+// is the wrong shape; one agent per ~24 KB part is not. Mirrored in conductor.mjs — keep the two in
+// sync (shared-consts.test.mjs enforces it, cksumOf included).
 const WRITE_CHUNK = 24000
+// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
+// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
+const CK_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i << 24
+    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
+    t[i] = c >>> 0
+  }
+  return t
+})()
+const cksumOf = (s) => {
+  let crc = 0, len = 0
+  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
+  for (const ch of s) {
+    const c = ch.codePointAt(0)
+    if (c < 0x80) feed(c)
+    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
+    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+  }
+  const bytes = len
+  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
+  return { crc: (~crc) >>> 0, bytes }
+}
 const writeVerbatim = (path, text, extra = '') => {
-  if (text.length <= WRITE_CHUNK)
-    return { single: `Overwrite the file ${path} with exactly this JSON and nothing else${extra}:\n${text}` }
+  // Every writer (single, part, assembler) verifies its file by CONTENT HASH — `cksum` (POSIX,
+  // coreutils, present in every sandbox) prints `<crc> <bytes>` for stdin — computed here by
+  // cksumOf. Byte count alone was gamed live: a part-writer un-escaped `\"`/`\\` inside string
+  // values (losing bytes) and then PADDED the tail with lines copied from the next record until
+  // the count matched, reporting ok:true; the assembled state.json did not parse. A CRC cannot be
+  // iterated toward, so the writer's only honest move on a mismatch is to report it.
+  const check = (file, ck) => `Then verify: \`cksum < ${file}\` must print exactly \`${ck.crc} ${ck.bytes}\`; if it ` +
+    `prints anything else, report ok:false with the observed output in detail. NEVER edit, pad, trim, or rewrite the ` +
+    `file to make the numbers match — a mismatch is reported, not repaired (padding to hit the count once produced an ` +
+    `unparseable state.json). Retry the write at most once.`
+  // Shared body of the copy instruction: a quoted here-doc in ONE Bash call, because a file-write
+  // tool re-interprets escapes (arc-observed: `\"` → `"` inside JSON string values).
+  const copy = (file, what) => `never repair, reformat, re-indent, or re-escape anything (escape sequences such as \\n ` +
+    `and \\" inside JSON string values are literal characters to copy, not instructions). Write it in ONE Bash tool ` +
+    `call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit ` +
+    `tool (a file-write tool re-interprets escapes): run \`cat > ${file} <<'ROADMAP_PART'\` followed by ${what} ` +
+    `and a closing \`ROADMAP_PART\` line.`
+  if (text.length <= WRITE_CHUNK) {
+    const ck = cksumOf(`${text}\n`)   // the here-doc leaves one trailing newline
+    return {
+      single: `Write the file ${path} so its content is EXACTLY the JSON document below, and nothing else${extra} — ` +
+        `${copy(path, "the document's lines")} The document is every line after the <<<DOCUMENT>>> marker line to the ` +
+        `end of this message, excluding the marker line. ${check(path, ck)}\n<<<DOCUMENT>>>\n${text}`,
+    }
+  }
   // Split on line boundaries so a part is an exact run of whole lines (pretty-printed JSON keeps
   // every line far below the chunk size — free-text caps bound the longest value). Every part file
   // ends in the newline its here-doc leaves, so a plain `cat` of the part files, in order, IS the
@@ -802,35 +853,24 @@ const writeVerbatim = (path, text, extra = '') => {
     else cur = cur ? `${cur}\n${line}` : line
   }
   if (cur) parts.push(cur)
-  // Expected on-disk size of a part file: its UTF-8 bytes plus the here-doc's trailing newline.
-  // Hand-counted (no Buffer/TextEncoder in the workflow sandbox).
-  const bytesOf = (s) => {
-    let b = 1
-    for (const ch of s) { const c = ch.codePointAt(0); b += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
-    return b
-  }
   const n = parts.length
   const partPath = (k) => `${path}.part${k}`
-  const sizes = parts.map(bytesOf)
+  const cks = parts.map((p) => cksumOf(`${p}\n`))   // each part file: its text + the here-doc's newline
+  const whole = cksumOf(`${text}\n`)                // the cat of the parts, in order
   return {
     parts: parts.map((p, i) => ({
       k: i + 1,
       prompt: `Write the file ${partPath(i + 1)} so its content is EXACTLY part ${i + 1} of ${n} below, and nothing ` +
-        `else${extra}. The part is a mechanical slice of one JSON document on line boundaries — never repair, reformat, ` +
-        `re-indent, or re-escape anything (escape sequences such as \\n and \\" inside JSON string values are literal ` +
-        `characters to copy, not instructions). Write it in ONE Bash tool call through a single-quoted here-doc so the ` +
-        `shell interprets nothing — never echo, printf, or a file-write/edit tool: run \`cat > ${partPath(i + 1)} ` +
-        `<<'ROADMAP_PART'\` followed by the part's lines and a closing \`ROADMAP_PART\` line. The part's content is every ` +
-        `line after the <<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line ` +
-        `itself. Then verify: \`wc -c < ${partPath(i + 1)}\` must print exactly ${sizes[i]}; if it prints anything else, ` +
-        `report ok:false with the observed count in detail.\n<<<PART ${i + 1}/${n}>>>\n${p}`,
+        `else${extra}. It is a mechanical slice of one JSON document on line boundaries — ` +
+        `${copy(partPath(i + 1), "the part's lines")} The part's content is every line after the ` +
+        `<<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line. ` +
+        `${check(partPath(i + 1), cks[i])}\n<<<PART ${i + 1}/${n}>>>\n${p}`,
     })),
-    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and byte-verified${extra}: ` +
+    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and cksum-verified${extra}: ` +
       `run \`cat ${parts.map((_, i) => partPath(i + 1)).join(' ')} > ${path}\` in exactly that order — never open, ` +
-      `edit, or reformat any of them. Then verify: \`wc -c < ${path}\` must print exactly ` +
-      `${sizes.reduce((a, b) => a + b, 0)}; if it prints anything else, report ok:false with the observed count in ` +
-      `detail and leave the part files in place. On success run \`rm ${parts.map((_, i) => partPath(i + 1)).join(' ')}\` ` +
-      `and report ok:true.`,
+      `edit, or reformat any of them. ${check(path, whole)} On a mismatch leave the part files in place. On success ` +
+      `run \`rm -f ${path}.part*\` (the glob also clears stale parts left by an earlier fan-out with a different ` +
+      `part count) and report ok:true.`,
   }
 }
 // Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
