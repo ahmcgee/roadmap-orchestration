@@ -385,7 +385,7 @@ test('i2 the brief carries the guardrails that must survive a half-read: scope, 
 })
 
 // =========================================================================================
-// Cross-model spec critique. A short read-only `codex exec` interrogates the spec + plan from the
+// Cross-model spec critique. A short read-only-by-brief `codex exec` interrogates the spec + plan from the
 // OTHER model family's perspective BEFORE the plan-check adjudicates — GPT and Claude miss
 // different things, and the pre-dispatch gate is the highest-leverage judgment point in this lane.
 // The plan-check gets the questions as INPUT, never as verdicts, and the pass gates nothing.
@@ -401,7 +401,23 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   const review = calls.find((c) => c.label === 'codex-spec-review:a')
   assert.ok(review, 'the critique fires on a fresh build whose risk is in planCheckRisk')
   assert.equal(review.model, 'haiku', 'it is steered at codexSteerModel like every other codex step')
-  assert.ok(review.prompt.includes('-s read-only'), 'the critique run changes nothing — read-only sandbox')
+  // Sandbox: NOT `-s read-only` — that needs the bwrap namespace this devcontainer cannot build
+  // (arc-observed EPERM while reading the spec). It runs under C.codexSandbox like the build lane;
+  // "change nothing" is carried by the brief text.
+  assert.ok(review.prompt.includes('-s danger-full-access'), 'the critique honours codexSandbox like the build lane')
+  assert.ok(!review.prompt.includes('-s read-only'), 'and never hardcodes the read-only sandbox')
+  assert.ok(review.prompt.includes('change nothing'), 'read-only intent lives in the brief')
+  // Location: STRICT makes the steerer cd to the first path named; that must be the unit worktree,
+  // and the __codex artifact dir must be marked as scratch (arc-observed: Haiku cd'd to wtRoot and
+  // refused because it "is not a git repository").
+  const cdIdx = review.prompt.indexOf('Your cd target is the unit worktree')
+  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/a/spec-review'),
+    'the worktree is named as the cd target before the artifact dir')
+  assert.ok(/scratch artifact directory, NOT a git checkout/.test(review.prompt), 'the artifact dir is marked scratch')
+  // Schema hard-cut: an entry truncated at the 300-char cap is a valid entry (arc-observed: Haiku
+  // reported ok:false and the critique was thrown away).
+  assert.ok(/cut off mid-sentence at its 300-character cap is still a valid entry/.test(review.prompt) &&
+    /truncation is never a failure/.test(review.prompt), 'a hard-cut entry is copied through, not failed')
 
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check.includes('A second engineer from a different model family'),

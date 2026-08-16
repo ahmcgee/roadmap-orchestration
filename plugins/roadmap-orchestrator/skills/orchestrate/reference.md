@@ -407,8 +407,9 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   clauses that contradict a referenced contract or documented codebase reality, stale premises —
   **plus the frontier-only grounds**: overengineering and complexity that does not earn its keep,
   structure that makes the next change harder, missed reuse or a simpler shape, doors quietly
-  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, read-only codex, best-effort)
-  runs first; its questions/risks feed the plan-check as adjudication input — cross-model
+  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort; read-only by brief
+  — "change nothing" — not by sandbox: it runs under `codexSandbox` like the build lane, because
+  `-s read-only` needs the bwrap namespace the devcontainer cannot build) runs first; its questions/risks feed the plan-check as adjudication input — cross-model
   disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
   unit** (plus infeasible plans and `planCheck:'always-fable'`); only low-risk units ride
   **Opus-first** (`approve`/`redirect`/`escalate`; Opus may not quarantine — kill decisions are
