@@ -92,8 +92,9 @@ const DEFAULTS = [
   [(l) => l === 'preview-setup', (b) => ({ ok: true, sha: b })],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
   [(l) => l === 'checkpoint', () => ({ ok: true })],
-  // Large-payload fan-out: `<label>:partK` writers + `<label>:assemble` (harness checkpoint and the
-  // conductor's persist-state/persist-plan alike; the conductor labels are matched by prefix).
+  // Large-payload fan-out: `<label>:partK` writers, their one-shot `<label>:partK#retry` re-runs,
+  // and `<label>:assemble` (harness checkpoint and the conductor's persist-state/persist-plan
+  // alike; the conductor labels are matched by prefix in conductor.test.mjs's rules()).
   [(l) => l.startsWith('checkpoint:part') || l === 'checkpoint:assemble', () => ({ ok: true })],
   [(l) => l === 'skill-feedback', () => ({ ok: true })],   // conductor's degradation-region writer
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],

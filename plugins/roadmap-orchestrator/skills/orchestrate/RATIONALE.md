@@ -303,7 +303,11 @@ so a resume splits identically) and each part gets its OWN writer, in `parallel`
 `<file>.partK` through a single-quoted here-doc; a single assembler `cat`s the parts in order and
 removes them (`rm -f <file>.part*`, so stale parts from an earlier fan-out with a different count go
 too) — and it never runs if any part failed, so the previous complete file is what a crash finds,
-never a partial. Below the threshold one writer copies the whole document through the same here-doc.
+never a partial. A part that fails is re-run once by a fresh agent before that verdict — a
+mis-transcription is per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed,
+caught by cksum; a fresh sample of the same part succeeded), so with five parts a checkpoint that
+died on any first-try loss died far too often; the assembler is never retried, a bad `cat` is not
+stochastic. Below the threshold one writer copies the whole document through the same here-doc.
 
 **Every writer verifies by content hash, not byte count.** The first fan-out checked each part with
 `wc -c`. Live, one of five part-writers un-escaped every `\"` and `\\` inside JSON string values

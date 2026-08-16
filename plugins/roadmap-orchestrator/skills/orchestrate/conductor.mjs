@@ -296,9 +296,14 @@ const writeVerbatim = (path, text, extra = '') => {
 // Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
 // in `parallel` (each echoes ~WRITE_CHUNK of output — the shape that fits one response), then ONE
 // assembler, dispatched only when every part landed: a failed part means no assembly, so the file on
-// disk stays the previous complete document rather than becoming a partial. `prefix` is prepended to
-// every prompt (the conductor's STRICT). Resolves { ok, detail } and never throws — `detail` names
-// the failing part(s) or the assembler, with each agent's own reason. Mirrored in both scripts.
+// disk stays the previous complete document rather than becoming a partial. A part that fails is
+// re-run ONCE, by a fresh agent (`<label>:partK#retry`), before that verdict: a mis-transcription is
+// per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed, caught by cksum;
+// a fresh sample of the same part succeeded), and with five parts a checkpoint that dies on any one
+// first-try loss dies far too often. The assembler is never retried — a bad `cat` is not
+// stochastic. `prefix` is prepended to every prompt (the conductor's STRICT). Resolves { ok, detail }
+// and never throws — `detail` names the part(s) that failed BOTH attempts (with the retry's reason)
+// or the assembler. Mirrored in both scripts.
 const runVerbatim = async (plan, opts, prefix = '') => {
   const call = (prompt, label) => run(prefix + prompt, { ...opts, label })
     .then((r) => (r?.ok ? { ok: true }   // covers agent-died-null and an explicit ok:false alike
@@ -306,8 +311,10 @@ const runVerbatim = async (plan, opts, prefix = '') => {
     .catch((e) => ({ ok: false, detail: String(e?.message ?? e).slice(0, 200) }))
   if (plan.single) return call(plan.single, opts.label)
   const results = await parallel(plan.parts.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}`)))
-  const failed = plan.parts
-    .map((p, i) => (results[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${results[i]?.detail ?? 'writer died'}`))
+  const lost = plan.parts.filter((_, i) => !results[i]?.ok)
+  const retried = await parallel(lost.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}#retry`)))
+  const failed = lost
+    .map((p, i) => (retried[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${retried[i]?.detail ?? 'writer died'}`))
     .filter(Boolean)
   if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
   const a = await call(plan.assemble, `${opts.label}:assemble`)

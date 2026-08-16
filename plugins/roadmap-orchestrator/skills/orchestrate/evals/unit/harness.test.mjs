@@ -533,16 +533,56 @@ test('13b large-state checkpoint: fan-out — one bounded writer per part, assem
   assert.deepEqual(reassembled, ret, 'the parts reassemble to the returned state')
 })
 
-test('13e a failed part writer: no assembler, write-failed names the part, wave unblocked', async () => {
-  const { fn, calls } = makeAgent([{ match: /^checkpoint:part2$/, result: { ok: false, detail: 'wc printed 24071' } }])
+test('13e a part lost twice: retried once by a fresh agent, no assembler, write-failed names it', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^checkpoint:part2$/, result: { ok: false, detail: 'wc printed 24071' } },
+    { match: /^checkpoint:part2#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
+  ])
   const state = await runWave(fn, makePlan([unit('a')]), bigState())
   assert.equal(state.units.a.status, 'merged', 'the wave completes despite the failed write')
   assert.ok(calls.some((c) => c.label === 'checkpoint:part1'), 'the fan-out fired')
+  // Every checkpoint of the wave loses part 2 (the rule is label-keyed): each one retries part 2
+  // exactly once and retries nothing else.
+  const retries = calls.filter((c) => c.label.endsWith('#retry'))
+  assert.ok(retries.length >= 1, 'the lost part is retried')
+  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried — never a part that landed')
+  assert.equal(retries.length, calls.filter((c) => c.label === 'checkpoint:part2').length, 'one retry per loss, never a second')
   assert.ok(!calls.some((c) => c.label === 'checkpoint:assemble'), 'a lost part means NO assembler — never a partial state.json')
   const d = state.degradations.filter((x) => x.label === 'checkpoint' && x.kind === 'write-failed')
   assert.ok(d.length >= 1, 'the loss is ledgered under the top-level label')
-  assert.match(d[0].what, /part 2\/\d+: wc printed 24071/, 'the degradation names the failed part and its reason')
+  assert.match(d[0].what, /part 2\/\d+: cksum printed 9 24071/, 'the degradation names the failed part with the RETRY\'s reason')
+  assert.ok(!d[0].what.includes('wc printed 24071'), 'the first attempt\'s reason is superseded by the retry\'s')
   assert.match(d[0].what, /assembly skipped, previous file left intact/, 'and says what that means on disk')
+})
+
+// A mis-transcription is per-sample stochastic (live: 2 of 16 part writes, a fresh sample of the same
+// part succeeded), so one lost part costs one more writer, not the whole checkpoint.
+test('13f a part lost once: the fresh-agent retry lands, the assembler runs, nothing is ledgered', async () => {
+  const { fn, calls } = makeAgent([{ match: /^checkpoint:part2$/, result: { ok: false, detail: 'cksum printed 9 24071' } }])
+  const state = await runWave(fn, makePlan([unit('a')]), bigState())
+  assert.equal(state.units.a.status, 'merged')
+  const retries = calls.filter((c) => c.label.endsWith('#retry'))
+  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried')
+  assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
+  // Same shape as 13b: the final checkpoint is the last run of `checkpoint:part*` calls (the retry
+  // among them, after every first-pass writer) closed by the assembler.
+  const asm = calls[calls.length - 1]
+  assert.equal(asm.label, 'checkpoint:assemble', 'the assembler runs once every part has landed')
+  let i = calls.length - 2
+  while (i >= 0 && calls[i].label.startsWith('checkpoint:part')) i--
+  const run = calls.slice(i + 1, calls.length - 1)
+  const writers = run.filter((c) => !c.label.endsWith('#retry'))
+  const n = writers.length
+  assert.deepEqual(run.map((w) => w.label),
+    [...Array.from({ length: n }, (_, k) => `checkpoint:part${k + 1}`), 'checkpoint:part2#retry'],
+    'first pass in order, then the single retry, then the assembler')
+  const p2 = writers.find((c) => c.label === 'checkpoint:part2')
+  assert.equal(run[run.length - 1].prompt, p2.prompt, 'the retry is handed the identical part prompt')
+  // Spend: the recovered checkpoint is n writers + 1 retry + 1 assembler, every call tallied. (13b's
+  // snapshot-relative arithmetic is not repeated here: an earlier checkpoint's retry+assembler can
+  // still be in flight when the final target is serialized, so its offset is timing-dependent.)
+  assert.equal(run.length + 1, n + 2, 'the fan-out costs n + 2 Haiku calls')
+  assert.equal(state.spend.haiku, calls.filter((c) => c.model === 'haiku').length, 'the retry is tallied like any writer')
 })
 
 // The single-write path is one Haiku writer copying the whole document through the SAME quoted

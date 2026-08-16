@@ -985,17 +985,44 @@ test('persist-state of a small state: one STRICT-prefixed here-doc writer, cksum
   assertCksumVerified(p, '/repo/.roadmap/state.json', `${body}\n`, 'the persist-state writer')
 })
 
-test('persist-state: a failed part writer skips the assembler and ledgers write-failed naming the part', async () => {
+test('persist-state: a part lost twice is retried once, then skips the assembler and ledgers write-failed', async () => {
   const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
     [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
   const { agent, result } = await conduct({
     state: mkState({ units }),
-    agentRules: [{ match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'wc printed 9' } }, ...rules()],
+    agentRules: [
+      { match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'wc printed 9' } },
+      { match: /^persist-state:w1:part1#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
+      ...rules(),
+    ],
   })
-  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:assemble$/), 'no assembler after a lost part')
+  const retries = labeled(agent.calls, /#retry$/)
+  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'the lost part is retried once, by a fresh agent, and nothing else is')
+  assert.ok(retries[0].prompt.startsWith('Start by `cd`'), 'the retry carries the STRICT prefix like every writer')
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:assemble$/), 'no assembler after a part lost twice')
   const d = result.degradations.find((x) => x.label === 'persist-state:w1' && x.kind === 'write-failed')
   assert.ok(d, 'the loss is ledgered under the top-level persist label')
-  assert.match(d.what, /part 1\/\d+: wc printed 9/, 'the failed part and its reason are named')
+  assert.match(d.what, /part 1\/\d+: cksum printed 9 24071/, 'the failed part is named with the retry\'s reason')
+  assert.ok(!d.what.includes('wc printed 9'), 'the first attempt\'s reason is superseded')
+})
+
+test('persist-state: a part lost once is recovered by its retry — assembler runs, nothing ledgered', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent, result } = await conduct({
+    state: mkState({ units }),
+    agentRules: [{ match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'cksum printed 9 24071' } }, ...rules()],
+  })
+  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
+  const retries = labeled(agent.calls, /#retry$/)
+  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
+  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'only the lost part is retried, once')
+  assert.equal(retries[0].prompt, writers[0].prompt, 'the retry is handed the identical part prompt')
+  assert.ok(retries[0].seq > Math.max(...writers.map((w) => w.seq)), 'the retry follows the first pass')
+  assert.equal(asm.length, 1, 'the assembler runs once the retry lands')
+  assert.ok(asm[0].seq > retries[0].seq, 'and follows the retry')
+  assert.ok(!result.degradations.some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
+  assert.equal(labeled(agent.calls, /^persist-state:w1/).length, writers.length + 2, 'spend: n writers + 1 retry + 1 assembler')
 })
 
 /* ============================================================================== */
