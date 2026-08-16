@@ -22,13 +22,32 @@ with an arc. **Cleared 2026-08-16 of everything predating the skill update of 20
   surviving commits — judged on merits, fine. `codex-exec` thread-store conflict on a gate-fix
   resume ("thread already has a…") — one resume collided with a live session; worth a retry rule.
 
-## Resolved (for the record — remove entries once shipped in a tagged release)
+**ADDRESSED 2026-08-16 v0.11.1**
 
-- **0.11.1 branch (`fix/skill-feedback-2026-08-16`)**: all three 2026-08-16 items — the
-  `prefixUniqueGlobs` merge check now diffs duplicate sets pre-merge tip (`HEAD^1`) vs merged tree
-  (grandfathered pairs never refuse; SKILL.md/reference.md say so); the chunked state.json writer
-  writes one single-quoted here-doc per part per Bash call and byte-count-verifies the file (an
-  `ok:false` now carries the observed count); a codex resume that dies at once on "thread already…"
-  waits 60s, retries the resume once, then falls back to a cold session on the same brief. Sim-pinned;
-  the paid fixtures were NOT re-run (none of the three paths fires in them — no globs, small state,
-  no resume collision).
+## 2026-08-16 (agent-competence arc, waves 2–3, observed after the v0.11.1 fixes) — triaged
+
+47 degradations, collapsed by cause. Raw dump dropped after triage.
+
+- **`write-failed` checkpoint ×28 + `schema-retry` on `checkpoint` ×5.** State grew to 3–6 parts
+  (~75–145 KB: escalations + degradations ride inside state.json) and the ONE Haiku writer reported
+  "cannot complete within token budget" / "cannot reliably reconstruct 5–6 parts", or gave up and
+  returned prose. The here-doc + byte-count fix makes the append mechanical but still asks one agent
+  to emit the whole document. Fix: fan the parts out — one writer per part to `state.json.partK`, an
+  assembler that `cat`s and byte-checks; a failed part never assembles. Deferred: sidecar ledger so
+  checkpoints send only deltas.
+- **`codex-spec-review` skipped ×4**, three causes: (a) the critique hardcodes `-s read-only` while
+  the build lane honours `codexSandbox` (danger-full-access, because bwrap can't build a namespace
+  here) → "bwrap namespace permission error"; (b) Codex hard-cut a risk at the 300-char schema cap and
+  the steerer called that ok:false; (c) ×2 the steerer `cd`'d to `wtRoot` (first path named is the
+  `__codex` scratch dir) and refused "not a git repository" though `-C ${w}` was passed.
+- **`scope-growth` ×7**, mostly noise: evidence screenshots (`docs/evidence/<unit>/*.png`), rehearsal
+  transcripts, test helpers/siblings — files the spec requires. Fix: `plan.scopeAllow` globs excluded
+  from `scopeGrew` so the two real cases (a unit reaching into 4 src files elsewhere) stay visible.
+- **`codex-exec` ×2 on `rehearsal-probes`** — build and build-retry both died before the first turn
+  with no exit-code file (the `sh -c` wrapper itself was killed). Not addressed: the steerer already
+  tails stderr into `notes`, and the following fix round succeeded — the existing path did the right
+  thing. Watch for recurrence.
+- `codex-timeout` ×3 with surviving commits (`web-message-bounds` on build AND gate-fix0 — a
+  unit-sizing signal for the architect), `codex-uncommitted` ×1 — working as designed.
+
+**ADDRESSED 2026-08-16 v0.12.0** (all but codex-exec, deliberately)
