@@ -497,6 +497,46 @@ test('k2 an in-envelope diff produces no growth signal and leaves the gate promp
   assert.ok(!promptOf(calls, 'opus-gate:a#0').includes('outside the unit'), 'and no clause at all in the gate prompt')
 })
 
+// plan.scopeAllow: files the repo's conventions put in every unit's scope (evidence, tests) are
+// excluded from the growth CHECK — never counted, never adjudicated — while a real wander still is.
+// The pinned envelope itself is untouched. Absent, SCOPE/FIX_SCOPE text is byte-identical (the paid
+// fixtures carry no scopeAllow, so an unconditional clause would silently change every brief).
+test('k3 scopeAllow: matching files are never growth; non-matching still are; absent -> byte-identical scope text', async () => {
+  const setup = () => makeAgent([
+    { match: /^plan:a$/, result: () => ({ approach: 'x', files: ['src/a.js'], testPlan: 'x', feasible: true }) },
+    { match: /^verify:a/, result: (() => { let n = 0; return () => ({ ...(n++ === 0 ? VERIFY_FAIL() : VERIFY_OK),
+      diffFiles: ['src/a.js', 'docs/evidence/a/shot.png', 'src/a.test.js', 'src/wandered.js'] }) })() },
+  ])
+  const allow = ['docs/evidence/**', '**/*.test.*']
+
+  const { fn, calls } = setup()
+  const state = await runWave(fn, makePlan([unit('a')], [], { scopeAllow: allow }), makeState())
+  const d = state.degradations.find((x) => x.kind === 'scope-growth')
+  assert.ok(d, 'the non-matching wander is still a recorded signal')
+  assert.ok(d.what.includes('1 file(s)') && d.what.includes('src/wandered.js'), 'and only that file is counted')
+  assert.ok(!d.what.includes('shot.png') && !d.what.includes('a.test.js'), 'allowed files are not growth')
+  const gate = promptOf(calls, 'opus-gate:a#0')
+  const clause = gate.match(/This diff touches .*?outside the unit's pinned scope: .*?\. Adjudicate/)?.[0] ?? ''
+  assert.ok(clause.includes("1 file(s) outside the unit's pinned scope: src/wandered.js."), 'the gate clause carries only the wander')
+  assert.ok(!clause.includes('shot.png') && !clause.includes('a.test.js'), 'and never the allowed files')
+  const { brief } = schemaAndBriefOf(promptOf(calls, 'codex-build:a'))
+  assert.ok(brief.includes('In scope: src/a.js, plus by repo convention any file matching: docs/evidence/**, **/*.test.*, plus any file'),
+    'the implementer is told the convention globs are in scope beside the pinned files')
+  const { brief: fix } = schemaAndBriefOf(promptOf(calls, 'codex-fix:a#0'))
+  assert.ok(fix.includes('The files you may touch are: src/a.js, plus by repo convention any file matching: docs/evidence/**, **/*.test.*, plus any file named'),
+    'FIX_SCOPE carries the same convention clause')
+
+  const { fn: fn2, calls: calls2 } = setup()
+  const state2 = await runWave(fn2, makePlan([unit('a')]), makeState())
+  const d2 = state2.degradations.find((x) => x.kind === 'scope-growth')
+  assert.ok(d2.what.includes('3 file(s)'), 'without scopeAllow, all three are growth')
+  const { brief: brief2 } = schemaAndBriefOf(promptOf(calls2, 'codex-build:a'))
+  assert.ok(brief2.includes("In scope: src/a.js, plus any file you must"), 'no scopeAllow -> no convention clause')
+  assert.ok(!brief2.includes('repo convention'), 'byte-identical: the clause is absent, not empty-listed')
+  const { brief: fix2 } = schemaAndBriefOf(promptOf(calls2, 'codex-fix:a#0'))
+  assert.ok(fix2.includes('The files you may touch are: src/a.js, plus any file named'), 'and FIX_SCOPE is unchanged too')
+})
+
 // The directive cap is a cap on REPORTING, never on reading: overflow past C.maxBlockingFindings
 // is BANKED as debt (the ledger invariant), not dropped. A dropped finding is exactly the silent
 // loss the debt ledger exists to prevent.

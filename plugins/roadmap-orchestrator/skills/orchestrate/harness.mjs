@@ -200,9 +200,24 @@ const DEBT_DISCIPLINE = 'Debt discipline: banking is the DEFAULT for anything ou
 // mechanism, not the membership rule: the spiral's first clause defined the eligible-fix set as
 // "files you are already touching", i.e. as a function of the diff the fix rounds themselves grow.
 // Do not "simplify" this back to the live diff.
+// `plan.scopeAllow` (optional globs — evidence dirs, test files, rehearsal transcripts) names files
+// the repo's conventions put in EVERY unit's scope: they are stated to the implementer alongside the
+// pinned files and never counted as scope growth, so `scope-growth` stays a real signal instead of
+// re-adjudicating the unit's own screenshots at every gate. Absent → the clause is '' and the
+// SCOPE/FIX_SCOPE text is byte-identical to before (the paid fixtures depend on that). This is an
+// exclusion from the growth CHECK, not a widening of the pinned envelope.
+const scopeAllow = plan.scopeAllow ?? []
+// Minimal glob → RegExp (no Node APIs here): `**/` = zero or more directories, `**` = anything,
+// `*` = any run without `/`. Matched against the diff's repo-relative paths.
+const globRe = (g) => new RegExp('^' + g.split('**/').map((part) => part.split('**').map((seg) =>
+  seg.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')).join('(?:.*/)?') + '$')
+const scopeAllowRes = scopeAllow.map(globRe)
+const scopeAllowed = (f) => scopeAllowRes.some((re) => re.test(f))
+const scopeAllowClause = scopeAllow.length
+  ? `, plus by repo convention any file matching: ${scopeAllow.join(', ')}` : ''
 const SCOPE = (files) =>
   `Scope is fixed before you start and does not grow as you work. In scope: ${
-    files?.length ? files.join(', ') : "the files this unit's diff already touches"}, plus any file you must ` +
+    files?.length ? files.join(', ') : "the files this unit's diff already touches"}${scopeAllowClause}, plus any file you must ` +
   `change to make an acceptance criterion pass — name each such extra file in \`notes\` with a one-line ` +
   `reason (\`notes\` is at most a short paragraph, max 2000 characters). Inside that scope, finish the job ` +
   `properly: wrong behaviour, a missing acceptance test, or a test that would still pass if the behaviour ` +
@@ -219,7 +234,7 @@ const SCOPE = (files) =>
 // directive-driven work, threaded into every prompt that hands findings/directives to a fixer.
 const FIX_SCOPE = (files) =>
   `Fix exactly what is listed above and nothing else. The files you may touch are: ${
-    files?.length ? files.join(', ') : "this unit's declared scope"}, plus any file named in the findings or ` +
+    files?.length ? files.join(', ') : "this unit's declared scope"}${scopeAllowClause}, plus any file named in the findings or ` +
   `directives you are addressing. Touching anything outside that set is a scope violation, not initiative — ` +
   `if a listed fix truly cannot be made without it, make the minimal necessary change and name the file and ` +
   `the reason in \`notes\` (at most a short paragraph, max 2000 characters). Do not refactor, rename, ` +
@@ -1798,7 +1813,7 @@ async function runUnit(unit) {
     if (!envelope && verify.diffFiles?.length) envelope = [...verify.diffFiles]
     else if (envelope && verify.diffFiles) {
       const env = new Set(envelope)
-      const grew = verify.diffFiles.filter((f) => !env.has(f))
+      const grew = verify.diffFiles.filter((f) => !env.has(f) && !scopeAllowed(f))   // scopeAllow: never growth
       if (grew.length && grew.join('\n') !== scopeGrew.join('\n'))
         degrade({ label: `verify:${unit.id}#${round}`, model: 'haiku', phase: 'Verify', kind: 'scope-growth',
           what: `unit ${unit.id}'s diff reaches ${grew.length} file(s) outside its pinned scope: ` +
