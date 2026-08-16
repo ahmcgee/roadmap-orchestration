@@ -1182,11 +1182,17 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   return { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
 }
 
-// Cross-model spec critique (best-effort, read-only): a short foreground `codex exec -s
-// read-only` interrogates the spec + plan from the OTHER model family's perspective before the
-// plan-check adjudicates. GPT and Claude miss different things; the plan-check gets the
-// questions as input, never as verdicts. Failure skips with a degradation — this pass gates
-// nothing.
+// Cross-model spec critique (best-effort, read-only by INTENT): a short foreground `codex exec`
+// interrogates the spec + plan from the OTHER model family's perspective before the plan-check
+// adjudicates. GPT and Claude miss different things; the plan-check gets the questions as
+// input, never as verdicts. Failure skips with a degradation — this pass gates nothing.
+// "Read-only" lives in the brief ("change nothing"), NOT in the sandbox flag: it runs under
+// C.codexSandbox exactly like the build lane, because `-s read-only` needs the same bwrap
+// namespace that fails in this devcontainer (arc-observed: the critique was skipped for a bwrap
+// EPERM while merely reading the spec). The steerer's Haiku is told two more things it
+// otherwise improvises wrongly on: the cd target is the unit worktree `w` (the artifact dir is
+// scratch, not a git checkout), and an entry the schema cut mid-sentence at its cap is a
+// valid entry, not a failure.
 const specCritique = async (unit, w, implPlan) => {
   const dir = codexDir(unit.id, 'spec-review')
   const critBrief =
@@ -1201,18 +1207,23 @@ const specCritique = async (unit, w, implPlan) => {
     `two sentences (max 500 characters).`
   const r = await withCodexSlot(() => runOr({ ok: false, questions: [] },
     STRICT +
-    `Run a short read-only Codex critique for unit ${unit.id}. 1) \`mkdir -p ${dir}\`; write ${dir}/brief.txt ` +
+    `Run a short Codex critique for unit ${unit.id}. Your cd target is the unit worktree ${w} (a git ` +
+    `checkout). ${dir} is a scratch artifact directory, NOT a git checkout — create it with mkdir -p and ` +
+    `never cd into it or judge it; Codex is pointed at the worktree by -C. ` +
+    `1) \`mkdir -p ${dir}\`; write ${dir}/brief.txt ` +
     `with EXACTLY the content between the <<<BRIEF>>> markers below (excluding the marker lines); write ` +
     `${dir}/schema.json with exactly this one-line JSON: ${CRITIQUE_OUT}\n` +
-    `2) Run, blocking: \`timeout 900 ${codexHome}codex exec -C ${w} -s read-only ` +
+    `2) Run, blocking: \`timeout 900 ${codexHome}codex exec -C ${w} -s ${C.codexSandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
     `-c projects."${w}".trust_level="trusted" --skip-git-repo-check --output-schema ${dir}/schema.json ` +
     `-o ${dir}/last-message.txt --json - < ${dir}/brief.txt > ${dir}/events.jsonl 2> ${dir}/stderr.log\`\n` +
     `3) Read ONLY \`head -c 4000 ${dir}/last-message.txt\` — never open ${dir}/events.jsonl or any transcript.\n` +
     `4) Report ok:true with \`questions\` (at most 8) and \`risks\` (at most 5) copied VERBATIM from the ` +
     `critique (each already one or two sentences, max 300 characters — never expand them), and \`notes\` one ` +
-    `or two sentences (max 500 characters) only if something needs saying. If the command failed or the ` +
-    `output is missing/unparseable, report ok:false with a one-sentence \`notes\` saying what happened. ` +
+    `or two sentences (max 500 characters) only if something needs saying. An entry the schema cut off ` +
+    `mid-sentence at its 300-character cap is still a valid entry: copy it through as-is and report ok:true ` +
+    `— truncation is never a failure. If the command failed or the output is missing/unparseable, report ` +
+    `ok:false with a one-sentence \`notes\` saying what happened. ` +
     `${TERSE}\n<<<BRIEF>>>\n${critBrief}\n<<<BRIEF>>>`,
     { model: C.codexSteerModel, effort: 'low', phase: 'Implement', label: `codex-spec-review:${unit.id}`, schema: S.specReview }))
   if (!r.ok)
@@ -1268,7 +1279,7 @@ const CODEX_BUDGETS =
   `characters); \`contractMismatch\` and \`specGap\` one or two sentences each (max 300 characters); each ` +
   `\`debt\` entry's \`what\` and \`why\` a sentence or two (max 400 characters each), at most 8 debt entries ` +
   `(consolidate related items); \`notes\` at most a short paragraph (max 2000 characters).`
-// What the read-only spec critique reports (strict mode, same P1 rule as CODEX_OUT).
+// What the spec critique reports (strict mode, same P1 rule as CODEX_OUT).
 const CRITIQUE_OUT = JSON.stringify(strictify(obj({
   questions: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 300 } },
   risks: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 300 } },
