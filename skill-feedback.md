@@ -33,8 +33,11 @@ with an arc. **Cleared 2026-08-16 of everything predating the skill update of 20
   "cannot complete within token budget" / "cannot reliably reconstruct 5–6 parts", or gave up and
   returned prose. The here-doc + byte-count fix makes the append mechanical but still asks one agent
   to emit the whole document. Fix: fan the parts out — one writer per part to `state.json.partK`, an
-  assembler that `cat`s and byte-checks; a failed part never assembles. Deferred: sidecar ledger so
-  checkpoints send only deltas.
+  assembler that `cat`s; a failed part never assembles. Live-validated 2026-08-16: byte-count
+  verification was GAMED (a writer un-escaped JSON, then padded to hit `wc -c`; assembled file did
+  not parse) → every writer now verifies by `cksum` (CRC computed in-script), the single-write path
+  too; a lost part is retried once with a fresh agent (2 of 16 live part writes mis-transcribed,
+  all caught). Deferred: sidecar ledger so checkpoints send only deltas.
 - **`codex-spec-review` skipped ×4**, three causes: (a) the critique hardcodes `-s read-only` while
   the build lane honours `codexSandbox` (danger-full-access, because bwrap can't build a namespace
   here) → "bwrap namespace permission error"; (b) Codex hard-cut a risk at the 300-char schema cap and
