@@ -293,6 +293,20 @@ Two mechanisms make rung 3 of the recovery ladder behave like a resume:
 So the loss bound is only the in-flight wave's *uncached* agent calls. Nothing is reimplemented; nothing
 is destroyed.
 
+**The checkpoint writer is a fan-out, not one transcriber.** `state.json` is written by Haiku agents that
+echo the document as their own output, and one response caps at ~32k output tokens. The first fix
+(a single writer told to stage the parts itself) failed the moment state reached 3–6 parts: ~28
+`write-failed` checkpoints across two waves — "cannot complete within token budget" — plus five
+schema-retries where the writer gave up in prose. One agent emitting 145 KB is the wrong shape. Now a
+payload over `WRITE_CHUNK` is split deterministically on line boundaries (a pure function of the text,
+so a resume splits identically) and each part gets its OWN writer, in `parallel`, writing only
+`<file>.partK` through a single-quoted here-doc and checking it by byte count; a single assembler
+`cat`s the parts in order, checks the total, and removes them — and it never runs if any part failed,
+so the previous complete file is what a crash finds, never a partial. Below the threshold the prompt is
+byte-identical to the legacy single write, which is what keeps the offline fixtures pinned.
+Deferred (YAGNI-with-a-backlog): move `degradations`/`escalations` to an append-only sidecar so
+checkpoints send only deltas — the arc-cumulative arrays are most of what makes state large.
+
 Two guards exist because they were each learned the hard way:
 
 - A branch with commits beyond its fork base that the passed state does not mark `running` is **refused,

@@ -939,6 +939,44 @@ test('a tier-1 continuation persists state with boundary removed and debt cleare
   assert.match(p, /"debt"\s*:\s*\[\s*\]/, 'consumed debt is persisted as an empty array')
 })
 
+// A large state fans out exactly as the harness checkpoint does (shared-consts pins the two
+// executors byte-identical; this pins the conductor actually ROUTING through it): one STRICT-
+// prefixed Haiku writer per `.partK`, then one assembler under the same top-level label.
+test('persist-state of a large state fans out to part writers + one assembler, STRICT-prefixed', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent } = await conduct({ state: mkState({ units }) })
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1$/), 'no single agent is handed the whole document')
+  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
+  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
+  assert.ok(writers.length >= 3, `several part writers (saw ${writers.length})`)
+  assert.equal(asm.length, 1, 'exactly one assembler')
+  assert.ok(asm[0].seq > Math.max(...writers.map((w) => w.seq)), 'the assembler is dispatched after every writer')
+  for (const c of [...writers, asm[0]]) {
+    assert.ok(c.prompt.startsWith('Start by `cd`'), `${c.label} carries the STRICT location discipline`)
+    assert.equal(c.model, 'haiku')
+  }
+  writers.forEach((w, k) => {
+    assert.ok(w.prompt.includes(`cat > /repo/.roadmap/state.json.part${k + 1} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
+    assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
+  })
+  assert.ok(asm[0].prompt.includes(`cat ${writers.map((_, k) => `/repo/.roadmap/state.json.part${k + 1}`).join(' ')} > /repo/.roadmap/state.json`),
+    'the assembler cats the parts in order')
+})
+
+test('persist-state: a failed part writer skips the assembler and ledgers write-failed naming the part', async () => {
+  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
+  const { agent, result } = await conduct({
+    state: mkState({ units }),
+    agentRules: [{ match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'wc printed 9' } }, ...rules()],
+  })
+  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:assemble$/), 'no assembler after a lost part')
+  const d = result.degradations.find((x) => x.label === 'persist-state:w1' && x.kind === 'write-failed')
+  assert.ok(d, 'the loss is ledgered under the top-level persist label')
+  assert.match(d.what, /part 1\/\d+: wc printed 9/, 'the failed part and its reason are named')
+})
+
 /* ============================================================================== */
 /* 15. Hygiene                                                                     */
 /* ============================================================================== */
