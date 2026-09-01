@@ -2,12 +2,13 @@ export const meta = {
   name: 'roadmap-conductor',
   description: 'Loop multiple roadmap waves in one run, routing each boundary through a tiered triage ladder',
   phases: [
+    { title: 'Launch', detail: 'verified plan/state pack read (Haiku)' },
     { title: 'Wave', detail: 'dispatch one wave via the harness workflow' },
     { title: 'Census', detail: 'feedback + quarantine folder census (Haiku)' },
     { title: 'Triage-opus', detail: 'tier-2 boundary triage (Opus)' },
     { title: 'Triage-fable', detail: 'tier-3 boundary agent + quarantine respec (Fable)' },
     { title: 'Spec-expand', detail: 'render new-unit skeletons to specs (Sonnet)' },
-    { title: 'Persist', detail: 'plan/debt/log/feedback/state writers (Haiku)' },
+    { title: 'Persist', detail: 'feedback archive + issue projection (Haiku)' },
   ],
 }
 
@@ -22,31 +23,222 @@ export const meta = {
  * leaf-only. Idioms are mirrored from harness.mjs deliberately:
  *   - defensive stringified-args parse (a stringified args object makes every
  *     destructured field undefined and agents improvise in their cwd);
+ *   - the LAUNCH-salted, cksum-verified launch pack read (below);
  *   - obj/arr/oneOf schema helpers, additionalProperties:false, maxLength caps,
  *     and a `notes` pressure-release on tight schemas;
- *   - the STRICT fail-loud location preamble for mechanical writers;
+ *   - the STRICT fail-loud location preamble for mechanical agents;
  *   - run(), a thin agent() wrapper that pins model+schema, tallies per-tier
  *     spend, and retries ONCE on a StructuredOutput validation failure;
  *   - deterministic prompts: pure functions of the wave number, unit ids, shas,
  *     and the JSON of in-memory structured data, so resumeFromRunId replays
  *     completed calls (both this script's and the child harness's) for free.
  *
- * Inputs: args = { plan, state, config, harnessPath }. The root MUST pass
- * `harnessPath` (absolute path to harness.mjs). `config` is the caller's raw
- * config and is threaded to the harness UNTOUCHED (the conductor never sets
- * boundary:'off' itself — ruling 1). Conductor knobs live under
- * plan.config.conductor / config.conductor; the harness ignores unknown keys.
+ * Inputs: args = { roadmapDir, launchId, config, harnessPath }. The root MUST
+ * pass `harnessPath` (absolute path to harness.mjs) and `roadmapDir` (absolute
+ * path to the arc's .roadmap directory). `config` is the caller's raw config and
+ * is threaded to the harness UNTOUCHED (the conductor never sets boundary:'off'
+ * itself — ruling 1). Conductor knobs live under plan.config.conductor /
+ * config.conductor; the harness ignores unknown keys.
+ *
+ * Outputs: this script writes NOTHING under .roadmap/. Every wave's state, the
+ * merged plan, the debt, the journal and both event ledgers ride home in the
+ * RETURN envelope, and `persist.mjs` — a real Node process replaying this run's
+ * journal at zero model cost — is what puts them on disk. The writes it replaces
+ * were the second-largest model cost in the system after the root's own wakes.
+ * See reference.md "Who writes `.roadmap/`".
  * ---------------------------------------------------------------------- */
 
 // args can arrive JSON-stringified depending on how the caller encoded them — tolerate both.
 const A = typeof args === 'string' ? JSON.parse(args) : args
-// `launchId` is a per-launch nonce the root regenerates on every launch AND every resume; it is
-// passed straight through to each wave so the harness can salt its ENVIRONMENT probes out of
-// resumeFromRunId's cache (harness.mjs, LAUNCH). The conductor never reads it — pure passthrough.
-const { plan: inPlan, state: inState, config: overrides, harnessPath, launchId } = A
-// harnessPath is not optional — the wave dispatch cannot resolve the child script without it.
+// `launchId` is a per-launch nonce the root regenerates on every launch AND every resume. It salts
+// this script's own launch pack read and is passed straight through to each wave so the harness can
+// salt its ENVIRONMENT probes out of resumeFromRunId's cache (harness.mjs, LAUNCH).
+const { roadmapDir, config: overrides, harnessPath, launchId } = A
+// Neither is optional: without harnessPath the wave dispatch cannot resolve the child script, and
+// without roadmapDir there is no pack to read.
 if (!harnessPath)
   throw new Error('conductor requires args.harnessPath (absolute path to harness.mjs) — the root must pass it')
+if (!roadmapDir)
+  throw new Error('conductor requires args.roadmapDir (absolute path to the arc\'s .roadmap directory) — the root must pass it')
+const LAUNCH = launchId
+  ? `\nProbe id ${launchId} — this line exists only to make this request unique; ignore it.`
+  : ''
+
+/* --------------------------- schema helpers ---------------------------- */
+// Declared here rather than beside the schemas: the launch pack's courier needs them before any
+// plan-dependent line has run.
+const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
+const arr = (t) => ({ type: 'array', items: { type: t } })
+const oneOf = (vals) => ({ type: 'string', enum: vals })
+const strArr = (maxItems, maxLength) => ({ type: 'array', maxItems, items: { type: 'string', maxLength } })
+
+/* ------------------------- courier vocabulary -------------------------- */
+// Location discipline for mechanical agents (copied from harness.mjs): given a bad path,
+// Haiku will improvise in its cwd and report plausible success — fail-loud beats adaptive.
+const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
+  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
+  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
+  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
+  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
+// EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
+// A cap is a contract with the model, and the prompt is the only place that contract is stated — a
+// capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
+// `notes` cap, no terseness clause, and a closing line inviting the agent to put overflow THERE. It
+// overran, exhausted its schema-retries, and died at two consecutive boundaries. See RATIONALE §9.
+const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
+  'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
+  'unexpected key is rejected as hard as an over-long one. '
+// The ONE canonical way to have a cheap agent run shell on this script's behalf: a CLOSED LIST of
+// exact commands whose verbatim output the SCRIPT judges, never a goal with destructive reach.
+// Mirrored from harness.mjs — see the long rationale there; keep the two in sync
+// (shared-consts.test.mjs enforces it).
+const COURIER_OUT = 1200
+const courierSchema = (n, outMax = COURIER_OUT) => obj({
+  ok: { type: 'boolean' },
+  results: { type: 'array', maxItems: n, items: obj({
+    command: { type: 'string', maxLength: 300 },
+    exitCode: { type: 'number' },
+    stdout: { type: 'string', maxLength: outMax },
+  }, ['command', 'exitCode', 'stdout']) },
+  detail: { type: 'string', maxLength: 300 },
+}, ['ok', 'results'])
+const courierPrompt = (where, commands, extra = '', outMax = COURIER_OUT) =>
+  STRICT +
+  `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
+  `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
+  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
+  `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
+  `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
+  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
+  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
+  `command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
+  `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
+  `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
+  `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
+  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+const courierShape = (r, commands) => {
+  const n = commands.length
+  const results = (Array.isArray(r?.results) ? r.results : []).slice(0, n)
+  const bad = results.findIndex((x) => x?.exitCode !== 0)
+  const raw = (i) => String(results[i]?.stdout ?? '')
+  const out = (i) => raw(i).trim()
+  const short = results.length < n
+  return {
+    ok: bad < 0 && !short,
+    results,
+    exit: (i) => (typeof results[i]?.exitCode === 'number' ? results[i].exitCode : null),
+    out,
+    raw,
+    detail: bad >= 0
+      ? `\`${commands[bad]}\` exited ${results[bad].exitCode} — ${out(bad).slice(0, 300) || '(no output)'}`
+      : short
+        ? `only ${results.length}/${n} commands reported — ${String(r?.detail ?? 'no reason given').slice(0, 200)}`
+        : String(r?.detail ?? ''),
+  }
+}
+
+/* --------------------------- the launch pack --------------------------- */
+// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
+// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
+// Mirrored in harness.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const CK_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i << 24
+    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
+    t[i] = c >>> 0
+  }
+  return t
+})()
+const cksumOf = (s) => {
+  let crc = 0, len = 0
+  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
+  for (const ch of s) {
+    const c = ch.codePointAt(0)
+    if (c < 0x80) feed(c)
+    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
+    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+  }
+  const bytes = len
+  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
+  return { crc: (~crc) >>> 0, bytes }
+}
+const READ_CHUNK = 24000
+const PACK_FILES = ['plan.json', 'state.json']
+const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
+  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
+  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
+  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
+  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
+  '`detail` — a truncated copy is worse than no copy. '
+// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
+// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
+// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
+// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+const readPackFile = async (path, ranges, label, extra) => {
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+  const r = courierShape(
+    await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
+      { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
+      .catch(() => null),
+    cmds)
+  const bytes = Number(r.out(1)) || 0
+  const lines = Number(r.out(2)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
+  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
+  // ends in exactly one newline. Nothing else is accepted.
+  for (const text of [body, `${body}\n`]) {
+    const ck = cksumOf(text)
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+  }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+}
+// Read the whole pack, verified. One courier per file, in parallel — the common case is one call
+// each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
+// one response, otherwise by a fresh courier whose prompt differs (mis-transcription is per-sample
+// stochastic, so a fresh sample is worth one try — and a differing prompt is what stops
+// `resumeFromRunId` serving the bad sample straight back). After that the launch FAILS LOUD: a wave
+// dispatched from a plan nobody can vouch for is worse than a wave that never started.
+const readPack = async () => {
+  const attempt = (name, ranges, extra, suffix) =>
+    readPackFile(`${roadmapDir}/${name}`, ranges, `pack-read:${name}${suffix}`, extra)
+  const text = {}
+  const why = {}
+  const record = (n, r) => { if (r.text !== undefined) text[n] = r.text; else why[n] = r }
+  const first = await parallel(PACK_FILES.map((n) => () => attempt(n, [[1, '$']], '', '')))
+  PACK_FILES.forEach((n, i) => record(n, first[i]))
+  const again = PACK_FILES.filter((n) => text[n] === undefined)
+  const second = await parallel(again.map((n) => () => {
+    const { bytes, lines } = why[n]
+    if (bytes <= READ_CHUNK || lines < 2)
+      return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
+    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
+    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const ranges = []
+    for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
+    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+  }))
+  again.forEach((n, i) => record(n, second[i]))
+  const missing = PACK_FILES.filter((n) => text[n] === undefined)
+  if (missing.length)
+    throw new Error(`pack-unreadable: no verified copy of ${missing.join(' + ')} under ${roadmapDir} after two ` +
+      `attempts — ${missing.map((n) => `${n}: ${why[n].fail}`).join('; ')}`)
+  const parsed = {}
+  for (const n of PACK_FILES) {
+    try { parsed[n] = JSON.parse(text[n]) }
+    catch (e) { throw new Error(`pack-unreadable: ${roadmapDir}/${n} is cksum-verified but does not parse — ${String(e?.message ?? e)}`) }
+  }
+  log(`launch pack read from ${roadmapDir}: ${PACK_FILES.map((n) => `${n} ${text[n].length}b`).join(', ')}`)
+  return { plan: parsed['plan.json'], state: parsed['state.json'] }
+}
+const { plan: inPlan, state: inState } = await readPack()
 
 // Conductor config: defaults, then plan.config.conductor, then the caller's config.conductor.
 const CC = {
@@ -177,22 +369,33 @@ const deltaSpend = (sp) => {
 // evaporates at the next dispatch), and the clear used to happen BEFORE the bank call with its
 // result never inspected — arc-observed, 23 items vanished at one wave-12 boundary.
 let pendingDebt = []
-// plan.json held unit ids this run never saw, so persist-plan REFUSED to overwrite it. Surfaced on
-// the return envelope: the root merges by hand. No automatic merge — a wrong merge is worse than a
-// refused one.
-const planConflicts = []
 // Skill-defect ledger — the orchestrator misbehaving, not the product (same idiom as harness.mjs).
-// THIS RUN's rows only: the conductor's own plus whatever the child harness returns. The ARC's
-// record is the append-only .roadmap/degradations.jsonl sidecar, written once at the event; nothing
-// re-transcribes it and it never rides in state.json (carrying it there is what made every
-// checkpoint bigger than the last). What is kept here feeds the return envelope and the summary.
+// THIS RUN's rows only: the conductor's own plus whatever the child harness returns. They ride home
+// in the RETURN envelope, and persist.mjs appends them to the arc's append-only
+// .roadmap/degradations.jsonl. Nothing re-transcribes them and they never ride in state.json
+// (carrying a ledger there is what made every write bigger than the last).
 const degradations = []
 const degrade = (o) => {
-  const row = { script: 'conductor', wave: state?.wave ?? 0, ...o }
-  degradations.push(row)
-  sidecarAppend('degradations', row)
+  degradations.push({ script: 'conductor', wave: state?.wave ?? 0, ...o })
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
+// Wave-state snapshot, for FORENSICS ONLY — it costs nothing and writes nothing. Emitted at every
+// continuation boundary, where the run used to pay a Haiku agent to transcribe the consumed state
+// to disk. `persist.mjs` keeps the LAST snapshot it sees during a replay, so a run that crashes in
+// wave 3 still lands wave 2's consumed state, marked `partial`. A complete run's return value
+// supersedes every snapshot. Mirrored in harness.mjs and read by persist.mjs — keep all three in
+// sync (shared-consts.test.mjs enforces it).
+const SNAPSHOT_TAG = 'ROADMAP-SNAPSHOT '
+const snapshot = (st) => log(SNAPSHOT_TAG + JSON.stringify(st))
+// Escalation-ladder rulings, collected from each wave's return and passed straight through to
+// .roadmap/escalations.jsonl by persist.mjs. The conductor authors none of its own.
+const escalations = []
+// This run's debt.md sections, one per continuation boundary that banked in FILE mode
+// ({ wave, body }). Issue mode banks to roadmap:debt issues instead and leaves this empty.
+const debtSections = []
+// Architect-log sections the tier-3 boundary agent authored ({ wave, journal }). The TEXT is
+// judgment; putting it in the file is transcription, so persist.mjs does that.
+const journalEntries = []
 
 // One code-level retry on structured-output failure — identical idiom to harness.mjs's run():
 // agents deep in tool-work occasionally end a turn without a valid structured report; a single
@@ -245,215 +448,12 @@ const runOr = async (fallback, prompt, opts) => {
   return retried ?? fallback
 }
 
-// Location discipline for mechanical writers (copied from harness.mjs): given a bad path,
-// Haiku will improvise in its cwd and report plausible success — fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
-  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
-  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
-  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
-  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
-// EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
-// A cap is a contract with the model, and the prompt is the only place that contract is stated — a
-// capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
-// `notes` cap, no terseness clause, and a closing line inviting the agent to put overflow THERE. It
-// overran, exhausted its schema-retries, and died at two consecutive boundaries. See RATIONALE §9.
-const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
-  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
-  'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
-  'unexpected key is rejected as hard as an over-long one. '
-// Verbatim-write prompts for a large JSON payload — mirrored from harness.mjs (keep in sync;
-// shared-consts.test.mjs enforces it). A single write's content is echoed as agent OUTPUT and one
-// response caps at ~32k output tokens; below WRITE_CHUNK one writer copies the document through a
-// quoted here-doc, above it the payload is split deterministically and FANNED OUT — one Haiku
-// writer per part (`<path>.partK`) and one assembler (runVerbatim). Every writer verifies its file
-// by `cksum` (in-script cksumOf), not byte count — a byte count was gamed live (un-escaped values,
-// tail padded to the expected size, ok:true, unparseable state.json).
-const WRITE_CHUNK = 24000
-// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
-// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
-const CK_TABLE = (() => {
-  const t = new Array(256)
-  for (let i = 0; i < 256; i++) {
-    let c = i << 24
-    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
-    t[i] = c >>> 0
-  }
-  return t
-})()
-const cksumOf = (s) => {
-  let crc = 0, len = 0
-  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
-  for (const ch of s) {
-    const c = ch.codePointAt(0)
-    if (c < 0x80) feed(c)
-    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
-    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
-    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
-  }
-  const bytes = len
-  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
-  return { crc: (~crc) >>> 0, bytes }
-}
-const writeVerbatim = (path, text, extra = '') => {
-  // Every writer (single, part, assembler) verifies its file by CONTENT HASH — `cksum` (POSIX,
-  // coreutils, present in every sandbox) prints `<crc> <bytes>` for stdin — computed here by
-  // cksumOf. Byte count alone was gamed live: a part-writer un-escaped `\"`/`\\` inside string
-  // values (losing bytes) and then PADDED the tail with lines copied from the next record until
-  // the count matched, reporting ok:true; the assembled state.json did not parse. A CRC cannot be
-  // iterated toward, so the writer's only honest move on a mismatch is to report it.
-  const check = (file, ck) => `Then verify: \`cksum < ${file}\` must print exactly \`${ck.crc} ${ck.bytes}\`; if it ` +
-    `prints anything else, report ok:false with the observed output in detail. NEVER edit, pad, trim, or rewrite the ` +
-    `file to make the numbers match — a mismatch is reported, not repaired (padding to hit the count once produced an ` +
-    `unparseable state.json). Retry the write at most once.`
-  // Shared body of the copy instruction: a quoted here-doc in ONE Bash call, because a file-write
-  // tool re-interprets escapes (arc-observed: `\"` → `"` inside JSON string values).
-  const copy = (file, what) => `never repair, reformat, re-indent, or re-escape anything (escape sequences such as \\n ` +
-    `and \\" inside JSON string values are literal characters to copy, not instructions). Write it in ONE Bash tool ` +
-    `call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit ` +
-    `tool (a file-write tool re-interprets escapes): run \`cat > ${file} <<'ROADMAP_PART'\` followed by ${what} ` +
-    `and a closing \`ROADMAP_PART\` line.`
-  if (text.length <= WRITE_CHUNK) {
-    const ck = cksumOf(`${text}\n`)   // the here-doc leaves one trailing newline
-    return {
-      single: `Write the file ${path} so its content is EXACTLY the JSON document below, and nothing else${extra} — ` +
-        `${copy(path, "the document's lines")} The document is every line after the <<<DOCUMENT>>> marker line to the ` +
-        `end of this message, excluding the marker line. ${check(path, ck)}\n<<<DOCUMENT>>>\n${text}`,
-    }
-  }
-  // Split on line boundaries so a part is an exact run of whole lines (pretty-printed JSON keeps
-  // every line far below the chunk size — free-text caps bound the longest value). Every part file
-  // ends in the newline its here-doc leaves, so a plain `cat` of the part files, in order, IS the
-  // document (plus one trailing newline — the same shape the single write leaves).
-  const parts = []
-  let cur = ''
-  for (const line of text.split('\n')) {
-    if (cur && cur.length + line.length + 1 > WRITE_CHUNK) { parts.push(cur); cur = line }
-    else cur = cur ? `${cur}\n${line}` : line
-  }
-  if (cur) parts.push(cur)
-  const n = parts.length
-  const partPath = (k) => `${path}.part${k}`
-  const cks = parts.map((p) => cksumOf(`${p}\n`))   // each part file: its text + the here-doc's newline
-  const whole = cksumOf(`${text}\n`)                // the cat of the parts, in order
-  return {
-    parts: parts.map((p, i) => ({
-      k: i + 1,
-      prompt: `Write the file ${partPath(i + 1)} so its content is EXACTLY part ${i + 1} of ${n} below, and nothing ` +
-        `else${extra}. It is a mechanical slice of one JSON document on line boundaries — ` +
-        `${copy(partPath(i + 1), "the part's lines")} The part's content is every line after the ` +
-        `<<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line. ` +
-        `${check(partPath(i + 1), cks[i])}\n<<<PART ${i + 1}/${n}>>>\n${p}`,
-    })),
-    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and cksum-verified${extra}: ` +
-      `run \`cat ${parts.map((_, i) => partPath(i + 1)).join(' ')} > ${path}\` in exactly that order — never open, ` +
-      `edit, or reformat any of them. ${check(path, whole)} On a mismatch leave the part files in place. On success ` +
-      `run \`rm -f ${path}.part*\` (the glob also clears stale parts left by an earlier fan-out with a different ` +
-      `part count) and report ok:true.`,
-  }
-}
-// Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
-// in `parallel` (each echoes ~WRITE_CHUNK of output — the shape that fits one response), then ONE
-// assembler, dispatched only when every part landed: a failed part means no assembly, so the file on
-// disk stays the previous complete document rather than becoming a partial. A part that fails is
-// re-run ONCE, by a fresh agent (`<label>:partK#retry`), before that verdict: a mis-transcription is
-// per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed, caught by cksum;
-// a fresh sample of the same part succeeded), and with five parts a checkpoint that dies on any one
-// first-try loss dies far too often. The assembler is never retried — a bad `cat` is not
-// stochastic. `prefix` is prepended to every prompt (the conductor's STRICT). Resolves { ok, detail }
-// and never throws — `detail` names the part(s) that failed BOTH attempts (with the retry's reason)
-// or the assembler. Mirrored in both scripts.
-const runVerbatim = async (plan, opts, prefix = '') => {
-  const call = (prompt, label) => run(prefix + prompt, { ...opts, label })
-    .then((r) => (r?.ok ? { ok: true }   // covers agent-died-null and an explicit ok:false alike
-      : { ok: false, detail: r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report' }))
-    .catch((e) => ({ ok: false, detail: String(e?.message ?? e).slice(0, 200) }))
-  if (plan.single) return call(plan.single, opts.label)
-  const results = await parallel(plan.parts.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}`)))
-  const lost = plan.parts.filter((_, i) => !results[i]?.ok)
-  const retried = await parallel(lost.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}#retry`)))
-  const failed = lost
-    .map((p, i) => (retried[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${retried[i]?.detail ?? 'writer died'}`))
-    .filter(Boolean)
-  if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
-  const a = await call(plan.assemble, `${opts.label}:assemble`)
-  return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
-}
-// Append-only sidecar write: ONE `>>` here-doc, verified by cksum over the file's TAIL. A sidecar is
-// arc-cumulative and lives only on disk, so the script can never know the whole file — but it knows
-// exactly the bytes it is appending, and `tail -c <bytes>` isolates them, so the same content hash
-// that guards a whole-file write guards an append. Mirrored in both scripts — keep the two in sync
-// (shared-consts.test.mjs enforces it).
-const appendVerbatim = (path, text) => {
-  const ck = cksumOf(`${text}\n`)
-  return `Append to the file ${path} (create it if it is missing) EXACTLY the lines below and nothing else. ` +
-    `NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file: it is append-only ` +
-    `and everything already in it is another agent's record. Append in ONE Bash tool call through a ` +
-    `single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit tool (a ` +
-    `file-write tool re-interprets escapes; escape sequences such as \\n and \\" inside JSON string values are ` +
-    `literal characters to copy, not instructions): run \`cat >> ${path} <<'ROADMAP_APPEND'\` followed by the ` +
-    `lines and a closing \`ROADMAP_APPEND\` line. Then verify: \`tail -c ${ck.bytes} ${path} | cksum\` must ` +
-    `print exactly \`${ck.crc} ${ck.bytes}\`; if it prints anything else, report ok:false with the observed ` +
-    `output in detail. NEVER edit, pad, trim, or rewrite the file to make the numbers match — a mismatch is ` +
-    `reported, not repaired. Retry the append at most once. The lines are every line after the <<<APPEND>>> ` +
-    `marker line to the end of this message, excluding the marker line.\n<<<APPEND>>>\n${text}`
-}
-// Agent-authored report text can carry raw control characters (an explorer's `repro` string quoting
-// a \x01 test input, arc-observed). JSON.stringify escapes those correctly — but every file here is
-// written by a Haiku agent TRANSCRIBING the document, and the transcription decodes the escape back
-// into a raw byte, producing a document no JSON parser will read. A control character in a
-// human-readable report is never load-bearing, so it is replaced with a printable token BEFORE
-// serialization, leaving no escape for a transcriber to get wrong. Mirrored from harness.mjs.
-const CTRL_UNSAFE = /[\u0000-\u0007\u000b\u000e-\u001f\u007f]/g
-const scrubCtrl = (v) => (typeof v === 'string'
-  ? v.replace(CTRL_UNSAFE, (c) => `<0x${c.charCodeAt(0).toString(16).padStart(2, '0')}>`)
-  : v)
-// Event sidecars. `degradations` and `escalations` used to ride INSIDE state.json, arc-cumulative:
-// by wave 19 of a live arc they were a third of a 170-190 KB document that EVERY checkpoint
-// re-transcribed, so each row made the next write likelier to fail and each failed write appended
-// another row (91 `write-failed` rows in one arc, growing with the wave number). They are EVENTS,
-// not state — ONE JSON line appended at the moment they happen, never rewritten. state.json keeps
-// only what the run's own decisions read; the wave's degradations ride back to the conductor in the
-// RETURN value, in memory, never on disk.
-const sidecarPath = (kind) => `${repo}/.roadmap/${kind}.jsonl`
-let sidecarLost = 0
-let sidecarChain = Promise.resolve()
-const sidecarPending = { degradations: [], escalations: [] }
-// Queue a row and flush on a serial chain: a burst coalesces into one append, and two appends never
-// interleave. A LOST append must NOT call degrade() — that recurses into the very mechanism that is
-// failing. runVerbatim's own single retry is the only retry; after it the rows are counted in
-// `sidecarLost`, which rides in state.json: loud, bounded, and not self-feeding.
-function sidecarAppend(kind, row) {
-  sidecarPending[kind].push(row)
-  sidecarChain = sidecarChain.then(async () => {
-    const rows = sidecarPending[kind].splice(0)
-    if (!rows.length) return
-    const text = rows.map((r) => JSON.stringify(r, (_k, v) => scrubCtrl(v))).join('\n')
-    const r = await runVerbatim({ single: appendVerbatim(sidecarPath(kind), text) },
-      { model: 'haiku', effort: 'low', label: `sidecar:${kind}`, phase: 'Persist', schema: S.ok }, STRICT)
-    if (!r.ok) {
-      sidecarLost += rows.length
-      log(`SIDECAR LOST ${rows.length} ${kind} row(s) — ${r.detail} (see the agent transcript)`)
-    }
-  }).catch(() => null)
-}
-// Await a verbatim write and ledger any failure as a `write-failed` degradation — a lost persist
-// is exactly the evidence-destroying silence the degradation ledger exists to catch. Never throws.
-const persistVerbatim = async (path, text, opts, extra = '') => {
-  const r = await runVerbatim(writeVerbatim(path, text, extra), opts, STRICT)
-  if (!r.ok)
-    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'write-failed',
-      what: `${path.split('/').pop()} persist did not land (${r.detail}) — on-disk copy may trail the run` })
-}
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
   `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). `
 
 /* ------------------------------- schemas ------------------------------- */
-const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
-const arr = (t) => ({ type: 'array', items: { type: t } })
-const oneOf = (vals) => ({ type: 'string', enum: vals })
-const strArr = (maxItems, maxLength) => ({ type: 'array', maxItems, items: { type: 'string', maxLength } })
 
 // Shared new-unit skeleton — judgment-bearing shape the boundary agents emit; Sonnet expands it
 // into a full spec file. Capped hard (rides in state/prompts; the platform resends over-long
@@ -542,14 +542,6 @@ S.banked = obj({
   banked: { type: 'array', items: obj({ marker: { type: 'string' }, number: { type: 'number' } }, ['marker']) },
   detail: { type: 'string' },
 }, ['ok', 'banked'])
-// plan-ids: the on-disk unit ids, read back BEFORE persist-plan overwrites plan.json. A courier
-// shape — it reports facts, the script judges. Uncapped: the ids are echoed from a file this
-// script wrote.
-S.planIds = obj({
-  ok: { type: 'boolean' },
-  ids: { type: 'array', items: { type: 'string' } },
-  detail: { type: 'string' },
-}, ['ok', 'ids'])
 
 /* ------------------------------- helpers ------------------------------- */
 // Kebab-sanitize + 60-char cap. Deterministic (no Date/random) so ids are resume-stable.
@@ -655,52 +647,18 @@ const draftSkeleton = (d) => ({
 
 const contractPaths = () => [...new Set(plan.edges.filter((e) => e.contract).map((e) => e.contract))]
 
-// .roadmap/skill-degradations.md — the MACHINE-owned half of the orchestrator's own defect log.
-// It used to be a marker region INSIDE the hand-written .roadmap/skill-feedback.md, rewritten by an
-// unverified Haiku edit whose content grew with every degradation; twice the growing region ate the
-// hand-written entry above it (the truncated fragment in the shipped ledger is the evidence). Two
-// changes close that for good: the orchestrator never touches skill-feedback.md again — that file is
-// human-owned, full stop — and this one is a WHOLE-FILE cksum-verified write of a summary that
-// CANNOT grow with the row count (one line per distinct kind; the rows themselves are in the
-// append-only sidecar). Written at every persist point, not just on return, because a run that dies
-// never returns. A pure function of `degradations`, so a resume rewrites it byte-identically.
-async function writeSkillDegradations() {
-  if (!degradations.length) return
-  const byKind = new Map()
-  for (const d of degradations) {
-    const k = d.kind ?? 'unknown'
-    if (!byKind.has(k)) byKind.set(k, { n: 0, last: '' })
-    const e = byKind.get(k)
-    e.n++
-    e.last = `${d.label ?? 'agent'} (${d.script ?? '?'} · ${d.model ?? '?'} · wave ${d.wave ?? '?'})`
-  }
-  const rows = [...byKind].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]))
-    .map(([k, e]) => `| ${k} | ${e.n} | \`${e.last}\` |`)
-  const doc = `# Skill degradations — roadmap-orchestrator\n\n` +
-    `MACHINE-WRITTEN — every persist point overwrites this file. Hand-written observations belong in ` +
-    `\`skill-feedback.md\`, which the orchestrator never touches.\n\n` +
-    `Defects in the ORCHESTRATOR itself (not the product) observed while running this arc. Carry this file and ` +
-    `\`.roadmap/degradations.jsonl\` back to the skill's repository; they are not product debt and do not belong ` +
-    `in debt.md.\n\n## This run: ${degradations.length} degradation(s)\n\n` +
-    `| kind | count | most recent |\n|---|---|---|\n${rows.join('\n')}\n\n` +
-    `Full rows — one JSON line per event, arc-cumulative — are in \`.roadmap/degradations.jsonl\`. Each names ` +
-    `the agent label; find its transcript in the workflow's agent-*.jsonl to see the real error, which the ` +
-    `platform does not expose to the script.\n`
-  await persistVerbatim(`${repo}/.roadmap/skill-degradations.md`, doc,
-    { model: 'haiku', effort: 'low', label: 'skill-degradations', phase: 'Persist', schema: S.ok })
-}
-// log-append: architect journal, tier-3 only (replace-if-header-exists idempotency). A helper
-// because it must fire on TERMINAL tier-3 paths too (cut-line, arc-complete) — the persist
-// section sits past those returns, and a journal that dies with a terminal boundary takes the
-// owed-waiver justifications down with it.
-async function writeJournal(N, journal) {
+// The architect journal is TIER-3 JUDGMENT, and the file it lands in is transcription — so the
+// text is collected here and persist.mjs writes the `## Wave N` section. Collected rather than
+// written inline because it must survive the TERMINAL tier-3 paths too (cut-line, arc-complete),
+// whose returns jump the wave tail: a journal dropped there takes the owed-waiver justifications
+// with it. Idempotent by wave: a re-ruled wave replaces its entry rather than adding a second.
+// `.roadmap/skill-degradations.md` is likewise rendered by persist.mjs, from the returned
+// `degradations` — it is a pure function of them, so nothing here has to author it.
+function noteJournal(N, journal) {
   if (!journal) return
-  await run(
-    STRICT + `In the file ${repo}/.roadmap/architect-log.md (create it if missing): ensure exactly one section ` +
-    `headed \`## Wave ${N}\`. If that exact header already exists, replace its body; otherwise append it at the ` +
-    `end. The section body is:\n${journal}\n\nChange nothing else in the file.`,
-    { model: 'haiku', effort: 'low', label: `log-append:w${N}`, phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  const at = journalEntries.findIndex((e) => e.wave === N)
+  if (at >= 0) journalEntries[at] = { wave: N, journal }
+  else journalEntries.push({ wave: N, journal })
 }
 const arcSummary = (census) => {
   const u = state.units ?? {}
@@ -708,31 +666,28 @@ const arcSummary = (census) => {
   return { merged: ids('merged'), quarantined: ids('quarantined').map((id) => ({ id })), deferred: ids('deferred'), pendingFeedback: census.pendingUserFeedback ?? [], wavesRun }
 }
 
-// Persist the current `state` (or a supplied variant) with the conductor block, then build the
-// frozen return envelope. Every early return flows through here; `tier` records the boundary
-// outcome (null skips the record — pre-dispatch/post-loop guards belong to no wave's boundary).
+// Freeze the current `state` (or a supplied variant) with the conductor block and build the return
+// envelope. Every early return flows through here; `tier` records the boundary outcome (null skips
+// the record — pre-dispatch/post-loop guards belong to no wave's boundary). NOTHING is written: the
+// envelope IS the persistence contract, and `persist.mjs` turns it into files at zero model cost.
 async function ret(reason, tier, extra = {}) {
   if (tier != null) boundaries.push({ wave: state.wave, tier, escalated: reason })
   const st = { ...state, spend: { ...(state.spend ?? {}) } }   // tier-4 handoff: boundary + debt stay INTACT (the root consumes them)
   mergeConductorSpend(st)
   st.conductor = { reason, wavesRun, boundaries }
-  delete st.degradations   // sidecar-only: an arc-cumulative ledger inside state.json IS the growth loop
-  // Rows that never reached the sidecar. Loud, bounded, and deliberately not a degradation — a
-  // sidecar failure that degraded would feed the ledger it just failed to write.
-  if (sidecarLost) st.sidecarLost = (st.sidecarLost ?? 0) + sidecarLost
-  phase('Persist')
-  await writeSkillDegradations()
-  await persistVerbatim(`${repo}/.roadmap/state.json`, JSON.stringify(st, null, 2),
-    { model: 'haiku', effort: 'low', label: `persist-state:w${st.wave}`, phase: 'Persist', schema: S.ok })
-  await sidecarChain   // every event of this run is on disk before the root sees the envelope
+  delete st.degradations   // ledger-only: an arc-cumulative ledger inside state.json IS the growth loop
+  delete st.escalations
   return {
     status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
     spendDelta: deltaSpend(st.spend),
-    // Always present (empty when clean) so the root never has to wonder whether the run was healthy.
+    // Everything below is what persist.mjs puts on disk. Always present (empty when clean) so
+    // neither the root nor the persister has to wonder whether the run was healthy.
     degradations,
-    // A refused plan.json overwrite is the root's to reconcile — it is the only thing this script
-    // deliberately did NOT persist.
-    ...(planConflicts.length ? { planConflict: planConflicts } : {}),
+    escalations,
+    debtSections,
+    journalEntries,
+    // The wave's debt exactly as received, for .roadmap/debt.json.
+    debt: pendingDebt,
     // Owed boundary jobs surface on every return — on a terminal one they are the root's to
     // discharge (or explicitly waive in the architect log) before close-out.
     ...(st.owed?.length ? { owed: st.owed } : {}),
@@ -967,25 +922,27 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // 3. Dispatch the wave through the harness. Config is passed UNTOUCHED; boundary:'off' is never
   //    set here (ruling 1). The returned state threads forward (units/spend/wave accumulate).
   phase('Wave')
-  state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath, launchId })
+  state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, launchId })
   wavesRun++
   const N = state.wave
-  // The harness returns THIS WAVE's degradations in its ENVELOPE only — it has already written each
-  // one to the shared sidecar, and its serialize() carries none of them. Absorb them in memory for
-  // the return envelope and the summary, then strip them so nothing threads a ledger back onto disk.
+  // The harness returns THIS WAVE's degradations and escalation rulings in its ENVELOPE only — its
+  // serialize() carries neither. Absorb them for this run's envelope and the summary, then strip
+  // them so nothing threads a ledger back into the state that gets persisted.
   const newDegradations = state.degradations ?? []
   for (const d of newDegradations) degradations.push(d)
+  for (const e of state.escalations ?? []) escalations.push(e)
   if (newDegradations.length) log(`wave ${N}: ${newDegradations.length} harness degradation(s) recorded`)
-  if ('degradations' in state) { state = { ...state }; delete state.degradations }
+  if ('degradations' in state || 'escalations' in state) {
+    state = { ...state }
+    delete state.degradations
+    delete state.escalations
+  }
 
-  // Wave debt reaches DISK the moment it arrives — before the census, before triage, before any
-  // return can skip past the bank. `.roadmap/debt.json` is the wave's raw ledger as received;
-  // debt.md / the roadmap:debt issues remain the durable, human-facing record that bank-debt writes.
+  // Wave debt joins the run's ledger the moment it arrives — before the census, before triage,
+  // before any return can skip past the bank. It rides out on EVERY return path as `debt`, which
+  // persist.mjs writes to `.roadmap/debt.json`; debt.md / the roadmap:debt issues remain the
+  // durable, human-facing record.
   pendingDebt = [...pendingDebt, ...(state.debt ?? [])]
-  if (pendingDebt.length)
-    await persistVerbatim(`${repo}/.roadmap/debt.json`, JSON.stringify({ wave: N, items: pendingDebt }, null, 2),
-      { model: 'haiku', effort: 'low', label: `persist-debt:w${N}`, phase: 'Persist', schema: S.ok },
-      ' (create parent directories if needed)')
 
   // Wave-level halt (`state.halt.reason`, one of: codex-unavailable / codex-usage-limit — Codex is
   // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper —
@@ -1115,7 +1072,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       }
       // The journal (waiver justifications included) must survive a terminal boundary — the
       // persist-section writer sits past this return and used to drop it.
-      if (er === 'cut-line') { await writeJournal(N, boundaryPlan.journal); return await finish(3) }
+      if (er === 'cut-line') { noteJournal(N, boundaryPlan.journal); return await finish(3) }
     }
   }
   const ranTier = tier
@@ -1127,7 +1084,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // still lands first — this terminal return used to jump the persist-section writer and drop
   // it (waiver justifications with it).
   if (arcCompleteFlag || (prepared.length === 0 && reviseList.length === 0)) {
-    if (ranTier === 3) await writeJournal(N, journal)
+    if (ranTier === 3) noteJournal(N, journal)
     return await finish(ranTier)
   }
 
@@ -1146,7 +1103,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   mergeConductorSpend(consumed)
   boundaries.push({ wave: N, tier: ranTier, escalated: null })
   consumed.conductor = { reason: null, wavesRun, boundaries }
-  await writeSkillDegradations()
+  snapshot(consumed)   // the crash-recovery record for everything this boundary decided
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
   // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports
@@ -1180,9 +1137,6 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
   }
 
-  // persist-state: the consumed state + conductor block.
-  await persistVerbatim(`${repo}/.roadmap/state.json`, JSON.stringify(consumed, null, 2),
-    { model: 'haiku', effort: 'low', label: `persist-state:w${N}`, phase: 'Persist', schema: S.ok })
 
   state = consumed   // thread the consumed state into the next wave
 }
@@ -1267,12 +1221,15 @@ function collect(ranTier, P, triageResult, boundaryPlan) {
     feedbackDispositions: triageResult?.feedback ?? [] }
 }
 
-// Everything a boundary's decisions must leave ON DISK: specs, the merged plan, the issue
-// projection, the debt ledger and the architect journal. Hoisted out of the wave tail so the
-// ESCALATING returns can stage before handing back — arc-observed: a tier-3 needs-user return
-// jumped every one of these, and the boundary's new-unit skeletons, the wave's debt and the journal
-// survived only in the run's journal.jsonl. Returns the debt items whose banking could NOT be
-// confirmed; the caller decides what to do with them, and never clears blind.
+// Everything a boundary's decisions must LEAVE BEHIND: the specs a model has to author, the merged
+// plan, the issue projection, the debt ledger and the architect journal. Two shapes now — an agent
+// call where a model must actually do the work (spec-expand, the gh projections), and a collected
+// value where it is transcription (debtSections, journalEntries) and persist.mjs writes it.
+// Hoisted out of the wave tail so the ESCALATING returns can stage before handing back —
+// arc-observed: a tier-3 needs-user return jumped every one of these, and the boundary's new-unit
+// skeletons, the wave's debt and the journal survived only in the run's journal.jsonl. Returns the
+// debt items whose banking could NOT be confirmed (issue mode only); the caller carries them rather
+// than clearing blind.
 async function stage(N, ranTier, c) {
   const { prepared, reviseList, cutUnitIds, journal, debtLedger } = c
   // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
@@ -1302,7 +1259,7 @@ async function stage(N, ranTier, c) {
       `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
       { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },
     ).catch(() => null)
-    // Cache the numbers so this wave's persisted plan AND next wave's dispatchPlan carry them.
+    // Cache the numbers so the returned plan AND next wave's dispatchPlan carry them.
     for (const o of opened?.opened ?? []) {
       const u = plan.units.find((x) => x.id === o.id)
       if (u && Number.isInteger(o.number)) u.issue = o.number
@@ -1310,37 +1267,6 @@ async function stage(N, ranTier, c) {
   }
 
   phase('Persist')
-  // persist-plan: overwrite plan.json with the merged plan — but never blind. The write is
-  // wholesale, so a plan.json that already carries units this run has not seen (a root edit between
-  // launches, a hand-merged respec) would be destroyed with no trace. The script cannot read a file,
-  // so one Haiku courier reports the on-disk unit ids and the SCRIPT decides. No merge is attempted:
-  // a loud refusal is the whole ask.
-  const onDisk = await run(
-    STRICT + `Read the file ${repo}/.roadmap/plan.json and report facts only — change nothing. In \`ids\`, give ` +
-    `the \`id\` of every entry in its top-level \`units\` array, in file order. If the file does not exist, ` +
-    `report ok:true with an empty \`ids\`. If it exists but will not parse, report ok:false with the parse error ` +
-    `in \`detail\` and an empty \`ids\`.`,
-    { model: 'haiku', effort: 'low', label: `plan-ids:w${N}`, phase: 'Persist', schema: S.planIds },
-  ).catch(() => null)
-  const knownIds = new Set(plan.units.map((u) => u.id))
-  const strangers = (onDisk?.ids ?? []).filter((id) => !knownIds.has(id))
-  if (!onDisk?.ok)
-    // A dead courier is not evidence of a conflict, but it IS evidence the check did not run. The
-    // plan is the arc's spine and a stale plan.json breaks the next resume, so persist — and say so.
-    degrade({ label: `plan-ids:w${N}`, model: 'haiku', phase: 'Persist', kind: 'plan-conflict',
-      what: `could not read the on-disk unit ids of plan.json (${onDisk?.detail ?? 'agent died without a report'}) ` +
-        '— persisting the in-memory plan unchecked' })
-  if (strangers.length) {
-    planConflicts.push({ wave: N, unknownUnits: strangers })
-    degrade({ label: `persist-plan:w${N}`, model: 'haiku', phase: 'Persist', kind: 'plan-conflict',
-      what: `.roadmap/plan.json holds ${strangers.length} unit id(s) this run has never seen ` +
-        `(${strangers.join(', ')}) — REFUSED to overwrite it; the root must merge the two plans by hand` })
-  } else {
-    await persistVerbatim(`${repo}/.roadmap/plan.json`, JSON.stringify(plan, null, 2),
-      { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
-      ' (create parent directories if needed)')
-  }
-
   // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
   // ONE consolidated issue per unit-with-residue, keyed arc+wave+unit (arc-observed: per-finding
   // minting produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered
@@ -1394,26 +1320,22 @@ async function stage(N, ranTier, c) {
       for (const it of items) if (!confirmed.has(it.marker)) unbanked.push(...(rowsFor.get(it.marker) ?? []))
     }
   } else {
+    // FILE MODE: the wave's section is COLLECTED, and persist.mjs writes it into debt.md. Deciding
+    // what the section says is this script's job; putting the text in a file is not, and a
+    // deterministic writer cannot half-land one — so there is nothing left to confirm and nothing
+    // stays unbanked on this branch.
     const debtLines = [...pendingDebt.map(fmtDebt), ...debtLedger.map((s) => `- ${s}`)]
-    const debtBody = debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries`
-    // One section for the whole wave, so the write landing IS the confirmation: no ok, nothing banked.
-    const res = await run(
-      STRICT + `In the file ${repo}/.roadmap/debt.md (create it if missing): ensure exactly one section marked ` +
-      `\`<!-- wave ${N} -->\`. If a section with that exact marker already exists, replace its body; otherwise ` +
-      `append a new one at the end of the file. The section must be exactly:\n<!-- wave ${N} -->\n${debtBody}\n\n` +
-      `Change nothing else in the file.`,
-      { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
-    if (!res?.ok) unbanked.push(...pendingDebt)
+    debtSections.push({ wave: N, body: debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries` })
   }
+  // Issue mode only: gh is best-effort, so an item the banker could not confirm rides forward.
   if (unbanked.length)
     degrade({ label: `bank-debt:w${N}`, model: 'haiku', phase: 'Persist', kind: 'debt-unbanked',
-      what: `${unbanked.length} of ${pendingDebt.length} debt item(s) were not confirmed banked — kept in ` +
-        'state.debt and .roadmap/debt.json, and re-banked at the next boundary' })
+      what: `${unbanked.length} of ${pendingDebt.length} debt item(s) were not confirmed banked as ` +
+        'roadmap:debt issues — kept in state.debt and .roadmap/debt.json, and re-banked at the next boundary' })
 
-  // log-append: architect journal, ONLY when tier 3 ran (terminal tier-3 paths write it
-  // before their own returns — see writeJournal).
-  if (ranTier === 3) await writeJournal(N, journal)
+  // architect journal, ONLY when tier 3 ran (terminal tier-3 paths note it before their own
+  // returns — see noteJournal).
+  if (ranTier === 3) noteJournal(N, journal)
 
   return { unbanked }
 }

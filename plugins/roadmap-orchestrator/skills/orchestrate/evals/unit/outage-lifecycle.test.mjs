@@ -21,8 +21,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, courierResult, BASE_SHA, implCodexOk, codexMetaOk, structuredOutputError } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, courierResult, BASE_SHA, implCodexOk, codexMetaOk, structuredOutputError } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -377,14 +377,17 @@ test('a contract mismatch on a unit whose work already landed banks as `rebanked
 /* ====================================================================== */
 async function driveConductorWith(waveState, extraState = {}) {
   const { fn: workflowFn } = makeWorkflow(() => waveState)
+  const plan = makePlan([unit('a'), unit('b')])
+  const state = makeState({ spend: {}, wave: 0, ...extraState })
   const { fn: agentFn, calls } = makeAgent([
-    { match: /^(persist-plan|persist-state|persist-debt|bank-debt|log-append|move-feedback|skill-degradations):/, result: { ok: true } },
+    ...packRules(plan, state),
+    { match: /^(bank-debt|move-feedback):/, result: { ok: true } },
   ])
   const runner = await loadScript(CONDUCTOR)
   const res = await runner({
     args: {
-      plan: makePlan([unit('a'), unit('b')]),
-      state: makeState({ spend: {}, wave: 0, ...extraState }),
+      roadmapDir: `${plan.repoPath}/.roadmap`,
+      launchId: 'sim-launch',
       config: {},
       harnessPath: '/skills/orchestrate/harness.mjs',
     },
@@ -408,7 +411,7 @@ test('every halt reason early-returns at tier 4, before any census or triage spe
     assert.deepEqual(res.parked, ['a'], 'and the parked units are named')
     assert.ok(!has(calls, 'census:'), `${reason}: no census against a wave the root must hand to a human`)
     assert.ok(!has(calls, 'triage:'))
-    assert.ok(has(calls, 'persist-state:'), 'state is still persisted — every halt must be resumable')
+    assert.ok(res.state?.units, 'the full wave state rides home on the envelope — every halt must be resumable')
     assert.deepEqual((res.state.conductor?.boundaries ?? []).map((x) => x.tier), [4])
   }
 })

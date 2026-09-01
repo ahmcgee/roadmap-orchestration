@@ -1,10 +1,15 @@
 // Zero-token script loader — generalizes the parse.sh AsyncFunction idiom into a
-// runnable simulation harness. Reads a workflow .mjs, strips its single leading
-// `export ` (the `export const meta` line — the same transform parse.sh applies so
-// top-level `return`/`await` parse), and wraps the body in an AsyncFunction whose
-// parameters are exactly the workflow globals. The returned runner accepts a globals
-// bag and supplies honest defaults for anything omitted, so a test only injects what
-// it drives (normally just `args` + a scripted `agent`).
+// runnable harness for a workflow script. Reads a workflow .mjs, strips its single
+// leading `export ` (the `export const meta` line — the same transform parse.sh
+// applies so top-level `return`/`await` parse), and wraps the body in an
+// AsyncFunction whose parameters are exactly the workflow globals. The returned
+// runner accepts a globals bag and supplies honest defaults for anything omitted,
+// so a caller only injects what it drives (normally just `args` + an `agent`).
+//
+// ONE loader, two callers: the `evals/unit` simulations drive a script with scripted
+// fakes, and `persist.mjs` replays a real run against its own journal. Both need the
+// same wrapper and the same `parallel`/`pipeline` stand-ins, and two copies of this
+// would drift apart exactly where a divergence is hardest to see.
 import { readFile } from 'node:fs/promises'
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor

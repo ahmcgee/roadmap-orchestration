@@ -5,17 +5,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
+import { loadScript } from '../../script-loader.mjs'
 import {
   makeAgent,
-  sidecarRows,
-  assertAppendVerified,
+  packRules,
   BASE_SHA,
   assertAllModelsPinned,
   assertSchemasPresent,
   structuredOutputError,
   implCodexOk,
-  assertCksumVerified,
 } from './fakes.mjs'
 
 // Codex is the only implementer: the code-writing labels are `codex-build:`/`codex-fix:` and
@@ -314,11 +312,13 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
   assert.ok(calls.some((c) => c.label === 'gap-consult:b#1'), 'a contract mismatch pulls the architect in')
   assert.ok(!calls.some((c) => c.label === 'adjudicate:b#1'),
     'and skips Opus triage — no adjudicator confined to this unit may rule on a surface binding every unit')
-  assert.equal(sidecarRows(calls, 'escalations').find((e) => e.unit === 'b')?.boundary, 'contract',
-    'the escalation SIDECAR records which boundary was crossed')
+  assert.equal((state.escalations ?? []).find((e) => e.unit === 'b')?.boundary, 'contract',
+    'the returned escalation LEDGER records which boundary was crossed')
   assert.equal(state.escalationStops?.b, 1,
     'and state.json keeps only the stop count the three-strikes brake reads')
-  assert.equal(state.escalations, undefined, 'the ruling rows themselves never enter state.json')
+  const { degradations: _d, escalations: _e, ...serialized } = state
+  assert.ok(!JSON.stringify(serialized).includes('"by"'),
+    'the ruling rows themselves ride the envelope, never the state persist.mjs writes')
   // The post-implement debt-fix sweep is gone with the Claude lane: the Codex brief's SCOPE
   // already demands in-scope fixing before the run reports done, so a surviving confession is
   // out-of-scope BY DECLARATION and goes straight to the ledger. A sweep round here would only
@@ -451,188 +451,101 @@ test('12 spend seeding: numeric carry-over, junk dropped', async () => {
 })
 
 // =========================================================================================
-// 13. Checkpoint coalescing: writes well under the checkpoint()-site count; last write == return.
+// 13. THE LAUNCH PACK. The root no longer pastes plan.json and state.json into `args` — it passes
+//     an envelope naming the .roadmap directory, and the script's first act is a Haiku courier that
+//     cats both files and reports each one's real `cksum`, which the script verifies IN CODE. The
+//     conductor dispatches each wave with its live plan already in memory, so that NESTED path
+//     passes both and reads no pack. Both halves are pinned here: a launch that silently accepted a
+//     mis-transcribed plan, or one that re-read a stale plan.json over the conductor's, would be a
+//     wave built on a document nobody checked.
 // =========================================================================================
-test('13 checkpoint coalescing: fewer writes than status changes, last write equals return', async () => {
+const packLabels = (calls) => calls.filter((c) => c.label.startsWith('pack-read:')).map((c) => c.label)
+
+test('13 nested launch: an in-memory plan+state is used as-is, and no pack is read', async () => {
   const { fn, calls } = makeAgent()
-  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
-  const cps = calls.filter((c) => c.label === 'checkpoint')
-  assert.ok(cps.length >= 1, 'at least one checkpoint write')
-  // Two merged units drive ~17 checkpoint() invocations (1 running + 5 stages + merge-queue +
-  // terminal, per unit, + the final). Coalescing must collapse them below that ceiling.
-  assert.ok(cps.length < 17, `expected coalescing below 17 writes, saw ${cps.length}`)
-
-  const last = cps[cps.length - 1]
-  const embedded = last.prompt.slice(last.prompt.indexOf('<<<DOCUMENT>>>\n') + '<<<DOCUMENT>>>\n'.length)
-  const emb = JSON.parse(embedded)
-  const ret = JSON.parse(JSON.stringify(state))
-  // The final checkpoint (harness.mjs ~L1034) snapshots serialize() and THEN its own haiku
-  // write executes — incrementing spend.haiku by exactly one after the snapshot. That single
-  // "field written after" is the only difference; everything load-bearing must match.
-  assert.equal(ret.spend.haiku, emb.spend.haiku + 1, 'only the final checkpoint write postdates the snapshot')
-  emb.spend.haiku = ret.spend.haiku
-  // The RETURN value carries this wave's degradations for the conductor; the persisted document
-  // deliberately does not (they are append-only sidecar rows). Compare the rest.
-  delete ret.degradations
-
-  assert.deepEqual(emb, ret, 'final checkpoint payload equals the returned state (modulo its own write)')
-})
-
-// A 54-unit arc's state exceeded one response's ~32k output-token cap and killed 5 checkpoint
-// agents silently; the staged single-writer that replaced it then failed ~28 checkpoints in two
-// waves once state reached 3–6 parts ("cannot complete within token budget"). Large states must
-// FAN OUT: one writer per line-boundary part (each ≤ ~WRITE_CHUNK of output), then one assembler
-// that runs only after every part landed; small states get one here-doc writer. Every writer is cksum-verified (13c).
-const bigState = () => makeState({ wave: 1, units: Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
-  [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }])) })
-const HERE_DOC = (file) => `cat > ${file} <<'ROADMAP_PART'`
-
-test('13b large-state checkpoint: fan-out — one bounded writer per part, assembler last, lossless', async () => {
-  const { fn, calls } = makeAgent()
-  const state = await runWave(fn, makePlan([unit('a')]), bigState())
-
-  assert.ok(!calls.some((c) => c.label === 'checkpoint' && c.prompt.includes('<<<PART')),
-    'no single agent is ever handed the whole multi-part document')
-  // The last checkpoint is the fan-out for the final state: its assembler is the last agent call
-  // and its part writers are the contiguous run of `checkpoint:partK` calls before it.
-  const asm = calls[calls.length - 1]
-  assert.equal(asm.label, 'checkpoint:assemble', 'the assembler is the final call of the wave')
-  let i = calls.length - 2
-  while (i >= 0 && calls[i].label.startsWith('checkpoint:part')) i--
-  const writers = calls.slice(i + 1, calls.length - 1)
-  const n = writers.length
-  assert.ok(n >= 3, `a ~100 KB state fans out to several writers (saw ${n})`)
-  assert.deepEqual(writers.map((w) => w.label), Array.from({ length: n }, (_, k) => `checkpoint:part${k + 1}`),
-    'writers are labelled checkpoint:part1..N in order')
-  for (const w of [...writers, asm]) {
-    assert.equal(w.model, 'haiku', `${w.label} runs on haiku`)
-    assert.ok(w.hasSchema && w.schema.required?.includes('ok'), `${w.label} reports through S.ok`)
-  }
-
-  const bodies = writers.map((w, k) => {
-    const marker = `<<<PART ${k + 1}/${n}>>>\n`
-    const at = w.prompt.indexOf(marker)
-    assert.ok(at > 0, `writer ${k + 1} carries its own part marker`)
-    const body = w.prompt.slice(at + marker.length)
-    assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1}'s whole prompt stays near the chunk bound (${w.prompt.length})`)
-    assert.ok(body.length <= 24000 + 500, `part ${k + 1} stays near the chunk bound (${body.length})`)
-    // Each writer: ONE quoted here-doc into ITS OWN part file, its own byte count, and no other file.
-    const file = `/repo/.roadmap/state.json.part${k + 1}`
-    assert.ok(w.prompt.includes(HERE_DOC(file)), `part ${k + 1} is written via a quoted here-doc to ${file}`)
-    assert.ok(!w.prompt.includes(`cat > /repo/.roadmap/state.json <<`) && !w.prompt.includes('cat >>'),
-      `part ${k + 1} never touches state.json itself, and never appends`)
-    // Verified by cksum of the part file (its text + the here-doc's trailing newline), never byte count.
-    assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)
-    return body
-  })
-
-  // The assembler: cats the parts IN ORDER into state.json, checks the total, removes the parts.
-  const files = Array.from({ length: n }, (_, k) => `/repo/.roadmap/state.json.part${k + 1}`)
-  assert.ok(asm.prompt.includes(`cat ${files.join(' ')} > /repo/.roadmap/state.json`), 'assembler cats the parts in order')
-  assert.ok(asm.prompt.includes('On success run `rm -f /repo/.roadmap/state.json.part*`'),
-    'assembler removes the part files on success by glob — stale parts from an earlier fan-out with a different count go too')
-  assert.match(asm.prompt, /On a mismatch leave the part files in place/, 'a failed assembly leaves the parts for inspection')
-  const joined = bodies.join('\n')
-  // The assembled file is the cat of the parts = the document + one trailing newline; verified by cksum.
-  assertCksumVerified(asm.prompt, '/repo/.roadmap/state.json', `${joined}\n`, 'the assembler')
-  assert.ok(!asm.prompt.includes('<<<PART'), 'the assembler is never handed the document itself')
-
-  const reassembled = JSON.parse(joined)
-  const ret = JSON.parse(JSON.stringify(state))
-  // Same accounting as test 13, but the final write is n writers + 1 assembler after the snapshot —
-  // and AT LEAST that: checkpoint() captures its snapshot synchronously while an earlier fan-out
-  // may still be draining on the chain, so those in-flight writes are tallied after the capture too.
-  // The exact delta is a scheduling artefact; the floor is not (a write cannot be counted before it runs).
-  assert.ok(ret.spend.haiku >= reassembled.spend.haiku + n + 1,
-    `at least the final fan-out postdates the snapshot (ret ${ret.spend.haiku}, snapshot ${reassembled.spend.haiku}, n ${n})`)
-  reassembled.spend.haiku = ret.spend.haiku
-  // The RETURN value carries this wave's degradations for the conductor; the persisted document
-  // deliberately does not (they are append-only sidecar rows). Compare the rest.
-  delete ret.degradations
-
-  assert.deepEqual(reassembled, ret, 'the parts reassemble to the returned state')
-})
-
-test('13e a part lost twice: retried once by a fresh agent, no assembler, write-failed names it', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^checkpoint:part2$/, result: { ok: false, detail: 'wc printed 24071' } },
-    { match: /^checkpoint:part2#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
-  ])
-  const state = await runWave(fn, makePlan([unit('a')]), bigState())
-  assert.equal(state.units.a.status, 'merged', 'the wave completes despite the failed write')
-  assert.ok(calls.some((c) => c.label === 'checkpoint:part1'), 'the fan-out fired')
-  // Every checkpoint of the wave loses part 2 (the rule is label-keyed): each one retries part 2
-  // exactly once and retries nothing else.
-  const retries = calls.filter((c) => c.label.endsWith('#retry'))
-  assert.ok(retries.length >= 1, 'the lost part is retried')
-  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried — never a part that landed')
-  assert.equal(retries.length, calls.filter((c) => c.label === 'checkpoint:part2').length, 'one retry per loss, never a second')
-  assert.ok(!calls.some((c) => c.label === 'checkpoint:assemble'), 'a lost part means NO assembler — never a partial state.json')
-  const d = state.degradations.filter((x) => x.label === 'checkpoint' && x.kind === 'write-failed')
-  assert.ok(d.length >= 1, 'the loss is ledgered under the top-level label')
-  assert.match(d[0].what, /part 2\/\d+: cksum printed 9 24071/, 'the degradation names the failed part with the RETRY\'s reason')
-  assert.ok(!d[0].what.includes('wc printed 24071'), 'the first attempt\'s reason is superseded by the retry\'s')
-  assert.match(d[0].what, /assembly skipped, previous file left intact/, 'and says what that means on disk')
-})
-
-// A mis-transcription is per-sample stochastic (live: 2 of 16 part writes, a fresh sample of the same
-// part succeeded), so one lost part costs one more writer, not the whole checkpoint.
-test('13f a part lost once: the fresh-agent retry lands, the assembler runs, nothing is ledgered', async () => {
-  const { fn, calls } = makeAgent([{ match: /^checkpoint:part2$/, result: { ok: false, detail: 'cksum printed 9 24071' } }])
-  const state = await runWave(fn, makePlan([unit('a')]), bigState())
-  assert.equal(state.units.a.status, 'merged')
-  const retries = calls.filter((c) => c.label.endsWith('#retry'))
-  assert.ok(retries.every((c) => c.label === 'checkpoint:part2#retry'), 'only the lost part is retried')
-  assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
-  // Same shape as 13b: the final checkpoint is the last run of `checkpoint:part*` calls (the retry
-  // among them, after every first-pass writer) closed by the assembler.
-  const asm = calls[calls.length - 1]
-  assert.equal(asm.label, 'checkpoint:assemble', 'the assembler runs once every part has landed')
-  let i = calls.length - 2
-  while (i >= 0 && calls[i].label.startsWith('checkpoint:part')) i--
-  const run = calls.slice(i + 1, calls.length - 1)
-  const writers = run.filter((c) => !c.label.endsWith('#retry'))
-  const n = writers.length
-  assert.deepEqual(run.map((w) => w.label),
-    [...Array.from({ length: n }, (_, k) => `checkpoint:part${k + 1}`), 'checkpoint:part2#retry'],
-    'first pass in order, then the single retry, then the assembler')
-  const p2 = writers.find((c) => c.label === 'checkpoint:part2')
-  assert.equal(run[run.length - 1].prompt, p2.prompt, 'the retry is handed the identical part prompt')
-  // Spend: the recovered checkpoint is n writers + 1 retry + 1 assembler, every call tallied. (13b's
-  // snapshot-relative arithmetic is not repeated here: an earlier checkpoint's retry+assembler can
-  // still be in flight when the final target is serialized, so its offset is timing-dependent.)
-  assert.equal(run.length + 1, n + 2, 'the fan-out costs n + 2 Haiku calls')
-  assert.equal(state.spend.haiku, calls.filter((c) => c.model === 'haiku').length, 'the retry is tallied like any writer')
-})
-
-// The single-write path is one Haiku writer copying the whole document through the SAME quoted
-// here-doc as a part writer, cksum-verified. It used to be an unverified "Overwrite the file … with
-// exactly this JSON" — and a file-write tool de-escaped \" inside string values, arc-observed.
-test('13c small-state checkpoint: one here-doc writer, cksum-verified, no fan-out', async () => {
-  const { fn, calls } = makeAgent()
-  await runWave(fn, makePlan([unit('a')]), makeState())
-  const last = calls.filter((c) => c.label === 'checkpoint').pop()
-  assert.ok(last.prompt.startsWith('Write the file /repo/.roadmap/state.json so its content is EXACTLY the JSON document below'),
-    'below the chunk threshold one writer is handed the whole document')
-  assert.ok(!last.prompt.includes('<<<PART'), 'no chunk markers on a small state')
-  assert.ok(!calls.some((c) => c.label.startsWith('checkpoint:')), 'no part writers or assembler')
-  assert.ok(last.prompt.includes(HERE_DOC('/repo/.roadmap/state.json')), 'written through a single-quoted here-doc')
-  assert.match(last.prompt, /never echo, printf, or a file-write\/edit tool \(a file-write tool re-interprets escapes\)/,
-    'the writer is told why a file-write tool is forbidden')
-  const marker = '<<<DOCUMENT>>>\n'
-  const at = last.prompt.indexOf(marker)
-  assert.ok(at > 0, 'the document follows a marker line')
-  const body = last.prompt.slice(at + marker.length)
-  JSON.parse(body)   // the embedded document is the state itself, intact
-  assertCksumVerified(last.prompt, '/repo/.roadmap/state.json', `${body}\n`, 'the single writer')
-})
-
-test('13d a failed checkpoint write degrades loudly but never blocks the wave', async () => {
-  const { fn } = makeAgent([{ match: /^checkpoint$/, result: { ok: false, detail: 'disk full' } }])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
-  assert.equal(state.units.a.status, 'merged', 'the wave completes despite the failed write')
-  assert.ok(state.degradations.some((d) => d.label === 'checkpoint' && d.kind === 'write-failed'),
-    'the loss is ledgered, not silent')
+  assert.deepEqual(packLabels(calls), [], 'the conductor path never re-reads a plan it is mutating in memory')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+test('13b root launch: the pack is read by one courier per file and verified by cksum', async () => {
+  const plan = makePlan([unit('a')])
+  const state = makeState()
+  const { fn, calls } = makeAgent(packRules(plan, state))
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.deepEqual(packLabels(calls), ['pack-read:plan.json', 'pack-read:state.json'],
+    'one courier per file, no retry needed when the transcription is honest')
+  const p = calls.find((c) => c.label === 'pack-read:plan.json')
+  assert.equal(p.model, 'haiku', 'the pack read is floor-tier work')
+  assert.match(p.prompt, /cksum < \/repo\/\.roadmap\/plan\.json/, 'the courier is asked for the file\'s own cksum')
+  assert.match(p.prompt, /sed -n '1,\$p' \/repo\/\.roadmap\/plan\.json/, 'and for its content, over an explicit range')
+  assert.match(p.prompt, /Probe id L1/, 'salted: a replayed pack would be the LAST run\'s plan')
+  assert.match(p.prompt, /truncated copy is worse than no copy/, 'and told to refuse rather than truncate')
+  assert.equal(out.units.a.status, 'merged', 'the wave then runs on exactly the plan it read')
+})
+
+test('13c a mis-transcribed pack file is re-read once, by a courier with a different prompt', async () => {
+  const plan = makePlan([unit('a')])
+  const state = makeState()
+  const honest = packRules(plan, state)
+  let firstTry = true
+  const { fn, calls } = makeAgent([
+    // The first plan.json courier drops a line — the exact shape cksum exists to catch.
+    { match: /^pack-read:plan\.json$/, result: (prompt, opts) => {
+      if (!firstTry) return honest[0].result(prompt, opts)
+      firstTry = false
+      const r = honest[0].result(prompt, opts)
+      r.results[3].stdout = r.results[3].stdout.split('\n').slice(1).join('\n')
+      return r
+    } },
+    ...honest,
+  ])
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:plan.json#retry'],
+    'only the file that failed is re-read, and exactly once')
+  const [first, retry] = calls.filter((c) => c.label.startsWith('pack-read:plan.json'))
+  assert.notEqual(first.prompt, retry.prompt,
+    'the retry prompt differs, or resumeFromRunId would serve the bad sample straight back')
+  assert.match(retry.prompt, /did not match its cksum/, 'and says why it is being asked again')
+  assert.equal(out.units.a.status, 'merged', 'the fresh sample lands and the wave proceeds')
+})
+
+test('13d a pack that never verifies fails the launch loudly — no wave on an unchecked plan', async () => {
+  const plan = makePlan([unit('a')])
+  const honest = packRules(plan, makeState())
+  const { fn } = makeAgent([
+    { match: /^pack-read:state\.json/, result: (prompt, opts) => {
+      const r = honest[0].result(prompt, opts)
+      r.results[3].stdout = `${r.results[3].stdout}\n{"junk":true}`
+      return r
+    } },
+    ...honest,
+  ])
+  const runner = await loadScript(HARNESS)
+  await assert.rejects(
+    () => runner({ args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: {} }, agent: fn }),
+    /pack-unreadable[\s\S]*state\.json/,
+    'an unverifiable pack throws by name rather than dispatching a wave',
+  )
+})
+
+test('13e one of plan/state without the other is a caller bug, and says so', async () => {
+  const runner = await loadScript(HARNESS)
+  await assert.rejects(
+    () => runner({ args: { plan: makePlan([unit('a')]), roadmapDir: '/repo/.roadmap' }, agent: makeAgent().fn }),
+    /only one of plan\/state/,
+  )
+  await assert.rejects(
+    () => runner({ args: { launchId: 'L1' }, agent: makeAgent().fn }),
+    /roadmapDir is required/,
+  )
 })
 
 // =========================================================================================
@@ -826,52 +739,42 @@ test('21 a stale `deferred` stamp on an in-scope unit is cleared at wave start',
 })
 
 // Degradations are EVENTS, not state. They used to ride inside state.json, arc-cumulative — a third
-// of a 170-190 KB document by wave 19, re-transcribed at every checkpoint, so each row made the next
+// of a 170-190 KB document by wave 19, re-transcribed at every write, so each row made the next
 // write likelier to fail and each failure appended another row (91 lost checkpoints in one arc).
-// Now: appended ONCE to .roadmap/degradations.jsonl at the moment they happen, carried back to the
-// conductor in the return envelope, and absent from every persisted document.
-test('22 degradations are sidecar rows: appended once, never serialized into state.json', async () => {
-  const { fn, calls } = makeAgent([
+// Now: collected in memory, handed to the conductor in the RETURN envelope, and absent from the
+// state itself — persist.mjs is what appends them to .roadmap/degradations.jsonl, for free.
+test('22 degradations ride the return envelope and are never serialized into the state', async () => {
+  const { fn } = makeAgent([
     { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
     { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1 }))
 
-  // The envelope carries this wave's rows; the checkpoint document carries none of them.
-  assert.ok(state.degradations.some((d) => d.label === 'codex-build:a'), 'the loss rides back in the return envelope')
-  for (const cp of calls.filter((c) => c.label === 'checkpoint'))
-    assert.ok(!cp.prompt.includes('"degradations"'), 'no checkpoint document ever carries a degradation ledger')
+  assert.ok(state.degradations.some((d) => d.label === 'codex-build:a' && d.kind === 'schema-retry'),
+    'the row itself, in full, rides back in the return envelope')
+  // serialize() is everything BUT the two event ledgers — that separation is what stops state.json
+  // growing with the wave number.
+  const { degradations, escalations, ...serialized } = state
+  assert.ok(!JSON.stringify(serialized).includes('schema-retry'),
+    'and no part of the persisted state carries a degradation ledger')
 
-  // One append per row, verified by cksum over the file's tail, and unable to reach prior rows.
-  const rows = sidecarRows(calls, 'degradations')
-  assert.ok(rows.some((d) => d.label === 'codex-build:a' && d.kind === 'schema-retry'),
-    'the row itself, in full, is on disk in .roadmap/degradations.jsonl')
-  assert.deepEqual(rows, state.degradations, 'the sidecar and the envelope agree exactly — one write per event')
-  const app = calls.filter((c) => c.label === 'sidecar:degradations')
-  assert.ok(app.length >= 1, 'the sidecar was written')
-  const body = app[0].prompt.split('<<<APPEND>>>\n')[1]
-  assertAppendVerified(app[0].prompt, '/repo/.roadmap/degradations.jsonl', `${body}\n`, 'the degradation sidecar writer')
-
-  // A clean wave writes nothing at all.
-  const { fn: fn2, calls: calls2 } = makeAgent()
+  // A clean wave has nothing to report, and says so with an empty array rather than an absence.
+  const { fn: fn2 } = makeAgent()
   const clean = await runWave(fn2, makePlan([unit('a')]), makeState({ wave: 1 }))
   assert.deepEqual(clean.degradations, [], 'a clean wave has nothing to report')
-  assert.equal(calls2.some((c) => c.label.startsWith('sidecar:')), false, 'and appends nothing')
+  assert.deepEqual(clean.escalations, [], 'and no rulings to record')
 })
 
-// A lost sidecar append must NOT degrade — that would recurse into the mechanism that is failing.
-// It is counted instead, in a state field that is loud and cannot feed itself.
-test('22b a sidecar append lost twice is counted in state.sidecarLost, never re-degraded', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
-    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
-    { match: /^sidecar:degradations$/, result: { ok: false, detail: 'cksum printed 9 120' } },
+// The escalation ledger takes the same route, and state.json keeps only the STOP COUNT the
+// three-strikes brake actually reads.
+test('22b escalation rulings ride the envelope; only the stop count is state', async () => {
+  const { fn } = makeAgent([
+    { match: /^plan-check:a$/, result: () => ({ verdict: 'redirect', guidance: 'g', notes: '' }) },
   ])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1 }))
-  assert.ok(state.sidecarLost >= 1, 'the loss is counted where a reader will see it')
-  assert.equal(calls.filter((c) => c.label.startsWith('sidecar:')).length,
-    calls.filter((c) => c.label === 'sidecar:degradations').length,
-    'a failed degradation append never queues another one — no recursion')
-  assert.ok(!state.degradations.some((d) => d.kind === 'sidecar-failed'),
-    'and never becomes a degradation itself')
+  const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState({ wave: 1 }))
+  assert.ok(state.escalations.some((e) => e.unit === 'a'), 'the ruling is in the envelope')
+  assert.equal(state.escalationStops?.a, 1, 'the state keeps the count, not the rulings')
+  const { degradations, escalations, ...serialized } = state
+  assert.ok(!JSON.stringify(serialized).includes('"by"'), 'no ruling row survives into the state')
 })
+

@@ -99,7 +99,7 @@ Logged in → record `plan.codex: { home: <the CODEX_HOME path or null> }` and c
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
 `codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Auth is
 a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
-early-returns `codex-unavailable` / `codex-usage-limit` with state checkpointed; both are
+early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
 resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
 route around by re-implementing with Claude. The same shape covers the host and the platform:
 `env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
@@ -325,22 +325,27 @@ itself a deliverable.
 
 ## Phase 1…n — Execute waves
 
-Read `.roadmap/plan.json` and `.roadmap/state.json`, then launch the **conductor** in the
-background and stay quiet — it notifies you when the whole run finishes, not each wave.
+Launch the **conductor** in the background and stay quiet — it notifies you when the whole run
+finishes, not each wave. **Do not read `plan.json` or `state.json` first**: the envelope names the
+directory and the script reads the pack itself, cksum-verified, on a floor-tier agent. Pasting those
+documents into `args` put the whole pack through this session — the most expensive tier in the
+system — on every launch and every resume.
 
 ```
 Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
-           args: { plan, state, config,
+           args: { roadmapDir: "<repoPath>/.roadmap",
+                   config,
                    harnessPath: "<this skill's directory>/harness.mjs",
                    launchId: "<a value you have never used before — a timestamp is fine>" } })
 ```
 
-`harnessPath` is not optional — the conductor dispatches each wave via that child script and
-cannot resolve it otherwise. **`launchId` must be FRESH on every launch and on every resume** —
+`roadmapDir` and `harnessPath` are both required — the first is the pack the script reads at launch,
+the second is the child script it dispatches each wave with. **`launchId` must be FRESH on every
+launch and on every resume** —
 never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
-probes (provisioning, integration setup, the merged/reachability git probes, the per-wave codex
-probe, the host preflight, the preview worktree + mirror couriers) out of `resumeFromRunId`'s cache: those probes answer "what does the
-disk and git look like right now",
+probes (the launch pack read itself, provisioning, integration setup, the merged/reachability git
+probes, the per-wave codex probe, the host preflight, the preview worktree + mirror couriers) out of
+`resumeFromRunId`'s cache: those probes answer "what does the disk and git look like right now",
 and a replayed answer is a lie (a resume once replayed a pre-rebuild `cd: No such file` and
 quarantined healthy units). The scripts cannot generate it themselves — `Date.now()` and
 `Math.random()` do not exist in a workflow script, so it has to arrive in `args`. Omitting it does
@@ -348,6 +353,38 @@ not fail the run: the harness records one `no-launch-id` degradation and runs th
 optional `run` field at launch: that `runId` identifies the whole multi-wave run, so a
 same-session `resumeFromRunId` replays every completed wave and crash forensics are one `cat`
 away.
+
+### After every run — persist
+
+**The scripts write nothing under `.roadmap/`.** They have no filesystem, so every byte they used to
+put on disk went through a model transcribing a document — the second-largest model cost in the
+system, and it occasionally lost the document anyway. Everything now rides home in the return value,
+and one command turns it into files, at zero model cost:
+
+```
+node <this skill's directory>/persist.mjs \
+     --run <the run's workflow transcript directory> \
+     --script <this skill's directory>/conductor.mjs \
+     --args '<the exact envelope you launched with>'
+```
+
+Run it **after every Workflow return, and after every crash** — before you read `.roadmap/` for
+anything, and before any relaunch. It replays the run against its own journal (no model is called),
+then writes `state.json`, `plan.json`, `debt.json`, the `debt.md` and `architect-log.md` sections,
+`skill-degradations.md`, and appends `degradations.jsonl` / `escalations.jsonl`. Re-running it over
+the same run is a no-op, so persisting twice is safe.
+
+Read its last line:
+
+- **`OK …`** (exit 0) — everything landed; the files named on that line are current.
+- **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
+  call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
+  recovery ladder below, then persist again.
+- **`PLAN-CONFLICT unknownUnits=…`** — `.roadmap/plan.json` holds unit ids this run never saw (a
+  root edit between launches, a hand-merged respec). The file was left exactly as it was; merge the
+  two plans by hand before relaunching.
+- **exit 1** — nothing was written and the reason is on stderr. The most common is a partial with no
+  snapshot at all (the run died before its first status change): relaunch and persist again.
 
 **Do not** pass `config: { boundary: 'off' }` to end the arc — arc-completeness is detected
 post-hoc, and the final wave's untriaged boundary evidence is handed to you deliberately as
@@ -371,7 +408,8 @@ calls that are yours. The ladder's routing table, config knobs, and the per-unit
 harness runs are in `reference.md`. What you need at the keyboard is what comes back.
 
 **Fallback — per-wave harness dispatch.** You can still launch `harness.mjs` directly per wave
-(`args: { plan, state, config, launchId }`, no `harnessPath`) and triage every boundary yourself; setting
+(`args: { roadmapDir, config, launchId }`, no `harnessPath` — it reads the same pack, and
+`persist.mjs --script harness.mjs` writes its return) and triage every boundary yourself; setting
 `boundaryTriage: 'root'` gets the same effect without leaving the conductor. If you take the
 fallback path you inherit the conductor's duties back — in particular withholding contingent
 dependents (`reference.md`), which the harness's scheduler does not do for you.
@@ -400,7 +438,7 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
 - **`needs-user`** — a call only the user can make; the question is in the escalating agent's
   `notes`. Get the answer, fold it in, relaunch.
 - **`max-waves` / `agent-budget`** — the run hit its wave cap or its pre-dispatch budget guard
-  with work remaining. State is already persisted and consumed; relaunch fresh (a new run resets
+  with work remaining. Persist, then relaunch fresh (a new run resets
   the per-run agent counter). `max-waves` carries the final wave's `boundary` back marked
   `triaged:true` — read it for context, but its findings are already banked and its feedback
   already moved, so it is not yours to triage again.
@@ -465,10 +503,10 @@ The scripts' safety nets are *silent by design*: a dead agent degrades to a code
 never costs an arc. That silence is dangerous — it once let a deterministic bug masquerade as three
 runs of "network flakiness" — so every degradation is now **recorded, not swallowed**. Read it.
 
-Every return carries a **`degradations`** array (this run's rows). Each one is also appended, at the
-moment it happens, to `.roadmap/degradations.jsonl` — the arc's full record — and a per-kind count
-summary is rendered to `.roadmap/skill-degradations.md` at every persist point, so it survives a run
-that dies. `skill-feedback.md` is yours and the user's: the scripts never write it. Each entry is
+Every return carries a **`degradations`** array (this run's rows). `persist.mjs` appends each one to
+`.roadmap/degradations.jsonl` — the arc's full record — and renders a per-kind count summary to
+`.roadmap/skill-degradations.md`. `skill-feedback.md` is yours and the user's: nothing in the
+orchestrator can write it. Each entry is
 `{script, wave, phase, label, model, kind, what}`. The `kind` you will meet most are `schema-retry` (a
 report was rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the
 platform does not expose why**), `salvage-failed` and `threw`; `reference.md` enumerates the full set,
@@ -497,14 +535,19 @@ Your duties:
 The conductor and its child harness share one journal, so `resumeFromRunId` replays every
 completed wave *and* every completed unit within the in-flight wave for free — but it is
 **same-session only, even when the crash notification recommends otherwise** (that recommendation
-is wrong across sessions; the journal does not survive the host process). Work the ladder in order:
+is wrong across sessions; the journal does not survive the host process).
+
+**Run `persist.mjs` first, always** (the command above, with the same `--run` directory and the same
+envelope). A crashed run leaves no state on disk by itself; the persister is what turns whatever the
+journal holds into a `state.json`, marked `partial: {stoppedAt: <label>}` when the replay could not
+reach the end. That file is what rung 3 relaunches from. Then work the ladder in order:
 
 1. **Same session, run still alive** — nothing to do; it will notify you when the run finishes.
 2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in `state.json`'s
    `run` field. Best-effort: if it doesn't cleanly resume, drop to rung 3.
-3. **Adopt rejected, or a new session** — launch a **fresh conductor** from the latest checkpointed
-   `state.json`. This behaves like a resume, not a restart: the conductor persists the merged plan
-   and consumed state *before* every dispatch, so you resume from the last completed boundary; and
+3. **Adopt rejected, or a new session** — launch a **fresh conductor** against the `state.json`
+   `persist.mjs` just wrote. This behaves like a resume, not a restart: a continuation boundary
+   snapshots the consumed state, so a partial persist lands the last completed boundary; and
    within the in-flight wave, the harness asks **git** what already finished before it dispatches
    anything (a branch that landed on the integration branch is recorded `merged` and never
    re-dispatched — including one whose checkpoint says `running`/`merge-ready`; a crashed `running`
@@ -521,12 +564,17 @@ is wrong across sessions; the journal does not survive the host process). Work t
 
    Two more refusals read the same way — the run declining to destroy something rather than failing.
    A **`plan-conflict`** degradation means `.roadmap/plan.json` on disk holds unit ids this run has
-   never seen, so the conductor skipped the write instead of overwriting them; the return envelope's
-   `planConflict` names them, and merging the two plans is yours before you relaunch. A
-   **`debt-unbanked`** degradation means the banker did not confirm every item it was given: the
-   unconfirmed ones stay in `state.debt` and `.roadmap/debt.json` and re-bank at the next boundary, so
-   nothing is lost — but a repeat at the same wave means the ledger write itself is failing, and the
-   `write-failed` entries beside it are the thing to read.
+   never seen, so `persist.mjs` skipped the write instead of overwriting them (it says so on stdout
+   too); merging the two plans is yours before you relaunch. A **`debt-unbanked`** degradation means
+   the issue-mode banker did not confirm every item it was given: the unconfirmed ones stay in
+   `state.debt` and `.roadmap/debt.json` and re-bank at the next boundary, so nothing is lost — but
+   a repeat at the same wave means the `gh` projection is failing, and the `gh-sync` entries beside
+   it are the thing to read.
+
+   A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
+   copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
+   dispatch a wave from a document nobody could vouch for. Check the file parses and that
+   `roadmapDir` is right, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately
