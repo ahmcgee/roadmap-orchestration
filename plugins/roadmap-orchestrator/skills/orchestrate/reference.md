@@ -225,6 +225,18 @@ Fields the scripts add:
   the sanctioned exit. Non-empty `owed` on a terminal return
   is yours: discharge it (run the job) or waive it explicitly in the architect log before
   close-out.
+- **`sharedReds`** — present when the wave's circuit breaker took over a shared pre-existing red:
+  `{spec, units, wave}` per entry. A red claimed by ≥2 units whose diffs all leave it alone is one
+  assertion, not N unit defects — it is degraded once (`shared-red`), suppressed in every affected
+  unit's fix rounds (they proceed on their remaining failures, and are never quarantined for it),
+  and handed to the boundary as a **finding**. Never a debt item: a finding rides the
+  promote/escalation path, which the cut line brakes, so the breaker cannot reopen the
+  "debt creates a wave" hole.
+- **`scopeRulings`** — this wave's exit-gate verdicts on out-of-scope files: `{unit, file, verdict:
+  "approve" | "revert"}` per entry. Previously only the *breach* was recorded (`scope-growth`) and
+  never the ruling, so two identical breaches in one wave could get opposite answers. Each gate is
+  now shown its siblings' rulings as precedent, and the record is here to audit. Wave-scoped —
+  it describes this wave's diffs and does not accumulate.
 - **`conductor`** — `{ reason, wavesRun, boundaries: [{ wave, tier, escalated }] }`. `reason` is
   `null` in flight and the frozen return reason on return; `tier` is the ladder rung that handled
   each boundary; `escalated` is the reason a tier handed up/out, else `null`. `boundaries` is
@@ -252,18 +264,30 @@ Fields the scripts add:
   appended another row. Shape: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
   write-failed | preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
-  quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | codex-exec |
+  quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
+  duplicate-draft | codex-exec |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
   Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
   `codex-timeout` with surviving commits mean the branch was judged on its merits (a dead process
   is not a dead unit); `codex-unavailable`/`codex-usage-limit` accompany a wave halt (see
   `state.codex` below); `scope-growth` means a diff reached beyond its pinned envelope and the
-  gate adjudicated it. A **`tip-regressed`** entry accompanies a thrown wave: the checkpointed
+  gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
+  so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the checkpointed
   integration tip is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
   reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
   landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
-  and a resume can serve them from cache.
+  and a resume can serve them from cache. A `verify-blocked` entry accompanies an environment
+  quarantine and carries the host's load; a `shared-red` entry names the one spec several units
+  failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
+  one batch, which are dropped rather than renamed into extra units.
+
+  **Host load is recorded, never gated on.** Every test lane reports `loadavg1` and `cpuCount`
+  (`cat /proc/loadavg`, `nproc`) into its verify result, the flake band reports one `loads` sample
+  per run, and the `verify-blocked` and `codex-timeout` entries cite them. The wave's own
+  concurrency is what produces the load, so waiting on it would be waiting on our own siblings —
+  `gateMaxConcurrent` is the actual brake. The numbers exist so a wall-clock verdict is auditable
+  after the fact instead of a mystery.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `plan-conflict` entry means `plan.json`
   on disk held unit ids this run has never seen, so the conductor REFUSED to overwrite it (the
@@ -650,8 +674,11 @@ free.
 | — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
 | — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — escape hatch) |
 | **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
-| **2** | Opus boundary triager | any judgment (explorer/health findings, flake flips, non-contract debt, user-feedback files), or `fixUnitAdmit:'triage'` + drafts present |
-| **1** | script (mechanical) | only health fix-unit **drafts**, or nothing — admitted with no frontier tokens |
+| **2** | Opus boundary triager | any judgment (explorer/health findings, flake flips, non-contract debt, user-feedback files), or `fixUnitAdmit:'triage'` + drafts present, or more than `tier1MaxDrafts` drafts |
+| **1** | script (mechanical) | at most `tier1MaxDrafts` health fix-unit **drafts**, or nothing — admitted with no frontier tokens |
+
+Tier 3 also takes the wave when `admissions:'closed'` and a finding is graded `blocker` — see
+**Admissions** below.
 
 - **Tier 2 (Opus)** weighs findings, disposes of debt and non-contract feedback, and admits or cuts
   health-assessor drafts (drafts are the default action). It may **not** kill a unit, amend a
@@ -664,6 +691,31 @@ free.
   convergence brake generalized: once the plan's own units are all terminal, debt is NOT promoted;
   it banks (to `roadmap:debt` issues in issue mode, `debt.md` in file mode) and the arc completes. So
   termination is preserved and outstanding debt is picked up at the next session's Phase 0.
+
+**Admissions (`conductor.admissions`).** Debt is braked; *drafts* were not. Explorer/health/design
+drafts are findings, not debt, so the debt brake above never touched them — a healthy assessor
+drafts something every wave, and after the plan drains that grows the denominator forever (observed:
+7 drafts admitted at wave 18 and 8 at wave 19 after the architect had already logged PLAN DRAINED).
+`admissions:'closed'` closes that in **code**: tiers 1 and 2 set `newSkeletons = []`, every draft
+the tier admitted and every skeleton it promoted becomes a **debt line** (banked with its origin,
+never dropped), and the boundary then finds nothing new and closes the arc. The line is banked into
+`state.debt` *and* the wave's pending-debt buffer, because the two terminate differently: a terminal
+return hands `state.debt` to the root intact, while a continuation banks the buffer through
+`bank-debt` — the receipt-time snapshot is taken before the boundary mints anything, so one channel
+alone would lose the line. A continuation overwrites `state.debt` from the buffer, so the pair
+never double-banks. The tiers still
+*run* — closed admissions never route work away from judgment, only stop judgment minting units.
+The single exception is a finding graded **`blocker`**, which routes the wave to tier 3 so the
+architect tier rules on it rather than the script auto-admitting it.
+
+**Shared reds.** A `sharedReds` entry in the wave state (one failing spec that broke ≥2 units'
+gates and lies in none of their diffs — see the harness's circuit breaker) arrives at triage as a
+**finding**, tagged `source:'shared-red'`, never as a debt item: a finding rides the promote path,
+which the cut line brakes, whereas admitting it as debt would reopen the "debt creates a wave" hole.
+
+**Duplicate drafts.** A draft filed twice in one batch (same id, or same title once kebabbed) is
+**dropped** before ids are assigned, and the drop records a `duplicate-draft` degradation. Only a
+`supersedes` respec keeps the id-suffixing path — that one legitimately re-files a topic.
 - **Tier 3 (Fable)** handles quarantine respecs and Opus escalations, routing each quarantine by its
   dossier *reason*, and appends the architect journal. It emits **skeletons only** plus a `journal`
   — never code, never a contract amendment. `supersedes` retires the old unit (`inScope:false`) and
@@ -777,6 +829,7 @@ integration-review material.
 | `codexFixTimeoutMin` | `20` | Resume-round deadline |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
+| `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
 | `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
@@ -801,6 +854,8 @@ integration-review material.
 | `agentBudgetReserve` | `200` | Headroom below the 1000-call cap |
 | `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit |
 | `fixUnitAdmit` | `'auto'` | `'auto'` tier-1 mechanical admit of health drafts · `'triage'` force ≥Opus veto when drafts are present |
+| `admissions` | `'open'` | `'open'` normal · `'closed'` tiers 1 and 2 admit **no** new units — drafts and promotions become debt lines in `state.debt`. Enforced in code, not prompt. Flip it once the plan is DRAINED |
+| `tier1MaxDrafts` | `3` | Above this many drafts, tier 1 hands the wave to tier 2 so the cut line is actually applied instead of a batch being admitted mechanically |
 | `fableEffort` | `'high'` | Effort for the Fable boundary agent (the respec/escalation arbiter) — Fable 5's `high` default |
 
 **Spend direction when tuning:** extra frontier budget goes to the **planning side** (spec detail,

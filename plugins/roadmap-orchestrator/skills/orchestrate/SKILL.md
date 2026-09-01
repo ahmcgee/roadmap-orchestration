@@ -343,7 +343,19 @@ away.
 
 **Do not** pass `config: { boundary: 'off' }` to end the arc — arc-completeness is detected
 post-hoc, and the final wave's untriaged boundary evidence is handed to you deliberately as
-integration-review input. (You may pass it on a relaunch you *know* is final.)
+integration-review input. (You may pass it on a relaunch you *know* is final. Owed boundary jobs
+still run in that wave — an explorer or design reconcile that never ran is a debt the last boundary
+pays, not one it defers to a boundary that will never come.)
+
+**Closing admissions.** Once you have judged the plan DRAINED — every unit you meant to build is
+terminal, and what is left arriving is polish — relaunch with
+`config: { conductor: { admissions: 'closed' } }`. Under it the boundary tiers still run and still
+judge, but they may not mint units: every draft they would have admitted and every unit they would
+have promoted is banked to the debt ledger with its origin, and the arc closes on the next dry
+boundary. Without it, a healthy assessor drafts something every wave and the denominator grows as
+fast as the numerator — arc-observed, ~93% merged for 12+ hours after the plan was already drained.
+The one thing `closed` does not bank is a finding graded `blocker`: that routes to the Fable
+boundary tier for a ruling instead of being auto-admitted.
 
 Between waves the conductor triages each boundary through a tiered ladder — script, then Opus,
 then Fable — escalating only as far as the boundary demands, and returning to you only for the
