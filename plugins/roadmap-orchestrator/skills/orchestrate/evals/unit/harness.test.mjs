@@ -268,7 +268,12 @@ test('8b opus effort wiring: opusEffort defaults + overrides; the plan pass is a
   assert.equal(modelOf(defaults, 'plan:a'), 'haiku', 'the plan pass is steered at codexSteerModel now')
   assert.equal(effortOf(defaults, 'plan:a'), 'low', 'steering a codex role is a low-effort mechanical job')
   assert.equal(effortOf(defaults, 'opus-gate:a'), 'medium', 'opusEffort defaults to medium (gate)')
-  assert.equal(effortOf(defaults, 'health:w'), 'medium', 'opusEffort defaults to medium (boundary)')
+  // The wave-tail health assessor was the boundary's opusEffort call until 0.14.0 moved it onto
+  // the codex role adapter. It is now a steering courier like every other codex dispatch, so it is
+  // pinned to codexSteerModel/low here instead — a changed contract, not a weakened assertion:
+  // opusEffort still drives the Opus gate above and the Opus plan-check.
+  assert.equal(modelOf(defaults, 'health:w'), 'haiku', 'the boundary health role runs on codex, steered at codexSteerModel')
+  assert.equal(effortOf(defaults, 'health:w'), 'low', 'steering is a low-effort mechanical job there too')
   // The steering agent is deliberately NOT on either Opus knob — it launches and watches a
   // process, it does not reason about the code.
   assert.equal(modelOf(defaults, 'codex-build:a'), 'haiku', 'the codex steering agent runs at codexSteerModel')
@@ -282,7 +287,7 @@ test('8b opus effort wiring: opusEffort defaults + overrides; the plan pass is a
   })()
   assert.equal(modelOf(overridden, 'plan:a'), 'sonnet', 'codexSteerModel override carried to the plan role too')
   assert.equal(effortOf(overridden, 'opus-gate:a'), 'low', 'opusEffort override carried to the Opus gate')
-  assert.equal(effortOf(overridden, 'health:w'), 'low', 'opusEffort override carried to the boundary assessor')
+  assert.equal(modelOf(overridden, 'health:w'), 'sonnet', 'codexSteerModel override reaches the boundary role too')
   assert.equal(modelOf(overridden, 'codex-build:a'), 'sonnet', 'codexSteerModel override carried to the steering agent')
 })
 

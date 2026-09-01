@@ -27,12 +27,14 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
 2. **Claude decides, Codex drafts and executes, Haiku only couriers.** You, and every `fable`
    agent, produce plans, contracts, specs, directives, verdicts, reports — never code, never
    bulk text. The Codex CLI writes ALL implementation and fixes, plans each unit's own work,
-   runs the spec's verification lanes and reads the diff into a pre-gate review digest (every one
-   of those steered by a Haiku agent). Claude keeps every surface that can REJECT work: the
-   plan-check, both exit gates, the escalation ladder, the consults, the merge and its suite gate,
-   and the boundary assessors. Opus judges; Sonnet gates low-risk units, extracts and compresses;
-   Haiku runs closed command lists. A codex outage is a hard stop to surface to the user, never a
-   licence for a Claude agent to implement in its place.
+   runs the spec's verification lanes, reads the diff into a pre-gate review digest and — since
+   0.14.0 — drafts at the boundary too (the wave-tail explorer, health assessor, flake band and
+   design reconciler, each writing its own report); every one of those is steered by a Haiku agent.
+   Claude keeps every surface that can REJECT work: the plan-check, both exit gates, the escalation
+   ladder, the consults, the merge and its suite gate, and the boundary TRIAGE that rules on what
+   those roles found. Opus judges; Sonnet gates low-risk units, extracts and compresses; Haiku runs
+   closed command lists and writes down what the script already composed. A codex outage is a hard
+   stop to surface to the user, never a licence for a Claude agent to implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
    outcome that feeds redesign, not a failure to retry around.
@@ -466,10 +468,11 @@ plenty.
 ### On the wakes where you do triage
 
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
-harness has already *run* the boundary jobs (Opus runtime explorer against the live preview, Opus
-health assessor against the integration tip, codex full-suite flake re-runs); their results are in
-the returned state's `boundary` block and in `feedback/{explorer,health,design}/wave-<n>.md`
-(`design/` appears only on waves that merged a design-cited unit). If that
+harness has already *run* the boundary jobs (a codex runtime explorer against the live preview, a
+codex health assessor against the integration tip, codex full-suite flake re-runs); their results are
+in the returned state's `boundary` block, and each role wrote its own
+`feedback/{explorer,health,design}/wave-<n>.md` (`design/` appears only on waves that merged a
+design-cited unit; the flake band's record is `feedback/health/wave-<n>-flake.md`). If that
 block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
 
 - **Quarantines**: read the dossiers in `.roadmap/quarantine/` — the *reason* routes the action.

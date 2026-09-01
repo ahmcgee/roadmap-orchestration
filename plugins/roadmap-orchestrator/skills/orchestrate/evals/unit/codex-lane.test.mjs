@@ -546,19 +546,28 @@ test('n4 adapter: a role never runs in the operator\'s checkout — the cwd brak
 test('n5 adapter: codex dispatches land in their own spend bucket', async () => {
   const { fn, calls } = makeAgent()
   const clean = await runWave(fn, makePlan([unit('a')]), makeState())
-  // One tick per codex exec the ADAPTER launched. A clean single-unit wave dispatches five roles:
-  // the spec critique, the plan, the verify, the pre-gate review, and the wave-tail flake band.
-  // (The build/fix lane has its own `codexRuns` counter — it is not a role.)
-  assert.equal(clean.spend.codex, 5, 'one role call = one codex exec = one tick in the `codex` bucket')
+  // One tick per codex exec the ADAPTER launched. A clean single-unit wave dispatches six roles:
+  // the spec critique, the plan, the verify and the pre-gate review from the per-unit pipeline,
+  // plus the wave-tail health assessor and flake band. (The build/fix lane has its own `codexRuns`
+  // counter — it is not a role.)
+  assert.equal(clean.spend.codex, 6, 'one role call = one codex exec = one tick in the `codex` bucket')
   assert.deepEqual(
     calls.filter((c) => c.schema?.properties?.result).map((c) => c.label).sort(),
-    ['codex-review:a', 'codex-spec-review:a', 'flake:w1', 'plan:a', 'verify:a#0'],
-    'and those five are exactly the roles the per-unit pipeline plus the boundary dispatches')
+    ['codex-review:a', 'codex-spec-review:a', 'flake:w1', 'health:w1', 'plan:a', 'verify:a#0'],
+    'and those six are exactly the roles the per-unit pipeline plus the boundary dispatches')
 
   const { fn: fn2 } = makeAgent([{ match: /^codex-spec-review:a/, result: () => codexRoleDead() }])
   const retried = await runWave(fn2, makePlan([unit('a')]), makeState())
-  assert.equal(retried.spend.codex, 6, 'the reattempt is a second codex process and is counted as one')
+  assert.equal(retried.spend.codex, 7, 'the reattempt is a second codex process and is counted as one')
   assert.ok(retried.spend.haiku > clean.spend.haiku, 'and each one also costs its own Haiku courier')
+
+  // The boundary roles ride the same bucket — that is the whole point of the 0.14.0 shift. With the
+  // wave-tail band switched off, only the four per-unit roles tick, and the Opus bill is unmoved:
+  // the health assessor that used to be an Opus investigator costs that tier nothing now.
+  const { fn: fn3 } = makeAgent()
+  const noBoundary = await runWave(fn3, makePlan([unit('a')]), makeState(), { healthCheck: 'off' })
+  assert.equal(noBoundary.spend.codex, 4, 'the health assessor and the flake band are codex dispatches')
+  assert.equal(noBoundary.spend.opus, clean.spend.opus, 'and neither costs the Opus tier anything')
 })
 
 // =========================================================================================
@@ -867,4 +876,88 @@ test('j3 conductor: a healthy wave still reaches the census (the halt guard is n
     boundary: { explorer: null, health: { findings: [], fixUnits: [] }, flake: null },
   })
   assert.ok(has(calls, 'census:w1'), 'without a halt the boundary runs normally — j/j2 are not vacuous')
+})
+
+// =========================================================================================
+// p. The four BOUNDARY roles on the adapter (0.14.0). The wave-tail explorer, health assessor and
+//    design reconciler were Opus investigators, and the flake band a Haiku test-runner; all four
+//    had a Haiku verbatim-writer transcribe their structured result to
+//    `.roadmap/feedback/<job>/wave-N.md`. They are codex roles now and each writes its own report,
+//    so what has to stay pinned is: WHERE each one runs, WHAT it may write, and what a dead one
+//    costs the wave. The judgment that reads their output — the conductor's tier-2/tier-3 triagers
+//    — is deliberately untouched.
+// =========================================================================================
+const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: 'npm run dev' }
+const AUTH_P = [{ id: 'checkin', source: 'design-project', path: 'apps/web/src/design/checkin/', covers: ['/checkin'] }]
+const boundaryPlan = () => makePlan([unit('ui', { design: ['checkin#chrome'] })], [],
+  { designAuthorities: AUTH_P, preview: PREVIEW })
+
+test('p1 boundary roles: each is a codex dispatch, in the tree it judges', async () => {
+  const { fn, calls } = makeAgent()
+  // `codexSandbox: null` drops the ENVIRONMENT's override so the role's own declared intent is what
+  // reaches the command line — the only way to observe it (the shipped default is
+  // 'danger-full-access' for the measured reason on that knob, and it wins by design).
+  await runWave(fn, boundaryPlan(), makeState(), { codexSandbox: null })
+
+  for (const [label, cwd] of [['explorer:w1', `${WT}/__preview`], ['health:w1', `${WT}/__integration`],
+    ['flake:w1', `${WT}/__integration`], ['design:w1', `${WT}/__preview`]]) {
+    const c = calls.find((x) => x.label === label)
+    assert.ok(c, `${label} ran`)
+    assert.equal(c.model, 'haiku', `${label} is steered by the codex courier, not an Opus turn`)
+    assert.ok(c.prompt.includes(`codex exec -C ${cwd} -s workspace-write`),
+      `${label} runs codex in ${cwd} and declares workspace-write (it writes exactly one file: its report)`)
+    assert.ok(c.prompt.includes(`${WT}/__codex/roles/${label.replace(':', '-')}`),
+      `${label} gets its own artifact dir under the roles namespace`)
+  }
+  // The preview tree is where a shell may reach the running product; the operator's checkout never is.
+  for (const label of ['explorer:w1', 'design:w1'])
+    assert.ok(!calls.find((c) => c.label === label).prompt.includes('codex exec -C /repo '),
+      `${label} must never be pointed at the operator's checkout`)
+})
+
+test('p2 boundary roles: each writes its own report, and no transcription courier survives', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, boundaryPlan(), makeState())
+
+  for (const [label, path] of [['explorer:w1', '/repo/.roadmap/feedback/explorer/wave-1.md'],
+    ['health:w1', '/repo/.roadmap/feedback/health/wave-1.md'],
+    ['design:w1', '/repo/.roadmap/feedback/design/wave-1.md'],
+    // The flake band's record is its OWN file, not a section inside the health report: the health
+    // assessor owns that path end to end, and two writers on one path lose a section.
+    ['flake:w1', '/repo/.roadmap/feedback/health/wave-1-flake.md']])
+    assert.ok(calls.find((c) => c.label === label).prompt.includes(path),
+      `${label} is told to write ${path} itself`)
+
+  for (const gone of ['explorer-write:', 'health-write:', 'design-write:', 'flake-write:'])
+    assert.ok(!has(calls, gone), `${gone} is a removed label — the role has a filesystem now`)
+})
+
+test('p3 boundary roles: a dead explorer or design role goes OWED, exactly as a skipped one did', async () => {
+  const { fn } = makeAgent([
+    { match: /^explorer:w1/, result: () => codexRoleDead() },
+    { match: /^design:w1/, result: () => codexRoleDead() },
+  ])
+  const state = await runWave(fn, boundaryPlan(), makeState())
+
+  const owed = Object.fromEntries((state.owed ?? []).map((o) => [o.job, o]))
+  assert.ok(owed.explorer, 'the explorer is owed at the next boundary')
+  assert.ok(owed.design, 'so is the design reconcile')
+  assert.deepEqual(owed.design.units, ['ui'], 'and it names the surfaces that went unchecked')
+  assert.equal(state.halt, undefined, 'a dead codex role halts nothing — that is the adapter contract')
+  // One `codex-role` row per dead role, from the adapter, plus the design job's own no-report row.
+  const kinds = (state.degradations ?? []).map((d) => d.kind)
+  assert.equal(kinds.filter((k) => k === 'codex-role').length, 2, 'each dead role is ledgered once, at the event')
+  assert.ok(kinds.includes('no-report'), 'and the unchecked design surfaces are named for the operator')
+})
+
+test('p4 boundary roles: a dead health role degrades `health-skipped` and yields no drafts', async () => {
+  const { fn } = makeAgent([{ match: /^health:w1/, result: () => codexRoleDead() }])
+  const state = await runWave(fn, boundaryPlan(), makeState())
+
+  assert.equal(state.boundary.health, null, 'no drafts — an empty draft set here means UNASSESSED')
+  const row = (state.degradations ?? []).find((d) => d.kind === 'health-skipped')
+  assert.ok(row, 'and the ledger says so, so a triager cannot read silence as "nothing to consolidate"')
+  assert.match(row.what, /UNASSESSED/)
+  assert.ok(state.boundary.explorer, 'the boundary itself proceeds — a skipped assessment is not a failed wave')
+  assert.ok((state.owed ?? []).some((o) => o.job === 'health'), 'and it is re-queued')
 })

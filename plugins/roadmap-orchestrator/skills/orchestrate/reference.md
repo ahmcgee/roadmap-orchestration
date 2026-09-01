@@ -62,9 +62,12 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
   quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
-    explorer/*.md      #   per-wave runtime exploration findings (harness-run Opus, wave-tail)
-    health/*.md        #   per-wave code/test/structure/ergonomics health findings (Opus)
-    design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (Opus);
+    explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
+                       #   writes this file ITSELF — see "Who writes .roadmap/")
+    health/*.md        #   per-wave code/test/structure/ergonomics health findings (codex role)
+    health/*-flake.md  #   the flake band's re-run record (codex role, which writes this file
+                       #   ITSELF; its own file, so the health role owns wave-<n>.md end to end)
+    design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (codex role);
                        #   written only on waves that merged a design-cited unit
     user/*.md          #   FILE MODE: the user drops notes here AT ANY TIME (copying TEMPLATE.md);
                        #   read at the next boundary — never an input to a running wave. ISSUE
@@ -299,17 +302,20 @@ Fields the scripts add:
   preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
-  env-no-reaper | review-skipped | verify-unrun | dossier-write-fallback | codex-exec | codex-lifecycle |
+  env-no-reaper | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
   Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
   directory to read; `codex-role` is a role that produced no result after its one retry — its
-  caller got `null`, and nothing was halted on account of it. The three 0.14.0 kinds are what the
-  harness *did about* such a null on the three roles that have a coded answer: `review-skipped` (no
+  caller got `null`, and nothing was halted on account of it. Four 0.14.0 kinds are what the
+  harness *did about* such a null on the roles that have a coded answer: `review-skipped` (no
   pre-gate digest, so the exit gate reads the raw diff at Opus whatever the risk — less evidence
   buys more Claude, never less scrutiny), `verify-unrun` (the unit is recorded `blocked`, **not**
   quarantined: nothing about it was judged, its commits are intact, and the wave-start loop
-  re-opens it next wave) and `dossier-write-fallback` (codex did not write the quarantine dossier,
-  so the Haiku writer it replaced runs once — a dossier must exist). `codex-exec`
+  re-opens it next wave), `dossier-write-fallback` (codex did not write the quarantine dossier,
+  so the Haiku writer it replaced runs once — a dossier must exist) and `health-skipped` (no
+  wave-tail health report, so an empty draft set at this boundary means UNASSESSED rather than
+  "nothing to consolidate"). `codex-exec`
   (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
   finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
   the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
@@ -532,10 +538,11 @@ at the wave tail, the **boundary phase**.
 
 **The 0.14.0 division of labour, in one line: Claude decides, Codex drafts and executes, Haiku only
 couriers.** Every judgment surface that can *reject* work stays Claude — the plan-check, both exit
-gates, the escalation ladder, the consults, the merge and its suite gate, and the boundary's
-explorer/health/design assessors. What moved onto the role adapter is what a shell-capable executor
-does better and cheaper: planning its own work, running the spec's lanes, reading the diff to
-produce a review digest, writing the quarantine dossier, and the flake band. The economics behind
+gates, the escalation ladder, the consults, the merge and its suite gate, and the boundary TRIAGE
+that rules on what the wave-tail roles found. What moved onto the role adapter is what a
+shell-capable executor does better and cheaper: planning its own work, running the spec's lanes,
+reading the diff to produce a review digest, writing the quarantine dossier, and every wave-tail
+boundary job — explorer, health, flake and design. The economics behind
 it: Claude Code weekly limits are the scarce resource, Opus calls dominate that spend, and codex
 quota is plentiful. **Fable's allocation is untouched** — boundaries, consults, the frontier gate
 and the high-risk plan-check are exactly where they were.
@@ -597,8 +604,20 @@ honest, skip where it is not. A usage limit still sets `halt.codex` (one OpenAI 
 run), and a halted wave returns `null` without dispatching. Spend: every role dispatch, retries
 included, ticks `spend.codex`.
 
-Today the **spec critique** is the adapter's only caller — deliberately, so there is exactly one way
-to call Codex and no bespoke path left beside it.
+Callers today: the **spec critique** (`codex-spec-review:<id>`), the per-unit `plan`/`replan`,
+`verify`, pre-gate `codex-review` and `dossier-write` roles, and the four **boundary roles** — the
+wave-tail runtime `explorer`, the `health` assessor, the `flake` band and the `design` reconciler,
+which moved off Opus (the flake band off Haiku) in 0.14.0. Each boundary role runs in the tree it
+judges (explorer and design in the preview worktree, which is where a shell may reach the running
+product; health and flake in the integration worktree), declares `workspace-write` because each
+writes exactly one file — its own report under `.roadmap/feedback/<job>/wave-<n>.md`, or
+`health/wave-<n>-flake.md` for the flake band — and carries every other restraint in its brief,
+since `codexSandbox` overrides the declared intent anyway. `codexBoundaryTimeoutMin` (45) is their
+deadline rather than the 20-minute `codexRoleTimeoutMin`: driving a product end to end, or running
+the full suite N times over, is real work and not a one-artifact errand. On `null`: explorer, flake
+and design go **owed** exactly as a skipped job does,
+and health additionally records a `health-skipped` degradation — without it an empty draft set reads
+to the triager as "nothing to consolidate" rather than "nobody looked".
 
 **The process outlives its steerer, safely.** The deadline rides *inside* the launched command
 line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
@@ -725,13 +744,16 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   fired zero times in 92 units while every real failure was a silent design decision under a spec
   that didn't cover it.
 - **Boundary phase** (wave tail, strictly after every merge and mirror advance; gates nothing). In
-  parallel: the **Opus runtime explorer** against the live preview (drives it via
-  `preview.howToAccess`; ≤10 findings with severity, exact repro, observed vs expected; an empty
-  report is legitimate), the **Opus health assessor** against the integration tip, and **codex**
-  full-suite **flake re-runs** (`flakeReruns` — pure execution, so it moved off Claude in 0.14.0;
-  a null leaves the job `owed`, exactly as before). Results land in the returned state's `boundary`
-  block and, via Haiku writer agents, in `feedback/{explorer,health,design}/wave-<n>.md`
-  (`design/` only on waves that merged a design-cited unit).
+  parallel: the **runtime explorer** against the live preview (drives it via `preview.howToAccess`;
+  ≤10 findings with severity, exact repro, observed vs expected; an empty report is legitimate), the
+  **health assessor** against the integration tip, and full-suite **flake re-runs** (`flakeReruns`;
+  a null leaves the job `owed`, exactly as before). All four boundary jobs — explorer, health, flake
+  and the design reconciler — are **codex roles** (0.14.0; the three investigators were Opus and the
+  flake band Haiku through 0.13.x); their results land in the returned state's `boundary` block, and
+  each role writes its own `feedback/{explorer,health,design}/wave-<n>.md` rather than paying a Haiku
+  transcriber for it (`design/` only on waves that merged a design-cited unit). The flake band's
+  record is its own file, `feedback/health/wave-<n>-flake.md`, so two writers never share the health
+  report's path.
 
 **The health assessor is empowered, not advisory.** It judges what no per-unit gate can see: test
 health (coverage gaps, brittleness — assertions on implementation detail, over-mocking,
@@ -886,8 +908,15 @@ which the cut line brakes, whereas admitting it as debt would reopen the "debt c
   — never code, never a contract amendment. `supersedes` retires the old unit (`inScope:false`) and
   repoints its edges; new ids are kebab-sanitized and collision-suffixed; a respec **never** reuses a
   failed id.
-- After a tier runs, **Sonnet** renders every new skeleton to `.roadmap/specs/<id>.md` and a pure-code
-  merge appends the units and edges. **Arc-completeness is post-hoc**: a tier says so, or the boundary
+- After a tier runs, every new skeleton becomes `.roadmap/specs/<id>.md` and a pure-code
+  merge appends the units and edges. **No spec, no unit**: the spec file's content is composed in
+  code from the skeleton and written verbatim by Haiku through a quoted here-doc, then **verified by
+  `cksum`** — the courier reports what `cksum < <file>` printed and the *script* compares it with
+  `cksumOf` of the bytes it composed, because an `ok:true` from a cheap writer is not evidence. A
+  mismatch buys one resample under a deliberately **differing** prompt (so `resumeFromRunId` cannot
+  serve the bad sample back); after that the skeleton never reaches the merge — it is degraded
+  (`spec-unwritten`) and banked as debt for the next boundary to re-draft, because `specs/<id>.md`
+  is the authority the planner, Codex and both exit gates build and grade against. **Arc-completeness is post-hoc**: a tier says so, or the boundary
   produced no new units and no spec revisions. Both paths are then filtered through a satisfiability
   census — if any in-scope unit is still non-terminal *and* dispatchable, the return is `arc-stalled`
   instead, carrying `outstanding`. Units wedged behind an unresolved quarantine can never move, so
@@ -916,9 +945,16 @@ writes `.roadmap/`"): the final `state`, the merged `plan`, `debt` (→ `debt.js
 ledgers. A **continuation** boundary also logs a snapshot of the consumed state (`boundary` removed,
 banked debt cleared) so a crash in a LATER wave still lands what this one decided.
 
-What still runs as an agent call at a boundary, because a model has to do it: **spec expansion**
-(Sonnet renders each new skeleton to `specs/<id>.md`, and revises where asked) and **move-feedback**
-(this wave's evidence + the actioned/dismissed user notes → `feedback/triaged/N/`).
+What still runs as an agent call at a boundary, because the bytes have to reach disk mid-run
+(`persist.mjs` only replays *after* a run, and the next wave reads these files): **spec expansion**
+— a Haiku verbatim write of content this script composes, cksum-verified, so no model stands
+between the boundary's decision and the file — **spec revision** (Sonnet, the one that stays a
+judgment: it edits three sections in place around material it must not touch, such as an architect
+ruling the harness appended mid-wave; it reports its post-edit `cksum` for the record, but there is
+no expected value to check it against), and **move-feedback** (this wave's evidence + the actioned/dismissed
+user notes → `feedback/triaged/N/`). A failed *expansion* withholds its unit; a failed *revision*
+degrades (`spec-unrevised`) and the unit dispatches on its previous spec — an amendment is not an
+authority.
 
 **Staging on an escalating return.** Spec expansion, `issue-new`, the debt collection and the
 journal all happen **before** a tier-2 or tier-3 `contract-amendment` / `contingent-replan` /
@@ -951,6 +987,11 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   plan,              // the conductor's merged working plan -> .roadmap/plan.json (refused if the
                      //   file on disk holds unit ids this run never saw)
   spendDelta,        // per-key nonzero delta of state.spend vs the launch state
+  spendReport,       // arc-cumulative, split the way 0.14.0 makes decisions about it:
+                     //   { claude: {fable, opus, sonnet, haiku, total},
+                     //     codex:  {roles, processes, inputTokens, outputTokens} }.
+                     //   Claude tiers are the weekly-limited resource; codex is the plentiful
+                     //   one work moved onto, and `claude.total` never counts a codex run
   degradations,      // this run's rows (empty when clean) -> degradations.jsonl + skill-degradations.md
   escalations,       // this run's ladder rulings -> escalations.jsonl
   debt,              // the wave ledger as received -> debt.json (empty once a boundary banked it)
@@ -1018,9 +1059,10 @@ integration-review material.
 | `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work |
 | `codexNetwork` | `false` | Adds `-c sandbox_workspace_write.network_access=true` (needed when builds must install packages) |
 | `codexTimeoutMin` | `240` | Build deadline before the steering agent kills the process group and assesses what's on disk. Sized for long-horizon units; per-milestone commits are what make a kill survivable |
-| `codexFixTimeoutMin` | `20` | Resume-round deadline. Also the deadline for the two roles that run test suites — verify and the flake band — since a lane is the one role that legitimately spends most of an hour, unlike the 20-minute `codexRoleTimeoutMin` readers |
+| `codexFixTimeoutMin` | `45` | Resume-round deadline. Also the deadline for `verify`, the one per-unit role that runs test suites, since a lane legitimately spends most of an hour unlike the 20-minute `codexRoleTimeoutMin` readers (the flake band takes `codexBoundaryTimeoutMin` with the rest of the boundary) |
 | `codexRoleEffort` | `'medium'` | `model_reasoning_effort` for a codex ROLE run (`run(…, {model:'codex'})`) — since 0.14.0 that is the spec critique, plan/replan, verify, the pre-gate review, the quarantine dossier write and the flake band. One knob for all of them; a caller may override per role, and there is deliberately no separate planning-effort dial until a workload proves one is needed |
 | `codexRoleTimeoutMin` | `20` | Role deadline. Far below `codexTimeoutMin` on purpose: a role that has not finished in 20 minutes is stuck, not thinking, and its caller has a fallback either way |
+| `codexBoundaryTimeoutMin` | `45` | Deadline for the four wave-tail BOUNDARY roles (explorer, health, flake, design). Longer than `codexRoleTimeoutMin` because they drive a product end to end, read a whole integrated tree, or run the full suite N times over; still far below `codexTimeoutMin` |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
 | `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
@@ -1028,7 +1070,7 @@ integration-review material.
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
 | `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
-| `opusEffort` | `'medium'` | Effort for every Opus call the harness makes — boundary assessors (explorer/health/design), the Opus-first plan-check, the first-pass exit gate wherever `gateModel` puts it on Opus, and merge-conflict/integration fixes. Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth. (`implementEffort` was **removed** in 0.14.0: it only ever drove plan/replan, and the implementer plans its own work on codex now — a codex role's effort is `codexRoleEffort`. Setting it is inert.) |
+| `opusEffort` | `'medium'` | Effort for every Opus call the harness makes — the Opus-first plan-check, the first-pass exit gate wherever `gateModel` puts it on Opus, and merge-conflict/integration fixes (the boundary assessors moved to Codex in 0.14.0, so this no longer reaches them). Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth. (`implementEffort` was **removed** in 0.14.0: it only ever drove plan/replan, and the implementer plans its own work on codex now — a codex role's effort is `codexRoleEffort`. Setting it is inert.) |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
@@ -1068,11 +1110,13 @@ anti-rubber-stamp checks on everything below them.
 
 | Tier | Does | Never does |
 |---|---|---|
-| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus every ROLE dispatched through the adapter — the cross-model spec critique, the unit's own implementation **plan**/replan, **verify** and every gate re-verify, the **pre-gate review digest**, the quarantine **dossier write**, and the wave-tail **flake band**. Runs its own implement→test→fix loop inside the brief's pinned scope | **Decide.** It advises — a review digest, a critique, a plan — but nothing it says is a verdict: it never gates, never approves a merge, never rules on an escalation, never plans the roadmap, and never adjudicates its own findings |
+| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus every ROLE dispatched through the adapter — the cross-model spec critique, the unit's own implementation **plan**/replan, **verify** and every gate re-verify, the **pre-gate review digest**, the quarantine **dossier write**, and the four wave-tail **boundary
+roles** (runtime explorer, health assessor, flake band, design reconciler), each of which writes its
+own report file. Runs its own implement→test→fix loop inside the brief's pinned scope | **Decide.** It advises — a review digest, a critique, a plan — but nothing it says is a verdict: it never gates, never approves a merge, never rules on an escalation, never plans the roadmap, and never adjudicates its own findings |
 | `fable` | Plan pack, plan-checks for med/high-risk units (taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
-| `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, conflict resolution, the wave-tail runtime explorer + health assessor (incl. drafting consolidation fix-units), the conductor's tier-2 boundary triager | Implementation and planning (Codex's) |
-| `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's skeleton→spec expansion | — |
-| `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack read, mirror advance / preview refresh, the conductor's census, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
+| `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, conflict resolution, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
+| `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's spec **revisions** | Spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
+| `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack read, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
 
 **Root-only, never delegated down the ladder**: the Phase-0 plan pack, contingent replans, contract
 amendments, needs-user calls, and the session integration review.

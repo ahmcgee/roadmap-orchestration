@@ -156,7 +156,6 @@ async function conductorRun({ onDisk } = {}) {
       newUnits: [{ id: 'ic-v2', title: 'respec', risk: 'low', goal: 'g', acceptance: ['a'], supersedes: 'ic' }],
       reviseSpecs: [], cutUnits: [], debtLedger: ['LEDGER-ITEM'],
       journal: 'JOURNAL-TEXT', escalate: false, arcComplete: false, notes: '' } },
-    { match: /^spec-(expand|revise):/, result: { ok: true } },
     { match: /^move-feedback:/, result: { ok: true } },
   ])
   const waveState = {

@@ -355,6 +355,18 @@ function mergeConductorSpend(st) {
   }
   cMerged = { ...cSpend }
 }
+// Where the arc's attention went, split the way 0.14.0 asks the question: CLAUDE tiers — the
+// weekly-limited resource every routing decision is now trying to spend less of — against CODEX,
+// which is plentiful and is where the drafting and the building moved. The harness already tallies
+// the codex side (`codex` = role dispatches, `codexRuns` = every codex process including the
+// build/fix lane's, plus its token counters) and it threads home in `state.spend`; this only splits
+// one number into the two an operator actually compares. Arc-CUMULATIVE, like `spend` itself —
+// `spendDelta` beside it is this run's contribution.
+const spendReport = (sp) => ({
+  claude: { ...Object.fromEntries(TIER_KEYS.map((k) => [k, sp?.[k] ?? 0])), total: sumTiers(sp) },
+  codex: { roles: sp?.codex ?? 0, processes: sp?.codexRuns ?? 0,
+    inputTokens: sp?.codexInputTokens ?? 0, outputTokens: sp?.codexOutputTokens ?? 0 },
+})
 const deltaSpend = (sp) => {
   const d = {}
   for (const k of new Set([...Object.keys(initialSpend), ...Object.keys(sp ?? {})])) {
@@ -451,7 +463,7 @@ const runOr = async (fallback, prompt, opts) => {
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
-  `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). `
+  `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). ` + TERSE
 
 /* ------------------------------- schemas ------------------------------- */
 
@@ -525,7 +537,14 @@ const S_boundaryPlan = obj({
   notes: { type: 'string', maxLength: 2000 },   // pressure-release — see S_triage.notes
 }, ['newUnits', 'journal', 'escalate', 'arcComplete'])
 
-const S = { ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']) }
+const S = {
+  ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
+  // A verbatim WRITE report. `cksum` is the whole point and therefore REQUIRED: it is what the
+  // writer observed `cksum < <file>` print, copied through, and the script — not the writer —
+  // decides whether it matches. A writer that cannot run the check reports "", which is data.
+  write: obj({ ok: { type: 'boolean' }, cksum: { type: 'string', maxLength: 60 },
+    detail: { type: 'string', maxLength: 300 } }, ['ok', 'cksum']),
+}
 // issue-new returns the {id, number} of every unit issue it created or found, so the conductor can
 // cache each number into plan.units[].issue. No maxLength anywhere: the ids are echoed from the units
 // passed in, so there is nothing for the model to overrun (and nothing for prompt-hygiene to require).
@@ -680,6 +699,7 @@ async function ret(reason, tier, extra = {}) {
   return {
     status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
     spendDelta: deltaSpend(st.spend),
+    spendReport: spendReport(st.spend),
     // Everything below is what persist.mjs puts on disk. Always present (empty when clean) so
     // neither the root nor the persister has to wonder whether the run was healthy.
     degradations,
@@ -810,19 +830,89 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `Return skeletons and journal only — write no code and no files. Hold \`journal\` to one short paragraph ` +
   `(max 1500 characters) and \`notes\` to a few (max 2000 characters). ${TERSE}${lead}`
 
-const specExpandPrompt = (skel) => SPECWRITE +
-  `Expand this unit skeleton into a full spec and write it to exactly ${repo}/.roadmap/specs/${skel.id}.md and no ` +
-  `other file. Skeleton:\n${JSON.stringify(skel)}\nThe spec must contain: a Goal section (from \`goal\`), a ` +
-  `Constraints section (from \`constraints\`), a Contract references section (from \`contractRefs\`), and an ` +
-  `Acceptance criteria section written as individually gradeable clauses (from \`acceptance\`) — the exit gate ` +
-  `grades them one by one. Render the skeleton's content faithfully; invent no requirements. Report ok:false with ` +
-  `the exact error if the path cannot be written.`
+// A spec file is a PROJECTION of the skeleton the boundary already decided — every section is one
+// of the skeleton's own fields, and the prompt that used to buy a Sonnet turn for it said exactly
+// that ("render the skeleton's content faithfully; invent no requirements"). So the bytes are
+// composed HERE, in code, and a Haiku verbatim-writer puts them on disk: the same move 0.14.0 makes
+// everywhere else, and the strongest possible form of "invent no requirements" — there is no longer
+// a model between the boundary's decision and the file. It is also replay-exact, being a pure
+// function of the skeleton.
+// `files` is carried because health/design fix-unit DRAFTS have one (their `{id, goal, files,
+// acceptance}` shape) even though the skeleton schema does not require it — dropping it here would
+// throw away the one scope hint a consolidation draft ships with.
+const specFileText = (s) => {
+  const L = [s.title ? `# ${s.id} — ${s.title}` : `# ${s.id}`, '',
+    `Risk: ${s.risk ?? 'low'} · Kind: ${s.kind ?? 'code'}${s.supersedes ? ` · Supersedes: ${s.supersedes}` : ''}`, '',
+    '## Goal', '', s.goal ?? '', '',
+    '## Constraints', '', s.constraints || 'None stated.', '',
+    '## Contract references', '',
+    ...(s.contractRefs?.length ? s.contractRefs.map((r) => `- ${r}`) : ['None.']), '']
+  if (s.files?.length) L.push('## Files in scope', '', ...s.files.map((f) => `- ${f}`), '')
+  // The exit gate grades these one by one, so they stay one checkbox per clause. An empty list is
+  // written as the defect it is rather than silently omitted: a unit whose acceptance nobody can
+  // grade is a unit that cannot pass its gate, and that has to be visible in the spec itself.
+  L.push('## Acceptance criteria', '',
+    ...(s.acceptance?.length ? s.acceptance.map((a) => `- [ ] ${a}`)
+      : ['- [ ] (none stated — the draft shipped no gradeable criteria; the exit gate has nothing to grade)']))
+  // NO trailing newline: the here-doc that writes this leaves exactly one, and the expected cksum
+  // is computed over `text + '\n'`. An extra blank line here is a cksum mismatch, not cosmetics.
+  return L.join('\n')
+}
+// The on-disk bytes and the `cksum` line they must print. `cksum` (POSIX, in every sandbox) prints
+// `<crc> <bytes>` for stdin; cksumOf computes the same in-script, and the sims cross-validate it
+// against real coreutils.
+const specBytes = (skel) => {
+  const text = specFileText(skel)
+  const ck = cksumOf(`${text}\n`)
+  return { text, want: `${ck.crc} ${ck.bytes}` }
+}
+// An `ok:true` from a cheap writer is not evidence — that is the whole of RATIONALE §19's second
+// half, and the ledger paid for it (bank-debt:w12 reported success and dropped 23 items). A
+// mis-transcribed spec is worse than a lost one: the implementer builds the wrong thing and every
+// gate grades it against the same wrong text. So the write is COURIER-SHAPED — an exact quoted
+// here-doc, then `cksum < <file>` reported VERBATIM — and the SCRIPT decides, by comparing the
+// printed line against `cksumOf` of the bytes it composed. A CRC cannot be iterated toward, which
+// is why it replaced the byte count that a writer once padded its way to.
+const specWritePrompt = (skel, resample = '') => {
+  const path = `${repo}/.roadmap/specs/${skel.id}.md`
+  const { text, want } = specBytes(skel)
+  return SPECWRITE + resample +
+    `Write the file ${path} so its content is EXACTLY the document below and nothing else (create parent ` +
+    `directories first if needed). You are a courier here, not an author: never reword, reorder, summarise, ` +
+    `expand, re-indent or add a section, and never fill a blank you think is missing. Write it in ONE Bash ` +
+    `tool call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a ` +
+    `file-write/edit tool (a file-write tool re-interprets escapes): run \`cat > ${path} <<'ROADMAP_SPEC'\` ` +
+    `followed by the document's lines and a closing \`ROADMAP_SPEC\` line. The document is every line after ` +
+    `the <<<DOCUMENT>>> marker line to the end of this message, excluding the marker line itself. ` +
+    `Then run \`cksum < ${path}\` and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 ` +
+    `characters; empty string if you could not run it) — copy the numbers, never compute, round or ` +
+    `reformat them, and never edit, pad or trim the file to change what they say: the scheduler compares ` +
+    `that line itself and a mismatch is reported, never repaired. Report ok:true when you wrote the file ` +
+    `and ran the check, whatever it printed — \`ok\` is about YOUR report, not about the verdict — and ` +
+    `ok:false with the exact error in \`detail\` (one sentence, max 300 characters) if the write itself ` +
+    `failed.\n<<<DOCUMENT>>>\n${text}`
+}
+// A fresh sample, worded differently: mis-transcription is per-sample stochastic, so one more try is
+// worth it — and a DIFFERING prompt is what stops `resumeFromRunId` serving the bad sample straight
+// back (the same rule the launch pack's re-read follows).
+const SPEC_RESAMPLE =
+  'A previous courier\'s copy of this spec did not match its `cksum`, so the file on disk is wrong. ' +
+  'Write it again from scratch, from the document in THIS message only — do not read, diff or patch ' +
+  'what is already there. '
 
+// A REVISION is not a projection: the file on disk carries content this script never composed —
+// architect rulings the harness appends mid-wave (`spec-append`) among them — so the three sections
+// named here have to be edited in place around material that must survive. That is a read-modify-write
+// judgment, not transcription, and it is why this one keeps a model where spec-expand shed its.
 const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
-  `Constraints sections to match; leave the rest of the spec intact. Report ok:false with the exact error if the ` +
-  `file cannot be written.`
+  `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
+  `architect ruling, for instance) is not yours to edit. Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
+  `and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 characters). Nothing is compared ` +
+  `against it — the revised content is yours to compose, so there is no expected value — it is recorded so a ` +
+  `later reader can tell WHICH version of this spec they are looking at. Report ok:false with the exact error ` +
+  `in \`detail\` (one sentence, max 300 characters) if the file cannot be written.`
 
 /* ---------------------------- plan mutation ---------------------------- */
 // Assign resume-stable, collision-free kebab ids to a batch of new skeletons. A respec NEVER
@@ -1117,7 +1207,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       STRICT + `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
       `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md. Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md. ` +
+      `Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
       `Then dispose of the triaged user bug ISSUES: for each {number, action, reason} below, run ` +
       `\`gh issue comment ${ghRepo}<number> --body "Triaged wave ${N}: <action> — <reason>"\` then ` +
       `\`gh issue close ${ghRepo}<number> --reason completed\`: ${JSON.stringify(disposed)}. ` +
@@ -1130,7 +1221,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
       `Move these files if they exist — skip any that are missing (this is idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md` +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md` +
       `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
       `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
       { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
@@ -1232,11 +1323,67 @@ function collect(ranTier, P, triageResult, boundaryPlan) {
 // than clearing blind.
 async function stage(N, ranTier, c) {
   const { prepared, reviseList, cutUnitIds, journal, debtLedger } = c
-  // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
+  // 7. Materialize — every new skeleton gets its spec file, revisions are applied; then merge.
+  //
+  // NO SPEC, NO UNIT. The writer's `ok` used to be discarded, so a dead spec-expand minted a plan
+  // unit whose spec file did not exist — and the harness hands `.roadmap/specs/<id>.md` to the
+  // planner, to Codex, to the spec critique and to both exit gates as the authority on what the
+  // unit is. A unit dispatched without one is not a degraded unit, it is an unspecified one. So the
+  // brake lives here, at the one place units are minted (the same place `admissions:'closed'` and
+  // `tier1MaxDrafts` live): a skeleton whose file was not confirmed on disk does NOT reach
+  // mergePlan. It is not lost either — it is banked as debt and ledgered — so the next boundary can
+  // re-draft it, and a superseded quarantine stays unresolved rather than being retired by a
+  // replacement that never got written.
   phase('Spec-expand')
-  await Promise.all(prepared.map((s) => run(specExpandPrompt(s), { model: 'sonnet', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  await Promise.all(reviseList.map((r) => run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  mergePlan(prepared, cutUnitIds)
+  const unwritten = new Set()
+  // One spec, written and VERIFIED. The verdict is the script's: `cksum < <file>` as the courier
+  // observed it, against `cksumOf` of the bytes this script composed — never the writer's `ok`,
+  // which says only that it reported. A mismatch buys exactly one fresh sample under a differing
+  // prompt (mis-transcription is per-sample stochastic; the differing prompt is what stops
+  // `resumeFromRunId` replaying the bad one), and then the file is treated as absent.
+  const writeSpec = async (skel) => {
+    const { want } = specBytes(skel)
+    const attempt = async (label, resample) => {
+      const r = await run(specWritePrompt(skel, resample),
+        { model: 'haiku', effort: 'low', label, phase: 'Spec-expand', schema: S.write }).catch(() => null)
+      if (!r) return { why: 'writer produced no report' }
+      if (!r.ok) return { why: `writer reported ok:false — ${String(r.detail ?? '').slice(0, 160)}` }
+      const got = String(r.cksum ?? '').trim().split(/\s+/).slice(0, 2).join(' ')
+      if (got === want) return { ok: true }
+      return { why: `\`cksum\` printed ${got ? `\`${got}\`` : 'nothing'}, expected \`${want}\` — the file on disk is not the spec this boundary composed` }
+    }
+    const first = await attempt(`spec-expand:${skel.id}`, '')
+    if (first.ok) return true
+    const second = await attempt(`spec-expand:${skel.id}#rewrite`, SPEC_RESAMPLE)
+    if (second.ok) return true
+    unwritten.add(skel.id)
+    degrade({ label: `spec-expand:${skel.id}`, model: 'haiku', phase: 'Spec-expand', kind: 'spec-unwritten',
+      what: `the spec file for ${skel.id} was not confirmed on disk after two attempts (${first.why}; then ${second.why}) — ` +
+        `the unit is NOT added to the plan, because a unit with no spec has no authority for the planner, ` +
+        `Codex or either exit gate to build and grade against. It is banked as debt for the next boundary to re-draft.` })
+    pendingDebt.push({ unit: skel.id, kind: 'structure', severity: 'major',
+      what: `wave-${N} boundary drafted unit "${skel.id}" but its spec could not be written and verified, so the unit was not created`,
+      why: (skel.goal ?? '').slice(0, 400) })
+    return false
+  }
+  await Promise.all(prepared.map(writeSpec))
+  await Promise.all(reviseList.map(async (r) => {
+    const res = await run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.write }).catch(() => null)
+    // Unlike an unwritten spec, a failed revision leaves a VALID spec on disk — the pre-revision
+    // one. The unit still dispatches; what it loses is the amendment, which is a degradation to
+    // read, not a reason to withhold a unit that already has its authority. There is no expected
+    // cksum to check here either: the revised content is the model's to compose, so its report is
+    // recorded (which version a later reader is looking at) rather than verified.
+    if (!res?.ok)
+      degrade({ label: `spec-revise:${r.id}`, model: 'sonnet', phase: 'Spec-expand', kind: 'spec-unrevised',
+        what: `the spec revision for ${r.id} was not confirmed (${res ? `writer reported: ${String(res.detail ?? 'ok:false').slice(0, 160)}` : 'writer produced no report'}) — ` +
+          `the unit keeps its PREVIOUS spec and still dispatches; the boundary's amendment did not land` })
+    else log(`wave ${N}: revised spec ${r.id}.md — cksum ${String(res.cksum ?? '(unreported)').trim()}`)
+  }))
+  // The units that actually exist after this step. Everything downstream — the plan merge and the
+  // issue projection, whose issue BODY is the spec file — keys off this list, never off `prepared`.
+  const created = prepared.filter((s) => !unwritten.has(s.id))
+  mergePlan(created, cutUnitIds)
 
   // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
   // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
@@ -1244,7 +1391,7 @@ async function stage(N, ranTier, c) {
   // that, a mid-arc unit has no cached number, gets dropped from the arc-issue task-list rollup (the
   // sweep skips unknown-number units), and forces a marker-search fallback in every folded clause.
   // One Haiku call, only when there is new work; a no-op / '' path in file mode.
-  if (issueMode && prepared.length) {
+  if (issueMode && created.length) {
     const opened = await run(
       STRICT + GH_BEST_EFFORT + MARKER_RULE +
       `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
@@ -1254,7 +1401,7 @@ async function stage(N, ranTier, c) {
       `ABSENT: create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
       `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
       `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
-      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
+      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(created.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
       `Report ok:true when every unit has an issue, and in \`opened\` give each unit's {id, number} — the issue ` +
       `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
       { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },

@@ -51,6 +51,10 @@ shipping; never ship on an upper rung alone.
    absent exit-code file means RUNNING (`-1` needs a dead pid), a re-dispatched steer prompt attaches
    instead of launching a second process, and both the build and fix retries reap the previous pid;
    debt dedupes and `rebanked` ghosts stop forcing a `contract-amendment` return.
+   `codex-lane.test.mjs` locks the codex executor lane and the **role adapter**, including the three
+   wave-tail BOUNDARY roles (explorer/health/design) that moved onto it in 0.14.0: each runs in the
+   tree it judges, writes its own `feedback/<job>/wave-N.md`, and on a `null` goes owed (explorer,
+   design) or records `health-skipped` (health) rather than halting anything.
    `wave-policy.test.mjs` locks the **wave-level brakes that used to be prose**: the
    `gateMaxConcurrent` semaphore on test lanes (and that it adds no extra checkpoint fan-out), load
    recorded on every lane but never gated on, the shared-red breaker collapsing N identical
@@ -60,7 +64,12 @@ shipping; never ship on an upper rung alone.
    tiers 1 and 2 minting units — drafts and promotions become debt lines banked into *both* channels —
    while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
    finding routes to tier 3 instead of being auto-admitted; and duplicate drafts are dropped, not
-   renamed into extra units.
+   renamed into extra units. `conductor.test.mjs` adds the **no spec, no unit** brake (0.14.0): the
+   spec write is cksum-verified rather than `ok`-trusted (the fakes compute the expected line with
+   real coreutils, cross-validating the in-script `cksumOf`), a mis-transcribed spec buys exactly one
+   resample under a DIFFERING prompt, and a skeleton still unconfirmed after that never reaches the
+   plan merge — it is degraded and banked as debt — while a failed spec *revision* only degrades,
+   since the unit still has a valid (pre-revision) spec to build against.
    `persist.test.mjs` locks **`persist.mjs` end-to-end**, against a journal the test WRITES from a
    real sim run (the fakes' results ARE the journal): a harness run and a conductor run each replay
    from their own journal and land every document the scripts stopped writing, a truncated journal
@@ -224,7 +233,7 @@ Expected shape: an **autonomous 2-wave run ending `arc-complete`**.
 | `add-multiply` | Happy path (wave 1) | `merged` |
 | `add-divide` | Contract-edge scheduling (wave 1, after multiply) | `merged` |
 | `impossible-cache` | Unsatisfiable → quarantine (`feasible:false` → Fable plan-check) → **tier-3** Fable boundary agent handles it | `quarantined`, never merged |
-| `stats.js` inline `gcd` | Health assessor drafts a consolidation fix-unit → tier admits it → wave 2 merges it | integration `stats.js` reuses `shared.gcd` |
+| `stats.js` inline `gcd` | Health assessor (a **codex role** since 0.14.0) drafts a consolidation fix-unit → tier admits it → wave 2 merges it | integration `stats.js` reuses `shared.gcd` |
 | architect-log | Tier-3 engagement appends a `## Wave 1` section beyond the seed | grew |
 
 `check-conductor.sh` probes:
@@ -462,7 +471,10 @@ forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k outpu
 - **(a)** architect-log missing a wave section → tier-3 didn't fire (was `impossible-cache` actually
   quarantined *and* in scope?), or the `log-append` writer regressed.
 - **(b)** no extra merged unit / `stats.js` still inline → rerun once; if it repeats, the health assessor
-  stopped drafting, tier routing stopped admitting drafts, or wave 2 didn't merge it.
+  stopped drafting, tier routing stopped admitting drafts, or wave 2 didn't merge it. Since 0.14.0 the
+  assessor is a codex role, so also check the wave's degradations for `health-skipped` (the role died —
+  a codex/auth problem, not a drafting one) and read
+  `feedback/health/wave-1.md`, which the role now writes itself.
 - **(c)** laundering detected → a respec smuggled cross-process persistence into `calc.js`. The Fable
   boundary agent must respec *within* contract; a contract amendment returns to the root.
 

@@ -98,6 +98,20 @@ export function packRules(plan, state) {
   }]
 }
 
+// A spec WRITE report (conductor `spec-expand:` / `spec-revise:`). The conductor composes the exact
+// bytes and verifies them by `cksum`, so an honest fake has to produce the cksum of the document the
+// prompt actually carries — computed with the REAL coreutils tool, which is what cross-validates the
+// script's in-script cksumOf on every run (the same trick packRules uses for the launch pack).
+// The document is every line after the <<<DOCUMENT>>> marker; the here-doc that writes it leaves one
+// trailing newline. `mutate` lets a test corrupt the transcription the way a real writer would.
+export const specWriteOk = (prompt, mutate = (t) => t) => {
+  const at = String(prompt).indexOf('<<<DOCUMENT>>>\n')
+  // spec-revise carries no document: nothing is compared against its cksum, so any line will do.
+  if (at === -1) return { ok: true, cksum: '0 0', detail: '' }
+  const doc = String(prompt).slice(at + '<<<DOCUMENT>>>\n'.length)
+  return { ok: true, cksum: sysCksum(`${mutate(doc)}\n`), detail: '' }
+}
+
 // ---- built-in default results, keyed by harness label prefix ---------------------------
 // Each entry: [labelMatches(label) -> bool, (baseSha, prompt, opts) -> freshResultObject]. Colons in
 // the prefixes disambiguate siblings (`gate:` never matches `gate-verify:` etc.), but the list is
@@ -169,17 +183,25 @@ const DEFAULTS = [
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('spec-append:'), () => ({ ok: true })],   // adjudication rulings appended to the spec
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
-  [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],
-  [(l) => l.startsWith('health-write:'), () => ({ ok: true })],
-  [(l) => l.startsWith('design-write:'), () => ({ ok: true })],
+  // No `*-write:` courier for any boundary job: all four roles write their own reports (0.14.0).
+
+  // The conductor's verbatim spec writers. Defaulted here so every conductor drive gets an HONEST
+  // report — one whose cksum matches the document the prompt carries — rather than a bare ok:true
+  // that the script would now (correctly) refuse.
+  [(l) => l.startsWith('spec-expand:'), (b, p) => specWriteOk(p)],
+  [(l) => l.startsWith('spec-revise:'), (b, p) => specWriteOk(p)],
 
   [(l) => l.startsWith('rescue-dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('consult:'), () => ({ action: 'redirect', guidance: 'g' })],
-  [(l) => l.startsWith('explorer:'), (b) => ({ findings: [], shaObserved: b })],
-  [(l) => l.startsWith('health:'), () => ({ findings: [], fixUnits: [] })],
+  // All four BOUNDARY ROLES moved onto the codex role adapter in 0.14.0, so what the harness
+  // records at these labels is the STEERING COURIER's report — the role's own result nested under
+  // `result` — not the bare boundary schema. The flake band states the bare result and lets the
+  // auto-wrap above supply the envelope, which is the shape a rule in a test writes too.
+  [(l) => l.startsWith('explorer:'), (b) => codexRoleOk({ findings: [], shaObserved: b })],
+  [(l) => l.startsWith('health:'), () => codexRoleOk({ findings: [], fixUnits: [] })],
   [(l) => l.startsWith('flake:'), () => ({ runs: 3, flips: [] })],
-  [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
+  [(l) => l.startsWith('design:'), (b) => codexRoleOk({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
 export const verifyOk = () => ({ pass: true, blocked: false, failures: [],
