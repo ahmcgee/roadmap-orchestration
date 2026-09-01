@@ -145,6 +145,11 @@ const DEFAULTS = [
   // it `codex-role:<name>`; real roles keep their own label (`codex-spec-review:` above) and get
   // their own entry, exactly like every other lane here.
   [(l) => l.startsWith('codex-role:'), () => codexRoleOk({})],
+  // The cross-model PRE-GATE REVIEW (0.14.0) — one per unit, feeding the exit gate's digest diet.
+  // Clean-and-low by default: that is the shape that lets `gateModel` put a low-risk unit's
+  // first-pass gate on the cheaper tier, so the default drive exercises the diet rather than the
+  // fallback. Tests probing the fallback return `blocking`/`high` (or a dead role) themselves.
+  [(l) => l.startsWith('codex-review:'), () => reviewDigestOk()],
   [(l) => l.startsWith('codex-build-retry:'), () => implCodexOk()],
   [(l) => l.startsWith('codex-build:'), () => implCodexOk()],
   [(l) => l.startsWith('codex-fix:'), () => implCodexOk()],
@@ -188,6 +193,16 @@ export const implCodexOk = () => ({ ...implOk(), codex: codexMetaOk() })
 export const codexRoleMetaOk = () => ({ exitCode: 0, turns: 1, inputTokens: 0, outputTokens: 0,
   timedOut: false, limitHit: false, sessionCaptured: true, error: '' })
 export const codexRoleOk = (result) => ({ ok: true, result, codex: codexRoleMetaOk(), notes: '' })
+// A clean pre-gate review digest (S.reviewDigest).
+export const reviewDigestOk = (extra = {}) => ({ verdict: 'clean', risk: 'low', specFindings: [],
+  conventionFindings: [], contractTouches: [], scopeNotes: [], unread: [], notes: '', ...extra })
+// Is this call the courier for a codex ROLE? Decided on the SCHEMA the harness passed — the
+// adapter's envelope, the caller's own schema nested under `result` — never on the label, because a
+// role is a role by virtue of having gone through `run(…, {model:'codex'})` and nothing else.
+const isRoleEnvelope = (schema) => {
+  const props = schema?.properties
+  return !!props && !!props.ok && !!props.codex && !!props.result
+}
 // A role whose codex run died: no `result` at all (the courier is forbidden from inventing one).
 export const codexRoleDead = (codex = {}) =>
   ({ ok: false, codex: { ...codexRoleMetaOk(), exitCode: 1, ...codex }, notes: 'no last-message file' })
@@ -243,6 +258,13 @@ export function makeAgent(rules = [], baseSha = BASE_SHA) {
       // null (with no error object at all) when a subagent dies, which is a different code path in
       // the scripts from a throw, and a rule returning null is the only way to simulate it.
       if (val === null) return null
+      // Codex ROLE transport, supplied by the fake. A rule (and a built-in default) says what the
+      // ROLE returned, because that is what the harness actually reads and what the test is about;
+      // wrapping it in the courier envelope is the adapter's business, not the test's. A canned
+      // value that already carries a `codex` block is a deliberate envelope (codexRoleOk /
+      // codexRoleDead — the shapes that drive the adapter's own retry and give-up paths) and is
+      // passed through untouched.
+      if (isRoleEnvelope(opts.schema) && !(typeof val === 'object' && 'codex' in val)) val = codexRoleOk(val)
       if (opts.schema && !conformsToSchema(val, opts.schema))
         throw new Error(
           `fakes.makeAgent: canned result for "${label}" violates its schema — ` +

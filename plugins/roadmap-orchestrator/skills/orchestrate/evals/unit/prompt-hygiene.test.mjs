@@ -130,9 +130,12 @@ test('harness: every capped-schema prompt states the length contract', async () 
   // The code-writing family is now the CODEX STEERING family: `impl`/`debt-fix`/`fix`/`gate-fix`/
   // `opus-gate-fix` no longer exist, and `codex-spec-review` is a new capped schema (S.specReview)
   // that must not be allowed to slip in untested — a capped schema no drive reaches is exactly the
-  // trap this file exists to catch.
+  // trap this file exists to catch. 0.14.0 adds four more: `plan`, `verify` and `flake` became
+  // codex ROLES (so their courier carries the adapter envelope, which is itself capped), and
+  // `codex-review` is a brand-new capped schema — the pre-gate digest the exit gate now eats.
   const seen = new Set(capped.map((c) => c.label.split(':')[0].split('#')[0]))
   for (const required of ['codex-build', 'codex-fix', 'codex-gate-fix', 'codex-opus-gate-fix', 'codex-spec-review',
+    'plan', 'verify', 'codex-review',
     'opus-gate', 'gate', 'explorer', 'health', 'flake', 'design'])
     assert.ok(seen.has(required), `harness: expected to exercise a capped '${required}' prompt; saw ${[...seen]}`)
 })

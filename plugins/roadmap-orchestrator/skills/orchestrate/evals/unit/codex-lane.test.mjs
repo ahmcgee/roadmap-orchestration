@@ -31,7 +31,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -248,10 +248,13 @@ test('f limitHit: halts new dispatch mid-wave; the in-flight unit finishes, the 
   assert.equal(state.codex.available, false)
   assert.ok(state.degradations.some((d) => d.kind === 'codex-usage-limit'), 'the limit is ledgered for the root')
 
-  // What the code ACTUALLY does with the unit that observed the limit: its build already
-  // returned a report, so runUnit never sees `parked` and the unit rides verify -> gate -> merge
-  // to completion. Parking only bites a unit that still needs a codex step (see f2).
-  assert.equal(state.units.a.status, 'merged', 'the unit whose build already reported is finished, not discarded')
+  // CHANGED CONTRACT (0.14.0): the unit that observed the limit no longer rides to completion.
+  // VERIFY is a codex role now, so with codex halted there is no way to check the branch, and
+  // nothing may be gated or merged on evidence that was never gathered. It PARKS instead — commits
+  // intact, adopted next wave — which is the same answer every other halted codex step gives.
+  assert.equal(state.units.a.status, 'pending', 'the unit whose next step is codex parks; it is never discarded')
+  assert.equal(state.units.a.parked, true)
+  assert.match(state.units.a.note, /codex-usage-limit/, 'and the note names the halt that stopped it')
   assert.equal(state.units.b.status, 'pending', 'ready() gates on the halt — b is never dispatched')
   assert.ok(!has(calls, 'codex-build:b'), 'and it certainly never reaches codex')
   assert.ok(!has(calls, 'setup:b'))
@@ -541,14 +544,143 @@ test('n4 adapter: a role never runs in the operator\'s checkout — the cwd brak
 })
 
 test('n5 adapter: codex dispatches land in their own spend bucket', async () => {
-  const { fn } = makeAgent()
+  const { fn, calls } = makeAgent()
   const clean = await runWave(fn, makePlan([unit('a')]), makeState())
-  assert.equal(clean.spend.codex, 1, 'one role call = one codex exec = one tick in the `codex` bucket')
+  // One tick per codex exec the ADAPTER launched. A clean single-unit wave dispatches five roles:
+  // the spec critique, the plan, the verify, the pre-gate review, and the wave-tail flake band.
+  // (The build/fix lane has its own `codexRuns` counter — it is not a role.)
+  assert.equal(clean.spend.codex, 5, 'one role call = one codex exec = one tick in the `codex` bucket')
+  assert.deepEqual(
+    calls.filter((c) => c.schema?.properties?.result).map((c) => c.label).sort(),
+    ['codex-review:a', 'codex-spec-review:a', 'flake:w1', 'plan:a', 'verify:a#0'],
+    'and those five are exactly the roles the per-unit pipeline plus the boundary dispatches')
 
   const { fn: fn2 } = makeAgent([{ match: /^codex-spec-review:a/, result: () => codexRoleDead() }])
   const retried = await runWave(fn2, makePlan([unit('a')]), makeState())
-  assert.equal(retried.spend.codex, 2, 'the reattempt is a second codex process and is counted as one')
+  assert.equal(retried.spend.codex, 6, 'the reattempt is a second codex process and is counted as one')
   assert.ok(retried.spend.haiku > clean.spend.haiku, 'and each one also costs its own Haiku courier')
+})
+
+// =========================================================================================
+// o. THE 0.14.0 PER-UNIT SHIFT — plan/replan, verify, the pre-gate review, the dossier write and
+//    the flake band all run on the codex role adapter, and the exit gate eats a DIGEST instead of
+//    the raw diff. What these lock is the part that cannot be recovered from a prompt diff: which
+//    tier each role reaches, which tree it runs in, and — the load-bearing half — that every path
+//    where evidence goes MISSING routes to MORE Claude scrutiny, never less.
+// =========================================================================================
+const ROLE_LABELS = (calls) => calls.filter((c) => c.schema?.properties?.result).map((c) => c.label)
+
+test('o1 moved roles: each one reaches codex, in the right tree, with the sandbox it intended', async () => {
+  // codexSandbox is the ENVIRONMENT's ruling and normally overrides every role's intent, so it is
+  // pinned to null here — that is the only way a role's own `sandbox` argument becomes observable,
+  // and the intent is what a future environment with working user namespaces will actually enforce.
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState(), { codexSandbox: null })
+
+  const roles = ROLE_LABELS(calls)
+  for (const l of ['plan:a', 'verify:a#0', 'codex-review:a', 'flake:w1'])
+    assert.ok(roles.includes(l), `${l} must dispatch through the codex role adapter, not a Claude agent`)
+
+  const where = { 'plan:a': `${WT}/a`, 'verify:a#0': `${WT}/a`, 'codex-review:a': `${WT}/a`,
+    'flake:w1': `${WT}/__integration` }
+  const sand = { 'plan:a': 'read-only', 'verify:a#0': 'workspace-write', 'codex-review:a': 'read-only',
+    'flake:w1': 'workspace-write' }
+  for (const [label, cwd] of Object.entries(where)) {
+    const p = promptOf(calls, label)
+    assert.ok(p.includes(`-C ${cwd} `), `${label} runs codex in ${cwd}`)
+    assert.ok(p.includes(`-s ${sand[label]} `), `${label} declares sandbox ${sand[label]}`)
+    assert.ok(!/-C \/repo(\s|$)/.test(p), `${label} must never be pointed at the operator's checkout`)
+  }
+  // The two readers say so in the BRIEF as well: codexSandbox normally overrides `-s`, so where the
+  // sandbox cannot carry "change nothing", the brief has to.
+  for (const l of ['plan:a', 'codex-review:a'])
+    assert.match(promptOf(calls, l), /Read-only\. Change nothing|Read-only\. Write no code/,
+      `${l} carries its read-only intent in the brief, not only in the flag`)
+})
+
+test('o2 gate diet: gateModel by risk, and only a low-risk unit trades the raw diff for the digest', async () => {
+  const gate = (calls, id) => calls.find((c) => c.label === `opus-gate:${id}#0`)
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('lo'), unit('mid', { risk: 'med' })]), makeState())
+
+  assert.equal(gate(calls, 'lo').model, 'sonnet', 'a low-risk unit takes the cheap first-pass gate')
+  assert.equal(gate(calls, 'mid').model, 'opus', 'med keeps Opus')
+  assert.match(gate(calls, 'lo').prompt, /git diff --stat/, 'and reads a diet, expanding on suspicion')
+  assert.match(gate(calls, 'mid').prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/,
+    'while med keeps the raw diff in front of it')
+  for (const id of ['lo', 'mid']) {
+    const p = gate(calls, id).prompt
+    assert.match(p, /A cross-model reviewer/, `${id}'s gate is handed the digest`)
+    assert.match(p, /"verdict":"clean"/, 'verbatim, as the object the reviewer emitted')
+    assert.match(p, /never as a verdict and never as coverage/,
+      'and told it is evidence to adjudicate — this sentence is what stands between a diet and a rubber stamp')
+  }
+  // The knob is a plan/config map, and an override replaces it wholesale.
+  const { fn: fn2, calls: c2 } = makeAgent()
+  await runWave(fn2, makePlan([unit('lo')]), makeState(), { gateModel: { low: 'opus' } })
+  assert.equal(gate(c2, 'lo').model, 'opus', 'gateModel is a knob, not a hardcode')
+})
+
+test('o3 a dead reviewer buys MORE Claude: Opus gate, raw diff, and a review-skipped row', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-review:lo/, result: () => codexRoleDead() }])
+  const state = await runWave(fn, makePlan([unit('lo')]), makeState())
+
+  assert.ok(has(calls, 'codex-review:lo#reattempt'), 'the adapter retries once before giving up')
+  const g = calls.find((c) => c.label === 'opus-gate:lo#0')
+  assert.equal(g.model, 'opus', 'no digest -> Opus, whatever the unit\'s risk')
+  assert.match(g.prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/, 'and on the raw diff, not a diet')
+  assert.match(g.prompt, /No cross-model review digest exists/, 'told plainly that nothing was pre-checked')
+  const d = (state.degradations ?? []).filter((x) => x.kind === 'review-skipped')
+  assert.equal(d.length, 1, 'the skip is ledgered — a spend audit has to see why the gate got expensive')
+  assert.match(d[0].what, /never less scrutiny/, 'and the row states the direction the fallback moves in')
+  assert.equal(state.halt, undefined, 'a dead codex role halts nothing')
+  assert.equal(state.units.lo.status, 'merged')
+})
+
+test('o3b a digest the reviewer graded `blocking` or high-risk refuses the diet too', async () => {
+  for (const digest of [{ verdict: 'blocking' }, { risk: 'high' }]) {
+    const { fn, calls } = makeAgent([
+      { match: /^codex-review:lo/, result: () => reviewDigestOk(digest) },
+      // a blocking digest is still only ADVICE: the gate rules, and here it approves.
+      { match: /^opus-gate:lo/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [] }) },
+    ])
+    await runWave(fn, makePlan([unit('lo')]), makeState())
+    const g = calls.find((c) => c.label === 'opus-gate:lo#0')
+    assert.equal(g.model, 'opus', `${JSON.stringify(digest)} must not ride the cheap tier`)
+    assert.match(g.prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/,
+      `${JSON.stringify(digest)} must not ride the diet — the gate has to be able to disagree`)
+  }
+})
+
+test('o3c the frontier gate is handed the same digest', async () => {
+  const MARK = 'DIGEST_SPEC_FINDING_MARKER'
+  const { fn, calls } = makeAgent([
+    { match: /^codex-review:hi/, result: () => reviewDigestOk({ verdict: 'concerns',
+      specFindings: [{ criterion: 'rounds half away from zero', what: MARK, evidence: 'Math.round(-0.5)' }] }) },
+  ])
+  await runWave(fn, makePlan([unit('hi', { risk: 'high' })]), makeState())
+  const p = promptOf(calls, 'gate:hi#0')
+  assert.ok(p, 'a high-risk unit still goes straight to the frontier gate')
+  assert.match(p, /A cross-model reviewer/)
+  assert.ok(p.includes(MARK), 'with the reviewer\'s findings verbatim')
+})
+
+test('o4 a dead dossier writer falls back to the Haiku writer once — a dossier must exist', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^setup:a$/, result: { ok: true, sha: 'f'.repeat(40), state: 'ready' } },   // wrong base -> quarantine
+    // Anchored WITHOUT `$` so the adapter's own `#reattempt` dispatch is dead too — the write only
+    // gives up after its retry, exactly like every other role.
+    { match: /^dossier-write:a(?!#fallback)/, result: () => null },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'quarantined')
+  const fb = calls.find((c) => c.label === 'dossier-write:a#fallback')
+  assert.ok(fb, 'the Haiku writer this replaced is still there as the fallback')
+  assert.equal(fb.model, 'haiku')
+  assert.equal(calls.filter((c) => c.label === 'dossier-write:a#fallback').length, 1, 'exactly once — never a loop')
+  const d = (state.degradations ?? []).filter((x) => x.kind === 'dossier-write-fallback')
+  assert.equal(d.length, 1, 'and the fallback is ledgered, not silent')
 })
 
 // =========================================================================================
