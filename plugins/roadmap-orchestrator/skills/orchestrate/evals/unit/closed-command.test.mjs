@@ -278,7 +278,10 @@ test('verify: the prompt demands the spec\'s exact commands and a per-lane exit 
   assert.match(v, /NEVER substitute a narrower, faster or cheaper lane/, 'the observed failure is named')
   assert.match(v, /`pass` is true ONLY if every ` \+\n?|`pass` is true ONLY if every one of those exit codes is 0/,
     'pass is defined over the lane ledger, not over the verifier\'s impression')
-  const schema = callOf(calls, 'verify:a#0').schema
+  // CHANGED CONTRACT (0.14.0): the verifier is a codex ROLE, so the call the courier makes carries
+  // the ADAPTER ENVELOPE and S.verify rides nested under `result` — still platform-validated, one
+  // level deeper. The ledger is exactly as required as it was.
+  const schema = callOf(calls, 'verify:a#0').schema.properties.result
   assert.ok(schema.required.includes('lanes'), 'the ledger is required, not optional')
   assert.equal(schema.properties.lanes.items.required.join(','), 'command,exitCode')
 })

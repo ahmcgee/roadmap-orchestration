@@ -48,20 +48,24 @@ const deadRun = () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 
 /* ====================================================================== */
 /* 1. A dead REQUIRED result parks the unit and halts the wave             */
 /* ====================================================================== */
-// The four `verify.blocked` derefs of the ledger. A null verify used to reach the scheduler's
-// catch as a TypeError and be recorded as the UNIT's pipeline error.
-test('a null verify parks the unit — never a quarantine, never a pipeline-error verdict', async () => {
+// CHANGED CONTRACT (0.14.0): the verifier is a CODEX ROLE, so a dead verify is codex's failure,
+// not the Claude platform's — the adapter never throws, never sets `halt.platform`, and hands back
+// null. The unit is BLOCKED rather than quarantined or parked-on-outage: nothing about it was
+// judged, its commits are intact, and the wave-start loop re-opens a `blocked` unit whose blocker
+// is gone, so it re-enters dispatch next wave. What must NOT happen is unchanged and is still the
+// point: no quarantine, no pipeline-error verdict, no dossier over an infrastructure failure.
+test('a null verify BLOCKS the unit — never a quarantine, never a pipeline-error verdict', async () => {
   const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => null }])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
-  assert.equal(state.units.a.status, 'pending', 'a dead agent leaves the unit resumable')
-  assert.equal(state.units.a.parked, true, '`parked` is what makes next wave adopt its commits')
-  assert.match(state.units.a.note, /platform outage/, 'the record says whose failure it was')
+  assert.equal(state.units.a.status, 'blocked', 'a role that never reported is not a verdict about the unit')
   assert.ok(!/pipeline error/.test(state.units.a.note ?? ''), 'and never blames the unit for it')
-  assert.ok(!has(calls, 'dossier:a'), 'no redesign dossier is written for a platform failure')
-  assert.equal(state.halt.reason, 'platform-outage', 'the wave halts, so nothing else is dispatched into a dead platform')
-  assert.equal(state.halt.platform, 'platform-outage')
-  assert.ok(kinds(state, 'platform-outage').length, 'the outage is ledgered, once')
+  assert.ok(!has(calls, 'dossier:a'), 'no redesign dossier is written for an infrastructure failure')
+  assert.equal(state.halt, undefined, 'a codex role failure halts nothing — the Claude platform is fine')
+  const d = kinds(state, 'verify-unrun')
+  assert.equal(d.length, 1, 'the never-ran verify is ledgered, once')
+  assert.match(d[0].what, /BLOCKED, not quarantined/, 'and the row says which door the unit went through')
+  assert.ok(kinds(state, 'codex-role').length, 'the adapter has already ledgered the role death itself')
 })
 
 test('the salvage retry is real: a verify that dies once and then reports is NOT an outage', async () => {
@@ -97,9 +101,11 @@ test('a null merge result parks the unit at merge-ready — the gate-approved wo
 })
 
 test('an outage stops new dispatch: ready() gates on the halt record, whatever set it', async () => {
-  // b sits behind a's merge, so the halt is observed before b is ever ready.
-  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => null }])
-  const state = await runWave(fn, makePlan([unit('a'), unit('b')],
+  // b sits behind a's merge, so the halt is observed before b is ever ready. Driven through the
+  // FRONTIER GATE rather than the verify: verify is a codex role since 0.14.0 and no longer speaks
+  // for the Claude platform, while the gate is still a `runReq` result nobody can substitute for.
+  const { fn, calls } = makeAgent([{ match: /^gate:a/, result: () => null }])
+  const state = await runWave(fn, makePlan([unit('a', { risk: 'high' }), unit('b')],
     [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }]), makeState(), { warmLanes: false })
 
   assert.equal(state.units.b.status, 'pending')
@@ -109,11 +115,13 @@ test('an outage stops new dispatch: ready() gates on the halt record, whatever s
 // The throw path is the ONLY one carrying text — a null carries no error object at all — so quota
 // and connection strings are read there, and only as a fast path.
 test('a quota error on the throw path halts immediately, without burning a salvage agent', async () => {
-  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => { throw new Error('Usage limit reached for this week') } }])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  // On the frontier gate, for the same reason as the test above: the throw path with quota TEXT on
+  // it is a Claude-platform signal, and verify no longer runs on Claude.
+  const { fn, calls } = makeAgent([{ match: /^gate:a/, result: () => { throw new Error('Usage limit reached for this week') } }])
+  const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
 
   assert.equal(state.halt.reason, 'platform-outage')
-  assert.ok(!has(calls, 'verify:a#0#salvage'), 'a platform that just said it is down is not asked twice')
+  assert.ok(!has(calls, 'gate:a#0#salvage'), 'a platform that just said it is down is not asked twice')
   assert.equal(state.units.a.parked, true)
 })
 

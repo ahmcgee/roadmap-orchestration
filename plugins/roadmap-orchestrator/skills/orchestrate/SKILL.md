@@ -24,12 +24,15 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
 1. **Every delegation names its model explicitly.** The scripts already do. Any agent *you*
    spawn must too — and never a typed agent (Explore, Plan, …) without a pinned model: they
    inherit *your* model and silently bill recon sweeps at frontier prices.
-2. **Frontier never generates volume — and Claude never implements.** You, and every `fable`
+2. **Claude decides, Codex drafts and executes, Haiku only couriers.** You, and every `fable`
    agent, produce plans, contracts, specs, directives, verdicts, reports — never code, never
-   bulk text. The Codex CLI writes ALL implementation and fixes (steered by Haiku agents);
-   Opus plans units and judges; Sonnet extracts and compresses; Haiku runs commands. A codex
-   outage is a hard stop to surface to the user, never a licence for a Claude agent to
-   implement in its place.
+   bulk text. The Codex CLI writes ALL implementation and fixes, plans each unit's own work,
+   runs the spec's verification lanes and reads the diff into a pre-gate review digest (every one
+   of those steered by a Haiku agent). Claude keeps every surface that can REJECT work: the
+   plan-check, both exit gates, the escalation ladder, the consults, the merge and its suite gate,
+   and the boundary assessors. Opus judges; Sonnet gates low-risk units, extracts and compresses;
+   Haiku runs closed command lists. A codex outage is a hard stop to surface to the user, never a
+   licence for a Claude agent to implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
    outcome that feeds redesign, not a failure to retry around.
@@ -464,7 +467,7 @@ plenty.
 
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
 harness has already *run* the boundary jobs (Opus runtime explorer against the live preview, Opus
-health assessor against the integration tip, Haiku full-suite flake re-runs); their results are in
+health assessor against the integration tip, codex full-suite flake re-runs); their results are in
 the returned state's `boundary` block and in `feedback/{explorer,health,design}/wave-<n>.md`
 (`design/` appears only on waves that merged a design-cited unit). If that
 block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
@@ -598,7 +601,11 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    skipped-reconcile failure the marker exists to prevent.
 2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
-   ledger's state; gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
+   ledger's state; **where the run's attention actually went** — Claude spend broken out by tier
+   (`spend.fable`/`opus`/`sonnet`/`haiku`) beside `spend.codex` and `spend.codexRuns`, so the
+   Claude-versus-codex ratio is on the page and not left to be inferred; gate spend broken down by
+   first-pass gate (`spend.opusGateRounds`, whatever tier `gateModel` sent it to) vs escalated
+   Fable gate (`spend.gateRounds`), and consult spend;
    the conductor's ladder breakdown from the final state's `conductor` block plus
    `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/degradations.jsonl` entries, and
    which stage's judgment they cost you**; notes for the next session. Partial completion with

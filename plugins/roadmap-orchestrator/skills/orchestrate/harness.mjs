@@ -4,10 +4,11 @@ export const meta = {
   phases: [
     { title: 'Launch', detail: 'verified plan/state pack read (Haiku)' },
     { title: 'Setup', detail: 'integration + unit worktrees' },
-    { title: 'Implement', detail: 'Opus plan + codex build (Haiku steer)' },
+    { title: 'Implement', detail: 'codex plan + codex build (Haiku steer)' },
     { title: 'Architect', detail: 'plan-check + exit gate (Fable)' },
-    { title: 'Opus-gate', detail: 'Opus exit gate; escalates to Fable when hard' },
-    { title: 'Verify', detail: 'build/tests (Haiku)' },
+    { title: 'Opus-gate', detail: 'first-pass exit gate (gateModel); escalates to Fable when hard' },
+    { title: 'Verify', detail: "the spec's lanes, run by codex" },
+    { title: 'Review', detail: 'cross-model pre-gate review digest (codex)' },
     { title: 'Fix', detail: 'codex resume applies findings/directives' },
     { title: 'Escalate', detail: 'rescue consults (Fable, capped)' },
     { title: 'Merge', detail: 'serial queue + integrated suite gate' },
@@ -279,13 +280,13 @@ const C = {
   // spot-check `auditEffort` can be dialled below a full gate to keep the 10% sample cheap.
   fableEffort: 'high',
   gateEffort: 'high',
-  // Opus reasoning effort, two knobs. `implementEffort` covers the code-authoring pipeline —
-  // planning, implementing, and every fix loop (incl. the post-impl debt-fix round);
-  // `opusEffort` covers every other Opus call (boundary assessors, review, opus-first
-  // plan-check/gate, merge resolution, conductor triage). Opus 5 holds review and coding
-  // quality at `medium` at a fraction of the tokens; raise per-arc via plan.config if a
-  // workload proves effort-sensitive.
-  implementEffort: 'medium',
+  // Opus reasoning effort. ONE knob now: `implementEffort` died with 0.14.0's move of planning
+  // onto the implementer's own model family — there is no Opus code-authoring pipeline left to
+  // dial, and codex roles take `codexRoleEffort`. `opusEffort` covers every Opus call the harness
+  // still makes: the boundary assessors, the Opus-first plan-check, the first-pass exit gate where
+  // `gateModel` puts it on Opus, and merge conflict/integration fixes. Opus 5 holds review quality
+  // at `medium` at a fraction of the tokens; raise per-arc via plan.config if a workload proves
+  // effort-sensitive.
   opusEffort: 'medium',
   planCheckRisk: ['low', 'med', 'high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
@@ -299,6 +300,18 @@ const C = {
   exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
   gateAuditRate: 0.10,
   auditEffort: 'high',
+  // The FIRST-PASS exit gate's Claude tier, by unit risk. 0.14.0 put a cross-model Codex reviewer
+  // in front of the gate (`codex-review:<id>`), so the gate's ordinary job is adjudicating a
+  // DIGEST — spec-prose findings, convention-reuse findings, contract touches, scope observations —
+  // beside the lane ledger and this wave's scope precedent, rather than re-reading the whole diff.
+  // A low-risk unit does not need Opus for that; med/high still do, and they still get the raw diff.
+  // Overridden per arc via plan.config, and an override REPLACES the map (the config spread is
+  // shallow), so name every tier you care about. An unknown tier falls back to 'opus'.
+  // Two conditions in code override it back to Opus-on-the-raw-diff, and the direction is
+  // deliberate — less evidence must never buy less scrutiny: no digest at all (the reviewer died),
+  // and a digest the reviewer itself graded `blocking` or high-risk. The gate has to be able to
+  // DISAGREE with the review, and a gate that cannot see the diff cannot.
+  gateModel: { low: 'sonnet', med: 'opus', high: 'opus' },
   boundary: 'on',            // 'on' | 'off' — wave-tail explorer + health assessor inside the
                              //   workflow; 'off' for the arc's final wave (the session
                              //   integration review supersedes it)
@@ -1179,6 +1192,35 @@ const S = {
     risks: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 300 } },
     notes: { type: 'string', maxLength: 500 },
   }, ['questions', 'risks', 'notes']),
+  // The cross-model PRE-GATE REVIEW DIGEST (`codex-review:<id>`), designed for the GATE to consume
+  // rather than for a human to read: every field is something the gate would otherwise have had to
+  // re-derive from the raw diff, and the gate's diet (config `gateModel`) is only affordable
+  // because this arrives first. The two scalars are what the SCRIPT routes on — `verdict` and the
+  // reviewer's own `risk` grade — so they are enums, never prose. The finding arrays are SAMPLING
+  // arrays: worst-first, capped in both dimensions, and deliberately small. `unread` is the
+  // honesty channel and it is load-bearing: a reviewer that could not read something must say so,
+  // because the gate is about to trust this digest in place of the diff, and silence would read as
+  // coverage. `notes` is capped for the usual reason — an over-long field is a lost report.
+  reviewDigest: obj({
+    verdict: oneOf(['clean', 'concerns', 'blocking']),
+    risk: oneOf(['low', 'med', 'high']),
+    // The `gate-bad` class: a diff that passes every runnable check and still violates what the
+    // spec's PROSE requires. One entry per criterion, each quoting the clause it fails.
+    specFindings: { type: 'array', maxItems: 6, items: obj({
+      criterion: { type: 'string', maxLength: 200 }, what: { type: 'string', maxLength: 300 },
+      evidence: { type: 'string', maxLength: 300 },
+    }, ['criterion', 'what', 'evidence']) },
+    // The `gate-convention` class: a catalogued shared helper reimplemented inside this diff.
+    conventionFindings: { type: 'array', maxItems: 4, items: obj({
+      helper: { type: 'string', maxLength: 120 }, where: { type: 'string', maxLength: 200 },
+      what: { type: 'string', maxLength: 300 },
+    }, ['helper', 'where', 'what']) },
+    contractTouches: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 200 } },
+    scopeNotes: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 200 } },
+    unread: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 200 } },
+    notes: { type: 'string', maxLength: 600 },
+  }, ['verdict', 'risk', 'specFindings', 'conventionFindings', 'contractTouches', 'scopeNotes',
+    'unread', 'notes']),
   // `blocked` = the tooling itself could not run (env/deps/config) — a third outcome,
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
   verify: obj({
@@ -1599,7 +1641,9 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
     evidence: JSON.stringify(extra ?? {}),
     hypothesis: reason,
   }
-  await run(
+  // ONE writing task, two possible writers. The content is a pure function of the structured
+  // findings above, so a resume renders it byte-identically either way.
+  const dossierTask =
     `Create the file ${dossierPath} (creating parent directories as needed) with exactly this content:\n` +
     `# ${unit.id} — quarantine dossier\n\nReason: ${reason}\n\n## Attempted\n${dossier.attempted}\n\n` +
     `## Evidence\n${dossier.evidence}\n\n## Hypothesis\n${dossier.hypothesis}\n` +
@@ -1609,9 +1653,34 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
         `\`gh issue edit ${ghRepo}"$ISS" ` +
         `--remove-label status:running,status:merge-ready --add-label status:quarantined\` and post the dossier ` +
         `as a comment: \`gh issue comment ${ghRepo}"$ISS" --body-file ${dossierPath}\`. `
-      : ''),
-    { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}`, schema: S.ok },
-  ).catch(() => null)
+      : '')
+  // Codex writes it directly — it has a shell, so the file lands as a heredoc instead of being
+  // transcribed by a courier. cwd is the INTEGRATION worktree, not the unit's: quarantine is
+  // reachable before a unit worktree exists at all (an unresolvable existingBranch, a failed
+  // setup), and pointing a role at a directory that may not be there buys two doomed codex runs
+  // before the fallback. The dossier path is absolute, so the cwd is only ever the cd target.
+  const dw = await run(
+    `# GOAL\n${dossierTask}\n\n# CONSTRAINTS\n` +
+    `Write that ONE file and nothing else. Do not edit, stage, commit or revert anything in the checkout you ` +
+    `are running in, do not touch the unit's branch or worktree, and do not investigate — the findings above ` +
+    `are already decided and are yours to write down verbatim, not to revise.\n\n` +
+    `# REPORT\nReport ok:true only if \`test -f ${dossierPath}\` succeeds after you have written it; ` +
+    `otherwise ok:false with the exact error in \`detail\` (one sentence).`,
+    { model: 'codex', cwd: intWt, sandbox: 'workspace-write', schema: S.ok,
+      phase: 'Quarantine', label: `dossier-write:${unit.id}` },
+  )
+  // A dossier must EXIST — it is the redesign feed, and a quarantine with no dossier sends the next
+  // reader hunting. So the null (or a codex that reported it could not write) falls back to the
+  // Haiku writer this replaced, exactly once.
+  if (!dw?.ok) {
+    degrade({ label: `dossier-write:${unit.id}`, model: 'codex', phase: 'Quarantine', kind: 'dossier-write-fallback',
+      what: `codex did not write ${unit.id}'s quarantine dossier (${dw ? `reported ok:false — ${String(dw.detail ?? '').slice(0, 160)}` : 'no result'}) ` +
+        `— falling back to the Haiku writer once. A dossier must exist; the findings themselves ride home in the wave state regardless.` })
+    await run(
+      dossierTask,
+      { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}#fallback`, schema: S.ok },
+    ).catch(() => null)
+  }
   return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
 }
 
@@ -1674,16 +1743,23 @@ async function runBoundary() {
       `Hold \`notes\` to a short paragraph (max 500 characters). ` + TERSE,
       { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
     ).catch(() => null),
+    // Pure execution — no judgment in it at all — so it runs on codex like every other lane that
+    // spends the box's cores. Its deadline is the fix-round deadline rather than the 20-minute role
+    // default: N full suites back to back is the one role that legitimately runs for an hour.
     !(doHealth && C.flakeReruns > 0 && dueHere('flake', true)) ? null : run(
-      STRICT +
-      `In the integration worktree at ${intWt}: run the project's full test suite ${C.flakeReruns} times in a ` +
-      `row (commands: ${brief}). Report runs = how many completed, and in flips the exact name of every test ` +
-      `that changed pass/fail between runs (empty when stable). Immediately BEFORE each run, read the first ` +
-      `number printed by \`cat /proc/loadavg\` and report those samples in \`loads\`, in run order; also report ` +
-      `cpuCount = the number printed by \`nproc\`. A flip is not worth less because the box was busy — the ` +
+      `# GOAL\nHunt intermittent tests in the integration worktree at ${intWt} (tip ${tip}). Run the ` +
+      `project's full test suite ${C.flakeReruns} times in a row (build/test commands are documented at ` +
+      `${brief}). Fix nothing, edit nothing, commit nothing — you are measuring, not repairing.\n\n` +
+      `# METHOD\nImmediately BEFORE each run, read the first number printed by \`cat /proc/loadavg\` and ` +
+      `keep it for \`loads\`. Then run the suite. A flip is not worth less because the box was busy — the ` +
       `numbers are recorded so a triager can tell a saturated run from a real sentinel, and you must not ` +
-      `withhold, wait, or re-run on account of them. Fix nothing. Keep \`detail\` to one sentence (max 400 characters). ${TERSE}`,
-      { model: 'haiku', phase: 'Boundary', label: `flake:w${waveN}`, schema: S.flake }
+      `withhold, wait, or re-run on account of them.\n\n` +
+      `# REPORT\n\`runs\` = how many of the ${C.flakeReruns} runs completed. \`flips\` = the exact name of ` +
+      `every test that changed pass/fail between runs (an empty list is the healthy answer, and the right one ` +
+      `when the suite was stable). \`loads\` = the loadavg1 samples you took, in run order. \`cpuCount\` = ` +
+      `the number printed by \`nproc\`.`,
+      { model: 'codex', cwd: intWt, sandbox: 'workspace-write', schema: S.flake, phase: 'Boundary',
+        label: `flake:w${waveN}`, timeoutMin: C.codexFixTimeoutMin }
     ).catch(() => null),
     !doDesign ? null : run(
       `You are the wave-${waveN} design-fidelity reconciler for a roadmap build. These units merged this wave ` +
@@ -2620,28 +2696,48 @@ async function runUnit(unit) {
   if (!unit.existingBranch && ws.state !== 'adopted') {
   setStage(unit.id, 'plan')
   // Plan first, then the architect plan-check — wrong approaches die before code exists.
-  let implPlan = await runReq(
-    `Plan one unit of a larger roadmap for an implementer who is not you. Read the unit spec at ${spec} and any ` +
-    `contract files it references under ${repo}/.roadmap/contracts/ (contracts are frozen — treat them as ` +
-    `immutable requirements). Codebase conventions and build/test commands are documented at ${brief}. Explore ` +
-    `the code in ${w} as needed. ${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source '+ 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed '+ 'screen without its comp is how screens get reinvented. ' : ''}A different engineer will implement this from your plan and CANNOT ` +
-    `ask you anything — everything it needs must be in the plan or in the spec; before you finish, ask what an ` +
-    `implementer would have to ask you, and answer it here. A question with a look-up-able answer is yours to ` +
-    `resolve now; a question that is a genuine unsettled DECISION is a spec defect — set \`feasible\`:false and ` +
-    `name it in \`approach\`. Produce the plan — return the required fields with the structured ones FIRST and the ` +
-    `free-text last: \`feasible\` (boolean), \`files\` (an array of the file paths the implementer may touch — ` +
-    `this list becomes its BINDING scope, so an omission forces the work out of scope; err complete, not broad), ` +
-    `\`testPlan\` (the specific seams its tests hook into — as few as possible, one is ideal — and the exact ` +
-    `command that runs them), then \`approach\` (your approach) LAST. Emit each as a real ` +
-    `JSON field — do not fold files/testPlan into the approach prose. Also return \`evidence\`, the context ` +
-    `manifest your exploration already earned — the implementer starts from it instead of re-exploring, and ` +
-    `the reviewer gets its file list as a reading list: \`keyFiles\` (at most 20, one line each: path plus a ` +
-    `one-phrase why), \`signatures\` (at most 15, each one line: an exact signature/type the work builds ` +
-    `against, quoted), \`seams\` (at most 10, each a sentence or two: where the change hooks in, with a short ` +
-    `quoted anchor). ${TERSE}If the spec cannot be satisfied ` +
-    `within its contracts, do not force it: set \`feasible\`:false and explain the contradiction in ` +
-    `\`approach\`. Do not write code yet.`,
-    { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `plan:${unit.id}`, schema: S.plan })
+  // The IMPLEMENTER plans its own work (0.14.0): the same model family that will build this unit
+  // reads the spec, the contracts and the tree itself and produces the plan. Claude's judgment on
+  // it is unchanged and is still the point — the Opus/Fable plan-check below is what a plan has to
+  // survive, and a self-planned unit is exactly why that check interrogates the SPEC as hard as
+  // the plan. Nothing is pasted in here that a shell can read: the brief names paths.
+  let implPlan = await run(
+    `# GOAL\nPlan one unit of a larger roadmap, then hand the plan over. You are not writing code in this ` +
+    `run: an architect reviews the plan first, and only an approved plan is built.\n\n` +
+    `# CONTEXT (read these — do not guess at them)\n` +
+    `- The unit spec at ${spec} is authoritative.\n` +
+    `- Contract files it references live under ${repo}/.roadmap/contracts/ and are frozen — immutable ` +
+    `requirements, never something to plan around amending.\n` +
+    `- Codebase conventions and build/test commands are documented at ${brief}.\n` +
+    `- The code is in front of you at ${w}; explore as much of it as you need.\n` +
+    `${convClause}${designClause(unit)}${unit.design?.length ? 'Confirm each cited design source ' + 'actually exists in this worktree; if one is missing, set feasible:false and name it — building a designed ' + 'screen without its comp is how screens get reinvented. ' : ''}\n\n` +
+    `# CONSTRAINTS\nRead-only. Write no code, create no files, run no build, make no commit — this run produces ` +
+    `a plan and nothing else.\n\n` +
+    `# METHOD\nThe engineer who builds this works from your plan and CANNOT ask you anything — everything it ` +
+    `needs must be in the plan or in the spec. Before you finish, ask what an implementer would have to ask ` +
+    `you, and answer it here. A question with a look-up-able answer is yours to resolve now, by reading; a ` +
+    `question that is a genuine unsettled DECISION is a spec defect — set \`feasible\`:false and name it in ` +
+    `\`approach\`. If the spec cannot be satisfied within its contracts, do not force it: set ` +
+    `\`feasible\`:false and explain the contradiction in \`approach\`.\n\n` +
+    `# REPORT\n\`feasible\` (boolean). \`files\` — the file paths the implementer may touch; this list ` +
+    `becomes its BINDING scope, so an omission forces the work out of scope: err complete, not broad. ` +
+    `\`testPlan\` — the specific seams its tests hook into (as few as possible, one is ideal) and the exact ` +
+    `command that runs them. \`approach\` — your approach. \`evidence\` — the context manifest your ` +
+    `exploration already earned, so the implementer starts from it instead of re-exploring and the reviewer ` +
+    `gets its file list as a reading list: \`keyFiles\` (at most 20, one line each: path plus a one-phrase ` +
+    `why), \`signatures\` (at most 15, each one line: an exact signature/type the work builds against, ` +
+    `quoted), \`seams\` (at most 10, each a sentence or two: where the change hooks in, with a short quoted ` +
+    `anchor). Emit each as a real JSON field — never fold files/testPlan into the approach prose.`,
+    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
+      phase: 'Implement', label: `plan:${unit.id}` })
+  // No honest coded stand-in for a missing plan: a fabricated plan is a verdict about the unit
+  // invented out of an infrastructure failure. Same answer as the dead plan-check below — the
+  // unit does not get built, and the dossier says infrastructure rather than blaming the spec.
+  // Never a platform halt: a dead codex role is CODEX's failure (the adapter has already ledgered
+  // it) and the rest of the wave's Claude pipeline is unaffected.
+  if (!implPlan)
+    return quarantine(unit, 'no implementation plan was produced (the codex planner died twice) — ' +
+      'infrastructure, not the spec; relaunch to retry', { role: `plan:${unit.id}` })
 
   // Plan-check — Opus-first: every eligible unit still gets a check (wrong approaches die
   // before code exists), but only structural calls (high risk, claimed-infeasible, or the
@@ -2678,13 +2774,24 @@ async function runUnit(unit) {
         `this ruling verbatim: the architect redirected the plan for unit ${unit.id} with "${check.guidance}". ` +
         `Report ok.`,
         { model: 'haiku', effort: 'low', phase: 'Escalate', label: `spec-append:${unit.id}#plan`, schema: S.ok })
-      implPlan = await runReq(
-        `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
-        `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
-        `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
-        `\`approach\` last — and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line ` +
-        `each, seams a sentence or two each) where the direction changes it. ${TERSE}`,
-        { model: 'opus', effort: C.implementEffort, phase: 'Implement', label: `replan:${unit.id}`, schema: S.plan })
+      implPlan = await run(
+        `# GOAL\nRevise your implementation plan for unit ${unit.id} (spec: ${spec}; contracts under ` +
+        `${repo}/.roadmap/contracts/; the code is at ${w}).\n\n` +
+        `# THE ARCHITECT'S DIRECTION\n${check.guidance}\n\n` +
+        `# YOUR PREVIOUS PLAN\n${JSON.stringify(implPlan)}\n\n` +
+        `# CONSTRAINTS\nRead-only. Write no code, create no files, make no commit — this run produces a ` +
+        `revised plan and nothing else. The direction is a ruling, not a suggestion: apply it, or set ` +
+        `\`feasible\`:false and say in \`approach\` why it cannot be applied.\n\n` +
+        `# REPORT\nAll four required fields again — \`feasible\`, \`files\`, \`testPlan\`, \`approach\` — ` +
+        `and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line each, seams a ` +
+        `sentence or two each) wherever the direction changes it.`,
+        { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
+          phase: 'Implement', label: `replan:${unit.id}` })
+      // The architect redirected and the revision never came back. Building the plan the architect
+      // just rejected is the one thing that must not happen here.
+      if (!implPlan)
+        return quarantine(unit, 'the architect redirected the plan and the revision never came back (the codex ' +
+          'planner died twice) — infrastructure, not the plan; relaunch to retry', check)
     }
   }
   // Never hand an infeasible plan to an implementer — there is no honest way to execute it.
@@ -2739,33 +2846,73 @@ async function runUnit(unit) {
   if (!impl.reportLost) addDebt(unit.id, base, impl.debt)
   } // end fresh-build block — existingBranch and adopted (crash-recovered) branches enter the pipeline here
 
-  // Mechanical polish loop: verify → codex fix, bounded. There is deliberately NO adversarial
-  // review stage here: Codex's build already ran its own implement→test→fix loop, and a
-  // standalone review was a free pass generating directives against a diff the exit gate
-  // re-reads with authority anyway — i.e. one more way to widen the diff (the spiral's third
-  // clause). The gates carry the hunting clauses (FINDING_BAR); this loop fixes only what the
-  // mechanical verify can prove failing.
+  // Mechanical polish loop: verify → codex fix, bounded. There is deliberately NO review stage
+  // INSIDE it: Codex's build already ran its own implement→test→fix loop, and a review that can
+  // issue directives here is a free pass widening the diff the exit gate re-reads with authority
+  // anyway (the spiral's third clause). The gates carry the hunting clauses (FINDING_BAR); this
+  // loop fixes only what the mechanical verify can prove failing. The cross-model review added in
+  // 0.14.0 sits AFTER this loop and before the gate, issues no directives at all, and reports to
+  // the gate rather than to a fixer — which is exactly why it does not re-open that failure mode.
+  // ONE canonical verifier, and it is CODEX. The polish loop's check and every gate re-verify only
+  // ever differed in tense, so they are one brief now — and a shell-capable verifier reads the
+  // acceptance-check commands out of the SPEC itself instead of being handed a transcription of
+  // them. `LOAD_CMDS` deliberately stays inline rather than becoming a second courier call: the
+  // number that matters is the load WHILE the lanes ran, and only the process that ran them can
+  // sample it.
+  const verifyBrief =
+    `# GOAL\nVerify unit ${unit.id} in the git worktree at ${w} (branch unit/${unit.id}, diff base ${base}). ` +
+    `Run the checks and report what they did. Fix NOTHING and commit nothing — a failing check is a RESULT ` +
+    `to report, never a problem for you to solve.\n\n` +
+    `# METHOD\nCheck cheapest-first — lint/typecheck the changed files first, then run EXACTLY ` +
+    `the acceptance-check commands ${spec} names, verbatim, in the order it names them (commands and ` +
+    `conventions: ${brief}). NEVER substitute a narrower, faster or cheaper lane for one the spec names: ` +
+    `running \`test:unit\` where the spec says \`test:ci\` is a false green, and it once hid a red seal for a ` +
+    `whole unit. If the spec names no runnable command at all, run the tests scoped to this unit and say so in ` +
+    `\`notes\`. Do NOT run the full project suite — that happens at merge.\n\n` +
+    `# REPORT\nReport \`lanes\` = every command you ` +
+    `ran, in run order, each {command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every ` +
+    `one of those exit codes is 0. Report \`diffFiles\` = the exact output ` +
+    `lines of \`git diff --name-only ${base}..HEAD\`, and check whether that diff touches any path under ` +
+    `.roadmap/ (report that as contractSurfaceTouched — ` +
+    `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
+    `verbatim error output, never paraphrased, and \`failingSpecs\` = the repo-relative path of every test ` +
+    `FILE that has a failure, one entry per file. ${LOAD_FACTS}If the tooling itself cannot run (missing ` +
+    `dependency, broken command, environment failure) — as opposed to an assertion failing — report ` +
+    `blocked:true and stop.`
+  // Still inside withGateSlot: a codex verify spends the box's cores exactly as a Haiku one did, and
+  // gateMaxConcurrent bounds the HOST, not the driver. It nests OUTSIDE the adapter's own codex
+  // semaphore and cannot deadlock — nothing holding a codex slot ever waits on a gate slot. Its
+  // deadline is the fix-round deadline, not the 20-minute role default: a lane is the one role that
+  // legitimately spends most of an hour.
+  const runVerify = async (label) => {
+    const v = await withGateSlot(() => run(verifyBrief, { model: 'codex', cwd: w, sandbox: 'workspace-write',
+      schema: S.verify, phase: 'Verify', label, timeoutMin: C.codexFixTimeoutMin }))
+    if (v) noteFailingSpecs(unit.id, v)
+    return v
+  }
+  // A verify that never RAN is not a verdict about the unit. It BLOCKS: the branch and its commits
+  // stay, and the wave-start loop re-opens a `blocked` unit whose blocker is gone, so it re-enters
+  // dispatch next wave and is judged then. Deliberately NOT the env-blocked quarantine beside it —
+  // `blocked:true` is a verifier that ran and found the tooling broken, a fact about this checkout;
+  // a dead codex role is a fact about CODEX, and re-opening finished work for redesign over one is
+  // the invented-verdict class (§9) with a process boundary in front of it.
+  const verifyUnrun = (label) => {
+    // A HALTED wave is a park, not a block, and not a degradation either: the halt is already
+    // ledgered with its own cause, the role was never launched, and the unit re-enters by adoption
+    // next wave exactly as every other halted step leaves it.
+    if (haltReason()) return { status: 'pending', parked: true, note: `parked at ${label}: ${haltReason()}` }
+    degrade({ label, model: 'codex', phase: 'Verify', kind: 'verify-unrun',
+      what: `the codex verifier produced no report for ${unit.id} after its retry${loadNote()} — the unit is ` +
+        `BLOCKED, not quarantined: nothing about it was judged, its commits are intact, and it re-enters ` +
+        `dispatch next wave` })
+    return { status: 'blocked', branch: `unit/${unit.id}`, note: `verification never ran (${label})` }
+  }
+
   setStage(unit.id, 'polish')
   let verify
   for (let round = 0; round <= C.maxFixRounds; round++) {
-    verify = await withGateSlot(() => runReq(
-      STRICT +
-      `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files first, then run EXACTLY ` +
-      `the acceptance-check commands ${spec} names, verbatim, in the order it names them (commands and ` +
-      `conventions: ${brief}). NEVER substitute a narrower, faster or cheaper lane for one the spec names: ` +
-      `running \`test:unit\` where the spec says \`test:ci\` is a false green, and it once hid a red seal for a ` +
-      `whole unit. If the spec names no runnable command at all, run the tests scoped to this unit and say so in ` +
-      `\`notes\`. Do NOT run the full project suite — that happens at merge. Report \`lanes\` = every command you ` +
-      `ran, in run order, each {command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every ` +
-      `one of those exit codes is 0. Report \`diffFiles\` = the exact output ` +
-      `lines of \`git diff --name-only ${base}..HEAD\`, and check whether that diff touches any path under ` +
-      `.roadmap/ (report that as contractSurfaceTouched — ` +
-      `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
-      `verbatim error output, never paraphrased, and \`failingSpecs\` = the repo-relative path of every test ` +
-      `FILE that has a failure, one entry per file. ${LOAD_FACTS}If the tooling itself cannot run (missing ` +
-      `dependency, broken command, environment failure) — as opposed to an assertion failing — report ` +
-      `blocked:true and stop. Do not fix anything. ` + TERSE,
-      { model: 'haiku', phase: 'Verify', label: `verify:${unit.id}#${round}`, schema: S.verify }))
+    verify = await runVerify(`verify:${unit.id}#${round}`)
+    if (!verify) return verifyUnrun(`verify:${unit.id}#${round}`)
     // The only coverage assertion the SCRIPT can make: a pass with no lane ledger at all is not
     // evidence of anything. Coverage against the spec's named list is the exit gates' (LANE_BAR).
     if (verify.pass && !verify.lanes?.length)
@@ -2773,9 +2920,8 @@ async function runUnit(unit) {
         what: `unit ${unit.id} verified pass with an empty \`lanes\` ledger — no acceptance-check command was ` +
           `reported, so the green is unattributable and the exit gate must demand the spec's named lanes` })
     if (verify.blocked) return envBlocked(`verify:${unit.id}#${round}`, verify)
-    // Cross-unit aggregation: a red that several units share and none of them caused is taken over
-    // by the breaker here, before this unit spends a fix round on it.
-    noteFailingSpecs(unit.id, verify)
+    // (Cross-unit aggregation — the shared-red breaker — already ran inside runVerify, before this
+    // unit could spend a fix round on a red none of its siblings caused either.)
     // Adopted/existing-branch entry has no plan pass: the envelope is the diff AT ENTRY —
     // pinned from the first verify and never widened after (that distinction is the mechanism).
     if (!envelope && verify.diffFiles?.length) envelope = [...verify.diffFiles]
@@ -2830,22 +2976,6 @@ async function runUnit(unit) {
   // Quarantining a unit for a red the breaker owns would be exactly the failure the breaker exists
   // to stop — one shared assertion killing every unit in the wave.
   if (!verify.pass && !fullySuppressed(verify)) return quarantine(unit, 'verification never passed', verify)
-  const gateReverify = async (label) => {
-    const v = await withGateSlot(() => runReq(
-      STRICT +
-      `In ${w}: re-run lint/typecheck on the changed files, then EXACTLY the acceptance-check commands ${spec} ` +
-      `names, verbatim, in the order it names them (commands: ${brief}). Never substitute a narrower, faster or ` +
-      `cheaper lane for one the spec names. Report \`lanes\` = every command you ran, in run order, each ` +
-      `{command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every one of those exit codes ` +
-      `is 0. Report failures verbatim, \`failingSpecs\` = the repo-relative path of every test FILE that has a ` +
-      `failure, and \`diffFiles\` = the exact output lines ` +
-      `of \`git diff --name-only ${base}..HEAD\`. ${LOAD_FACTS}blocked:true if the tooling itself cannot ` +
-      `run. Fix nothing. ` + TERSE,
-      { model: 'haiku', phase: 'Verify', label, schema: S.verify }))
-    noteFailingSpecs(unit.id, v)
-    return v
-  }
-
   // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
   // adjudication — the polish loop's rescue only fires on failure signals, and the class this
   // closes is precisely the silent design decision under an all-green suite. One consult per
@@ -2951,15 +3081,83 @@ async function runUnit(unit) {
     // A stop DURING the fix round re-enters the ladder rather than being dropped — the whole
     // point of the release valve is that it can fire more than once on a long unit.
     noteGap(gFix)
-    verify = await gateReverify(`gap-verify:${unit.id}#${stops}`)
+    verify = await runVerify(`gap-verify:${unit.id}#${stops}`)
+    if (!verify) return verifyUnrun(`gap-verify:${unit.id}#${stops}`)
     if (verify.blocked) return envBlocked(`gap-verify:${unit.id}#${stops}`, verify)
   }
 
-  // Exit gate — Opus-first, escalating to the Fable architect only when the call is
+  // Cross-model PRE-GATE REVIEW. The old standalone Claude review stage was removed with the codex
+  // executor (RATIONALE §17) because it graded the same diff the exit gate then re-read with
+  // authority — a free pass whose only durable effect was widening the diff. This is not that. It
+  // is the OTHER model family reading the diff once, read-only, and producing a DIGEST built for
+  // the GATE to consume: the gate's diet (`gateModel`) is affordable only because this arrives
+  // first, and this is the only reader whose whole job is the two classes no runnable check can
+  // see — a diff that passes every command and still violates what the spec's PROSE requires, and
+  // one that reimplements a helper the conventions contract already catalogues.
+  setStage(unit.id, 'review')
+  const reviewBrief =
+    `# GOAL\nReview unit ${unit.id} of a roadmap build before its exit gate, and report a DIGEST the gate will ` +
+    `adjudicate. You are a second engineer, from a different model family than both the gate and the ` +
+    `implementer: what you catch is what the runnable checks and that family both missed.\n\n` +
+    `# CONTEXT (read these — do not guess at them)\n` +
+    `- The spec at ${spec} is authoritative, ITS PROSE INCLUDED. A criterion stated in words binds exactly as ` +
+    `hard as one a command can check.\n` +
+    `- Frozen contracts it references live under ${repo}/.roadmap/contracts/.\n` +
+    (conventions
+      ? `- The standing conventions contract at ${conventions} catalogues the shared utilities every unit must ` +
+        `REUSE rather than reinvent, and the naming/error/pattern conventions every unit must follow. Read it: ` +
+        `a catalogued helper reimplemented inside this diff violates that contract, is never a style ` +
+        `preference, and is invisible to every runnable check.\n`
+      : '') +
+    `- The diff is \`git diff ${base}..HEAD\` in ${w} (branch unit/${unit.id}). Read it in full, plus whatever ` +
+    `surrounding code you need to judge it.\n` +
+    `- This unit's pinned scope is: ${envelope?.length ? envelope.join(', ') : "the files its diff already touched at entry"}${scopeAllowClause}.\n` +
+    `- What actually ran, and what it returned: ${JSON.stringify(verify)}.\n` +
+    `${designClause(unit)}\n` +
+    `# CONSTRAINTS\nRead-only. Change nothing, write nothing, run no build, commit nothing, and fix not one ` +
+    `thing you find — the report IS your output. Do not propose an alternative design, and do not re-litigate ` +
+    `the approach: it was planned and an architect approved it.\n\n` +
+    `# WHAT TO HUNT\n` +
+    `1. \`specFindings\` — acceptance criteria this diff does NOT satisfy, graded one at a time against what ` +
+    `the spec SAYS rather than against what the suite happens to check. The highest-value finding available to ` +
+    `you is the criterion every runnable command passes and the prose still forbids: a rule stated in words and ` +
+    `implemented with the language's default, an edge case the spec names and no test covers. Quote the clause ` +
+    `you are grading as \`criterion\` and state what makes it fail as \`evidence\`.\n` +
+    `2. \`conventionFindings\` — a shared utility the conventions contract catalogues, reimplemented inside ` +
+    `this diff. Name the catalogued \`helper\` and \`where\` the diff duplicates it.\n` +
+    `3. \`contractTouches\` — every frozen-contract surface this diff touches or depends on, one line each.\n` +
+    `4. \`scopeNotes\` — behaviour or files in this diff the spec did not ask for, and anything the pinned ` +
+    `scope names that the diff never reached.\n` +
+    `5. \`unread\` — whatever you could NOT check, and why. The gate may read this digest INSTEAD of the diff, ` +
+    `so silence reads as coverage: a criterion you skipped and did not list becomes one nobody knows was ` +
+    `skipped. An honest short list beats a complete-looking one.\n\n` +
+    FINDING_BAR('finding') +
+    `\n# VERDICT\n\`verdict\`: "clean" = you would merge this as it stands; "concerns" = findings the gate ` +
+    `should weigh that do not by themselves block; "blocking" = at least one finding makes the spec's behaviour ` +
+    `wrong, violates a contract or the conventions contract, or leaves an acceptance criterion untested. ` +
+    `\`risk\` = what a missed defect in THIS diff would cost — "low", "med" or "high". The SCHEDULER reads ` +
+    `both: "blocking" or "high" puts a frontier-capable gate back in front of the raw diff, and "clean"/"low" ` +
+    `is what lets a cheaper one stand on your report. Grade honestly in both directions — inflating costs the ` +
+    `arc frontier attention it needed elsewhere, and deflating hands a defect a cheaper gate was never given ` +
+    `the evidence to catch.`
+  const digest = await run(reviewBrief,
+    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.reviewDigest,
+      phase: 'Review', label: `codex-review:${unit.id}` })
+  // No digest is not a cheaper gate — it is a MORE expensive one. The adapter has already ledgered
+  // why codex produced nothing; this row records what the harness did about it, because "the gate
+  // read the raw diff at Opus this time" is the fact a spend audit needs. Not on a HALT, though:
+  // there the role was never launched, the halt carries its own ledger row and its own cause, and a
+  // second row blaming the reviewer would point the reader at the wrong thing.
+  if (!digest && !haltReason())
+    degrade({ label: `codex-review:${unit.id}`, model: 'codex', phase: 'Review', kind: 'review-skipped',
+      what: `no cross-model review digest for ${unit.id} — the exit gate falls back to reading the raw diff ` +
+        `itself, at Opus whatever the unit's risk. Less evidence buys MORE Claude here, never less scrutiny` })
+
+  // Exit gate — first-pass tier per `gateModel`, escalating to the Fable architect only when the call is
   // genuinely hard. High-risk units, contract-touching diffs, and a deterministic audit
-  // sample skip straight to the guaranteed Fable gate: Opus cannot reliably self-detect the
+  // sample skip straight to the guaranteed Fable gate: no first-pass tier reliably self-detects the
   // subtle oversights that gate exists to catch, so where the stakes are structurally
-  // highest, frontier judgment stays mandatory (DESIGN.md decision 4).
+  // highest, frontier judgment stays mandatory (DESIGN.md decision 4) — unchanged by 0.14.0.
   setStage(unit.id, 'gate')
   // Scope growth is adjudicated at the gate, where judgment already lives — annotate-and-decide,
   // not force-frontier (which would fire constantly on legitimately-underestimated file lists).
@@ -2996,6 +3194,37 @@ async function runUnit(unit) {
     unit.risk !== 'high' && !verify.contractSurfaceTouched && !mismatchEver && !reportLostEver &&
     !(gapEver && !gapConsulted)
 
+  // THE GATE DIET. The first-pass gate's ordinary job is now adjudicating the review digest, the
+  // lane ledger, this wave's scope precedent and the contract notes — not re-reading the whole diff
+  // — so `gateModel` puts a low-risk unit on a cheaper tier. Two conditions refuse the diet outright
+  // and put Opus back in front of the RAW DIFF, and the direction is the whole safety argument: a
+  // gate that cannot see the diff cannot DISAGREE with the review, and a review that says "clean"
+  // over a spec-prose violation must never become a rubber stamp (the `gate-bad` fixture is exactly
+  // that probe). So: no digest at all, or a digest the reviewer itself graded `blocking` or
+  // high-risk, and the cheap path is off. Med/high-risk units keep the raw diff either way.
+  const digestUsable = !!digest && digest.verdict !== 'blocking' && digest.risk !== 'high'
+  const dietRefused = !digestUsable || unit.risk !== 'low'
+  const firstGateModel = digestUsable ? (C.gateModel?.[unit.risk] ?? 'opus') : 'opus'
+  const firstGateRead = dietRefused
+    ? `read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. `
+    : `read \`git diff --stat ${base}..HEAD\` and then, IN FULL, the diff of every file the review digest's ` +
+      `findings, contract touches or scope notes name — expanding to the complete diff the moment anything ` +
+      `looks off, the digest looks thin for the size of the change, or an acceptance criterion is not settled ` +
+      `by what you have read. The raw diff is one command away and reading it is never wrong: this is where to ` +
+      `start, not a ceiling on what you may read. `
+  // Handed to BOTH gates. A digest is evidence to adjudicate, never a verdict and never coverage —
+  // that sentence is what stands between a cheaper gate and a rubber stamp.
+  const reviewClause = digest
+    ? ` A cross-model reviewer — a different model family, read-only — has already read this diff in full ` +
+      `against the spec, the contracts${conventions ? ', the conventions contract' : ''} and the pinned scope, ` +
+      `and reported this digest: ${JSON.stringify(digest)}. Treat it as EVIDENCE to adjudicate, never as a ` +
+      `verdict and never as coverage: a "clean" digest is not an approval, what it does not mention is not ` +
+      `thereby correct, and anything it lists under \`unread\` was checked by nobody. Confirm what it claims ` +
+      `against the spec yourself, add what it missed, and say plainly where you disagree — cross-model ` +
+      `disagreement is signal, not noise.`
+    : ` No cross-model review digest exists for this unit (the reviewer produced nothing), so the diff itself ` +
+      `is the only account of what was built. Read it in full and assume nothing was pre-checked.`
+
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
   // rather than re-deriving the concern from the spec, contracts, and diff from scratch.
@@ -3007,13 +3236,14 @@ async function runUnit(unit) {
       spend.opusGateRounds++
       bumpRound(unit.id, 'opusGate')
       const og = await runOr({ verdict: 'escalate', trigger: 'stuck', directives: [], debt: [],
-        notes: 'opus gate produced no report — degraded to the frontier gate' },
+        notes: 'the first-pass exit gate produced no report — degraded to the frontier gate' },
         riskTilt(unit.risk) +
         `You are the exit gate for unit ${unit.id} of a roadmap build, standing in for the architect — but you ` +
-        `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
+        `are the FIRST PASS, not the frontier, so escalate to the frontier architect the moment the call ` +
+        `exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
-        `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}Grade each of the spec's acceptance criteria ` +
+        `references, then ${firstGateRead}` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
@@ -3025,7 +3255,10 @@ async function runUnit(unit) {
         `you have found an oversight you are not confident you can resolve. Name the escalation trigger. ` +
         `${DEBT_DISCIPLINE}${TERSE}` +
         `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
-        { model: 'opus', effort: C.opusEffort, phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
+        // The label and the per-unit `rounds.opusGate` tally keep their names — the paid fixtures'
+        // round-ceiling graders and every resume journal key on them — but the TIER is `gateModel`'s
+        // now, and `spend` records what actually ran, per tier, either way.
+        { model: firstGateModel, effort: C.opusEffort, phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
       capDirectives(og, 'opus-gate')
       recordScopeRulings(unit.id, og)
       // Approve-with-correctness-debt is the verdict-downgrade path the discipline forbids: the
@@ -3061,7 +3294,8 @@ async function runUnit(unit) {
         log(`${unit.id}: opus-gate-fix report lost — escalating to the frontier gate`)
         break
       }
-      verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
+      verify = await runVerify(`opus-gate-verify:${unit.id}#${g}`)
+      if (!verify) return verifyUnrun(`opus-gate-verify:${unit.id}#${g}`)
       if (verify.blocked) return envBlocked(`opus-gate-verify:${unit.id}#${g}`, verify)
     }
     // Opus approved nothing across its rounds — whether it escalated or merely failed to
@@ -3112,7 +3346,7 @@ async function runUnit(unit) {
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
-      `${JSON.stringify(verify)}. ${LANE_BAR}Grade each of the spec's acceptance criteria individually before forming your ` +
+      `${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
@@ -3151,7 +3385,8 @@ async function runUnit(unit) {
     if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gate-fix: ${haltReason()}` }
     addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
     if (gFix.reportLost) reportLostEver = true
-    verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
+    verify = await runVerify(`gate-verify:${unit.id}#${g}`)
+    if (!verify) return verifyUnrun(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked) return envBlocked(`gate-verify:${unit.id}#${g}`, verify)
   }
   return quarantine(unit, 'architect gate did not converge')

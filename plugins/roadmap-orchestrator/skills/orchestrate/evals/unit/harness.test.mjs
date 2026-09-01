@@ -250,11 +250,13 @@ test('8 audit determinism: rate 1 forces low-effort Fable gate, rate 0 does not'
 })
 
 // =========================================================================================
-// 8b. Opus effort wiring: implementEffort drives the Opus code-authoring calls that remain
-//     (planning — the implementer itself is Codex now, steered at C.codexSteerModel), opusEffort
-//     drives every other Opus call; both default to 'medium' and both honour a config override.
+// 8b. Opus effort wiring. CHANGED CONTRACT (0.14.0): `implementEffort` is GONE. It only ever drove
+//     plan/replan, and the implementer plans its own work on codex now — so there is no Opus
+//     code-authoring pipeline left to dial, and the plan pass is a codex role steered at
+//     codexSteerModel/low like every other one. `opusEffort` still drives every Opus call the
+//     harness makes, defaults to 'medium', and honours a config override.
 // =========================================================================================
-test('8b opus effort wiring: implementEffort and opusEffort defaults + overrides', async () => {
+test('8b opus effort wiring: opusEffort defaults + overrides; the plan pass is a codex role', async () => {
   const effortOf = (calls, prefix) => calls.find((c) => c.label.startsWith(prefix))?.effort
   const modelOf = (calls, prefix) => calls.find((c) => c.label.startsWith(prefix))?.model
 
@@ -263,7 +265,8 @@ test('8b opus effort wiring: implementEffort and opusEffort defaults + overrides
     await runWave(fn, makePlan([unit('a')]), makeState())
     return calls
   })()
-  assert.equal(effortOf(defaults, 'plan:a'), 'medium', 'implementEffort defaults to medium')
+  assert.equal(modelOf(defaults, 'plan:a'), 'haiku', 'the plan pass is steered at codexSteerModel now')
+  assert.equal(effortOf(defaults, 'plan:a'), 'low', 'steering a codex role is a low-effort mechanical job')
   assert.equal(effortOf(defaults, 'opus-gate:a'), 'medium', 'opusEffort defaults to medium (gate)')
   assert.equal(effortOf(defaults, 'health:w'), 'medium', 'opusEffort defaults to medium (boundary)')
   // The steering agent is deliberately NOT on either Opus knob — it launches and watches a
@@ -274,10 +277,10 @@ test('8b opus effort wiring: implementEffort and opusEffort defaults + overrides
   const overridden = await (async () => {
     const { fn, calls } = makeAgent()
     await runWave(fn, makePlan([unit('a')]), makeState(),
-      { implementEffort: 'xhigh', opusEffort: 'low', codexSteerModel: 'sonnet' })
+      { opusEffort: 'low', codexSteerModel: 'sonnet' })
     return calls
   })()
-  assert.equal(effortOf(overridden, 'plan:a'), 'xhigh', 'implementEffort override carried to the plan pass')
+  assert.equal(modelOf(overridden, 'plan:a'), 'sonnet', 'codexSteerModel override carried to the plan role too')
   assert.equal(effortOf(overridden, 'opus-gate:a'), 'low', 'opusEffort override carried to the Opus gate')
   assert.equal(effortOf(overridden, 'health:w'), 'low', 'opusEffort override carried to the boundary assessor')
   assert.equal(modelOf(overridden, 'codex-build:a'), 'sonnet', 'codexSteerModel override carried to the steering agent')

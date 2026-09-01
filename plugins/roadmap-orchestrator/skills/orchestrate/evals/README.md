@@ -351,8 +351,10 @@ budget**. Nothing in a fixture run is free:
 - **Opus / Sonnet / Haiku** draw on the same weekly budget, just far more slowly per call. A run that
   is "only 3 Fable calls" can still be 1.7M tokens and a real dent.
 
-This is exactly why the skill's economy is shaped the way it is (invariant 2 — frontier never
-generates volume): Fable plans, gates and adjudicates; Opus writes; Haiku runs commands. The
+This is exactly why the skill's economy is shaped the way it is (invariant 2 — Claude decides,
+Codex drafts and executes, Haiku only couriers): Fable plans, gates and adjudicates; Opus and
+Sonnet judge; Codex — on its own plentiful quota — plans each unit, writes every line, runs every
+lane and reads the diff into the digest the gate adjudicates; Haiku runs closed command lists. The
 orchestrated split is not stylistic, it is what keeps an arc inside a weekly budget. The same logic
 applies to the evals themselves — hence the wave cap on the conductor fixture, and the probes below.
 
