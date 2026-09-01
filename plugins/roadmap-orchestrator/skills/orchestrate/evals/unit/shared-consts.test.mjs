@@ -10,7 +10,8 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_EXTRA + courierPrompt/courierSchema/courierShape +
+//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_EXTRA + cdGuard +
+//                      courierPrompt/courierSchema/courierShape +
 //                      readPackFile + readPack — byte-identical value and byte-identical source.
 //                      This is the LAUNCH PACK read: both scripts open by having a Haiku courier
 //                      cat plan.json/state.json and then verifying the transcription against the
@@ -148,6 +149,24 @@ test('STRICT (location discipline) is byte-identical in harness.mjs and conducto
   assertInSync('The STRICT const', h, c)
   // The clause is worthless if it stops naming the behaviour it forbids.
   assert.match(h, /Never substitute/, 'STRICT still forbids cwd substitution')
+  // CHANGED CONTRACT (0.14.1): the mechanical check proves WHICH checkout, not merely that the agent
+  // stands in one — `git rev-parse --git-dir` succeeded in the workflow session's own repo.
+  assert.match(h, /`pwd` must print that path exactly/, 'the location proof is an identity test')
+  assert.match(h, /--show-toplevel` names WHICH checkout/, 'and it names the repository')
+})
+
+test('cdGuard (the composed working directory) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'cdGuard', '(where, cmd)'))
+  assertInSync('The cdGuard composer', h, c)
+  // The guard is the MECHANISM behind STRICT's cd sentence: the working directory is composed into
+  // every command the script hands out, so a courier that ignores the prose fails that command's
+  // exit code instead of answering plausibly from the wrong repository (wf_106cdf59-c5f).
+  const cdGuard = Function(`"use strict"; return (${h.replace('const cdGuard = ', '')});`)()
+  assert.equal(cdGuard('/repo', 'git rev-parse HEAD'), "cd '/repo' && ( git rev-parse HEAD )",
+    'the guard is `cd \'<where>\' && ( <cmd> )` — a failed cd is a non-zero exit of THAT command')
+  assert.equal(cdGuard("/o'dd", 'ls'), "cd '/o'\\''dd' && ( ls )", 'a single quote in the path is escaped')
+  assert.throws(() => cdGuard('', 'ls'), /explicit absolute working directory/,
+    'an empty path throws at compose time rather than shipping an improvisable prompt')
 })
 
 test('READ_CHUNK is the same launch-pack budget in both scripts', () => {
@@ -188,11 +207,15 @@ test('cksumOf (the in-script POSIX cksum) has byte-identical source in both scri
 test('the courier prompt/schema/shape are byte-identical in both scripts', () => {
   const [hp, cp] = FILES.map((f) => blockSource(f, 'courierPrompt'))
   assert.ok(hp.includes('run NOTHING ELSE'), 'the closed-list discipline is stated')
+  assert.ok(hp.includes('cdGuard(where, c)'), 'every numbered command is composed with its own cd guard')
   assert.ok(hp.includes('\\nCommands:\\n'), 'the numbered command list is the last thing in the prompt')
   assertInSync('The courierPrompt builder', hp, cp)
 
   const [hs, cs] = FILES.map((f) => blockSource(f, 'courierSchema'))
   assert.ok(hs.includes('exitCode'), 'the courier reports exit codes, never a verdict')
+  // CHANGED CONTRACT (0.14.1): results are positional. The `command` echo cost output tokens and,
+  // capped at 300 characters, failed validation outright on a composed command.
+  assert.ok(!hs.includes('command'), 'and never echoes the command text back')
   assertInSync('The courierSchema builder', hs, cs)
 
   const [hh, ch] = FILES.map((f) => fnSource(f, 'courierShape', '(r, commands)'))
@@ -267,6 +290,7 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
-      'courierSchema', 'courierPrompt', 'courierShape', 'readPackFile', 'readPack', 'markerFind', 'MARKER_RULE'])
+      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'readPackFile', 'readPack',
+      'markerFind', 'MARKER_RULE'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

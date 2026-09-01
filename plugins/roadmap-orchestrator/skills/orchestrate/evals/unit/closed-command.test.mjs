@@ -19,9 +19,10 @@
 // agent's remit by construction, which is what these tests check.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, courierResult, BASE_SHA, INT_SHA, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
+import { makeAgent, courierResult, courierCommands, BASE_SHA, INT_SHA, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -36,17 +37,23 @@ const runWave = async (agentFn, plan, state, config = {}) =>
 const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: 'npm run dev', healthcheck: 'curl -sf http://localhost:5173' }
 const callOf = (calls, label) => calls.find((c) => c.label === label)
 const promptOf = (calls, label) => callOf(calls, label)?.prompt ?? ''
-// Every courier prompt ends in its numbered command list; this is the list the agent may run.
-const commandsOf = (prompt) => (prompt.split('\nCommands:\n')[1] ?? '')
+// Every courier prompt ends in its numbered command list; this is the list the agent may run, with
+// the script-composed `cd '<where>' && ( … )` guard unwrapped (courierCommands asserts it is there).
+const commandsOf = courierCommands
+// The RAW numbered lines, guard included — what the model is actually handed.
+const rawCommandsOf = (prompt) => (prompt.split('\nCommands:\n')[1] ?? '')
   .split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
 
 // A courier fake that fails at `failing` and stops there, exactly as the courier contract says.
+// CHANGED CONTRACT (0.14.1): results are POSITIONAL — no `command` comes back — so the failing slot
+// is found by index against the prompt's own list.
 const courierFailingAt = (failing) => (prompt) => {
   const full = courierResult(prompt, BASE_SHA)
+  const cmds = commandsOf(prompt)
   const results = []
-  for (const e of full.results) {
-    if (failing.test(e.command)) { results.push({ ...e, exitCode: 1, stdout: 'listen EADDRINUSE :::5173' }); break }
-    results.push(e)
+  for (let i = 0; i < full.results.length; i++) {
+    if (failing.test(cmds[i])) { results.push({ ...full.results[i], exitCode: 1, stdout: 'listen EADDRINUSE :::5173' }); break }
+    results.push(full.results[i])
   }
   return { ok: true, results }
 }
@@ -70,6 +77,94 @@ test('courier prompts hand over a closed command list and forbid everything outs
     assert.match(c.prompt, /ok is about YOUR REPORT, not/, `${c.label} keeps the verdict in the script`)
     assert.equal(c.schema.required.join(','), 'ok,results', `${c.label} reports per-command results`)
     assert.equal(c.schema.properties.results.maxItems, cmds.length, `${c.label} bounds results to its own list`)
+  }
+})
+
+// =========================================================================================
+// 1b. WHERE a command runs is composed by the script, never left to the model.
+// Arc-observed (paid conductor fixture wf_106cdf59-c5f): the `preview-worktree` courier read
+// STRICT's cd sentence, ran `git rev-parse --git-dir` — which succeeded, because the Claude Code
+// session's own cwd IS a git checkout — and then ran the whole list in THIS skill's repo. The
+// worktree add failed with "invalid reference" against a repo that had never heard of the sha, and
+// a setup courier in the same run reported this repo's HEAD as the unit branch's. The cd sentence
+// stays as the explanation; the guard below is the mechanism.
+// =========================================================================================
+test('every composed courier command carries its own cd guard — the cwd is never the model\'s choice', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW, provision: { setup: 'npm ci' } }), makeState())
+  const couriers = calls.filter((c) => c.prompt.includes('\nCommands:\n'))
+  assert.ok(couriers.length >= 3, `several courier calls drive this wave (saw ${couriers.length})`)
+  for (const c of couriers) {
+    // `In <where>:` opens every courier prompt body; that same path must guard every command.
+    const where = /In (\/\S+): run EXACTLY/.exec(c.prompt)?.[1]
+    assert.ok(where, `${c.label} names the directory it runs in`)
+    const raw = rawCommandsOf(c.prompt)
+    assert.ok(raw.length, `${c.label} carries a non-empty command list`)
+    for (const line of raw)
+      assert.ok(line.startsWith(`cd '${where}' && ( `) && line.endsWith(' )'),
+        `${c.label} composes the cwd into every command, got: ${line}`)
+    // And the prompt says the prefix is not the courier's to edit.
+    assert.match(c.prompt, /the working directory is part of the command, not a choice of yours/,
+      `${c.label} forbids stripping the guard`)
+  }
+})
+
+test('the preview-worktree courier runs its list in the primary checkout, by construction', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  // This is the exact call that failed live: `git worktree add` can only run in the primary
+  // checkout, and it ran in the workflow session's instead.
+  for (const line of rawCommandsOf(promptOf(calls, 'preview-worktree')))
+    assert.ok(line.startsWith("cd '/repo' && ( "), `the worktree add is pinned to /repo, got: ${line}`)
+  // The mirror/setup advances are pinned to the preview worktree for the same reason.
+  for (const line of rawCommandsOf(promptOf(calls, 'preview-setup')))
+    assert.ok(line.startsWith("cd '/wt/__preview' && ( "), `the advance is pinned to __preview, got: ${line}`)
+})
+
+test('gitProbe composes the cd guard too — merged-probe cannot answer from another repository', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan(), makeState())
+  const probe = promptOf(calls, 'merged-probe:a')
+  assert.ok(probe.includes('In the directory /repo,'), 'the probe names the checkout it is about')
+  // gitProbe numbers with `N) `, not `N. `, so read its lines directly.
+  const numbered = probe.split('\n').map((l) => /^\s*\d+\)\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
+  assert.equal(numbered.length, 3, 'the merged test is three commands')
+  for (const line of numbered)
+    assert.ok(line.startsWith("cd '/repo' && ( "), `merged-probe pins its own cwd, got: ${line}`)
+  assert.match(probe, /the working directory is part of the command, not a choice of yours/,
+    'and says so, so the prefix is not stripped')
+})
+
+test('a courier with no working directory throws at compose time rather than shipping the prompt', async () => {
+  // Fix 3: an undefined path interpolated into a prompt is the documented way an agent ends up
+  // improvising in its own cwd, so it is a loud compose-time failure, never a runtime surprise.
+  const src = readFileSync(HARNESS, 'utf8')
+  const guard = /const cdGuard = \(where, cmd\) => \{[\s\S]*?\n\}/.exec(src)
+  assert.ok(guard, 'harness.mjs still declares cdGuard')
+  // eslint-disable-next-line no-new-func
+  const cdGuard = Function(`"use strict"; return (${guard[0].replace('const cdGuard = ', '')});`)()
+  assert.equal(cdGuard('/repo', 'git status'), "cd '/repo' && ( git status )")
+  assert.equal(cdGuard("/o'dd", 'ls'), "cd '/o'\\''dd' && ( ls )", 'a quote in the path is escaped, not interpolated raw')
+  for (const bad of ['', '   ', undefined, null])
+    assert.throws(() => cdGuard(bad, 'ls'), /explicit absolute working directory/,
+      `${JSON.stringify(bad)} is refused`)
+  assert.match(src, /courierRun: \\`where\\` is required/, 'courierRun refuses an empty path of its own')
+})
+
+test('courier results are POSITIONAL — the command text is never echoed back', async () => {
+  // CHANGED CONTRACT (0.14.1): the schema's `command` field is gone. It cost Haiku output tokens
+  // per courier and, capped at 300 characters, failed schema validation outright on the long
+  // composed commands (arc-observed in the same fixture: "/results/0/command: must NOT have more
+  // than 300 characters", burning the call's schema retries). The script already knows what it
+  // sent; index is the identifier.
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  for (const c of calls.filter((x) => x.prompt.includes('\nCommands:\n'))) {
+    const item = c.schema.properties.results.items
+    assert.equal(item.required.join(','), 'exitCode,stdout', `${c.label} reports exit code + output only`)
+    assert.ok(!('command' in item.properties), `${c.label} no longer asks for the command text back`)
+    assert.match(c.prompt, /do NOT echo the command text back/, `${c.label} says so in the prompt`)
+    assert.match(c.prompt, /IN LIST ORDER — position is the only identifier/, `${c.label} states the positional rule`)
   }
 })
 
@@ -307,14 +402,23 @@ test('a pass with an empty lane ledger degrades lane-substituted', async () => {
 })
 
 // =========================================================================================
-// 7. STRICT's checkout test is mechanical, and a linked worktree passes it.
+// 7. STRICT's location test is mechanical, proves WHICH checkout, and a linked worktree passes it.
 // =========================================================================================
-test('STRICT: the checkout test is an exit code, and a linked worktree is explicitly valid', async () => {
+// CHANGED CONTRACT (0.14.1): `git rev-parse --git-dir` only proved the agent was in SOME checkout,
+// which is exactly the fact a courier that never cd'd could still report truthfully (arc-observed,
+// wf_106cdf59-c5f: the whole preview list ran in the workflow session's own repo). The test is now
+// an IDENTITY test — `pwd`, and `git rev-parse --show-toplevel` naming which repository.
+test('STRICT: the location test proves WHICH checkout, and a linked worktree is explicitly valid', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan({ provision: { setup: 'npm ci' } }), makeState())
   const p = promptOf(calls, 'provision:integration')
   assert.ok(p.startsWith('Start by `cd`'), 'STRICT still leads')
-  assert.match(p, /`git rev-parse --git-dir`: a NON-ZERO exit is the only failure/, 'mechanical, not a judgement')
+  assert.match(p, /`pwd` must print that path exactly, character for character/,
+    'the proof is an identity, not merely "the command succeeded"')
+  assert.match(p, /`git rev-parse --show-toplevel` names WHICH checkout you are in/,
+    'and it names the repository, so being in SOME checkout is no longer a pass')
+  assert.ok(!/--git-dir`: a NON-ZERO exit is the only failure/.test(p),
+    'the old succeeds-anywhere test is gone')
   assert.match(p, /A LINKED WORKTREE IS VALID/, 'the case that failed is named — every unit tree is one')
   assert.ok(!/is not the described git checkout/.test(p), 'the judgement-call wording is gone')
   assertAllModelsPinned(calls)

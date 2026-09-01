@@ -33,7 +33,8 @@ export const nextSeq = () => __seq++
 export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'utf8' }).trim()
 
 // A COURIER call (harness.mjs `courierRun`) is handed a closed, numbered command list and reports
-// {command, exitCode, stdout} per command. The fake replays that exact list back with exit 0 and a
+// {exitCode, stdout} POSITIONALLY — since 0.14.1 it never echoes the command text back. The fake
+// replays that exact list back with exit 0 and a
 // plausible stdout, so the scripts' own pattern-matching — `git rev-parse HEAD` -> the mirror sha,
 // `codex login status` -> the /logged in/i probe test — runs for real instead of being
 // short-circuited by a canned verdict. A canned {ok:true} here would prove nothing about the code
@@ -50,18 +51,32 @@ const courierStdout = (cmd, head) =>
               : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
                 : /^nproc$/.test(cmd) ? '16'
                   : ''
-export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
+// Every numbered command the script composes, with its `cd '<where>' && ( … )` guard STRIPPED back
+// off — the guard is the script's, the inner command is what a test (and the fake's own stdout
+// table) is about. A line that does not carry the guard is a defect the tests want to see, so the
+// unwrap is asserted rather than tolerated.
+export function courierCommands(prompt) {
   const block = prompt.split('\nCommands:\n')[1] ?? ''
-  const commands = block.split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
+  return block.split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean).map((line) => {
+    const m = /^cd '(?:[^']|'\\'')*' && \( ([\s\S]*) \)$/.exec(line)
+    assert.ok(m, `fakes: a courier command is missing its cd guard: ${line}`)
+    return m[1]
+  })
+}
+
+export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
+  const commands = courierCommands(prompt)
   assert.ok(commands.length, 'fakes.courierResult: no numbered `Commands:` block — not a courier prompt')
   // A detach in the list MOVES the fake tree, so a later `git rev-parse HEAD` reads the target
   // back. Anything cheaper would let a mirror advance "succeed" against a sha it never reached —
   // exactly the read-back check the script relies on.
   let head = baseSha
+  // Positional: {exitCode, stdout} only — the schema has no `command` field, so neither does this.
+  // A test that needs to know WHICH slot is which reads courierCommands(prompt) by index.
   return { ok: true, results: commands.map((command) => {
     const m = /checkout --detach (\S+)/.exec(command)
     if (m) head = m[1]
-    return { command, exitCode: 0, stdout: stdoutFor(command, head) }
+    return { exitCode: 0, stdout: stdoutFor(command, head) }
   }) }
 }
 

@@ -818,6 +818,49 @@ retry whose only kill targets are the pidfile's process group and the literal `p
 **The preview is observability, never a gate**: setup/refresh/healthcheck failures set
 `preview.status: "failed"`, log, and continue.
 
+### The courier contract (`courierRun`, and every closed list that isn't one)
+
+A courier is handed a **closed list of exact commands** and returns their **exit codes and verbatim
+output**; the *script* judges. Three rules make that hold, and all three are code, not prose:
+
+1. **The working directory is composed into every command.** Each numbered command goes out as
+
+   ```
+   cd '<where>' && ( <cmd> )
+   ```
+
+   (`cdGuard`, mirrored in both scripts). STRICT's `cd` sentence stays as the *explanation*; this is
+   the *mechanism*. A courier that ignores the sentence now produces a non-zero exit of that
+   numbered command — which the stop-at-first-failure rule already handles — instead of a plausible
+   answer from the wrong repository. `where` is **required**: an empty or undefined path throws at
+   compose time, in `cdGuard` and again in `courierRun`, because an undefined path interpolated into
+   a prompt is precisely how an agent ends up improvising in its own cwd. `gitProbe` composes the
+   same guard.
+2. **Results are positional.** `results[i]` corresponds to `commands[i]`; the courier reports
+   `{exitCode, stdout}` and **never echoes the command text back** — the script already has the list
+   it sent, and anything that needs to name a command in a degradation detail composes it from that
+   list (`courierShape`'s `detail` does exactly this, from the *unwrapped* command, so the guard
+   never leaks into an operator-facing message).
+3. **STRICT proves WHICH checkout, not merely that there is one.** `pwd` must print the named path
+   character for character, and where that path is inside a checkout, `git rev-parse --show-toplevel`
+   must print that same path or a directory it sits under. A linked worktree is explicitly valid.
+   The old test — `git rev-parse --git-dir` exiting zero — was true of *any* checkout, including the
+   Claude Code session's own, which is what let a courier report facts about the wrong repo.
+
+Why: in the paid conductor fixture `wf_106cdf59-c5f` the `preview-worktree` courier never `cd`'d,
+ran the whole list in the orchestrator's own source repo, and `git worktree add --detach <prevWt>
+<sha>` failed with "invalid reference" against a repository that had never heard of that sha; a
+setup courier in the same run reported that repo's HEAD as a unit branch's tip and the unit was
+quarantined. The same transcript shows `/results/0/command: must NOT have more than 300 characters`
+— the echoed command overrunning its cap and burning the call's schema retries. Both are the RATIONALE
+§19 failure class: a fact the script could compose was left to model compliance.
+
+Prompts that are **not** command lists (the codex steerers, the `gh` projections, provisioning,
+worktree setup) name their working directory explicitly in the first sentence, so STRICT's identity
+test has something to bind to — including `steerCodex`, which now composes its own
+"your cd target is `<worktree>`; `<artifactDir>` is scratch, not a checkout" line for every step
+rather than leaving it to one caller's preamble.
+
 ## `conductor.mjs` — multi-wave dispatch
 
 The **default** dispatch path: a top-level Workflow script that loops the arc's waves in a single

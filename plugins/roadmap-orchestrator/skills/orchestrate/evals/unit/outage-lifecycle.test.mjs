@@ -237,11 +237,16 @@ test('the preflight is a closed command list, salted, and switchable off', async
   const { fn, calls } = makeAgent([host({})])
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'env-probe:w1')
-  assert.match(p, /1\. cat \/sys\/fs\/cgroup\/pids\.current \/sys\/fs\/cgroup\/pids\.max/, 'exact commands, not a goal')
-  assert.match(p, /2\. ps -eo stat= \| grep -c '\^Z' \|\| true/,
+  // CHANGED CONTRACT (0.14.1): every numbered command carries the script-composed working directory
+  // (`cd '/repo' && ( … )`), so a courier that ignores STRICT's cd sentence fails that command's
+  // exit code instead of probing whatever host directory it happened to start in.
+  assert.match(p, /1\. cd '\/repo' && \( cat \/sys\/fs\/cgroup\/pids\.current \/sys\/fs\/cgroup\/pids\.max \)/,
+    'exact commands, not a goal, and the cwd is part of the command')
+  assert.match(p, /2\. cd '\/repo' && \( ps -eo stat= \| grep -c '\^Z' \|\| true \)/,
     'the zombie count carries `|| true` — grep -c exits 1 on zero, and the courier stops at the first non-zero exit')
-  assert.match(p, /3\. ps -p 1 -o comm=/)
-  assert.match(p, /4\. cat \/proc\/loadavg/, 'the load pair rides the same courier, so lastLoad exists before any lane')
+  assert.match(p, /3\. cd '\/repo' && \( ps -p 1 -o comm= \)/)
+  assert.match(p, /4\. cd '\/repo' && \( cat \/proc\/loadavg \)/,
+    'the load pair rides the same courier, so lastLoad exists before any lane')
   assert.match(p, /judge none of it/, 'the pass test is the script\'s, not the courier\'s')
   assert.match(p, /Probe id launch-1/, 'salted like every environment probe — a resume re-reads the box')
 

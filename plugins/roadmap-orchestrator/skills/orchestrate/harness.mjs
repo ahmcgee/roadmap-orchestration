@@ -74,13 +74,21 @@ const arr = (t) => ({ type: 'array', items: { type: t } })
 const oneOf = (vals) => ({ type: 'string', enum: vals })
 
 /* ------------------------- courier vocabulary -------------------------- */
-// Location discipline for mechanical agents: smoke testing showed that given a bad path
-// they improvise in their cwd and report plausible success. Fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
-  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
-  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
-  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
-  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
+// Location discipline for mechanical agents: given a bad path — or, worse, none it recognises —
+// an agent improvises in its own cwd and reports plausible success. So the check is an IDENTITY
+// test, not a liveness one: `git rev-parse --git-dir` used to satisfy it from ANY checkout, the
+// workflow session's own included (wf_106cdf59-c5f). Fail-loud beats adaptive. Every prompt
+// carrying this must name the directory it wants as the agent's working directory; where the
+// SCRIPT composes the commands, cdGuard makes that mechanical instead of merely instructed.
+const STRICT = 'Start by `cd` to the exact absolute path this task names as your working directory, then PROVE ' +
+  'you are there before doing anything else: `pwd` must print that path exactly, character for character. If the ' +
+  'cd fails, or `pwd` prints anything else, report ok/pass as false with what it actually printed and stop — ' +
+  'never carry on in the directory you happened to start in. Where that path is inside a git checkout, ' +
+  '`git rev-parse --show-toplevel` names WHICH checkout you are in, and it must print either that same path or a ' +
+  'directory the path sits under; anything else is the wrong repository and is a failure to report. A LINKED ' +
+  'WORKTREE IS VALID — its `.git` is a FILE and the toplevel it prints is the worktree\'s own root, which is not ' +
+  'a defect and must never be reported as one. Never substitute your current working directory, the enclosing ' +
+  'project, or any other repository. '
 // EVERY prompt whose schema carries a maxLength must also carry this. A cap is a contract with the
 // model, and the prompt is the only place that contract is communicated — a capped field with no
 // matching instruction is a trap: the agent overruns it, burns its schema-retries, and dies
@@ -96,29 +104,47 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
 // courier report. The launch pack read raises it (READ_CHUNK) — echoing a whole JSON document is
 // the entire point of that one call.
 const COURIER_OUT = 1200
+// THE WORKING DIRECTORY IS PART OF THE COMMAND, never a thing the model is asked to arrange.
+// STRICT's `cd` sentence explains the rule; this composes it. Arc-observed (wf_106cdf59-c5f): a
+// courier read the sentence, never cd'd, and ran an entire preview list in the workflow session's
+// OWN checkout — `git worktree add --detach <prevWt> <sha>` failed with "invalid reference" against
+// a repository that had never heard of that sha, and a setup courier reported this repo's HEAD as
+// the unit's. With the prefix, a wrong or missing directory is a NON-ZERO EXIT of that numbered
+// command, which the stop-at-first-failure rule already handles — no compliance required.
+// Throws on an empty path: an undefined path interpolated into a prompt is exactly how an agent
+// ends up improvising in its own cwd, and a loud compose-time failure beats a plausible report.
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const cdGuard = (where, cmd) => {
+  if (typeof where !== 'string' || !where.trim())
+    throw new Error(`cdGuard: a command needs an explicit absolute working directory (got ${JSON.stringify(where)}) — ` +
+      'a path the script did not compose is a path the model will improvise')
+  return `cd '${where.replace(/'/g, "'\\''")}' && ( ${cmd} )`
+}
 const courierSchema = (n, outMax = COURIER_OUT) => obj({
   ok: { type: 'boolean' },
   results: { type: 'array', maxItems: n, items: obj({
-    command: { type: 'string', maxLength: 300 },
     exitCode: { type: 'number' },
     stdout: { type: 'string', maxLength: outMax },
-  }, ['command', 'exitCode', 'stdout']) },
+  }, ['exitCode', 'stdout']) },
   detail: { type: 'string', maxLength: 300 },
 }, ['ok', 'results'])
 const courierPrompt = (where, commands, extra = '', outMax = COURIER_OUT) =>
   STRICT +
   `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
   `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
-  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
+  `flags, not a command you think would help. Each one already carries its own \`cd\` prefix: run it exactly as ` +
+  `written, prefix included, and never strip, shorten or "simplify" it — the working directory is part of the ` +
+  `command, not a choice of yours. Anything absent from that list is outside your remit: a command ` +
   `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
   `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
-  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
-  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
-  `command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
+  `exact output. Report \`results\`: one entry per command you actually ran, IN LIST ORDER — position is the ` +
+  `only identifier, so never reorder and never leave a gap, and do NOT echo the command text back (the ` +
+  `scheduler already has the list it sent). Each entry is {exitCode (the integer the shell returned), stdout ` +
+  `(that command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
   `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
   `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
   `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
-  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${cdGuard(where, c)}`).join('\n')}`
 // Raw courier report -> the shape the SCRIPT reads. Shared by courierRun (below, once run() exists)
 // and by the launch pack read, which cannot use courierRun: run() tallies spend against the plan
 // this very read is what fetches. `out` is trimmed, for the ordinary fact-reading callers; `raw` is
@@ -1355,9 +1381,16 @@ const S = {
  * arc-observed disasters (a host-wide `kill -9`, 163 deleted untracked files, a wave halted by an
  * invented credential requirement) were all a goal-shaped prompt at Haiku.
  *
+ * The second rule, added after wf_106cdf59-c5f: WHERE a command runs is composed, not asked for.
+ * Every listed command goes out as `cd '<where>' && ( <cmd> )`, so a courier that ignores STRICT's
+ * cd sentence (Haiku did, and ran a whole preview list in the workflow session's own checkout)
+ * produces a NON-ZERO EXIT of that numbered command instead of a plausible answer from the wrong
+ * repository. `where` is required and empty throws here, at compose time.
+ *
  *   courierRun(where, commands, opts, extra) -> { ok, results, exit(i), out(i), detail }
- *     where     absolute path the agent cds to (STRICT verifies it is a git checkout)
- *     commands  ordered array of exact command strings; index i is stable and load-bearing
+ *     where     absolute path every command is `cd`'d into by the script (required; empty throws)
+ *     commands  ordered array of exact command strings; index i is stable and load-bearing —
+ *               results are POSITIONAL, the courier never echoes the command text back
  *     opts      the usual run() opts minus `schema` (model/effort/phase/label) — the schema is
  *               built here, sized to the list — plus optional `outMax`, the per-command output
  *               budget (default COURIER_OUT; the launch pack read is the one caller that raises it)
@@ -1375,11 +1408,18 @@ const S = {
  * courierSchema / courierShape) are mirrored in both scripts — keep those in sync
  * (shared-consts.test.mjs enforces it).
  */
-const courierRun = async (where, commands, opts, extra = '') =>
-  courierShape(
+const courierRun = async (where, commands, opts, extra = '') => {
+  // Fail loud at compose time. cdGuard would catch this too, but only once there is a command to
+  // wrap — an empty list with an undefined `where` would otherwise ship a prompt naming `In
+  // undefined:` and get whatever the agent's cwd happened to be.
+  if (typeof where !== 'string' || !where.trim())
+    throw new Error(`courierRun: \`where\` is required (got ${JSON.stringify(where)}) — a courier with no ` +
+      'working directory improvises in its own')
+  return courierShape(
     await runOr({ ok: false, results: [], detail: 'courier agent died without a report' },
       courierPrompt(where, commands, extra), { ...opts, schema: courierSchema(commands.length, opts.outMax) }),
     commands)
+}
 
 /* --------------------------- live wave state --------------------------- */
 const units = new Map(Object.entries(prior.units ?? {}))
@@ -1524,7 +1564,10 @@ async function gitProbe(label, dir, cmds, phase) {
     STRICT +
     `In the directory ${dir}, run these ${cmds.length} shell commands IN ORDER, exactly as written, and report ` +
     `only what they did:\n` +
-    cmds.map((c, i) => `${i + 1}) ${c}`).join('\n') + '\n' +
+    // Same rule as courierRun: the directory is composed into each command, never left to the model.
+    cmds.map((c, i) => `${i + 1}) ${cdGuard(dir, c)}`).join('\n') + '\n' +
+    `Each command already carries its own \`cd\` prefix — run it exactly as written, prefix included, and never ` +
+    `strip or shorten it: the working directory is part of the command, not a choice of yours. ` +
     `Run no other command. Change NOTHING — no checkout, merge, fetch, reset, repair or cleanup. A command ` +
     `that fails is not a problem to fix: its failure IS the answer, and you report it. Report \`exitCodes\` as ` +
     `the ${cmds.length} exit codes ($? immediately after each command) in that same order, and \`out\` as each ` +
@@ -2216,7 +2259,7 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // the reap, the attach-don't-relaunch rule, the detached `timeout -k` launch, the sleep-free wait,
 // the absent-exit-code rule — is shared verbatim, which is the whole point of not forking it.
 const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin,
-  sandbox = C.codexSandbox, gitTruth = true, preamble = '', resumeDir, reapDir, outSchema, reportInstr }) => {
+  sandbox = C.codexSandbox, gitTruth = true, resumeDir, reapDir, outSchema, reportInstr }) => {
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
@@ -2266,9 +2309,17 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
       `\`echo 137 > ${reapDir}/exit-code\` yourself. Do NOT continue to step 1 until the old process is ` +
       `gone — a second Codex writing this worktree while the first is alive corrupts both.\n`
     : ''
+  // The cd target is NAMED here, always, rather than left to STRICT's "the first path this task
+  // names" — which is `${dir}`, the scratch artifact directory, in every step below. Arc-observed
+  // on the role lane before this moved out of one caller's preamble: Haiku cd'd into __codex and
+  // refused the whole run because it "is not a git repository".
+  const location = `Your cd target is ${w} — the directory Codex itself runs in. ${dir} is a scratch ` +
+    `artifact directory, NOT a git checkout: create it with mkdir -p and never cd into it or judge it; ` +
+    `Codex is pointed at ${w} by -C. `
   return STRICT +
     `You are the steering agent for an autonomous Codex CLI run on ${subject}. You never write product ` +
-    `code yourself — you launch the run, wait for it, verify its work on disk, and report. ${preamble}Do exactly this:\n` +
+    `code yourself — you launch the run, wait for it, verify its work on disk, and report. ${location}` +
+    `Do exactly this:\n` +
     reap +
     `1) Create the artifact directory: \`mkdir -p ${dir}\`. Write the file ${dir}/brief.txt with EXACTLY the ` +
     `content between the <<<BRIEF>>> markers at the end of this message (excluding the marker lines; if one ` +
@@ -2501,12 +2552,6 @@ const codexRole = async (prompt, opts) => {
     spend.codex++
     const r = await runOr(null, steerCodex({
       id: label, subject: `role ${label}`, w: cwd, dir: at, briefText: brief, sandbox: C.codexSandbox ?? sandbox,
-      // Arc-observed on the critique before it moved here: STRICT makes the courier cd to the first
-      // path this task names, and Haiku cd'd to the artifact dir and refused because it "is not a
-      // git repository". Name the cd target, and mark the artifact dir as the scratch it is.
-      preamble: `Your cd target is ${cwd} — the directory Codex itself runs in. ${at} is a scratch ` +
-        `artifact directory, NOT a git checkout: create it with mkdir -p and never cd into it or judge ` +
-        `it; Codex is pointed at ${cwd} by -C. `,
       effort: opts.effort ?? C.codexRoleEffort, timeoutMin: opts.timeoutMin ?? C.codexRoleTimeoutMin,
       gitTruth: false, reapDir, outSchema, reportInstr: roleReportInstr(at, schema),
     }), { model: C.codexSteerModel, effort: 'low', phase, label: l, schema: codexRoleReport(schema) })
@@ -2827,7 +2872,8 @@ async function runUnit(unit) {
       // gate, the next unit — reads the spec.
       await run(
         STRICT +
-        `Append to the spec file ${spec} — do not modify anything already in it. Add a section titled ` +
+        `In the git repository at ${repo}: append to the spec file ${spec} — do not modify anything already ` +
+        `in it. Add a section titled ` +
         `"## Adjudicated during implementation" if it is not already present, then one bullet recording ` +
         `this ruling verbatim: the architect redirected the plan for unit ${unit.id} with "${check.guidance}". ` +
         `Report ok.`,
@@ -3089,7 +3135,8 @@ async function runUnit(unit) {
       if (v.tier === 'decided')
         await run(
           STRICT +
-          `Append to the spec file ${spec} — do not modify anything already in it. Add a section titled ` +
+          `In the git repository at ${repo}: append to the spec file ${spec} — do not modify anything already ` +
+          `in it. Add a section titled ` +
           `"## Adjudicated during implementation" if it is not already present, then one bullet recording ` +
           `this ruling verbatim: the question was "${reported}"; the ruling is "${v.guidance}". Report ok.`,
           { model: 'haiku', effort: 'low', phase: 'Escalate', label: `spec-append:${unit.id}#${stops}`, schema: S.ok })

@@ -73,13 +73,19 @@ const oneOf = (vals) => ({ type: 'string', enum: vals })
 const strArr = (maxItems, maxLength) => ({ type: 'array', maxItems, items: { type: 'string', maxLength } })
 
 /* ------------------------- courier vocabulary -------------------------- */
-// Location discipline for mechanical agents (copied from harness.mjs): given a bad path,
-// Haiku will improvise in its cwd and report plausible success — fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
-  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
-  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
-  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
-  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
+// Location discipline for mechanical agents (copied from harness.mjs): given a bad path — or none
+// it recognises — Haiku improvises in its cwd and reports plausible success. The check is an
+// IDENTITY test, not a liveness one: `git rev-parse --git-dir` passed from ANY checkout, the
+// workflow session's own included. Every prompt carrying this names its working directory.
+const STRICT = 'Start by `cd` to the exact absolute path this task names as your working directory, then PROVE ' +
+  'you are there before doing anything else: `pwd` must print that path exactly, character for character. If the ' +
+  'cd fails, or `pwd` prints anything else, report ok/pass as false with what it actually printed and stop — ' +
+  'never carry on in the directory you happened to start in. Where that path is inside a git checkout, ' +
+  '`git rev-parse --show-toplevel` names WHICH checkout you are in, and it must print either that same path or a ' +
+  'directory the path sits under; anything else is the wrong repository and is a failure to report. A LINKED ' +
+  'WORKTREE IS VALID — its `.git` is a FILE and the toplevel it prints is the worktree\'s own root, which is not ' +
+  'a defect and must never be reported as one. Never substitute your current working directory, the enclosing ' +
+  'project, or any other repository. '
 // EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
 // A cap is a contract with the model, and the prompt is the only place that contract is stated — a
 // capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
@@ -94,29 +100,47 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
 // Mirrored from harness.mjs — see the long rationale there; keep the two in sync
 // (shared-consts.test.mjs enforces it).
 const COURIER_OUT = 1200
+// THE WORKING DIRECTORY IS PART OF THE COMMAND, never a thing the model is asked to arrange.
+// STRICT's `cd` sentence explains the rule; this composes it. Arc-observed (wf_106cdf59-c5f): a
+// courier read the sentence, never cd'd, and ran an entire preview list in the workflow session's
+// OWN checkout — `git worktree add --detach <prevWt> <sha>` failed with "invalid reference" against
+// a repository that had never heard of that sha, and a setup courier reported this repo's HEAD as
+// the unit's. With the prefix, a wrong or missing directory is a NON-ZERO EXIT of that numbered
+// command, which the stop-at-first-failure rule already handles — no compliance required.
+// Throws on an empty path: an undefined path interpolated into a prompt is exactly how an agent
+// ends up improvising in its own cwd, and a loud compose-time failure beats a plausible report.
+// Mirrored from harness.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const cdGuard = (where, cmd) => {
+  if (typeof where !== 'string' || !where.trim())
+    throw new Error(`cdGuard: a command needs an explicit absolute working directory (got ${JSON.stringify(where)}) — ` +
+      'a path the script did not compose is a path the model will improvise')
+  return `cd '${where.replace(/'/g, "'\\''")}' && ( ${cmd} )`
+}
 const courierSchema = (n, outMax = COURIER_OUT) => obj({
   ok: { type: 'boolean' },
   results: { type: 'array', maxItems: n, items: obj({
-    command: { type: 'string', maxLength: 300 },
     exitCode: { type: 'number' },
     stdout: { type: 'string', maxLength: outMax },
-  }, ['command', 'exitCode', 'stdout']) },
+  }, ['exitCode', 'stdout']) },
   detail: { type: 'string', maxLength: 300 },
 }, ['ok', 'results'])
 const courierPrompt = (where, commands, extra = '', outMax = COURIER_OUT) =>
   STRICT +
   `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
   `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
-  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
+  `flags, not a command you think would help. Each one already carries its own \`cd\` prefix: run it exactly as ` +
+  `written, prefix included, and never strip, shorten or "simplify" it — the working directory is part of the ` +
+  `command, not a choice of yours. Anything absent from that list is outside your remit: a command ` +
   `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
   `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
-  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
-  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
-  `command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
+  `exact output. Report \`results\`: one entry per command you actually ran, IN LIST ORDER — position is the ` +
+  `only identifier, so never reorder and never leave a gap, and do NOT echo the command text back (the ` +
+  `scheduler already has the list it sent). Each entry is {exitCode (the integer the shell returned), stdout ` +
+  `(that command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
   `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
   `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
   `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
-  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${cdGuard(where, c)}`).join('\n')}`
 const courierShape = (r, commands) => {
   const n = commands.length
   const results = (Array.isArray(r?.results) ? r.results : []).slice(0, n)
@@ -462,6 +486,7 @@ const runOr = async (fallback, prompt, opts) => {
 
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
+  `Your working directory is the git repository at ${repo}. ` +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
   `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). ` + TERSE
 
@@ -719,6 +744,7 @@ async function ret(reason, tier, extra = {}) {
 // Deterministic functions of repo path + wave N + the JSON of in-memory structured data. Both
 // agents read architect-log.md FIRST so successive fresh agents inherit rationale.
 const censusPrompt = (N) => STRICT +
+  `Your working directory is the git repository at ${repo}. ` +
   `Take a wave-${N} census of a roadmap build's pending bug reports and quarantine dossiers. Report identifiers ` +
   `only — read no contents, change nothing:\n` +
   (issueMode
@@ -1204,7 +1230,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       .map((f) => ({ number: f.file, action: f.action, reason: String(f.reason ?? '').slice(0, 140) }))
     const deferred = feedbackDispositions.filter((f) => f.action === 'deferred').map((f) => String(f.file))
     await run(
-      STRICT + `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
+      STRICT + `Your working directory is the git repository at ${repo}. ` +
+      `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
       `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
       `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md. ` +
@@ -1218,7 +1245,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ).catch(() => null)
   } else {
     await run(
-      STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
+      STRICT + `Your working directory is the git repository at ${repo}. ` +
+      `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
       `Move these files if they exist — skip any that are missing (this is idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
       `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md` +
@@ -1394,6 +1422,7 @@ async function stage(N, ranTier, c) {
   if (issueMode && created.length) {
     const opened = await run(
       STRICT + GH_BEST_EFFORT + MARKER_RULE +
+      `Your working directory is the git repository at ${repo}. ` +
       `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
       `below: run \`${markerFind('roadmap:unit id=<id>')}\`, substituting that unit's id in BOTH places. If it ` +
       `prints a \`<number> <state>\` pair, the issue already exists: report that number and change NOTHING about ` +
@@ -1452,6 +1481,7 @@ async function stage(N, ranTier, c) {
     if (items.length) {
       const res = await run(
         STRICT + GH_BEST_EFFORT + MARKER_RULE +
+        `Your working directory is the git repository at ${repo}. ` +
         `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below run ` +
         `\`${markerFind('<marker>')}\`, substituting that item's marker in BOTH places. If it prints a ` +
         `\`<number> <state>\` pair the item is already banked: leave that issue completely untouched. If it ` +

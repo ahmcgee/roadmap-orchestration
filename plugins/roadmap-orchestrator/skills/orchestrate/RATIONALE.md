@@ -692,6 +692,18 @@ The rule since 0.13.0, in two halves:
    list* rather than misjudging inside it, containment replaces wording: the preview lives in its own
    worktree so no sanctioned command can reach the operator's checkout. What genuinely needs a model
    — executing test lanes, judging a diff — keeps a model, but never the *choice* of what to run.
+   **And never the choice of WHERE to run it** (0.14.1). The cd instruction lived only in STRICT's
+   prose, and in `wf_106cdf59-c5f` Haiku simply skipped it: the `preview-worktree` courier ran the
+   entire list in the orchestrator's own source repo — `git rev-parse --git-dir` passed there, since
+   that is a checkout too — so `git worktree add --detach <prevWt> <sha>` failed with "invalid
+   reference", both waves' previews died, and a setup courier reported that repo's HEAD as a unit
+   branch's tip. Every command a script composes now carries `cd '<where>' && ( … )`, so a wrong
+   directory is a non-zero exit of that numbered command rather than a plausible answer; STRICT's
+   mechanical check became an *identity* test (`pwd`, and `git rev-parse --show-toplevel` naming
+   which repository) for the prompts that genuinely run free-form; and an empty `where` throws at
+   compose time. The same batch dropped the `command` echo from the courier report: the script has
+   the list it sent, results are positional, and the echo was overrunning its 300-character cap and
+   burning schema retries on the very commands the guard made longer.
 2. **Every wave-level brake lives in code.** Through 0.12.0 the harness had one wave-level flag
    (`codexHalt`); host health, platform outages, shared reds, scope precedent and admissions were
    either absent or prose inside a triager prompt that an Opus turn could reason its way past — which
