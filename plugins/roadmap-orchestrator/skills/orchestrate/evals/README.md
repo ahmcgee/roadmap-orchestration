@@ -33,6 +33,14 @@ shipping; never ship on an upper rung alone.
    exact-first-line jq predicate with the CLOSED-issue bar; verify reports a lane ledger and both exit
    gates check it. Each property is one of the four arc-observed disasters a goal-shaped Haiku prompt
    produced — the file's header names them with dates.
+   `outage-lifecycle.test.mjs` locks **theme D**: a dead REQUIRED result (a null verify, gate or
+   merge) PARKS its unit and halts the wave as `platform-outage` instead of quarantining it, while a
+   single death is still rescued by the salvage; a dead commit probe parks alone rather than halting;
+   the pre-dispatch host preflight halts on pid-cgroup exhaustion or a non-reaping PID 1 and fails
+   SOFT on a fact it cannot read; the codex deadline rides inside the launched command line, an
+   absent exit-code file means RUNNING (`-1` needs a dead pid), a re-dispatched steer prompt attaches
+   instead of launching a second process, and both the build and fix retries reap the previous pid;
+   debt dedupes and `rebanked` ghosts stop forcing a `contract-amendment` return.
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not

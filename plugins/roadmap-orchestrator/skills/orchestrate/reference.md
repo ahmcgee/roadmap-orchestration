@@ -265,12 +265,19 @@ Fields the scripts add:
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
   write-failed | preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
-  duplicate-draft | codex-exec |
+  duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
+  env-no-reaper | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
-  Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
-  `codex-timeout` with surviving commits mean the branch was judged on its merits (a dead process
-  is not a dead unit); `codex-unavailable`/`codex-usage-limit` accompany a wave halt (see
-  `state.codex` below); `scope-growth` means a diff reached beyond its pinned envelope and the
+  Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`
+  (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
+  finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
+  the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
+  (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`, `env-no-reaper`,
+  `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
+  fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
+  treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
+  died, so whether the branch holds work is unknown and the unit parked rather than being
+  quarantined for building nothing; `scope-growth` means a diff reached beyond its pinned envelope and the
   gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
   so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the checkpointed
   integration tip is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
@@ -327,14 +334,27 @@ dependency is `merged`. While `running` a unit also carries a `stage` field
 (`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
 replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`, the per-unit
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
-it) and, on a codex halt, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
+it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
 `units[id].codexSession = {id, cwd, wave}` is forensics only — session ids are nondeterministic
 and never enter a prompt; fix prompts reference the session-id FILE. The wave state also carries
-**`codex`**: `{probed, available, halt?}` — `halt ∈ codex-unavailable | codex-usage-limit` is the
-conductor's early-return signal (re-auth / wait out the limit window, then relaunch; everything
-resumes cleanly). Checkpoints land at every status change **and** every stage transition,
-coalesced latest-wins — the file can trail the newest event by one write.
+**`codex`**: `{probed, available}`, and — only when the wave halted — **`halt`**:
+`{reason, codex?, env?, platform?}`. One record for every wave-level brake; `reason` is the winning
+slot (precedence `platform > env > codex`, decided in the harness so nothing downstream duplicates
+it) and it IS the conductor's early-return reason, read verbatim by the root:
+
+| `reason` | who set it | how the root clears it |
+|---|---|---|
+| `codex-unavailable` | the per-wave `codex-probe` found no CLI or no "logged in" line | `codex login` (or `--device-auth` headless), then relaunch |
+| `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
+| `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
+| `env-no-reaper` | the host preflight: PID 1 is not a known init, so orphans are never reaped | recreate the container with an init as PID 1 (compose `init: true`); if the box is healthy and its PID 1 simply is not on the list, set `config.envPreflight: 'off'` |
+| `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
+
+Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
+with their commits intact, state is checkpointed, and no slot carries forward — the next wave
+re-establishes each from its own probes. Checkpoints land at every status change **and** every
+stage transition, coalesced latest-wins — the file can trail the newest event by one write.
 
 In **issue mode** `state.units[id].issue` caches the unit's issue number (convenience only; see
 `plan.units[].issue`). `degradations` gains the `gh-sync` kind (below).
@@ -488,12 +508,23 @@ nothing downstream learns who wrote the code. Artifacts live under `<worktreeRoo
 unreachable; degradations name the directory to read. There is **no adversarial review stage**:
 the build already ran its own test-fix loop, and the exit gates carry the hunting clauses with
 authority. Failure policy: exit≠0/timeout with commits ⇒ judge the branch (a dead process is not
-a dead unit); with no commits ⇒ ONE fresh retry, then the commit-probe/quarantine path; a
-usage/rate limit or a failed per-wave `codex-probe` ⇒ **hard stop** — new dispatch halts,
-in-flight units **park** (`status:'pending', parked:true`, re-entering by adoption next wave),
-the wave state carries `codex.halt`, and the conductor early-returns it to the root
-(`codex-unavailable` / `codex-usage-limit`) for the human to re-auth or wait out the window.
-Never a quarantine, never a substitute implementer.
+a dead unit); with no commits ⇒ ONE retry — for the build step AND for every fix round — which
+first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file) and tells codex in
+its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
+`blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
+`codex-probe` ⇒ **hard stop** — new dispatch halts, in-flight units **park**
+(`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
+`halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
+wait out the window. Never a quarantine, never a substitute implementer.
+
+**The process outlives its steerer, safely.** The deadline rides *inside* the launched command
+line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
+agent can no longer leave a detached codex running unbounded on an OpenAI seat already handed to
+the next unit. The steerer's liveness rule is the other half: **an absent `exit-code` file means
+RUNNING, never dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails,
+and elapsed time is never evidence. And the steer prompt is idempotent by construction: if
+`<dir>/codex.pid` already exists it attaches instead of launching, so any re-dispatch of the same
+prompt (a schema retry, a salvage, a replay) cannot put two codex processes in one worktree.
 
 **Warm lanes are gone** (0.11.0). They existed to amortize one fixed cold start — read the brief,
 explore the codebase, rediscover conventions — across a chain of units too small to absorb it
@@ -613,6 +644,13 @@ the `maxBlockingFindings` cap, banked rather than dropped), and the health asses
 enforced by schema and code, not just prompt:
 - `bankReason` is a closed set — `out-of-scope-file | needs-migration-or-ruling |
   pre-existing-untouched` — REQUIRED on gate debt entries.
+- **Items are deduped** on `(unit, kind, hash(what))` — the ledger was a pure append with no
+  identity, and a resume (which replays a cached implementer report byte-identically) banked the
+  same item twice. A reworded finding is a new item; a literal replay is not.
+- An item banked against a unit whose work has **already landed** (`merge-ready`/`merged`) is
+  stamped **`rebanked: true`** — a ghost of a finding the branch resolved. It stays in the ledger
+  (dropping evidence is worse) but the conductor's contract-debt filter ignores it, so a resolved
+  ghost can no longer force a `contract-amendment` return.
 - **Correctness debt never banks through an approve.** A gate that approves while holding a
   `kind:'correctness'` item is coerced to `revise` (the items become directives) within the
   existing `maxGateRounds`; at the cap the Opus gate escalates to the frontier gate, and the
@@ -670,7 +708,7 @@ free.
 | # | Route | When |
 |---|---|---|
 | — | return `contingent-replan` | a contingent edge crossed (`from` merged, `to` withheld this wave or out of scope) |
-| — | return `contract-amendment` | any `kind:'contract'` debt this wave |
+| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates) |
 | — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
 | — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — escape hatch) |
 | **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
@@ -778,6 +816,8 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
                      //   | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
+                     //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
+                     //     | env-no-reaper | platform-outage — state.halt.reason, returned verbatim
   wave, wavesRun,
   state,             // final persisted state (incl. the `conductor` block)
   plan,              // the conductor's merged working plan
@@ -793,13 +833,33 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }
   // root-triage       → { pendingFeedback, quarantined }
+  // <halt>            → { parked }  // the unit ids that parked; see state.halt above
   // triage-degraded   → { pendingFeedback, quarantined }
 }
 ```
 
 **`agent()` resolves to `null` on a terminal API error — it does not throw.** A bare `.catch()`
 therefore does not cover that path, so every `run()` whose result is *dereferenced* must go through
-`runOr(fallback, …)`. A dead **census** degrades to an empty one (the authoritative evidence is the
+one of two wrappers, and which one is a real decision:
+
+- **`runOr(fallback, …)`** where a coded fallback is an HONEST answer to the question asked (a dead
+  census is an empty census; a dead boundary job is a job that did not run).
+- **`runReq(…)`** where the caller dereferences the result and no fallback would be honest —
+  verify, both exit gates, the plan and plan-check, the merge and its suite gate. Inventing a
+  verdict there converts a platform failure into a judgment about a unit. `runReq` salvages once,
+  then sets `halt.platform` and throws a tagged `PlatformOutage`, which the scheduler turns into a
+  **park** (`status:'pending', parked:true`) and the conductor returns to the root as
+  `platform-outage`. The trigger is STRUCTURAL — a required result missing after its salvage —
+  because a null carries no error object at all; quota/limit/connection TEXT exists only on the
+  throw path, where it is used as a fast path (halt without burning a second agent), never as the
+  sole signal.
+
+The one deliberate exception is the **commit probe** after a lost implement report: a dead probe
+returns an `unknown` state that parks the unit alone rather than halting the wave — one cheap probe
+dying twice is not evidence of an outage, and the branch's commits are safe either way. It used to
+read as "no commits" and quarantine a branch that held every milestone (2026-08-25).
+
+A dead **census** degrades to an empty one (the authoritative evidence is the
 in-memory state; user-feedback files stay on disk for the next boundary). A dead **triage tier** has
 no safe fallback — inventing an empty verdict would silently admit or drop work the root never saw —
 so it returns **`triage-degraded`**, and the root triages that boundary by hand exactly as it would
@@ -829,6 +889,7 @@ integration-review material.
 | `codexFixTimeoutMin` | `20` | Resume-round deadline |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
+| `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and PID 1 (`ps -p 1 -o comm=`, halts on anything but `init`/`tini`/`systemd`/`docker-init`/`dumb-init`). An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape for a healthy box with an unusual init, and the only way past the check |
 | `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |

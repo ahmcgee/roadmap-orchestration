@@ -112,6 +112,9 @@ const C = {
                               //   env-quarantines in one wave). Throughput-only, like codexMaxConcurrent:
                               //   prompts are unaffected, so resumeFromRunId replay is safe.
   codexProfile: null,         // -p <profile> ($CODEX_HOME/<name>.config.toml) when set
+  envPreflight: 'on',         // host-health preflight (pid-cgroup headroom + a reaping PID 1) before
+                              //   dispatch; 'off' is the documented escape for a healthy box whose
+                              //   PID 1 is not on the known-init list, and it is the ONLY way past it
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
 }
@@ -469,17 +472,32 @@ const escalate = (row) => {
 // mismatch pathway stamps it directly and the conductor routes on it.
 const DEBT_KINDS = ['correctness', 'test', 'structure', 'ergonomics', 'contract']
 const DEBT_BANK_REASONS = ['out-of-scope-file', 'needs-migration-or-ruling', 'pre-existing-untouched']
+// Dedupe key: (unit, kind, hash of the text). The ledger was a pure append with no identity at
+// all, so a resume — which replays a cached implementer report byte-identically — re-banked the
+// same items against a branch that had since resolved them (2026-08-25). Hashing `what` rather
+// than keying on the whole item means a re-worded confession still counts as new (it is), while a
+// literal replay does not. Wave-scoped, like `debtLog` itself.
+const debtSeen = new Set()
 const addDebt = (unitId, sha, items, defaults = {}) => {
   for (const d of items ?? []) {
     if (!d) continue
     const o = typeof d === 'string' ? { what: d } : d
     const kind = [o.kind, defaults.kind].find((k) => DEBT_KINDS.includes(k)) ?? 'structure'
     const bankReason = [o.bankReason, defaults.bankReason].find((r) => DEBT_BANK_REASONS.includes(r))
+    const what = o.what ?? o.summary ?? ''
+    const key = `${unitId}|${kind}|${hashStr(what)}`
+    if (debtSeen.has(key)) continue
+    debtSeen.add(key)
     debtLog.push({
       unit: unitId, sha, kind,
       severity: o.severity ?? defaults.severity ?? 'minor',
-      what: o.what ?? o.summary ?? '', why: o.why ?? '',
+      what, why: o.why ?? '',
       ...(bankReason ? { bankReason } : {}),
+      // A REBANKED item is one banked against a unit whose work has already landed — a ghost of a
+      // finding the branch resolved. It stays in the ledger (dropping evidence is worse) but the
+      // conductor's contract-debt filter ignores it, so a resolved ghost can no longer force a
+      // contract-amendment return to the root.
+      ...(defaults.rebanked ? { rebanked: true } : {}),
     })
   }
 }
@@ -565,21 +583,43 @@ if (!LAUNCH)
 // breaching a wall-clock budget at load 35 on 16 cores is a scheduling artefact, and without the
 // numbers on the record that is indistinguishable from a real defect (arc-observed 2026-08-26).
 // Deliberately NOT a gate: the load is largely self-inflicted, so waiting on it would wait on our
-// own siblings. (Docs pass: fold onto the shared courier-prompt helper when one lands.)
+// own siblings.
+// ONE vocabulary for the two commands, shared with the env preflight, which runs them through
+// courierRun (the canonical way to RUN a shell fact) and seeds `lastLoad` before any lane exists.
+// The lanes keep reporting them inline rather than paying a second agent per lane: a lane already
+// runs commands, and the number that matters is the load WHILE the suite ran, which a courier
+// sampled beforehand cannot give.
+const LOAD_CMDS = ['cat /proc/loadavg', 'nproc']
 const LOAD_FACTS =
-  'Also report loadavg1 = the first number printed by `cat /proc/loadavg`, and cpuCount = the number printed ' +
-  'by `nproc` — run those two commands exactly and report what they print, as numbers. '
+  `Also report loadavg1 = the first number printed by \`${LOAD_CMDS[0]}\`, and cpuCount = the number printed ` +
+  `by \`${LOAD_CMDS[1]}\` — run those two commands exactly and report what they print, as numbers. `
 // Most recent load pair any lane reported, so a degradation raised where no verify result is in
 // hand (a codex wall-clock kill) can still cite the host it happened on.
 let lastLoad = null
 const noteLoad = (v) => {
-  if (typeof v?.loadavg1 === 'number' && typeof v?.cpuCount === 'number')
+  // Finite, not merely `typeof number`: the preflight parses these out of command output, and a
+  // NaN riding into a degradation reads as "host load NaN on NaN cpu" — worse than saying nothing.
+  if (Number.isFinite(v?.loadavg1) && Number.isFinite(v?.cpuCount))
     lastLoad = { loadavg1: v.loadavg1, cpuCount: v.cpuCount }
 }
 const loadNote = (v) => {
   const l = (typeof v?.loadavg1 === 'number' && typeof v?.cpuCount === 'number') ? v : lastLoad
   return l ? ` [host load ${l.loadavg1} on ${l.cpuCount} cpu]` : ''
 }
+
+/* ------------- host health: the two facts that halt a wave -------------- */
+// Read by the env preflight below (see the block beside the codex probe). Kept here with the other
+// host-fact vocabulary so the commands the box is asked about live in one place.
+const PIDS_CUR = '/sys/fs/cgroup/pids.current'
+const PIDS_MAX = '/sys/fs/cgroup/pids.max'
+// Below this fraction of the pid cgroup free, forking is a coin flip: the arc-observed box was at
+// 36,350/36,792 (1.2% free) when three full-suite gates died of EAGAIN in one wave.
+const PIDS_MIN_HEADROOM = 0.2
+// PID 1 must reap orphans. Short and explicit ON PURPOSE — an unknown comm halts loudly rather
+// than being assumed benign, because the observed failure (`sleep infinity` as PID 1) is
+// indistinguishable from any other non-init by inspection.
+const INIT_COMMS = ['init', 'tini', 'systemd', 'docker-init', 'dumb-init']
+
 
 /* ------------- shared-red circuit breaker (wave-scoped) ----------------- */
 // One pre-existing red outside every unit's diff used to be judged N times independently: N fix
@@ -714,6 +754,65 @@ const runOr = async (fallback, prompt, opts) => {
       what: 'salvage retry also produced no report — degrading to the coded fallback' })
   return retried ?? fallback
 }
+// A REQUIRED result: the caller DEREFERENCES what comes back, so there is no honest fallback to
+// substitute — a coded stand-in for a dead agent is a verdict about the unit invented out of a
+// platform failure. 2026-08-25, twice: a quota outage and a run of "Connection lost mid-response"
+// deaths were each turned into unit-level conclusions — three units quarantined on
+// "pipeline error: null is not an object (evaluating 'verify.blocked')", one on "implementer
+// produced neither a report nor a commit" with all three milestones committed on its branch.
+// So: salvage once (runOr's rescue), and if the result is STILL missing, declare the platform
+// halted and throw. The scheduler converts the throw into a PARK, ready() stops dispatching, and
+// the conductor early-returns the wave to the root — the same shape the codex halt already had.
+//
+// The signal is STRUCTURAL, deliberately: an agent() null carries no error object at all (see
+// runOr above), so "match the quota error text" is not implementable on that path. A required
+// result missing after its salvage IS the signal. Text matching applies only where text exists —
+// the THROW path below, where "Connection lost", 429s and usage-limit strings really do appear —
+// and there it is a fast path, not the trigger: it halts without burning a second agent on a
+// platform that just said it is down.
+const OUTAGE_TEXT = /usage limit|rate limit|quota|\b429\b|connection lost|overloaded|service unavailable|\b50[23]\b/i
+const haltPlatform = (label, phase, why) => {
+  if (halt.platform) return
+  halt.platform = 'platform-outage'
+  degrade({ label, model: 'platform', phase, kind: 'platform-outage',
+    what: `a required agent result never arrived (${String(why).slice(0, 200)}) — treating this as a PLATFORM ` +
+      `outage, not a unit defect: dispatch stops, in-flight units park with their commits intact, and the ` +
+      `wave returns to the root. Operator: wait out the outage or usage-limit window and relaunch; parked ` +
+      `units re-enter by adoption.` })
+}
+// Tagged so the scheduler can tell "the platform died" from an ordinary pipeline bug. Checked by
+// `name`, not instanceof: it crosses .catch boundaries and Promise chains, and a name test cannot
+// be defeated by a re-wrapped error.
+const platformOutage = (label) =>
+  Object.assign(new Error(`platform outage — required result for "${label ?? 'agent'}" never arrived`),
+    { name: 'PlatformOutage' })
+const runReq = async (prompt, opts) => {
+  const r = await run(prompt, opts).catch((e) => {
+    const msg = String(e?.message ?? e)
+    degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
+      what: `threw — ${msg.slice(0, 200)}` })
+    if (OUTAGE_TEXT.test(msg)) haltPlatform(opts.label, opts.phase, msg)
+    return null
+  })
+  if (r) return r
+  if (halt.platform) throw platformOutage(opts.label)
+  degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'no-report',
+    what: 'agent died without a report (agent() returned null — cause not exposed by the platform); ' +
+      'salvaging once, then halting the wave as a platform outage. Read the agent transcript for the real error.' })
+  const retried = await run(
+    prompt + ' IMPORTANT: your previous report was rejected — most likely a free-text field exceeded ' +
+    'its maximum length. Shorten EVERY free-text field aggressively; one sentence each is acceptable. ' +
+    'Emit exactly the requested schema and no other fields.',
+    { ...opts, label: `${opts.label ?? 'agent'}#salvage` },
+  ).catch((e) => {
+    const msg = String(e?.message ?? e)
+    if (OUTAGE_TEXT.test(msg)) haltPlatform(opts.label, opts.phase, msg)
+    return null
+  })
+  if (retried) return retried
+  haltPlatform(opts.label, opts.phase, 'no result after the salvage retry')
+  throw platformOutage(opts.label)
+}
 // Verdict-threshold tilt by plan-time risk tier — makes `risk` bind at review/gate time.
 const riskTilt = (r) =>
   r === 'high' ? 'This unit is high-risk: a missed defect ships — when in doubt, demand revision rather than approve. '
@@ -722,8 +821,8 @@ const riskTilt = (r) =>
 // Deterministic audit sampling — a stable fraction of Opus-approved units still take the
 // Fable gate as an anti-rubber-stamp check. Keyed on the unit id so it is a pure function
 // (no Date.now/Math.random — those are forbidden and would break resumeFromRunId replay).
-const hashUnit = (id) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0; return h }
-const auditPick = (unit) => C.gateAuditRate > 0 && (hashUnit(unit.id) % 1000) < Math.round(C.gateAuditRate * 1000)
+const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h }
+const auditPick = (unit) => C.gateAuditRate > 0 && (hashStr(unit.id) % 1000) < Math.round(C.gateAuditRate * 1000)
 
 /* ------------------------------- schemas ------------------------------- */
 const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
@@ -1053,12 +1152,25 @@ for (const u of plan.units) {
 }
 let integrationTip = prior.integrationTip
 let consultsUsed = prior.consultsUsed ?? 0
-// Codex hard-stop flag. Set by the per-wave probe (binary/auth gone) or by any step observing a
-// usage/rate limit. Once set: no NEW codex dispatch this wave (ready() gates on it), in-flight
-// units PARK (status pending + parked:true, re-entering by adoption next wave) — never
-// quarantine, never a Claude implementer. The wave state carries it so the conductor
-// early-returns to the root, where the human re-auths or waits out the limit window.
-let codexHalt = null   // the per-wave probe is the authority; a prior halt never carries forward
+// The wave's HALT RECORD — one shape for every wave-level brake. Once any slot is set: no NEW
+// unit dispatch this wave (ready() gates on it), in-flight units PARK (status pending +
+// parked:true, re-entering by adoption next wave) — never quarantine, never a verdict. The wave
+// state carries `halt.reason` so the conductor early-returns to the root, where the human acts.
+//   codex    — the per-wave probe found the CLI/auth gone, or a step observed a usage/rate limit.
+//              Codex is the only implementer, so there is no lane to fall back to.
+//   env      — the host cannot support the work: pid-cgroup headroom gone, or a PID 1 that does
+//              not reap (the preflight below). Burning codex+gate rounds on it buys quarantines.
+//   platform — a REQUIRED agent result went missing after its salvage retry (runReq), i.e. the
+//              Claude platform itself is down or rate-limited. A model's death is a platform
+//              fact, never a unit verdict.
+// Nothing carries forward from a prior wave: every slot is re-established by this wave's own
+// probes and observations, so a cleared/expired condition never keeps an arc halted.
+const halt = { codex: null, env: null, platform: null }
+// Most fundamental layer first: a dead platform explains a dead codex, and a dead box explains
+// both. The winner is what the conductor returns and what a park note names, so the operator is
+// pointed at the cause rather than at a symptom.
+const HALT_ORDER = ['platform', 'env', 'codex']
+const haltReason = () => HALT_ORDER.map((k) => halt[k]).find(Boolean) ?? null
 let inFlight = 0
 let mergeChain = Promise.resolve()
 let checkpointChain = Promise.resolve()
@@ -1103,7 +1215,14 @@ const bumpRound = (id, kind) => {
   units.set(id, { ...r, rounds })
 }
 const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
-const ready = (u) => !codexHalt && rec(u.id).status === 'pending' && depsOf(u.id).every((d) => rec(d)?.status === 'merged')
+// A unit is dispatched at most once per WAVE. Every terminal status is self-limiting (only
+// 'pending' is ready), but a PARK deliberately returns the record to 'pending' — that is what makes
+// the unit re-enter by adoption in the NEXT wave — so without this the scheduler would re-dispatch
+// it immediately in THIS one, forever. `parked` itself cannot be the guard: it has to survive into
+// the next wave's state, where it is exactly what tells setup to adopt the branch's commits.
+const dispatched = new Set()
+const ready = (u) => !haltReason() && !dispatched.has(u.id) && rec(u.id).status === 'pending' &&
+  depsOf(u.id).every((d) => rec(d)?.status === 'merged')
 const blockedBy = (u) => depsOf(u.id).some((d) => ['quarantined', 'blocked'].includes(rec(d)?.status))
 const serialize = () => ({
   integrationBranch: intBranch, integrationTip, consultsUsed, spend,
@@ -1137,10 +1256,13 @@ const serialize = () => ({
   // later gate has precedent to follow. Wave-scoped: rulings are about this wave's diffs.
   ...(scopeRulings.length ? { scopeRulings } : {}),
   ...(boundary ? { boundary } : {}),
-  // Codex availability, the conductor's early-return signal: a `halt` here means the wave
-  // stopped dispatching (units parked, state resumable) and the ROOT must surface it to the
-  // user (re-auth / wait out the limit window / relaunch). Never route around it in-script.
-  codex: { probed: (prior.wave ?? 0) + 1, available: !codexHalt, ...(codexHalt ? { halt: codexHalt } : {}) },
+  // The wave-level halt record, the conductor's early-return signal: a `reason` here means the
+  // wave stopped dispatching (units parked, state resumable) and the ROOT must surface it to the
+  // user (re-auth, fix the box, wait out the outage window, relaunch). Never route around it
+  // in-script. `reason` is the winner by HALT_ORDER — the conductor reads exactly that field, so
+  // the precedence lives here, in one place, and never has to be duplicated over there.
+  ...(haltReason() ? { halt: { reason: haltReason(), ...Object.fromEntries(HALT_ORDER.filter((k) => halt[k]).map((k) => [k, halt[k]])) } } : {}),
+  codex: { probed: (prior.wave ?? 0) + 1, available: !halt.codex },
   wave: (prior.wave ?? 0) + 1, units: Object.fromEntries(units),
 })
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
@@ -1740,7 +1862,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   if (unit.risk !== 'low' || !implPlan.feasible || C.planCheck === 'always-fable')
     return fablePlanCheck()
   spend.opusPlanChecks++
-  const oc = await run(
+  const oc = await runReq(
     `You are an Opus plan-checker standing in for the architect on unit ${unit.id} of a roadmap build — but ` +
     `killing a unit is frontier-only, so you may approve or redirect the plan yourself, never quarantine. Read ` +
     `the spec at ${spec} and the contracts it references, then judge this plan against them:\n` +
@@ -1873,11 +1995,12 @@ const CRITIQUE_OUT = JSON.stringify(strictify(obj({
 // message (OpenAI's own scoping structure). Artifacts are referenced by path, EXCEPT the scope
 // envelope and the escalation contract, which are inlined because they ARE the guardrails: a
 // brief Codex only half-reads must still carry them in its context window.
-const codexBuildBrief = (unit, w, dir, base, implPlan) =>
+const codexBuildBrief = (unit, w, dir, base, implPlan, priorAttempt = '') =>
   `# GOAL\n` +
   `Implement unit ${unit.id} in the git worktree at ${w} (branch unit/${unit.id}, diff base ${base}) until ` +
   `every check under DONE-WHEN passes, and commit it. You own the whole loop: write it, test it, fix it, ` +
   `commit it. Nobody is watching between now and your final message.\n\n` +
+  priorAttempt +
   `# CONTEXT\n` +
   `- The spec at ${specOf(unit)} is authoritative. Read it in full before writing anything.\n` +
   `- Frozen contracts it references live under ${repo}/.roadmap/contracts/ — immutable requirements. ` +
@@ -1929,6 +2052,17 @@ const codexBuildBrief = (unit, w, dir, base, implPlan) =>
   `scope to route around a contradiction. Otherwise leave BOTH fields as empty strings — each is a trigger ` +
   `that summons the architect, never a notes field; never write "none" or an FYI there.\n\n` +
   `# FINAL MESSAGE\n${CODEX_BUDGETS}\n`
+// What a retry brief says about the attempt it is replacing. The steerer has already reaped that
+// process (see `reap` in steerCodex), so a live sibling in this worktree means the reap failed —
+// a harness bug to report, never a run to wait on or race. Arc-observed 2026-08-23: a retry codex
+// found the first process still editing the worktree and spent an hour narrating it read-only.
+const PRIOR_ATTEMPT =
+  `# PRIOR ATTEMPT\n` +
+  `An earlier Codex run on this worktree died and has been killed and reaped. Its commits, if any, are on the ` +
+  `branch and are yours to build on — read \`git log\` before you start. There must be no other Codex process ` +
+  `in this worktree: if you find one running, that is a HARNESS bug, not a condition to wait on — stop ` +
+  `immediately, set \`status\` to "blocked", say so in \`summary\`, and exit. Do not wait for it, do not ` +
+  `hand off to it, and do not edit alongside it.\n\n`
 // A fix-round brief. Self-contained enough to work in a FRESH session too (the fresh fallback
 // when no resumable session matches this worktree): it names the spec, the scope, and the exact
 // repairs. P1-pinned: a resumed session still holds the build brief's constraints, so the scope
@@ -1961,11 +2095,12 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // pidfile + group kill), poll sleep-free, kill at the deadline, verify the work ON DISK, read
 // back only the allowlisted slivers, and emit the S.implCodex report. The full transcript is
 // never loaded — that is the entire economic point of the lane.
-const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeDir, outSchema, reportInstr }) => {
+const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeDir, reapDir, outSchema, reportInstr }) => {
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
-      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'codex exec resume "$(cat ${resumeDir}/session-id)" ` +
+      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} ` +
+      `codex exec resume "$(cat ${resumeDir}/session-id)" ` +
       `-c sandbox_mode="${C.codexSandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
       `-c model_reasoning_effort=${effort} -c projects."${w}".trust_level="trusted" ` +
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
@@ -1984,27 +2119,53 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
       `fails the same way again, \`rm -f ${dir}/exit-code ${dir}/codex.pid\` and launch COMMAND F instead. Say ` +
       `in \`notes\` which of these happened.`
     : ''
+  // `timeout -k 30 <deadline>` wraps codex INSIDE the detached sh -c, so the deadline is enforced
+  // by the process tree itself and survives the steerer's death. It used to live only in the steer
+  // prompt — i.e. in the very process whose death is the failure mode — and a steerer that died
+  // left a detached, session-leading codex running unbounded while its OpenAI seat was already
+  // handed to the next unit (2026-08-25). `timeout` exits 124 on the deadline; the report
+  // instruction reads that as timedOut.
   const execCmd =
-    `${codexHome}setsid nohup sh -c 'codex exec -C ${w} -s ${C.codexSandbox} ` +
+    `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${C.codexSandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
     `-c projects."${w}".trust_level="trusted" ` +
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
     `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
     `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
     `> ${dir}/events.jsonl 2> ${dir}/stderr.log; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid`
+  // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
+  // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
+  // steerer that concluded "dead" while the process was alive once launched a second codex into the
+  // same checkout (2026-08-23), and two implementers in one worktree is not a state to reason about.
+  const reap = reapDir
+    ? `0) REAP THE PREVIOUS ATTEMPT FIRST. If ${reapDir}/codex.pid exists: run ` +
+      `\`kill -TERM -- -$(cat ${reapDir}/codex.pid)\` (an error here just means it is already gone — ` +
+      `continue), \`sleep 5\`, then \`kill -KILL -- -$(cat ${reapDir}/codex.pid)\`, then wait until ` +
+      `${reapDir}/exit-code exists, up to 60 seconds; if it never appears, run ` +
+      `\`echo 137 > ${reapDir}/exit-code\` yourself. Do NOT continue to step 1 until the old process is ` +
+      `gone — a second Codex writing this worktree while the first is alive corrupts both.\n`
+    : ''
   return STRICT +
     `You are the steering agent for an autonomous Codex CLI run on unit ${unit.id}. You never write product ` +
     `code yourself — you launch the run, wait for it, verify its work on disk, and report. Do exactly this:\n` +
+    reap +
     `1) Create the artifact directory: \`mkdir -p ${dir}\`. Write the file ${dir}/brief.txt with EXACTLY the ` +
     `content between the <<<BRIEF>>> markers at the end of this message (excluding the marker lines; if one ` +
     `write is rejected as too large, write it in consecutive appended parts). Write the file ` +
     `${dir}/schema.json with exactly this one-line JSON: ${outSchema ?? CODEX_OUT}\n` +
     `2) Record launch facts: \`date +%s > ${dir}/launched-at\` and \`printf '%s' "${w}" > ${dir}/cwd\`.\n` +
-    `3) Launch Codex in the background — ${launch}${execCmd}${collisionRule}\n` +
+    `3) Launch Codex in the background. FIRST: if ${dir}/codex.pid already exists, a run was ALREADY ` +
+    `launched from this exact request (you are a re-dispatch — a schema retry, a salvage, or a replay) — do ` +
+    `NOT launch a second one and do NOT delete the file; skip straight to step 4 and attach to the run that ` +
+    `is already there. Otherwise, ${launch}${execCmd}${collisionRule}\n` +
     `4) Wait, sleep-free: repeat \`timeout 540 tail --pid=$(cat ${dir}/codex.pid) -f /dev/null\`, each time ` +
     `setting your Bash tool's own timeout to its 600000 ms maximum so the call is not cut short (a 124 exit ` +
     `just means still running). Runs here are long — hours, not minutes — so expect many such waits and never ` +
-    `conclude from a 124 that anything is wrong. Repeat until ${dir}/exit-code exists. If \`$(date +%s)\` minus the value in ` +
+    `conclude from a 124 that anything is wrong. Repeat until ${dir}/exit-code exists. ` +
+    `A MISSING ${dir}/exit-code MEANS RUNNING, NEVER DEAD: the only evidence of death is a dead pid, so ` +
+    `before you may stop waiting on that ground, run \`kill -0 $(cat ${dir}/codex.pid)\` — if it SUCCEEDS the ` +
+    `process is alive and you keep waiting, however long it has been; only if it FAILS while ${dir}/exit-code ` +
+    `is still absent may you stop and report exitCode -1. Elapsed time on its own is never evidence. If \`$(date +%s)\` minus the value in ` +
     `${dir}/launched-at ever exceeds ${timeoutMin * 60}, the run is TIMED OUT: kill the process group with ` +
     `\`kill -TERM -- -$(cat ${dir}/codex.pid)\`, wait ~5 seconds, \`kill -KILL -- -$(cat ${dir}/codex.pid)\`, ` +
     `then treat whatever is on disk as the result.\n` +
@@ -2014,7 +2175,7 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `   - \`grep -m1 -o '"thread_id":"[^"]*"' ${dir}/events.jsonl\` — write the bare id to ${dir}/session-id,\n` +
     `   - \`grep '"turn.completed"' ${dir}/events.jsonl | tail -1\` (usage: input/output tokens, turn count),\n` +
     `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429|thread already' ${dir}/events.jsonl ` +
-    `${dir}/stderr.log | tail -5 | cut -c1-300\` (errors; also decides \`limitHit\`),\n` +
+    `${dir}/stderr.log | tail -5 | cut -c1-250\` (errors; also decides \`limitHit\`),\n` +
     `   - git truth in ${w}: \`git rev-list --count ${base}..HEAD\`, \`git diff --name-only ${base}..HEAD\`, ` +
     `\`git status --porcelain\`, \`git rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
     `6) If \`git status --porcelain\` shows uncommitted changes, commit them yourself with the message ` +
@@ -2026,11 +2187,16 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `max 300 characters each, debt entries' what/why max 400 characters each, notes max 2000 characters); ` +
     `if the final report is absent or unparseable, set \`summary\` to one sentence saying so (that absence ` +
     `is data, not a failure to hide). \`filesChanged\` comes from the git diff you ran, NOT from the report. `)}` +
-    `Fill \`codex\` with the process facts you observed: exitCode (the integer in ${dir}/exit-code, -1 if ` +
-    `absent), commits (the rev-list count), turns/inputTokens/outputTokens from the usage line (0 if ` +
-    `absent), timedOut, doneMarker (${dir}/done.txt existed), limitHit (any error sliver mentioned a usage/` +
-    `rate limit, quota, or 429), sessionCaptured (${dir}/session-id written non-empty), and \`error\` — the ` +
-    `most informative error sliver, one sentence, max 300 characters, empty string if none. ${TERSE}\n` +
+    `Fill \`codex\` with the process facts you observed: exitCode (the integer in ${dir}/exit-code; -1 ONLY ` +
+    `when that file is absent AND step 4's \`kill -0\` proved the pid dead — never because waiting felt long), ` +
+    `commits (the rev-list count), turns/inputTokens/outputTokens from the usage line (0 if ` +
+    `absent), timedOut (you killed it at the deadline, OR ${dir}/exit-code contains 124 — the launcher's own ` +
+    `\`timeout\` fired), doneMarker (${dir}/done.txt existed), limitHit (any error sliver mentioned a usage/` +
+    `rate limit, quota, or 429), sessionCaptured (${dir}/session-id written non-empty), and \`error\` — ONE ` +
+    `of those error lines, the most informative, copied as a SINGLE line of at most 250 characters; never ` +
+    `concatenate several of them and never let a newline into it (five 300-character lines joined is 1500 ` +
+    `characters into a 300-character field, which is a rejected report, not an error message). Empty string ` +
+    `if there is none. ${TERSE}\n` +
     `<<<BRIEF>>>\n${briefText}\n<<<BRIEF>>>`
 }
 // Counting semaphore on concurrent codex PROCESSES (one OpenAI account behind them all; 16
@@ -2072,7 +2238,7 @@ const noteCodexMeta = (unit, r, dir, label) => {
   spend.codexInputTokens = (spend.codexInputTokens ?? 0) + (m.inputTokens ?? 0)
   spend.codexOutputTokens = (spend.codexOutputTokens ?? 0) + (m.outputTokens ?? 0)
   if (m.limitHit) {
-    codexHalt = codexHalt ?? 'codex-usage-limit'
+    halt.codex = halt.codex ?? 'codex-usage-limit'
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-usage-limit',
       what: `codex reported a usage/rate limit on ${unit.id} (${dir}) — halting new codex dispatch for this ` +
         `wave; state is checkpointed and the arc resumes cleanly after the limit window` })
@@ -2081,20 +2247,33 @@ const noteCodexMeta = (unit, r, dir, label) => {
       what: `codex run for ${unit.id} exceeded its deadline and was killed (${dir})${loadNote()} — ` +
         `${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
   } else if (m.exitCode !== 0) {
-    degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-exec',
-      what: `codex exited ${m.exitCode} on ${unit.id} (${dir}${m.error ? `; ${m.error}` : ''}) — ` +
-        `${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
+    // Two different facts wore one label. `-1` means the exit-code file was ABSENT when the steerer
+    // reported — nobody observed the process finish, so this says something about the LIFECYCLE (a
+    // killed process, or a steerer that gave up on a live run); the exit status is unknown, not bad.
+    // Anything > 0 is codex itself reporting failure. One bucket made the arc's 29-row `codex-exec`
+    // cluster unreadable and hid the false-death defect inside it.
+    const lifecycle = m.exitCode === -1
+    degrade({ label, model: 'codex', phase: 'Implement', kind: lifecycle ? 'codex-lifecycle' : 'codex-exec',
+      what: (lifecycle
+        ? `no exit-code file for ${unit.id} (${dir}${m.error ? `; ${m.error}` : ''}) — the run was never observed ` +
+          `to finish, so its exit status is unknown; the steering agent reported it dead after \`kill -0\` failed`
+        : `codex exited ${m.exitCode} on ${unit.id} (${dir}${m.error ? `; ${m.error}` : ''})`) +
+        ` — ${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
   }
   if (m.commits > 0 && r.notes?.includes('left uncommitted by codex'))
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-uncommitted',
       what: `codex left uncommitted work on ${unit.id}; the steering agent committed it (${dir}) — a ` +
         `discipline signal worth watching, not a failure` })
 }
+// Dead on arrival with nothing on the branch: worth exactly one more attempt. Never on a lost
+// report (the branch may hold work nobody described), never past a halt, never on a usage limit.
+const worthRetry = (r) =>
+  !r.reportLost && r.codex && r.codex.exitCode !== 0 && r.codex.commits === 0 && !r.codex.limitHit && !haltReason()
 // One codex build step = the unit's whole implement→test→fix inner loop. Parks (never
-// quarantines) when codex dispatch is halted; retries ONCE fresh when a run dies with no
+// quarantines) when dispatch is halted; retries ONCE fresh when a run dies with no
 // commits; past that the normal pipeline (verify → gates) judges whatever is on the branch.
 async function buildStep(unit, w, base, implPlan) {
-  if (codexHalt) return { parked: true }
+  if (haltReason()) return { parked: true }
   const dir = codexDir(unit.id, 'build')
   const briefText = codexBuildBrief(unit, w, dir, base, implPlan)
   const opts = (label) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Implement', label, schema: S.implCodex })
@@ -2102,12 +2281,16 @@ async function buildStep(unit, w, base, implPlan) {
     steerCodex({ unit, w, dir, base, briefText, effort: C.codexEffort, timeoutMin: C.codexTimeoutMin }),
     opts(`codex-build:${unit.id}`)))
   noteCodexMeta(unit, r, dir, `codex-build:${unit.id}`)
-  if (!r.reportLost && r.codex && r.codex.exitCode !== 0 && r.codex.commits === 0 && !r.codex.limitHit && !codexHalt) {
-    // Dead on arrival with nothing on the branch: one fresh retry, then let the commit-probe/
-    // quarantine path in runUnit rule. Never a Claude implementer — there is no Claude lane.
+  if (worthRetry(r)) {
+    // The retry REAPS the previous pid before it launches (reapDir) and says so in its brief
+    // (PRIOR_ATTEMPT). Both are unconditional: this branch is reached by a genuine death and by a
+    // steerer that only believed one, and the second case is how two codex processes ended up in
+    // one worktree (2026-08-23). Then the commit-probe/quarantine path in runUnit rules. Never a
+    // Claude implementer — there is no Claude lane.
     const dir2 = codexDir(unit.id, 'build-retry')
     r = await withCodexSlot(() => runOr(REPORT_LOST,
-      steerCodex({ unit, w, dir: dir2, base, briefText: codexBuildBrief(unit, w, dir2, base, implPlan), effort: C.codexEffort, timeoutMin: C.codexTimeoutMin }),
+      steerCodex({ unit, w, dir: dir2, base, briefText: codexBuildBrief(unit, w, dir2, base, implPlan, PRIOR_ATTEMPT),
+        effort: C.codexEffort, timeoutMin: C.codexTimeoutMin, reapDir: dir }),
       opts(`codex-build-retry:${unit.id}`)))
     noteCodexMeta(unit, r, dir2, `codex-build-retry:${unit.id}`)
   }
@@ -2118,17 +2301,32 @@ async function buildStep(unit, w, base, implPlan) {
 // self-contained fix brief. `payload` carries the verbatim repairs (verify failures, gate
 // directives, or an architect ruling).
 async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, payload) {
-  if (codexHalt) return { parked: true }
+  if (haltReason()) return { parked: true }
   const dir = codexDir(unit.id, step)
   const briefText = codexFixBrief(unit, w, base, envelope, payload)
   // `fresh` skips the resume: a session that has already failed a gate twice is anchored on its
   // own approach (the resumed-session-bias finding) — the last attempt starts cold, carrying the
   // full directive set in the self-contained brief instead of the session's history.
-  const r = await withCodexSlot(() => runOr(REPORT_LOST,
-    steerCodex({ unit, w, dir, base, briefText, effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin,
-      resumeDir: fresh ? null : codexDir(unit.id, 'build') }),
-    { model: C.codexSteerModel, effort: 'low', phase: 'Fix', label, schema: S.implCodex }))
+  const opts = (l) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Fix', label: l, schema: S.implCodex })
+  const resumeDir = fresh ? null : codexDir(unit.id, 'build')
+  let r = await withCodexSlot(() => runOr(REPORT_LOST,
+    steerCodex({ unit, w, dir, base, briefText, effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir }),
+    opts(label)))
   noteCodexMeta(unit, r, dir, label)
+  // The same one-shot retry the build step gets, for the same reason: a fix round that died with
+  // nothing on the branch used to fall straight through to a re-verify that could only fail, and
+  // the `codex-gate-fix`/`codex-gap-fix` rows in one arc's ledger produced no recovery at all.
+  // Reaps this round's own pid first — the round it resumes from is a different, finished dir.
+  // `#reattempt`, not `#retry`: run()'s schema retry already owns `#retry`, and two different
+  // recoveries under one label make the degradation ledger unreadable.
+  if (worthRetry(r)) {
+    const dir2 = codexDir(unit.id, `${step}-retry`)
+    r = await withCodexSlot(() => runOr(REPORT_LOST,
+      steerCodex({ unit, w, dir: dir2, base, briefText: `${PRIOR_ATTEMPT}${briefText}`,
+        effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dir }),
+      opts(`${label}#reattempt`)))
+    noteCodexMeta(unit, r, dir2, `${label}#reattempt`)
+  }
   return r
 }
 async function runUnit(unit) {
@@ -2153,7 +2351,7 @@ async function runUnit(unit) {
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
   const adopt = !!unit.existingBranch ||
     ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status) ||
-    !!prior.units?.[unit.id]?.parked   // parked mid-pipeline (codex halt): its commits are its own progress
+    !!prior.units?.[unit.id]?.parked   // parked mid-pipeline (any halt): its commits are its own progress
 
   // H-7: implementer-reported deviation from a frozen surface. `mismatch` is consumable
   // (one consult per report, respecting the consult budget); `mismatchEver` sticks — carrying
@@ -2202,13 +2400,21 @@ async function runUnit(unit) {
     gap = triggerText(r.specGap)
     gapEver = gap
   }
+  // A contract mismatch banked from a report about work that has ALREADY landed is a ghost: on a
+  // resume the cached report replays verbatim, and `kind:'contract'` debt is what forces a
+  // contract-amendment return to the root (arc-observed: a resolved mismatch dragged the whole run
+  // back for an amendment nobody needed). The record keeps it, stamped `rebanked`, and the
+  // conductor's filter requires a non-rebanked item.
+  const alreadyLanded = () =>
+    ['merge-ready', 'merged'].includes(prior.units?.[unit.id]?.status) || rec(unit.id)?.status === 'merged'
   const noteMismatch = (r) => {
     if (!triggerText(r?.contractMismatch)) return
     mismatch = triggerText(r.contractMismatch)
     mismatchEver = mismatch
-    debtLog.push({ unit: unit.id, sha: base, kind: 'contract', severity: 'major',
+    addDebt(unit.id, base, [{
       what: `implementer-reported contract mismatch: ${mismatch}`,
-      why: 'frozen surface contradicts reality — needs architect adjudication' })
+      why: 'frozen surface contradicts reality — needs architect adjudication',
+    }], { kind: 'contract', severity: 'major', ...(alreadyLanded() ? { rebanked: true } : {}) })
   }
   // No debt-fix sweep in the codex lane: the brief's SCOPE already demands in-scope fixing
   // before the run reports done, and out-of-scope confessions BANK by design (DEBT_DISCIPLINE) —
@@ -2218,7 +2424,7 @@ async function runUnit(unit) {
   // (arc-observed: a setup agent deleted its own source branch and recreated it from main).
   let adoptTip = null
   if (unit.existingBranch) {
-    const rp = await run(
+    const rp = await runReq(
       STRICT +
       `In the git repository at ${repo}: run \`git rev-parse ${unit.existingBranch}\` and report the sha. ` +
       `Read-only — change nothing, create nothing. If the ref does not resolve, report ok:false with the exact error.`,
@@ -2284,7 +2490,7 @@ async function runUnit(unit) {
   if (!unit.existingBranch && ws.state !== 'adopted') {
   setStage(unit.id, 'plan')
   // Plan first, then the architect plan-check — wrong approaches die before code exists.
-  let implPlan = await run(
+  let implPlan = await runReq(
     `Plan one unit of a larger roadmap for an implementer who is not you. Read the unit spec at ${spec} and any ` +
     `contract files it references under ${repo}/.roadmap/contracts/ (contracts are frozen — treat them as ` +
     `immutable requirements). Codebase conventions and build/test commands are documented at ${brief}. Explore ` +
@@ -2342,7 +2548,7 @@ async function runUnit(unit) {
         `this ruling verbatim: the architect redirected the plan for unit ${unit.id} with "${check.guidance}". ` +
         `Report ok.`,
         { model: 'haiku', effort: 'low', phase: 'Escalate', label: `spec-append:${unit.id}#plan`, schema: S.ok })
-      implPlan = await run(
+      implPlan = await runReq(
         `Revise your implementation plan for unit ${unit.id} (spec: ${spec}). Your previous plan:\n` +
         `${JSON.stringify(implPlan)}\nThe architect's direction: ${check.guidance}. ` +
         `Return all four required fields again, structured first: \`feasible\`, \`files\`, \`testPlan\`, then ` +
@@ -2358,18 +2564,31 @@ async function runUnit(unit) {
 
   setStage(unit.id, 'implement')
   const impl = await buildStep(unit, w, base, implPlan)
-  // Codex dispatch halted (probe failure or usage limit observed mid-wave): PARK, don't judge.
-  // The unit re-enters by adoption next wave with whatever commits exist.
-  if (impl.parked) return { status: 'pending', parked: true, note: `parked before implement: ${codexHalt}` }
+  // Dispatch halted (a codex probe failure, a usage limit, a sick host, a dead platform): PARK,
+  // don't judge. The unit re-enters by adoption next wave with whatever commits exist.
+  if (impl.parked) return { status: 'pending', parked: true, note: `parked before implement: ${haltReason()}` }
   // The report died. Ask the branch whether the WORK died with it: commits present means the
   // implementer finished and only its report was lost, so the diff must be judged on its merits by
   // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
   // still the right answer. Getting this backwards is what cost two units and two hand-rescues.
   if (impl.reportLost) {
-    const probe = await runOr({ ok: false, sha: '', detail: 'commit probe agent died' },
+    // `unknown` is the fallback, NOT `ok:false`: a dead probe used to read as "no commits", and a
+    // branch with every milestone committed was quarantined as "nothing was built" during a quota
+    // outage (2026-08-25). Absence of an answer is not the answer. This one parks the unit instead
+    // of halting the wave the way runReq would — a single cheap probe dying twice while the rest of
+    // the wave runs is not evidence of a platform outage, and the unit's commits are safe either
+    // way: it re-enters by adoption next wave and is judged then.
+    const probe = await runOr({ ok: false, sha: '', unknown: true, detail: 'commit probe agent died' },
       STRICT + `In the worktree at ${w}: report ok:true if \`git rev-list --count ${base}..HEAD\` is greater ` +
-      `than zero, else ok:false, and sha = HEAD. Report only; change nothing.`,
+      `than zero, else ok:false, and sha = HEAD. Report only; change nothing.` + LAUNCH,
       { model: 'haiku', effort: 'low', phase: 'Implement', label: `commit-probe:${unit.id}`, schema: S.ws })
+    if (probe.unknown) {
+      degrade({ label: `commit-probe:${unit.id}`, model: 'haiku', phase: 'Implement', kind: 'commit-probe-unknown',
+        what: `the implement report for ${unit.id} was lost AND the commit probe died — whether the branch holds ` +
+          `work is unknown, so the unit PARKS with its branch intact rather than being quarantined for having ` +
+          `built nothing. It re-enters by adoption next wave, when the probe can be asked again.` })
+      return { status: 'pending', parked: true, note: 'parked: implement report lost and the commit probe never answered' }
+    }
     if (!probe.ok) {
       // Nothing was built, so quarantine is right — but runOr swallowed whatever actually went
       // wrong into the degradation ledger, and a dossier that says only "no commit" sends the next
@@ -2399,7 +2618,7 @@ async function runUnit(unit) {
   setStage(unit.id, 'polish')
   let verify
   for (let round = 0; round <= C.maxFixRounds; round++) {
-    verify = await withGateSlot(() => run(
+    verify = await withGateSlot(() => runReq(
       STRICT +
       `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files first, then run EXACTLY ` +
       `the acceptance-check commands ${spec} names, verbatim, in the order it names them (commands and ` +
@@ -2456,7 +2675,7 @@ async function runUnit(unit) {
         ` Implementer-reported contract mismatch: ${mismatch ?? 'none'}.` +
         ` Implementer-reported spec gap (a decision the spec does not settle): ${gap ?? 'none'}.`,
         { model: 'sonnet', phase: 'Escalate', label: `rescue-dossier:${unit.id}`, schema: S.dossier })
-      directive = await run(
+      directive = await runReq(
         `You are the architect. Unit ${unit.id} is stuck. Dossier: ${JSON.stringify(dossier)} (spec: ${spec} — ` +
         `consult it and the code in ${w} yourself if the dossier is not enough). Decide: redirect with brief ` +
         `guidance, or quarantine for redesign. Do not write code.`,
@@ -2472,7 +2691,7 @@ async function runUnit(unit) {
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\` ` +
       `(one or two sentences, max 300 characters).`)
-    if (fixed.parked) return { status: 'pending', parked: true, note: `parked mid-polish: ${codexHalt}` }
+    if (fixed.parked) return { status: 'pending', parked: true, note: `parked mid-polish: ${haltReason()}` }
     if (fixed.reportLost) reportLostEver = true
     addDebt(unit.id, base, fixed.debt)
     noteMismatch(fixed)
@@ -2482,7 +2701,7 @@ async function runUnit(unit) {
   // to stop — one shared assertion killing every unit in the wave.
   if (!verify.pass && !fullySuppressed(verify)) return quarantine(unit, 'verification never passed', verify)
   const gateReverify = async (label) => {
-    const v = await withGateSlot(() => run(
+    const v = await withGateSlot(() => runReq(
       STRICT +
       `In ${w}: re-run lint/typecheck on the changed files, then EXACTLY the acceptance-check commands ${spec} ` +
       `names, verbatim, in the order it names them (commands: ${brief}). Never substitute a narrower, faster or ` +
@@ -2595,7 +2814,7 @@ async function runUnit(unit) {
         ? `You reported that a frozen contract contradicts this unit, and the architect ruled: ${guidance}\n`
         : `The spec left a decision unsettled; you reported it, and the ruling is: ${guidance}\n`) +
       `Apply that ruling.`)
-    if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gap-fix: ${codexHalt}` }
+    if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gap-fix: ${haltReason()}` }
     addDebt(unit.id, base, gFix.debt)
     if (gFix.reportLost) reportLostEver = true
     noteMismatch(gFix)
@@ -2702,7 +2921,7 @@ async function runUnit(unit) {
       const ogFix = await fixStep(unit, w, base, envelope,
         { step: `opus-gate-fix${g}`, label: `codex-opus-gate-fix:${unit.id}#${g}`, fresh: g === C.maxGateRounds - 1 },
         `The exit gate reviewed your work and issued these directives:\n${JSON.stringify(og.directives)}`)
-      if (ogFix.parked) return { status: 'pending', parked: true, note: `parked at opus-gate-fix: ${codexHalt}` }
+      if (ogFix.parked) return { status: 'pending', parked: true, note: `parked at opus-gate-fix: ${haltReason()}` }
       addDebt(unit.id, base, ogFix.debt)   // was silently dropped — a fix round's confessions are debt too
       if (ogFix.reportLost) {
         // forceFrontier was computed before this loop, so flagging alone changes nothing here.
@@ -2759,7 +2978,7 @@ async function runUnit(unit) {
   for (let g = 0; g < C.maxGateRounds; g++) {
     spend.gateRounds++
     bumpRound(unit.id, 'gate')
-    const gate = await run(
+    const gate = await runReq(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
@@ -2799,7 +3018,7 @@ async function runUnit(unit) {
     const gFix = await fixStep(unit, w, base, envelope,
       { step: `gate-fix${g}`, label: `codex-gate-fix:${unit.id}#${g}`, fresh: g === C.maxGateRounds - 1 },
       `The frontier architect gate reviewed your work and issued these directives:\n${JSON.stringify(gate.directives)}`)
-    if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gate-fix: ${codexHalt}` }
+    if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gate-fix: ${haltReason()}` }
     addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
@@ -2851,7 +3070,7 @@ async function mergeUnit(unit) {
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
     `cleanly, run the project's full test suite (commands: ${brief}) and report the result.${prefixClause} ` +
     `Report the current HEAD sha either way.` + ghMerged(unit)
-  let res = await withGateSlot(() => run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge }))
+  let res = await withGateSlot(() => runReq(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge }))
 
   if (!res.merged && res.roadmapPaths?.length) {
     log(`${unit.id}: unit diff touches orchestrator-owned .roadmap/ (${res.roadmapPaths.join(', ')}) — stripping before merge`)
@@ -2865,14 +3084,15 @@ async function mergeUnit(unit) {
       `content preserved in prior commits". Touch nothing outside .roadmap/. Report ok plus the new HEAD sha.`,
       { model: 'haiku', phase: 'Merge', label: `strip-roadmap:${unit.id}`, schema: S.ws },
     ).catch(() => null)
-    debtLog.push({ unit: unit.id, sha: res.head, kind: 'contract', severity: 'major',
+    addDebt(unit.id, res.head, [{
       what: `unit diff touched orchestrator-owned .roadmap/ paths, stripped before merge: ${res.roadmapPaths.join(', ')}`,
       why: 'units may never write .roadmap/; the stripped content survives in the branch history — adjudicate ' +
-        'whether it belongs in a contract amendment (the channel it should have used)' })
+        'whether it belongs in a contract amendment (the channel it should have used)',
+    }], { kind: 'contract', severity: 'major' })
     if (!strip?.ok)
       return quarantine(unit, `unit diff touches .roadmap/ (${res.roadmapPaths.join(', ')}) and the strip commit ` +
         `failed — nothing merged; the branch is intact`, res)
-    res = await withGateSlot(() => run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge }))
+    res = await withGateSlot(() => runReq(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge }))
     if (!res.merged && res.roadmapPaths?.length)
       return quarantine(unit, 'unit diff still touches .roadmap/ after a strip commit — nothing merged', res)
   }
@@ -2886,7 +3106,7 @@ async function mergeUnit(unit) {
       `explicit numbers in the conventions contract and respec; never renumber silently`, res)
 
   if (!res.merged) {
-    res = await withGateSlot(() => run(
+    res = await withGateSlot(() => runReq(
       `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id}, resolving ` +
       `conflicts. First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
       `recently merged units ` +
@@ -2904,7 +3124,7 @@ async function mergeUnit(unit) {
   }
 
   if (!res.suitePass) {
-    res = await withGateSlot(() => run(
+    res = await withGateSlot(() => runReq(
       `The integrated test suite fails after merging unit/${unit.id} into ${intBranch} (worktree ${intWt}). ` +
       `Evidence: ${res.detail}. First check whether the failure predates this merge. If the merge caused it, ` +
       `diagnose and fix on ${intBranch} — this may be a cross-unit interaction; the specs of all units live under ` +
@@ -2939,12 +3159,18 @@ async function mergeUnit(unit) {
 /* ------------------------------- scheduler ------------------------------ */
 function start(unit) {
   inFlight++
+  dispatched.add(unit.id)
   units.set(unit.id, { status: 'running' })
   checkpoint()   // coalesces with the wave-start burst to ~1 Haiku write; a 'running' record is what recovery adopts
   ;(async () => {
     let result = await runUnit(unit)
-      .catch((e) => quarantine(unit, `pipeline error: ${e?.message ?? e}`).catch(() =>
-        ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
+      // A PlatformOutage is the platform's death, not this unit's: park it (commits intact, adopted
+      // next wave) instead of converting a dead agent into a unit verdict. Everything else that
+      // reaches here is a real pipeline bug and still quarantines, loudly.
+      .catch((e) => e?.name === 'PlatformOutage'
+        ? { status: 'pending', parked: true, note: `parked on platform outage: ${e.message}` }
+        : quarantine(unit, `pipeline error: ${e?.message ?? e}`).catch(() =>
+          ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
     // The terminal result replaces the running record wholesale — carry the round tally over.
     const rounds = units.get(unit.id)?.rounds
     if (result.status === 'merge-ready') {
@@ -2952,8 +3178,10 @@ function start(unit) {
       // this transient record is overwritten by the terminal result below, so no stale stage survives.
       units.set(unit.id, { ...(rounds ? { rounds } : {}), ...result, stage: 'merge-queue' })
       checkpoint()
-      const segment = mergeChain.then(() => mergeUnit(unit)).catch((e) =>
-        quarantine(unit, `merge pipeline error: ${e?.message ?? e}`))
+      const segment = mergeChain.then(() => mergeUnit(unit)).catch((e) => e?.name === 'PlatformOutage'
+        ? { status: 'merge-ready', branch: `unit/${unit.id}`, base: units.get(unit.id)?.base, parked: true,
+           note: `merge parked on platform outage: ${e.message}` }
+        : quarantine(unit, `merge pipeline error: ${e?.message ?? e}`))
       mergeChain = segment.then(() => null, () => null)
       result = await segment
     }
@@ -3051,6 +3279,63 @@ if (!sameSha(intSetup.sha, integrationTip)) {
 const intProv = await provision(intWt, 'provision:integration')
 if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${intProv.detail}`)
 
+// Host-health preflight — every wave, beside the codex probe and for the same reason: a fact about
+// the BOX is cheaper to read than to infer from three quarantines. Arc-observed 2026-08-22: a
+// devcontainer whose PID 1 was `sleep infinity` accumulated 35,940 zombies, the pid cgroup hit
+// 36,350 of 36,792, and wave 3's three full-suite gates all forked into `spawn sh EAGAIN` and were
+// quarantined as "environment blocked" — a whole wave of unit verdicts for one host defect that no
+// unit caused and none could fix. Closed command list, script-side pass test (the codex-probe
+// lesson: never ask the cheapest tier to judge a binary fact), salted with LAUNCH so a resume
+// re-reads the box instead of replaying a stale answer.
+if (C.envPreflight !== 'off') {
+  const waveN = (prior.wave ?? 0) + 1
+  // pids.current/pids.max in one `cat` (two lines, in that order); PID 1's comm; then the load
+  // pair, which seeds `lastLoad` so a degradation raised before any test lane can still cite the
+  // host it happened on.
+  const cmds = [`cat ${PIDS_CUR} ${PIDS_MAX}`, 'ps -p 1 -o comm=', ...LOAD_CMDS]
+  const ep = await courierRun(repo, cmds,
+    { model: 'haiku', effort: 'low', phase: 'Setup', label: `env-probe:w${waveN}` },
+    `This is a read-only host-health probe. Report what the commands print and judge none of it — ` +
+    `whether the numbers are healthy is not yours to assess. Change nothing, kill nothing. ` + LAUNCH)
+  if (ep.exit(2) === 0 && ep.exit(3) === 0)
+    noteLoad({ loadavg1: Number(ep.out(2).split(/\s+/)[0]), cpuCount: Number(ep.out(3)) })
+
+  // 1. pid-cgroup headroom. `pids.max` reads `max` when the cgroup is unlimited — not a number and
+  //    not a problem. An unreadable file (cgroup v1, a non-Linux host) is UNKNOWN, not exhausted:
+  //    the guard is a floor under a known fact, never a verdict on an absent one.
+  const [cur, max] = ep.out(0).split(/\s+/)
+  const curN = Number(cur)
+  const maxN = Number(max)
+  if (ep.exit(0) !== 0 || !Number.isFinite(curN) || !(max === 'max' || Number.isFinite(maxN)))
+    degrade({ label: `env-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'env-unprobed',
+      what: `could not read pid-cgroup headroom (\`cat ${PIDS_CUR} ${PIDS_MAX}\` exited ${ep.exit(0) ?? 'nothing'}: ` +
+        `${ep.out(0).slice(0, 120) || '(no output)'}) — the wave runs unguarded on that axis` })
+  else if (max !== 'max' && (maxN - curN) / maxN < PIDS_MIN_HEADROOM)
+    halt.env = 'env-pids-exhausted'
+
+  // 2. PID 1 must reap. The known-init list is deliberately short and explicit; anything else halts
+  //    NAMING the comm, because the observed failure (`sleep`) looks exactly like every other
+  //    non-init and guessing which non-inits reap is how this defect stayed invisible for a week.
+  //    A box with an unusual but healthy PID 1 is cleared with `config.envPreflight: 'off'`.
+  const comm = ep.out(1).split('\n')[0].trim()
+  if (ep.exit(1) !== 0 || !comm)
+    degrade({ label: `env-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'env-unprobed',
+      what: `could not read PID 1 (\`ps -p 1 -o comm=\` exited ${ep.exit(1) ?? 'nothing'}) — the wave runs ` +
+        `unguarded on the reaper axis` })
+  else if (!INIT_COMMS.includes(comm)) halt.env = halt.env ?? 'env-no-reaper'
+
+  if (halt.env)
+    degrade({ label: `env-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: halt.env,
+      what: (halt.env === 'env-pids-exhausted'
+        ? `pid cgroup at ${cur}/${max} — under ${Math.round(PIDS_MIN_HEADROOM * 100)}% headroom, so the next ` +
+          `fork storm is a test lane dying of EAGAIN`
+        : `PID 1 is \`${comm}\`, which is not a known init (${INIT_COMMS.join(', ')}) and so does not reap ` +
+          `orphans — killed test runs accumulate as zombies until the pid cgroup is full`) +
+        `. Wave halted before dispatch: units stay pending, state is checkpointed and resumable. Operator: ` +
+        `recreate the container with an init as PID 1 (compose \`init: true\`), or — if this box is healthy ` +
+        `and its PID 1 simply is not on that list — set \`config.envPreflight: 'off'\` in the plan and relaunch.` })
+}
+
 // Codex availability probe — every wave, because auth expires between waves (ChatGPT-plan
 // OAuth) and the Phase-0 preflight is only as fresh as the arc's start. Failure halts the wave
 // BEFORE dispatch: units stay pending, state checkpoints, the conductor early-returns to the
@@ -3074,7 +3359,7 @@ if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${in
   const status = cp.out(1)
   const loggedIn = /logged in/i.test(status) && !/not\s+logged\s+in/i.test(status)
   if (!(cp.exit(0) === 0 && loggedIn)) {
-    codexHalt = 'codex-unavailable'
+    halt.codex = 'codex-unavailable'
     const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
       : `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
@@ -3173,11 +3458,11 @@ while (true) {
 if (C.previewRefresh === 'wave') refreshMirror()   // single advance to the final tip
 await previewChain                                  // drain pending mirror advances
 // Boundary phase — strictly after all merges and mirror advances (invariant 8). Skipped on a
-// codex halt: the conductor early-returns this wave to the root regardless, and boundary
+// halt: the conductor early-returns this wave to the root regardless, and boundary
 // spend against a halted wave buys nothing the relaunch's boundary won't.
-// Owed jobs still run when the boundary is off — see runBoundary's owed-only mode. A codex halt
-// still skips everything: the conductor early-returns that wave regardless.
-if ((C.boundary !== 'off' || owed.length > 0) && !codexHalt) {
+// Owed jobs still run when the boundary is off — see runBoundary's owed-only mode. A halt of any
+// kind still skips everything: the conductor early-returns that wave regardless.
+if ((C.boundary !== 'off' || owed.length > 0) && !haltReason()) {
   phase('Boundary')
   await runBoundary().catch((e) => log(`boundary phase failed — continuing (${e?.message ?? e})`))
 }

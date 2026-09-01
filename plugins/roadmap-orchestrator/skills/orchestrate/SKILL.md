@@ -101,7 +101,9 @@ logged in or binary absent → **stop before dispatch** and tell the user exactl
 a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
 early-returns `codex-unavailable` / `codex-usage-limit` with state checkpointed; both are
 resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
-route around by re-implementing with Claude.
+route around by re-implementing with Claude. The same shape covers the host and the platform:
+`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
+(required agent results stopped arriving) park the wave the same way — see `state.halt`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -398,6 +400,13 @@ conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on 
 - **`triage-degraded`** — the boundary evidence is good but the triage agent itself died (a
   terminal API error). Nothing was admitted or dropped. Triage this boundary by hand, as for
   `boundary-degraded`, then relaunch.
+- **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`,
+  `env-no-reaper`, `platform-outage`) — the wave stopped dispatching and handed you a
+  **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
+  commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
+  wait out a usage-limit or platform-outage window, or fix the box (a full pid cgroup and a
+  non-reaping PID 1 both mean: recreate the container with an init as PID 1). Do the action, then
+  relaunch; never route around a halt by re-implementing the work another way.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
 **Nothing to replan?** Just relaunch the conductor. Keep your own turns terse — on a relaunch wake

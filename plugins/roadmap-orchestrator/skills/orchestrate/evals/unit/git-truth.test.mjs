@@ -128,7 +128,7 @@ test('3a quarantine is refused for a merged branch and recorded as merged instea
   const { fn, calls } = makeAgent([
     // Not merged at dispatch; merged by the time the (stale) verdict asks for a quarantine.
     { match: /^merged-probe:a$/, result: () => (n++ === 0 ? NOT_MERGED : MERGED) },
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], contractSurfaceTouched: false, diffFiles: [] }) },
+    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'merged', 'landed work is never re-opened for redesign')
@@ -141,7 +141,7 @@ test('3a quarantine is refused for a merged branch and recorded as merged instea
 
 test('3b an unmerged branch quarantines exactly as before', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], contractSurfaceTouched: false, diffFiles: [] }) },
+    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'quarantined')

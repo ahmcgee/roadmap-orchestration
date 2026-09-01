@@ -106,7 +106,8 @@ test('codex probe: no logged-in line halts the wave, and so does a missing CLI',
   for (const [name, rule] of [['not logged in', probe('Not logged in. Run codex login.')], ['no CLI', probe('', 127)]]) {
     const { fn } = makeAgent([{ match: /^codex-probe:/, result: rule }])
     const state = await runWave(fn, makePlan(), makeState())
-    assert.equal(state.codex.halt, 'codex-unavailable', `${name} halts dispatch`)
+    assert.equal(state.halt.reason, 'codex-unavailable', `${name} halts dispatch`)
+    assert.equal(state.halt.codex, 'codex-unavailable', `${name} fills the codex slot of the halt record`)
     assert.equal(state.units.a.status, 'pending', `${name} leaves the unit resumable, never quarantined`)
     assert.ok(state.degradations.some((d) => d.kind === 'codex-unavailable'), `${name} is ledgered`)
   }

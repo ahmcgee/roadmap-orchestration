@@ -72,11 +72,17 @@ export function assertCksumVerified(prompt, file, content, who) {
 // `codex login status` -> the /logged in/i probe test — runs for real instead of being
 // short-circuited by a canned verdict. A canned {ok:true} here would prove nothing about the code
 // that reads the results, which is the whole point of moving those decisions into the script.
+// The host-health defaults are a HEALTHY box: pid cgroup nearly empty, a reaping PID 1, an idle
+// load. A test that wants a sick box overrides `env-probe:` with its own stdout (see wave-policy).
 const courierStdout = (cmd, head) =>
   /\brev-parse HEAD\b/.test(cmd) ? head
     : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
       : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
-        : ''
+        : /pids\.current/.test(cmd) ? '412\n36792'
+          : /^ps -p 1\b/.test(cmd) ? 'init'
+            : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
+              : /^nproc$/.test(cmd) ? '16'
+                : ''
 export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   const block = prompt.split('\nCommands:\n')[1] ?? ''
   const commands = block.split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
@@ -127,6 +133,8 @@ const DEFAULTS = [
   // one-commit run; tests probing failure axes (exit!=0, no commits, limitHit, timeout) override
   // with their own `codex` block.
   [(l) => l.startsWith('codex-probe:'), (b, p) => courierResult(p, b)],
+  // Host-health preflight (pid-cgroup headroom, PID 1, load) — a courier like the codex probe.
+  [(l) => l.startsWith('env-probe:'), (b, p) => courierResult(p, b)],
   // The cross-model spec critique fires on EVERY fresh build whose risk is in planCheckRisk
   // (the shipped default is all three tiers), so it needs a default or every wave records four
   // spurious degradations. Clean-and-silent: ok with nothing to say, so the plan-check prompt
@@ -195,8 +203,9 @@ export function conformsToSchema(result, schema) {
 // makeAgent(rules, baseSha) — `fn` is the `agent` global. rules: [{match: RegExp (tested
 // against opts.label), result: object | (prompt, opts) => object|Promise|throws}], first match
 // wins; unmatched labels with no built-in default throw (fail-loud). A rule's result function
-// may throw to inject errors (see structuredOutputError). Every invocation is recorded to
-// `calls` at call time (so a deferred/parked result is still recorded in issue order).
+// may throw to inject errors (see structuredOutputError), or return `null` to simulate the
+// platform's own death signal (agent() resolves to null when a subagent dies). Every invocation is
+// recorded to `calls` at call time (so a deferred/parked result is still recorded in issue order).
 export function makeAgent(rules = [], baseSha = BASE_SHA) {
   const calls = []
   const fn = (prompt, opts = {}) => {
@@ -224,6 +233,10 @@ export function makeAgent(rules = [], baseSha = BASE_SHA) {
       }
       let val = typeof producer === 'function' ? producer(prompt, opts) : producer
       val = await val // a throwing producer rejects here, before conformance
+      // `null` is not schema drift — it is the platform's OTHER death signal. agent() RESOLVES to
+      // null (with no error object at all) when a subagent dies, which is a different code path in
+      // the scripts from a throw, and a rule returning null is the only way to simulate it.
+      if (val === null) return null
       if (opts.schema && !conformsToSchema(val, opts.schema))
         throw new Error(
           `fakes.makeAgent: canned result for "${label}" violates its schema — ` +

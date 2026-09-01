@@ -611,8 +611,14 @@ function predicates(census, withheldIds) {
   const crossedContingent = plan.edges.filter((e) =>
     e.mode === 'contingent' && units[e.from]?.status === 'merged' && units[e.to]?.status !== 'merged' &&
     (withheldIds.has(e.to) || !inScopeIds.has(e.to)))
-  const contractDebt = debt.filter((d) => d && d.kind === 'contract')
-  const nonContractDebt = debt.filter((d) => d && d.kind !== 'contract')
+  // `rebanked` items are excluded: a contract mismatch banked against a unit whose work had
+  // already landed is a ghost of a finding the branch resolved (the harness stamps them — see
+  // noteMismatch), and on a resume the cached report replays it verbatim. Forcing a
+  // contract-amendment return to the root on one of those drags the whole arc back for an
+  // amendment nobody needs (arc-observed 2026-08-25). They are still DEBT — they bank with
+  // everything else below — they just no longer escalate.
+  const contractDebt = debt.filter((d) => d && d.kind === 'contract' && !d.rebanked)
+  const nonContractDebt = debt.filter((d) => d && (d.kind !== 'contract' || d.rebanked))
   // Only UNRESOLVED quarantines force tier 3. A unit already superseded or cut is inScope:false in
   // the plan (its record stays 'quarantined' — the harness never rewrites an existing record), so
   // excluding out-of-scope ids stops a respecced quarantine from re-triaging forever.
@@ -979,12 +985,15 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       { model: 'haiku', effort: 'low', label: `persist-debt:w${N}`, phase: 'Persist', schema: S.ok },
       ' (create parent directories if needed)')
 
-  // Codex hard stop (Codex is the only implementer — there is no lane to fall back to). The
-  // harness already halted dispatch and parked in-flight units; no census/triage spend against a
-  // wave the root must hand to the human anyway (re-auth, or wait out the usage-limit window,
-  // then relaunch — state and parked units resume cleanly).
-  if (state.codex?.halt)
-    return await ret(state.codex.halt, 4, { parked: Object.entries(state.units ?? {})
+  // Wave-level halt (`state.halt.reason`, one of: codex-unavailable / codex-usage-limit — Codex is
+  // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper —
+  // the box cannot support the work; platform-outage — required agent results stopped arriving).
+  // The harness already halted dispatch and parked in-flight units; no census/triage spend against
+  // a wave the root must hand to the human anyway (re-auth, recreate the container, or wait out the
+  // outage window, then relaunch — state and parked units resume cleanly). The harness picks the
+  // winning reason so this precedence is never duplicated here.
+  if (state.halt?.reason)
+    return await ret(state.halt.reason, 4, { parked: Object.entries(state.units ?? {})
       .filter(([, u]) => u.parked).map(([id]) => id) })
 
   // 4. Census (Haiku) — feedback + quarantine folder listing. A dead census degrades to an empty

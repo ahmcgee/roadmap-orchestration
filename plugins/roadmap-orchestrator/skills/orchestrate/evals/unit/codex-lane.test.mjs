@@ -88,7 +88,7 @@ test('a lane shape: probe + codex-build replace the Claude implementation lane e
   assert.equal(calls.find((c) => c.label === 'codex-build:a').model, 'haiku')
   assert.equal(state.codex.available, true, 'a green probe records availability in the wave state')
   assert.equal(state.codex.probed, 1)
-  assert.equal(state.codex.halt, undefined, 'nothing halted')
+  assert.equal(state.halt, undefined, 'nothing halted')
 })
 
 // Rounds counters are the measurable ceiling on runaway revision loops (the paid fixtures assert
@@ -178,7 +178,8 @@ test('d probe failure: nothing dispatches, units stay pending, the wave halts re
   assert.ok(!has(calls, 'setup:'), 'ready() gates on the halt, so not even a worktree is built')
   assert.equal(state.units.a.status, 'pending', 'a lapsed login is not a unit defect — never quarantine')
   assert.equal(state.units.b.status, 'pending')
-  assert.equal(state.codex.halt, 'codex-unavailable')
+  assert.equal(state.halt.reason, 'codex-unavailable')
+  assert.equal(state.halt.codex, 'codex-unavailable')
   assert.equal(state.codex.available, false)
 
   const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
@@ -242,7 +243,8 @@ test('f limitHit: halts new dispatch mid-wave; the in-flight unit finishes, the 
   const state = await runWave(fn, makePlan([unit('a'), unit('b')],
     [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }]), makeState(), { warmLanes: false })
 
-  assert.equal(state.codex.halt, 'codex-usage-limit')
+  assert.equal(state.halt.reason, 'codex-usage-limit')
+  assert.equal(state.halt.codex, 'codex-usage-limit')
   assert.equal(state.codex.available, false)
   assert.ok(state.degradations.some((d) => d.kind === 'codex-usage-limit'), 'the limit is ledgered for the root')
 
@@ -584,7 +586,8 @@ test('j conductor: a codex halt early-returns at tier 4, before any census or tr
     integrationBranch: 'roadmap/session-codex', integrationTip: BASE_SHA, consultsUsed: 0,
     spend: {}, wave: 1, debt: [],
     units: { a: { status: 'pending', parked: true, note: 'parked mid-polish: codex-usage-limit' }, b: { status: 'pending' } },
-    codex: { probed: 1, available: false, halt: 'codex-usage-limit' },
+    halt: { reason: 'codex-usage-limit', codex: 'codex-usage-limit' },
+    codex: { probed: 1, available: false },
   })
 
   assert.equal(res.reason, 'codex-usage-limit', 'the halt value IS the return reason — the root reads it verbatim')
@@ -603,7 +606,8 @@ test('j2 conductor: the unavailable-probe halt returns its own reason, not a gen
     integrationBranch: 'roadmap/session-codex', integrationTip: BASE_SHA, consultsUsed: 0,
     spend: {}, wave: 1, debt: [],
     units: { a: { status: 'pending' }, b: { status: 'pending' } },
-    codex: { probed: 1, available: false, halt: 'codex-unavailable' },
+    halt: { reason: 'codex-unavailable', codex: 'codex-unavailable' },
+    codex: { probed: 1, available: false },
   })
   assert.equal(res.reason, 'codex-unavailable', 're-auth and wait-out-the-limit are different human actions')
   assert.deepEqual(res.parked, [], 'a pre-dispatch halt parks nothing — the units never started')
