@@ -147,7 +147,9 @@ const cSpend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, boundaryTriages: 0, bou
 let cMerged = { ...cSpend }
 // Budget arithmetic counts MODEL-TIER keys only: spend also carries derived counters
 // (planChecks, gateRounds, boundaryTriages, …) that subset the tier counts — summing
-// everything double-counts each gate/check round and trips the guard early.
+// everything double-counts each gate/check round and trips the guard early. `codex` and the
+// codexRuns/token counters stay out for a different reason: the budget guarded here is CLAUDE
+// attention, and codex is precisely the thing 0.14.0 moves work ONTO.
 const TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku']
 const sumTiers = (o) => TIER_KEYS.reduce((a, k) => a + (typeof o?.[k] === 'number' && Number.isFinite(o[k]) ? o[k] : 0), 0)
 const initialSpend = { ...(inState.spend ?? {}) }

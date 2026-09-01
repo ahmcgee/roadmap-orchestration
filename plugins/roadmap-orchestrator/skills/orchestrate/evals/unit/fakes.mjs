@@ -140,7 +140,12 @@ const DEFAULTS = [
   // (the shipped default is all three tiers), so it needs a default or every wave records four
   // spurious degradations. Clean-and-silent: ok with nothing to say, so the plan-check prompt
   // stays byte-identical to the no-critique form.
-  [(l) => l.startsWith('codex-spec-review:'), () => ({ ok: true, questions: [], risks: [], notes: '' })],
+  [(l) => l.startsWith('codex-spec-review:'), () => codexRoleOk({ questions: [], risks: [], notes: '' })],
+  // The CODEX ROLE ADAPTER (`run(brief, {model:'codex', …})`) dispatches one Haiku courier whose
+  // report is the caller's schema nested under `result`. Tests drive a synthetic role by labelling
+  // it `codex-role:<name>`; real roles keep their own label (`codex-spec-review:` above) and get
+  // their own entry, exactly like every other lane here.
+  [(l) => l.startsWith('codex-role:'), () => codexRoleOk({})],
   [(l) => l.startsWith('codex-build-retry:'), () => implCodexOk()],
   [(l) => l.startsWith('codex-build:'), () => implCodexOk()],
   [(l) => l.startsWith('codex-fix:'), () => implCodexOk()],
@@ -186,6 +191,14 @@ const implOk = () => ({ summary: 'done', filesChanged: [] })
 export const codexMetaOk = () => ({ exitCode: 0, commits: 1, turns: 1, inputTokens: 0, outputTokens: 0,
   timedOut: false, doneMarker: true, limitHit: false, sessionCaptured: true, error: '' })
 export const implCodexOk = () => ({ ...implOk(), codex: codexMetaOk() })
+// A codex ROLE courier's report. Its `codex` block carries no `commits`/`doneMarker` — a role has
+// no diff base and no DONE-WHEN file — which is exactly the shape S.codexRoleReport asks for.
+export const codexRoleMetaOk = () => ({ exitCode: 0, turns: 1, inputTokens: 0, outputTokens: 0,
+  timedOut: false, limitHit: false, sessionCaptured: true, error: '' })
+export const codexRoleOk = (result) => ({ ok: true, result, codex: codexRoleMetaOk(), notes: '' })
+// A role whose codex run died: no `result` at all (the courier is forbidden from inventing one).
+export const codexRoleDead = (codex = {}) =>
+  ({ ok: false, codex: { ...codexRoleMetaOk(), exitCode: 1, ...codex }, notes: 'no last-message file' })
 const mergeOk = (b) => ({ merged: true, suitePass: true, head: b, detail: '' })
 
 const defaultFor = (label, baseSha, prompt, opts) => {
