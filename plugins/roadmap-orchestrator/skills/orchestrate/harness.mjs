@@ -103,6 +103,14 @@ const C = {
   codexFixTimeoutMin: 45,     // resume-round deadline (fix rounds and adjudicated resumes)
   codexSteerModel: 'haiku',   // steering tier; 'sonnet' if Haiku proves unable to drive it (P2)
   codexMaxConcurrent: 4,      // semaphore on concurrent codex processes (one OpenAI account)
+  gateMaxConcurrent: 4,       // semaphore on concurrent TEST lanes (verify, gate re-verify, and the
+                              //   integrated suite at merge). Unit dispatch is deliberately unbounded —
+                              //   the units are cheap to start and mostly wait on codex — but their test
+                              //   lanes are not: N full suites on one box is load the orchestrator itself
+                              //   creates, and wall-clock budgets are then judged against a host it
+                              //   saturated (arc-observed: loads of 28-56 on 16 cores, three false
+                              //   env-quarantines in one wave). Throughput-only, like codexMaxConcurrent:
+                              //   prompts are unaffected, so resumeFromRunId replay is safe.
   codexProfile: null,         // -p <profile> ($CODEX_HOME/<name>.config.toml) when set
   ...(plan.config ?? {}),
   ...(overrides ?? {}),
@@ -419,6 +427,103 @@ const degrade = (o) => {
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
 
+/* ------------- host load: recorded, never gated on (wave-scoped) -------- */
+// Two closed commands appended to every lane that spends the box's cores. Courier work — the
+// lane reports the numbers, nobody judges them. The point is auditability: a unit quarantined for
+// breaching a wall-clock budget at load 35 on 16 cores is a scheduling artefact, and without the
+// numbers on the record that is indistinguishable from a real defect (arc-observed 2026-08-26).
+// Deliberately NOT a gate: the load is largely self-inflicted, so waiting on it would wait on our
+// own siblings. (Docs pass: fold onto the shared courier-prompt helper when one lands.)
+const LOAD_FACTS =
+  'Also report loadavg1 = the first number printed by `cat /proc/loadavg`, and cpuCount = the number printed ' +
+  'by `nproc` — run those two commands exactly and report what they print, as numbers. '
+// Most recent load pair any lane reported, so a degradation raised where no verify result is in
+// hand (a codex wall-clock kill) can still cite the host it happened on.
+let lastLoad = null
+const noteLoad = (v) => {
+  if (typeof v?.loadavg1 === 'number' && typeof v?.cpuCount === 'number')
+    lastLoad = { loadavg1: v.loadavg1, cpuCount: v.cpuCount }
+}
+const loadNote = (v) => {
+  const l = (typeof v?.loadavg1 === 'number' && typeof v?.cpuCount === 'number') ? v : lastLoad
+  return l ? ` [host load ${l.loadavg1} on ${l.cpuCount} cpu]` : ''
+}
+
+/* ------------- shared-red circuit breaker (wave-scoped) ----------------- */
+// One pre-existing red outside every unit's diff used to be judged N times independently: N fix
+// rounds, N scope-creep patches to the same file on N branches, then quarantines for a failure no
+// unit caused (arc-observed 2026-08-25). The breaker collapses that into one signal. A failing
+// spec claimed by >= 2 units that appears in NONE of their diffs is not a unit defect — it is one
+// shared assertion. It is degraded ONCE, suppressed in every affected unit's fix rounds (the units
+// proceed on their remaining failures), and surfaced to the boundary as a FINDING.
+//
+// A finding, never a debt item, and that distinction is load-bearing: debt must never create a
+// wave (that brake is what makes arcs terminate), so a shared red rides the promote/escalation
+// path instead, which the cut line already brakes.
+const specOwners = new Map()   // failing spec path -> Set(unitId)
+const unitDiffs = new Map()    // unitId -> Set(diffFiles), the diff at the time of that verify
+const sharedReds = new Map()   // failing spec path -> { spec, units, wave }
+const noteFailingSpecs = (unitId, v) => {
+  noteLoad(v)
+  if (!v || v.pass || v.blocked) return
+  unitDiffs.set(unitId, new Set(v.diffFiles ?? []))
+  for (const f of v.failingSpecs ?? []) {
+    if (!f) continue
+    if (!specOwners.has(f)) specOwners.set(f, new Set())
+    specOwners.get(f).add(unitId)
+  }
+  for (const [f, owners] of specOwners) {
+    if (sharedReds.has(f) || owners.size < 2) continue
+    // If any claimant's own diff touches the spec, it is that unit's business, not a shared red.
+    if ([...owners].some((id) => unitDiffs.get(id)?.has(f))) continue
+    sharedReds.set(f, { spec: f, units: [...owners], wave: (prior.wave ?? 0) + 1 })
+    degrade({ label: `shared-red:${f}`, model: 'haiku', phase: 'Verify', kind: 'shared-red',
+      what: `${f} fails for ${owners.size} units (${[...owners].join(', ')}) and appears in none of their ` +
+        `diffs — a shared pre-existing red, not a unit defect${loadNote(v)}. Fix rounds for it are suppressed ` +
+        `on every affected unit, and it goes to the boundary as ONE finding to adjudicate` })
+  }
+}
+const suppressedSpecs = (v) => (v?.failingSpecs ?? []).filter((f) => sharedReds.has(f))
+// True when the breaker has taken over this verify's ENTIRE red: the unit has nothing of its own
+// left to fix, so it proceeds to its gates on the work it actually did rather than burning fix
+// rounds — or a quarantine — on somebody else's assertion.
+const fullySuppressed = (v) =>
+  !!v && !v.pass && !v.blocked && (v.failingSpecs?.length ?? 0) > 0 &&
+  suppressedSpecs(v).length === v.failingSpecs.length
+const sharedRedClause = (v) => {
+  const f = suppressedSpecs(v)
+  return f.length
+    ? ` These failing specs are a SHARED pre-existing red — they fail for several units and no unit's diff ` +
+      `touches them: ${f.join(', ')}. They are being adjudicated once at the boundary. Do not attempt to fix ` +
+      `them and do not edit them; fix only the remaining failures.`
+    : ''
+}
+
+/* ------------- gate scope rulings + precedent (wave-scoped) ------------- */
+// The breach was always recorded (a `scope-growth` degradation); the gate's approve/revert VERDICT
+// on each out-of-scope file never was, so a later gate had nothing to be consistent with and two
+// identical breaches in one wave got opposite answers (arc-observed 2026-08-23). Record the
+// rulings, then hand a gate the ones its siblings already made.
+const scopeRulings = []
+const recordScopeRulings = (unitId, g) => {
+  for (const r of g?.scopeRulings ?? [])
+    if (r?.file && (r.verdict === 'approve' || r.verdict === 'revert'))
+      scopeRulings.push({ unit: unitId, file: r.file, verdict: r.verdict })
+}
+// Deterministically ordered and capped, so the clause is a pure function of the rulings recorded
+// so far. It IS order-dependent across concurrent units, which is the one price here: a resume
+// whose gate ordering differs sees a different prompt and re-runs the call instead of replaying it
+// from the journal — a cache miss, never a wrong answer.
+const scopePrecedent = (unitId) => {
+  const rows = scopeRulings.filter((r) => r.unit !== unitId)
+    .sort((a, b) => (a.unit === b.unit ? a.file.localeCompare(b.file) : a.unit.localeCompare(b.unit)))
+    .slice(0, 12)
+  return rows.length
+    ? ` Precedent — rulings other gates already made on out-of-scope files this wave. Follow them unless you ` +
+      `can say what makes this case different: ${rows.map((r) => `${r.file} (${r.unit}) → ${r.verdict}`).join('; ')}.`
+    : ''
+}
+
 // One code-level retry on structured-output failure: agents deep in tool-work
 // occasionally end their turn without a valid structured report (observed ~1 in 15
 // impl-stage calls across eval runs). A single retry with an explicit report-last
@@ -507,6 +612,11 @@ const debtItem = (req) => obj({
 const debtArr = { type: 'array', items: debtItem(['what']) }
 const gateDebtArr = { type: 'array', items: debtItem(['what', 'bankReason']) }
 const directiveArr = { type: 'array', items: obj({ what: { type: 'string' }, why: { type: 'string' } }, ['what', 'why']) }
+// One entry per out-of-scope file the gate adjudicated: the VERDICT, which was previously never
+// written down anywhere (only the breach was). Wave-scoped precedent is built from these, so two
+// identical breaches in one wave get the same answer. A completeness list bounded by the diff.
+const scopeRulingArr = { type: 'array', items: obj({ file: { type: 'string' },
+  verdict: oneOf(['approve', 'revert']) }, ['file', 'verdict']) }
 // Codex process metadata, attached by the steering agent to its S.impl-shaped report. All
 // scalars read mechanically from the artifact dir (exit-code file, events.jsonl greps, git) —
 // never recalled from memory; `error` is the one capped prose field (the tail of the error
@@ -589,7 +699,8 @@ const S = {
   opusGate: obj({
     verdict: oneOf(['approve', 'revise', 'escalate']),
     trigger: oneOf(['stuck', 'hard-tradeoff', 'foundational', 'oversight', 'none']),
-    directives: directiveArr, debt: gateDebtArr, notes: { type: 'string' },
+    directives: directiveArr, debt: gateDebtArr, scopeRulings: scopeRulingArr,
+    notes: { type: 'string' },
   }, ['verdict']),
   // Cross-model spec critique (codex-spec-review) — the steering agent's report. `questions`/
   // `risks` are sampling arrays (worst-first, verbatim from the critique); best-effort, gates
@@ -608,6 +719,15 @@ const S = {
     // The diff's name-only file list — the objective input to the code-side scope-growth check
     // (envelope pinning + the scope-creep gate annotation). A completeness list, never capped.
     diffFiles: arr('string'),
+    // The failing tests' SPEC FILES (repo-relative paths), one entry per distinct file — courier
+    // work, not judgment. Feeds the shared-red circuit breaker, which needs a stable key it can
+    // intersect with `diffFiles`; `failures` is verbatim runner output and cannot be keyed on.
+    // A completeness list, never capped. Optional: absence only costs the breaker a signal.
+    failingSpecs: arr('string'),
+    // Host-load facts as read off the box this lane ran on. Recorded, never gated on — the wave's
+    // own concurrency is what produces high load, so gating on it would wait on siblings; but a
+    // wall-clock verdict ("this unit breached its 100ms budget") is unauditable without it.
+    loadavg1: { type: 'number' }, cpuCount: { type: 'number' },
     notes: { type: 'string' },
   }, ['pass', 'blocked', 'failures', 'contractSurfaceTouched', 'diffFiles']),
   // (The standalone adversarial-review stage — and its S.review schema — was removed with the
@@ -615,6 +735,7 @@ const S = {
   gate: obj({
     verdict: oneOf(['approve', 'revise', 'quarantine']),
     directives: directiveArr, debt: gateDebtArr,
+    scopeRulings: scopeRulingArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
   // 'confirm' exists for the specGap consult (the decision stands as built — no fix round);
@@ -661,7 +782,13 @@ const S = {
     }, ['id', 'goal', 'acceptance']) },
     notes: { type: 'string', maxLength: 500 },
   }, ['findings', 'fixUnits']),
-  flake: obj({ runs: { type: 'number' }, flips: arr('string'), detail: { type: 'string', maxLength: 400 } },
+  // `loads` is the band's per-run load record (one loadavg1 sample taken before each run) plus the
+  // box's cpuCount. The band's real co-tenants are its own sibling boundary agents and the preview
+  // server — the unit gates have all drained by then — so the flips are not read as caused by the
+  // gates; the numbers are here so a triager can tell a flip under saturation from a real sentinel
+  // instead of guessing. Recorded, never gated on. Completeness lists, never capped.
+  flake: obj({ runs: { type: 'number' }, flips: arr('string'), loads: arr('number'),
+    cpuCount: { type: 'number' }, detail: { type: 'string', maxLength: 400 } },
     ['runs', 'flips']),
   // Per-wave design reconcile. The severity split is the atlas2 handoff's own taxonomy, because it
   // is the one that changes what you DO: a bug is a fix unit, an adoption gap is a fix unit that
@@ -765,6 +892,13 @@ const serialize = () => ({
   ...(((prior.degradations?.length ?? 0) + degradations.length)
     ? { degradations: [...(prior.degradations ?? []), ...degradations] } : {}),
   ...(owed.length ? { owed } : {}),
+  // Shared pre-existing reds the circuit breaker took over this wave. The conductor folds these
+  // into the boundary FINDINGS (never into debt — debt must not create a wave) so the triager
+  // adjudicates the red once instead of every unit fighting it independently.
+  ...(sharedReds.size ? { sharedReds: [...sharedReds.values()] } : {}),
+  // This wave's exit-gate rulings on out-of-scope files, so the root can audit consistency and a
+  // later gate has precedent to follow. Wave-scoped: rulings are about this wave's diffs.
+  ...(scopeRulings.length ? { scopeRulings } : {}),
   ...(boundary ? { boundary } : {}),
   // Codex availability, the conductor's early-return signal: a `halt` here means the wave
   // stopped dispatching (units parked, state resumable) and the ROOT must surface it to the
@@ -1031,8 +1165,17 @@ async function runBoundary() {
   const waveN = (prior.wave ?? 0) + 1
   const tip = integrationTip
   const explSha = previewSha ?? tip
-  const doExplore = previewStatus === 'live'
-  const doHealth = C.healthCheck !== 'off'
+  // Owed-only mode. The arc's FINAL wave is expected to run with `boundary:'off'`, and an owed
+  // explorer/design job used to be deferred there to a boundary that never came — it left the run
+  // as a manual chore in the return envelope (arc-observed). So when the boundary is off but the
+  // ledger is not empty, this phase still runs, restricted to exactly the jobs that are owed:
+  // the debt is paid in the last boundary that exists. Nothing else runs, so a switched-off
+  // boundary stays switched off for every job that isn't owed.
+  const owedOnly = C.boundary === 'off'
+  const isOwed = (job) => owed.some((o) => o.job === job)
+  const dueHere = (job, base) => base && (!owedOnly || isOwed(job))
+  const doExplore = dueHere('explorer', previewStatus === 'live')
+  const doHealth = dueHere('health', C.healthCheck !== 'off')
   // Design-cited units that reached `merged` IN THIS WAVE. The plan is the authority on what is
   // UI work — deliberately NO diff-path heuristic (*.tsx and friends), because a unit that touches
   // a designed surface without citing it is the plan-pack defect Phase 0 hunts, and papering over
@@ -1042,8 +1185,9 @@ async function runBoundary() {
   // still design-cited) so the debt is paid, not merely remembered.
   const owedDesignIds = new Set(owed.filter((o) => o.job === 'design').flatMap((o) => o.units ?? []))
   const designUnits = plan.units.filter((u) => u.design?.length && rec(u.id)?.status === 'merged' &&
-    (prior.units?.[u.id]?.status !== 'merged' || owedDesignIds.has(u.id)))
-  const doDesign = designUnits.length > 0 && previewStatus === 'live'
+    (owedOnly ? owedDesignIds.has(u.id)
+      : (prior.units?.[u.id]?.status !== 'merged' || owedDesignIds.has(u.id))))
+  const doDesign = dueHere('design', designUnits.length > 0 && previewStatus === 'live')
   const [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
       `You are the wave-${waveN} runtime explorer for a roadmap build. The integrated result is live as a ` +
@@ -1071,11 +1215,15 @@ async function runBoundary() {
       `Hold \`notes\` to a short paragraph (max 500 characters). ` + TERSE,
       { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
     ).catch(() => null),
-    !(doHealth && C.flakeReruns > 0) ? null : run(
+    !(doHealth && C.flakeReruns > 0 && dueHere('flake', true)) ? null : run(
       STRICT +
       `In the integration worktree at ${intWt}: run the project's full test suite ${C.flakeReruns} times in a ` +
       `row (commands: ${brief}). Report runs = how many completed, and in flips the exact name of every test ` +
-      `that changed pass/fail between runs (empty when stable). Fix nothing. Keep \`detail\` to one sentence (max 400 characters). ${TERSE}`,
+      `that changed pass/fail between runs (empty when stable). Immediately BEFORE each run, read the first ` +
+      `number printed by \`cat /proc/loadavg\` and report those samples in \`loads\`, in run order; also report ` +
+      `cpuCount = the number printed by \`nproc\`. A flip is not worth less because the box was busy — the ` +
+      `numbers are recorded so a triager can tell a saturated run from a real sentinel, and you must not ` +
+      `withhold, wait, or re-run on account of them. Fix nothing. Keep \`detail\` to one sentence (max 400 characters). ${TERSE}`,
       { model: 'haiku', phase: 'Boundary', label: `flake:w${waveN}`, schema: S.flake }
     ).catch(() => null),
     !doDesign ? null : run(
@@ -1112,11 +1260,11 @@ async function runBoundary() {
   }
   const previewWhy = previewStatus === 'failed' ? 'preview failed at setup — fix the primary checkout and relaunch'
     : 'no live preview this wave'
-  settleOwed('explorer', previewStatus !== 'none', !!expl,
+  settleOwed('explorer', dueHere('explorer', previewStatus !== 'none'), !!expl,
     doExplore ? 'explorer agent produced no report' : previewWhy)
   settleOwed('health', doHealth, !!hlth, 'health assessor produced no report')
-  settleOwed('flake', doHealth && C.flakeReruns > 0, !!flk, 'flake re-runs produced no report')
-  settleOwed('design', designUnits.length > 0, !!dsgn,
+  settleOwed('flake', dueHere('flake', doHealth && C.flakeReruns > 0), !!flk, 'flake re-runs produced no report')
+  settleOwed('design', dueHere('design', designUnits.length > 0), !!dsgn,
     doDesign ? 'design reconcile produced no report' : previewWhy,
     designUnits.map((u) => u.id))
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
@@ -1146,7 +1294,9 @@ async function runBoundary() {
     `\n\n## Fix-unit drafts\n` +
     ((hlth?.fixUnits ?? []).map((u) => `- ${u.id}: ${u.goal}\n  - files: ${(u.files ?? []).join(', ')}\n  - acceptance: ${u.acceptance.join(' · ')}`).join('\n') || 'None.') +
     `\n\n## Flake re-runs\n` +
-    (flk ? (flk.flips.length ? `${flk.runs} runs; flips: ${flk.flips.join(', ')}` : `${flk.runs} runs; stable`) : 'not run') +
+    (flk ? (flk.flips.length ? `${flk.runs} runs; flips: ${flk.flips.join(', ')}` : `${flk.runs} runs; stable`) +
+      (flk.loads?.length ? ` (loadavg1 per run: ${flk.loads.join(', ')}${flk.cpuCount ? ` on ${flk.cpuCount} cpu` : ''})` : '')
+      : 'not run') +
     (flk?.detail ? ` — ${flk.detail}` : '') + '\n',
     { model: 'haiku', effort: 'low', phase: 'Boundary', label: `health-write:w${waveN}`, schema: S.ok }).catch(() => null))
   if (dsgn) writes.push(run(
@@ -1569,6 +1719,25 @@ const withCodexSlot = async (fn) => {
   codexSlots++
   try { return await fn() } finally { codexSlots--; codexQueue.shift()?.() }
 }
+// Counting semaphore on concurrent TEST lanes — the codex semaphore's twin, a different resource.
+// Codex runs are gated by one OpenAI account; test lanes are gated by the HOST. Everything that
+// spends the box's cores goes through here: the polish-loop verify, every gate re-verify, and the
+// integrated suite at merge. Timing-only — no prompt changes, so replay is safe — and it cannot
+// deadlock: a slot is always released by the call that took it, and nothing holding one waits on
+// another. When a slot is free it returns fn()'s OWN promise rather than a wrapper, so an
+// uncontended lane settles on exactly the tick it did before: the checkpoint chain coalesces on
+// microtask timing, and an extra tick per merge is an extra state.json fan-out per wave.
+let gateSlots = 0
+const gateQueue = []
+const withGateSlot = (fn) => {
+  if (gateSlots >= C.gateMaxConcurrent)
+    return new Promise((r) => gateQueue.push(r)).then(() => withGateSlot(fn))
+  gateSlots++
+  const release = () => { gateSlots--; gateQueue.shift()?.() }
+  const p = fn()
+  p.then(release, release)   // releases a tick AFTER p settles; never delays p itself
+  return p
+}
 // Degradation + spend bookkeeping shared by build and fix steps. A dead process is not a dead
 // unit (the branch is judged on its commits); every entry names the artifact dir to read.
 const noteCodexMeta = (unit, r, dir, label) => {
@@ -1584,7 +1753,7 @@ const noteCodexMeta = (unit, r, dir, label) => {
         `wave; state is checkpointed and the arc resumes cleanly after the limit window` })
   } else if (m.timedOut) {
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-timeout',
-      what: `codex run for ${unit.id} exceeded its deadline and was killed (${dir}) — ` +
+      what: `codex run for ${unit.id} exceeded its deadline and was killed (${dir})${loadNote()} — ` +
         `${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
   } else if (m.exitCode !== 0) {
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-exec',
@@ -1666,6 +1835,19 @@ async function runUnit(unit) {
   // used to license further fixing.
   let envelope = null
   let scopeGrew = []
+  // Every file this unit has EVER reached outside its envelope. The re-emit guard used to be set
+  // equality, so a unit that added one more file on the next fix round degraded a second time for
+  // the same incident (arc-observed: 22 `scope-growth` rows, ~15 real incidents). Superset-aware:
+  // only a genuinely new file re-degrades.
+  const scopeGrewSeen = new Set()
+  // A `blocked` verify is a verdict about the ENVIRONMENT, and the host's load is the fact that
+  // most often explains one. Record it beside the quarantine so the verdict is auditable.
+  const envBlocked = (label, v) => {
+    degrade({ label, model: 'haiku', phase: 'Verify', kind: 'verify-blocked',
+      what: `verification tooling could not run for ${unit.id}${loadNote(v)} — quarantined as an environment ` +
+        `failure, not a unit defect; fix provisioning, not the spec` })
+    return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', v)
+  }
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
   // diff nobody described. Sticky, and forces the frontier gate — the same compensation
@@ -1877,7 +2059,7 @@ async function runUnit(unit) {
   setStage(unit.id, 'polish')
   let verify
   for (let round = 0; round <= C.maxFixRounds; round++) {
-    verify = await run(
+    verify = await withGateSlot(() => run(
       STRICT +
       `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
       `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
@@ -1885,26 +2067,31 @@ async function runUnit(unit) {
       `lines of \`git diff --name-only ${base}..HEAD\`, and check whether that diff touches any path under ` +
       `.roadmap/ (report that as contractSurfaceTouched — ` +
       `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
-      `verbatim error output, never paraphrased. If the tooling itself cannot run (missing dependency, broken ` +
-      `command, environment failure) — as opposed to an assertion failing — report blocked:true and stop. ` +
-      `Do not fix anything.`,
-      { model: 'haiku', phase: 'Verify', label: `verify:${unit.id}#${round}`, schema: S.verify })
-    if (verify.blocked)
-      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+      `verbatim error output, never paraphrased, and \`failingSpecs\` = the repo-relative path of every test ` +
+      `FILE that has a failure, one entry per file. ${LOAD_FACTS}If the tooling itself cannot run (missing ` +
+      `dependency, broken command, environment failure) — as opposed to an assertion failing — report ` +
+      `blocked:true and stop. Do not fix anything.`,
+      { model: 'haiku', phase: 'Verify', label: `verify:${unit.id}#${round}`, schema: S.verify }))
+    if (verify.blocked) return envBlocked(`verify:${unit.id}#${round}`, verify)
+    // Cross-unit aggregation: a red that several units share and none of them caused is taken over
+    // by the breaker here, before this unit spends a fix round on it.
+    noteFailingSpecs(unit.id, verify)
     // Adopted/existing-branch entry has no plan pass: the envelope is the diff AT ENTRY —
     // pinned from the first verify and never widened after (that distinction is the mechanism).
     if (!envelope && verify.diffFiles?.length) envelope = [...verify.diffFiles]
     else if (envelope && verify.diffFiles) {
       const env = new Set(envelope)
       const grew = verify.diffFiles.filter((f) => !env.has(f) && !scopeAllowed(f))   // scopeAllow: never growth
-      if (grew.length && grew.join('\n') !== scopeGrew.join('\n'))
+      if (grew.some((f) => !scopeGrewSeen.has(f)))
         degrade({ label: `verify:${unit.id}#${round}`, model: 'haiku', phase: 'Verify', kind: 'scope-growth',
           what: `unit ${unit.id}'s diff reaches ${grew.length} file(s) outside its pinned scope: ` +
             `${grew.slice(0, 8).join(', ')}${grew.length > 8 ? ', …' : ''} — the exit gate adjudicates each ` +
             `(necessary vs creep); this is a signal, never a licence to fix them` })
+      for (const f of grew) scopeGrewSeen.add(f)
       scopeGrew = grew
     }
-    if (verify.pass) break
+    // A unit whose entire red belongs to the breaker has nothing of its own left to fix.
+    if (verify.pass || fullySuppressed(verify)) break
 
     // Mid-loop rescue: fired by code over objective signals only, and capped.
     let directive = null
@@ -1930,7 +2117,7 @@ async function runUnit(unit) {
 
     bumpRound(unit.id, 'fix')
     const fixed = await fixStep(unit, w, base, envelope, { step: `fix${round}`, label: `codex-fix:${unit.id}#${round}` },
-      `Failing checks (verbatim): ${JSON.stringify(verify.failures)}.` +
+      `Failing checks (verbatim): ${JSON.stringify(verify.failures)}.${sharedRedClause(verify)}` +
       `${directive ? ` Architect direction: ${directive.guidance}` : ''}${designClause(unit)}` +
       ` If a fix forces you to deviate from a frozen contract surface, report it in \`contractMismatch\` ` +
       `(one or two sentences, max 300 characters).`)
@@ -1940,14 +2127,21 @@ async function runUnit(unit) {
     noteMismatch(fixed)
     noteGap(fixed)
   }
-  if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
-  const gateReverify = (label) => run(
-    STRICT +
-    `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
-    `from ${spec} (commands: ${brief}). Report failures verbatim, and \`diffFiles\` = the exact output lines ` +
-    `of \`git diff --name-only ${base}..HEAD\`. blocked:true if the tooling itself cannot ` +
-    `run. Fix nothing.`,
-    { model: 'haiku', phase: 'Verify', label, schema: S.verify })
+  // Quarantining a unit for a red the breaker owns would be exactly the failure the breaker exists
+  // to stop — one shared assertion killing every unit in the wave.
+  if (!verify.pass && !fullySuppressed(verify)) return quarantine(unit, 'verification never passed', verify)
+  const gateReverify = async (label) => {
+    const v = await withGateSlot(() => run(
+      STRICT +
+      `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
+      `from ${spec} (commands: ${brief}). Report failures verbatim, \`failingSpecs\` = the repo-relative path ` +
+      `of every test FILE that has a failure, and \`diffFiles\` = the exact output lines ` +
+      `of \`git diff --name-only ${base}..HEAD\`. ${LOAD_FACTS}blocked:true if the tooling itself cannot ` +
+      `run. Fix nothing.`,
+      { model: 'haiku', phase: 'Verify', label, schema: S.verify }))
+    noteFailingSpecs(unit.id, v)
+    return v
+  }
 
   // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
   // adjudication — the polish loop's rescue only fires on failure signals, and the class this
@@ -2055,8 +2249,7 @@ async function runUnit(unit) {
     // point of the release valve is that it can fire more than once on a long unit.
     noteGap(gFix)
     verify = await gateReverify(`gap-verify:${unit.id}#${stops}`)
-    if (verify.blocked)
-      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+    if (verify.blocked) return envBlocked(`gap-verify:${unit.id}#${stops}`, verify)
   }
 
   // Exit gate — Opus-first, escalating to the Fable architect only when the call is
@@ -2067,11 +2260,14 @@ async function runUnit(unit) {
   setStage(unit.id, 'gate')
   // Scope growth is adjudicated at the gate, where judgment already lives — annotate-and-decide,
   // not force-frontier (which would fire constantly on legitimately-underestimated file lists).
-  const scopeCreepClause = scopeGrew.length
+  // Evaluated per gate CALL, not once: the precedent it carries is this wave's sibling rulings,
+  // which accumulate while this unit is in flight.
+  const scopeCreepClause = () => scopeGrew.length
     ? ` This diff touches ${scopeGrew.length} file(s) outside the unit's pinned scope: ${scopeGrew.join(', ')}. ` +
       `Adjudicate each explicitly: necessary to satisfy the spec (say so and approve it), or scope creep to ` +
       `be reverted (a revise directive). Do not treat their presence as licence to review them as though ` +
-      `they were in scope.`
+      `they were in scope. Record one entry per file in \`scopeRulings\` ({file, verdict:"approve"|"revert"}) — ` +
+      `that record is what makes the next gate's answer consistent with yours.` + scopePrecedent(unit.id)
     : ''
   // Directive-cap enforcement, both gates: a cap on REPORTING, never on reading — overflow past
   // it is banked as debt (the ledger invariant), and the cap runs BEFORE the correctness-debt
@@ -2117,7 +2313,7 @@ async function runUnit(unit) {
         `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
-        `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
+        `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
         `as-is and personally vouch for it; "revise" if there is a concrete, mechanical fix you can specify and it ` +
         `needs no frontier judgment (give at most ${C.maxBlockingFindings} directives, worst first — what and ` +
         `why, not code); "escalate" to the frontier ` +
@@ -2128,6 +2324,7 @@ async function runUnit(unit) {
         `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
         { model: 'opus', effort: C.opusEffort, phase: 'Opus-gate', label: `opus-gate:${unit.id}#${g}`, schema: S.opusGate })
       capDirectives(og, 'opus-gate')
+      recordScopeRulings(unit.id, og)
       // Approve-with-correctness-debt is the verdict-downgrade path the discipline forbids: the
       // items become revise directives (rounds remaining) or force the frontier gate (round cap).
       // Coercion consumes the EXISTING gate rounds, so token cost stays bounded by maxGateRounds.
@@ -2162,8 +2359,7 @@ async function runUnit(unit) {
         break
       }
       verify = await gateReverify(`opus-gate-verify:${unit.id}#${g}`)
-      if (verify.blocked)
-        return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+      if (verify.blocked) return envBlocked(`opus-gate-verify:${unit.id}#${g}`, verify)
     }
     // Opus approved nothing across its rounds — whether it escalated or merely failed to
     // converge, the frontier architect decides next. Fall through to the Fable gate below.
@@ -2219,12 +2415,13 @@ async function runUnit(unit) {
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
       `actually wrong, the things a capable engineer plausibly overlooks — are exactly your job. ` +
       `${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}` +
-      `${FINDING_BAR('revise directive')}${scopeCreepClause}${directionClause}If revising, ` +
+      `${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}If revising, ` +
       `give at most ${C.maxBlockingFindings} specific directives, worst first: what and why, not code. ` +
       `${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${gapClause}${reportLostClause}` +
       `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     capDirectives(gate, 'frontier gate')
+    recordScopeRulings(unit.id, gate)
     // Same coercion as the Opus gate — but this IS the frontier, so at the round cap the items
     // bank at severity:major with a LOUD degradation instead of quarantining work the frontier
     // gate judged mergeable (banking + evidence beats destroying an approved unit).
@@ -2252,8 +2449,7 @@ async function runUnit(unit) {
     addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
     if (gFix.reportLost) reportLostEver = true
     verify = await gateReverify(`gate-verify:${unit.id}#${g}`)
-    if (verify.blocked)
-      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
+    if (verify.blocked) return envBlocked(`gate-verify:${unit.id}#${g}`, verify)
   }
   return quarantine(unit, 'architect gate did not converge')
 }
@@ -2296,7 +2492,7 @@ async function mergeUnit(unit) {
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
     `cleanly, run the project's full test suite (commands: ${brief}) and report the result.${prefixClause} ` +
     `Report the current HEAD sha either way.` + ghMerged(unit)
-  let res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge })
+  let res = await withGateSlot(() => run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge }))
 
   if (!res.merged && res.roadmapPaths?.length) {
     log(`${unit.id}: unit diff touches orchestrator-owned .roadmap/ (${res.roadmapPaths.join(', ')}) — stripping before merge`)
@@ -2317,7 +2513,7 @@ async function mergeUnit(unit) {
     if (!strip?.ok)
       return quarantine(unit, `unit diff touches .roadmap/ (${res.roadmapPaths.join(', ')}) and the strip commit ` +
         `failed — nothing merged; the branch is intact`, res)
-    res = await run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge })
+    res = await withGateSlot(() => run(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge }))
     if (!res.merged && res.roadmapPaths?.length)
       return quarantine(unit, 'unit diff still touches .roadmap/ after a strip commit — nothing merged', res)
   }
@@ -2331,7 +2527,7 @@ async function mergeUnit(unit) {
       `explicit numbers in the conventions contract and respec; never renumber silently`, res)
 
   if (!res.merged) {
-    res = await run(
+    res = await withGateSlot(() => run(
       `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id}, resolving ` +
       `conflicts. First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
       `recently merged units ` +
@@ -2339,7 +2535,7 @@ async function mergeUnit(unit) {
       `resolution. Then run the full test suite.${prefixClause} If you are genuinely unsure a resolution is ` +
       `semantically right, ` +
       `abort the merge and report merged:false rather than guessing. Report the HEAD sha and suite result.`,
-      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge })
+      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `resolve:${unit.id}`, schema: S.merge }))
     if (!res.merged && res.roadmapPaths?.length)
       return quarantine(unit, 'unit diff touches .roadmap/ at conflict resolution — nothing merged', res)
     if (!res.merged && plan.prefixUniqueGlobs?.length && res.prefixCollision?.length)
@@ -2349,13 +2545,13 @@ async function mergeUnit(unit) {
   }
 
   if (!res.suitePass) {
-    res = await run(
+    res = await withGateSlot(() => run(
       `The integrated test suite fails after merging unit/${unit.id} into ${intBranch} (worktree ${intWt}). ` +
       `Evidence: ${res.detail}. First check whether the failure predates this merge. If the merge caused it, ` +
       `diagnose and fix on ${intBranch} — this may be a cross-unit interaction; the specs of all units live under ` +
       `${repo}/.roadmap/specs/. Re-run the suite. If you cannot make it pass, revert the merge commit ` +
       `(git revert -m 1 HEAD, keeping the branch intact for later redesign) and report suitePass:false.`,
-      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge })
+      { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge }))
     if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res)
   }
 
@@ -2570,7 +2766,9 @@ await previewChain                                  // drain pending mirror adva
 // Boundary phase — strictly after all merges and mirror advances (invariant 8). Skipped on a
 // codex halt: the conductor early-returns this wave to the root regardless, and boundary
 // spend against a halted wave buys nothing the relaunch's boundary won't.
-if (C.boundary !== 'off' && !codexHalt) {
+// Owed jobs still run when the boundary is off — see runBoundary's owed-only mode. A codex halt
+// still skips everything: the conductor early-returns that wave regardless.
+if ((C.boundary !== 'off' || owed.length > 0) && !codexHalt) {
   phase('Boundary')
   await runBoundary().catch((e) => log(`boundary phase failed — continuing (${e?.message ?? e})`))
 }

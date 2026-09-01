@@ -52,6 +52,19 @@ const CC = {
   agentBudgetReserve: 200,     // headroom below the 1000-call cap; the pre-wave guard returns before crossing
   perUnitCallEstimate: 15,     // pre-wave budget estimate per dispatchable unit; corrected by harness spend deltas
   fixUnitAdmit: 'auto',        // 'auto' tier-1 mechanical admit of health drafts | 'triage' force >=Opus veto when drafts present
+  // 'open' | 'closed'. The architect flips this to 'closed' once the plan is DRAINED. Under
+  // 'closed' tiers 1 and 2 admit NOTHING: drafts and promotions become debt-ledger lines, in CODE,
+  // not by asking a triager nicely. Arc-observed: after PLAN DRAINED at wave 17, waves 18 and 19
+  // kept admitting 7 and 8 fresh drafts, so the merged fraction sat at ~93% for 12+ hours while the
+  // denominator grew in lockstep. Every other brake in this file is prose an Opus turn can
+  // rationalise past; this one is not. The single exception is a finding graded `blocker`, which is
+  // routed to the architect tier to be RULED on rather than auto-admitted.
+  admissions: 'open',
+  // Tier 1 admits health/design drafts mechanically, with no judgment and no cut line applied. That
+  // is acceptable for a trickle and not for a batch: a healthy assessor drafts something every wave,
+  // so a large batch is exactly the denominator growth above, arriving without anyone deciding. Past
+  // this count the wave buys an Opus triage instead, which does apply the cut line.
+  tier1MaxDrafts: 3,
   fableEffort: 'high',         // effort for the Fable boundary agent (respec/escalation arbiter) — Fable 5's high default for real adjudication
   opusEffort: 'medium',        // effort for the Opus tier-2 triager — mirrors the harness's opusEffort knob
   ...(inPlan.config?.conductor ?? {}),
@@ -487,7 +500,16 @@ function predicates(census, withheldIds) {
   // the plan (its record stays 'quarantined' — the harness never rewrites an existing record), so
   // excluding out-of-scope ids stops a respecced quarantine from re-triaging forever.
   const quarantined = Object.entries(units).filter(([id, r]) => r?.status === 'quarantined' && inScopeIds.has(id)).map(([id]) => id)
-  const findings = [...(explorer.findings ?? []), ...(health.findings ?? []), ...(design.findings ?? [])]
+  // Shared pre-existing reds, collapsed by the harness's circuit breaker: ONE entry per red rather
+  // than one per affected unit. They arrive as FINDINGS, never as debt items — debt must never
+  // create a wave (that brake is what makes arcs terminate), so a shared red rides the
+  // promote/escalation path, which the cut line already brakes.
+  const sharedReds = (state.sharedReds ?? []).map((r) => ({
+    source: 'shared-red', severity: 'major', spec: r.spec, units: r.units ?? [],
+    summary: `${r.spec} failed for ${(r.units ?? []).length} units and no unit's diff touches it — one shared ` +
+      `pre-existing red, to be homed once`,
+  }))
+  const findings = [...sharedReds, ...(explorer.findings ?? []), ...(health.findings ?? []), ...(design.findings ?? [])]
   const healthFixUnits = [...(health.fixUnits ?? []), ...(design.fixUnits ?? [])]
   const flakeFlips = flake.flips ?? []
   const userFeedback = census.pendingUserFeedback ?? []
@@ -496,7 +518,7 @@ function predicates(census, withheldIds) {
   // (Fable only) waive them; entries owed two boundaries running force tier 3.
   const owedJobs = state.owed ?? []
   const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0 || owedJobs.length > 0
-  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
+  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, sharedReds, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
 }
 
 // A health-assessor fix-unit draft {id, goal, files, acceptance} -> a default skeleton
@@ -621,6 +643,18 @@ const opusTriagePrompt = (N, P) =>
       `broken (e.g. the preview is down), that is itself a finding to act on, and only the Fable tier may waive an ` +
       `owed job outright — escalate 'hard-call' if you believe one should be. `
     : '') +
+  (P.sharedReds.length
+    ? `A finding marked \`source:"shared-red"\` is ONE pre-existing failure that broke several units' gates at once ` +
+      `and lies outside every one of their diffs. It is not evidence against those units and their specs are not ` +
+      `wrong: home it in a single fix unit (or bank it), and never respec a unit over it. `
+    : '') +
+  (CC.admissions === 'closed'
+    ? `ADMISSIONS ARE CLOSED for this arc: the plan is drained. Nothing you list in \`admit\` or \`promote\` will ` +
+      `become a unit — the scheduler banks those entries to the debt ledger instead, in code, whatever you decide. ` +
+      `Dispose of the wave on that basis: say what is real so it is banked with a reason, cut what is noise, and set ` +
+      `arcComplete. The one exception is a finding graded \`blocker\`, which the scheduler routes to the architect ` +
+      `tier to be ruled on — do not try to admit one yourself. `
+    : '') +
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
@@ -659,6 +693,15 @@ const fableBoundaryPrompt = (N, P, lead) =>
       `(e.g. a fix unit or journal instruction for a downed preview) or — if the job is genuinely moot for this ` +
       `arc — waive it explicitly by putting its job name in \`waiveOwed\` and justifying the waiver in your ` +
       `journal. An owed job you neither act on nor waive rides forward and forces this tier again. `
+    : '') +
+  (P.sharedReds.length
+    ? `A finding marked \`source:"shared-red"\` is ONE pre-existing failure that broke several units' gates at once ` +
+      `and lies outside every one of their diffs. Home it once; it is never grounds to respec the units it failed. `
+    : '') +
+  (CC.admissions === 'closed'
+    ? `ADMISSIONS ARE CLOSED for this arc: the plan is drained, and you are reading this tier only because a ` +
+      `quarantine, an owed job, or a blocker-graded finding needs a ruling. New units are still yours to emit, but ` +
+      `only work of that grade justifies one — everything else belongs in \`debtLedger\`. `
     : '') +
   `Route each quarantined unit by its dossier REASON: environment/tooling-blocked -> re-run as-is (prefer ` +
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
@@ -707,6 +750,27 @@ function makeFreshId() {
     taken.add(id)
     return id
   }
+}
+
+// Drop drafts a boundary filed twice in ONE batch. makeFreshId dedupes by id string and RENAMES a
+// collision (`x` -> `x-2`), which is right for a genuine respec and exactly wrong here: it turned
+// one draft filed twice into two real units (arc-observed, #1261/#1262). Exact duplicates go —
+// same id, or same title once kebabbed — and suffixing survives only for a `supersedes` respec,
+// which legitimately re-files a topic under a new id.
+function dedupeDrafts(skeletons) {
+  const seen = new Set()
+  const kept = []
+  const dropped = []
+  for (const sk of skeletons) {
+    if (sk?.supersedes) { kept.push(sk); continue }
+    const id = kebab(sk?.id ?? '')
+    const title = kebab(sk?.title ?? sk?.goal ?? '')
+    if (seen.has(`id:${id}`) || (title && seen.has(`title:${title}`))) { dropped.push(sk); continue }
+    seen.add(`id:${id}`)
+    if (title) seen.add(`title:${title}`)
+    kept.push(sk)
+  }
+  return { kept, dropped }
 }
 
 // Pure-code merge: append units (inScope:true) + edges, apply supersedes (old unit inScope:false,
@@ -802,6 +866,13 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // reachable by the other path.
   const finish = async (tier) => {
     const { satisfiable, stuck } = outstanding()
+    // An owed boundary job must never leave a TERMINAL return quietly. The harness now runs owed
+    // jobs in the final boundary even when it is switched off — which is where they used to vanish
+    // — so anything still owed here survived that too and is the root's to discharge or waive
+    // before close-out. `ret()` carries the ledger out; this makes it loud in the journal as well.
+    if (state.owed?.length)
+      log(`wave ${state.wave}: closing with ${state.owed.length} owed boundary job(s) unsettled ` +
+        `(${state.owed.map((o) => o.job).join(', ')}) — discharge or waive them before close-out`)
     if (satisfiable.length)
       return await ret('arc-stalled', tier, { arcSummary: arcSummary(census), outstanding: satisfiable, stuck })
     // Nothing dispatchable remains. Units stuck behind an unresolved quarantine are NOT a reason to
@@ -824,10 +895,18 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     return await ret('boundary-degraded', 4, {})
   if (CC.boundaryTriage === 'root') return await ret('root-triage', 4, { pendingFeedback: census.pendingUserFeedback ?? [], quarantined: P.quarantined.map((id) => ({ id })) })
 
+  // Admissions, enforced in code from here down. `closed` never routes work AWAY from judgment —
+  // it only stops judgment from minting units — so it can never weaken the termination guarantee.
+  const admissionsClosed = CC.admissions === 'closed'
+  const blockerFinding = P.findings.some((f) => f?.severity === 'blocker')
+
   let tier
   if (P.quarantined.length || P.owedJobs.some((o) => (o.count ?? 1) >= 2) ||
+      // Closed admissions bank everything except a blocker, which needs a ruling, not a bank line.
+      (admissionsClosed && blockerFinding) ||
       (CC.boundaryTriage === 'always-fable' && P.anyJudgment)) tier = 3
-  else if (P.anyJudgment || (CC.fixUnitAdmit === 'triage' && P.drafts.length)) tier = 2
+  else if (P.anyJudgment || (CC.fixUnitAdmit === 'triage' && P.drafts.length) ||
+      P.drafts.length > CC.tier1MaxDrafts) tier = 2
   else tier = 1
 
   let triageResult = null
@@ -902,15 +981,32 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   let feedbackDispositions = triageResult?.feedback ?? []
   let debtLedger = []
 
+  // Nothing an admissions-closed boundary was not allowed to mint is merely dropped: each unit
+  // becomes a debt line carrying its origin. It banks into `state.debt`, NOT `debtLedger` — the
+  // normal outcome under closed admissions is an arc-complete return, which fires before the
+  // persist section where `debtLedger` is consumed, whereas `ret()` carries `state.debt` out INTACT
+  // on a terminal return and the persist path banks it as `waveDebt` on a continuation. One
+  // channel, both paths, no double-banking.
+  const bankLine = (sk) => `[not admitted — admissions closed] ${sk?.id ?? 'unnamed'}: ${sk?.goal ?? sk?.title ?? ''}`.slice(0, 400)
+  const bankUnadmitted = (skeletons) => {
+    if (!skeletons.length) return
+    state = { ...state, debt: [...(state.debt ?? []), ...skeletons.map(bankLine)] }
+    log(`wave ${N}: admissions closed — banked ${skeletons.length} draft(s)/promotion(s), admitted 0 units`)
+  }
+
   if (ranTier === 1) {
-    newSkeletons = P.healthFixUnits.map(draftSkeleton)
+    const drafts = P.healthFixUnits.map(draftSkeleton)
+    if (admissionsClosed) bankUnadmitted(drafts)
+    newSkeletons = admissionsClosed ? [] : drafts
   } else if (ranTier === 2) {
     arcCompleteFlag = !!triageResult.arcComplete
     const draftById = new Map(P.healthFixUnits.map((d) => [d.id, d]))
-    newSkeletons = [
+    const admitted = [
       ...(triageResult.admit ?? []).filter((id) => draftById.has(id)).map((id) => draftSkeleton(draftById.get(id))),
       ...(triageResult.promote ?? []),
     ]
+    if (admissionsClosed) bankUnadmitted(admitted)
+    newSkeletons = admissionsClosed ? [] : admitted
     debtLedger = triageResult.debtLedger ?? []
   } else {
     arcCompleteFlag = !!boundaryPlan.arcComplete
@@ -921,8 +1017,18 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     debtLedger = boundaryPlan.debtLedger ?? []
   }
 
-  // Assign final ids up front so spec files and plan units agree.
-  const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
+  // Assign final ids up front so spec files and plan units agree — after dropping duplicates, so a
+  // draft filed twice can never be renamed into a second unit.
+  const { kept: uniqueSkeletons, dropped: duplicateDrafts } = dedupeDrafts(newSkeletons)
+  if (duplicateDrafts.length) {
+    const names = duplicateDrafts.map((d) => d?.id ?? '(no id)').join(', ')
+    log(`wave ${N}: dropped ${duplicateDrafts.length} duplicate draft(s) from this batch: ${names}`)
+    degrade({ label: ranTier === 3 ? `boundary:w${N}` : `triage:w${N}`, model: ranTier === 3 ? 'fable' : 'opus',
+      phase: 'Persist', kind: 'duplicate-draft',
+      what: `the wave-${N} boundary filed ${duplicateDrafts.length} draft(s) already present in the same batch ` +
+        `(${names}) — dropped, not suffixed into a second unit` })
+  }
+  const prepared = uniqueSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
 
   // Arc complete: a tier said so, or the boundary produced no new units and no spec revisions.
   // Routed through finish(), which refuses to close over dispatchable work. A tier-3 journal

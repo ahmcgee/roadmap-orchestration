@@ -416,3 +416,58 @@ test('a clean run omits `owed` from the envelope entirely (absent, not empty)', 
   assert.equal(result.reason, 'arc-complete')
   assert.equal('owed' in result, false, 'the root never has to distinguish [] from "nothing owed"')
 })
+
+/* ============================================================================== */
+/* 6. The FINAL wave — `boundary:'off'` no longer defers an owed job forever       */
+/* ============================================================================== */
+// Owed jobs settle only inside the harness's boundary phase, and the arc's last relaunch is the one
+// the architect is told to run with `boundary:'off'`. An explorer or design reconcile owed at that
+// point was therefore deferred to a boundary that never came, and left the run as a manual chore in
+// the return envelope. The harness now runs the owed jobs — and only those — in that wave;
+// `wave-policy.test.mjs` locks that end, and these lock the conductor's half of the handshake.
+
+test('the ledger is handed DOWN to the wave that must discharge it, even with the boundary off', async () => {
+  const entry = owedEntry('design', 1, 'preview down')
+  const st = mkState({ boundary: emptyBoundary(), owed: [entry] })
+  const { workflow } = await conduct({
+    state: st,
+    config: { boundary: 'off' },
+    agentRules: rules({ triage: triage({ arcComplete: true }) }),
+    waveHandler: waves(st),
+  })
+  assert.deepStrictEqual(workflow.calls[0].args.state.owed, [entry],
+    'the harness cannot run an owed job it was never told about')
+  assert.equal(workflow.calls[0].args.config.boundary, 'off',
+    "and it is still told the boundary is off — running the owed job anyway is the harness's call, not a config lie")
+})
+
+test('a final wave that discharged its owed job returns clean — nothing left for the root to chase', async () => {
+  const st = mkState({ boundary: emptyBoundary(), owed: [owedEntry('design', 1, 'preview down')] })
+  // What the harness hands back once the owed reconcile has actually run: no `owed` key at all.
+  const discharged = mkState({ wave: 2, boundary: emptyBoundary() })
+  const { result } = await conduct({
+    state: st,
+    config: { boundary: 'off' },
+    agentRules: rules({ triage: triage({ arcComplete: true }) }),
+    waveHandler: waves(discharged),
+  })
+  assert.equal(result.reason, 'arc-complete')
+  assert.equal('owed' in result, false, 'a discharged job is gone, not carried out as a permanent chore')
+})
+
+test('a final wave that could NOT discharge it still routes to judgment and surfaces the leftover', async () => {
+  // The nasty shape: `boundary:'off'` means no boundary block, which normally reads as a degraded
+  // wave. The owed ledger must still buy a triage rather than being swallowed by that path.
+  const entry = owedEntry('design', 1, 'preview still down')
+  const stillOwed = mkState({ wave: 2, owed: [entry] })
+  delete stillOwed.boundary
+  const { result, agent } = await conduct({
+    state: mkState({ boundary: emptyBoundary(), owed: [entry] }),
+    config: { boundary: 'off' },
+    agentRules: rules({ triage: triage({ arcComplete: true }) }),
+    waveHandler: waves(stillOwed),
+  })
+  assert.notEqual(result.reason, 'boundary-degraded', 'a switched-off boundary is not a degraded one')
+  assert.ok(hasLabel(agent.calls, /^triage:w2\b/), 'the undischargeable job is still examined before the arc closes')
+  assert.deepStrictEqual(result.owed, [entry], 'and rides out to the root, which discharges or waives it')
+})
