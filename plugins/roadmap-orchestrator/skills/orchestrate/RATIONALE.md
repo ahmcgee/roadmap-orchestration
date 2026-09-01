@@ -879,6 +879,25 @@ transport, one retry whose prompt differs so `resumeFromRunId` cannot serve the 
 then a loud `pack-unreadable` throw). Measured before it was built: the fixtures' packs are 1.3–1.8
 KB, so the `READ_CHUNK` fan-out is the escape hatch for a big file, not the common path.
 
+**Journal order is the clock — the replay's one non-obvious dependency.** "The scripts are
+deterministic functions of (args, agent results)" is true only *up to completion order*, and the
+first paid conductor run to finish cleanly (wf_318afa1b-e9d) is what proved it. The harness merges
+units through one serial chain in the order their pipelines reach merge-ready; each merge moves
+`integrationTip`, and every later prompt embeds it. Live, `consolidate-stats-gcd` merged before
+`memoize-in-process`. The replayer resolved every lookup instantly, so the two pipelines raced in
+whatever order the event loop picked, the merge heads were applied in reverse, the tip diverged, and
+the wave-2 explorer prompt missed — a perfect arc persisted as `PARTIAL stoppedAt=explorer:w2`. The
+missing input was never in the args: it is the completion order, and the platform's journal is
+written in exactly that order. So `persist.mjs` keeps a cursor over the journal and a lookup
+resolves only when the cursor reaches its record, all earlier records having been consumed by their
+own lookups first; pending lookups wait, and the script's concurrency unfolds as it did live. Two
+rules make that total rather than merely usually-right. A record no lookup ever asks for — a
+superseded launch's prompt in a resumed run, an agent whose transcript carries no recoverable
+prompt — is stepped over once the run is quiescent, because a clock that can stall is worse than no
+clock. And a lookup for a record the cursor has already passed is reported as a divergence
+(`<label> (out of journal order)`) rather than silently served out of sequence: a silent reorder is
+the bug, so the replay must never be able to commit one.
+
 **A role with a filesystem writes its own report, but not in its own voice.** The transcription
 courier was the price of a script with no filesystem, and a Codex role has one, so the finding and
 the file now come out of the same process. The rendering stays script-dictated (`reportWrite`)

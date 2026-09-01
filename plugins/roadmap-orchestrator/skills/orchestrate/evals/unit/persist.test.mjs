@@ -9,7 +9,9 @@
 //
 // Covered: the harness path (state.json + the event ledgers), the conductor path (plan.json,
 // debt.md, architect-log.md, skill-degradations.md and both ledgers), the plan.json
-// read-and-refuse, and the cache-miss partial marker a crashed run leaves behind.
+// read-and-refuse, the cache-miss partial marker a crashed run leaves behind, and — the property
+// the rest of it rests on — that the replay reproduces the live run's COMPLETION ORDER, because
+// the journal is written in that order and the harness's serial merge queue is ordered by it.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -129,6 +131,89 @@ test('a replay that runs out of journal writes the last snapshot, marked partial
   const partial = JSON.parse(read(roadmapDir, 'state.json'))
   assert.ok(partial.partial?.stoppedAt, 'the marker names the call, so the root knows to relaunch and re-run this')
   assert.ok(partial.units, 'and the snapshot is real state, not a stub')
+})
+
+/* ==================== journal order is the clock ========================== */
+// The claim "a script is a deterministic function of (args, agent results)" is true only UP TO
+// COMPLETION ORDER. The harness merges units through ONE serial chain in the order their pipelines
+// reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds. A
+// replay that resolves lookups instantly races those pipelines however the event loop feels like
+// it — which is what wf_318afa1b-e9d hit: two wave-2 merges came back reversed, the tip diverged
+// from the live run's, and the next prompt missed. So the journal's order IS the clock.
+//
+// Here `slow` stalls on a real timer at its first step, so `fast` runs its whole pipeline and takes
+// the merge queue first; the LIVE tip is therefore `slow`'s merge head, the second one applied. The
+// replay has no timers at all — every lookup could resolve at once — so it reproduces that only by
+// following the journal.
+test('the replay reproduces the live MERGE ORDER, not the one the event loop would pick', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const plan = mkPlan([unit('slow'), unit('fast')])
+  const state = mkState()
+  const HEAD = { slow: 'c'.repeat(40), fast: 'd'.repeat(40) }
+  const { fn, calls } = makeAgent([
+    ...packRules(plan, state),
+    { match: /^plan:slow$/, result: async () => {
+      await new Promise((r) => setTimeout(r, 50))
+      return { approach: 'x', files: [], testPlan: 'x', feasible: true }
+    } },
+    { match: /^merge:/, result: (_p, opts) =>
+      ({ merged: true, suitePass: true, head: HEAD[opts.label.slice('merge:'.length)], detail: '' }) },
+  ])
+  const args = { roadmapDir, launchId: 'L1', config: { gateAuditRate: 0 } }
+  const live = await (await loadScript(HARNESS))({ args, agent: recording(fn, record) })
+
+  const merges = calls.filter((c) => c.label.startsWith('merge:')).map((c) => c.label)
+  assert.deepStrictEqual(merges, ['merge:fast', 'merge:slow'], 'live, the unstalled unit merged first')
+  assert.equal(live.integrationTip, HEAD.slow, 'so the live tip is the SECOND merge head')
+
+  const out = persist(runDir, HARNESS, args)
+  assert.match(out, /^OK /m, 'the replay serves every call — a reordered merge would miss on the tip')
+  const written = JSON.parse(read(roadmapDir, 'state.json'))
+  assert.equal(written.integrationTip, HEAD.slow,
+    'and lands the live tip: the merges were applied in the order the journal recorded them')
+  const { degradations, escalations, ...expected } = live
+  assert.deepStrictEqual(written, expected, 'the whole wave state matches, not just the tip')
+})
+
+// A RESUMED run's journal opens with the failed launch's records, whose prompts the resumed run
+// never asks for (its own carry a different launchId). Those must not stall the clock: a record no
+// pending lookup wants, once the run is quiescent, is stepped over.
+test('stale records from a superseded launch are stepped over, and the replay still completes', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const plan = mkPlan([unit('a')])
+  const state = mkState()
+  // The first launch's leftovers, journalled BEFORE anything this run asks for.
+  record('a first-launch prompt this run never issues', { verdict: 'approve', directives: [], debt: [] })
+  record('another one, with a dead agent behind it', null)
+  const { fn } = makeAgent(packRules(plan, state))
+  const args = { roadmapDir, launchId: 'L2', config: { gateAuditRate: 0 } }
+  const live = await (await loadScript(HARNESS))({ args, agent: recording(fn, record) })
+
+  const out = persist(runDir, HARNESS, args)
+  assert.match(out, /^OK /m, 'the two unrequested records never block the cursor')
+  const { degradations, escalations, ...expected } = live
+  assert.deepStrictEqual(JSON.parse(read(roadmapDir, 'state.json')), expected)
+})
+
+// The other side of stepping over a record: if the replay LATER asks for one the cursor has already
+// passed, its control flow diverged from the live run's. That is a miss with a marker naming the
+// call, never a silent reorder — a reorder is precisely the bug the clock exists to stop.
+test('a lookup whose record the cursor already passed is a miss marked out of journal order', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const state = mkState()
+  record('P-FIRST', { ok: true })
+  record('P-SECOND', { ok: true })
+
+  const reversed = path.join(runDir, 'reversed.mjs')
+  writeFileSync(reversed, "export const meta = { name: 'reversed', phases: [] }\n" +
+    `log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify(state))})\n` +
+    "await agent('P-SECOND', { label: 'second' })\n" +
+    "await agent('P-FIRST', { label: 'first' })\n")
+
+  const out = persist(runDir, reversed, { roadmapDir }, 2)
+  assert.match(out, /^PARTIAL stoppedAt=first \(out of journal order\)/m,
+    'the marker names the call AND why, so a script change that reorders calls is legible')
+  assert.equal(JSON.parse(read(roadmapDir, 'state.json')).partial.stoppedAt, 'first (out of journal order)')
 })
 
 /* =============================== conductor ================================ */

@@ -96,6 +96,18 @@ no duplicate ledger rows. A replay that runs out of journal — a crash — writ
 script logged, marked `partial: {stoppedAt: <label>}`, and exits 2; relaunch with `resumeFromRunId`
 and run it again. Exit 0 = complete, 2 = partial, 1 = error (nothing written).
 
+**Journal order is the clock.** A script is a deterministic function of (args, agent results) only
+*up to completion order*: the harness merges units through one serial chain in the order their
+pipelines reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds
+— so which unit finishes first decides what the rest of the wave is asked. The journal is written in
+completion order, so the replay uses it as its clock: a lookup resolves only when the cursor reaches
+that prompt's record, every earlier record having been consumed by its own lookup first, and pending
+lookups wait. A record nothing asks for (a superseded launch's prompt in a resumed run, an agent
+whose transcript carries no prompt) is stepped over once the run is quiescent, so the clock cannot
+deadlock; a lookup for a record the cursor already passed is a real divergence and stops the replay
+with `partial: {stoppedAt: "<label> (out of journal order)"}`. A nested `workflow()` child shares
+the journal and so shares the one cursor.
+
 What the scripts still delegate to a model is what a model must actually *do*: author a spec, write a
 quarantine dossier or a feedback report, move consumed feedback, and project state into GitHub
 issues. Those are agent work, not transport.

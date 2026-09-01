@@ -6,8 +6,9 @@
 // every checkpoint and every persist point, verified it by cksum, and sometimes lost it anyway. That was
 // the second-largest model cost in the system after the root's own wakes, and it bought nothing but
 // transport. The platform already journals every agent result, and the scripts are deterministic
-// functions of (args, agent results) — so the run can simply be REPLAYED here, in a real Node
-// process, at zero model cost, and its return value written out with `fs`.
+// functions of (args, agent results, completion order) — so the run can simply be REPLAYED here, in
+// a real Node process, at zero model cost, and its return value written out with `fs`. The journal
+// supplies the completion order too: see "journal order is the clock" below.
 //
 //   node persist.mjs --run <workflowTranscriptDir> --script <harness.mjs|conductor.mjs>
 //                    --args <envelope JSON string | path to a JSON file>
@@ -48,15 +49,18 @@ const parseArgs = async () => {
   try { return JSON.parse(text) } catch (e) { die(`--args is neither a readable JSON file nor JSON: ${e.message}`) }
 }
 
-/* --------------------------- the journal map ---------------------------- */
+/* -------------------------- the journal, in order ------------------------ */
 // The platform writes, per workflow run:
 //   journal.jsonl        {"type":"started"|"result","key":"v2:<hash>","agentId":"<id>",["result":…]}
 //   agent-<id>.jsonl     that agent's transcript; the FIRST `type:"user"` record's message.content
 //                        is the prompt, verbatim
 // `key` is an opaque hash of (prompt, opts) — it cannot be recomputed here, so the prompt is
-// recovered from the transcript instead and the map is keyed on it. A `started` with no `result` is
-// an agent that DIED, which is not an absence: agent() resolves to `null` there, a code path several
-// scripts handle explicitly, so it is recorded as a null result rather than dropped.
+// recovered from the transcript instead and the records are indexed on it. A `started` with no
+// `result` is an agent that DIED, which is not an absence: agent() resolves to `null` there, a code
+// path several scripts handle explicitly, so it is recorded as a null result rather than dropped.
+//
+// The RESULT RECORDS ARE KEPT IN JOURNAL ORDER — that is, in the order the live run's calls
+// COMPLETED — because that order is the replay's clock; see "journal order is the clock" below.
 const promptOf = (records) => {
   const first = records.find((r) => r?.type === 'user')
   const c = first?.message?.content
@@ -65,7 +69,7 @@ const promptOf = (records) => {
   return undefined
 }
 
-async function buildMap(dir) {
+async function buildJournal(dir) {
   const journal = path.join(dir, 'journal.jsonl')
   if (!existsSync(journal)) die(`no journal.jsonl under ${dir}`)
   const lines = (await readFile(journal, 'utf8')).split('\n').filter(Boolean)
@@ -87,19 +91,26 @@ async function buildMap(dir) {
     }
   }
   const files = new Set((await readdir(dir)).filter((f) => /^agent-.*\.jsonl$/.test(f)))
-  const map = new Map()     // prompt -> { queue: [result], last: result }
+  const records = []        // [{ prompt, result }] in journal order; prompt null = unrecoverable
+  const byPrompt = new Map()// prompt -> [index into records], ascending
   let unmapped = 0
   for (const { agentId, result } of order) {
     const f = `agent-${agentId}.jsonl`
-    if (!files.has(f)) { unmapped++; continue }
-    const recs = (await readFile(path.join(dir, f), 'utf8')).split('\n').filter(Boolean)
-      .map((l) => { try { return JSON.parse(l) } catch { return null } })
-    const prompt = promptOf(recs)
-    if (prompt === undefined) { unmapped++; continue }
-    if (!map.has(prompt)) map.set(prompt, { queue: [], last: undefined })
-    map.get(prompt).queue.push(result)
+    let prompt
+    if (files.has(f)) {
+      const recs = (await readFile(path.join(dir, f), 'utf8')).split('\n').filter(Boolean)
+        .map((l) => { try { return JSON.parse(l) } catch { return null } })
+      prompt = promptOf(recs)
+    }
+    // A record whose prompt cannot be recovered still OCCUPIES ITS SLOT in the order — no lookup can
+    // ever ask for it, so the clock simply steps over it, but dropping it would shift every index
+    // after it and silently rewrite the completion order.
+    if (prompt === undefined) { unmapped++; records.push({ prompt: null, result }); continue }
+    if (!byPrompt.has(prompt)) byPrompt.set(prompt, [])
+    byPrompt.get(prompt).push(records.length)
+    records.push({ prompt, result })
   }
-  return { map, total: order.length, unmapped }
+  return { records, byPrompt, total: order.length, unmapped }
 }
 
 /* ----------------------------- the replay ------------------------------- */
@@ -109,7 +120,7 @@ class CacheMiss extends Error {
 
 const SNAPSHOT_TAG = 'ROADMAP-SNAPSHOT '
 
-async function replay(entry, entryArgs, map) {
+async function replay(entry, entryArgs, { records, byPrompt }) {
   let lastSnapshot = null
   // The FIRST miss is what matters, and it is recorded rather than merely thrown: the scripts wrap
   // most calls in their own `.catch()` (a dead agent is a fact they are built to survive), so a
@@ -122,20 +133,89 @@ async function replay(entry, entryArgs, map) {
       try { lastSnapshot = JSON.parse(s.slice(SNAPSHOT_TAG.length)) } catch { /* a truncated snapshot is not state */ }
     }
   }
-  const miss = (opts) => {
-    const label = opts.label ?? '(unlabeled)'
+  const miss = (opts, why = '') => {
+    const label = `${opts.label ?? '(unlabeled)'}${why}`
     firstMiss = firstMiss ?? label
     return new CacheMiss(label)
   }
+
+  /* ------------------------ journal order is the clock ---------------------
+  // The scripts are deterministic functions of (args, agent results) only UP TO COMPLETION ORDER.
+  // The harness merges units through one serial chain in the order their pipelines reach
+  // merge-ready, and each merge moves `integrationTip`, which every later prompt embeds — so which
+  // unit finishes first decides what the rest of the wave is asked. A replay that resolves every
+  // lookup instantly races those pipelines in whatever order the event loop happens to pick; in
+  // wf_318afa1b-e9d that reversed two wave-2 merges, the tip diverged from the live run's, and the
+  // next prompt missed. The platform's journal is written in COMPLETION order, so it is the missing
+  // clock: a lookup for prompt P resolves only when the cursor reaches P's record, every earlier
+  // record having been consumed by its own lookup first. Pending lookups wait, and the script's
+  // concurrency therefore unfolds exactly as it did live. A nested `workflow()` child shares the
+  // journal and so shares this one cursor.
+  //
+  // Four rules make that total:
+  //  1. A lookup CLAIMS the earliest unclaimed record for its prompt at or after the cursor, then
+  //     waits for the cursor to reach it. Two concurrent lookups for the same prompt claim
+  //     different records, in issue order.
+  //  2. A record NOTHING ASKED FOR must never stall the clock: when the run is quiescent (every
+  //     microtask the script could take has been taken) and no pending lookup wants the record at
+  //     the cursor, the cursor steps over it. That is a prior launch's superseded prompt (this run
+  //     was a resume), an agent whose transcript carries no recoverable prompt, or a `started`
+  //     whose null result no live call ever consumed.
+  //  3. A lookup for a prompt whose only records were already stepped over is a REAL DIVERGENCE —
+  //     the replay's control flow reached a call the live run did not make there — and is a miss
+  //     marked `(out of journal order)`, never a silent reorder.
+  //  4. A prompt whose records are all claimed is the platform's own cache collapsing a
+  //     byte-identical repeat into one call: the last record is echoed, consuming nothing, once
+  //     the cursor has passed it.
+  ------------------------------------------------------------------------ */
+  let cursor = 0
+  const claimed = new Set()   // record indices some lookup has taken
+  const pending = []          // [{ index, echo, resolve, reject, opts }]
+  let ticking = false
+  const settle = () => new Promise((r) => setImmediate(r))
+
+  // Serve at most one waiter the cursor has reached; `true` if the clock moved.
+  const serveOne = () => {
+    const e = pending.findIndex((w) => w.echo && w.index < cursor)
+    if (e >= 0) { const [w] = pending.splice(e, 1); w.resolve(records[w.index].result); return true }
+    const c = pending.findIndex((w) => !w.echo && w.index === cursor)
+    if (c >= 0) { const [w] = pending.splice(c, 1); cursor++; w.resolve(records[w.index].result); return true }
+    return false
+  }
+
+  const tick = () => {
+    if (ticking) return
+    ticking = true
+    void (async () => {
+      try {
+        for (;;) {
+          await settle()                 // every step the script can take without us, it takes now
+          if (serveOne()) continue
+          if (!pending.length) return    // nothing is waiting on the journal — the script drives
+          // A pending lookup always holds its own record against the cursor, so the cursor cannot
+          // run off the end while one waits. If it somehow does, fail the waiters loudly rather
+          // than hanging the process on a clock that can no longer move.
+          if (cursor >= records.length) {
+            for (const w of pending.splice(0)) w.reject(miss(w.opts, ' (journal exhausted)'))
+            return
+          }
+          cursor++                       // quiescent, and nothing asked for this record: step over
+        }
+      } finally { ticking = false }
+    })()
+  }
+
   const agent = async (prompt, opts = {}) => {
-    const hit = map.get(prompt)
-    if (!hit) throw miss(opts)
-    // Consume in journal order; once the queue is spent, serve the last result again. Two calls
-    // with a byte-identical (prompt, opts) are exactly what the platform's own cache collapses,
-    // so repeating the answer is what the live run would have seen.
-    if (hit.queue.length) hit.last = hit.queue.shift()
-    else if (hit.last === undefined) throw miss(opts)
-    return hit.last
+    const idxs = byPrompt.get(prompt)
+    if (!idxs) throw miss(opts)
+    const next = idxs.find((i) => i >= cursor && !claimed.has(i))
+    if (next === undefined && idxs.some((i) => !claimed.has(i))) throw miss(opts, ' (out of journal order)')
+    if (next !== undefined) claimed.add(next)
+    const index = next ?? idxs[idxs.length - 1]
+    return new Promise((resolve, reject) => {
+      pending.push({ index, echo: next === undefined, resolve, reject, opts })
+      tick()
+    })
   }
   const globals = (a) => ({
     args: a, agent, log, phase: () => {},
@@ -212,10 +292,11 @@ function skillDegradationsDoc(degradations) {
 const entryArgs = await parseArgs()
 const roadmapDir = entryArgs.roadmapDir
 if (!roadmapDir) die('args carries no roadmapDir — nothing to write to')
-const { map, total, unmapped } = await buildMap(runDir)
-console.log(`journal: ${total} result(s), ${map.size} distinct prompt(s)${unmapped ? `, ${unmapped} unmapped` : ''}`)
+const journal = await buildJournal(runDir)
+console.log(`journal: ${journal.total} result(s), ${journal.byPrompt.size} distinct prompt(s)` +
+  `${journal.unmapped ? `, ${journal.unmapped} unmapped` : ''}`)
 
-const { value, miss, thrown, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, map)
+const { value, miss, thrown, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, journal)
 await mkdir(roadmapDir, { recursive: true })
 const wrote = []
 const write = async (name, text) => { await writeFile(path.join(roadmapDir, name), text); wrote.push(name) }
