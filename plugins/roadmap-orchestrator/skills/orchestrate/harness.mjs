@@ -2337,6 +2337,14 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   // left a detached, session-leading codex running unbounded while its OpenAI seat was already
   // handed to the next unit (2026-08-25). `timeout` exits 124 on the deadline; the report
   // instruction reads that as timedOut.
+  // `session-id` used to be a steerer instruction (step 5's grep, below) — a model step, and Haiku
+  // skipped it at least once (fixture wf_26d28b9e-4ed, add-divide: events.jsonl had a thread.started
+  // line, no session-id file). That silently downgrades every fix round to a fresh session, since
+  // the resume launch (COMMAND R above) reads this file. Capture is now in the launch line itself:
+  // codex is backgrounded so a bounded poll loop can race it, in the SAME process group (so a
+  // group kill reaps the loop too), writing the id the moment thread.started appears — durable even
+  // if the steerer dies mid-run. The loop only writes on a match, never touches the file otherwise,
+  // so a run with no thread.started leaves no file (`test -s` stays honest).
   const execCmd =
     `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
@@ -2344,7 +2352,12 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
     `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
     `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
-    `> ${dir}/events.jsonl 2> ${dir}/stderr.log; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid`
+    `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; ` +
+    `( i=0; while [ "$i" -lt 120 ] && [ ! -s ${dir}/session-id ]; do ` +
+    `L=$(grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl 2>/dev/null); ` +
+    `if [ -n "$L" ]; then printf "%s" "$L" | cut -d\\" -f4 > ${dir}/session-id; fi; ` +
+    `sleep 1; i=$((i+1)); done ) & ` +
+    `wait $CPID; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid`
   // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
   // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
   // steerer that concluded "dead" while the process was alive once launched a second codex into the
@@ -2392,7 +2405,6 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `5) Read back ONLY these — never open ${dir}/events.jsonl whole, never read a Codex transcript, never ` +
     `paste more than these slivers into your context:\n` +
     `   - \`head -c 8000 ${dir}/last-message.txt\` (the schema-constrained final report; may be absent),\n` +
-    `   - \`grep -m1 -o '"thread_id":"[^"]*"' ${dir}/events.jsonl\` — write the bare id to ${dir}/session-id,\n` +
     `   - \`grep '"turn.completed"' ${dir}/events.jsonl | tail -1\` (usage: input/output tokens, turn count),\n` +
     `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429|thread already' ${dir}/events.jsonl ` +
     `${dir}/stderr.log | tail -5 | cut -c1-250\` (errors; also decides \`limitHit\`)${gitTruth ? ',' : '.'}\n` +

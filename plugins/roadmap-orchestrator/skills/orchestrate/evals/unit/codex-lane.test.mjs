@@ -149,6 +149,36 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
 })
 
 // =========================================================================================
+// b2. session-id capture. Fixture wf_26d28b9e-4ed: add-divide's build dir had a thread.started
+//    line in events.jsonl but no session-id file — the steerer (Haiku) skipped the read-back
+//    instruction that used to be the only place this got written, and COMMAND R's resume silently
+//    fell back to a fresh session. The launch line now captures it itself: codex is backgrounded
+//    and raced by a bounded loop, in the SAME sh -c, that greps events.jsonl for thread_id and
+//    writes session-id the moment it appears — a closed command, not a step the steerer can skip.
+// =========================================================================================
+test('b2 session-id capture: the launch line races codex with a bounded thread_id watcher, never the steerer', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const p = promptOf(calls, 'codex-build:a')
+  assert.ok(p, 'the build steering call fired')
+
+  const dir = `${WT}/__codex/a/build`
+  assert.ok(p.includes('CPID=$!'), 'codex is backgrounded so the watcher loop can race it')
+  assert.ok(p.includes('wait $CPID'), 'the script still waits on codex for the real exit code')
+  assert.ok(
+    p.includes(`grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl`),
+    'the launch line greps events.jsonl for thread_id'
+  )
+  assert.ok(p.includes(`cut -d\\" -f4 > ${dir}/session-id`), 'a match is written to session-id, bare id only')
+  assert.ok(/\[ ! -s \S*\/session-id \]/.test(p), 'the loop stops once session-id is already non-empty')
+
+  // The steerer is never asked to write session-id itself — that used to be a step-5 read-back
+  // instruction, and Haiku skipped it once (the fixture above). One canonical capture point.
+  assert.ok(!p.includes('write the bare id to'), 'the steerer prompt no longer instructs the model to write session-id')
+  assert.equal((p.match(/thread_id/g) ?? []).length, 1, 'thread_id is read in exactly one place: the launch line')
+})
+
+// =========================================================================================
 // c. Determinism. Prompts are deterministic functions of unit ids and shas so resumeFromRunId
 //    can replay completed calls from the journal. A session id, a timestamp or a counter leaking
 //    into a prompt breaks replay silently — the second run just re-does paid work.
