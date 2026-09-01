@@ -607,6 +607,21 @@ const returnRows = [
     state: mkState({ units: { a: { status: 'merged' }, b: { status: 'deferred' } } }),
   },
   {
+    // Pre-dispatch, ahead of the boundary ladder: a cyclic plan is a return, never a dispatch —
+    // the harness THROWS on one, and that throw inside the nested workflow() kills the whole run.
+    name: 'plan-cycle',
+    reason: 'plan-cycle',
+    briefKeys: ['edges', 'units'],
+    plan: mkPlan({
+      units: [
+        { id: 'a', title: 'a', risk: 'med', kind: 'code', inScope: true },
+        { id: 'b', title: 'b', risk: 'med', kind: 'code', inScope: true },
+      ],
+      edges: [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }, { from: 'b', to: 'a', type: 'semantic', mode: 'contract' }],
+    }),
+    state: mkState({ units: {} }),
+  },
+  {
     name: 'contract-amendment',
     reason: 'contract-amendment',
     briefKey: 'debt',
@@ -1326,4 +1341,105 @@ test('a spec mis-transcribed TWICE takes the spec-unwritten path, ok:true notwit
   assert.ok(row, 'the withholding is ledgered')
   assert.match(row.what, /cksum/, 'and names the check that caught it, not a writer verdict')
   assert.ok(result.debtSections.some((sec) => sec.body.includes('consolidate-gcd')), 'and it is banked, not lost')
+})
+
+/* ============================================================================== */
+/* 16. Plan cycles — mergePlan edge hygiene and the pre-dispatch guard             */
+/* ============================================================================== */
+// wf_c6971376-1a5: the wave-1 boundary respecced a quarantine and filed a dependency on a new unit;
+// the wave-2 boundary respecced THAT unit and filed the reverse dependency. mergePlan's supersede
+// repoint carried the first edge onto the successor, the pair closed a 2-cycle, and the harness's
+// dispatch validation threw — inside the nested workflow(), which took the whole conductor run down
+// with no return envelope. Two independent brakes now: edges never touch merged units, and the
+// conductor detects the cycle itself instead of letting the harness throw.
+
+// A quarantine (routes to tier 3), one wave, so the run stages and then hands back at max-waves.
+const cyclePlan = (edges) => mkPlan({
+  units: [
+    { id: 'seed-unit', title: 'seed', risk: 'med', kind: 'code', inScope: true },
+    { id: 'live-unit', title: 'live', risk: 'med', kind: 'code', inScope: true },
+    { id: 'impossible-cache', title: 'ic', risk: 'high', kind: 'code', inScope: true },
+  ],
+  edges,
+})
+const cycleState = () => mkState({
+  boundary: boundaryBlock(),
+  units: { 'seed-unit': { status: 'merged' }, 'live-unit': { status: 'pending' }, 'impossible-cache': { status: 'quarantined' } },
+})
+const respec = (edges) => rules({
+  census: censusQuar(),
+  boundary: boundaryPlan({ newUnits: [skeleton('ic-v2', { supersedes: 'impossible-cache', ...(edges ? { edges } : {}) })] }),
+})
+
+test('supersede repoint: an edge whose other endpoint is already MERGED is dropped, not carried over', async () => {
+  // seed-unit -> impossible-cache: the quarantine depended on merged work. Repointed onto ic-v2 that
+  // dependency is already satisfied, and keeping it is what lets a later boundary close a loop.
+  const { result } = await conduct({
+    plan: cyclePlan([{ from: 'seed-unit', to: 'impossible-cache', type: 'semantic', mode: 'contract' }]),
+    state: cycleState(),
+    config: { conductor: { maxWavesPerRun: 1 } },
+    agentRules: respec(),
+  })
+  assert.equal(result.reason, 'max-waves')
+  assert.ok(result.plan.units.some((u) => u.id === 'ic-v2'), 'the respec still lands')
+  assert.deepStrictEqual(result.plan.edges, [], 'the repointed edge is dropped — merged work is already satisfied')
+})
+
+test('a new unit\'s declared edge FROM an already-merged unit is dropped on append', async () => {
+  const { result } = await conduct({
+    plan: cyclePlan([]),
+    state: cycleState(),
+    config: { conductor: { maxWavesPerRun: 1 } },
+    agentRules: respec([{ from: 'seed-unit', type: 'file-overlap', mode: 'contract' }]),
+  })
+  assert.deepStrictEqual(result.plan.edges, [], 'a dependency on merged work is satisfied the moment it is filed')
+})
+
+test('a repoint never manufactures a duplicate of an edge the same batch appends', async () => {
+  // live-unit -> impossible-cache repoints to live-unit -> ic-v2, and ic-v2 declares the SAME
+  // dependency. Neither endpoint is merged, so both survive the hygiene check — only the dedupe
+  // keeps the plan from carrying the edge twice.
+  const { result } = await conduct({
+    plan: cyclePlan([{ from: 'live-unit', to: 'impossible-cache', type: 'semantic', mode: 'contract' }]),
+    state: cycleState(),
+    config: { conductor: { maxWavesPerRun: 1 } },
+    agentRules: respec([{ from: 'live-unit', type: 'file-overlap', mode: 'contract' }]),
+  })
+  assert.deepStrictEqual(result.plan.edges.map((e) => `${e.from}->${e.to}`), ['live-unit->ic-v2'],
+    'exactly one edge, not two')
+})
+
+test('a boundary that closes a cycle returns plan-cycle: nothing dispatched, everything staged', async () => {
+  // The live shape, minus the wave-1/wave-2 split: impossible-cache -> live-unit repoints to
+  // ic-v2 -> live-unit, and ic-v2 declares live-unit -> ic-v2. Neither endpoint is merged, so the
+  // hygiene rule cannot see it; the pre-dispatch guard is what stops the run.
+  const { result, agent, workflow } = await conduct({
+    plan: cyclePlan([{ from: 'impossible-cache', to: 'live-unit', type: 'semantic', mode: 'contract' }]),
+    state: cycleState(),
+    agentRules: respec([{ from: 'live-unit', type: 'file-overlap', mode: 'contract' }]),
+  })
+  assert.equal(result.reason, 'plan-cycle')
+  assert.equal(workflow.calls.length, 1, 'the cyclic wave is never dispatched — the harness would throw on it')
+  assert.deepStrictEqual([...result.units].sort(), ['ic-v2', 'live-unit'], 'the brief names the units in the loop')
+  assert.deepStrictEqual(result.edges.map((e) => `${e.from}->${e.to}`).sort(),
+    ['ic-v2->live-unit', 'live-unit->ic-v2'], 'and both edges, so the root knows which one to repoint')
+  // Staging happened at the wave tail, BEFORE the guard — the whole point of returning rather than
+  // letting the harness throw is that the boundary's work survives.
+  assert.ok(hasLabel(agent.calls, /^spec-expand:ic-v2/), 'the respec spec was written before the return')
+  assert.ok(result.plan.units.some((u) => u.id === 'ic-v2'), 'and the merged plan rides home for the root to edit')
+})
+
+test('a cyclic plan handed in by the ROOT is refused before the first dispatch', async () => {
+  const { result, workflow } = await conduct({
+    plan: mkPlan({
+      units: [
+        { id: 'a', title: 'a', risk: 'med', kind: 'code', inScope: true },
+        { id: 'b', title: 'b', risk: 'med', kind: 'code', inScope: true },
+      ],
+      edges: [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }, { from: 'b', to: 'a', type: 'semantic', mode: 'contract' }],
+    }),
+    state: mkState({ units: {} }),
+  })
+  assert.equal(result.reason, 'plan-cycle')
+  assert.equal(workflow.calls.length, 0, 'no wave runs at all')
 })

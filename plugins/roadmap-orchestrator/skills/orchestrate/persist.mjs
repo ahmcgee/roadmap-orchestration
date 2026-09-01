@@ -21,7 +21,7 @@
 // PARTIAL state from the last snapshot the script logged, marked `partial: {stoppedAt}`, so the root
 // can relaunch with `resumeFromRunId` and run this again.
 //
-// Exit codes: 0 = complete, 2 = partial (cache miss), 1 = error.
+// Exit codes: 0 = complete, 2 = partial (cache miss, or a script throw the live run also hit), 1 = error.
 import { readFile, writeFile, readdir, mkdir, appendFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -151,7 +151,12 @@ async function replay(entry, entryArgs, map) {
   let thrown
   try { value = await runner(globals(entryArgs)) } catch (e) { thrown = e }
   if (firstMiss) return { miss: firstMiss, lastSnapshot }
-  if (thrown) throw thrown
+  // A THROW is the other way a replay ends short of a return value, and it is not exotic: the
+  // scripts fail loudly on conditions that should not happen (a malformed plan, a cycle), and the
+  // journal of a crashed run replays straight back into the same throw. Dying with an uncaught
+  // exception here loses everything the run did decide; the last snapshot is still the honest
+  // answer, exactly as for a cache miss. `thrown.label` is carried when the error names a call.
+  if (thrown) return { thrown, lastSnapshot }
   return { value, lastSnapshot }
 }
 
@@ -210,18 +215,22 @@ if (!roadmapDir) die('args carries no roadmapDir — nothing to write to')
 const { map, total, unmapped } = await buildMap(runDir)
 console.log(`journal: ${total} result(s), ${map.size} distinct prompt(s)${unmapped ? `, ${unmapped} unmapped` : ''}`)
 
-const { value, miss, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, map)
+const { value, miss, thrown, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, map)
 await mkdir(roadmapDir, { recursive: true })
 const wrote = []
 const write = async (name, text) => { await writeFile(path.join(roadmapDir, name), text); wrote.push(name) }
 
-if (miss) {
-  // The replay stopped short of a return value. Everything the run decided after this point is
-  // unreachable, so the ONLY honest output is the last snapshot the script logged.
-  if (!lastSnapshot) die(`replay stopped at "${miss}" before the first snapshot — nothing to write; ` +
+if (miss || thrown) {
+  // The replay stopped short of a return value — the journal ran out, or the script threw.
+  // Everything the run decided after this point is unreachable, so the ONLY honest output is the
+  // last snapshot the script logged.
+  const stoppedAt = miss ?? thrown.label ?? 'script-error'
+  const error = thrown ? String(thrown.message ?? thrown) : undefined
+  if (!lastSnapshot) die(`replay stopped at "${stoppedAt}" before the first snapshot — nothing to write; ` +
+    `${error ? `the error was: ${error}. ` : ''}` +
     'the existing state.json is left untouched. Relaunch with resumeFromRunId and run this again.')
-  await write('state.json', json({ ...lastSnapshot, partial: { stoppedAt: miss } }))
-  console.log(`PARTIAL stoppedAt=${miss} wrote=${wrote.join(',')}`)
+  await write('state.json', json({ ...lastSnapshot, partial: { stoppedAt, ...(error ? { error } : {}) } }))
+  console.log(`PARTIAL stoppedAt=${stoppedAt} wrote=${wrote.join(',')}${error ? ` error=${error}` : ''}`)
   process.exit(2)
 }
 

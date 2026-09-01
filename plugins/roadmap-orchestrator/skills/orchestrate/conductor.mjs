@@ -594,6 +594,33 @@ const uStatus = (id) => (state.units ?? {})[id]?.status
 const isMerged = (id) => uStatus(id) === 'merged'
 const isTerminal = (id) => ['merged', 'quarantined', 'deferred'].includes(uStatus(id))
 
+// Cycle detection over a plan's dependency graph (Kahn: drain every unit with no remaining
+// dependency; whatever will not drain sits on a cycle, or behind one). Returns null for a DAG, else
+// the undrained units and the edges among them. MIRRORED between harness.mjs and conductor.mjs —
+// shared-consts.test.mjs enforces byte-identity, because the two must agree on what a cycle IS: the
+// conductor refuses to dispatch one and hands the root a `plan-cycle` return, and the harness throws
+// on one that reached it anyway (which is a conductor bug, or a hand-edited plan.json). An edge
+// naming an unknown unit is ignored here; the harness rejects those separately.
+const planCycle = (units, edges) => {
+  const indeg = new Map(units.map((u) => [u.id, 0]))
+  for (const e of edges) if (indeg.has(e.from) && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to) + 1)
+  const q = [...indeg.keys()].filter((id) => indeg.get(id) === 0)
+  const drained = new Set()
+  while (q.length) {
+    const id = q.shift()
+    drained.add(id)
+    for (const e of edges) {
+      if (e.from !== id || !indeg.has(e.to)) continue
+      indeg.set(e.to, indeg.get(e.to) - 1)
+      if (indeg.get(e.to) === 0) q.push(e.to)
+    }
+  }
+  if (drained.size === indeg.size) return null
+  const stuck = [...indeg.keys()].filter((id) => !drained.has(id))
+  const inCycle = new Set(stuck)
+  return { units: stuck, edges: edges.filter((e) => inCycle.has(e.from) && inCycle.has(e.to)) }
+}
+
 // Contingent withholding (ruling 2): ready() ignores edge.mode, so the conductor mechanically
 // sets aside any contingent `to`-unit whose `from` is not yet merged, keeping independent work
 // running. The flip is transient — applied only to the dispatched copy, never to `plan`.
@@ -986,12 +1013,30 @@ function mergePlan(prepared, cutIds) {
     const u = plan.units.find((x) => x.id === cid || x.id === kebab(cid))
     if (u) u.inScope = false
   }
+  // EDGE HYGIENE. An edge must never touch a unit that is ALREADY merged: merged work cannot come
+  // to depend on new work, and a dependency ON merged work is already satisfied. Two boundaries
+  // that each wired one in successive waves closed a 2-cycle, the harness threw on dispatch, and
+  // the throw took a whole conductor run down with it (wf_c6971376-1a5). Self-edges and duplicates
+  // are dropped on the same pass — a repoint can manufacture both out of edges that were fine.
+  const dropEdge = (why, from, to) => { log(`mergePlan: dropped edge ${from} -> ${to} (${why})`); return true }
+  const badEdge = (from, to) => (from === to && dropEdge('self-edge', from, to)) ||
+    (isMerged(from) && dropEdge(`${from} is already merged — the dependency is satisfied`, from, to)) ||
+    (isMerged(to) && dropEdge(`${to} is already merged — merged work cannot depend on new work`, from, to))
   for (const s of prepared) {
     if (s.supersedes) {
       const oldId = s.supersedes
       const oldU = plan.units.find((x) => x.id === oldId)
       if (oldU) oldU.inScope = false
-      for (const e of plan.edges) { if (e.from === oldId) e.from = s.id; if (e.to === oldId) e.to = s.id }
+      const kept = []
+      for (const e of plan.edges) {
+        if (e.from !== oldId && e.to !== oldId) { kept.push(e); continue }
+        const from = e.from === oldId ? s.id : e.from
+        const to = e.to === oldId ? s.id : e.to
+        if (badEdge(from, to)) continue
+        if (kept.some((k) => k.from === from && k.to === to)) { dropEdge('duplicate of an edge already in the plan', from, to); continue }
+        kept.push({ ...e, from, to })
+      }
+      plan.edges = kept
     }
     plan.units.push({ id: s.id, title: (s.title ?? s.id).slice(0, 120), risk: s.risk ?? 'low', kind: s.kind ?? 'code', inScope: true,
       // The push is a whitelist — an unlisted skeleton field is dropped here, so `closes` must be
@@ -1002,6 +1047,8 @@ function mergePlan(prepared, cutIds) {
   for (const s of prepared) for (const e of s.edges ?? []) {
     const from = kebab(e.from)
     if (!plan.units.some((u) => u.id === from)) continue
+    if (badEdge(from, s.id)) continue
+    if (plan.edges.some((x) => x.from === from && x.to === s.id)) { dropEdge('duplicate of an edge already in the plan', from, s.id); continue }
     plan.edges.push({ from, to: s.id, type: e.type ?? 'semantic', mode: e.mode ?? 'contract', ...(e.contract ? { contract: e.contract } : {}) })
   }
 }
@@ -1016,6 +1063,17 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // 1. Contingent withholding, computed before dispatch from the latest state.
   const { dispatchPlan, withheld } = withhold()
   if (withheld.length) log(`wave ${w}: withholding ${withheld.length} contingent-dependent unit(s): ${withheld.join(', ')}`)
+  // 1b. Cycle guard, on exactly the graph the harness is about to validate. The harness THROWS on a
+  // cycle, and a throw inside the nested workflow() takes the whole conductor run down with no
+  // return envelope — the run's specs, plan, debt and journal survive only in journal.jsonl
+  // (wf_c6971376-1a5). Nothing is lost by returning instead: the previous boundary already staged
+  // everything through stage(), and this hands the root the edges to repoint. Placed here rather
+  // than inside mergePlan so it also catches a cyclic plan.json handed in by the root.
+  const cycle = planCycle(dispatchPlan.units, dispatchPlan.edges)
+  if (cycle) {
+    log(`wave ${w}: REFUSING to dispatch — plan cycle through ${cycle.units.join(', ')}`)
+    return await ret('plan-cycle', 4, { edges: cycle.edges, units: cycle.units })
+  }
   const dispatchable = dispatchPlan.units.filter((u) => u.inScope && !isTerminal(u.id))
   // Excluding withheld units nothing dispatchable remains, but withheld ones do -> the root must replan.
   if (dispatchable.length === 0 && withheld.length > 0) {

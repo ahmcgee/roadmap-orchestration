@@ -447,6 +447,10 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   left. Read the learnings, revise the downstream specs, relaunch.
 - **`needs-user`** — a call only the user can make; the question is in the escalating agent's
   `notes`. Get the answer, fold it in, relaunch.
+- **`plan-cycle`** — the merged plan's dependency graph closed a loop, so no wave could be
+  dispatched (the harness throws on a cyclic plan, which would take the whole run down). `edges` and
+  `units` name the loop. Remove or repoint one edge in `.roadmap/plan.json`, then relaunch — the
+  boundary's specs, plan, issues and debt were all staged before the return, so nothing is lost.
 - **`max-waves` / `agent-budget`** — the run hit its wave cap or its pre-dispatch budget guard
   with work remaining. Persist, then relaunch fresh (a new run resets
   the per-run agent counter). `max-waves` carries the final wave's `boundary` back marked

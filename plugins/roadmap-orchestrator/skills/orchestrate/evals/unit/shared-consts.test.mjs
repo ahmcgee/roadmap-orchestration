@@ -24,6 +24,10 @@
 //                      marker" and GitHub's tokenizing full-text search adopting an unrelated issue
 //                      (three live issues clobbered, 2026-08-22). A predicate that drifts in one
 //                      script is a silent re-opening of that hole in half the sites.
+//   (e) planCycle    — byte-identical source. The conductor refuses to dispatch a cyclic plan
+//                      (`plan-cycle`); the harness throws on one that reached it anyway. If the two
+//                      disagree about what a cycle is, the conductor dispatches a plan the harness
+//                      then kills the whole run on (wf_c6971376-1a5).
 //
 // Extraction anchors on distinctive syntax rather than line numbers so the tests survive edits
 // around the constants and fail with a readable, file-naming diff when a copy actually drifts.
@@ -245,6 +249,23 @@ test('the launch pack read is byte-identical in both scripts', () => {
   assertInSync('The readPack reader (comments included)', hr, cr)
 })
 
+test('planCycle (the plan-graph cycle detector) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'planCycle', '(units, edges)'))
+  assertInSync('The planCycle detector', h, c)
+  // Not merely "both have a function": the two scripts must AGREE on what a cycle is. The conductor
+  // refuses to dispatch one (`plan-cycle`); the harness throws on one that reached it anyway. A copy
+  // that drifts means one of them dispatches a plan the other would have refused, and the harness's
+  // throw inside the nested workflow() takes the whole conductor run down (wf_c6971376-1a5).
+  const planCycle = Function(`"use strict"; return (${h.replace('const planCycle = ', '')});`)()
+  const u = (...ids) => ids.map((id) => ({ id }))
+  assert.equal(planCycle(u('a', 'b'), [{ from: 'a', to: 'b' }]), null, 'a DAG has no cycle')
+  const two = planCycle(u('a', 'b'), [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }])
+  assert.deepStrictEqual(two.units.sort(), ['a', 'b'], 'a 2-cycle names both units')
+  assert.equal(two.edges.length, 2, 'and both edges, so the root knows which one to repoint')
+  assert.equal(planCycle(u('a'), [{ from: 'a', to: 'ghost' }]), null,
+    'an edge naming an unknown unit is ignored here — the harness rejects those separately')
+})
+
 test('TERSE opens with the same first sentence in both scripts', () => {
   // Only the OPENING sentence is shared: the harness copy adds "keep each finding to a sentence or
   // two", which is meaningless for the conductor's prompts. The first sentence is the part that
@@ -291,6 +312,6 @@ test('both scripts still declare every shared constant this suite guards', () =>
   for (const f of FILES)
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
       'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'readPackFile', 'readPack',
-      'markerFind', 'MARKER_RULE'])
+      'markerFind', 'MARKER_RULE', 'planCycle'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

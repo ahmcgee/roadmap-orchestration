@@ -3673,28 +3673,47 @@ function start(unit) {
   })()
 }
 
+// Cycle detection over a plan's dependency graph (Kahn: drain every unit with no remaining
+// dependency; whatever will not drain sits on a cycle, or behind one). Returns null for a DAG, else
+// the undrained units and the edges among them. MIRRORED between harness.mjs and conductor.mjs —
+// shared-consts.test.mjs enforces byte-identity, because the two must agree on what a cycle IS: the
+// conductor refuses to dispatch one and hands the root a `plan-cycle` return, and the harness throws
+// on one that reached it anyway (which is a conductor bug, or a hand-edited plan.json). An edge
+// naming an unknown unit is ignored here; the harness rejects those separately.
+const planCycle = (units, edges) => {
+  const indeg = new Map(units.map((u) => [u.id, 0]))
+  for (const e of edges) if (indeg.has(e.from) && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to) + 1)
+  const q = [...indeg.keys()].filter((id) => indeg.get(id) === 0)
+  const drained = new Set()
+  while (q.length) {
+    const id = q.shift()
+    drained.add(id)
+    for (const e of edges) {
+      if (e.from !== id || !indeg.has(e.to)) continue
+      indeg.set(e.to, indeg.get(e.to) - 1)
+      if (indeg.get(e.to) === 0) q.push(e.to)
+    }
+  }
+  if (drained.size === indeg.size) return null
+  const stuck = [...indeg.keys()].filter((id) => !drained.has(id))
+  const inCycle = new Set(stuck)
+  return { units: stuck, edges: edges.filter((e) => inCycle.has(e.from) && inCycle.has(e.to)) }
+}
+
 // Fail loudly on a malformed graph — a bad edge reference or a cycle otherwise strands
 // units as silently-pending: ready() never fires, no error is raised, the wave just ends.
+// A cycle should never GET here: the conductor runs the same planCycle before every dispatch and
+// returns 'plan-cycle' instead. So this throw means the plan came straight from a root launch (the
+// root's error to fix in plan.json) or the conductor wired one anyway (a conductor bug).
 {
   const ids = new Set(plan.units.map((u) => u.id))
   for (const e of plan.edges)
     if (!ids.has(e.from) || !ids.has(e.to))
       throw new Error(`plan edge references unknown unit: ${e.from} -> ${e.to}`)
-  const indeg = new Map(plan.units.map((u) => [u.id, 0]))
-  for (const e of plan.edges) indeg.set(e.to, indeg.get(e.to) + 1)
-  const q = plan.units.map((u) => u.id).filter((id) => indeg.get(id) === 0)
-  let seen = 0
-  while (q.length) {
-    const id = q.shift()
-    seen++
-    for (const e of plan.edges) {
-      if (e.from !== id) continue
-      indeg.set(e.to, indeg.get(e.to) - 1)
-      if (indeg.get(e.to) === 0) q.push(e.to)
-    }
-  }
-  if (seen < plan.units.length)
-    throw new Error('plan dependency graph contains a cycle — fix the plan before dispatch')
+  const cyc = planCycle(plan.units, plan.edges)
+  if (cyc)
+    throw new Error('plan dependency graph contains a cycle — fix the plan before dispatch: ' +
+      cyc.edges.map((e) => `${e.from} -> ${e.to}`).join(', '))
   // A design citation naming an authority that does not exist is a plan-pack defect that would
   // otherwise degrade silently into an empty clause — the exact "invisible to the pipeline"
   // failure designAuthorities exists to end. Fail loud, like the unknown-edge check above.

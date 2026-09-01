@@ -227,3 +227,49 @@ test('persist.mjs refuses to overwrite a plan.json holding unit ids the run neve
   const degs = read(roadmapDir, 'degradations.jsonl')
   assert.match(degs, /"kind":"plan-conflict"/, 'ledgered too, so a later reader finds it without the console')
 })
+
+// A replay that THROWS is not the same as one that runs out of journal, and it used to be fatal: a
+// crashed run's journal replays straight back into the crash, and an uncaught exception here lost
+// everything the run did decide (wf_c6971376-1a5 — the harness's cyclic-plan throw). The last
+// snapshot is the honest answer either way, so the throw takes the partial path too.
+test('a replay whose script throws mid-run writes the last snapshot, marked partial with the error', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const plan = mkPlan([unit('a')])
+  const state = mkState()
+  const { fn } = makeAgent(packRules(plan, state))
+  const args = { roadmapDir, launchId: 'L1', config: { gateAuditRate: 0 } }
+  await (await loadScript(HARNESS))({ args, agent: recording(fn, record) })
+
+  // Replay the SAME journal through a script that snapshots and then fails the way a real script
+  // does — loudly, on a condition that should not happen. The launch-pack calls are served from the
+  // journal, so the throw lands well after the first snapshot.
+  const failing = path.join(runDir, 'throws.mjs')
+  writeFileSync(failing, "export const meta = { name: 'throws', phases: [] }\n" +
+    `log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify({ ...state, wave: 1, units: { a: { status: 'merged' } } }))})\n` +
+    "throw new Error('plan dependency graph contains a cycle — fix the plan before dispatch: a -> b, b -> a')\n")
+
+  const out = persist(runDir, failing, args, 2)
+  assert.match(out, /^PARTIAL stoppedAt=script-error/m, 'the throw is reported as a partial, not a crash')
+  assert.match(out, /contains a cycle/, 'and the console names what actually went wrong')
+  const partial = JSON.parse(read(roadmapDir, 'state.json'))
+  assert.equal(partial.partial.stoppedAt, 'script-error')
+  assert.match(partial.partial.error, /contains a cycle/, 'the marker carries the message, not just the fact')
+  assert.deepStrictEqual(partial.units, { a: { status: 'merged' } }, 'and the snapshot is real state')
+})
+
+test('a script that throws BEFORE its first snapshot leaves state.json untouched and exits 1', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const plan = mkPlan([unit('a')])
+  const state = mkState()
+  const { fn } = makeAgent(packRules(plan, state))
+  const args = { roadmapDir, launchId: 'L1', config: { gateAuditRate: 0 } }
+  await (await loadScript(HARNESS))({ args, agent: recording(fn, record) })
+  writeFileSync(path.join(roadmapDir, 'state.json'), '{"keep":"me"}\n')
+
+  const failing = path.join(runDir, 'throws-early.mjs')
+  writeFileSync(failing, "export const meta = { name: 'early', phases: [] }\nthrow new Error('boom before any snapshot')\n")
+
+  const out = persist(runDir, failing, args, 1)
+  assert.match(out, /boom before any snapshot/, 'the refusal names the error')
+  assert.equal(read(roadmapDir, 'state.json'), '{"keep":"me"}\n', 'a partial with nothing in it overwrites nothing')
+})

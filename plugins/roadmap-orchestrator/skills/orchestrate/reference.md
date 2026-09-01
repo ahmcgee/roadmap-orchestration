@@ -976,6 +976,18 @@ conductor sets aside any contingent `to`-unit whose `from` is not yet merged, vi
 keeps running. **A direct per-wave harness launch inherits this duty** — withhold contingent
 dependents yourself or the harness will launch them early.
 
+**Cycle guard.** Before every dispatch the conductor runs `planCycle` over the plan it is about to
+hand the harness; on a cycle it returns **`plan-cycle`** with the loop's `edges` and `units` and
+dispatches nothing. This is a hard escalation to the root (repoint or remove one edge in
+`plan.json`, relaunch), not something the ladder can resolve. It exists because the harness *throws*
+on a cyclic plan and that throw, inside the nested `workflow()`, kills the whole conductor run with
+no return envelope — a boundary's staged specs, plan, debt and journal survive only in the
+platform's journal. The two use the **same** `planCycle` (byte-identical in both scripts,
+`shared-consts.test.mjs`): a cycle reaching the harness's throw is a conductor bug, or a plan a root
+launched at the harness directly, which is the root's error to fix. `mergePlan` also refuses to wire
+an edge into or out of an already-**merged** unit, which is what closed the first observed cycle:
+merged work cannot come to depend on new work, and a dependency on merged work is already satisfied.
+
 **Budget guard.** For waves after the first, a pre-dispatch guard refuses to start a wave that could
 cross the 1000-call cap: `runLocalCalls + 8 + dispatchable×perUnitCallEstimate + agentBudgetReserve
 > 1000` → return `agent-budget`. Exhausting `maxWavesPerRun` returns `max-waves`. Both mean *relaunch
@@ -1026,7 +1038,7 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
 ```jsonc
 { status: 'conductor-return',
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
-                     //   | max-waves | agent-budget | boundary-degraded | triage-degraded
+                     //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
                      //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
                      //     | env-no-reaper | platform-outage — state.halt.reason, returned verbatim
@@ -1047,6 +1059,7 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   journalEntries,    // [{wave, journal}] -> the ## Wave N sections of architect-log.md (tier 3 only)
   /* + reason-specific brief: */
   // contingent-replan → { edges }
+  // plan-cycle       → { edges, units }  // the loop, for the root to repoint in plan.json
   // contract-amendment → { debt, contracts }
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
