@@ -8,8 +8,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, sidecarRows, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -472,35 +472,6 @@ test('13b merge fence: prefixCollision still quarantines when prefixUniqueGlobs 
 })
 
 // =========================================================================================
-// 13. state.json must survive an agent TRANSCRIBING it. Agent-authored report text can carry raw
-//     control characters (arc-observed: an explorer `repro` quoting a \x01 test input).
-//     JSON.stringify escapes them correctly as \u0001 — but the checkpoint is written by a Haiku
-//     agent copying the document, and that transcription decoded the escape back into a raw byte,
-//     leaving a state.json no parser would read. An unresumable arc is far worse than a lossy
-//     repro string, and a control character in a report is never load-bearing.
-// =========================================================================================
-test('13 checkpoint: control characters never reach the state.json payload', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(),
-      // A confessed debt entry DOES reach state.json — that is the path that corrupted it.
-      debt: [{ what: 'repro: f("a\x01b")', why: 'control chars in a quoted repro, arc-observed "\x1f"' }] }) },
-  ])
-  await runWave(fn, makePlan([unit('a')]), makeState())
-
-  const writes = calls.filter((c) => c.label === 'checkpoint')
-  assert.ok(writes.length, 'the wave checkpoints at least once')
-  for (const w of writes) {
-    assert.ok(!/[\x01\x1f]/.test(w.prompt),
-      'no raw control character may appear in the document handed to the transcriber')
-    assert.ok(!/\\u0001/.test(w.prompt),
-      'nor an escape a transcriber could decode back into one')
-  }
-  const payload = writes.at(-1).prompt
-  assert.ok(payload.includes('<0x01>') && payload.includes('<0x1f>'),
-    'they are replaced with a printable token, so the evidence survives in readable form')
-})
-
-// =========================================================================================
 // 14. The empty-trigger artifact. Codex emits the two-character string `""` when it means "nothing
 //     to report" (arc-observed) — truthy, so it fired the contractMismatch AND specGap triggers,
 //     summoned an adjudicator for a stop with no content, and banked a bogus `major` debt entry.
@@ -515,7 +486,7 @@ test('14 empty triggers: a literal double-quote pair is not a report', async () 
   assert.ok(!has(calls, 'adjudicate:a#1'), 'an empty gap summons no adjudicator')
   assert.ok(!has(calls, 'gap-consult:a#1'), 'and certainly no frontier consult')
   assert.equal(state.consultsUsed, 0)
-  assert.deepEqual(sidecarRows(calls, 'escalations'), [], 'nothing is recorded in the escalation ledger')
+  assert.deepEqual(state.escalations, [], 'nothing is recorded in the escalation ledger')
   assert.ok(!(state.debt ?? []).some((d) => /contract mismatch/.test(d.what ?? '')),
     'and no bogus contract-mismatch debt is banked')
   assert.ok(has(calls, 'opus-gate:a#0'), 'an empty trigger does not force the frontier gate either')
@@ -569,7 +540,7 @@ test('16 plan-check rulings are recorded in the same ledger the ladder writes to
   ])
   const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
 
-  const entry = sidecarRows(calls, 'escalations').find((e) => e.by === 'plan-check')
+  const entry = state.escalations.find((e) => e.by === 'plan-check')
   assert.ok(entry, 'a plan-check redirect is an adjudication and must leave a trace')
   assert.equal(entry.unit, 'a')
   assert.equal(entry.tier, 'decided')

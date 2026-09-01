@@ -1,7 +1,7 @@
 // Acceptance / simulation suite for conductor.mjs — written from the FROZEN conductor
 // contract and the plan file, independently of the implementation (acceptance-spec
 // discipline). Runs as a zero-token control-flow simulation: the conductor is loaded under
-// an AsyncFunction wrapper (./load.mjs) with scripted fakes (./fakes.mjs) standing in for
+// an AsyncFunction wrapper (../../script-loader.mjs) with scripted fakes (./fakes.mjs) standing in for
 // every agent() / workflow() side effect.
 //
 // -------------------------------------------------------------------------------------
@@ -18,21 +18,22 @@
 //   * Tier-2 admits ONLY draft ids listed in `admit` (the default-admit doctrine lives in
 //     the triager's PROMPT, not the code) — any fixture whose draft must survive a tier-2
 //     boundary carries an explicit admit rule (triageAdmit below).
-//   * Writers (persist-plan/bank-debt/log-append/move-feedback) run on CONTINUATION
-//     boundaries only; every return (early or terminal) persists via persist-state, with
-//     boundary + debt handed to the root INTACT on tier-4 returns.
-// The verbatim writers (persist-*/bank-*/log-*/move-*) and spec-* return the harness's
-// S.ok shape ({ ok: true }).
+//   * The conductor WRITES NOTHING under .roadmap/. What a boundary decides — the merged
+//     plan, the consumed state, the debt.md section, the architect-log section, both event
+//     ledgers — rides home in the RETURN envelope, and persist.mjs puts it on disk. What is
+//     still an agent call is what a model must actually DO: spec-expand, move-feedback, and
+//     the issue-mode gh projections (issue-new / bank-debt).
+//   * Staging (spec-expand / gh projection) runs on CONTINUATION boundaries and on every
+//     escalating return; boundary + debt reach the root INTACT on tier-4 returns.
+// spec-* and move-feedback return the harness's S.ok shape ({ ok: true }).
 // -------------------------------------------------------------------------------------
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
-import { loadScript } from './load.mjs'
-import {
-  makeAgent, makeWorkflow, assertAllModelsPinned, assertCksumVerified, assertAppendVerified, sidecarRows,
-} from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -122,11 +123,7 @@ function rules({ census, triage, boundary } = {}) {
   // with a partial list. File mode names no markers, and reads `ok` alone.
   list.push({ match: /^bank-debt:/, result: (prompt) => ({ ok: true,
     banked: [...prompt.matchAll(/"marker":"([^"]+)"/g)].map((m, i) => ({ marker: m[1], number: 100 + i })) }) })
-  list.push({ match: /^(persist-plan|persist-state|persist-debt|log-append|move-feedback):/, result: OK })
-  // plan-ids: the pre-persist courier. An empty on-disk plan is the no-conflict case.
-  list.push({ match: /^plan-ids:/, result: { ok: true, ids: [] } })
-  list.push({ match: /^skill-degradations$/, result: OK })
-  list.push({ match: /^sidecar:/, result: OK })
+  list.push({ match: /^move-feedback:/, result: OK })
   return list
 }
 
@@ -139,19 +136,26 @@ async function conduct({
   plan = mkPlan(), state = mkState(), config = {}, harnessPath = HARNESS_PATH,
   stringify = false, agentRules = rules(), waveHandler = waves(state),
 } = {}) {
-  const agent = makeAgent(agentRules)
+  // The plan and state reach the script through the LAUNCH PACK, not through args: the envelope
+  // names the directory and a Haiku courier reads it. packRules is what makes that read succeed.
+  const agent = makeAgent([...packRules(plan, state), ...agentRules])
   const workflow = makeWorkflow(waveHandler)
   const run = await loadScript(CONDUCTOR)
-  const argObj = { plan, state, config, harnessPath }
+  const logs = []
+  const argObj = { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath }
   const bag = {
     args: stringify ? JSON.stringify(argObj) : argObj,
     agent: agent.fn,
     workflow: workflow.fn,
-    log: () => {},
+    // The conductor's crash-recovery record is a tagged `log` line, not a paid write: persist.mjs
+    // keeps the last one it sees, so a continuation boundary's decisions survive a later crash.
+    log: (line) => logs.push(String(line ?? '')),
     phase: () => {},
   }
   const result = await run(bag)
-  return { result, agent, workflow }
+  return { result, agent, workflow, snapshots: logs
+    .filter((l) => l.startsWith('ROADMAP-SNAPSHOT '))
+    .map((l) => JSON.parse(l.slice('ROADMAP-SNAPSHOT '.length))) }
 }
 
 /* -------------------------------- call helpers -------------------------------- */
@@ -180,7 +184,7 @@ const routingRows = [
       assert.equal(hasLabel(agent.calls, /^boundary:/), false, 'tier-1 must not call the Fable boundary agent')
       assert.equal(hasLabel(agent.calls, /^census:/), true, 'census always runs')
       assert.ok(hasLabel(agent.calls, /^spec-expand:/), 'draft materialization issues a spec-expand')
-      assert.ok(hasLabel(agent.calls, /^persist-plan:/), 'persists the revised plan before dispatch')
+      assert.ok(hasLabel(agent.calls, /^move-feedback:/), 'the consumed boundary is archived before dispatch')
       assert.equal(workflow.calls.length, 2, 'next wave dispatched')
       const census = firstLabel(agent.calls, /^census:/)
       assert.equal(census.model, 'haiku', 'census is haiku')
@@ -365,8 +369,8 @@ test('draft is materialized into an in-scope plan unit; spec-expand prompt carri
 /* ============================================================================== */
 /* 3. Persist-before-dispatch ordering (seq monotonic across fakes)               */
 /* ============================================================================== */
-test('all persist/bank/move writes precede the next workflow() dispatch', async () => {
-  const { agent, workflow } = await conduct({
+test('a boundary stages its decisions before the next workflow() dispatch', async () => {
+  const { agent, workflow, snapshots } = await conduct({
     waveHandler: waves(
       mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
       mkState({ wave: 2, boundary: boundaryBlock() }),
@@ -374,15 +378,20 @@ test('all persist/bank/move writes precede the next workflow() dispatch', async 
   })
   assert.equal(workflow.calls.length, 2)
   const dispatchSeq = workflow.calls[1].seq
-  for (const re of [/^persist-plan:w1\b/, /^persist-state:w1\b/, /^bank-debt:w1\b/, /^move-feedback:w1\b/]) {
+  for (const re of [/^spec-expand:consolidate-gcd\b/, /^move-feedback:w1\b/]) {
     const c = firstLabel(agent.calls, re)
-    if (c) assert.ok(c.seq < dispatchSeq, `${c.label} (seq ${c.seq}) must precede dispatch (seq ${dispatchSeq})`)
+    assert.ok(c, `${re} must run before the next dispatch`)
+    assert.ok(c.seq < dispatchSeq, `${c.label} (seq ${c.seq}) must precede dispatch (seq ${dispatchSeq})`)
   }
-  // persist-plan and persist-state are non-optional on a continuation.
-  assert.ok(firstLabel(agent.calls, /^persist-plan:w1\b/), 'persist-plan present')
-  assert.ok(firstLabel(agent.calls, /^persist-state:w1\b/), 'persist-state present')
+  // The consumed state is snapshotted at the boundary, so a crash in wave 2 still lands wave 1's
+  // decisions when persist.mjs replays the run.
+  assert.ok(snapshots.some((sn) => sn.wave === 1 && sn.conductor),
+    'the continuation boundary leaves a crash-recovery snapshot')
+  // And nothing writes: the plan the root gets back is the envelope's, not a file the run authored.
+  for (const c of agent.calls)
+    assert.ok(!/^(persist-|plan-ids|skill-degradations|log-append|sidecar)/.test(c.label),
+      `${c.label}: the scripts no longer pay a model to write .roadmap/`)
 })
-
 
 /* ============================================================================== */
 /* 3b. Debt: on disk at receipt, cleared only when the banker confirms it          */
@@ -391,21 +400,17 @@ test('all persist/bank/move writes precede the next workflow() dispatch', async 
 // result never inspected — 23 items vanished at one live wave-12 boundary. Two independent fixes:
 // the raw ledger reaches .roadmap/debt.json the moment it arrives, and nothing is cleared that the
 // banker did not name.
-test('wave debt is persisted on receipt — before the census, before any return can skip the bank', async () => {
+test('wave debt joins the run ledger on receipt and rides every return', async () => {
   const debt = [{ unit: 'seed-unit', kind: 'structure', severity: 'minor', what: 'DEBT-ONE', why: 'w' }]
   const state = mkState({ debt, boundary: boundaryBlock() })
-  const { agent } = await conduct({ state, waveHandler: waves(state) })
-  const pd = firstLabel(agent.calls, /^persist-debt:w1\b/)
-  assert.ok(pd, "the wave's debt is written as it arrives, not at the persist section")
-  assert.ok(prompt(pd).includes('/repo/.roadmap/debt.json'), 'to its own file')
-  assert.ok(prompt(pd).includes('DEBT-ONE'), 'carrying the items verbatim')
-  assert.ok(pd.seq < firstLabel(agent.calls, /^census:w1\b/).seq,
-    'and it lands before any triage or early return can jump the bank')
+  const { result } = await conduct({ state, waveHandler: waves(state) })
+  assert.deepStrictEqual(result.debt, debt,
+    "the wave's debt is on the envelope verbatim — persist.mjs writes it to .roadmap/debt.json")
 })
 
-test('a clean wave writes no debt.json', async () => {
-  const { agent } = await conduct()
-  assert.equal(hasLabel(agent.calls, /^persist-debt:/), false, 'no debt -> no write')
+test('a clean wave carries no debt', async () => {
+  const { result } = await conduct()
+  assert.deepStrictEqual(result.debt, [], 'no debt -> an empty ledger, not a missing one')
 })
 
 test('issue mode: only the markers the banker CONFIRMED are cleared; the rest ride forward', async () => {
@@ -431,84 +436,53 @@ test('issue mode: only the markers the banker CONFIRMED are cleared; the rest ri
   assert.deepStrictEqual(workflow.calls[1].args.state.debt, [keep],
     'the unconfirmed item survives in state.debt; the confirmed one is cleared')
   assert.ok(result.degradations.some((d) => d.kind === 'debt-unbanked'), 'and the shortfall is loud')
-  const pd2 = firstLabel(agent.calls, /^persist-debt:w2\b/)
-  assert.ok(pd2 && prompt(pd2).includes('KEEP-ME'), 'the carried item is re-persisted and re-banked next wave')
-  assert.ok(!prompt(pd2).includes('BANKED-OK'), 'the banked one is not carried')
+  const bank2 = firstLabel(agent.calls, /^bank-debt:w2\b/)
+  assert.ok(!bank2 || prompt(bank2).includes('KEEP-ME'), 'the carried item is re-banked next wave')
+  assert.ok(!bank2 || !prompt(bank2).includes('BANKED-OK'), 'the banked one is not carried')
 })
 
-test('file mode: a bank-debt that never reports ok clears nothing', async () => {
+test('file mode: the wave-1 debt.md section is COLLECTED, not written, and the ledger clears', async () => {
   const d = { unit: 'u1', kind: 'structure', severity: 'minor', what: 'KEEP-ME', why: 'w' }
   const cont = boundaryBlock({ fixUnits: [draft('consolidate-gcd')] })
-  const { workflow, result } = await conduct({
+  const { agent, workflow, result } = await conduct({
     state: mkState({ debt: [d], boundary: cont }),
-    agentRules: [
-      { match: /^bank-debt:w1$/, result: { ok: false, detail: 'debt.md is read-only' } },
-      ...rules({ triage: triageAdmit(['consolidate-gcd']) }),
-    ],
+    agentRules: rules({ triage: triageAdmit(['consolidate-gcd']) }),
     waveHandler: waves(mkState({ debt: [d], boundary: cont }), mkState({ wave: 2, boundary: boundaryBlock() })),
   })
-  assert.deepStrictEqual(workflow.calls[1].args.state.debt, [d], 'nothing was cleared on a failed bank')
-  assert.ok(result.degradations.some((x) => x.kind === 'debt-unbanked'))
+  assert.equal(hasLabel(agent.calls, /^bank-debt:/), false, 'file mode pays no banker — the section is data')
+  const sec = (result.debtSections ?? []).find((x) => x.wave === 1)
+  assert.ok(sec && sec.body.includes('KEEP-ME'), 'the wave-1 section carries the item, for persist.mjs to upsert')
+  assert.deepStrictEqual(workflow.calls[1].args.state.debt, [],
+    'and the ledger clears: a deterministic writer cannot half-land a section, so nothing stays unbanked')
+  assert.equal(result.degradations.some((x) => x.kind === 'debt-unbanked'), false)
 })
 
 /* ============================================================================== */
-/* 3c. persist-plan refuses to overwrite units this run has never seen            */
+/* 3c. The merged plan rides the envelope; nothing here overwrites plan.json       */
 /* ============================================================================== */
-// The write is wholesale, so a plan.json carrying a root-added unit would be destroyed with no
-// trace. One courier reports the on-disk ids; the SCRIPT decides. No merge — a loud refusal.
-const contFixture = () => ({
-  state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
-  agentRulesExtra: [],
-  waveHandler: waves(
-    mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
-    mkState({ wave: 2, boundary: boundaryBlock() }),
-  ),
-})
-
-test('persist-plan refuses to overwrite a plan.json holding unit ids this run never saw', async () => {
-  const f = contFixture()
+// The overwrite is wholesale, so a plan.json carrying a root-added unit would be destroyed with no
+// trace. The refusal now lives in persist.mjs, which can simply READ the file — no courier, no
+// model, no chance of a dead reporter making the check "not run". What this script owes the root is
+// the merged plan itself.
+test('a continuation returns the merged plan and issues no plan writer or courier', async () => {
   const { agent, result } = await conduct({
-    state: f.state,
-    waveHandler: f.waveHandler,
-    agentRules: [{ match: /^plan-ids:/, result: { ok: true, ids: ['seed-unit', 'root-added-unit'] } }, ...rules()],
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
   })
-  const ids = firstLabel(agent.calls, /^plan-ids:w1\b/)
-  assert.ok(ids, 'the on-disk ids are read first')
-  assert.equal(ids.model, 'haiku', 'a courier, not a judge')
-  assert.ok(prompt(ids).includes('report facts only'), 'and it is told so')
-  assert.equal(hasLabel(agent.calls, /^persist-plan:w1\b/), false, 'the overwrite never happens')
-  assert.deepStrictEqual(result.planConflict, [{ wave: 1, unknownUnits: ['root-added-unit'] }],
-    'the conflict reaches the root, which merges by hand')
-  assert.ok(result.degradations.some((d) => d.kind === 'plan-conflict' && /REFUSED/.test(d.what)))
-})
-
-test('persist-plan proceeds when the on-disk ids are a subset, and after a dead courier says so', async () => {
-  const f = contFixture()
-  const { agent } = await conduct({
-    state: f.state, waveHandler: f.waveHandler,
-    agentRules: [{ match: /^plan-ids:/, result: { ok: true, ids: ['seed-unit'] } }, ...rules()],
-  })
-  const ids = firstLabel(agent.calls, /^plan-ids:w1\b/)
-  const pp = firstLabel(agent.calls, /^persist-plan:w1\b/)
-  assert.ok(pp, 'a subset is not a conflict')
-  assert.ok(ids.seq < pp.seq, 'and the check always precedes the write')
-
-  const g = contFixture()
-  const { agent: a2, result } = await conduct({
-    state: g.state, waveHandler: g.waveHandler,
-    agentRules: [{ match: /^plan-ids:/, result: { ok: false, detail: 'no such file' } }, ...rules()],
-  })
-  assert.ok(firstLabel(a2.calls, /^persist-plan:w1\b/),
-    'a courier that could not read still persists — a stale plan.json breaks the next resume')
-  assert.ok(result.degradations.some((d) => d.kind === 'plan-conflict' && /unchecked/.test(d.what)),
-    'but never silently: the check that did not run is ledgered')
+  assert.equal(hasLabel(agent.calls, /^(plan-ids|persist-plan):/), false,
+    'no courier reads plan.json and no writer overwrites it')
+  assert.ok(result.plan.units.some((u) => u.id === 'consolidate-gcd'),
+    'the admitted draft is in the plan the root (and persist.mjs) gets back')
 })
 
 /* ============================================================================== */
 /* 3d. Escalating returns stage their work before handing back                    */
 /* ============================================================================== */
-// A tier-3 needs-user return used to fire before spec-expand, mergePlan, persist-plan, bank-debt and
-// the journal, so the boundary's new-unit skeletons, the wave's debt ledger and the architect's
+// A tier-3 needs-user return used to fire before spec-expand, mergePlan and the debt/journal
+// collection, so the boundary's new-unit skeletons, the wave's debt ledger and the architect's
 // rationale existed only in the run's journal.jsonl. An escalating return is a HANDOFF, not an abort.
 test('a tier-3 needs-user return stages specs, plan, debt and journal before returning', async () => {
   const debt = [{ unit: 'seed-unit', kind: 'structure', severity: 'minor', what: 'DEBT-ONE', why: 'w' }]
@@ -533,14 +507,11 @@ test('a tier-3 needs-user return stages specs, plan, debt and journal before ret
     waveHandler: waves(quarState()),
   })
   assert.equal(result.reason, 'needs-user')
-  const ret = firstLabel(agent.calls, /^persist-state:w1\b/)
-  for (const re of [/^spec-expand:cache-v2\b/, /^persist-plan:w1\b/, /^bank-debt:w1\b/, /^log-append:w1\b/]) {
-    const c = firstLabel(agent.calls, re)
-    assert.ok(c, `${re} must run before an escalating return`)
-    assert.ok(c.seq < ret.seq, `${c.label} precedes the return's persist-state`)
-  }
-  assert.ok(prompt(firstLabel(agent.calls, /^bank-debt:w1\b/)).includes('LEDGER-ITEM'), "the triage ledger is banked")
-  assert.ok(prompt(firstLabel(agent.calls, /^log-append:w1\b/)).includes('JOURNAL-TEXT'), 'the journal survives')
+  assert.ok(hasLabel(agent.calls, /^spec-expand:cache-v2\b/), 'the respec gets its spec before the handoff')
+  const sec = (result.debtSections ?? []).find((x) => x.wave === 1)
+  assert.ok(sec && sec.body.includes('LEDGER-ITEM'), 'the triage ledger is banked into the wave-1 debt section')
+  assert.ok(sec.body.includes('DEBT-ONE'), 'alongside the wave\'s own items')
+  assert.deepStrictEqual(result.journalEntries, [{ wave: 1, journal: 'JOURNAL-TEXT' }], 'the journal survives')
   assert.ok(result.plan.units.some((u) => u.id === 'cache-v2'), 'and the respec is in the plan the root gets back')
 })
 
@@ -554,8 +525,7 @@ test('a tier-2 needs-user escalation stages the drafts it admitted', async () =>
   })
   assert.equal(result.reason, 'needs-user')
   assert.ok(hasLabel(agent.calls, /^spec-expand:consolidate-gcd\b/), 'the admitted draft gets its spec')
-  assert.ok(hasLabel(agent.calls, /^persist-plan:w1\b/), 'and the plan carrying it reaches disk')
-  assert.ok(result.plan.units.some((u) => u.id === 'consolidate-gcd'))
+  assert.ok(result.plan.units.some((u) => u.id === 'consolidate-gcd'), 'and the plan carrying it reaches the root')
 })
 
 /* ============================================================================== */
@@ -765,7 +735,7 @@ test('no persist/bank/log/move/spec prompt names .roadmap/contracts/ as a write 
     ),
   }))
 
-  const writerLabel = /^(persist-plan|persist-state|bank-debt|log-append|move-feedback|spec-expand|spec-revise):/
+  const writerLabel = /^(bank-debt|move-feedback|spec-expand|spec-revise):/
   for (const { agent } of runs) {
     for (const c of labeled(agent.calls, writerLabel)) {
       assert.ok(!prompt(c).includes('.roadmap/contracts/'),
@@ -777,8 +747,8 @@ test('no persist/bank/log/move/spec prompt names .roadmap/contracts/ as a write 
 /* ============================================================================== */
 /* 9. Architect-log appended only when tier-3 ran                                  */
 /* ============================================================================== */
-test('tier-3 boundary journal is appended under a ## Wave 1 header', async () => {
-  const { agent } = await conduct({
+test('tier-3 boundary journal rides the envelope as a wave-1 entry', async () => {
+  const { result } = await conduct({
     // Ruling 4: the quarantined unit must be present AND inScope:true in the plan for
     // the quarantine predicate to force tier 3.
     plan: mkPlan({
@@ -800,47 +770,44 @@ test('tier-3 boundary journal is appended under a ## Wave 1 header', async () =>
       mkState({ wave: 2, boundary: boundaryBlock() }),
     ),
   })
-  const log = firstLabel(agent.calls, /^log-append:w1\b/)
-  assert.ok(log, 'tier-3 appends the architect log')
-  assert.equal(log.model, 'haiku', 'the log writer is haiku')
-  assert.ok(prompt(log).includes('rationale'), 'journal text is carried into the append')
-  assert.ok(prompt(log).includes('## Wave 1'), 'append uses a ## Wave N header')
+  assert.deepStrictEqual(result.journalEntries, [{ wave: 1, journal: 'rationale' }],
+    'the journal TEXT is judgment; putting it under a `## Wave 1` header is persist.mjs\'s transcription')
 })
 
 test('clean tier-1 boundary never appends the architect log', async () => {
-  const { agent } = await conduct({
+  const { agent, result } = await conduct({
     waveHandler: waves(
       mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
       mkState({ wave: 2, boundary: boundaryBlock() }),
     ),
   })
-  assert.equal(hasLabel(agent.calls, /^log-append:/), false, 'no tier-3 ⇒ no architect-log append')
+  assert.equal(hasLabel(agent.calls, /^log-append:/), false, 'no tier-3 ⇒ no architect-log writer at all')
+  assert.deepStrictEqual(result.journalEntries, [], 'and no journal entry to transcribe')
 })
 
 /* ============================================================================== */
 /* 10. Debt stamped every boundary; not re-banked next wave                        */
 /* ============================================================================== */
-test('debt.md is stamped on an empty-debt continuation boundary with a wave-1 marker', async () => {
-  // Ruling 5: writers run on CONTINUATION boundaries only, so the empty-debt stamp needs a
+test('an empty-debt continuation boundary still stamps a wave-1 debt section', async () => {
+  // Ruling 5: staging runs on CONTINUATION boundaries only, so the empty-debt stamp needs a
   // boundary that dispatches wave 2 — a tier-1 draft admit is the cheapest continuation.
-  const { agent } = await conduct({
+  const { result } = await conduct({
     waveHandler: waves(
       mkState({ debt: [], boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
       mkState({ wave: 2, boundary: boundaryBlock() }),
     ),
   })
-  const bank = firstLabel(agent.calls, /^bank-debt:w1\b/)
-  assert.ok(bank, 'bank-debt fires even with an empty ledger')
-  assert.match(prompt(bank), /wave[\s-]*1\b/i, 'the append carries a wave-1 marker')
+  assert.deepStrictEqual(result.debtSections, [{ wave: 1, body: 'wave 1: no new entries' }],
+    'the section is stamped even when there is nothing to say (ruling 7)')
 })
 
-test('debt item text appears in bank-debt:w1 and is not re-sent at wave 2', async () => {
+test('debt item text lands in the wave-1 section and is not re-sent at wave 2', async () => {
   const marker = 'DEBT_ONE_MARKER'
   // Wave-1 non-contract debt routes the boundary to tier 2 (debt counts as judgment), so
   // the draft only survives via an explicit admit (ruling 3). Wave 2 carries a fresh draft
-  // (no debt → tier 1 auto-admit) so ITS boundary is also a continuation and bank-debt:w2
-  // actually fires; maxWavesPerRun:2 ends the run at max-waves after that.
-  const { agent } = await conduct({
+  // (no debt → tier 1 auto-admit) so ITS boundary is also a continuation and stamps too;
+  // maxWavesPerRun:2 ends the run at max-waves after that.
+  const { result } = await conduct({
     config: { conductor: { maxWavesPerRun: 2 } },
     agentRules: rules({ triage: triageAdmit(['consolidate-gcd']) }),
     waveHandler: waves(
@@ -851,11 +818,10 @@ test('debt item text appears in bank-debt:w1 and is not re-sent at wave 2', asyn
       mkState({ wave: 2, debt: [], boundary: boundaryBlock({ fixUnits: [draft('fix-w2')] }) }),
     ),
   })
-  const bank1 = firstLabel(agent.calls, /^bank-debt:w1\b/)
-  assert.ok(bank1 && prompt(bank1).includes(marker), 'wave-1 debt text is banked')
-  const bank2 = firstLabel(agent.calls, /^bank-debt:w2\b/)
-  assert.ok(bank2, 'wave 2 is a continuation boundary, so its stamp fires too')
-  assert.ok(!prompt(bank2).includes(marker), 'wave-1 debt is not re-banked at wave 2')
+  const [s1, s2] = result.debtSections
+  assert.ok(s1.wave === 1 && s1.body.includes(marker), 'wave-1 debt text is in the wave-1 section')
+  assert.ok(s2 && s2.wave === 2, 'wave 2 is a continuation boundary, so its section is stamped too')
+  assert.ok(!s2.body.includes(marker), 'wave-1 debt is not re-stamped at wave 2')
 })
 
 // Issue mode mints ONE consolidated roadmap:debt issue per unit-with-residue, keyed wave+unit
@@ -1011,11 +977,10 @@ test('the returned state is threaded to the next wave, boundary/debt consumed', 
 // The harness now returns prior+wave degradations (arc-cumulative); the conductor must absorb
 // only the delta past what it dispatched — seeding from inState AND pushing the full returned
 // array would double-count every prior entry at each wave.
-// The harness returns THIS WAVE's degradations in its envelope only (it has already appended each
-// one to the shared .roadmap/degradations.jsonl sidecar, and its serialize() carries none). The
-// conductor absorbs them in memory and must NEVER thread a ledger back onto disk — that arc-cumulative
-// re-transcription is exactly what made every checkpoint bigger than the last.
-test('degradations absorb each wave once and never re-enter a persisted document', async () => {
+// The harness returns THIS WAVE's degradations in its envelope only (its serialize() carries none).
+// The conductor absorbs them in memory and must NEVER thread a ledger back into the state — that
+// arc-cumulative re-transcription is exactly what made every write bigger than the last.
+test('degradations absorb each wave once and never re-enter the threaded state', async () => {
   const W1 = { script: 'harness', wave: 1, label: 'codex-build:x', model: 'haiku', kind: 'threw', what: 'first' }
   const W2 = { script: 'harness', wave: 2, label: 'codex-build:y', model: 'haiku', kind: 'threw', what: 'second' }
   const { result, agent, workflow } = await conduct({
@@ -1028,62 +993,40 @@ test('degradations absorb each wave once and never re-enter a persisted document
   assert.deepStrictEqual(result.degradations, [W1, W2], 'each wave absorbed once, in order')
   for (const c of workflow.calls)
     assert.equal(c.args.state.degradations, undefined, 'no ledger is ever threaded into the next dispatch')
-  for (const c of agent.calls.filter((x) => /^persist-state:/.test(x.label)))
-    assert.ok(!c.prompt.includes('"degradations"'), `${c.label} persists no degradation ledger`)
   assert.equal(result.state.degradations, undefined, 'and the returned state carries none either')
 })
 
 // skill-feedback.md is HUMAN-owned and the orchestrator must not be able to reach it. It used to
 // carry a machine-rewritten marker region beside hand-written sections, and twice the growing region
-// ate the entry above it. The machine half now lives in its own file, written whole and
-// cksum-verified, with a body that cannot grow with the row count.
-test('the machine summary is its own cksum-verified file — skill-feedback.md is never written', async () => {
+// ate the entry above it. The machine half is now `.roadmap/skill-degradations.md`, rendered by
+// persist.mjs from the returned rows — so no agent can reach either file.
+test('no agent can write skill-feedback.md, and the rows reach the root in the envelope', async () => {
   const { agent, result } = await conduct({
     waveHandler: waves(mkState({
       boundary: boundaryBlock(),
       degradations: [
         { script: 'harness', wave: 1, label: 'codex-build:x', model: 'haiku', kind: 'no-report', what: 'MARKER_WHAT' },
         { script: 'harness', wave: 1, label: 'codex-build:y', model: 'haiku', kind: 'no-report', what: 'another' },
-        { script: 'harness', wave: 1, label: 'checkpoint', model: 'haiku', kind: 'write-failed', what: 'lost' },
+        { script: 'harness', wave: 1, label: 'gate:z', model: 'opus', kind: 'threw', what: 'lost' },
       ],
     })),
   })
   for (const c of agent.calls)
     assert.ok(!c.prompt.includes('skill-feedback.md: ') && !/(write|edit|append|replace)[^.]{0,80}skill-feedback\.md/i.test(c.prompt),
       `${c.label} must not be able to write skill-feedback.md`)
-
-  const sf = firstLabel(agent.calls, /^skill-degradations$/)
-  assert.ok(sf, 'a degradation-carrying run writes the machine summary')
-  assert.equal(sf.model, 'haiku')
-  const doc = sf.prompt.slice(sf.prompt.indexOf('<<<DOCUMENT>>>\n') + '<<<DOCUMENT>>>\n'.length)
-  assertCksumVerified(sf.prompt, '/repo/.roadmap/skill-degradations.md', `${doc}\n`, 'the skill-degradations writer')
-  // Bounded by the number of distinct KINDS, never by the number of rows: three rows, two kinds,
-  // and no row text at all.
-  assert.ok(doc.includes('| no-report | 2 |'), 'per-kind counts, not per-row lines')
-  assert.ok(doc.includes('| write-failed | 1 |'))
-  assert.ok(!doc.includes('MARKER_WHAT'), 'no row text — the rows live in the sidecar')
-  assert.ok(doc.includes('.roadmap/degradations.jsonl'), 'and the summary points at it')
-  assert.equal(result.degradations.length, 3, 'the rows themselves still reach the root in the envelope')
+  assert.equal(hasLabel(agent.calls, /^skill-degradations$/), false, 'no model renders the machine summary any more')
+  assert.equal(result.degradations.length, 3, 'the rows reach the root — and persist.mjs — in the envelope')
 })
 
-test('a clean run writes no degradation summary at all', async () => {
-  const { agent } = await conduct()
-  assert.equal(hasLabel(agent.calls, /^skill-degradations$/), false, 'no degradations -> no write')
-  assert.equal(hasLabel(agent.calls, /^sidecar:/), false, 'and nothing to append')
-})
-
-// The conductor's OWN degradations take the same route as the harness's: one append at the event.
-test('a conductor degradation is appended to the shared sidecar, cksum-verified over the tail', async () => {
-  const { agent } = await conduct({
-    agentRules: [{ match: /^persist-state:w1$/, result: { ok: false, detail: 'cksum printed 9 400' } }, ...rules()],
+// The conductor's OWN degradations take the same route as the harness's: in memory, then out on
+// the envelope.
+test('a conductor degradation rides the envelope', async () => {
+  const { result } = await conduct({
+    // A census that dies twice: runOr ledgers `no-report`, then `salvage-failed`.
+    agentRules: [{ match: /^census:/, result: null }, ...rules()],
   })
-  const app = labeled(agent.calls, /^sidecar:degradations$/)
-  assert.ok(app.length >= 1, 'the write-failed degradation reached the sidecar')
-  const rows = sidecarRows(agent.calls, 'degradations')
-  assert.ok(rows.some((d) => d.script === 'conductor' && d.kind === 'write-failed'),
-    'the full row is on disk, not a truncated rendering')
-  const body = app[0].prompt.split('<<<APPEND>>>\n')[1]
-  assertAppendVerified(app[0].prompt, '/repo/.roadmap/degradations.jsonl', `${body}\n`, 'the conductor sidecar writer')
+  assert.ok(result.degradations.some((d) => d.script === 'conductor' && d.kind === 'no-report'),
+    'the full row is on the envelope, not a truncated rendering')
 })
 
 /* ============================================================================== */
@@ -1133,118 +1076,26 @@ test('a supersedes respec adds a new id, quarantines the old, and repoints its e
 /* ============================================================================== */
 /* 14. Persisted `conductor` block                                                 */
 /* ============================================================================== */
-test('tier-4 return persists a conductor block (reason + boundaries) before returning', async () => {
-  const { agent } = await conduct({
+test('a tier-4 return carries a conductor block (reason + boundaries) on the envelope', async () => {
+  const { result } = await conduct({
     state: mkState({ debt: [{ unit: 'seed-unit', kind: 'contract', severity: 'major', what: 'mismatch', why: 'adjudicate' }] }),
   })
-  const ps = firstLabel(agent.calls, /^persist-state:w1\b/)
-  assert.ok(ps, 'a persist-state precedes the tier-4 return')
-  const p = prompt(ps)
-  assert.ok(p.includes('"conductor"'), 'the persisted JSON carries a conductor block')
-  assert.ok(p.includes('contract-amendment'), 'the conductor block records the return reason')
-  assert.ok(p.includes('"boundaries"'), 'the conductor block carries a boundaries array')
+  assert.equal(result.reason, 'contract-amendment')
+  assert.equal(result.state.conductor.reason, 'contract-amendment', 'the block records the return reason')
+  assert.ok(Array.isArray(result.state.conductor.boundaries), 'and carries a boundaries array')
 })
 
-test('a tier-1 continuation persists state with boundary removed and debt cleared', async () => {
-  const { agent } = await conduct({
+test('a tier-1 continuation snapshots state with boundary removed and debt cleared', async () => {
+  const { snapshots } = await conduct({
     waveHandler: waves(
       mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
       mkState({ wave: 2, boundary: boundaryBlock() }),
     ),
   })
-  const ps = firstLabel(agent.calls, /^persist-state:w1\b/)
-  assert.ok(ps, 'continuation persists state')
-  const p = prompt(ps)
-  assert.ok(!p.includes('"boundary"'), 'the consumed boundary block is stripped from the persisted state')
-  assert.match(p, /"debt"\s*:\s*\[\s*\]/, 'consumed debt is persisted as an empty array')
-})
-
-// A large state fans out exactly as the harness checkpoint does (shared-consts pins the two
-// executors byte-identical; this pins the conductor actually ROUTING through it): one STRICT-
-// prefixed Haiku writer per `.partK`, then one assembler under the same top-level label.
-test('persist-state of a large state fans out to part writers + one assembler, STRICT-prefixed', async () => {
-  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
-    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
-  const { agent } = await conduct({ state: mkState({ units }) })
-  assert.ok(!hasLabel(agent.calls, /^persist-state:w1$/), 'no single agent is handed the whole document')
-  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
-  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
-  assert.ok(writers.length >= 3, `several part writers (saw ${writers.length})`)
-  assert.equal(asm.length, 1, 'exactly one assembler')
-  assert.ok(asm[0].seq > Math.max(...writers.map((w) => w.seq)), 'the assembler is dispatched after every writer')
-  for (const c of [...writers, asm[0]]) {
-    assert.ok(c.prompt.startsWith('Start by `cd`'), `${c.label} carries the STRICT location discipline`)
-    assert.equal(c.model, 'haiku')
-  }
-  const bodies = writers.map((w, k) => {
-    const file = `/repo/.roadmap/state.json.part${k + 1}`
-    assert.ok(w.prompt.includes(`cat > ${file} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
-    // Slack covers STRICT + the copy/verify boilerplate; it grew when STRICT's checkout test
-    // became a mechanical `git rev-parse --git-dir` instead of a judgement call.
-    assert.ok(w.prompt.length <= 24000 + 2000, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
-    const marker = `<<<PART ${k + 1}/${writers.length}>>>\n`
-    const body = w.prompt.slice(w.prompt.indexOf(marker) + marker.length)
-    assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)
-    return body
-  })
-  assert.ok(asm[0].prompt.includes(`cat ${writers.map((_, k) => `/repo/.roadmap/state.json.part${k + 1}`).join(' ')} > /repo/.roadmap/state.json`),
-    'the assembler cats the parts in order')
-  assertCksumVerified(asm[0].prompt, '/repo/.roadmap/state.json', `${bodies.join('\n')}\n`, 'the assembler')
-  assert.ok(asm[0].prompt.includes('On success run `rm -f /repo/.roadmap/state.json.part*`'), 'the assembler clears parts by glob')
-})
-
-test('persist-state of a small state: one STRICT-prefixed here-doc writer, cksum-verified', async () => {
-  const { agent } = await conduct()
-  const ps = labeled(agent.calls, /^persist-state:w1$/)
-  assert.equal(ps.length, 1, 'one single writer, no fan-out')
-  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:/), 'no part writers or assembler')
-  const p = ps[0].prompt
-  assert.ok(p.startsWith('Start by `cd`'), 'STRICT-prefixed')
-  assert.ok(p.includes(`cat > /repo/.roadmap/state.json <<'ROADMAP_PART'`), 'written through a quoted here-doc')
-  const marker = '<<<DOCUMENT>>>\n'
-  const body = p.slice(p.indexOf(marker) + marker.length)
-  JSON.parse(body)
-  assertCksumVerified(p, '/repo/.roadmap/state.json', `${body}\n`, 'the persist-state writer')
-})
-
-test('persist-state: a part lost twice is retried once, then skips the assembler and ledgers write-failed', async () => {
-  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
-    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
-  const { agent, result } = await conduct({
-    state: mkState({ units }),
-    agentRules: [
-      { match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'wc printed 9' } },
-      { match: /^persist-state:w1:part1#retry$/, result: { ok: false, detail: 'cksum printed 9 24071' } },
-      ...rules(),
-    ],
-  })
-  const retries = labeled(agent.calls, /#retry$/)
-  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'the lost part is retried once, by a fresh agent, and nothing else is')
-  assert.ok(retries[0].prompt.startsWith('Start by `cd`'), 'the retry carries the STRICT prefix like every writer')
-  assert.ok(!hasLabel(agent.calls, /^persist-state:w1:assemble$/), 'no assembler after a part lost twice')
-  const d = result.degradations.find((x) => x.label === 'persist-state:w1' && x.kind === 'write-failed')
-  assert.ok(d, 'the loss is ledgered under the top-level persist label')
-  assert.match(d.what, /part 1\/\d+: cksum printed 9 24071/, 'the failed part is named with the retry\'s reason')
-  assert.ok(!d.what.includes('wc printed 9'), 'the first attempt\'s reason is superseded')
-})
-
-test('persist-state: a part lost once is recovered by its retry — assembler runs, nothing ledgered', async () => {
-  const units = Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
-    [`old-${i}`, { status: 'merged', reason: `synthetic terminal record ${'x'.repeat(200)} #${i}` }]))
-  const { agent, result } = await conduct({
-    state: mkState({ units }),
-    agentRules: [{ match: /^persist-state:w1:part1$/, result: { ok: false, detail: 'cksum printed 9 24071' } }, ...rules()],
-  })
-  const writers = labeled(agent.calls, /^persist-state:w1:part\d+$/)
-  const retries = labeled(agent.calls, /#retry$/)
-  const asm = labeled(agent.calls, /^persist-state:w1:assemble$/)
-  assert.deepEqual(retries.map((c) => c.label), ['persist-state:w1:part1#retry'], 'only the lost part is retried, once')
-  assert.equal(retries[0].prompt, writers[0].prompt, 'the retry is handed the identical part prompt')
-  assert.ok(retries[0].seq > Math.max(...writers.map((w) => w.seq)), 'the retry follows the first pass')
-  assert.equal(asm.length, 1, 'the assembler runs once the retry lands')
-  assert.ok(asm[0].seq > retries[0].seq, 'and follows the retry')
-  assert.ok(!result.degradations.some((x) => x.kind === 'write-failed'), 'a recovered part is not a degradation')
-  assert.equal(labeled(agent.calls, /^persist-state:w1/).length, writers.length + 2, 'spend: n writers + 1 retry + 1 assembler')
+  const w1 = snapshots.find((sn) => sn.wave === 1 && sn.conductor)
+  assert.ok(w1, 'the continuation leaves a crash-recovery snapshot')
+  assert.equal('boundary' in w1, false, 'the consumed boundary block is stripped')
+  assert.deepStrictEqual(w1.debt, [], 'consumed debt is carried as an empty array')
 })
 
 /* ============================================================================== */

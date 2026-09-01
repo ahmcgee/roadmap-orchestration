@@ -41,8 +41,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
 // The introspection + assertion toolkit lives in hygiene-lib.mjs so other suites
 // (codex-lane.test.mjs holds the embedded Codex brief to the same bar) share one copy.
 import {
@@ -199,7 +199,11 @@ async function driveConductor() {
     }
   })
 
+  const hygienePlan = makePlan([unit('ok'), unit('broken')])
+  const hygieneState = makeState()
   const { fn: agentFn, calls } = makeAgent([
+    // The launch pack read — the conductor's first act, and itself a capped-schema prompt.
+    ...packRules(hygienePlan, hygieneState),
     // Tier 3 (wave 1): respec the quarantine so the arc continues into wave 2.
     {
       match: /^boundary:w1$/,
@@ -220,7 +224,7 @@ async function driveConductor() {
 
   const runner = await loadScript(CONDUCTOR)
   await runner({
-    args: { plan: makePlan([unit('ok'), unit('broken')]), state: makeState(), config: {}, harnessPath: HARNESS_PATH },
+    args: { roadmapDir: `${hygienePlan.repoPath}/.roadmap`, launchId: 'sim-launch', config: {}, harnessPath: HARNESS_PATH },
     agent: agentFn,
     workflow: workflowFn,
   })

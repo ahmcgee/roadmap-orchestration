@@ -3,6 +3,7 @@
 // contract:
 //   makeAgent(rules, baseSha?) -> { fn, calls }
 //   makeWorkflow(handler)      -> { fn, calls }
+//   packRules(plan, state)     -> rules satisfying the launch pack read
 //   BASE_SHA, INT_SHA
 //   assertAllModelsPinned(calls), assertSchemasPresent(calls), conformsToSchema(result, schema)
 //   structuredOutputError()
@@ -30,41 +31,6 @@ export const nextSeq = () => __seq++
 // expect. Computed by the REAL system tool so every run cross-validates the scripts' in-script
 // cksumOf (which the workflow sandbox needs because it has no crypto) against coreutils.
 export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'utf8' }).trim()
-
-// The rows a run appended to an event sidecar (.roadmap/<kind>.jsonl), parsed back out of the
-// `sidecar:<kind>` writer prompts. This is the ONLY place degradations and escalations are recorded
-// now — state.json carries neither — so a test that used to read state.escalations reads this.
-export const sidecarRows = (calls, kind) => calls
-  .filter((c) => c.label === `sidecar:${kind}`)
-  .flatMap((c) => c.prompt.split('<<<APPEND>>>\n')[1].split('\n').filter(Boolean).map((l) => JSON.parse(l)))
-
-// An append prompt must be cksum-verified over the file's TAIL (the script cannot know the whole
-// file) and must never touch what is already there.
-export function assertAppendVerified(prompt, file, content, who) {
-  const pair = sysCksum(content)
-  const [crc, bytes] = pair.split(' ')
-  assert.ok(prompt.includes(`cat >> ${file} <<'ROADMAP_APPEND'`), `${who} appends through a quoted here-doc`)
-  assert.ok(prompt.includes(`\`tail -c ${bytes} ${file} | cksum\` must print exactly \`${crc} ${bytes}\``),
-    `${who} verifies the appended bytes by cksum of the file's tail (${pair})`)
-  assert.match(prompt, /NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file/,
-    `${who} cannot reach the rows already on disk`)
-  assert.match(prompt, /NEVER edit, pad, trim, or rewrite the file to make the numbers match/,
-    `${who} is forbidden from repairing a mismatch`)
-}
-
-// A verbatim writer prompt (single, partK, or assembler) must verify its file by cksum against the
-// system-computed pair for `content` and must never repair a mismatch. Byte count alone was gamed
-// live (un-escaped JSON, tail padded to the expected count, ok:true, unparseable state.json).
-export function assertCksumVerified(prompt, file, content, who) {
-  const pair = sysCksum(content)
-  assert.match(pair, /^\d+ \d+$/, 'coreutils cksum prints "<crc> <bytes>" for stdin')
-  assert.ok(prompt.includes(`\`cksum < ${file}\` must print exactly \`${pair}\``),
-    `${who} is told the exact system cksum pair (${pair}) of ${file}`)
-  assert.ok(!/wc -c/.test(prompt), `${who} no longer verifies by byte count`)
-  assert.match(prompt, /NEVER edit, pad, trim, or rewrite the file/, `${who} is forbidden from repairing a mismatch`)
-  assert.match(prompt, /a mismatch is reported, not repaired/, `${who} reports rather than repairs`)
-  assert.match(prompt, /Retry the write at most once/, `${who} is capped at one retry`)
-}
 
 // A COURIER call (harness.mjs `courierRun`) is handed a closed, numbered command list and reports
 // {command, exitCode, stdout} per command. The fake replays that exact list back with exit 0 and a
@@ -97,6 +63,39 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
     if (m) head = m[1]
     return { command, exitCode: 0, stdout: stdoutFor(command, head) }
   }) }
+}
+
+// The LAUNCH PACK read — the scripts' first act on a root launch. Given the plan and state a test
+// wants the script to see, this returns the rule that satisfies every `pack-read:<file>` courier.
+// The `cksum` line comes from the REAL coreutils tool over exactly the bytes the fake echoes back,
+// so the verification the script performs at launch runs for real in every sim: a script that
+// stopped checking, or checked the wrong candidate, fails here rather than silently accepting a
+// mis-transcribed plan. The on-disk file is modelled as `JSON.stringify(...) + "\n"` — the trailing
+// newline every writer leaves, and the one the script's two-candidate check exists for.
+export function packRules(plan, state) {
+  const docs = {
+    'plan.json': `${JSON.stringify(plan, null, 2)}\n`,
+    'state.json': `${JSON.stringify(state, null, 2)}\n`,
+  }
+  return [{
+    match: /^pack-read:/,
+    result: (prompt, opts) => {
+      const name = String(opts.label).slice('pack-read:'.length).replace(/#.*$/, '')
+      const file = docs[name]
+      assert.ok(file !== undefined, `fakes.packRules: no canned document for ${name}`)
+      const lines = file.split('\n').slice(0, -1)   // the trailing newline terminates the last line
+      return courierResult(prompt, BASE_SHA, (cmd) => {
+        if (/^cksum </.test(cmd)) return sysCksum(file)
+        if (/^wc -c </.test(cmd)) return String(Buffer.byteLength(file))
+        if (/^wc -l </.test(cmd)) return String(lines.length)
+        const m = /^sed -n '(\d+),(\d+|\$)p'/.exec(cmd)
+        if (!m) return ''
+        const a = Number(m[1])
+        const b = m[2] === '$' ? lines.length : Number(m[2])
+        return `${lines.slice(a - 1, b).join('\n')}\n`
+      })
+    },
+  }]
 }
 
 // ---- built-in default results, keyed by harness label prefix ---------------------------
@@ -157,15 +156,8 @@ const DEFAULTS = [
   [(l) => l.startsWith('preview-setup'), (b, p) => courierResult(p, b)],
   [(l) => l === 'preview-worktree', (b, p) => courierResult(p, b)],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
-  [(l) => l === 'checkpoint', () => ({ ok: true })],
-  // Large-payload fan-out: `<label>:partK` writers, their one-shot `<label>:partK#retry` re-runs,
-  // and `<label>:assemble` (harness checkpoint and the conductor's persist-state/persist-plan
-  // alike; the conductor labels are matched by prefix in conductor.test.mjs's rules()).
-  [(l) => l.startsWith('checkpoint:part') || l === 'checkpoint:assemble', () => ({ ok: true })],
-  // Event sidecars: one cksum-verified `>>` append per degradation/escalation burst, in both scripts.
-  [(l) => l.startsWith('sidecar:'), () => ({ ok: true })],
-  [(l) => l === 'skill-degradations', () => ({ ok: true })],   // conductor's per-kind count summary
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
+  [(l) => l.startsWith('spec-append:'), () => ({ ok: true })],   // adjudication rulings appended to the spec
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
   [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('health-write:'), () => ({ ok: true })],

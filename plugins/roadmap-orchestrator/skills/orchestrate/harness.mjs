@@ -2,6 +2,7 @@ export const meta = {
   name: 'roadmap-wave',
   description: 'Execute one wave of a roadmap plan: per-unit build/gate pipelines and a serial merge queue',
   phases: [
+    { title: 'Launch', detail: 'verified plan/state pack read (Haiku)' },
     { title: 'Setup', detail: 'integration + unit worktrees' },
     { title: 'Implement', detail: 'Opus plan + codex build (Haiku steer)' },
     { title: 'Architect', detail: 'plan-check + exit gate (Fable)' },
@@ -17,19 +18,249 @@ export const meta = {
 }
 
 /* ------------------------------------------------------------------------
- * Inputs. This script has no filesystem access: the main loop reads
- * .roadmap/plan.json and .roadmap/state.json and passes them in as args.
+ * Launch. This script has no filesystem access, so its input arrives through
+ * an agent: the ROOT passes only a small envelope — { roadmapDir, launchId,
+ * config? } — and the script's FIRST act is a Haiku courier that reads the
+ * plan/state pack off disk and proves what it transcribed, by cksum, in code.
+ * The root used to paste plan.json and state.json into `args`, which put the
+ * whole pack through the most expensive tier in the system (the root session)
+ * on every launch and every resume.
+ *
+ * NESTED LAUNCH. The conductor dispatches each wave with `plan` and `state`
+ * already IN MEMORY — its plan is mutated wave to wave and deliberately does
+ * not round-trip through disk — so a nested launch passes both in `args` and
+ * reads no pack. The rule, in one line: BOTH in memory => nested; NEITHER =>
+ * root, read the pack. One without the other is a caller bug and throws.
+ *
  * Shapes: reference.md. Every call pins its model explicitly — agents would
  * otherwise inherit the main-loop model (frontier) silently. All delegations go
  * through run(), a thin wrapper that also tallies per-tier spend for the report.
  * Prompts are deterministic functions of unit ids and shas so that
  * resumeFromRunId can replay completed calls from the journal.
+ *
+ * This script writes NOTHING under .roadmap/. Everything it decides rides home
+ * in the RETURN value, and `persist.mjs` — a real Node process replaying this
+ * run's journal at zero model cost — is what puts it on disk. See reference.md
+ * "Who writes `.roadmap/`".
  * ---------------------------------------------------------------------- */
 // args can arrive JSON-stringified depending on how the caller encoded them — tolerate both.
 // (Observed in smoke testing: a stringified args object makes every destructured field
 // `undefined`, and undefined paths in prompts make agents improvise in their cwd.)
 const A = typeof args === 'string' ? JSON.parse(args) : args
-const { plan, state: prior, config: overrides } = A
+const { roadmapDir, config: overrides } = A
+
+// Cache-buster for ENVIRONMENT READS only. `resumeFromRunId` replays any agent() call whose
+// (prompt, opts) is byte-identical — which is exactly what makes a resume cheap, and exactly what
+// makes a probe lie: arc-observed twice (2026-08-25/26) a resume replayed a pre-rebuild
+// `cd: No such file` provisioning failure and a pre-merge `state:'ready'`, quarantining units whose
+// real environment was fine. A probe's whole value is what the disk and git look like RIGHT NOW, so
+// every probe prompt carries `args.launchId`, which the ROOT re-generates on every launch AND every
+// resume. The launch pack read is one of these: plan.json and state.json on disk are what the LAST
+// run left there, so a replayed pack would silently dispatch from a stale plan. WORK-PRODUCT calls
+// never carry it — replaying those for free is the point of resume.
+// A missing launchId DEGRADES to unsalted rather than throwing (the `no-launch-id` entry below,
+// raised once `degrade` exists): the salt is freshness hygiene, and converting one stale-probe
+// defect into a dead arc is strictly worse than the defect.
+const LAUNCH = A.launchId
+  ? `\nProbe id ${A.launchId} — this line exists only to make this request unique; ignore it.`
+  : ''
+
+/* --------------------------- schema helpers ---------------------------- */
+// Declared here rather than beside the schemas: the launch pack's courier needs them before any
+// plan-dependent line has run.
+const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
+const arr = (t) => ({ type: 'array', items: { type: t } })
+const oneOf = (vals) => ({ type: 'string', enum: vals })
+
+/* ------------------------- courier vocabulary -------------------------- */
+// Location discipline for mechanical agents: smoke testing showed that given a bad path
+// they improvise in their cwd and report plausible success. Fail-loud beats adaptive.
+const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
+  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
+  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
+  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
+  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
+// EVERY prompt whose schema carries a maxLength must also carry this. A cap is a contract with the
+// model, and the prompt is the only place that contract is communicated — a capped field with no
+// matching instruction is a trap: the agent overruns it, burns its schema-retries, and dies
+// returning null (arc-observed: the conductor's triage prompt had a 600-char `notes` cap, no
+// terseness clause, and an invitation to put overflow THERE — it died at two consecutive
+// boundaries). Applied as a const, not remembered per-prompt, so it cannot drift out of a new prompt.
+const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
+  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
+  'Respect every character budget named below exactly, keep each finding to a sentence or two, and emit no ' +
+  'field the schema does not define — an unexpected key is rejected as hard as an over-long one. '
+// Default per-command output budget. Enough for a `codex login status`, a porcelain status, a
+// rev-parse or a failing command's error tail; a test lane's full output does not belong in a
+// courier report. The launch pack read raises it (READ_CHUNK) — echoing a whole JSON document is
+// the entire point of that one call.
+const COURIER_OUT = 1200
+const courierSchema = (n, outMax = COURIER_OUT) => obj({
+  ok: { type: 'boolean' },
+  results: { type: 'array', maxItems: n, items: obj({
+    command: { type: 'string', maxLength: 300 },
+    exitCode: { type: 'number' },
+    stdout: { type: 'string', maxLength: outMax },
+  }, ['command', 'exitCode', 'stdout']) },
+  detail: { type: 'string', maxLength: 300 },
+}, ['ok', 'results'])
+const courierPrompt = (where, commands, extra = '', outMax = COURIER_OUT) =>
+  STRICT +
+  `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
+  `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
+  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
+  `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
+  `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
+  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
+  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
+  `command's combined stdout and stderr, first ${outMax} characters — truncate, never summarise or ` +
+  `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
+  `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
+  `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
+  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+// Raw courier report -> the shape the SCRIPT reads. Shared by courierRun (below, once run() exists)
+// and by the launch pack read, which cannot use courierRun: run() tallies spend against the plan
+// this very read is what fetches. `out` is trimmed, for the ordinary fact-reading callers; `raw` is
+// the untouched capture, which the pack read needs — a JSON document's indentation is content.
+const courierShape = (r, commands) => {
+  const n = commands.length
+  const results = (Array.isArray(r?.results) ? r.results : []).slice(0, n)
+  const bad = results.findIndex((x) => x?.exitCode !== 0)
+  const raw = (i) => String(results[i]?.stdout ?? '')
+  const out = (i) => raw(i).trim()
+  const short = results.length < n
+  return {
+    ok: bad < 0 && !short,
+    results,
+    exit: (i) => (typeof results[i]?.exitCode === 'number' ? results[i].exitCode : null),
+    out,
+    raw,
+    detail: bad >= 0
+      ? `\`${commands[bad]}\` exited ${results[bad].exitCode} — ${out(bad).slice(0, 300) || '(no output)'}`
+      : short
+        ? `only ${results.length}/${n} commands reported — ${String(r?.detail ?? 'no reason given').slice(0, 200)}`
+        : String(r?.detail ?? ''),
+  }
+}
+
+/* --------------------------- the launch pack --------------------------- */
+// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
+// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
+// Kept after the verbatim WRITERS were deleted, because it is what makes the pack READ
+// trustworthy: a courier that truncated, summarised or re-escaped a JSON document cannot produce
+// the crc `cksum` prints for the real file, and a crc cannot be iterated toward. (Byte count alone
+// was gamed live, in the writer era: a transcriber un-escaped `\"`/`\\` inside string values and
+// padded the tail until `wc -c` matched.)
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const CK_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i << 24
+    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
+    t[i] = c >>> 0
+  }
+  return t
+})()
+const cksumOf = (s) => {
+  let crc = 0, len = 0
+  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
+  for (const ch of s) {
+    const c = ch.codePointAt(0)
+    if (c < 0x80) feed(c)
+    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
+    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
+  }
+  const bytes = len
+  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
+  return { crc: (~crc) >>> 0, bytes }
+}
+// One courier's content budget for a pack file, sized like the writers it replaces: a single
+// response caps at ~32k output tokens, so ~24 KB of echoed document is the shape that fits. A file
+// bigger than this is re-read over line ranges rather than silently truncated (readPack below).
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const READ_CHUNK = 24000
+// The pack: the documents the root used to paste into `args`.
+const PACK_FILES = ['plan.json', 'state.json']
+const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
+  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
+  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
+  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
+  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
+  '`detail` — a truncated copy is worse than no copy. '
+// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
+// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
+// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
+// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+const readPackFile = async (path, ranges, label, extra) => {
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+  const r = courierShape(
+    await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
+      { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
+      .catch(() => null),
+    cmds)
+  const bytes = Number(r.out(1)) || 0
+  const lines = Number(r.out(2)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
+  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
+  // ends in exactly one newline. Nothing else is accepted.
+  for (const text of [body, `${body}\n`]) {
+    const ck = cksumOf(text)
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+  }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+}
+// Read the whole pack, verified. One courier per file, in parallel — the common case is one call
+// each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
+// one response, otherwise by a fresh courier whose prompt differs (mis-transcription is per-sample
+// stochastic, so a fresh sample is worth one try — and a differing prompt is what stops
+// `resumeFromRunId` serving the bad sample straight back). After that the launch FAILS LOUD: a wave
+// dispatched from a plan nobody can vouch for is worse than a wave that never started.
+const readPack = async () => {
+  const attempt = (name, ranges, extra, suffix) =>
+    readPackFile(`${roadmapDir}/${name}`, ranges, `pack-read:${name}${suffix}`, extra)
+  const text = {}
+  const why = {}
+  const record = (n, r) => { if (r.text !== undefined) text[n] = r.text; else why[n] = r }
+  const first = await parallel(PACK_FILES.map((n) => () => attempt(n, [[1, '$']], '', '')))
+  PACK_FILES.forEach((n, i) => record(n, first[i]))
+  const again = PACK_FILES.filter((n) => text[n] === undefined)
+  const second = await parallel(again.map((n) => () => {
+    const { bytes, lines } = why[n]
+    if (bytes <= READ_CHUNK || lines < 2)
+      return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
+    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
+    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const ranges = []
+    for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
+    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+  }))
+  again.forEach((n, i) => record(n, second[i]))
+  const missing = PACK_FILES.filter((n) => text[n] === undefined)
+  if (missing.length)
+    throw new Error(`pack-unreadable: no verified copy of ${missing.join(' + ')} under ${roadmapDir} after two ` +
+      `attempts — ${missing.map((n) => `${n}: ${why[n].fail}`).join('; ')}`)
+  const parsed = {}
+  for (const n of PACK_FILES) {
+    try { parsed[n] = JSON.parse(text[n]) }
+    catch (e) { throw new Error(`pack-unreadable: ${roadmapDir}/${n} is cksum-verified but does not parse — ${String(e?.message ?? e)}`) }
+  }
+  log(`launch pack read from ${roadmapDir}: ${PACK_FILES.map((n) => `${n} ${text[n].length}b`).join(', ')}`)
+  return { plan: parsed['plan.json'], state: parsed['state.json'] }
+}
+// BOTH in memory => nested (the conductor's live plan); NEITHER => root, read the pack.
+if ((A.plan == null) !== (A.state == null))
+  throw new Error('args carries only one of plan/state — a NESTED launch passes both in memory, a ROOT launch ' +
+    'passes neither and names roadmapDir')
+if (A.plan == null && !roadmapDir)
+  throw new Error('args.roadmapDir is required on a root launch — the absolute path of the arc\'s .roadmap directory')
+const { plan, state: prior } = A.plan != null ? { plan: A.plan, state: A.state } : await readPack()
+
 const C = {
   maxFixRounds: 2,
   maxGateRounds: 2,
@@ -123,8 +354,8 @@ const wtRoot = plan.worktreeRoot    // absolute path OUTSIDE the repository
 const intBranch = prior.integrationBranch
 const intWt = `${wtRoot}/__integration`
 // The preview gets its OWN worktree, exactly like the merge queue's __integration. It used to be
-// the operator's PRIMARY checkout — which is also where checkpoint() writes the tracked
-// .roadmap/state.json, so git refused the detach ("local changes … would be overwritten"),
+// the operator's PRIMARY checkout — which, in the era when the wave wrote its own tracked
+// .roadmap/state.json, made git refuse the detach ("local changes … would be overwritten"),
 // explorer and design silently went owed, and a Haiku agent told to make the checkout work
 // anyway deleted 163 untracked .roadmap/ files to get past it (twice, 2026-08-28). A dedicated
 // worktree puts the operator's tree outside the harness's reach by construction: no preview
@@ -184,13 +415,6 @@ const wtOf = (u) => `${wtRoot}/${u.id}`
 // events.jsonl,last-message.txt,stderr.log,exit-code,session-id,cwd,done.txt,codex.pid,launched-at}
 const codexHome = plan.codex?.home ? `CODEX_HOME=${plan.codex.home} ` : ''
 const codexDir = (id, step) => `${wtRoot}/__codex/${id}/${step}`
-// Location discipline for mechanical agents: smoke testing showed that given a bad path
-// they improvise in their cwd and report plausible success. Fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
-  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
-  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
-  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
-  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
 // Report discipline for the code-writing agents: commit first (the commit is the deliverable,
 // and it is what makes a killed unit recoverable), then keep the structured report short. The
 // platform's schema-retry resends an over-long payload verbatim until the unit dies, so an
@@ -212,16 +436,6 @@ const NOROADMAP = `You cannot create or modify anything under ${repo}/.roadmap/ 
   `orchestrator's. Never leave code comments or commit messages referencing debt-ledger or dossier entries: ` +
   `you cannot write those entries, so the reference would be fabricated. Report deviations and deferred ` +
   `imperfections ONLY through your structured output fields. `
-// EVERY prompt whose schema carries a maxLength must also carry this. A cap is a contract with the
-// model, and the prompt is the only place that contract is communicated — a capped field with no
-// matching instruction is a trap: the agent overruns it, burns its schema-retries, and dies
-// returning null (arc-observed: the conductor's triage prompt had a 600-char `notes` cap, no
-// terseness clause, and an invitation to put overflow THERE — it died at two consecutive
-// boundaries). Applied as a const, not remembered per-prompt, so it cannot drift out of a new prompt.
-const TERSE = 'Keep every free-text field terse — an oversized report fails schema validation and the work is ' +
-  'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
-  'Respect every character budget named below exactly, keep each finding to a sentence or two, and emit no ' +
-  'field the schema does not define — an unexpected key is rejected as hard as an over-long one. '
 // The banking bar, shared by both exit gates. REWRITTEN for the pinned-scope discipline: the old
 // form keyed "must fix" on the LIVE diff ("a file this diff touches"), so the eligible-fix set was
 // a function of the diff's own growth — and scope→diff→fixes→scope is the closed loop that IS the
@@ -455,17 +669,18 @@ for (const [k, v] of Object.entries(prior.spend ?? {}))
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
 const debtLog = []
 // Escalation ledger. Every ruling on an implementer stop: which tier answered it, which boundary it
-// crossed, and who ruled — one JSON line each in the append-only .roadmap/escalations.jsonl sidecar,
-// written at the ruling and never re-transcribed. state.json keeps only the per-unit STOP COUNT,
-// which is the only part the run itself READS: the three-strikes brake needs a count that survives a
-// unit re-entering in a LATER wave (the in-pipeline counter resets), and escalation-rate-per-unit is
-// the calibration signal that replaced the old self-estimated "0.5-2 agent-hours" sizing heuristic.
+// crossed, and who ruled — one row each, RETURNED with the wave and appended to
+// .roadmap/escalations.jsonl by persist.mjs. state.json keeps only the per-unit STOP COUNT, which
+// is the only part the run itself READS: the three-strikes brake needs a count that survives a unit
+// re-entering in a LATER wave (the in-pipeline counter resets), and escalation-rate-per-unit is the
+// calibration signal that replaced the old self-estimated "0.5-2 agent-hours" sizing heuristic.
 // A unit that stopped five times was under-specified; one that never stopped could have been sized
-// larger. Forensics on disk, decisions in state.
+// larger. Forensics in the envelope, decisions in state.
 const escalationStops = { ...(prior.escalationStops ?? {}) }
+const escalations = []
 const escalate = (row) => {
   escalationStops[row.unit] = (escalationStops[row.unit] ?? 0) + 1
-  sidecarAppend('escalations', { script: 'harness', wave: (prior.wave ?? 0) + 1, ...row })
+  escalations.push({ script: 'harness', wave: (prior.wave ?? 0) + 1, ...row })
 }
 // Normalized against the schema enums: an out-of-enum kind (the old 'quality' default was one)
 // rode into state.json and collapsed unpredictably downstream. 'contract' is legal here — the
@@ -508,69 +723,25 @@ const asDirectives = (items) => items.map((d) => ({
   what: `Fix now (correctness debt is not bankable): ${d.what}`,
   why: d.why || 'a correctness-kind finding blocks approval; banking it would ship a known bug',
 }))
-// Event sidecars. `degradations` and `escalations` used to ride INSIDE state.json, arc-cumulative:
-// by wave 19 of a live arc they were a third of a 170-190 KB document that EVERY checkpoint
-// re-transcribed, so each row made the next write likelier to fail and each failed write appended
-// another row (91 `write-failed` rows in one arc, growing with the wave number). They are EVENTS,
-// not state — ONE JSON line appended at the moment they happen, never rewritten. state.json keeps
-// only what the run's own decisions read; the wave's degradations ride back to the conductor in the
-// RETURN value, in memory, never on disk.
-const sidecarPath = (kind) => `${repo}/.roadmap/${kind}.jsonl`
-let sidecarLost = 0
-let sidecarChain = Promise.resolve()
-const sidecarPending = { degradations: [], escalations: [] }
-// Queue a row and flush on a serial chain: a burst coalesces into one append, and two appends never
-// interleave. A LOST append must NOT call degrade() — that recurses into the very mechanism that is
-// failing. runVerbatim's own single retry is the only retry; after it the rows are counted in
-// `sidecarLost`, which rides in state.json: loud, bounded, and not self-feeding.
-// Declared HERE, above `degrade`, because the no-launch-id degradation fires at module load: the
-// queue state must already exist by then. The writers it reaches for (`runVerbatim`,
-// `appendVerbatim`) are only touched inside the deferred `.then`, long after module evaluation.
-function sidecarAppend(kind, row) {
-  sidecarPending[kind].push(row)
-  sidecarChain = sidecarChain.then(async () => {
-    const rows = sidecarPending[kind].splice(0)
-    if (!rows.length) return
-    const text = rows.map((r) => JSON.stringify(r, (_k, v) => scrubCtrl(v))).join('\n')
-    const r = await runVerbatim({ single: appendVerbatim(sidecarPath(kind), text) },
-      { model: 'haiku', effort: 'low', label: `sidecar:${kind}`, phase: 'Setup', schema: S.ok }, STRICT)
-    if (!r.ok) {
-      sidecarLost += rows.length
-      log(`SIDECAR LOST ${rows.length} ${kind} row(s) — ${r.detail} (see the agent transcript)`)
-    }
-  }).catch(() => null)
-}
 
 // Skill-defect ledger: every time the ORCHESTRATOR's own machinery misbehaves — an agent dies
 // without a report, a schema-retry fires, a salvage rescues a null — record it instead of silently
 // swallowing it. Every safety net below is otherwise SILENT, which is exactly how a deterministic
 // schema-cap bug masqueraded as three runs of "network flakiness" (RATIONALE §14). Defects in the
 // ORCHESTRATOR only — product imperfections go to `debt`, a different audience.
-// The arc's record is the append-only .roadmap/degradations.jsonl sidecar (sidecarAppend below),
-// written once at the event. THIS array holds this wave's rows only: it is read in-script (the
-// commit-probe dossier mines it for the real cause) and rides back to the conductor in the RETURN
-// value — deliberately NOT in serialize(), so state.json cannot grow with it.
+// This wave's rows, in memory: read in-script (the commit-probe dossier mines them for the real
+// cause) and RETURNED, whence persist.mjs appends them to the arc's .roadmap/degradations.jsonl.
+// Deliberately NOT in serialize(): carrying an arc-cumulative ledger inside state.json is what made
+// each snapshot bigger than the last (a third of a 170-190 KB document by wave 19 of one arc).
 const degradations = []
 const degrade = (o) => {
-  const row = { script: 'harness', wave: (prior.wave ?? 0) + 1, ...o }
-  degradations.push(row)
-  sidecarAppend('degradations', row)
+  degradations.push({ script: 'harness', wave: (prior.wave ?? 0) + 1, ...o })
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
 
-// Cache-buster for ENVIRONMENT PROBES only. `resumeFromRunId` replays any agent() call whose
-// (prompt, opts) is byte-identical — which is exactly what makes a resume cheap, and exactly what
-// makes a probe lie: arc-observed twice (2026-08-25/26) a resume replayed a pre-rebuild
-// `cd: No such file` provisioning failure and a pre-merge `state:'ready'`, quarantining units whose
-// real environment was fine. A probe's whole value is what the disk and git look like RIGHT NOW, so
-// every probe prompt carries `args.launchId`, which the ROOT re-generates on every launch AND every
-// resume. WORK-PRODUCT calls never carry it — replaying those for free is the point of resume.
-// A missing launchId DEGRADES to unsalted rather than throwing: the salt is freshness hygiene, and
-// converting one stale-probe defect into a dead arc (every direct harness launch, every older root)
-// is strictly worse than the defect. The degradation says which happened.
-const LAUNCH = A.launchId
-  ? `\nProbe id ${A.launchId} — this line exists only to make this request unique; ignore it.`
-  : ''
+// The `no-launch-id` degradation for an unsalted run. LAUNCH itself is computed at the top of the
+// file (it salts the launch pack read, which happens before `degrade` exists); this is where it is
+// finally recorded.
 if (!LAUNCH)
   degrade({ label: 'launch-id', model: 'haiku', phase: 'Setup', kind: 'no-launch-id',
     what: 'args.launchId absent — environment probes (provisioning, integration setup, the merged/reachability ' +
@@ -834,9 +1005,6 @@ const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 
 const auditPick = (unit) => C.gateAuditRate > 0 && (hashStr(unit.id) % 1000) < Math.round(C.gateAuditRate * 1000)
 
 /* ------------------------------- schemas ------------------------------- */
-const obj = (properties, required) => ({ type: 'object', additionalProperties: false, properties, required })
-const arr = (t) => ({ type: 'array', items: { type: t } })
-const oneOf = (vals) => ({ type: 'string', enum: vals })
 // Deferred-imperfection items — consciously accepted, not blocking. Collected into the
 // wave's debt ledger. Banking is not free-form: `bankReason` is the closed set of legitimate
 // grounds for deferring instead of fixing (arc-observed: ~350 banked items in one arc, most of
@@ -1095,64 +1263,27 @@ const S = {
  *     where     absolute path the agent cds to (STRICT verifies it is a git checkout)
  *     commands  ordered array of exact command strings; index i is stable and load-bearing
  *     opts      the usual run() opts minus `schema` (model/effort/phase/label) — the schema is
- *               built here, sized to the list
+ *               built here, sized to the list — plus optional `outMax`, the per-command output
+ *               budget (default COURIER_OUT; the launch pack read is the one caller that raises it)
  *     extra     prompt text appended BEFORE the command list (context, allowlist reminders)
  *     ok        every listed command ran and exited 0 — the ONLY blanket verdict offered
  *     exit(i)   the i-th command's integer exit code, or null if it never ran
  *     out(i)    the i-th command's captured output, trimmed ('' if it never ran)
+ *     raw(i)    the same capture untouched — for a caller to whom whitespace is content
  *
  * THE SCRIPT decides what the output means: pattern-match `exit(i)`/`out(i)`, never ask the agent
  * for a verdict about the commands it ran. Callers that need a value read it out of the output of
  * a command they put on the list for that purpose (`git rev-parse HEAD`, `codex login status`).
- * No conductor copy: nothing in conductor.mjs runs a command list — its Haiku writers all go
- * through persistVerbatim or the gh clauses. Add one there only when a real site needs it.
+ * No conductor copy of courierRun itself: nothing over there runs a command list except the launch
+ * pack read, which calls agent() directly. The PROMPT, SCHEMA and SHAPE (courierPrompt /
+ * courierSchema / courierShape) are mirrored in both scripts — keep those in sync
+ * (shared-consts.test.mjs enforces it).
  */
-// Per-command output budget. Enough for a `codex login status`, a porcelain status, a rev-parse or
-// a failing command's error tail; a test lane's full output does not belong in a courier report.
-const COURIER_OUT = 1200
-const courierSchema = (n) => obj({
-  ok: { type: 'boolean' },
-  results: { type: 'array', maxItems: n, items: obj({
-    command: { type: 'string', maxLength: 300 },
-    exitCode: { type: 'number' },
-    stdout: { type: 'string', maxLength: COURIER_OUT },
-  }, ['command', 'exitCode', 'stdout']) },
-  detail: { type: 'string', maxLength: 300 },
-}, ['ok', 'results'])
-const courierPrompt = (where, commands, extra = '') =>
-  STRICT +
-  `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
-  `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
-  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
-  `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
-  `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
-  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
-  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
-  `command's combined stdout and stderr, first ${COURIER_OUT} characters — truncate, never summarise or ` +
-  `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
-  `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
-  `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
-  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
-const courierRun = async (where, commands, opts, extra = '') => {
-  const n = commands.length
-  const r = await runOr({ ok: false, results: [], detail: 'courier agent died without a report' },
-    courierPrompt(where, commands, extra), { ...opts, schema: courierSchema(n) })
-  const results = (Array.isArray(r?.results) ? r.results : []).slice(0, n)
-  const bad = results.findIndex((x) => x?.exitCode !== 0)
-  const out = (i) => String(results[i]?.stdout ?? '').trim()
-  const short = results.length < n
-  return {
-    ok: bad < 0 && !short,
-    results,
-    exit: (i) => (typeof results[i]?.exitCode === 'number' ? results[i].exitCode : null),
-    out,
-    detail: bad >= 0
-      ? `\`${commands[bad]}\` exited ${results[bad].exitCode} — ${out(bad).slice(0, 300) || '(no output)'}`
-      : short
-        ? `only ${results.length}/${n} commands reported — ${String(r?.detail ?? 'no reason given').slice(0, 200)}`
-        : String(r?.detail ?? ''),
-  }
-}
+const courierRun = async (where, commands, opts, extra = '') =>
+  courierShape(
+    await runOr({ ok: false, results: [], detail: 'courier agent died without a report' },
+      courierPrompt(where, commands, extra), { ...opts, schema: courierSchema(commands.length, opts.outMax) }),
+    commands)
 
 /* --------------------------- live wave state --------------------------- */
 const units = new Map(Object.entries(prior.units ?? {}))
@@ -1182,7 +1313,6 @@ const HALT_ORDER = ['platform', 'env', 'codex']
 const haltReason = () => HALT_ORDER.map((k) => halt[k]).find(Boolean) ?? null
 let inFlight = 0
 let mergeChain = Promise.resolve()
-let checkpointChain = Promise.resolve()
 let settleWaiters = []
 // Green-tip mirror (DESIGN §7.5): the PRIMARY checkout rides the latest suite-green
 // integration tip so the user — and the between-wave explorer — only ever observe real
@@ -1202,19 +1332,19 @@ let boundary = null
 let owed = (prior.owed ?? []).map((o) => ({ ...o }))
 
 const rec = (id) => units.get(id)
-// Per-unit forensic breadcrumb: stamp the pipeline stage onto a running record and checkpoint.
+// Per-unit forensic breadcrumb: stamp the pipeline stage onto a running record and snapshot it.
 // Guarded to `running` so a terminal result (which replaces the record wholesale) never keeps
 // a stale stage — after a crash, `stage` tells you how far a running unit got.
 const setStage = (id, stage) => {
   const r = units.get(id)
   if (r?.status !== 'running') return
   units.set(id, { ...r, stage })
-  checkpoint()
+  snapshot()
 }
 // Per-unit round tally ({fix, opusGate, gate}) — makes runaway revision loops measurable
 // (the paid fixtures assert ceilings on these). Stamped on the running record like `stage`;
-// the terminal stores in start()/runWarmLane carry it onto the final record. No checkpoint
-// here — the next stage/status checkpoint carries it, and a slightly-stale tally after a
+// the terminal stores in start()/runWarmLane carry it onto the final record. No snapshot
+// here — the next stage/status snapshot carries it, and a slightly-stale tally after a
 // crash is acceptable forensics.
 const bumpRound = (id, kind) => {
   const r = units.get(id)
@@ -1238,24 +1368,22 @@ const serialize = () => ({
   // Run identity ({runId, scriptPath}) set by the architect at launch — carried through so
   // same-session resume is mechanical and crash forensics are one `cat` of state.json.
   ...(prior.run ? { run: prior.run } : {}),
-  // The conductor block is the conductor's, but the harness OWNS state.json mid-wave — so without
-  // this passthrough every checkpoint strips it, and a crash mid-wave (the common case) leaves the
-  // rung-3 recovery signal and the arc-cumulative boundary forensics missing from disk. Arc-observed:
-  // three completed waves on disk, `conductor: undefined`. Passthrough only — never authored here.
+  // The conductor block is the conductor's, but the harness's serialize() is what the persister
+  // writes — so without this passthrough the wave would strip it, and a crash mid-wave (the common
+  // case) would leave the rung-3 recovery signal and the arc-cumulative boundary forensics missing
+  // from disk. Arc-observed: three completed waves on disk, `conductor: undefined`. Passthrough
+  // only — never authored here.
   ...(prior.conductor ? { conductor: prior.conductor } : {}),
   preview: { sha: previewSha, status: previewStatus },
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
   // Escalation stop counts per unit, arc-cumulative — the three-strikes brake reads these. The
-  // rulings themselves, and every degradation, are append-only sidecar lines
-  // (.roadmap/escalations.jsonl, .roadmap/degradations.jsonl): NEITHER is serialized here. They
-  // were, and re-transcribing an arc-cumulative ledger at every checkpoint is what drove
+  // rulings themselves, and every degradation, ride home in the RETURN envelope and land as
+  // append-only lines in .roadmap/{escalations,degradations}.jsonl: NEITHER is serialized here.
+  // They were, and re-transcribing an arc-cumulative ledger at every write is what drove
   // state.json to 8 parts and 91 lost checkpoints in one arc.
   ...(Object.keys(escalationStops).length ? { escalationStops } : {}),
-  // Rows that never reached their sidecar. Loud (a non-zero value means forensics are missing)
-  // and bounded — a sidecar failure must never itself degrade, or it feeds its own ledger.
-  ...(sidecarLost ? { sidecarLost } : {}),
   ...(owed.length ? { owed } : {}),
   // Shared pre-existing reds the circuit breaker took over this wave. The conductor folds these
   // into the boundary FINDINGS (never into debt — debt must not create a wave) so the triager
@@ -1277,187 +1405,16 @@ const serialize = () => ({
 const notifySettle = () => { const w = settleWaiters; settleWaiters = []; w.forEach((f) => f()) }
 const nextSettle = () => new Promise((r) => settleWaiters.push(r))
 
-// Verbatim-write prompts for a large JSON payload. A single write's content is echoed as agent
-// OUTPUT, and one response caps at ~32k output tokens (arc-observed: a 54-unit arc's state killed
-// 5 checkpoint agents on that cap, silently). Below WRITE_CHUNK one Haiku writer copies the whole
-// document through a single-quoted here-doc; above it, the payload is split deterministically (a
-// pure function of the text — resumeFromRunId-safe) and FANNED OUT: one Haiku writer per part, each
-// writing only its own `<path>.partK`, then one assembler that `cat`s the parts together and
-// removes them (runVerbatim below). EVERY writer verifies its file with `cksum` (content hash +
-// length, computed in-script by cksumOf), not a byte count: byte count was gamed live — a part
-// writer un-escaped JSON string values, padded the tail with fabricated lines until `wc -c`
-// matched, and reported ok:true; the assembled state.json did not parse. The single-write path had
-// no verification at all and showed the same de-escaping. Arc-observed before that, twice: a single
-// writer told to stage 3–6 parts itself (75–145 KB of output) failed ~28 checkpoints in two waves —
-// "cannot complete within token budget" — and gave up in prose on 5 more. One agent emitting 145 KB
-// is the wrong shape; one agent per ~24 KB part is not. Mirrored in conductor.mjs — keep the two in
-// sync (shared-consts.test.mjs enforces it, cksumOf included).
-const WRITE_CHUNK = 24000
-// POSIX cksum: CRC-32 (poly 0x04C11DB7, MSB-first, init 0), then the byte length fed in
-// little-endian until zero, then complemented. Pure JS over UTF-8 code units, no Buffer.
-const CK_TABLE = (() => {
-  const t = new Array(256)
-  for (let i = 0; i < 256; i++) {
-    let c = i << 24
-    for (let k = 0; k < 8; k++) c = (c & 0x80000000) ? ((c << 1) ^ 0x04C11DB7) : (c << 1)
-    t[i] = c >>> 0
-  }
-  return t
-})()
-const cksumOf = (s) => {
-  let crc = 0, len = 0
-  const feed = (b) => { crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0; len++ }
-  for (const ch of s) {
-    const c = ch.codePointAt(0)
-    if (c < 0x80) feed(c)
-    else if (c < 0x800) { feed(0xc0 | (c >> 6)); feed(0x80 | (c & 63)) }
-    else if (c < 0x10000) { feed(0xe0 | (c >> 12)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
-    else { feed(0xf0 | (c >> 18)); feed(0x80 | ((c >> 12) & 63)); feed(0x80 | ((c >> 6) & 63)); feed(0x80 | (c & 63)) }
-  }
-  const bytes = len
-  for (let l = bytes; l > 0; l >>>= 8) crc = ((crc << 8) ^ CK_TABLE[((crc >>> 24) ^ (l & 0xff)) & 0xff]) >>> 0
-  return { crc: (~crc) >>> 0, bytes }
-}
-const writeVerbatim = (path, text, extra = '') => {
-  // Every writer (single, part, assembler) verifies its file by CONTENT HASH — `cksum` (POSIX,
-  // coreutils, present in every sandbox) prints `<crc> <bytes>` for stdin — computed here by
-  // cksumOf. Byte count alone was gamed live: a part-writer un-escaped `\"`/`\\` inside string
-  // values (losing bytes) and then PADDED the tail with lines copied from the next record until
-  // the count matched, reporting ok:true; the assembled state.json did not parse. A CRC cannot be
-  // iterated toward, so the writer's only honest move on a mismatch is to report it.
-  const check = (file, ck) => `Then verify: \`cksum < ${file}\` must print exactly \`${ck.crc} ${ck.bytes}\`; if it ` +
-    `prints anything else, report ok:false with the observed output in detail. NEVER edit, pad, trim, or rewrite the ` +
-    `file to make the numbers match — a mismatch is reported, not repaired (padding to hit the count once produced an ` +
-    `unparseable state.json). Retry the write at most once.`
-  // Shared body of the copy instruction: a quoted here-doc in ONE Bash call, because a file-write
-  // tool re-interprets escapes (arc-observed: `\"` → `"` inside JSON string values).
-  const copy = (file, what) => `never repair, reformat, re-indent, or re-escape anything (escape sequences such as \\n ` +
-    `and \\" inside JSON string values are literal characters to copy, not instructions). Write it in ONE Bash tool ` +
-    `call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit ` +
-    `tool (a file-write tool re-interprets escapes): run \`cat > ${file} <<'ROADMAP_PART'\` followed by ${what} ` +
-    `and a closing \`ROADMAP_PART\` line.`
-  if (text.length <= WRITE_CHUNK) {
-    const ck = cksumOf(`${text}\n`)   // the here-doc leaves one trailing newline
-    return {
-      single: `Write the file ${path} so its content is EXACTLY the JSON document below, and nothing else${extra} — ` +
-        `${copy(path, "the document's lines")} The document is every line after the <<<DOCUMENT>>> marker line to the ` +
-        `end of this message, excluding the marker line. ${check(path, ck)}\n<<<DOCUMENT>>>\n${text}`,
-    }
-  }
-  // Split on line boundaries so a part is an exact run of whole lines (pretty-printed JSON keeps
-  // every line far below the chunk size — free-text caps bound the longest value). Every part file
-  // ends in the newline its here-doc leaves, so a plain `cat` of the part files, in order, IS the
-  // document (plus one trailing newline — the same shape the single write leaves).
-  const parts = []
-  let cur = ''
-  for (const line of text.split('\n')) {
-    if (cur && cur.length + line.length + 1 > WRITE_CHUNK) { parts.push(cur); cur = line }
-    else cur = cur ? `${cur}\n${line}` : line
-  }
-  if (cur) parts.push(cur)
-  const n = parts.length
-  const partPath = (k) => `${path}.part${k}`
-  const cks = parts.map((p) => cksumOf(`${p}\n`))   // each part file: its text + the here-doc's newline
-  const whole = cksumOf(`${text}\n`)                // the cat of the parts, in order
-  return {
-    parts: parts.map((p, i) => ({
-      k: i + 1,
-      prompt: `Write the file ${partPath(i + 1)} so its content is EXACTLY part ${i + 1} of ${n} below, and nothing ` +
-        `else${extra}. It is a mechanical slice of one JSON document on line boundaries — ` +
-        `${copy(partPath(i + 1), "the part's lines")} The part's content is every line after the ` +
-        `<<<PART ${i + 1}/${n}>>> marker line to the end of this message, excluding the marker line. ` +
-        `${check(partPath(i + 1), cks[i])}\n<<<PART ${i + 1}/${n}>>>\n${p}`,
-    })),
-    assemble: `Assemble ${path} from its ${n} staged part files, which are already written and cksum-verified${extra}: ` +
-      `run \`cat ${parts.map((_, i) => partPath(i + 1)).join(' ')} > ${path}\` in exactly that order — never open, ` +
-      `edit, or reformat any of them. ${check(path, whole)} On a mismatch leave the part files in place. On success ` +
-      `run \`rm -f ${path}.part*\` (the glob also clears stale parts left by an earlier fan-out with a different ` +
-      `part count) and report ok:true.`,
-  }
-}
-// Execute a writeVerbatim plan. A single prompt is one run. A fan-out is one Haiku writer per part
-// in `parallel` (each echoes ~WRITE_CHUNK of output — the shape that fits one response), then ONE
-// assembler, dispatched only when every part landed: a failed part means no assembly, so the file on
-// disk stays the previous complete document rather than becoming a partial. A part that fails is
-// re-run ONCE, by a fresh agent (`<label>:partK#retry`), before that verdict: a mis-transcription is
-// per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed, caught by cksum;
-// a fresh sample of the same part succeeded), and with five parts a checkpoint that dies on any one
-// first-try loss dies far too often. The assembler is never retried — a bad `cat` is not
-// stochastic. `prefix` is prepended to every prompt (the conductor's STRICT). Resolves { ok, detail }
-// and never throws — `detail` names the part(s) that failed BOTH attempts (with the retry's reason)
-// or the assembler. Mirrored in both scripts.
-const runVerbatim = async (plan, opts, prefix = '') => {
-  const call = (prompt, label) => run(prefix + prompt, { ...opts, label })
-    .then((r) => (r?.ok ? { ok: true }   // covers agent-died-null and an explicit ok:false alike
-      : { ok: false, detail: r ? String(r.detail ?? 'ok:false').slice(0, 200) : 'agent died without a report' }))
-    .catch((e) => ({ ok: false, detail: String(e?.message ?? e).slice(0, 200) }))
-  if (plan.single) return call(plan.single, opts.label)
-  const results = await parallel(plan.parts.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}`)))
-  const lost = plan.parts.filter((_, i) => !results[i]?.ok)
-  const retried = await parallel(lost.map((p) => () => call(p.prompt, `${opts.label}:part${p.k}#retry`)))
-  const failed = lost
-    .map((p, i) => (retried[i]?.ok ? null : `part ${p.k}/${plan.parts.length}: ${retried[i]?.detail ?? 'writer died'}`))
-    .filter(Boolean)
-  if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
-  const a = await call(plan.assemble, `${opts.label}:assemble`)
-  return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
-}
-// Append-only sidecar write: ONE `>>` here-doc, verified by cksum over the file's TAIL. A sidecar is
-// arc-cumulative and lives only on disk, so the script can never know the whole file — but it knows
-// exactly the bytes it is appending, and `tail -c <bytes>` isolates them, so the same content hash
-// that guards a whole-file write guards an append. Mirrored in both scripts — keep the two in sync
+// Wave-state snapshot, for FORENSICS ONLY — it costs nothing and writes nothing. The old
+// checkpoint() paid a Haiku agent to transcribe the whole of state.json at every status change;
+// the journal is the checkpoint now, so a snapshot is one tagged `log` line. `persist.mjs` keeps
+// the LAST one it sees during a replay: when a crash stops the replay short of the return value,
+// that snapshot is what lands as the partial state.json, with a `partial` marker naming the call
+// the replay could not serve. A complete run's return value supersedes every snapshot.
+// Mirrored in conductor.mjs and read by persist.mjs — keep all three in sync
 // (shared-consts.test.mjs enforces it).
-const appendVerbatim = (path, text) => {
-  const ck = cksumOf(`${text}\n`)
-  return `Append to the file ${path} (create it if it is missing) EXACTLY the lines below and nothing else. ` +
-    `NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file: it is append-only ` +
-    `and everything already in it is another agent's record. Append in ONE Bash tool call through a ` +
-    `single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit tool (a ` +
-    `file-write tool re-interprets escapes; escape sequences such as \\n and \\" inside JSON string values are ` +
-    `literal characters to copy, not instructions): run \`cat >> ${path} <<'ROADMAP_APPEND'\` followed by the ` +
-    `lines and a closing \`ROADMAP_APPEND\` line. Then verify: \`tail -c ${ck.bytes} ${path} | cksum\` must ` +
-    `print exactly \`${ck.crc} ${ck.bytes}\`; if it prints anything else, report ok:false with the observed ` +
-    `output in detail. NEVER edit, pad, trim, or rewrite the file to make the numbers match — a mismatch is ` +
-    `reported, not repaired. Retry the append at most once. The lines are every line after the <<<APPEND>>> ` +
-    `marker line to the end of this message, excluding the marker line.\n<<<APPEND>>>\n${text}`
-}
-// Crash-safety checkpoint of the whole wave state. Coalesced latest-wins (same idiom as the
-// preview mirror below): a burst of status changes collapses to a single Haiku write, since
-// only the newest snapshot matters for recovery. The final `await checkpointChain` still
-// guarantees the last state lands — the last queued segment observes the final target.
-// A failed write is LOUD: it lands in the degradation ledger (arc-observed silent losses hid a
-// window where a crash would have dropped the wave), but never blocks the wave — the next
-// successful checkpoint heals it.
-// Agent-authored report text can carry raw control characters (an explorer's `repro` string
-// quoting a \x01 test input, arc-observed). JSON.stringify escapes those correctly as \u0001 —
-// but state.json is written by a Haiku agent transcribing the document, and the transcription
-// DECODES the escape back into a raw byte, producing a state.json that no JSON parser will read.
-// An unresumable arc is a far worse outcome than a lossy repro string, and a control character in
-// a human-readable report is never load-bearing — so they are replaced with a printable token
-// BEFORE serialization, leaving no escape for a transcriber to get wrong. \t/\n/\r are left
-// alone: JSON gives them short escapes that agents reproduce reliably.
-const CTRL_UNSAFE = /[\u0000-\u0007\u000b\u000e-\u001f\u007f]/g
-const scrubCtrl = (v) => (typeof v === 'string'
-  ? v.replace(CTRL_UNSAFE, (c) => `<0x${c.charCodeAt(0).toString(16).padStart(2, '0')}>`)
-  : v)
-let checkpointTarget = null
-let checkpointWritten = null
-function checkpoint() {
-  checkpointTarget = JSON.stringify(serialize(), (_k, v) => scrubCtrl(v), 2)
-  checkpointChain = checkpointChain.then(async () => {
-    if (checkpointTarget === checkpointWritten) return   // coalesce: latest already written
-    const snap = checkpointTarget
-    checkpointWritten = snap
-    // The fan-out (part writers in parallel, then the assembler) runs INSIDE this chain segment, so
-    // a later checkpoint never races a half-assembled earlier one.
-    const r = await runVerbatim(writeVerbatim(`${repo}/.roadmap/state.json`, snap),
-      { model: 'haiku', effort: 'low', label: 'checkpoint', phase: 'Setup', schema: S.ok })
-    if (!r.ok)
-      degrade({ label: 'checkpoint', model: 'haiku', phase: 'Setup', kind: 'write-failed',
-        what: `state.json checkpoint did not land (${r.detail}) — on-disk state may trail the run; ` +
-          'the next successful checkpoint heals it' })
-  }).catch(() => null)
-}
+const SNAPSHOT_TAG = 'ROADMAP-SNAPSHOT '
+const snapshot = () => log(SNAPSHOT_TAG + JSON.stringify(serialize()))
 
 /* ------------------------- git facts, read in code ---------------------- */
 // Every git fact the harness ACTS on comes back through this one shape: the cheapest tier runs
@@ -1578,9 +1535,9 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
     }
   }
   // The dossier is the redesign feed, so its content must survive any file-level mishap:
-  // the investigator RETURNS findings through the schema (landing in checkpointed
-  // state.json), and a separate verbatim-writer renders the file — investigative agents
-  // flake on side-effects; verbatim writers don't (observed across eval runs).
+  // the investigator RETURNS findings through the schema (landing in the wave state), and a
+  // separate writer agent renders the file from them — investigative agents flake on
+  // side-effects; a writer with nothing to do but write doesn't (observed across eval runs).
   const dossierPath = `${repo}/.roadmap/quarantine/${unit.id}.md`
   const d = await run(
     `Unit ${unit.id} of a roadmap build is being quarantined (${reason}). Its spec is at ${specOf(unit)} and its ` +
@@ -2225,8 +2182,8 @@ const withCodexSlot = async (fn) => {
 // integrated suite at merge. Timing-only — no prompt changes, so replay is safe — and it cannot
 // deadlock: a slot is always released by the call that took it, and nothing holding one waits on
 // another. When a slot is free it returns fn()'s OWN promise rather than a wrapper, so an
-// uncontended lane settles on exactly the tick it did before: the checkpoint chain coalesces on
-// microtask timing, and an extra tick per merge is an extra state.json fan-out per wave.
+// uncontended lane settles on exactly the tick it did before: the merge queue and the mirror
+// chain both serialise on microtask timing.
 let gateSlots = 0
 const gateQueue = []
 const withGateSlot = (fn) => {
@@ -2250,7 +2207,7 @@ const noteCodexMeta = (unit, r, dir, label) => {
     halt.codex = halt.codex ?? 'codex-usage-limit'
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-usage-limit',
       what: `codex reported a usage/rate limit on ${unit.id} (${dir}) — halting new codex dispatch for this ` +
-        `wave; state is checkpointed and the arc resumes cleanly after the limit window` })
+        `wave; the wave state returns intact and the arc resumes cleanly after the limit window` })
   } else if (m.timedOut) {
     degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-timeout',
       what: `codex run for ${unit.id} exceeded its deadline and was killed (${dir})${loadNote()} — ` +
@@ -3170,7 +3127,7 @@ function start(unit) {
   inFlight++
   dispatched.add(unit.id)
   units.set(unit.id, { status: 'running' })
-  checkpoint()   // coalesces with the wave-start burst to ~1 Haiku write; a 'running' record is what recovery adopts
+  snapshot()   // a 'running' record is what a crash-residue recovery adopts
   ;(async () => {
     let result = await runUnit(unit)
       // A PlatformOutage is the platform's death, not this unit's: park it (commits intact, adopted
@@ -3186,7 +3143,7 @@ function start(unit) {
       // Stamp 'merge-queue' directly (not via setStage — status is 'merge-ready', not 'running');
       // this transient record is overwritten by the terminal result below, so no stale stage survives.
       units.set(unit.id, { ...(rounds ? { rounds } : {}), ...result, stage: 'merge-queue' })
-      checkpoint()
+      snapshot()
       const segment = mergeChain.then(() => mergeUnit(unit)).catch((e) => e?.name === 'PlatformOutage'
         ? { status: 'merge-ready', branch: `unit/${unit.id}`, base: units.get(unit.id)?.base, parked: true,
            note: `merge parked on platform outage: ${e.message}` }
@@ -3197,7 +3154,7 @@ function start(unit) {
     units.set(unit.id, { ...(rounds ? { rounds } : {}), ...result })
     log(`${unit.id}: ${result.status}`)
     inFlight--
-    checkpoint()
+    snapshot()
     notifySettle()
   })()
 }
@@ -3341,7 +3298,7 @@ if (C.envPreflight !== 'off') {
           `fork storm is a test lane dying of EAGAIN`
         : `${zombies} zombie processes (PID 1 is \`${comm}\`) — orphans are not being reaped, and killed test ` +
           `runs will accumulate until the pid cgroup is full`) +
-        `. Wave halted before dispatch: units stay pending, state is checkpointed and resumable. Operator: ` +
+        `. Wave halted before dispatch: units stay pending, the wave state returns intact and is resumable. Operator: ` +
         `recreate the container with a reaping PID 1 (compose \`init: true\`) — or, if this box is genuinely ` +
         `healthy, set \`config.envPreflight: 'off'\` in the plan and relaunch.` })
 }
@@ -3373,8 +3330,8 @@ if (C.envPreflight !== 'off') {
     const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
       : `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
-      what: `codex CLI unavailable (${why}) — wave halted before dispatch; ` +
-        `state is checkpointed and resumable. Operator: codex login (or codex login --device-auth headless), ` +
+      what: `codex CLI unavailable (${why}) — wave halted before dispatch; the wave state returns ` +
+        `intact and is resumable. Operator: codex login (or codex login --device-auth headless), ` +
         `then relaunch the arc.` })
   }
 }
@@ -3461,7 +3418,7 @@ while (true) {
     if (rec(u.id).status === 'pending' && blockedBy(u)) {
       units.set(u.id, { status: 'blocked' })
       log(`${u.id}: blocked (dependency quarantined)`)
-      checkpoint()
+      snapshot()
     }
   }
   if (inFlight === 0) break
@@ -3482,10 +3439,8 @@ if ((C.boundary !== 'off' || owed.length > 0) && !haltReason()) {
 // Reconcile the GitHub issue projection from the final unit map (issue mode only; no-op otherwise).
 // Best-effort observability — never gates, so a failure only logs/degrades and the wave still returns.
 await syncIssues().catch((e) => log(`issue sync failed — continuing (${e?.message ?? e})`))
-checkpoint()                                        // state.json reflects mirror + boundary
-await checkpointChain
-await sidecarChain                                  // drain pending degradation/escalation appends
-// The RETURN value carries this wave's degradations; serialize() (what lands on disk) does not.
-// The conductor absorbs them in memory for its return envelope and the skill-degradations
-// summary, and strips them before persisting — so no ledger is ever re-transcribed.
-return { ...serialize(), degradations }
+snapshot()                                          // last forensic line: mirror + boundary included
+// The RETURN value carries this wave's event ledgers; serialize() (the state itself) does not.
+// The conductor absorbs them in memory for its own envelope, and persist.mjs is what appends them
+// to .roadmap/{degradations,escalations}.jsonl — so no ledger is ever re-transcribed by a model.
+return { ...serialize(), degradations, escalations }

@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
-# Parse gate for every workflow script in the skill dir (harness.mjs, conductor.mjs).
-# Plain `node --check` rejects a workflow script's legal top-level `return` (the body runs
-# inside an async function), so wrap each source in an AsyncFunction with the workflow
-# globals stubbed as params — the same trick evals/unit/load.mjs uses to run the scripts.
+# Parse gate for every .mjs in the skill dir, in the two flavours it holds.
+# WORKFLOW scripts (harness.mjs, conductor.mjs) run inside an async function, so plain
+# `node --check` rejects their legal top-level `return`: each source is wrapped in an
+# AsyncFunction with the workflow globals stubbed as params — the same trick
+# script-loader.mjs uses to run them. Everything else is an ordinary ES module
+# (script-loader.mjs, persist.mjs) and is checked with `node --check`.
 # Prints `parse OK <basename>` per file; non-zero exit if ANY file fails to parse.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 status=0
-for f in "$DIR"/*.mjs; do
+for f in "$DIR"/script-loader.mjs "$DIR"/persist.mjs; do
+  base=$(basename "$f")
+  [ -f "$f" ] || continue
+  if node --check "$f" 2>/dev/null; then
+    echo "parse OK $base"
+  else
+    echo "parse FAIL $base" >&2
+    node --check "$f" || true
+    status=1
+  fi
+done
+for f in "$DIR"/harness.mjs "$DIR"/conductor.mjs; do
   base=$(basename "$f")
   if node -e '
 const fs = require("fs")

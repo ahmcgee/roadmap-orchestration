@@ -24,8 +24,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, assertAllModelsPinned } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -111,8 +111,7 @@ function rules({ census, triage: tr, boundary } = {}) {
   list.push({ match: /^triage:/, result: TRIAGE_OK })
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
   list.push({ match: /^spec-(expand|revise):/, result: OK })
-  list.push({ match: /^(persist-plan|persist-state|bank-debt|log-append|move-feedback):/, result: OK })
-  list.push({ match: /^skill-feedback$/, result: OK })
+  list.push({ match: /^(bank-debt|move-feedback):/, result: OK })
   return list
 }
 
@@ -124,17 +123,20 @@ async function conduct({
   plan = mkPlan(), state = mkState(), config = {}, harnessPath = HARNESS_PATH,
   agentRules = rules(), waveHandler = waves(state),
 } = {}) {
-  const agent = makeAgent(agentRules)
+  const agent = makeAgent([...packRules(plan, state), ...agentRules])
   const workflow = makeWorkflow(waveHandler)
+  // The conductor's crash-recovery record is a tagged `log` line, not a paid write — persist.mjs
+  // keeps the last one it sees, so a continuation boundary's decisions survive a later crash.
+  const logs = []
   const run = await loadScript(CONDUCTOR)
   const result = await run({
-    args: { plan, state, config, harnessPath },
+    args: { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath },
     agent: agent.fn,
     workflow: workflow.fn,
-    log: () => {},
+    log: (line) => logs.push(String(line ?? '')),
     phase: () => {},
   })
-  return { result, agent, workflow }
+  return { result, agent, workflow, snapshots: logs.filter((l) => l.startsWith('ROADMAP-SNAPSHOT ')).map((l) => JSON.parse(l.slice('ROADMAP-SNAPSHOT '.length))) }
 }
 
 /* -------------------------------- call helpers -------------------------------- */
@@ -239,7 +241,7 @@ test('waiveOwed clears exactly the named job from the state threaded into the ne
     boundary: emptyBoundary(),
     owed: [owedEntry('design', 2, 'preview down'), owedEntry('explorer', 1, 'explorer skipped')],
   })
-  const { agent, workflow } = await conduct({
+  const { snapshots, workflow } = await conduct({
     state: st,
     agentRules: rules({
       boundary: boundaryPlan({
@@ -260,12 +262,13 @@ test('waiveOwed clears exactly the named job from the state threaded into the ne
   assert.deepStrictEqual(threaded.owed, [owedEntry('explorer', 1, 'explorer skipped')],
     'and everything NOT named in waiveOwed rides forward byte-identically — the waiver is surgical')
 
-  // The same waiver must be on disk, or a resumeFromRunId replays the tier-3 boundary it paid for.
-  const ps = firstLabel(agent.calls, /^persist-state:w1\b/)
-  assert.ok(ps, 'a continuation persists state')
-  const persisted = JSON.parse(prompt(ps).slice(prompt(ps).indexOf('{\n')))
-  assert.deepStrictEqual(persisted.owed, [owedEntry('explorer', 1, 'explorer skipped')],
-    'the persisted state carries the waived-down ledger, so a resume does not re-force tier 3')
+  // The same waiver must be in the wave-1 continuation SNAPSHOT: that is what persist.mjs writes
+  // if the run dies in wave 2, and a resumeFromRunId off a stale copy re-forces the tier-3
+  // boundary this arc already paid for.
+  const w1 = snapshots.find((sn) => sn.wave === 1 && sn.conductor)
+  assert.ok(w1, 'a continuation boundary snapshots its consumed state')
+  assert.deepStrictEqual(w1.owed, [owedEntry('explorer', 1, 'explorer skipped')],
+    'the snapshot carries the waived-down ledger, so a crash-time persist does not re-force tier 3')
 })
 
 test('waiving the last owed entry drops the `owed` key entirely (no empty-array ghost)', async () => {
@@ -305,14 +308,9 @@ test('a waiver on a TERMINAL boundary sticks: arc-complete does not resurrect th
   assert.equal(result.reason, 'arc-complete')
   assert.equal('owed' in result, false, 'the envelope no longer carries the waived job')
   assert.equal('owed' in result.state, false, 'nor does the handed-back state')
-  const ps = firstLabel(agent.calls, /^persist-state:w1\b/)
-  assert.ok(ps, 'the terminal return persists state')
-  const persisted = JSON.parse(prompt(ps).slice(prompt(ps).indexOf('{\n')))
-  assert.equal('owed' in persisted, false,
-    'the on-disk state is waived too — a relaunch must not re-force tier 3 for a job Fable already ruled moot')
-  const j = firstLabel(agent.calls, /^log-append:w1\b/)
-  assert.ok(j, 'the tier-3 journal (the waiver justification) writes before the terminal return')
-  assert.ok(prompt(j).includes('preview target was cut'),
+  const j = (result.journalEntries ?? []).find((e) => e.wave === 1)
+  assert.ok(j, 'the tier-3 journal (the waiver justification) survives the terminal return')
+  assert.ok(j.journal.includes('preview target was cut'),
     'and carries the ruling — an unjournaled waiver is untraceable at the next Phase 0')
 })
 

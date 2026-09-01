@@ -30,8 +30,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -564,14 +564,17 @@ test('k3 gate directives past the cap are banked as debt, not dropped', async ()
 // =========================================================================================
 async function driveConductorWith(waveState) {
   const { fn: workflowFn } = makeWorkflow(() => waveState)
+  const plan = makePlan([unit('a'), unit('b')])
+  const state = makeState({ spend: {}, wave: 0 })
   const { fn: agentFn, calls } = makeAgent([
-    { match: /^(persist-plan|persist-state|bank-debt|log-append|move-feedback):/, result: { ok: true } },
+    ...packRules(plan, state),
+    { match: /^(bank-debt|move-feedback):/, result: { ok: true } },
   ])
   const runner = await loadScript(CONDUCTOR)
   const res = await runner({
     args: {
-      plan: makePlan([unit('a'), unit('b')]),
-      state: makeState({ spend: {}, wave: 0 }),
+      roadmapDir: `${plan.repoPath}/.roadmap`,
+      launchId: 'sim-launch',
       config: {},
       harnessPath: HARNESS_PATH,
     },
@@ -595,7 +598,7 @@ test('j conductor: a codex halt early-returns at tier 4, before any census or tr
   assert.ok(!has(calls, 'census:'), 'no census against a wave the root must hand to a human')
   assert.ok(!has(calls, 'triage:'), 'and certainly no boundary triage')
   assert.ok(!has(calls, 'boundary:'))
-  assert.ok(has(calls, 'persist-state:'), 'state is still persisted — the halt must be resumable')
+  assert.ok(res.state?.units, 'the full wave state rides home on the envelope — the halt must be resumable')
   const b = res.state.conductor?.boundaries ?? []
   assert.deepEqual(b.map((x) => x.tier), [4], 'recorded as a tier-4 boundary outcome')
   assert.equal(b[0].escalated, 'codex-usage-limit')

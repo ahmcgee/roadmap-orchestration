@@ -11,16 +11,19 @@ detects it — so this directory is the "done" gate for any harness- or conducto
 Each layer is cheaper and less faithful than the one below it. Climb the whole ladder before
 shipping; never ship on an upper rung alone.
 
-1. **`parse.sh` — syntax. Token-free, milliseconds.** Loads every `*.mjs` under an `AsyncFunction`
-   wrapper (plain `node --check` chokes on a workflow script's legal top-level `return`) with the
-   workflow globals stubbed. Non-zero exit if any script fails to parse.
-2. **`unit/` — control-flow simulations. Token-free, milliseconds.** `load.mjs` compiles a script
-   under the same wrapper and drives it with scripted fakes (`fakes.mjs`) — canned structured
-   outputs keyed on the short, stable `opts.label` (prompts drift with wording edits; labels don't).
+1. **`parse.sh` — syntax. Token-free, milliseconds.** Loads the two WORKFLOW scripts under an
+   `AsyncFunction` wrapper (plain `node --check` chokes on a workflow script's legal top-level
+   `return`) with the workflow globals stubbed, and `node --check`s the two ordinary ES modules
+   beside them (`script-loader.mjs`, `persist.mjs`). Non-zero exit if any file fails to parse.
+2. **`unit/` — control-flow simulations. Token-free, milliseconds.** `../script-loader.mjs` compiles
+   a script under the same wrapper and drives it with scripted fakes (`fakes.mjs`) — canned
+   structured outputs keyed on the short, stable `opts.label` (prompts drift with wording edits;
+   labels don't). One loader, two callers: the same module is what `persist.mjs` replays a real run
+   with, so a divergence between simulation and replay cannot hide in a second copy.
    Every fake result is shallow-checked against the call's own schema, so a drifted fake fails
    loudly. `harness.test.mjs` locks harness control flow; `conductor.test.mjs` is the conductor's
    acceptance spec — tier routing, the full early-return reason matrix (the paid fixture only ever
-   sees `arc-complete`), persist-before-dispatch ordering, and the nesting-level rule.
+   sees `arc-complete`), stage-before-dispatch ordering, and the nesting-level rule.
    `issue-mode.test.mjs` locks the GitHub issue-mode projection — file-mode byte-identity (no `gh`
    text, no sync sweep), the folded gh clauses on setup/merge/dossier, the single wave-tail sync
    sweep, and best-effort degradation (a failed sweep records `gh-sync` but never gates a unit).
@@ -58,6 +61,12 @@ shipping; never ship on an upper rung alone.
    while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
    finding routes to tier 3 instead of being auto-admitted; and duplicate drafts are dropped, not
    renamed into extra units.
+   `persist.test.mjs` locks **`persist.mjs` end-to-end**, against a journal the test WRITES from a
+   real sim run (the fakes' results ARE the journal): a harness run and a conductor run each replay
+   from their own journal and land every document the scripts stopped writing, a truncated journal
+   produces the `partial: {stoppedAt}` marker instead of a wrong state, re-running the persister is
+   a no-op (sections replaced, ledgers not doubled), and a `plan.json` holding unit ids the run never
+   saw is refused rather than overwritten.
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not
@@ -115,6 +124,7 @@ shipping; never ship on an upper rung alone.
 | a prompt/schema in one script | parse + sims + that script's fixture |
 | a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** (gh mechanics), then the **issue-mode paid arc** as source of truth |
 | a courier command list, an environment probe, or a wave-level brake | parse + sims (`closed-command`, `git-truth`, `outage-lifecycle`, `wave-policy`, `admissions` are the pins — a change that loosens one should fail one) + that script's fixture |
+| `persist.mjs` or `script-loader.mjs` | parse + sims (`persist.test.mjs` is the pin) + a spot-run of either fixture through its persist step |
 | `evals/*` plumbing only | parse + sims + a spot-run of the touched fixture |
 
 Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.
@@ -183,11 +193,14 @@ suite-green tip with `preview: {status: "live"}`, and spend is within a generous
 
 0. `bash parse.sh && bash unit/run.sh` — green before you spend a run.
 1. `bash setup-fixture.sh /tmp/roadmap-eval`
-2. Read `/tmp/roadmap-eval/repo/.roadmap/{plan,state}.json`, then
-   `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {plan, state, config: {}, launchId: "<fresh value>"}})`
-   and wait
-   (~10–25 min at ~16-way concurrency).
-3. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
+2. `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {roadmapDir: "/tmp/roadmap-eval/repo/.roadmap", config: {}, launchId: "<fresh value>"}})`
+   and wait (~10–25 min at ~16-way concurrency). Do NOT read the plan pack first — the script reads
+   it itself, cksum-verified, on a Haiku agent.
+3. **Persist** — the scripts write nothing under `.roadmap/`, and `check.sh` grades `state.json`:
+   `node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/harness.mjs
+   --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>"}'`
+   → `OK …`. A `PARTIAL` line means the run died; the marker names where.
+4. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
 **Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
 59 Haiku), 10–25 min. See **What a run actually costs** below — the Opus/Haiku bulk is not free.
@@ -240,12 +253,21 @@ per wave:
 
 ```
 Workflow({scriptPath: "<skill dir>/conductor.mjs",
-          args: {plan, state, config: {}, harnessPath: "<skill dir>/harness.mjs",
+          args: {roadmapDir: "/tmp/roadmap-eval-c/repo/.roadmap", config: {},
+                 harnessPath: "<skill dir>/harness.mjs",
                  launchId: "<fresh value — never reused, including on a relaunch>"}})
 ```
 
-`harnessPath` is **required** — the conductor throws without it. Then
-`bash check-conductor.sh /tmp/roadmap-eval-c`.
+`roadmapDir` and `harnessPath` are both **required** — the conductor throws without either. Then
+**persist** (the run writes nothing itself, and `check-conductor.sh` grades `state.json`,
+`plan.json`, `debt.md` and `architect-log.md`):
+
+```
+node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/conductor.mjs \
+     --args '<the exact envelope above, as JSON>'
+```
+
+→ `OK reason=…`. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
 
 **Cost:** the larger of the two by some margin — it runs the whole harness once per wave, so it
 multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19). **Budget for
@@ -429,8 +451,9 @@ forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k outpu
   architect-log seed must carry matching dismissal criteria. If both are intact and it still won't dry,
   the root's recovery is: cut the pending drafts (`inScope:false`), journal binding dismissal criteria,
   relaunch.
-- `conductor` block absent → the conductor didn't persist-before-return. **Severe**: this also breaks
-  rung-3 crash recovery, which reads that block. Check every `ret()` path and the persist writers.
+- `conductor` block absent → either the conductor's `ret()` did not stamp it, or the persist step was
+  skipped. **Severe**: this also breaks rung-3 crash recovery, which reads that block. Check every
+  `ret()` path, then check `persist.mjs` printed `OK` rather than `PARTIAL`.
 - **(f)** wave-2 boundary files MISSING → someone reintroduced "predict finality / set `boundary:'off'`
   on the final wave". That is a regression (RATIONALE §8) — single-wave arcs are exactly where drift is
   likeliest.

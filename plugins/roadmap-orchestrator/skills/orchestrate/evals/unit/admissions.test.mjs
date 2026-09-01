@@ -18,8 +18,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, assertAllModelsPinned } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -73,19 +73,18 @@ function rules({ census, triage: tr, boundary } = {}) {
   list.push({ match: /^triage:/, result: TRIAGE_OK })
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
   list.push({ match: /^spec-(expand|revise):/, result: OK })
-  list.push({ match: /^(persist-plan|persist-state|bank-debt|log-append|move-feedback):/, result: OK })
-  list.push({ match: /^skill-feedback$/, result: OK })
+  list.push({ match: /^(bank-debt|move-feedback):/, result: OK })
   return list
 }
 
 const waves = (...states) => (args, i) => states[Math.min(i, states.length - 1)]
 
 async function conduct({ plan = mkPlan(), state = mkState(), config = {}, agentRules = rules(), waveHandler } = {}) {
-  const agent = makeAgent(agentRules)
+  const agent = makeAgent([...packRules(plan, state), ...agentRules])
   const workflow = makeWorkflow(waveHandler ?? waves(state))
   const run = await loadScript(CONDUCTOR)
   const result = await run({
-    args: { plan, state, config, harnessPath: HARNESS_PATH },
+    args: { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath: HARNESS_PATH },
     agent: agent.fn, workflow: workflow.fn, log: () => {}, phase: () => {},
   })
   return { result, agent, workflow }
