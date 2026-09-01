@@ -318,11 +318,19 @@ background and stay quiet — it notifies you when the whole run finishes, not e
 ```
 Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
            args: { plan, state, config,
-                   harnessPath: "<this skill's directory>/harness.mjs" } })
+                   harnessPath: "<this skill's directory>/harness.mjs",
+                   launchId: "<a value you have never used before — a timestamp is fine>" } })
 ```
 
 `harnessPath` is not optional — the conductor dispatches each wave via that child script and
-cannot resolve it otherwise. Record the returned `runId` and `scriptPath` into `state.json`'s
+cannot resolve it otherwise. **`launchId` must be FRESH on every launch and on every resume** —
+never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
+probes (provisioning, integration setup, the merged/reachability git probes) out of
+`resumeFromRunId`'s cache: those probes answer "what does the disk and git look like right now",
+and a replayed answer is a lie (a resume once replayed a pre-rebuild `cd: No such file` and
+quarantined healthy units). The scripts cannot generate it themselves — `Date.now()` and
+`Math.random()` do not exist in a workflow script, so it has to arrive in `args`. Omitting it does
+not fail the run: the harness records one `no-launch-id` degradation and runs the probes unsalted. Record the returned `runId` and `scriptPath` into `state.json`'s
 optional `run` field at launch: that `runId` identifies the whole multi-wave run, so a
 same-session `resumeFromRunId` replays every completed wave and crash forensics are one `cat`
 away.
@@ -337,7 +345,7 @@ calls that are yours. The ladder's routing table, config knobs, and the per-unit
 harness runs are in `reference.md`. What you need at the keyboard is what comes back.
 
 **Fallback — per-wave harness dispatch.** You can still launch `harness.mjs` directly per wave
-(`args: { plan, state, config }`, no `harnessPath`) and triage every boundary yourself; setting
+(`args: { plan, state, config, launchId }`, no `harnessPath`) and triage every boundary yourself; setting
 `boundaryTriage: 'root'` gets the same effect without leaving the conductor. If you take the
 fallback path you inherit the conductor's duties back — in particular withholding contingent
 dependents (`reference.md`), which the harness's scheduler does not do for you.
@@ -455,10 +463,19 @@ is wrong across sessions; the journal does not survive the host process). Work t
 3. **Adopt rejected, or a new session** — launch a **fresh conductor** from the latest checkpointed
    `state.json`. This behaves like a resume, not a restart: the conductor persists the merged plan
    and consumed state *before* every dispatch, so you resume from the last completed boundary; and
-   within the in-flight wave, the harness's setup guards short-circuit work already done (a merged
-   unit branch short-circuits to `merged`; a crashed `running` unit auto-adopts its committed
-   branch and re-enters at verify — its `stage` field and `git log unit/<id>` show how far it got).
-   The loss bound is only the in-flight wave's uncached agent calls.
+   within the in-flight wave, the harness asks **git** what already finished before it dispatches
+   anything (a branch that landed on the integration branch is recorded `merged` and never
+   re-dispatched — including one whose checkpoint says `running`/`merge-ready`; a crashed `running`
+   unit whose branch did *not* land auto-adopts its committed work and re-enters at verify — its
+   `stage` field and `git log unit/<id>` show how far it got). The loss bound is only the in-flight
+   wave's uncached agent calls. Pass a **fresh `launchId`** on the relaunch: it is what stops those
+   git/disk probes being served from the dead run's cache.
+
+   A wave that halts immediately with **`integration tip regressed`** is not a crash — it is the
+   harness refusing to build on a branch its own record cannot reach (the branch was rewound, or
+   merges landed on a detached HEAD and are dangling). Nothing was changed. Find the merges
+   (`git reflog <integration branch>`, `git fsck --unreachable`), decide which history is real,
+   point the branch at it, and set `state.json`'s `integrationTip` to match before relaunching.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately

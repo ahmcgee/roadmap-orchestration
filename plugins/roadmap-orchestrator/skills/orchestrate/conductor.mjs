@@ -40,7 +40,10 @@ export const meta = {
 
 // args can arrive JSON-stringified depending on how the caller encoded them — tolerate both.
 const A = typeof args === 'string' ? JSON.parse(args) : args
-const { plan: inPlan, state: inState, config: overrides, harnessPath } = A
+// `launchId` is a per-launch nonce the root regenerates on every launch AND every resume; it is
+// passed straight through to each wave so the harness can salt its ENVIRONMENT probes out of
+// resumeFromRunId's cache (harness.mjs, LAUNCH). The conductor never reads it — pure passthrough.
+const { plan: inPlan, state: inState, config: overrides, harnessPath, launchId } = A
 // harnessPath is not optional — the wave dispatch cannot resolve the child script without it.
 if (!harnessPath)
   throw new Error('conductor requires args.harnessPath (absolute path to harness.mjs) — the root must pass it')
@@ -770,7 +773,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   //    set here (ruling 1). The returned state threads forward (units/spend/wave accumulate).
   phase('Wave')
   const sentDegradations = state.degradations?.length ?? 0
-  state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath })
+  state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath, launchId })
   wavesRun++
   const N = state.wave
   // The harness returns prior+wave degradations (arc-cumulative); absorb only the wave's delta —

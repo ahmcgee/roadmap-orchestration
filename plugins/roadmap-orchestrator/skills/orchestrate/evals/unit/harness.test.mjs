@@ -50,10 +50,13 @@ const makeState = (extra = {}) => ({
 })
 
 // Run a wave. Audits are disabled by default (gateAuditRate:0) so low-risk units take the
-// deterministic Opus-first gate path; test 8 opts back in explicitly.
-async function runWave(agentFn, plan, state, config = {}) {
+// deterministic Opus-first gate path; test 8 opts back in explicitly. `launchId` is the per-launch
+// nonce the root is contracted to pass (it salts the environment probes out of resume's cache) —
+// supplied here so every wave runs the way a correct root launches one; test 15d drops it on purpose.
+async function runWave(agentFn, plan, state, config = {}, args = {}) {
   const runner = await loadScript(HARNESS)
-  return runner({ args: { plan, state, config: { gateAuditRate: 0, ...config } }, agent: agentFn })
+  return runner({ args: { plan, state, config: { gateAuditRate: 0, ...config }, launchId: 'launch-1', ...args },
+    agent: agentFn })
 }
 
 // A controllable deferred promise (for parking a stage mid-flight).
@@ -633,14 +636,48 @@ test('14 stringified args: identical result to object args', async () => {
 })
 
 // =========================================================================================
-// 15. Integration-tip reconciliation: git tip wins over the checkpointed tip.
+// 15. Integration-tip reconciliation is STRICTLY ONE-WAY. It adopts the live branch tip only
+//     when the checkpointed tip is an ancestor of it (the setup courier reports the raw
+//     `merge-base --is-ancestor` exit code). Anything else is corruption — a rewound branch, or
+//     merges that landed where no branch reaches them (2026-08-28, a merge on a detached HEAD) —
+//     and the wave must halt before dispatch rather than adopt over its own record.
 // =========================================================================================
-test('15 integration-tip reconciliation: reported git sha overrides checkpointed tip', async () => {
-  const OTHER = 'ffffffffffffffffffffffffffffffffffffffff'
-  const { fn } = makeAgent([{ match: /^integration-worktree$/, result: () => ({ ok: true, sha: OTHER }) }])
+const OTHER_SHA = 'ffffffffffffffffffffffffffffffffffffffff'
+const intWorktree = (extra) => ({ match: /^integration-worktree$/, result: () => ({ ok: true, sha: OTHER_SHA, ...extra }) })
+
+test('15a integration-tip reconciliation: adopts the live tip when the checkpointed tip is its ancestor', async () => {
+  const { fn, calls } = makeAgent([intWorktree({ priorTipAncestorExit: 0 })])
   // Zero units so nothing forks/merges to move the tip again — isolate the reconciliation.
   const state = await runWave(fn, makePlan([]), makeState(), { boundary: 'off' })
-  assert.equal(state.integrationTip, OTHER, 'integrationTip reconciled to the reported git sha')
+  assert.equal(state.integrationTip, OTHER_SHA, 'integrationTip reconciled to the reported git sha')
+  const probe = calls.find((c) => c.label === 'integration-worktree')
+  assert.match(probe.prompt, /git merge-base --is-ancestor a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 roadmap\/session-test/,
+    'the courier is handed the exact command, not asked whether the branch moved forward')
+  assert.match(probe.prompt, /never rewind, reset or force the branch/, 'and is forbidden from making the answer zero')
+})
+
+test('15b integration-tip reconciliation: a tip that is NOT an ancestor halts the wave before dispatch', async () => {
+  const { fn, calls } = makeAgent([intWorktree({ priorTipAncestorExit: 1 })])
+  await assert.rejects(
+    runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' }),
+    /integration tip regressed/,
+  )
+  assert.ok(!has(calls, 'setup:a'), 'nothing dispatched onto a branch our own record cannot reach')
+  assert.ok(!has(calls, 'provision:integration'), 'the wave stops at the reconcile, before provisioning')
+})
+
+test('15c integration-tip reconciliation: an unresolvable checkpointed tip (exit 128) halts too', async () => {
+  const { fn } = makeAgent([intWorktree({ priorTipAncestorExit: 128 })])
+  await assert.rejects(
+    runWave(fn, makePlan([]), makeState(), { boundary: 'off' }),
+    /exited 128/,
+  )
+})
+
+test('15d equal shas need no ancestry answer — the reconcile does not fire', async () => {
+  const { fn } = makeAgent([{ match: /^integration-worktree$/, result: () => ({ ok: true, sha: BASE_SHA, priorTipAncestorExit: 1 }) }])
+  const state = await runWave(fn, makePlan([]), makeState(), { boundary: 'off' })
+  assert.equal(state.integrationTip, BASE_SHA, 'an unchanged tip is never second-guessed')
 })
 
 // =========================================================================================

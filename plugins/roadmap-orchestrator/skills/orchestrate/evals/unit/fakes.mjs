@@ -51,9 +51,18 @@ export function assertCksumVerified(prompt, file, content, who) {
 // ordered specific-first defensively. Every generator returns a FRESH object per call so the
 // harness can never mutate a shared canned result across units.
 const DEFAULTS = [
-  [(l) => l === 'integration-worktree', (b) => ({ ok: true, sha: b })],
+  // priorTipAncestorExit: the exit code of `merge-base --is-ancestor <checkpointed tip> <branch>`.
+  // 0 = the checkpointed tip is on the branch, which is the only state the tip reconcile adopts.
+  [(l) => l === 'integration-worktree', (b) => ({ ok: true, sha: b, priorTipAncestorExit: 0 })],
   [(l) => l.startsWith('setup:'), (b) => ({ ok: true, sha: b, state: 'ready' })],
   [(l) => l.startsWith('adopt-tip:'), (b) => ({ ok: true, sha: b })],
+  // Closed-list git couriers (gitProbe): exit codes in the order the script interpolated the
+  // commands, nothing interpreted. `merged-probe:` -> branch exists (0), NOT a second parent of any
+  // merge commit on the integration branch (1), worktree directory present (0) — i.e. an ordinary
+  // unmerged unit. `merge-reach:` -> HEAD on the integration branch (0), unit branch an ancestor
+  // (0), reported head reachable (0) — i.e. a merge that really landed on the branch.
+  [(l) => l.startsWith('merged-probe:'), () => ({ ok: true, exitCodes: [0, 1, 0], out: [] })],
+  [(l) => l.startsWith('merge-reach:'), () => ({ ok: true, exitCodes: [0, 0, 0], out: [] })],
 
   [(l) => l.startsWith('opus-plan-check:'), () => ({ verdict: 'approve', trigger: 'none', guidance: '' })],
   [(l) => l.startsWith('plan-check:'), () => ({ verdict: 'approve', guidance: '' })],

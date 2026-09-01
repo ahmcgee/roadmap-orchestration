@@ -217,13 +217,19 @@ Fields the scripts add:
   accumulator.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
-  write-failed | preview-failed | correctness-debt-banked | scope-growth | codex-exec |
+  write-failed | preview-failed | correctness-debt-banked | scope-growth | tip-regressed |
+  quarantine-refused | no-launch-id | codex-exec |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
   Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
   `codex-timeout` with surviving commits mean the branch was judged on its merits (a dead process
   is not a dead unit); `codex-unavailable`/`codex-usage-limit` accompany a wave halt (see
   `state.codex` below); `scope-growth` means a diff reached beyond its pinned envelope and the
-  gate adjudicated it.
+  gate adjudicated it. A **`tip-regressed`** entry accompanies a thrown wave: the checkpointed
+  integration tip is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
+  reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
+  landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
+  **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
+  and a resume can serve them from cache.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
   checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
@@ -439,6 +445,28 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
   enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
   `provision` block.
+- **Git decides `merged`, in code, before anything else.** At dispatch, before every quarantine,
+  and for every `running`/`merge-ready` crash-residue record, a closed-list Haiku courier
+  (`merged-probe:<id>`) runs the exact commands the script interpolated and reports their **exit
+  codes verbatim**; the script judges. The test is that the unit branch's tip is the **second
+  parent of a merge commit** on the integration branch — deliberately *not* a bare
+  `merge-base --is-ancestor`, which false-positives on a commit-less branch parked at an old
+  integration commit. A unit git already calls merged returns `merged` without dispatching, and
+  `quarantine()` **refuses** it (recording a `quarantine-refused` degradation) rather than
+  re-opening landed work. The single exception is a merge the integration fix **reverted**: `git
+  revert -m 1` leaves the merge commit in history, so that one caller quarantines explicitly.
+- **A merge is not merged until git says it is reachable.** After the suite passes, `merge-reach:<id>`
+  checks three things by exit code — HEAD is *on* the integration branch, the unit branch is an
+  ancestor of it, and the reported head sha is reachable from it — and only then are `status:
+  'merged'`, `mergedAt` and the new integration tip written. (The merge prompt itself now has to
+  put HEAD on the branch first.) A merge made on a detached HEAD leaves a commit no branch can
+  reach; it is quarantined with the three exit codes in its reason, and the branch is left intact
+  to re-merge.
+- **The wave-start tip reconcile is one-way.** The integration-worktree setup courier reports the
+  exit code of `git merge-base --is-ancestor <checkpointed tip> <integration branch>`. The live tip
+  is adopted **only** on exit 0 (the branch moved ahead). Anything else means our record and the
+  branch have diverged — the harness records a `tip-regressed` degradation and **throws before
+  dispatch** rather than forking a wave off a history that orphans the last one.
 - **Merge & quarantine.** Serial queue: Haiku checks the unit diff for `.roadmap/` paths (a hit
   refuses the merge, a strip commit restores the paths to the merge base — content preserved in
   branch history — and a `kind:'contract'` debt entry routes adjudication to you: NOROADMAP made
@@ -526,7 +554,12 @@ remains the fallback/recovery path; every conductor knob is inert there.
 ```jsonc
 Workflow({
   scriptPath: "<conductor.mjs>",
-  args: { plan, state, config, harnessPath }   // harnessPath REQUIRED — throws without it
+  args: { plan, state, config, harnessPath, launchId }
+  // harnessPath REQUIRED — throws without it.
+  // launchId: a per-launch nonce, FRESH on every launch and every resume. Passed straight
+  // through to each wave; the harness appends it to its ENVIRONMENT probes so resumeFromRunId
+  // cannot serve a stale disk/git fact from cache. Absent -> one `no-launch-id` degradation
+  // and unsalted probes, never a throw.
 })
 ```
 
@@ -708,7 +741,13 @@ amendments, needs-user calls, and the session integration review.
   (frontier) silently. Same for any agent you spawn yourself; never a bare typed agent.
 - `schema:` on every call — handoffs are validated structures; the scripts never parse prose.
 - No `Date.now()` / `Math.random()` / filesystem in a workflow script. Prompts are deterministic per
-  unit id + sha, so `resumeFromRunId` replays completed calls free.
+  unit id + sha, so `resumeFromRunId` replays completed calls free. **Environment probes are the
+  exception and must be salted**: a probe reports what the disk and git look like *now*, so replaying
+  one from cache is a lie (arc-observed: a resume replayed a pre-rebuild `cd: No such file` and a
+  pre-merge `state:'ready'`). Anything that must vary per launch cannot be generated in-script — it
+  arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
+  the harness appends to provisioning, integration setup, and the git probes. Work-product calls
+  never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
   `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout. Keep
   `worktreeRoot` outside the repo.
