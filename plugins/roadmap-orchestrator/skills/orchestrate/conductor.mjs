@@ -355,6 +355,18 @@ function mergeConductorSpend(st) {
   }
   cMerged = { ...cSpend }
 }
+// Where the arc's attention went, split the way 0.14.0 asks the question: CLAUDE tiers — the
+// weekly-limited resource every routing decision is now trying to spend less of — against CODEX,
+// which is plentiful and is where the drafting and the building moved. The harness already tallies
+// the codex side (`codex` = role dispatches, `codexRuns` = every codex process including the
+// build/fix lane's, plus its token counters) and it threads home in `state.spend`; this only splits
+// one number into the two an operator actually compares. Arc-CUMULATIVE, like `spend` itself —
+// `spendDelta` beside it is this run's contribution.
+const spendReport = (sp) => ({
+  claude: { ...Object.fromEntries(TIER_KEYS.map((k) => [k, sp?.[k] ?? 0])), total: sumTiers(sp) },
+  codex: { roles: sp?.codex ?? 0, processes: sp?.codexRuns ?? 0,
+    inputTokens: sp?.codexInputTokens ?? 0, outputTokens: sp?.codexOutputTokens ?? 0 },
+})
 const deltaSpend = (sp) => {
   const d = {}
   for (const k of new Set([...Object.keys(initialSpend), ...Object.keys(sp ?? {})])) {
@@ -680,6 +692,7 @@ async function ret(reason, tier, extra = {}) {
   return {
     status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
     spendDelta: deltaSpend(st.spend),
+    spendReport: spendReport(st.spend),
     // Everything below is what persist.mjs puts on disk. Always present (empty when clean) so
     // neither the root nor the persister has to wonder whether the run was healthy.
     degradations,
@@ -810,18 +823,49 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `Return skeletons and journal only — write no code and no files. Hold \`journal\` to one short paragraph ` +
   `(max 1500 characters) and \`notes\` to a few (max 2000 characters). ${TERSE}${lead}`
 
+// A spec file is a PROJECTION of the skeleton the boundary already decided — every section is one
+// of the skeleton's own fields, and the prompt that used to buy a Sonnet turn for it said exactly
+// that ("render the skeleton's content faithfully; invent no requirements"). So the bytes are
+// composed HERE, in code, and a Haiku verbatim-writer puts them on disk: the same move 0.14.0 makes
+// everywhere else, and the strongest possible form of "invent no requirements" — there is no longer
+// a model between the boundary's decision and the file. It is also replay-exact, being a pure
+// function of the skeleton.
+// `files` is carried because health/design fix-unit DRAFTS have one (their `{id, goal, files,
+// acceptance}` shape) even though the skeleton schema does not require it — dropping it here would
+// throw away the one scope hint a consolidation draft ships with.
+const specFileText = (s) => {
+  const L = [s.title ? `# ${s.id} — ${s.title}` : `# ${s.id}`, '',
+    `Risk: ${s.risk ?? 'low'} · Kind: ${s.kind ?? 'code'}${s.supersedes ? ` · Supersedes: ${s.supersedes}` : ''}`, '',
+    '## Goal', '', s.goal ?? '', '',
+    '## Constraints', '', s.constraints || 'None stated.', '',
+    '## Contract references', '',
+    ...(s.contractRefs?.length ? s.contractRefs.map((r) => `- ${r}`) : ['None.']), '']
+  if (s.files?.length) L.push('## Files in scope', '', ...s.files.map((f) => `- ${f}`), '')
+  // The exit gate grades these one by one, so they stay one checkbox per clause. An empty list is
+  // written as the defect it is rather than silently omitted: a unit whose acceptance nobody can
+  // grade is a unit that cannot pass its gate, and that has to be visible in the spec itself.
+  L.push('## Acceptance criteria', '',
+    ...(s.acceptance?.length ? s.acceptance.map((a) => `- [ ] ${a}`)
+      : ['- [ ] (none stated — the draft shipped no gradeable criteria; the exit gate has nothing to grade)']), '')
+  return L.join('\n')
+}
 const specExpandPrompt = (skel) => SPECWRITE +
-  `Expand this unit skeleton into a full spec and write it to exactly ${repo}/.roadmap/specs/${skel.id}.md and no ` +
-  `other file. Skeleton:\n${JSON.stringify(skel)}\nThe spec must contain: a Goal section (from \`goal\`), a ` +
-  `Constraints section (from \`constraints\`), a Contract references section (from \`contractRefs\`), and an ` +
-  `Acceptance criteria section written as individually gradeable clauses (from \`acceptance\`) — the exit gate ` +
-  `grades them one by one. Render the skeleton's content faithfully; invent no requirements. Report ok:false with ` +
-  `the exact error if the path cannot be written.`
+  `Create the file ${repo}/.roadmap/specs/${skel.id}.md (creating parent directories as needed) with EXACTLY ` +
+  `this content, and create or modify no other file:\n\n${specFileText(skel)}\n\n` +
+  `Copy that through verbatim — you are a writer here, not an author: never reword, reorder, summarise, ` +
+  `expand or add a section, and never fill a blank you think is missing. Report ok:true only once the file ` +
+  `is on disk with that content; report ok:false with the exact error in \`detail\` (one sentence) if it ` +
+  `cannot be written.`
 
+// A REVISION is not a projection: the file on disk carries content this script never composed —
+// architect rulings the harness appends mid-wave (`spec-append`) among them — so the three sections
+// named here have to be edited in place around material that must survive. That is a read-modify-write
+// judgment, not transcription, and it is why this one keeps a model where spec-expand shed its.
 const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
-  `Constraints sections to match; leave the rest of the spec intact. Report ok:false with the exact error if the ` +
+  `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
+  `architect ruling, for instance) is not yours to edit. Report ok:false with the exact error if the ` +
   `file cannot be written.`
 
 /* ---------------------------- plan mutation ---------------------------- */
@@ -1117,7 +1161,8 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       STRICT + `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
       `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md. Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md. ` +
+      `Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
       `Then dispose of the triaged user bug ISSUES: for each {number, action, reason} below, run ` +
       `\`gh issue comment ${ghRepo}<number> --body "Triaged wave ${N}: <action> — <reason>"\` then ` +
       `\`gh issue close ${ghRepo}<number> --reason completed\`: ${JSON.stringify(disposed)}. ` +
@@ -1130,7 +1175,7 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       STRICT + `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
       `Move these files if they exist — skip any that are missing (this is idempotent): ` +
       `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md` +
+      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md` +
       `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
       `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
       { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
@@ -1232,11 +1277,45 @@ function collect(ranTier, P, triageResult, boundaryPlan) {
 // than clearing blind.
 async function stage(N, ranTier, c) {
   const { prepared, reviseList, cutUnitIds, journal, debtLedger } = c
-  // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
+  // 7. Materialize — every new skeleton gets its spec file, revisions are applied; then merge.
+  //
+  // NO SPEC, NO UNIT. The writer's `ok` used to be discarded, so a dead spec-expand minted a plan
+  // unit whose spec file did not exist — and the harness hands `.roadmap/specs/<id>.md` to the
+  // planner, to Codex, to the spec critique and to both exit gates as the authority on what the
+  // unit is. A unit dispatched without one is not a degraded unit, it is an unspecified one. So the
+  // brake lives here, at the one place units are minted (the same place `admissions:'closed'` and
+  // `tier1MaxDrafts` live): a skeleton whose file was not confirmed on disk does NOT reach
+  // mergePlan. It is not lost either — it is banked as debt and ledgered — so the next boundary can
+  // re-draft it, and a superseded quarantine stays unresolved rather than being retired by a
+  // replacement that never got written.
   phase('Spec-expand')
-  await Promise.all(prepared.map((s) => run(specExpandPrompt(s), { model: 'sonnet', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  await Promise.all(reviseList.map((r) => run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  mergePlan(prepared, cutUnitIds)
+  const unwritten = new Set()
+  await Promise.all(prepared.map(async (s) => {
+    const r = await run(specExpandPrompt(s), { model: 'haiku', effort: 'low', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)
+    if (r?.ok) return
+    unwritten.add(s.id)
+    degrade({ label: `spec-expand:${s.id}`, model: 'haiku', phase: 'Spec-expand', kind: 'spec-unwritten',
+      what: `the spec file for ${s.id} was not confirmed on disk (${r ? `writer reported: ${String(r.detail ?? 'ok:false').slice(0, 160)}` : 'writer produced no report'}) — ` +
+        `the unit is NOT added to the plan, because a unit with no spec has no authority for the planner, ` +
+        `Codex or either exit gate to build and grade against. It is banked as debt for the next boundary to re-draft.` })
+    pendingDebt.push({ unit: s.id, kind: 'structure', severity: 'major',
+      what: `wave-${N} boundary drafted unit "${s.id}" but its spec could not be written, so the unit was not created`,
+      why: (s.goal ?? '').slice(0, 400) })
+  }))
+  await Promise.all(reviseList.map(async (r) => {
+    const res = await run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)
+    // Unlike an unwritten spec, a failed revision leaves a VALID spec on disk — the pre-revision
+    // one. The unit still dispatches; what it loses is the amendment, which is a degradation to
+    // read, not a reason to withhold a unit that already has its authority.
+    if (!res?.ok)
+      degrade({ label: `spec-revise:${r.id}`, model: 'sonnet', phase: 'Spec-expand', kind: 'spec-unrevised',
+        what: `the spec revision for ${r.id} was not confirmed (${res ? `writer reported: ${String(res.detail ?? 'ok:false').slice(0, 160)}` : 'writer produced no report'}) — ` +
+          `the unit keeps its PREVIOUS spec and still dispatches; the boundary's amendment did not land` })
+  }))
+  // The units that actually exist after this step. Everything downstream — the plan merge and the
+  // issue projection, whose issue BODY is the spec file — keys off this list, never off `prepared`.
+  const created = prepared.filter((s) => !unwritten.has(s.id))
+  mergePlan(created, cutUnitIds)
 
   // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
   // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
@@ -1244,7 +1323,7 @@ async function stage(N, ranTier, c) {
   // that, a mid-arc unit has no cached number, gets dropped from the arc-issue task-list rollup (the
   // sweep skips unknown-number units), and forces a marker-search fallback in every folded clause.
   // One Haiku call, only when there is new work; a no-op / '' path in file mode.
-  if (issueMode && prepared.length) {
+  if (issueMode && created.length) {
     const opened = await run(
       STRICT + GH_BEST_EFFORT + MARKER_RULE +
       `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
@@ -1254,7 +1333,7 @@ async function stage(N, ranTier, c) {
       `ABSENT: create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
       `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
       `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
-      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
+      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(created.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
       `Report ok:true when every unit has an issue, and in \`opened\` give each unit's {id, number} — the issue ` +
       `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
       { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },

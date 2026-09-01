@@ -26,10 +26,11 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    inherit *your* model and silently bill recon sweeps at frontier prices.
 2. **Frontier never generates volume — and Claude never implements.** You, and every `fable`
    agent, produce plans, contracts, specs, directives, verdicts, reports — never code, never
-   bulk text. The Codex CLI writes ALL implementation and fixes (steered by Haiku agents);
-   Opus plans units and judges; Sonnet extracts and compresses; Haiku runs commands. A codex
-   outage is a hard stop to surface to the user, never a licence for a Claude agent to
-   implement in its place.
+   bulk text. The Codex CLI writes ALL implementation and fixes (steered by Haiku agents) and,
+   since 0.14.0, drafts at the boundary too (the wave-tail explorer, health assessor and design
+   reconciler); Opus plans units and judges; Sonnet extracts and compresses; Haiku runs commands
+   and writes down what the script already composed. A codex outage is a hard stop to surface to
+   the user, never a licence for a Claude agent to implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
    outcome that feeds redesign, not a failure to retry around.
@@ -463,10 +464,11 @@ plenty.
 ### On the wakes where you do triage
 
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
-harness has already *run* the boundary jobs (Opus runtime explorer against the live preview, Opus
-health assessor against the integration tip, Haiku full-suite flake re-runs); their results are in
-the returned state's `boundary` block and in `feedback/{explorer,health,design}/wave-<n>.md`
-(`design/` appears only on waves that merged a design-cited unit). If that
+harness has already *run* the boundary jobs (a codex runtime explorer against the live preview, a
+codex health assessor against the integration tip, Haiku full-suite flake re-runs); their results are
+in the returned state's `boundary` block, and each role wrote its own
+`feedback/{explorer,health,design}/wave-<n>.md` (`design/` appears only on waves that merged a
+design-cited unit; the flake band's record is `feedback/health/wave-<n>-flake.md`). If that
 block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
 
 - **Quarantines**: read the dossiers in `.roadmap/quarantine/` — the *reason* routes the action.

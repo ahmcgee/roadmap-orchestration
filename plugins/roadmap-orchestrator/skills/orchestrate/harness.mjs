@@ -338,6 +338,13 @@ const C = {
   codexRoleTimeoutMin: 20,    // role deadline. Deliberately far below codexTimeoutMin: a role that
                               //   has not finished in 20 minutes is stuck, not thinking, and its
                               //   caller has a coded fallback (or a null) either way
+  codexBoundaryTimeoutMin: 45,  // deadline for the three BOUNDARY roles (explorer, health, design).
+                              //   Longer than codexRoleTimeoutMin for a stated reason: those roles
+                              //   drive a live product end to end or read a whole integrated tree,
+                              //   which is real work rather than the one-artifact errand the 20-minute
+                              //   bar was written for. Still far below codexTimeoutMin — a boundary
+                              //   role that has not reported in 45 minutes is stuck, and its caller
+                              //   (an owed marker) handles the null.
   codexSteerModel: 'haiku',   // steering tier; 'sonnet' if Haiku proves unable to drive it (P2)
   codexMaxConcurrent: 4,      // semaphore on concurrent codex processes (one OpenAI account)
   gateMaxConcurrent: 4,       // semaphore on concurrent TEST lanes (verify, gate re-verify, and the
@@ -1615,6 +1622,23 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
   return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
 }
 
+// The report-write clause every BOUNDARY role's brief carries. Through 0.13.0 each of these three
+// roles was an Opus investigator whose structured result a Haiku verbatim-writer then transcribed
+// into `.roadmap/feedback/<job>/wave-N.md`. The role is a Codex process now, and a Codex process has
+// a filesystem — so it writes its own report and the transcription courier is gone (0.14.0's rule:
+// Claude decides, Codex drafts and executes, Haiku only couriers). The rendering is dictated here
+// rather than left to the role's taste, because the file is the human-readable face of the SAME
+// structured report the triager reads: a file that says something the JSON does not is a second,
+// unreviewed account of the wave.
+const reportWrite = (path, heading, body) =>
+  `Write your report to ${path} — create its parent directories with \`mkdir -p\` first — and write NO ` +
+  `other file anywhere. Its content is exactly: the line \`${heading}\`, a blank line, then ${body}. ` +
+  `The file must carry the same findings as your final JSON report and nothing else: it is that ` +
+  `report rendered for a human, never a longer account of what you did. If the write fails, say so in ` +
+  `\`notes\` in one sentence and still report your findings — a lost file is not a lost wave. (The ` +
+  `budget for every field, \`notes\` included, is stated in FINAL MESSAGE below; this clause does not ` +
+  `restate it, so the two can never drift.)\n\n`
+
 // Wave-tail boundary phase (invariant 8: strictly after every merge and mirror advance;
 // findings gate nothing — they are the NEXT boundary's triage input). In-workflow so the
 // root wakes exactly once, cache warm, with explorer findings, health findings + fix-unit
@@ -1647,6 +1671,24 @@ async function runBoundary() {
     (owedOnly ? owedDesignIds.has(u.id)
       : (prior.units?.[u.id]?.status !== 'merged' || owedDesignIds.has(u.id))))
   const doDesign = dueHere('design', designUnits.length > 0 && previewStatus === 'live')
+  const fb = `${repo}/.roadmap/feedback`
+  // The three BOUNDARY ROLES (explorer, health, design) run on the CODEX role adapter, not on Opus.
+  // Three notes on how they are wired, because each was a decision:
+  //   cwd — the explorer and the design reconciler run in the PREVIEW worktree (${prevWt}): the thing
+  //     they judge is the running product, and that tree is where a shell may reach it without any
+  //     sanctioned command touching the operator's checkout (§19). The health assessor runs in the
+  //     integration worktree, which is the tree it reads.
+  //   sandbox — all three declare `workspace-write`, INCLUDING the read-only health assessor, because
+  //     each writes exactly one file: its own report. The read-only-ness is therefore carried by the
+  //     BRIEF, which is the adapter's documented answer whenever the sandbox cannot carry it — and in
+  //     this environment it never can, since `config.codexSandbox` ('danger-full-access', for the
+  //     measured reason on that knob) overrides the role's intent anyway. The feedback directory also
+  //     sits OUTSIDE every one of these cwds, so no writable-roots scoping would express the real
+  //     permission set either; a knob the environment overrides is a knob that lies.
+  //   null — a codex role failure is codex's (adapter contract): it degrades `codex-role` once and
+  //     returns null, and the settleOwed block below turns that into an owed marker, exactly as a
+  //     dead Opus explorer did. No `.catch` here: the adapter never throws, and a throw from it would
+  //     be a caller bug worth surfacing rather than swallowing.
   const [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
       `You are the wave-${waveN} runtime explorer for a roadmap build. The integrated result is live as a ` +
@@ -1654,15 +1696,24 @@ async function runBoundary() {
       `is runtime behavior ONLY — the diff, tests, and gates already judged the code: drive flows end to end ` +
       `the way a skeptical user would, poke edge cases, feed hostile/empty/huge inputs, break expected ` +
       `sequences — hunting behavior that is unexpected, counterintuitive, underdocumented, brittle, or ` +
-      `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). Change nothing: no commits, no file ` +
-      `edits, no restarts. At most 10 findings — severity, exact repro, observed vs expected; an empty report ` +
-      `is legitimate and better than manufactured findings. Hold \`notes\` to a short paragraph (max 500 ` +
-      `characters). ${TERSE}Report shaObserved: ${explSha}.`,
-      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `explorer:w${waveN}`, schema: S.explore }
-    ).catch(() => null),
+      `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). ` +
+      // The sandbox cannot carry this (see the boundary-role comment above the array), so the brief does.
+      `CHANGE NOTHING: no commits, no edits to any file under ${prevWt} or ${repo}, no restarts of a process ` +
+      `you did not start. The ONE file you may create is the report named below. At most 10 findings — ` +
+      `severity, exact repro, observed vs expected; an empty report is legitimate and better than manufactured ` +
+      `findings.\n\n` + reportWrite(`${fb}/explorer/wave-${waveN}.md`,
+        `# Wave ${waveN} — runtime exploration (sha ${explSha})`,
+        `one bullet per finding, \`- **<severity>** <summary>\`, each followed by the two indented sub-bullets ` +
+        `\`  - repro: <repro>\` and \`  - observed: <observed> · expected: <expected>\` — or the single line ` +
+        `\`No findings.\` when you have none — then, only when \`notes\` is non-empty, a blank line and the ` +
+        `line \`Notes: <notes>\``) +
+      `Report shaObserved: ${explSha}.`,
+      { model: 'codex', cwd: prevWt, sandbox: 'workspace-write', phase: 'Boundary',
+        label: `explorer:w${waveN}`, schema: S.explore, timeoutMin: C.codexBoundaryTimeoutMin }),
     !doHealth ? null : run(
       `You are the wave-${waveN} codebase-health assessor for a roadmap build. In the integration worktree at ` +
-      `${intWt} (tip ${tip}): per-unit gates each saw one unit; you own what none could see. Report with ` +
+      `${intWt} (tip ${tip}) — the directory you are running in: per-unit gates each saw one unit; you own what ` +
+      `none could see. Report with ` +
       `file-level specifics: test health — coverage gaps, slow tests, brittleness (assertions on ` +
       `implementation detail, over-mocking, order/timing dependence); structural health — files grown too ` +
       `large, misplaced code, architectural drift; cross-unit consistency — units that independently added ` +
@@ -1670,10 +1721,18 @@ async function runBoundary() {
       `${conventions ? `the conventions contract at ${conventions} already catalogs` : `another unit already provides`}; ` +
       `ergonomics — manual dev steps that should be automated, missing tooling that taxes every round. For ` +
       `each finding worth fixing, also return a ready-to-dispatch fix-unit draft (id, goal, files, acceptance ` +
-      `criteria as individually checkable clauses). Read-only — change nothing. An empty report is legitimate. ` +
-      `Hold \`notes\` to a short paragraph (max 500 characters). ` + TERSE,
-      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `health:w${waveN}`, schema: S.health }
-    ).catch(() => null),
+      `criteria as individually checkable clauses) — a draft is the default action, not a suggestion, and it ` +
+      `is what the boundary triage admits without re-authoring. ` +
+      `READ-ONLY: change nothing in ${intWt} and nothing under ${repo} — no edits, no commits, no test runs ` +
+      `that write. The ONE file you may create is the report named below. An empty report is legitimate.\n\n` +
+      reportWrite(`${fb}/health/wave-${waveN}.md`, `# Wave ${waveN} — codebase health (tip ${tip})`,
+        `one bullet per finding, \`- **<area>** <what> (<where>)\` with the parenthesis omitted when \`where\` ` +
+        `is empty — or the single line \`No findings.\` — then a blank line, the heading \`## Fix-unit drafts\`, ` +
+        `and one bullet per draft, \`- <id>: <goal>\` followed by the indented sub-bullets ` +
+        `\`  - files: <files joined by ", ">\` and \`  - acceptance: <acceptance clauses joined by " · ">\`, ` +
+        `or the single line \`None.\` when you drafted none`),
+      { model: 'codex', cwd: intWt, sandbox: 'workspace-write', phase: 'Boundary',
+        label: `health:w${waveN}`, schema: S.health, timeoutMin: C.codexBoundaryTimeoutMin }),
     !(doHealth && C.flakeReruns > 0 && dueHere('flake', true)) ? null : run(
       STRICT +
       `In the integration worktree at ${intWt}: run the project's full test suite ${C.flakeReruns} times in a ` +
@@ -1699,11 +1758,21 @@ async function runBoundary() {
       `not. Classify each finding: "bug" = it renders wrong; "adoption-gap" = the surface reimplements what the ` +
       `comp already provides; "irreconcilable" = the built behaviour and the comp cannot both be right, so a ` +
       `human decision is needed. For each finding worth fixing, return a ready-to-dispatch fix-unit draft (id, ` +
-      `goal, files, acceptance criteria as individually checkable clauses). Change nothing — no commits, no ` +
-      `edits. An empty report is legitimate. Hold \`notes\` to a short paragraph (max 500 characters). ` +
-      `${TERSE}Report shaObserved: ${explSha}.`,
-      { model: 'opus', effort: C.opusEffort, phase: 'Boundary', label: `design:w${waveN}`, schema: S.design }
-    ).catch(() => null),
+      `goal, files, acceptance criteria as individually checkable clauses). ` +
+      `Change nothing — no commits, no edits. The ONE file you may create is the report named below. ` +
+      `An empty report is legitimate.\n\n` +
+      reportWrite(`${fb}/design/wave-${waveN}.md`,
+        `# Wave ${waveN} — design fidelity (sha ${explSha}, <"screenshots compared visually" when you set ` +
+        `visionUsed true, else "NO SCREENSHOT CAPABILITY — DOM vs comp source only">)`,
+        `one bullet per finding, \`- **<severity>** <surface> vs <comp> — <what>\` with the \` vs <comp>\` ` +
+        `omitted when \`comp\` is empty — or the single line \`No findings.\` — then a blank line, the heading ` +
+        `\`## Fix-unit drafts\`, and one bullet per draft, \`- <id>: <goal>\` followed by the indented ` +
+        `sub-bullets \`  - files: <files joined by ", ">\` and ` +
+        `\`  - acceptance: <acceptance clauses joined by " · ">\`, or the single line \`None.\` when you ` +
+        `drafted none; then, only when \`notes\` is non-empty, a blank line and the line \`Notes: <notes>\``) +
+      `Report shaObserved: ${explSha}.`,
+      { model: 'codex', cwd: prevWt, sandbox: 'workspace-write', phase: 'Boundary',
+        label: `design:w${waveN}`, schema: S.design, timeoutMin: C.codexBoundaryTimeoutMin }),
   ])
   // Settle the owed ledger BEFORE any early return: a job that was DUE but produced nothing is
   // owed whether it was skipped (precondition down) or died; a successful run discharges its
@@ -1726,50 +1795,38 @@ async function runBoundary() {
   settleOwed('design', dueHere('design', designUnits.length > 0), !!dsgn,
     doDesign ? 'design reconcile produced no report' : previewWhy,
     designUnits.map((u) => u.id))
+  // A health role that produced nothing leaves this wave with NO fix-unit drafts — the boundary's
+  // one source of consolidation work — and the triage tiers cannot tell "nothing to consolidate"
+  // from "nobody looked". The adapter already filed a `codex-role` row saying the process died;
+  // this one says what that cost the wave, in the ledger the triager reads. The boundary proceeds
+  // either way: a skipped assessment is not a failed wave, and the owed marker re-queues it.
+  if (doHealth && !hlth)
+    degrade({ label: `health:w${waveN}`, model: 'codex', phase: 'Boundary', kind: 'health-skipped',
+      what: `the wave-${waveN} health assessment produced no report — no findings and no fix-unit drafts ` +
+        `were available to this boundary, so an empty draft set here means UNASSESSED, not clean. ` +
+        `An owed marker re-queues it at the next boundary.` })
   // Only assign when a job actually ran, so serialize() omits an empty all-null block.
   if (!expl && !hlth && !flk && !dsgn) return
   if (designUnits.length && !dsgn)
-    degrade({ label: `design:w${waveN}`, model: 'opus', phase: 'Boundary', kind: 'no-report',
+    degrade({ label: `design:w${waveN}`, model: 'codex', phase: 'Boundary', kind: 'no-report',
       what: `design reconcile did not report for ${designUnits.map((u) => u.id).join(', ')} ` +
         `(${doDesign ? 'agent produced nothing' : 'no live preview'}) — those surfaces went unchecked this wave. ` +
         `An owed marker re-queues them at the next boundary; they must be reconciled or explicitly waived before close-out.` })
   boundary = { explorer: expl, health: hlth, flake: flk, design: dsgn }
-  // Persist narratives via Haiku verbatim-writers (investigators flake on side effects;
-  // verbatim writers don't — same idiom as the quarantine dossier). Rendering is a pure
-  // function of the structured results, so a resume replays it byte-identically.
-  const fb = `${repo}/.roadmap/feedback`
-  const writes = []
-  if (expl) writes.push(run(
-    `Create the file ${fb}/explorer/wave-${waveN}.md (creating parent directories as needed) with exactly this ` +
-    `content:\n# Wave ${waveN} — runtime exploration (sha ${explSha})\n\n` +
-    (expl.findings.length
-      ? expl.findings.map((f) => `- **${f.severity}** ${f.summary}\n  - repro: ${f.repro ?? ''}\n  - observed: ${f.observed ?? ''} · expected: ${f.expected ?? ''}`).join('\n')
-      : 'No findings.') + (expl.notes ? `\n\nNotes: ${expl.notes}` : '') + '\n',
-    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `explorer-write:w${waveN}`, schema: S.ok }).catch(() => null))
-  if (hlth || flk) writes.push(run(
-    `Create the file ${fb}/health/wave-${waveN}.md (creating parent directories as needed) with exactly this ` +
-    `content:\n# Wave ${waveN} — codebase health (tip ${tip})\n\n` +
-    ((hlth?.findings ?? []).map((f) => `- **${f.area}** ${f.what}${f.where ? ` (${f.where})` : ''}`).join('\n') || 'No findings.') +
-    `\n\n## Fix-unit drafts\n` +
-    ((hlth?.fixUnits ?? []).map((u) => `- ${u.id}: ${u.goal}\n  - files: ${(u.files ?? []).join(', ')}\n  - acceptance: ${u.acceptance.join(' · ')}`).join('\n') || 'None.') +
-    `\n\n## Flake re-runs\n` +
-    (flk ? (flk.flips.length ? `${flk.runs} runs; flips: ${flk.flips.join(', ')}` : `${flk.runs} runs; stable`) +
-      (flk.loads?.length ? ` (loadavg1 per run: ${flk.loads.join(', ')}${flk.cpuCount ? ` on ${flk.cpuCount} cpu` : ''})` : '')
-      : 'not run') +
-    (flk?.detail ? ` — ${flk.detail}` : '') + '\n',
-    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `health-write:w${waveN}`, schema: S.ok }).catch(() => null))
-  if (dsgn) writes.push(run(
-    `Create the file ${fb}/design/wave-${waveN}.md (creating parent directories as needed) with exactly this ` +
-    `content:\n# Wave ${waveN} — design fidelity (sha ${explSha}, ` +
-    `${dsgn.visionUsed ? 'screenshots compared visually' : 'NO SCREENSHOT CAPABILITY — DOM vs comp source only'})\n\n` +
-    (dsgn.findings.length
-      ? dsgn.findings.map((f) => `- **${f.severity}** ${f.surface}${f.comp ? ` vs ${f.comp}` : ''} — ${f.what}`).join('\n')
-      : 'No findings.') +
-    `\n\n## Fix-unit drafts\n` +
-    ((dsgn.fixUnits ?? []).map((u) => `- ${u.id}: ${u.goal}\n  - files: ${(u.files ?? []).join(', ')}\n  - acceptance: ${u.acceptance.join(' · ')}`).join('\n') || 'None.') +
-    (dsgn.notes ? `\n\nNotes: ${dsgn.notes}` : '') + '\n',
-    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `design-write:w${waveN}`, schema: S.ok }).catch(() => null))
-  await Promise.all(writes)
+  // Each boundary ROLE writes its own report (reportWrite, above) — a Codex process has a
+  // filesystem, so the three Haiku verbatim-writers that used to transcribe explorer/health/design
+  // results are gone. The flake band is the exception and keeps one: it is a Haiku test-runner, not
+  // a codex role, and it has no filesystem of its own. It gets its OWN file rather than a section
+  // inside the health report, because the health assessor now owns that file end to end and two
+  // writers on one path is a lost section waiting to happen. Rendering here is still a pure
+  // function of the structured result, so a resume replays it byte-identically.
+  if (flk) await run(
+    `Create the file ${fb}/health/wave-${waveN}-flake.md (creating parent directories as needed) with exactly ` +
+    `this content:\n# Wave ${waveN} — flake re-runs (tip ${tip})\n\n` +
+    ((flk.flips.length ? `${flk.runs} runs; flips: ${flk.flips.join(', ')}` : `${flk.runs} runs; stable`) +
+      (flk.loads?.length ? ` (loadavg1 per run: ${flk.loads.join(', ')}${flk.cpuCount ? ` on ${flk.cpuCount} cpu` : ''})` : '')) +
+    (flk.detail ? ` — ${flk.detail}` : '') + '\n',
+    { model: 'haiku', effort: 'low', phase: 'Boundary', label: `flake-write:w${waveN}`, schema: S.ok }).catch(() => null)
 }
 
 // Issue-projection reconciliation sweep (issue mode only): one Haiku pass at the wave tail that

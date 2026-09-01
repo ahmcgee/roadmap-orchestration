@@ -164,17 +164,22 @@ const DEFAULTS = [
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('spec-append:'), () => ({ ok: true })],   // adjudication rulings appended to the spec
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
-  [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],
-  [(l) => l.startsWith('health-write:'), () => ({ ok: true })],
-  [(l) => l.startsWith('design-write:'), () => ({ ok: true })],
+  // The flake band is the ONE boundary job that still has a Haiku verbatim-writer: it is a test
+  // runner rather than a codex role, so it has no filesystem of its own. explorer/health/design
+  // write their own reports now (0.14.0), and their `*-write:` couriers are gone.
+  [(l) => l.startsWith('flake-write:'), () => ({ ok: true })],
 
   [(l) => l.startsWith('rescue-dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('consult:'), () => ({ action: 'redirect', guidance: 'g' })],
-  [(l) => l.startsWith('explorer:'), (b) => ({ findings: [], shaObserved: b })],
-  [(l) => l.startsWith('health:'), () => ({ findings: [], fixUnits: [] })],
+  // The three BOUNDARY ROLES moved onto the codex role adapter in 0.14.0, so what the harness
+  // records at these labels is the STEERING COURIER's report — the role's own result nested under
+  // `result` — not the bare boundary schema. `flake:` is still a direct Haiku call and keeps its
+  // bare shape.
+  [(l) => l.startsWith('explorer:'), (b) => codexRoleOk({ findings: [], shaObserved: b })],
+  [(l) => l.startsWith('health:'), () => codexRoleOk({ findings: [], fixUnits: [] })],
   [(l) => l.startsWith('flake:'), () => ({ runs: 3, flips: [] })],
-  [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
+  [(l) => l.startsWith('design:'), (b) => codexRoleOk({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
 export const verifyOk = () => ({ pass: true, blocked: false, failures: [],

@@ -15,7 +15,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, BASE_SHA } from './fakes.mjs'
+import { makeAgent, BASE_SHA, codexRoleOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -82,7 +82,11 @@ test('design: boundary job fires only for units merged THIS wave, and needs a li
   const state = await runWave(fn, plan, makeState())
   assert.ok(calls.some((c) => c.label === 'design:w1'), 'runs when a design-cited unit merged this wave')
   assert.ok(state.boundary?.design, 'result serialized into the boundary block')
-  assert.ok(calls.some((c) => c.label === 'design-write:w1'), 'narrative persisted like explorer/health')
+  // 0.14.0: the reconciler is a codex role and writes its own narrative — there is no
+  // `design-write:` transcription courier left to look for. The obligation moved into the brief.
+  assert.match(calls.find((c) => c.label === 'design:w1').prompt,
+    /\/repo\/\.roadmap\/feedback\/design\/wave-1\.md/,
+    'narrative persisted like explorer/health — by the role itself, at the documented path')
 
   // Already merged in an earlier wave: nothing new to reconcile.
   const { fn: fn2, calls: c2 } = makeAgent()
@@ -97,16 +101,20 @@ test('design: boundary job fires only for units merged THIS wave, and needs a li
 
 test('design: the job must declare whether it could actually SEE', async () => {
   const plan = makePlan([unit('ui', { design: ['checkin#chrome'] })], [], { designAuthorities: AUTH, preview: PREVIEW })
-  const { fn, calls } = makeAgent([{ match: /^design:w1$/, result: {
+  // The reconciler is a codex ROLE now, so what the harness records at `design:w1` is the steering
+  // courier's report with the role's own result nested under `result` — hence codexRoleOk here and
+  // `schema.properties.result` below. The REQUIREMENT itself is untouched.
+  const { fn, calls } = makeAgent([{ match: /^design:w1$/, result: codexRoleOk({
     findings: [{ surface: '/checkin', severity: 'adoption-gap', what: 'rebuilt the opening chrome' }],
-    fixUnits: [], visionUsed: false } }])
+    fixUnits: [], visionUsed: false }) }])
   const state = await runWave(fn, plan, makeState())
 
   assert.equal(state.boundary.design.visionUsed, false)
-  assert.ok(calls.find((c) => c.label === 'design:w1').schema.required.includes('visionUsed'),
+  assert.ok(calls.find((c) => c.label === 'design:w1').schema.properties.result.required.includes('visionUsed'),
     'visionUsed is REQUIRED — a fidelity check that silently cannot see is worse than none')
-  // A degraded check must be visible in the narrative a human reads, not only in state.json.
-  assert.match(calls.find((c) => c.label === 'design-write:w1').prompt, /NO SCREENSHOT CAPABILITY/)
+  // A degraded check must be visible in the narrative a human reads, not only in state.json — and
+  // the role writes that narrative itself, so the wording rides its own brief.
+  assert.match(calls.find((c) => c.label === 'design:w1').prompt, /NO SCREENSHOT CAPABILITY/)
 })
 
 test('design: the reconciler is told to read approved divergences before reporting drift', async () => {

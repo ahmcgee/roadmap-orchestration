@@ -362,8 +362,12 @@ test('draft is materialized into an in-scope plan unit; spec-expand prompt carri
 
   const spec = firstLabel(agent.calls, /^spec-expand:consolidate-gcd\b/)
   assert.ok(spec, 'a spec-expand is issued for the new unit')
-  assert.equal(spec.model, 'sonnet', 'spec expansion is sonnet')
+  // 0.14.0: the spec file is COMPOSED IN CODE from the skeleton and a Haiku verbatim-writer puts it
+  // on disk — a changed contract, not a weakened assertion. The old Sonnet turn was told to "render
+  // the skeleton's content faithfully; invent no requirements", which is a projection, not authorship.
+  assert.equal(spec.model, 'haiku', 'spec expansion is a verbatim write, not an authoring turn')
   assert.ok(prompt(spec).includes(acc), 'the spec-expand prompt carries the acceptance text')
+  assert.match(prompt(spec), /## Acceptance criteria/, 'and the exact file content, section headings included')
 })
 
 /* ============================================================================== */
@@ -1176,4 +1180,96 @@ test('a fully merged arc still closes as arc-complete', async () => {
   const state = mkState({ units: { 'seed-unit': { status: 'merged' } } })
   const { result } = await conduct({ plan, state, waveHandler: waves(state) })
   assert.equal(result.reason, 'arc-complete')
+})
+
+/* ============================================================================== */
+/* 12. NO SPEC, NO UNIT — the spec-expand brake (0.14.0)                          */
+/* ============================================================================== */
+// The writer's `ok` used to be discarded, so a dead spec-expand minted a plan unit whose spec file
+// did not exist — and `.roadmap/specs/<id>.md` is what the harness hands the planner, Codex, the
+// spec critique and both exit gates as the authority on what the unit IS. The brake belongs at the
+// one place units are minted, beside `admissions:'closed'` and `tier1MaxDrafts`.
+test('a spec that was never written withholds its unit, and banks it rather than losing it', async () => {
+  const { result, agent } = await conduct({
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+    agentRules: [
+      { match: /^spec-expand:consolidate-gcd/, result: { ok: false, detail: 'permission denied' } },
+      ...rules(),
+    ],
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+
+  assert.ok(hasLabel(agent.calls, /^spec-expand:consolidate-gcd\b/), 'the write was attempted')
+  assert.equal(result.plan.units.some((u) => u.id === 'consolidate-gcd'), false,
+    'a unit with no spec has no authority to build or grade against — it is not added to the plan')
+  const row = result.degradations.find((d) => d.kind === 'spec-unwritten')
+  assert.ok(row, 'the withholding is ledgered, not silent')
+  assert.match(row.what, /permission denied/, 'and carries what the writer actually said')
+  // Banked, not lost: in file mode this boundary's debt is collected into the wave's debt.md
+  // section (and cleared from `debt` once banked), which is where the next boundary reads it.
+  assert.ok(result.debtSections.some((sec) => sec.body.includes('consolidate-gcd')),
+    'the draft is banked as debt so the next boundary can re-draft it — withheld is not lost')
+})
+
+test('a failed spec REVISION degrades but never withholds: the unit still has a valid spec', async () => {
+  const { result } = await conduct({
+    plan: mkPlan({
+      units: [
+        { id: 'seed-unit', title: 's', risk: 'med', kind: 'code', inScope: true },
+        { id: 'impossible-cache', title: 'ic', risk: 'high', kind: 'code', inScope: true },
+      ],
+    }),
+    state: mkState({
+      boundary: boundaryBlock(),
+      units: { 'seed-unit': { status: 'merged' }, 'impossible-cache': { status: 'quarantined' } },
+    }),
+    agentRules: [
+      { match: /^spec-revise:seed-unit/, result: { ok: false, detail: 'file busy' } },
+      ...rules({
+        census: censusQuar(),
+        boundary: boundaryPlan({
+          newUnits: [skeleton('cache-v2', { supersedes: 'impossible-cache' })],
+          reviseSpecs: [{ id: 'seed-unit', goal: 'tightened', acceptance: ['still gradeable'] }],
+          journal: 'why',
+        }),
+      }),
+    ],
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock(), units: { 'seed-unit': { status: 'merged' }, 'impossible-cache': { status: 'quarantined' } } }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+
+  assert.ok(result.degradations.some((d) => d.kind === 'spec-unrevised'), 'the lost amendment is ledgered')
+  assert.ok(result.plan.units.some((u) => u.id === 'seed-unit' && u.inScope),
+    'but the unit keeps its previous spec and stays in the plan — an amendment is not an authority')
+  assert.ok(result.plan.units.some((u) => u.id === 'cache-v2'),
+    'and the respec whose spec DID land is created as normal')
+})
+
+/* ============================================================================== */
+/* 13. Spend visibility: Claude-by-tier vs codex (0.14.0)                         */
+/* ============================================================================== */
+// The whole point of moving work onto Codex is that the two resources are not fungible — Claude
+// tiers are weekly-limited, Codex is plentiful — so the envelope has to report them apart. A
+// codex count folded into a Claude total is the number an operator would budget against.
+test('the return envelope splits Claude-by-tier spend from codex spend', async () => {
+  const spend = { fable: 1, opus: 4, sonnet: 2, haiku: 20,
+    codex: 6, codexRuns: 9, codexInputTokens: 1000, codexOutputTokens: 200 }
+  const { result } = await conduct({
+    state: mkState({ spend }),
+    waveHandler: waves(mkState({ spend, boundary: boundaryBlock() })),
+  })
+
+  const sp = result.state.spend
+  assert.deepEqual(result.spendReport.codex,
+    { roles: sp.codex, processes: sp.codexRuns, inputTokens: sp.codexInputTokens, outputTokens: sp.codexOutputTokens },
+    'the codex side reports role dispatches, every codex process, and its tokens')
+  assert.equal(result.spendReport.claude.total, sp.fable + sp.opus + sp.sonnet + sp.haiku,
+    'the Claude total is the four tiers and nothing else — a codex run is not a Claude call')
+  for (const k of ['fable', 'opus', 'sonnet', 'haiku'])
+    assert.equal(result.spendReport.claude[k], sp[k], `${k} is reported per tier`)
 })
