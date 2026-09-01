@@ -361,10 +361,12 @@ away.
 
 ### After every run — persist
 
-**The scripts write nothing under `.roadmap/`.** They have no filesystem, so every byte they used to
-put on disk went through a model transcribing a document — the second-largest model cost in the
-system, and it occasionally lost the document anyway. Everything now rides home in the return value,
-and one command turns it into files, at zero model cost:
+**The scripts write no STATE under `.roadmap/`.** They have no filesystem, so every byte of it used
+to go through a model transcribing a document — the second-largest model cost in the system, and it
+occasionally lost the document anyway. State, the merged plan, the debt and log sections and both
+event ledgers now ride home in the return value, and one command turns them into files at zero model
+cost. (What the scripts still put there is content a model actually *authored*: a spec, a quarantine
+dossier, a boundary role's own report, and the feedback `move-feedback` archives.)
 
 ```
 node <this skill's directory>/persist.mjs \
@@ -556,7 +558,7 @@ reach the end. That file is what rung 3 relaunches from. Then work the ladder in
    snapshots the consumed state, so a partial persist lands the last completed boundary; and
    within the in-flight wave, the harness asks **git** what already finished before it dispatches
    anything (a branch that landed on the integration branch is recorded `merged` and never
-   re-dispatched — including one whose checkpoint says `running`/`merge-ready`; a crashed `running`
+   re-dispatched — including one the persisted state still records as `running`/`merge-ready`; a crashed `running`
    unit whose branch did *not* land auto-adopts its committed work and re-enters at verify — its
    `stage` field and `git log unit/<id>` show how far it got). The loss bound is only the in-flight
    wave's uncached agent calls. Pass a **fresh `launchId`** on the relaunch: it is what stops those

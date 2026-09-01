@@ -171,9 +171,10 @@ process.exit(bad)
 " || fail=1
 
 # --- spend sanity (informational thresholds, generous by design) ---------------
-# The wave-tail boundary phase adds ~2 Opus (explorer + health) + ~2-3 Haiku (flake re-run +
-# verbatim writers) per wave; the envelope below bounds fable/gateRounds/consults only, none
-# of which the boundary touches, so no threshold widening is needed for it.
+# Since 0.14.0 the wave-tail boundary phase spends CODEX, not Claude: explorer, health, flake and
+# design are codex roles that write their own reports, and the Haiku transcription writers are
+# gone. The envelope below bounds fable/gateRounds/consults only, none of which the boundary
+# touches, so no threshold widening is needed for it.
 node -e "
 const s = require('$STATE'); const sp = s.spend || {}
 console.log('spend:', JSON.stringify(sp))

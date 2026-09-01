@@ -56,8 +56,8 @@ shipping; never ship on an upper rung alone.
    tree it judges, writes its own `feedback/<job>/wave-N.md`, and on a `null` goes owed (explorer,
    design) or records `health-skipped` (health) rather than halting anything.
    `wave-policy.test.mjs` locks the **wave-level brakes that used to be prose**: the
-   `gateMaxConcurrent` semaphore on test lanes (and that it adds no extra checkpoint fan-out), load
-   recorded on every lane but never gated on, the shared-red breaker collapsing N identical
+   `gateMaxConcurrent` semaphore on test lanes (and that a bound of 1 still drains rather than
+   deadlocking), load recorded on every lane but never gated on, the shared-red breaker collapsing N identical
    out-of-scope failures into ONE finding (never debt, so the termination guarantee holds), and scope
    rulings carried to sibling gates as precedent. Every brake has a control pinning the counterfactual.
    `admissions.test.mjs` locks the **conductor's admission code path**: `admissions:'closed'` stops
@@ -89,6 +89,29 @@ shipping; never ship on an upper rung alone.
    encoded round 1's exact wording. Both holes are now closed — but note the standing limit: it
    verifies a budget is *stated*, never that the stated budget matches the schema or that the named
    field exists.
+   Four more suites the prose above skips: `hardening.test.mjs` (the owed-boundary ledger, the two
+   merge fences, the specGap pull channel, the evidence manifest handed to the implementer,
+   crash-residue reopen); `conductor-owed.test.mjs` (the conductor's four rules for a `state.owed`
+   entry — non-empty `owed` is a judgment signal that buys an Opus triage, `count >= 2` forces tier 3
+   outright, only Fable may waive, and anything unwaived rides forward byte-identically);
+   `design.test.mjs` (the design-authority path, whose load-bearing property is that an arc declaring
+   no `designAuthorities` emits byte-identical prompts — which is what lets a design-carrying change
+   ride the design-less paid fixtures as valid evidence); and `shared-consts.test.mjs` (a
+   text-level drift guard on the constants harness and conductor deliberately duplicate — they are
+   standalone workflow scripts and cannot import from each other — including the whole
+   `readPack`/`READ_CHUNK`/`cksumOf` launch-pack read, byte-identical in both).
+   `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
+   `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library.
+
+   **Inventory, post-0.14.0.** The suite is **306 sims** — every `*.test.mjs` under `unit/`, which is
+   exactly what `run.sh` globs. `unit/load.mjs` no longer exists: it moved up to
+   `../script-loader.mjs`, so `persist.mjs` and the sims compile a script through one module rather
+   than two copies. The **writer sims are gone**, and deliberately so — checkpoint coalescing,
+   checkpoint fan-out, part-retry, single-write and failed-write in the harness, the
+   control-characters transcription sim beside them, and the conductor's `persist-state` / `plan-ids`
+   sims all pinned a state-writing mechanism the scripts no longer have. `persist.test.mjs` is their
+   successor: it pins the same documents landing, from the other side of the boundary.
+
    Run: `bash unit/run.sh`. **`unit/` is owned separately by consumers of this skill — if you are
    running an arc, document don't edit. In the skill's own source repo it is yours to extend.**
 
@@ -205,14 +228,20 @@ suite-green tip with `preview: {status: "live"}`, and spend is within a generous
 2. `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {roadmapDir: "/tmp/roadmap-eval/repo/.roadmap", config: {}, launchId: "<fresh value>"}})`
    and wait (~10–25 min at ~16-way concurrency). Do NOT read the plan pack first — the script reads
    it itself, cksum-verified, on a Haiku agent.
-3. **Persist** — the scripts write nothing under `.roadmap/`, and `check.sh` grades `state.json`:
+3. **Persist** — the scripts write no state (every state writer was deleted in 0.14.0; what still
+   lands under `.roadmap/` during a run is a codex boundary role writing its own
+   `feedback/<job>/wave-N.md`, and in the conductor `move-feedback` archiving those), and `check.sh`
+   grades `state.json`:
    `node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/harness.mjs
    --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>"}'`
    → `OK …`. A `PARTIAL` line means the run died; the marker names where.
 4. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
 **Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
-59 Haiku), 10–25 min. See **What a run actually costs** below — the Opus/Haiku bulk is not free.
+59 Haiku), 10–25 min. **That per-tier breakdown was measured pre-0.14.0, before the Codex role
+shift** — it is the "before" picture, kept because it is the last real measurement, not a current
+one. Wall clock and agent count are roughly unchanged; the Claude mix is not. See **What a run
+actually costs** below — the Opus/Haiku bulk is not free.
 
 ---
 
@@ -267,19 +296,26 @@ Workflow({scriptPath: "<skill dir>/conductor.mjs",
                  launchId: "<fresh value — never reused, including on a relaunch>"}})
 ```
 
-`roadmapDir` and `harnessPath` are both **required** — the conductor throws without either. Then
-**persist** (the run writes nothing itself, and `check-conductor.sh` grades `state.json`,
-`plan.json`, `debt.md` and `architect-log.md`):
+`roadmapDir` and `harnessPath` are both **required** — the conductor throws without either. As with
+the harness, do **not** read the plan pack first: the script reads it itself, cksum-verified, on a
+Haiku courier. Then **persist** — the conductor writes no state either, and `check-conductor.sh`
+grades `state.json`, `plan.json`, `debt.md` and `architect-log.md`:
 
 ```
 node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/conductor.mjs \
      --args '<the exact envelope above, as JSON>'
 ```
 
-→ `OK reason=…`. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
+→ `OK reason=… wave=… wrote=…`. **One `--run` directory covers the whole arc**: a nested
+`workflow()` child shares its parent's journal, so the conductor's transcript dir already holds
+every wave's harness calls — do not persist per wave. A `PARTIAL stoppedAt=…` line means the replay
+hit a cache miss (the run died, or the script changed since the journal was written): it writes the
+last `snapshot()`'s state marked `partial: {stoppedAt}`, and exits 2 rather than 0. Run the
+persister after **every** return and after a crash. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
 
 **Cost:** the larger of the two by some margin — it runs the whole harness once per wave, so it
-multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19). **Budget for
+multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19) — again a
+**pre-0.14.0** measurement, taken before the per-unit and boundary roles moved onto Codex. **Budget for
 three waves, not the two its expected shape describes.** Tightening `maxWavesPerRun` to 2 to bound
 this was tried and reverted the same day: the fixture plants a blocker (`bash test.sh` exits 1
 without out-of-band provisioning), so a wave-2 boundary can *correctly* admit a draft that fixes it —
@@ -336,7 +372,10 @@ volume would bite):**
 ```
 bash setup-fixture.sh --conductor /tmp/roadmap-eval-c
 RUN_ISSUE_EVAL=1 bash issue-bootstrap.sh /tmp/roadmap-eval-c        # creates issues; patches plan.json
-# read the patched plan + state, launch conductor.mjs ONCE via Workflow (issue mode is now in the plan)
+# launch conductor.mjs ONCE via Workflow with the same envelope as above — do NOT read the patched
+# pack yourself, the script reads it; issue mode now lives in the plan the script will read
+node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/conductor.mjs \
+     --args '<that envelope, as JSON>'                             # state.json etc. — nothing exists until this runs
 bash check-conductor.sh /tmp/roadmap-eval-c                        # arc end state (git/state facts)
 bash check-arc-issues.sh /tmp/roadmap-eval-c                       # the GitHub projection + rate-limit signal
 bash issue-teardown.sh /tmp/roadmap-eval-c                         # ALWAYS — leaves the tracker clean
@@ -367,6 +406,38 @@ lane and reads the diff into the digest the gate adjudicates; Haiku runs closed 
 orchestrated split is not stylistic, it is what keeps an arc inside a weekly budget. The same logic
 applies to the evals themselves — hence the wave cap on the conductor fixture, and the probes below.
 
+**The shape to expect after 0.14.0 — expected, not measured.** Both per-tier breakdowns above were
+taken before the Codex role shift, and nobody has re-measured a fixture since. What follows is what
+the code now implies, and should be read as a prediction to check against a real run, *not* as an
+observation:
+
+- **Claude is judgment and transport only.** Per unit that is: a plan-check (`opus-plan-check`, or
+  the Fable `plan-check` when the plan reports `feasible:false` or the unit is med/high risk), the
+  first-pass exit gate on `gateModel` (`{low:'sonnet', med:'opus', high:'opus'}`), the Fable `gate`
+  when that escalates, and Haiku couriers for `setup`, `commit-probe` and `merge`. Everything else on
+  the Claude side is *contingent*: `dossier` (Sonnet) only on a quarantine, `adjudicate` (Opus) and
+  `consult`/`gap-consult` (Fable) only when a unit stalls, `resolve`/`integration-fix` (Opus) only on
+  a merge conflict. Per boundary and per wave: the Haiku `census`, the Opus `triage`, the Fable
+  `boundary` plan when the ladder escalates, and the Haiku `move-feedback`/`bank-debt`/`issue-new`
+  writers. Conductor `spec-expand` is a Haiku here-doc write of a code-composed document; only
+  `spec-revise` is Sonnet.
+- **Codex drafts and executes.** Per unit: `plan:` (plus `replan:` on a rejected plan),
+  `codex-spec-review:`, the build/fix lane (`codex-build`, each `codex-fix#N`, each gate-fix round),
+  `verify:` and every re-verify — there is one canonical verifier now, `gateReverify` is gone — and
+  `codex-review:` producing the digest the gate adjudicates. On a quarantine, `dossier-write:`. Per
+  boundary: `explorer`, `health`, `flake` and `design`, each writing its own
+  `feedback/<job>/wave-N.md` in the tree it judges, all four under `codexBoundaryTimeoutMin` (45).
+- **The direction is what matters, not the arithmetic.** The Opus bulk of the old measurement was
+  per-unit drafting and verification; that work is on OpenAI quota now. Expect the Claude side to
+  concentrate into gates and triage, and expect the Haiku count to *fall* rather than rise — the
+  transcription couriers behind the boundary reports and the state writers were deleted, not moved.
+
+**`spendReport` is what answers "where did the Claude quota go" for a real run.** The conductor's
+return envelope carries it beside `spendDelta`: `{ claude: {fable, opus, sonnet, haiku, total},
+codex: {roles, processes, inputTokens, outputTokens} }`, arc-cumulative. `roles` counts role
+dispatches, `processes` counts every codex process including the build/fix lane's. That is the
+number to re-measure against the predictions above — and to write down here when someone does.
+
 **Budget the ladder accordingly.** Tiers 1 and 2 are genuinely free and catch most regressions; run
 them on every edit. Tier 3 consumes real budget and — this is the part worth internalising — mostly
 proves *non-regression on paths you did not change*. It is pre-merge insurance, not a per-edit gate.
@@ -386,7 +457,7 @@ Probes worth keeping for the current surface:
 
 | Probe | Tier | What it proves |
 |---|---|---|
-| `design:w<N>` prompt + `S.design` against a toy comp dir + a live preview | Opus | The new capped schema validates against real output, and `visionUsed` reports honestly when no screenshot tool is provisioned |
+| `design:w<N>` prompt + `S.design` against a toy comp dir + a live preview | **Codex** (a role since 0.14.0 — spends OpenAI quota, not Claude) | The capped schema validates against real output, `visionUsed` reports honestly when no screenshot tool is provisioned, and the role writes its own `feedback/design/wave-N.md` |
 | `commit-probe:<id>` prompt against a worktree with and without commits | Haiku | The report-loss salvage distinguishes "work landed" from "nothing was built" — the judgement that decides quarantine vs merge |
 | Any prompt whose schema you just capped | its own tier | The budget you stated is one a real model can actually hold to |
 
@@ -441,8 +512,10 @@ forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k outpu
 - `gate-convention RUBBER-STAMPED` → the conventions contract isn't reaching the reviewer/gate
   (`plan.conventions` set? `convClause` still threaded into review + both gates?), or the gate stopped
   treating catalogued-helper duplication as a violation.
-- `gate-good` not merged → the gate or reviewer is over-blocking; check `minBlockConfidence`, the review
-  taxonomy wording, and the risk tilt.
+- `gate-good` not merged → the gate or reviewer is over-blocking. Since 0.14.0 the reviewer is the
+  `codex-review:<id>` role, so read its digest first: a `verdict:'blocking'` on a clean branch is a
+  reviewer problem, a clean digest the gate blocked anyway is a gate problem. Then check the review
+  taxonomy wording, the `gateModel` tier for the unit's risk, and the risk tilt.
 - `impossible-cache` merged → the unsatisfiable fast-exit or plan-check regressed. An infeasible plan
   (`feasible:false`) must route to the **Fable** plan-check and may never be killed or approved by Opus
   alone — a merge can mean Opus wrongly waved it through instead of escalating. It can also mean **spec

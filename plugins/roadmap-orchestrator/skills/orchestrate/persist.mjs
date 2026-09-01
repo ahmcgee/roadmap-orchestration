@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // persist.mjs — turn a finished (or crashed) Workflow run into the files under `.roadmap/`.
 //
-// WHY THIS EXISTS. A workflow script has no filesystem, so for two years every byte it wanted on
-// disk went through a model: a Haiku agent re-transcribed the whole of state.json at every
-// checkpoint and every persist point, verified it by cksum, and sometimes lost it anyway. That was
+// WHY THIS EXISTS. A workflow script has no filesystem, so since the first version every byte it
+// wanted on disk went through a model: a Haiku agent re-transcribed the whole of state.json at
+// every checkpoint and every persist point, verified it by cksum, and sometimes lost it anyway. That was
 // the second-largest model cost in the system after the root's own wakes, and it bought nothing but
 // transport. The platform already journals every agent result, and the scripts are deterministic
 // functions of (args, agent results) — so the run can simply be REPLAYED here, in a real Node

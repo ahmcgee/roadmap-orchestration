@@ -76,7 +76,8 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   archive/<arc>/       # closed-out arcs
 ```
 
-**Who writes `.roadmap/`.** Not the workflow scripts — `persist.mjs` does, and nothing else.
+**Who writes `.roadmap/`.** No workflow script writes a byte of *state*: `persist.mjs` writes all of
+that, after the run.
 A workflow script has no filesystem, so every byte it wanted on disk used to go through a model
 transcribing a document; that transport was the second-largest model cost in the system, and it
 occasionally lost the document anyway. The scripts now **return** everything (state, merged plan,
@@ -326,8 +327,8 @@ Fields the scripts add:
   died, so whether the branch holds work is unknown and the unit parked rather than being
   quarantined for building nothing; `scope-growth` means a diff reached beyond its pinned envelope and the
   gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
-  so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the checkpointed
-  integration tip is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
+  so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the recorded
+  integration tip (`state.json`'s `integrationTip`) is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
   reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
   landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
@@ -714,7 +715,7 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   reach; it is quarantined with the three exit codes in its reason, and the branch is left intact
   to re-merge.
 - **The wave-start tip reconcile is one-way.** The integration-worktree setup courier reports the
-  exit code of `git merge-base --is-ancestor <checkpointed tip> <integration branch>`. The live tip
+  exit code of `git merge-base --is-ancestor <the state's integrationTip> <integration branch>`. The live tip
   is adopted **only** on exit 0 (the branch moved ahead). Anything else means our record and the
   branch have diverged — the harness records a `tip-regressed` degradation and **throws before
   dispatch** rather than forking a wave off a history that orphans the last one.
@@ -1043,7 +1044,10 @@ finality, so arc-completeness is post-hoc and the last wave's evidence is handed
 integration-review material.
 
 **Forensic labels** (for journal reading / `resumeFromRunId` replay): `census:w<N>`, `triage:w<N>`,
-`boundary:w<N>`, `spec-expand:<id>`, `spec-revise:<id>`, and the five persistence writers.
+`boundary:w<N>`, `spec-expand:<id>` (`#rewrite` on a cksum resample), `spec-revise:<id>`, and
+`move-feedback:w<N>` — plus, in issue mode only, `issue-new:w<N>` and `bank-debt:w<N>`. 0.14.0
+deleted the state/plan/debt/log writers that used to sit beside them, so in file mode
+`move-feedback` is the conductor's only remaining Persist-phase agent.
 
 ## Config knobs (defaults in the harness; override via `plan.config` or the Workflow `config` arg)
 
@@ -1114,7 +1118,7 @@ anti-rubber-stamp checks on everything below them.
 roles** (runtime explorer, health assessor, flake band, design reconciler), each of which writes its
 own report file. Runs its own implement→test→fix loop inside the brief's pinned scope | **Decide.** It advises — a review digest, a critique, a plan — but nothing it says is a verdict: it never gates, never approves a merge, never rules on an escalation, never plans the roadmap, and never adjudicates its own findings |
 | `fable` | Plan pack, plan-checks for med/high-risk units (taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
-| `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, conflict resolution, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
+| `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, the escalation ladder's adjudicator (`adjudicate:<id>#<stop>`, effort `high` — not `opusEffort`), merge-conflict resolution and the one integration fix, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
 | `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's spec **revisions** | Spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
 | `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack read, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
 

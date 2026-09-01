@@ -94,8 +94,9 @@ where the script could have handed it a *closed command list*. That is now the d
 - **Working as designed / watch:** `codex-timeout` ×10 with surviving commits (unit-sizing signal);
   `codex-uncommitted` ×4; the one `preview-failed` was the root-checkout mirror, now structural.
 - **Deferred (backlog, not dropped):** per-unit gate commands in `plan.json` so lane *coverage* is
-  script-asserted rather than gate-asserted; delta checkpoints reduced by the root at wave end if the
-  sidecars aren't enough; arc-cumulative scope precedent (wave-scoped now to bound the prompt);
+  script-asserted rather than gate-asserted; delta checkpoints reduced by the root at wave end
+  (superseded in 0.14.0: no checkpoints at all; `persist.mjs` replays the journal);
+  arc-cumulative scope precedent (wave-scoped now to bound the prompt);
   auto-annotating banked debt that a later merge resolved; `rebanked` over-triggers on crash-residue
   re-entry (a prior-state `merge-ready`), bounded because `mismatchEver` still forces the frontier
   gate.

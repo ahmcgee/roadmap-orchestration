@@ -193,9 +193,11 @@ by tier:
   assertions — belt and braces. Keep both.
 - **Keep the behavioural steers; they are not padding.** These look verbose and are each load-bearing:
   the anti-gestalt instruction in both gates ("grade each acceptance criterion individually — a gestalt
-  impression hides exactly the misses you are here to catch"); the mutation-test instruction in the
-  reviewer ("introduce a plausible bug, run the tests, confirm at least one fails, then restore"); the
-  reviewer's "you did not write this code; assume it contains mistakes"; `NOROADMAP`; `REPORT`.
+  impression hides exactly the misses you are here to catch"); `FINDING_BAR`'s symmetry clause
+  ("under-reporting a real defect and over-reporting a non-defect are BOTH failures here"), which is
+  the only thing standing between the four evidence categories and §17's spiral; the Codex review
+  digest's `unread` field and the sentence that makes it work ("the gate may read this digest INSTEAD
+  of the diff, so silence reads as coverage"); `NOROADMAP`; `REPORT`.
 - **Schema-retry resends payloads verbatim**, so an oversized structured report can kill a unit whose
   work is already committed and done. This is why free-text fields carry `maxLength` caps and why
   code-writing agents are told to **commit before emitting the report** — the commit is the deliverable.
@@ -204,7 +206,7 @@ by tier:
   with something unusual to say emits extra keys and burns the retry cap. But the valve only works if
   the prompt does not invite the agent to burst it. The conductor's tier-2 triage prompt used to end
   "overflow goes in `notes`" — pointing the agent straight at the one hard-capped field — while
-  carrying none of the length discipline the harness's explorer/health prompts carry:
+  carrying none of the length discipline the harness's capped prompts carry:
 
   > Keep every free-text field terse — an oversized report fails validation.
 
@@ -220,7 +222,13 @@ by tier:
   capped opus calls vs 0/102 uncapped, p~4e-8), a split that holds when matched on turn length. What
   is NOT established is which field overran — no payloads survive for workflow agents — so treat
   per-field attribution as inference, and note one capped-schema-independent death in the record
-  (`plan:`, on the uncapped `S.plan`). Caps are the amplifier, not the whole mechanism.
+  (`plan:`, then an uncapped Claude call on `S.plan`). Caps are the amplifier, not the whole mechanism.
+
+  0.14.0 narrowed where this rule has to be *written down* without weakening it. The boundary
+  investigators and the unit pipeline are Codex roles now, and the role adapter derives the budget
+  line from the caller's own schema (§20), so a role gets the contract without any brief restating
+  it — and a new role cannot be added that forgets to. `TERSE` still rides every capped CLAUDE
+  prompt, which is now the gates, the triagers and the couriers.
 - **`feasible: false` is the planner's escape valve.** Without it, an agent that correctly refuses to
   build an unsatisfiable spec has no legal output.
 - **`agent()` resolves to `null` on a terminal API error — it does not throw.** This is the single
@@ -238,7 +246,7 @@ by tier:
 
 ## 9a. Observability — a silent safety net is its own failure mode
 
-Every degradation path in these scripts (`runOr`, the `.catch(() => null)` writers, the coded
+Every degradation path in these scripts (`runOr`, `runReq`, a dead Codex role's `null`, the coded
 fallbacks) exists to stop a blip from costing an arc. Each one also **destroys the evidence of why it
 fired.** That trade is only worth taking if the net *records* what it caught.
 
@@ -259,11 +267,21 @@ Three platform facts make this sharper than it sounds:
 3. **`spend` counts calls, not health.** A run that burned two retries and a salvage looked identical
    to a clean one.
 
-Hence: a `log()` line at the moment of every degradation (so a long run is legible while it runs, not
-only afterwards); the row appended *there and then* to `.roadmap/degradations.jsonl`, because a run
-that dies never returns and its evidence would die with it; this run's rows on the return envelope for
-the root to read; and a per-kind count summary rewritten to `.roadmap/skill-degradations.md` at every
-persist point. What the scripts do **not** write is `skill-feedback.md`.
+Hence: a `log()` line at the moment of every degradation, so a long run is legible while it runs and
+not only afterwards; the row pushed onto an in-memory ledger that every return path carries out; and
+`persist.mjs` writing all of it afterwards — appending `.roadmap/degradations.jsonl` and
+`escalations.jsonl`, and rewriting the per-kind count summary at `.roadmap/skill-degradations.md`.
+
+**0.14.0 moved the writing, not the recording, and that is the point.** Through 0.13.0 each row was
+appended *there and then* by a Haiku agent, on the argument that a run which dies never returns and
+its evidence would die with it. The argument was right and the mechanism was wrong: the ledger's own
+append could fail (and did), which is why `sidecarLost` existed — a counter for lost records of lost
+records. The replay closes it properly. `persist.mjs` reads the platform's journal, so a crashed run's
+degradations are recovered from the same source as everything else it decided, and the ledger is
+written once, by a process with `fs`, that cannot half-land a row. The `log()` line is what makes the
+run legible *during* it; the journal is what makes it recoverable after.
+
+What the scripts do **not** write is `skill-feedback.md`.
 
 `skill-feedback.md` is deliberately **not** `debt.md`. Debt is about the product and is triaged into fix
 units by the architect. Skill feedback is about the *orchestrator*, has a different audience (whoever
@@ -272,9 +290,9 @@ valuable signal in the commoner one. It is a living document and is **never arch
 defect log you archive is a defect log you have decided not to fix.
 
 It is also deliberately **hand-written**. It used to carry a machine-maintained marker region rewritten
-whole by an unverified Haiku pass, and that pass ate a hand-written entry. The machine half now lives in
-files the scripts own outright — `skill-degradations.md` (the per-kind summary) and the
-`degradations.jsonl` / `escalations.jsonl` sidecars — and no prompt in either script can reach
+whole by an unverified Haiku pass, and that pass ate a hand-written entry. The machine half lives in
+separate files that `persist.mjs` owns outright — `skill-degradations.md` (the per-kind summary) and
+the `degradations.jsonl` / `escalations.jsonl` ledgers — and no prompt in either script can reach
 `skill-feedback.md`; a sim asserts it.
 
 ## 10. H-7 — the phantom ledger reference (resolved)
@@ -301,9 +319,11 @@ arc-observed value, and is why the mismatch force is unconditional.
 
 Two mechanisms make rung 3 of the recovery ladder behave like a resume:
 
-1. The conductor persists the merged `plan.json` and the consumed `state.json` **before every dispatch**,
-   so a fresh launch resumes from the last *completed* boundary. Every finished wave is durable, and its
-   debt/journal/feedback moves are already on disk.
+1. The run's files are reconstructed by `persist.mjs` from the platform's journal, so a fresh launch
+   resumes from the last *completed* boundary — and, after a crash, from the last `snapshot()` the
+   script logged, written out as a partial state marked `partial: {stoppedAt}` (exit 2). Durability is
+   no longer a thing the script has to *do* before each dispatch; it is a property of the journal,
+   which the platform writes whether the run returns or not.
 2. Within the wave that was in flight, the harness's **setup guards short-circuit work already done**: a
    unit branch already merged into the integration branch short-circuits to `merged`; a crashed `running`
    unit auto-adopts its committed branch and re-enters at verify.
@@ -311,38 +331,28 @@ Two mechanisms make rung 3 of the recovery ladder behave like a resume:
 So the loss bound is only the in-flight wave's *uncached* agent calls. Nothing is reimplemented; nothing
 is destroyed.
 
-**The checkpoint writer is a fan-out, not one transcriber.** `state.json` is written by Haiku agents that
-echo the document as their own output, and one response caps at ~32k output tokens. The first fix
-(a single writer told to stage the parts itself) failed the moment state reached 3–6 parts: ~28
-`write-failed` checkpoints across two waves — "cannot complete within token budget" — plus five
-schema-retries where the writer gave up in prose. One agent emitting 145 KB is the wrong shape. Now a
-payload over `WRITE_CHUNK` is split deterministically on line boundaries (a pure function of the text,
-so a resume splits identically) and each part gets its OWN writer, in `parallel`, writing only
-`<file>.partK` through a single-quoted here-doc; a single assembler `cat`s the parts in order and
-removes them (`rm -f <file>.part*`, so stale parts from an earlier fan-out with a different count go
-too) — and it never runs if any part failed, so the previous complete file is what a crash finds,
-never a partial. A part that fails is re-run once by a fresh agent before that verdict — a
-mis-transcription is per-sample stochastic, not per-part (live: 2 of 16 part writes mis-transcribed,
-caught by cksum; a fresh sample of the same part succeeded), so with five parts a checkpoint that
-died on any first-try loss died far too often; the assembler is never retried, a bad `cat` is not
-stochastic. Below the threshold one writer copies the whole document through the same here-doc.
+**Checkpoints are gone, and the history is worth keeping because it is what the replay replaced.**
+`state.json` used to be written by Haiku agents echoing the document as their own output, and one
+response caps at ~32k output tokens. A single writer told to stage the parts itself failed the moment
+state reached 3–6 parts: ~28 `write-failed` checkpoints across two waves ("cannot complete within
+token budget"), plus five schema-retries where the writer gave up in prose. The fan-out that replaced
+it split the payload on line boundaries, gave each part its own writer, verified every part by
+`cksum` rather than `wc -c` (a byte count is a target an agent can steer toward, and one part-writer
+had un-escaped every `\"` inside the JSON, then padded the tail with fabricated lines for 32 tool
+calls until the count matched, and reported ok:true), and retried a lost part once with a fresh
+agent. Each of those fixes worked, and each of them was buying transport.
 
-**Every writer verifies by content hash, not byte count.** The first fan-out checked each part with
-`wc -c`. Live, one of five part-writers un-escaped every `\"` and `\\` inside JSON string values
-(losing bytes), then padded the tail with lines fabricated from the next record until the count
-matched — 32 tool calls of iterating toward the number — and reported ok:true; so did the assembler;
-the assembled state.json did not parse. A byte count is a target an agent can steer toward; a CRC is
-not. Every writer prompt (single, part, assembler) now runs `cksum < <file>` and must see the exact
-`<crc> <bytes>` pair the script computed (POSIX cksum in-script — the workflow sandbox has no crypto;
-the sims cross-validate it against coreutils on every run), and is told plainly never to edit, pad,
-trim, or rewrite the file to make the numbers match: a mismatch is reported, not repaired. The single
-write had no verification at all before this and showed the same de-escaping through a file-write
-tool; it now uses the identical here-doc + cksum instruction, which is why the legacy prompt shape was
-deliberately dropped.
-**Landed in 0.13.0** (§19), because the arc-cumulative arrays were most of what made state large:
-`degradations`/`escalations` moved to append-only sidecars, and `state.json` now carries only the
-per-unit escalation stop counts the three-strikes brake reads. Still deferred from that batch: delta
-checkpoints, if the sidecars alone turn out not to be enough.
+**0.14.0 deleted the whole mechanism** (§20): `checkpoint`, the fan-out, the part writers, the
+assembler, `WRITE_CHUNK`, the sidecar appends. The scripts are deterministic functions of (args,
+agent results), the platform journals every result, so the run is replayed after the fact by
+`persist.mjs` and the files are written with `fs`. What survived is the *reading* half — `cksum`
+computed in-script, POSIX, cross-validated against coreutils by the sims — because the launch pack
+still has to come in through a model, and one write, the code-composed spec the conductor hands to a
+Haiku here-doc. `checkpoint()` became `snapshot()`, a tagged `log` line carrying the same state at
+zero cost, which is what the replay reads back when a crash means there is no return value to write.
+`degradations`/`escalations` still live outside `state.json` (0.13.0's reason holds: arc-cumulative
+arrays were most of what made state large), and the deferred "delta checkpoints" idea died with the
+thing it was optimizing.
 
 Two guards exist because they were each learned the hard way:
 
@@ -413,9 +423,11 @@ wave-N section markers.
 
 **Sync folds into agents that already run.** The 1000-agent-per-run cap is real, so flooding the run
 with dedicated sync agents would shorten arc lifetime. Instead the projection rides existing agents:
-the setup agent flips `status:running`, the merge agent closes on a clean merge, the dossier-writer
-posts the quarantine, and the conductor's existing five persistence writers project debt/feedback/new
-units. The one added agent is a single wave-tail reconciliation *sweep* — the backstop that re-derives
+the setup agent flips `status:running`, the merge agent closes on a clean merge, the Codex
+dossier role posts the quarantine, and the conductor's remaining Persist-phase agents
+(`move-feedback`, `issue-new`, `bank-debt`) project feedback/new units/debt. 0.14.0 deleted the state
+and plan writers those used to sit beside, so in FILE mode `move-feedback` is the only one left —
+which is the same reason the offline fixtures still pass. The one added agent is a single wave-tail reconciliation *sweep* — the backstop that re-derives
 every unit's label from the final map and is the one place unit sync records a `gh-sync` degradation.
 Net cost in issue mode is a few Haiku calls per wave, no new frontier touchpoints.
 
@@ -565,6 +577,13 @@ each deliberate:
   separate adversarial review was a free pass generating directives against a diff the exit gate
   re-reads with authority anyway — one more diff-widening mechanism. The gates absorbed the
   review's hunting clauses (tautological-test check, comp adoption, the four categories).
+  **0.14.0's `codex-review:<id>` is not this stage returning, and the distinction is what keeps the
+  spiral shut.** It issues no directives, reaches no fixer, and reports to the GATE as a digest the
+  gate adjudicates — evidence, never a verdict. Nothing downstream of it can widen a diff, because
+  nothing downstream of it acts without Claude first agreeing. It exists because the gate's
+  `gateModel` diet needs a cross-model reader in front of it, and because the other family sees the
+  two classes no runnable check can (prose the diff violates, a catalogued helper reimplemented).
+  See §20 for the two code-side conditions that refuse the diet whenever that evidence goes missing.
 - **S.impl is the seam.** The steering agent emits the same report shape the pipeline always
   consumed; verify/gates/consults/merge and every trigger (specGap/contractMismatch/debt) are
   untouched and nothing downstream knows who wrote the code. This is what made the swap tractable
@@ -654,8 +673,9 @@ mutation-check clause. The degenerate behaviour to design against is unbounded s
 ## 19. Couriers, not janitors — the 0.13.0 batch
 
 The workflow script has no filesystem and no shell — `run()` is `agent()`. Every side effect the
-orchestrator has (a checkpoint, a checkout, a port freed, a login checked, a merge asserted) is a model
-acting on the script's behalf. Through 0.12.0 the harness handed those actions to the cheapest tier as
+orchestrator has (a checkout, a port freed, a login checked, a merge asserted) is a model
+acting on the script's behalf. (0.14.0 took the *writes* back out of that set entirely — see §20 —
+but the rule below governs everything a script still has to ask a model to do.) Through 0.12.0 the harness handed those actions to the cheapest tier as
 *goals* — "clean up leftover listeners", "find the issue for this unit", "make the checkout work",
 "report ok only if logged in" — and every incident in the 2026-08-21→28 ledger was that tier reaching
 for the biggest tool that satisfied the goal: `kill -9` of every node process, `rm -f` over untracked
@@ -681,7 +701,7 @@ The rule since 0.13.0, in two halves:
    decided by git in code at every chokepoint. Prompts may *inform* a brake; they never *are* one.
 
 Corollaries the ledger forced: a model's death is a platform fact, never a unit verdict (park, don't
-quarantine); events (degradations, escalations, debt) are appended once at the event, never
+quarantine); events (degradations, escalations, debt) are recorded once at the event, never
 re-transcribed with state; nothing is cleared that a writer did not confirm.
 
 **Git questions were asked as judgments.** The recurring defect was never that Haiku is cheap — it was
@@ -697,14 +717,16 @@ live sha on mere *inequality* is what let a rewound branch orphan the previous w
 
 **Events are not state.** Degradations and escalations rode inside `state.json`, arc-cumulative, so
 every checkpoint re-transcribed every prior row — a third of a 170–190 KB document by wave 19 — and
-each failure appended a row that made the next write likelier to fail. They now append once, at the
-event, cksum-verified over the file's **tail**: the script cannot know an append-only file's prior
-content, but it knows exactly the bytes it is adding. A sidecar failure is deliberately **not** a
-degradation — that would feed the ledger it just failed to write — so it logs and increments
-`sidecarLost` instead. The other half of the rule is that nothing is cleared that a writer did not
-confirm: debt clears per verified marker and the rest re-banks next boundary, `plan.json` is refused
-rather than overwritten when disk holds ids this run never saw, and an escalating return stages its
-specs, plan, issues and debt *before* handing back, because a handoff is not an abort.
+each failure appended a row that made the next write likelier to fail. Separating them was right and
+is unchanged; 0.13.0's *mechanism* for it (a Haiku append cksum-verified over the file's tail, with a
+`sidecarLost` counter for the appends that failed anyway) is gone. `persist.mjs` appends both ledgers
+from the journal now, so there is no half-landed row to count. What survives verbatim is the rule
+that nothing is cleared that a writer did not confirm: debt clears per verified marker and the rest
+re-banks next boundary, `plan.json` is refused rather than overwritten when disk holds ids this run
+never saw (a `readFileSync` in the persister now, which is strictly better — the courier that used to
+perform that check could itself die, forcing an "unchecked write" branch that no longer exists), and
+an escalating return carries its specs, plan, issues and debt out in the return envelope *before*
+handing back, because a handoff is not an abort.
 
 **Two null wrappers, and one deliberate middle case.** `agent()` resolving to `null` (§9) now has two
 answers, and choosing between them is a real decision. `runOr` is for questions where a coded fallback
@@ -752,3 +774,85 @@ only ever *reduce* unit creation; duplicate drafts are dropped, not renamed into
 so they cannot feed the same boundary they were minted at; and a shared red arrives at triage as a
 **finding**, which the cut line brakes, never as debt — §14's "debt never creates a wave" guarantee is
 untouched.
+
+## 20. Claude decides, Codex executes — the 0.14.0 economy
+
+The scarce resource is the Claude Code weekly allowance. Measured across the 2026-08 arc, Fable was
+elevated but Opus dominated: an implementation plan, a review, an exit gate, an explorer, a health
+assessment and a design pass per unit or wave, each reading the tree or the diff whole. Codex quota,
+by contrast, is plentiful, and Codex has the one thing a workflow agent lacks — a shell. 0.14.0 draws
+the line by what a role *does*, not what it costs:
+
+- **Claude decides.** The exit gate, the frontier gate, plan-check, the tier-2 and tier-3 triagers, and
+  consults stay on Claude — every surface that can *reject* work. Fable's allocation is unchanged.
+- **Codex drafts and executes.** The implementation plan (the implementer plans its own work), verify
+  (runs the spec's lanes and samples the load while they run), the pre-gate review, quarantine
+  dossiers, the flake band, and the boundary drafters (explorer, health, design) run as Codex *roles*
+  through one adapter — the build lane with git-truth removed, not a second client. A role that
+  authors a file writes it itself; there is no transcription courier behind it.
+- **Haiku couriers.** Closed command lists, the verified pack read, `gh` projections, and the one
+  cksum-verified write that remains (a spec composed in code) — nothing that judges.
+
+Two rules keep the shift from becoming a rubber stamp. The Codex review is *evidence for the gate*,
+never a verdict: it reports to Claude, not to a fixer, so it cannot re-open the review spiral of
+§17. And the gate's digest diet is refused in code, not prose, wherever evidence goes missing — no
+digest, or a digest graded blocking/high, puts Opus in front of the raw diff regardless of the
+unit's risk; every path where Codex fails routes to *more* Claude scrutiny, never less. A dead Codex
+role is a fact about Codex (`null` plus one `codex-role` row), never a platform halt and never a unit
+verdict.
+
+The other half of the economy is bytes. Through 0.13.0 the root pasted the whole plan and state into
+every launch, and a Haiku writer re-emitted state.json at every checkpoint. Neither was transport;
+both were a model re-deriving a document it had been handed. Now the launch envelope is four fields,
+the script reads its own pack through a cksum-verified courier, writes nothing under `.roadmap/`, and
+the run is replayed deterministically from the platform's journal by `persist.mjs` — a process with
+`fs` — to produce every file the writers used to produce. The checkpoint became a log line.
+
+What this deliberately does not do: put Claude judgment behind headless `claude -p` (its billing is
+moving off subscription), or port the Codex adapter into the conductor for a Sonnet→Haiku saving
+that the Opus figures show was never the cost.
+
+**The role adapter is the build lane with two facts removed, not a second Codex client.** A role has
+no diff base, so it collects no git truth and it commits nothing. Everything else is shared verbatim
+— the detached `timeout -k`, the pidfile, attach-don't-relaunch, absent-exit-code-means-RUNNING,
+reap-then-retry — because each of those was paid for by an incident (§17), and a second launcher
+would have to earn them again. The failure boundary is the one genuinely new brake, and it lives in
+code rather than prose: `runOr` and `runReq` **throw** on `model:'codex'`. A codex null absorbed by
+either would relaunch a whole exec with "your report was rejected" stapled on, or convert a dead
+OpenAI seat into a platform halt, and both were one careless call site away. Prompt hygiene is
+derived from the caller's own schema rather than restated per role, so the §9 death class
+`prompt-hygiene.test.mjs` exists to catch cannot be reintroduced by *adding* a role.
+
+**Every null routes to more scrutiny, never less.** This is the property to check when adding a
+role, because it is the one a plausible-looking shortcut breaks. A dead reviewer buys Opus on the raw
+diff (`review-skipped`) rather than a cheaper gate on no evidence. A dead verifier BLOCKS its unit
+(`verify-unrun`) rather than quarantining it, because a dead role is a fact about Codex and never a
+verdict about the unit. A dead planner quarantines with a reason that says *infrastructure, not the
+spec*. A dead dossier writer falls back to the Haiku writer it replaced, once, because a quarantine
+with no dossier sends the next reader hunting. A dead health assessor gets its own kind
+(`health-skipped`) instead of riding the generic owed marker, because silence from an assessor and a
+clean tree are the same shape on the wire, and that is exactly the shape a triager mis-reads as
+health.
+
+**The write never needed a model; the read still does.** The state writes were never *transport* —
+they were a model re-deriving a document it had just been handed, and the failure modes were
+transcription failures (§11's un-escaped JSON padded to hit a byte count; 91 lost checkpoints in one
+arc). The fix was not a better prompt. It was noticing that the platform already journals every agent
+result, and that the scripts are deterministic functions of (args, agent results), so the run can be
+replayed for free by a process that has `fs`. The read is the mirror image and cannot be replayed
+away — it *is* the input — so it keeps a model: one Haiku courier per file, with the verification
+moved into the script (`cksum` computed in-script, two candidates because a report is trimmed in
+transport, one retry whose prompt differs so `resumeFromRunId` cannot serve the bad sample back,
+then a loud `pack-unreadable` throw). Measured before it was built: the fixtures' packs are 1.3–1.8
+KB, so the `READ_CHUNK` fan-out is the escape hatch for a big file, not the common path.
+
+**A role with a filesystem writes its own report, but not in its own voice.** The transcription
+courier was the price of a script with no filesystem, and a Codex role has one, so the finding and
+the file now come out of the same process. The rendering stays script-dictated (`reportWrite`)
+anyway: the file is the human-readable face of the SAME structured report the triager reads, and a
+file that says something the JSON does not is a second, unreviewed account of the wave. The same
+reasoning runs the other way for the conductor's spec expansion, which has no Codex lane behind it —
+the document is composed in code and a Haiku here-doc writes it under a cksum check, so there is no
+model between the decision and the file at all. `spec-revise` keeps Sonnet because it is a
+read-modify-write over content the script never composed, and there is no expected cksum to check it
+against.
