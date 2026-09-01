@@ -845,10 +845,13 @@ which the cut line brakes, whereas admitting it as debt would reopen the "debt c
   failed id.
 - After a tier runs, every new skeleton becomes `.roadmap/specs/<id>.md` and a pure-code
   merge appends the units and edges. **No spec, no unit**: the spec file's content is composed in
-  code from the skeleton and written verbatim by Haiku, and a skeleton whose file is not confirmed
-  on disk never reaches the merge — it is degraded (`spec-unwritten`) and banked as debt for the
-  next boundary to re-draft, because `specs/<id>.md` is the authority the planner, Codex and both
-  exit gates build and grade against. **Arc-completeness is post-hoc**: a tier says so, or the boundary
+  code from the skeleton and written verbatim by Haiku through a quoted here-doc, then **verified by
+  `cksum`** — the courier reports what `cksum < <file>` printed and the *script* compares it with
+  `cksumOf` of the bytes it composed, because an `ok:true` from a cheap writer is not evidence. A
+  mismatch buys one resample under a deliberately **differing** prompt (so `resumeFromRunId` cannot
+  serve the bad sample back); after that the skeleton never reaches the merge — it is degraded
+  (`spec-unwritten`) and banked as debt for the next boundary to re-draft, because `specs/<id>.md`
+  is the authority the planner, Codex and both exit gates build and grade against. **Arc-completeness is post-hoc**: a tier says so, or the boundary
   produced no new units and no spec revisions. Both paths are then filtered through a satisfiability
   census — if any in-scope unit is still non-terminal *and* dispatchable, the return is `arc-stalled`
   instead, carrying `outstanding`. Units wedged behind an unresolved quarantine can never move, so
@@ -879,10 +882,11 @@ banked debt cleared) so a crash in a LATER wave still lands what this one decide
 
 What still runs as an agent call at a boundary, because the bytes have to reach disk mid-run
 (`persist.mjs` only replays *after* a run, and the next wave reads these files): **spec expansion**
-— a Haiku verbatim write of content this script composes, so there is no model between the
-boundary's decision and the file — **spec revision** (Sonnet, the one that stays a judgment: it
-edits three sections in place around material it must not touch, such as an architect ruling the
-harness appended mid-wave), and **move-feedback** (this wave's evidence + the actioned/dismissed
+— a Haiku verbatim write of content this script composes, cksum-verified, so no model stands
+between the boundary's decision and the file — **spec revision** (Sonnet, the one that stays a
+judgment: it edits three sections in place around material it must not touch, such as an architect
+ruling the harness appended mid-wave; it reports its post-edit `cksum` for the record, but there is
+no expected value to check it against), and **move-feedback** (this wave's evidence + the actioned/dismissed
 user notes → `feedback/triaged/N/`). A failed *expansion* withholds its unit; a failed *revision*
 degrades (`spec-unrevised`) and the unit dispatches on its previous spec — an amendment is not an
 authority.

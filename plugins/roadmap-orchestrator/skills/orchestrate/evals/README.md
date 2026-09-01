@@ -64,10 +64,12 @@ shipping; never ship on an upper rung alone.
    tiers 1 and 2 minting units — drafts and promotions become debt lines banked into *both* channels —
    while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
    finding routes to tier 3 instead of being auto-admitted; and duplicate drafts are dropped, not
-   renamed into extra units. `conductor.test.mjs` adds the **no spec, no unit** brake (0.14.0): a
-   skeleton whose spec file was not confirmed on disk never reaches the plan merge — it is degraded
-   and banked as debt — while a failed spec *revision* only degrades, since the unit still has a
-   valid (pre-revision) spec to build against.
+   renamed into extra units. `conductor.test.mjs` adds the **no spec, no unit** brake (0.14.0): the
+   spec write is cksum-verified rather than `ok`-trusted (the fakes compute the expected line with
+   real coreutils, cross-validating the in-script `cksumOf`), a mis-transcribed spec buys exactly one
+   resample under a DIFFERING prompt, and a skeleton still unconfirmed after that never reaches the
+   plan merge — it is degraded and banked as debt — while a failed spec *revision* only degrades,
+   since the unit still has a valid (pre-revision) spec to build against.
    `persist.test.mjs` locks **`persist.mjs` end-to-end**, against a journal the test WRITES from a
    real sim run (the fakes' results ARE the journal): a harness run and a conductor run each replay
    from their own journal and land every document the scripts stopped writing, a truncated journal

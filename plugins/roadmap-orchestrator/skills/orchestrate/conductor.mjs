@@ -463,7 +463,7 @@ const runOr = async (fallback, prompt, opts) => {
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
 const SPECWRITE = STRICT +
   `Write ONLY the single spec file named in this task under ${repo}/.roadmap/specs/ — create or modify nothing ` +
-  `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). `
+  `else under ${repo}/.roadmap/ (not plan.json, state.json, contracts, other specs, or feedback). ` + TERSE
 
 /* ------------------------------- schemas ------------------------------- */
 
@@ -537,7 +537,14 @@ const S_boundaryPlan = obj({
   notes: { type: 'string', maxLength: 2000 },   // pressure-release — see S_triage.notes
 }, ['newUnits', 'journal', 'escalate', 'arcComplete'])
 
-const S = { ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']) }
+const S = {
+  ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
+  // A verbatim WRITE report. `cksum` is the whole point and therefore REQUIRED: it is what the
+  // writer observed `cksum < <file>` print, copied through, and the script — not the writer —
+  // decides whether it matches. A writer that cannot run the check reports "", which is data.
+  write: obj({ ok: { type: 'boolean' }, cksum: { type: 'string', maxLength: 60 },
+    detail: { type: 'string', maxLength: 300 } }, ['ok', 'cksum']),
+}
 // issue-new returns the {id, number} of every unit issue it created or found, so the conductor can
 // cache each number into plan.units[].issue. No maxLength anywhere: the ids are echoed from the units
 // passed in, so there is nothing for the model to overrun (and nothing for prompt-hygiene to require).
@@ -846,16 +853,52 @@ const specFileText = (s) => {
   // grade is a unit that cannot pass its gate, and that has to be visible in the spec itself.
   L.push('## Acceptance criteria', '',
     ...(s.acceptance?.length ? s.acceptance.map((a) => `- [ ] ${a}`)
-      : ['- [ ] (none stated — the draft shipped no gradeable criteria; the exit gate has nothing to grade)']), '')
+      : ['- [ ] (none stated — the draft shipped no gradeable criteria; the exit gate has nothing to grade)']))
+  // NO trailing newline: the here-doc that writes this leaves exactly one, and the expected cksum
+  // is computed over `text + '\n'`. An extra blank line here is a cksum mismatch, not cosmetics.
   return L.join('\n')
 }
-const specExpandPrompt = (skel) => SPECWRITE +
-  `Create the file ${repo}/.roadmap/specs/${skel.id}.md (creating parent directories as needed) with EXACTLY ` +
-  `this content, and create or modify no other file:\n\n${specFileText(skel)}\n\n` +
-  `Copy that through verbatim — you are a writer here, not an author: never reword, reorder, summarise, ` +
-  `expand or add a section, and never fill a blank you think is missing. Report ok:true only once the file ` +
-  `is on disk with that content; report ok:false with the exact error in \`detail\` (one sentence) if it ` +
-  `cannot be written.`
+// The on-disk bytes and the `cksum` line they must print. `cksum` (POSIX, in every sandbox) prints
+// `<crc> <bytes>` for stdin; cksumOf computes the same in-script, and the sims cross-validate it
+// against real coreutils.
+const specBytes = (skel) => {
+  const text = specFileText(skel)
+  const ck = cksumOf(`${text}\n`)
+  return { text, want: `${ck.crc} ${ck.bytes}` }
+}
+// An `ok:true` from a cheap writer is not evidence — that is the whole of RATIONALE §19's second
+// half, and the ledger paid for it (bank-debt:w12 reported success and dropped 23 items). A
+// mis-transcribed spec is worse than a lost one: the implementer builds the wrong thing and every
+// gate grades it against the same wrong text. So the write is COURIER-SHAPED — an exact quoted
+// here-doc, then `cksum < <file>` reported VERBATIM — and the SCRIPT decides, by comparing the
+// printed line against `cksumOf` of the bytes it composed. A CRC cannot be iterated toward, which
+// is why it replaced the byte count that a writer once padded its way to.
+const specWritePrompt = (skel, resample = '') => {
+  const path = `${repo}/.roadmap/specs/${skel.id}.md`
+  const { text, want } = specBytes(skel)
+  return SPECWRITE + resample +
+    `Write the file ${path} so its content is EXACTLY the document below and nothing else (create parent ` +
+    `directories first if needed). You are a courier here, not an author: never reword, reorder, summarise, ` +
+    `expand, re-indent or add a section, and never fill a blank you think is missing. Write it in ONE Bash ` +
+    `tool call through a single-quoted here-doc so the shell interprets nothing — never echo, printf, or a ` +
+    `file-write/edit tool (a file-write tool re-interprets escapes): run \`cat > ${path} <<'ROADMAP_SPEC'\` ` +
+    `followed by the document's lines and a closing \`ROADMAP_SPEC\` line. The document is every line after ` +
+    `the <<<DOCUMENT>>> marker line to the end of this message, excluding the marker line itself. ` +
+    `Then run \`cksum < ${path}\` and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 ` +
+    `characters; empty string if you could not run it) — copy the numbers, never compute, round or ` +
+    `reformat them, and never edit, pad or trim the file to change what they say: the scheduler compares ` +
+    `that line itself and a mismatch is reported, never repaired. Report ok:true when you wrote the file ` +
+    `and ran the check, whatever it printed — \`ok\` is about YOUR report, not about the verdict — and ` +
+    `ok:false with the exact error in \`detail\` (one sentence, max 300 characters) if the write itself ` +
+    `failed.\n<<<DOCUMENT>>>\n${text}`
+}
+// A fresh sample, worded differently: mis-transcription is per-sample stochastic, so one more try is
+// worth it — and a DIFFERING prompt is what stops `resumeFromRunId` serving the bad sample straight
+// back (the same rule the launch pack's re-read follows).
+const SPEC_RESAMPLE =
+  'A previous courier\'s copy of this spec did not match its `cksum`, so the file on disk is wrong. ' +
+  'Write it again from scratch, from the document in THIS message only — do not read, diff or patch ' +
+  'what is already there. '
 
 // A REVISION is not a projection: the file on disk carries content this script never composed —
 // architect rulings the harness appends mid-wave (`spec-append`) among them — so the three sections
@@ -865,8 +908,11 @@ const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
   `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
-  `architect ruling, for instance) is not yours to edit. Report ok:false with the exact error if the ` +
-  `file cannot be written.`
+  `architect ruling, for instance) is not yours to edit. Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
+  `and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 characters). Nothing is compared ` +
+  `against it — the revised content is yours to compose, so there is no expected value — it is recorded so a ` +
+  `later reader can tell WHICH version of this spec they are looking at. Report ok:false with the exact error ` +
+  `in \`detail\` (one sentence, max 300 characters) if the file cannot be written.`
 
 /* ---------------------------- plan mutation ---------------------------- */
 // Assign resume-stable, collision-free kebab ids to a batch of new skeletons. A respec NEVER
@@ -1290,27 +1336,49 @@ async function stage(N, ranTier, c) {
   // replacement that never got written.
   phase('Spec-expand')
   const unwritten = new Set()
-  await Promise.all(prepared.map(async (s) => {
-    const r = await run(specExpandPrompt(s), { model: 'haiku', effort: 'low', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)
-    if (r?.ok) return
-    unwritten.add(s.id)
-    degrade({ label: `spec-expand:${s.id}`, model: 'haiku', phase: 'Spec-expand', kind: 'spec-unwritten',
-      what: `the spec file for ${s.id} was not confirmed on disk (${r ? `writer reported: ${String(r.detail ?? 'ok:false').slice(0, 160)}` : 'writer produced no report'}) — ` +
+  // One spec, written and VERIFIED. The verdict is the script's: `cksum < <file>` as the courier
+  // observed it, against `cksumOf` of the bytes this script composed — never the writer's `ok`,
+  // which says only that it reported. A mismatch buys exactly one fresh sample under a differing
+  // prompt (mis-transcription is per-sample stochastic; the differing prompt is what stops
+  // `resumeFromRunId` replaying the bad one), and then the file is treated as absent.
+  const writeSpec = async (skel) => {
+    const { want } = specBytes(skel)
+    const attempt = async (label, resample) => {
+      const r = await run(specWritePrompt(skel, resample),
+        { model: 'haiku', effort: 'low', label, phase: 'Spec-expand', schema: S.write }).catch(() => null)
+      if (!r) return { why: 'writer produced no report' }
+      if (!r.ok) return { why: `writer reported ok:false — ${String(r.detail ?? '').slice(0, 160)}` }
+      const got = String(r.cksum ?? '').trim().split(/\s+/).slice(0, 2).join(' ')
+      if (got === want) return { ok: true }
+      return { why: `\`cksum\` printed ${got ? `\`${got}\`` : 'nothing'}, expected \`${want}\` — the file on disk is not the spec this boundary composed` }
+    }
+    const first = await attempt(`spec-expand:${skel.id}`, '')
+    if (first.ok) return true
+    const second = await attempt(`spec-expand:${skel.id}#rewrite`, SPEC_RESAMPLE)
+    if (second.ok) return true
+    unwritten.add(skel.id)
+    degrade({ label: `spec-expand:${skel.id}`, model: 'haiku', phase: 'Spec-expand', kind: 'spec-unwritten',
+      what: `the spec file for ${skel.id} was not confirmed on disk after two attempts (${first.why}; then ${second.why}) — ` +
         `the unit is NOT added to the plan, because a unit with no spec has no authority for the planner, ` +
         `Codex or either exit gate to build and grade against. It is banked as debt for the next boundary to re-draft.` })
-    pendingDebt.push({ unit: s.id, kind: 'structure', severity: 'major',
-      what: `wave-${N} boundary drafted unit "${s.id}" but its spec could not be written, so the unit was not created`,
-      why: (s.goal ?? '').slice(0, 400) })
-  }))
+    pendingDebt.push({ unit: skel.id, kind: 'structure', severity: 'major',
+      what: `wave-${N} boundary drafted unit "${skel.id}" but its spec could not be written and verified, so the unit was not created`,
+      why: (skel.goal ?? '').slice(0, 400) })
+    return false
+  }
+  await Promise.all(prepared.map(writeSpec))
   await Promise.all(reviseList.map(async (r) => {
-    const res = await run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)
+    const res = await run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.write }).catch(() => null)
     // Unlike an unwritten spec, a failed revision leaves a VALID spec on disk — the pre-revision
     // one. The unit still dispatches; what it loses is the amendment, which is a degradation to
-    // read, not a reason to withhold a unit that already has its authority.
+    // read, not a reason to withhold a unit that already has its authority. There is no expected
+    // cksum to check here either: the revised content is the model's to compose, so its report is
+    // recorded (which version a later reader is looking at) rather than verified.
     if (!res?.ok)
       degrade({ label: `spec-revise:${r.id}`, model: 'sonnet', phase: 'Spec-expand', kind: 'spec-unrevised',
         what: `the spec revision for ${r.id} was not confirmed (${res ? `writer reported: ${String(res.detail ?? 'ok:false').slice(0, 160)}` : 'writer produced no report'}) — ` +
           `the unit keeps its PREVIOUS spec and still dispatches; the boundary's amendment did not land` })
+    else log(`wave ${N}: revised spec ${r.id}.md — cksum ${String(res.cksum ?? '(unreported)').trim()}`)
   }))
   // The units that actually exist after this step. Everything downstream — the plan merge and the
   // issue projection, whose issue BODY is the spec file — keys off this list, never off `prepared`.

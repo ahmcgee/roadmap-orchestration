@@ -215,7 +215,6 @@ async function driveConductor() {
     // The staging writers. Absent, these labels fell through to makeAgent's throw and were silently
     // swallowed by the old fire-and-forget `.catch(() => null)` — since 0.14.0 an unconfirmed spec
     // withholds its unit, so the fixture has to say what the writer did.
-    { match: /^spec-(expand|revise):/, result: { ok: true } },
     { match: /^move-feedback:/, result: { ok: true } },
     // Tier 2 (wave 2): nothing left worth a wave → arc-complete.
     {

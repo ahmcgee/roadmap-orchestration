@@ -33,7 +33,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, specWriteOk } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -117,7 +117,6 @@ function rules({ census, triage, boundary } = {}) {
   list.push({ match: /^census:/, result: CENSUS_EMPTY })
   list.push({ match: /^triage:/, result: TRIAGE_OK })
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
-  list.push({ match: /^spec-(expand|revise):/, result: OK })
   // bank-debt now reports which markers it CONFIRMED. The happy-path fake confirms every marker it
   // was handed (parsed out of the prompt's own item list); tests probing the clearing rule override
   // with a partial list. File mode names no markers, and reads `ok` alone.
@@ -1193,7 +1192,7 @@ test('a spec that was never written withholds its unit, and banks it rather than
   const { result, agent } = await conduct({
     state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
     agentRules: [
-      { match: /^spec-expand:consolidate-gcd/, result: { ok: false, detail: 'permission denied' } },
+      { match: /^spec-expand:consolidate-gcd/, result: { ok: false, cksum: '', detail: 'permission denied' } },
       ...rules(),
     ],
     waveHandler: waves(
@@ -1227,7 +1226,7 @@ test('a failed spec REVISION degrades but never withholds: the unit still has a 
       units: { 'seed-unit': { status: 'merged' }, 'impossible-cache': { status: 'quarantined' } },
     }),
     agentRules: [
-      { match: /^spec-revise:seed-unit/, result: { ok: false, detail: 'file busy' } },
+      { match: /^spec-revise:seed-unit/, result: { ok: false, cksum: '', detail: 'file busy' } },
       ...rules({
         census: censusQuar(),
         boundary: boundaryPlan({
@@ -1272,4 +1271,59 @@ test('the return envelope splits Claude-by-tier spend from codex spend', async (
     'the Claude total is the four tiers and nothing else — a codex run is not a Claude call')
   for (const k of ['fable', 'opus', 'sonnet', 'haiku'])
     assert.equal(result.spendReport.claude[k], sp[k], `${k} is reported per tier`)
+})
+
+/* ============================================================================== */
+/* 14. The spec write is cksum-verified, not `ok`-trusted (0.14.0)                */
+/* ============================================================================== */
+// RATIONALE §19's second half: an `ok:true` from a cheap writer is not evidence — bank-debt:w12
+// reported success and dropped 23 items. A spec is worse than a ledger to get wrong: the
+// implementer builds the wrong thing and every gate grades it against the same wrong text. The
+// courier reports what `cksum < <file>` printed; the SCRIPT compares it with the bytes it composed.
+test('a mis-transcribed spec fails its cksum and buys one resample under a DIFFERENT prompt', async () => {
+  const prompts = []
+  const { result } = await conduct({
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+    agentRules: [
+      { match: /^spec-expand:consolidate-gcd/, result: (prompt, opts) => {
+        prompts.push(prompt)
+        // The first sample reports ok:true over bytes that are NOT the document — the exact shape an
+        // `ok`-trusting caller cannot see. The resample copies it faithfully.
+        return /#rewrite$/.test(opts.label) ? specWriteOk(prompt) : specWriteOk(prompt, (t) => `${t}\nstray line`)
+      } },
+      ...rules(),
+    ],
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+
+  assert.equal(prompts.length, 2, 'the mismatch bought exactly one resample — not zero, not a loop')
+  assert.notEqual(prompts[0], prompts[1],
+    'and the resample prompt DIFFERS, so resumeFromRunId cannot serve the bad sample straight back')
+  assert.ok(result.plan.units.some((u) => u.id === 'consolidate-gcd'), 'the verified rewrite creates the unit')
+  assert.equal(result.degradations.some((d) => d.kind === 'spec-unwritten'), false,
+    'a recovered write is not a degradation')
+})
+
+test('a spec mis-transcribed TWICE takes the spec-unwritten path, ok:true notwithstanding', async () => {
+  const { result } = await conduct({
+    state: mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+    agentRules: [
+      { match: /^spec-expand:consolidate-gcd/, result: (prompt) => specWriteOk(prompt, (t) => `${t}\nstray line`) },
+      ...rules(),
+    ],
+    waveHandler: waves(
+      mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+
+  assert.equal(result.plan.units.some((u) => u.id === 'consolidate-gcd'), false,
+    'both writers said ok:true; the cksum said otherwise, and the script believes the cksum')
+  const row = result.degradations.find((d) => d.kind === 'spec-unwritten')
+  assert.ok(row, 'the withholding is ledgered')
+  assert.match(row.what, /cksum/, 'and names the check that caught it, not a writer verdict')
+  assert.ok(result.debtSections.some((sec) => sec.body.includes('consolidate-gcd')), 'and it is banked, not lost')
 })

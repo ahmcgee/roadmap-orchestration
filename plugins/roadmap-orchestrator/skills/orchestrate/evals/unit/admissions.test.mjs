@@ -72,7 +72,6 @@ function rules({ census, triage: tr, boundary } = {}) {
   list.push({ match: /^census:/, result: CENSUS_EMPTY })
   list.push({ match: /^triage:/, result: TRIAGE_OK })
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
-  list.push({ match: /^spec-(expand|revise):/, result: OK })
   list.push({ match: /^(bank-debt|move-feedback):/, result: OK })
   return list
 }

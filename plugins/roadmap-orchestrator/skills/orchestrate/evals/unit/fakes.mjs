@@ -98,6 +98,20 @@ export function packRules(plan, state) {
   }]
 }
 
+// A spec WRITE report (conductor `spec-expand:` / `spec-revise:`). The conductor composes the exact
+// bytes and verifies them by `cksum`, so an honest fake has to produce the cksum of the document the
+// prompt actually carries — computed with the REAL coreutils tool, which is what cross-validates the
+// script's in-script cksumOf on every run (the same trick packRules uses for the launch pack).
+// The document is every line after the <<<DOCUMENT>>> marker; the here-doc that writes it leaves one
+// trailing newline. `mutate` lets a test corrupt the transcription the way a real writer would.
+export const specWriteOk = (prompt, mutate = (t) => t) => {
+  const at = String(prompt).indexOf('<<<DOCUMENT>>>\n')
+  // spec-revise carries no document: nothing is compared against its cksum, so any line will do.
+  if (at === -1) return { ok: true, cksum: '0 0', detail: '' }
+  const doc = String(prompt).slice(at + '<<<DOCUMENT>>>\n'.length)
+  return { ok: true, cksum: sysCksum(`${mutate(doc)}\n`), detail: '' }
+}
+
 // ---- built-in default results, keyed by harness label prefix ---------------------------
 // Each entry: [labelMatches(label) -> bool, (baseSha, prompt, opts) -> freshResultObject]. Colons in
 // the prefixes disambiguate siblings (`gate:` never matches `gate-verify:` etc.), but the list is
@@ -168,6 +182,12 @@ const DEFAULTS = [
   // runner rather than a codex role, so it has no filesystem of its own. explorer/health/design
   // write their own reports now (0.14.0), and their `*-write:` couriers are gone.
   [(l) => l.startsWith('flake-write:'), () => ({ ok: true })],
+
+  // The conductor's verbatim spec writers. Defaulted here so every conductor drive gets an HONEST
+  // report — one whose cksum matches the document the prompt carries — rather than a bare ok:true
+  // that the script would now (correctly) refuse.
+  [(l) => l.startsWith('spec-expand:'), (b, p) => specWriteOk(p)],
+  [(l) => l.startsWith('spec-revise:'), (b, p) => specWriteOk(p)],
 
   [(l) => l.startsWith('rescue-dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
   [(l) => l.startsWith('dossier:'), () => ({ attempted: 'a', evidence: 'e', hypothesis: 'h' })],
