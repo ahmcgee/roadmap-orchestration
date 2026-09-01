@@ -712,6 +712,27 @@ The rule since 0.13.0, in two halves:
    minted, a shared-red breaker that emits one finding instead of N unit verdicts, and merged-ness
    decided by git in code at every chokepoint. Prompts may *inform* a brake; they never *are* one.
 
+**0.14.1 closed the roster.** 0.14.0's guard covered the couriers; it left the steps that were still
+free-form *prose* — unit setup, integration setup, adopt-tip, provisioning, the commit probe, the
+`.roadmap/` strip — relying on STRICT's sentence for their working directory. Paid fixture
+`wf_c6971376-1a5` broke on two of them in one run. `provision:preview` skipped the cd, read
+`/workspaces/roadmap-orchestration` out of `git rev-parse --show-toplevel`, did *not* report that as
+the failure STRICT calls it, and improvised `git worktree add <prevWt>` from the orchestrator's own
+checkout — no `--detach`, no base — creating a `__preview` branch here and cross-registering the path
+with two repositories, which killed both waves' previews. `setup:consolidate-stats-gcd` dropped its
+cd, "proved" in *this* repo that its fork base did not exist, and forked from the fixture's `main`
+instead. Nothing in either brief mentioned the thing it did; a goal was enough. So every shell step
+is a closed list now, and — the part that matters more than the cd guard — every *decision inside
+them* moved into code: which setup case a unit is in (from `merged-probe`/`setup-commits` exit
+codes, before a command exists), whether the worktree is on the right base and the right branch
+(read back with `git -C '<wt>' rev-parse …`), whether the preview's tree can even resolve the tip.
+The one branch a courier used to take by reading English — "if the worktree already exists, verify;
+else add" — is written as `test -d … && … || …` inside a single command, so idempotent crash
+re-entry is the shell's behaviour rather than a model's interpretation. What is left free-form needs
+a model for something a command list cannot express: launching and judging a Codex run, running a
+project's suite and resolving its conflicts, and adjudicating a `gh` full-text search hit that is
+only ever a *candidate*.
+
 Corollaries the ledger forced: a model's death is a platform fact, never a unit verdict (park, don't
 quarantine); events (degradations, escalations, debt) are recorded once at the event, never
 re-transcribed with state; nothing is cleared that a writer did not confirm.

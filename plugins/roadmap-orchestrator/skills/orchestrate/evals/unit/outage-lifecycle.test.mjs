@@ -22,7 +22,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, courierResult, BASE_SHA, implCodexOk, codexMetaOk, structuredOutputError } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, courierResult, courierSaying, BASE_SHA, implCodexOk, codexMetaOk,
+  structuredOutputError } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -146,7 +147,7 @@ test('a dead commit probe parks the unit instead of quarantining it for building
 test('a commit probe that ANSWERS "no commits" still quarantines — the old verdict is intact', async () => {
   const { fn } = makeAgent([
     { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
-    { match: /^commit-probe:a$/, result: { ok: false, sha: '' } },
+    { match: /^commit-probe:a$/, result: courierSaying([[/rev-list --count/, '0']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.units.a.status, 'quarantined')

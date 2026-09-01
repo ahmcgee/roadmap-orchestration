@@ -14,6 +14,8 @@ import {
   assertSchemasPresent,
   structuredOutputError,
   implCodexOk,
+  courierResult,
+  courierSaying,
 } from './fakes.mjs'
 
 // Codex is the only implementer: the code-writing labels are `codex-build:`/`codex-fix:` and
@@ -152,12 +154,16 @@ test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
 // 4. setup {ok:false, state:'has-commits'} -> quarantine, no plan/impl.
 // =========================================================================================
 test('4 has-commits setup: quarantine, no plan/impl', async () => {
+  // CHANGED CONTRACT (0.14.1): 'has-commits' is no longer a state an agent REPORTS — it is the
+  // script's reading of two git probes, so the test states the git facts instead of the verdict.
   const { fn, calls } = makeAgent([
-    { match: /^setup:a/, result: () => ({ ok: false, state: 'has-commits', sha: BASE_SHA }) },
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.units.a.status, 'quarantined')
   assert.match(state.units.a.reason, /has commits/)
+  assert.ok(!has(calls, 'setup:a'), 'nothing was touched — no worktree command was even composed')
   assert.ok(!has(calls, 'plan:'), 'no planning')
   assert.ok(!has(calls, 'codex-build:'), 'no implementation')
 })
@@ -166,11 +172,11 @@ test('4 has-commits setup: quarantine, no plan/impl', async () => {
 // 5. adopt-tip mismatch: adopt-tip sha != adopted setup sha -> recreated-branch quarantine.
 // =========================================================================================
 test('5 adopt-tip mismatch: recreated-branch quarantine', async () => {
+  // The pre-captured tip is a COURIER read now (`git rev-parse adopt/a^{commit}`), and the setup
+  // courier's read-back HEAD is the other half of the comparison — both facts, neither a verdict.
   const X = 'cccccccccccccccccccccccccccccccccccccccc'
-  const Y = 'dddddddddddddddddddddddddddddddddddddddd'
   const { fn, calls } = makeAgent([
-    { match: /^adopt-tip:a/, result: () => ({ ok: true, sha: X }) },
-    { match: /^setup:a/, result: () => ({ ok: true, sha: Y, state: 'adopted' }) },
+    { match: /^adopt-tip:a$/, result: (p) => courierResult(p, X) },
   ])
   const state = await runWave(fn, makePlan([unit('a', { existingBranch: 'adopt/a' })]), makeState())
   assert.equal(state.units.a.status, 'quarantined')
@@ -179,14 +185,17 @@ test('5 adopt-tip mismatch: recreated-branch quarantine', async () => {
 })
 
 // =========================================================================================
-// 6. setup state:'already-merged' -> unit merged, no plan/impl.
+// 6. Already-merged short-circuits to merged. CHANGED CONTRACT (0.14.1): the setup prompt's
+//    'already-merged' CASE is gone — the second-parent test is `merged-probe`'s exit codes and the
+//    script's reading of them, before a single worktree command is composed.
 // =========================================================================================
-test('6 already-merged setup: short-circuits to merged', async () => {
+test('6 already-merged: git answers before setup, and no worktree command is composed', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^setup:a/, result: () => ({ ok: true, sha: BASE_SHA, state: 'already-merged' }) },
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 0, 0], out: [BASE_SHA] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.units.a.status, 'merged')
+  assert.ok(!has(calls, 'setup:a'), 'the setup courier carries no already-merged case — git answered first')
   assert.ok(!has(calls, 'plan:'), 'no planning')
   assert.ok(!has(calls, 'codex-build:'), 'no implementation')
   assert.ok(!has(calls, 'merge:a'), 'no merge-queue work — already merged')
@@ -581,21 +590,26 @@ test('14 stringified args: identical result to object args', async () => {
 //     and the wave must halt before dispatch rather than adopt over its own record.
 // =========================================================================================
 const OTHER_SHA = 'ffffffffffffffffffffffffffffffffffffffff'
-const intWorktree = (extra) => ({ match: /^integration-worktree$/, result: () => ({ ok: true, sha: OTHER_SHA, ...extra }) })
+// CHANGED CONTRACT (0.14.1): integration setup is a courier, so the ancestry answer is the stdout
+// of `git merge-base --is-ancestor <tip> <branch>; echo $?` (printed by the SHELL, which also keeps
+// a legitimate answer of 1 off the courier's stop-at-first-failure path) and the tip is the stdout
+// of `git -C <intWt> rev-parse HEAD`.
+const intWorktree = (ancestorExit, sha = OTHER_SHA) =>
+  ({ match: /^integration-worktree$/, result: courierSaying([[/merge-base --is-ancestor/, String(ancestorExit)]], sha) })
 
 test('15a integration-tip reconciliation: adopts the live tip when the checkpointed tip is its ancestor', async () => {
-  const { fn, calls } = makeAgent([intWorktree({ priorTipAncestorExit: 0 })])
+  const { fn, calls } = makeAgent([intWorktree(0)])
   // Zero units so nothing forks/merges to move the tip again — isolate the reconciliation.
   const state = await runWave(fn, makePlan([]), makeState(), { boundary: 'off' })
   assert.equal(state.integrationTip, OTHER_SHA, 'integrationTip reconciled to the reported git sha')
   const probe = calls.find((c) => c.label === 'integration-worktree')
   assert.match(probe.prompt, /git merge-base --is-ancestor a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 roadmap\/session-test/,
     'the courier is handed the exact command, not asked whether the branch moved forward')
-  assert.match(probe.prompt, /never rewind, reset or force the branch/, 'and is forbidden from making the answer zero')
+  assert.match(probe.prompt, /never rewind, reset or force a branch/, 'and is forbidden from making the answer zero')
 })
 
 test('15b integration-tip reconciliation: a tip that is NOT an ancestor halts the wave before dispatch', async () => {
-  const { fn, calls } = makeAgent([intWorktree({ priorTipAncestorExit: 1 })])
+  const { fn, calls } = makeAgent([intWorktree(1)])
   await assert.rejects(
     runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' }),
     /integration tip regressed/,
@@ -605,7 +619,7 @@ test('15b integration-tip reconciliation: a tip that is NOT an ancestor halts th
 })
 
 test('15c integration-tip reconciliation: an unresolvable checkpointed tip (exit 128) halts too', async () => {
-  const { fn } = makeAgent([intWorktree({ priorTipAncestorExit: 128 })])
+  const { fn } = makeAgent([intWorktree(128)])
   await assert.rejects(
     runWave(fn, makePlan([]), makeState(), { boundary: 'off' }),
     /exited 128/,
@@ -613,7 +627,7 @@ test('15c integration-tip reconciliation: an unresolvable checkpointed tip (exit
 })
 
 test('15d equal shas need no ancestry answer — the reconcile does not fire', async () => {
-  const { fn } = makeAgent([{ match: /^integration-worktree$/, result: () => ({ ok: true, sha: BASE_SHA, priorTipAncestorExit: 1 }) }])
+  const { fn } = makeAgent([intWorktree(1, BASE_SHA)])
   const state = await runWave(fn, makePlan([]), makeState(), { boundary: 'off' })
   assert.equal(state.integrationTip, BASE_SHA, 'an unchanged tip is never second-guessed')
 })
@@ -648,7 +662,7 @@ test('17 StructuredOutput retry counts twice; a plain build-steering error quara
         throw new Error('non-structured explosion')
       },
     },
-    { match: /^commit-probe:b$/, result: { ok: false, sha: '', detail: 'no commits' } },
+    { match: /^commit-probe:b$/, result: courierSaying([[/rev-list --count/, '0']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
 
@@ -681,7 +695,7 @@ test('18 lost build report + commits present -> unit proceeds and takes the fron
     // every attempt fails, including the #retry and #salvage rescues — the real 2026-07-18 shape
     { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
     // the branch says the work landed
-    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
+    { match: /^commit-probe:a$/, result: courierSaying([[/rev-list --count/, '3']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
@@ -754,7 +768,7 @@ test('21 a stale `deferred` stamp on an in-scope unit is cleared at wave start',
 test('22 degradations ride the return envelope and are never serialized into the state', async () => {
   const { fn } = makeAgent([
     { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
-    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
+    { match: /^commit-probe:a$/, result: courierSaying([[/rev-list --count/, '3']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1 }))
 

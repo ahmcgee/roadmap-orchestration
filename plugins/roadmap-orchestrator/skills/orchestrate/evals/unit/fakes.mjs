@@ -41,16 +41,25 @@ export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'ut
 // that reads the results, which is the whole point of moving those decisions into the script.
 // The host-health defaults are a HEALTHY box: pid cgroup nearly empty, ZERO zombies (PID 1 is the
 // ordinary devcontainer `sh` supervisor — a name that decides nothing), an idle load. A test that wants a sick box overrides `env-probe:` with its own stdout (see wave-policy).
-const courierStdout = (cmd, head) =>
+const courierStdout = (cmd, head, branch) =>
   /\brev-parse HEAD\b/.test(cmd) ? head
-    : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
-      : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
-        : /pids\.current/.test(cmd) ? '412\n36792'
-          : /grep -c '\^Z'/.test(cmd) ? '0'
-            : /^ps -p 1\b/.test(cmd) ? 'sh'
-              : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
-                : /^nproc$/.test(cmd) ? '16'
-                  : ''
+    : /rev-parse --abbrev-ref HEAD\b/.test(cmd) ? branch
+      // `git rev-parse <ref>^{commit}` (adopt-tip) and `git cat-file -t <sha>^{commit}` (the
+      // preview worktree's can-this-tree-see-the-tip guard) — both resolve against the fake tree.
+      : /rev-parse \S+\^\{commit\}/.test(cmd) ? head
+        : /cat-file -t /.test(cmd) ? 'commit'
+          // `git merge-base --is-ancestor A B; echo $?` — the checkpointed tip IS on the branch.
+          : /merge-base --is-ancestor/.test(cmd) ? '0'
+            // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
+            : /rev-list --count/.test(cmd) ? '1'
+              : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
+                : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
+                  : /pids\.current/.test(cmd) ? '412\n36792'
+                    : /grep -c '\^Z'/.test(cmd) ? '0'
+                      : /^ps -p 1\b/.test(cmd) ? 'sh'
+                        : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
+                          : /^nproc$/.test(cmd) ? '16'
+                            : ''
 // Every numbered command the script composes, with its `cd '<where>' && ( … )` guard STRIPPED back
 // off — the guard is the script's, the inner command is what a test (and the fake's own stdout
 // table) is about. A line that does not carry the guard is a defect the tests want to see, so the
@@ -64,6 +73,16 @@ export function courierCommands(prompt) {
   })
 }
 
+// A courier result whose stdout table is the DEFAULT one with `overrides` layered on: a list of
+// [regex, stdout] pairs matched against the unwrapped command. Every closed-list step is a courier
+// since 0.14.1, so a test that wants ONE command to answer differently (an `is-ancestor` of 1, a
+// commit count of 0, a HEAD on the wrong base) says exactly that, positionally-agnostic.
+export const courierSaying = (overrides, baseSha = BASE_SHA) => (prompt) =>
+  courierResult(prompt, baseSha, (cmd, head, branch) => {
+    for (const [re, out] of overrides) if (re.test(cmd)) return out
+    return courierStdout(cmd, head, branch)
+  })
+
 export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   const commands = courierCommands(prompt)
   assert.ok(commands.length, 'fakes.courierResult: no numbered `Commands:` block — not a courier prompt')
@@ -71,12 +90,23 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   // back. Anything cheaper would let a mirror advance "succeed" against a sha it never reached —
   // exactly the read-back check the script relies on.
   let head = baseSha
+  // …and a `git worktree add` MOVES it too, to the base the script composed, on the branch the
+  // script named. This is what makes the setup courier's read-backs (`rev-parse HEAD`,
+  // `rev-parse --abbrev-ref HEAD`) mean something in a sim: a script that composed the wrong base
+  // or the wrong branch fails its own comparison here rather than being waved through.
+  let branch = ''
   // Positional: {exitCode, stdout} only — the schema has no `command` field, so neither does this.
   // A test that needs to know WHICH slot is which reads courierCommands(prompt) by index.
   return { ok: true, results: commands.map((command) => {
     const m = /checkout --detach (\S+)/.exec(command)
     if (m) head = m[1]
-    return { exitCode: 0, stdout: stdoutFor(command, head) }
+    const wa = /worktree add\b[^\n]*?\b([0-9a-f]{40})\b/.exec(command)
+    if (wa) head = wa[1]
+    const nb = /worktree add -b ([^\s;}]+)/.exec(command)
+    const ab = /worktree add (?:--detach )?'[^']*' ([^\s;}]+)/.exec(command)
+    if (nb) branch = nb[1]
+    else if (ab && !/^[0-9a-f]{40}$/.test(ab[1])) branch = ab[1]
+    return { exitCode: 0, stdout: stdoutFor(command, head, branch) }
   }) }
 }
 
@@ -135,9 +165,15 @@ export const specWriteOk = (prompt, mutate = (t) => t) => {
 const DEFAULTS = [
   // priorTipAncestorExit: the exit code of `merge-base --is-ancestor <checkpointed tip> <branch>`.
   // 0 = the checkpointed tip is on the branch, which is the only state the tip reconcile adopts.
-  [(l) => l === 'integration-worktree', (b) => ({ ok: true, sha: b, priorTipAncestorExit: 0 })],
-  [(l) => l.startsWith('setup:'), (b) => ({ ok: true, sha: b, state: 'ready' })],
-  [(l) => l.startsWith('adopt-tip:'), (b) => ({ ok: true, sha: b })],
+  [(l) => l === 'integration-worktree', (b, p) => courierResult(p, b)],
+  // Unit setup is a COURIER now (0.14.1): the fake replays the composed list, and `worktree add`
+  // moves the fake tree to the base/branch the SCRIPT wrote — so a wrong base is a sim failure.
+  [(l) => l.startsWith('setup:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('setup-commits:'), () => ({ ok: true, exitCodes: [0], out: ['0'] })],
+  [(l) => l.startsWith('adopt-tip:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('commit-probe:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('strip-roadmap:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('issue-running:'), () => ({ ok: true })],
   // Closed-list git couriers (gitProbe): exit codes in the order the script interpolated the
   // commands, nothing interpreted. `merged-probe:` -> branch exists (0), NOT a second parent of any
   // merge commit on the integration branch (1), worktree directory present (0) — i.e. an ordinary
@@ -195,7 +231,7 @@ const DEFAULTS = [
   [(l) => l.startsWith('mirror:'), (b, p) => courierResult(p, b)],
   [(l) => l.startsWith('preview-setup'), (b, p) => courierResult(p, b)],
   [(l) => l === 'preview-worktree', (b, p) => courierResult(p, b)],
-  [(l) => l.startsWith('provision:'), () => ({ ok: true })],
+  [(l) => l.startsWith('provision:'), (b, p) => courierResult(p, b)],
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('spec-append:'), () => ({ ok: true })],   // adjudication rulings appended to the spec
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep

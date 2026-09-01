@@ -855,11 +855,64 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 — the echoed command overrunning its cap and burning the call's schema retries. Both are the RATIONALE
 §19 failure class: a fact the script could compose was left to model compliance.
 
-Prompts that are **not** command lists (the codex steerers, the `gh` projections, provisioning,
-worktree setup) name their working directory explicitly in the first sentence, so STRICT's identity
-test has something to bind to — including `steerCodex`, which now composes its own
-"your cd target is `<worktree>`; `<artifactDir>` is scratch, not a checkout" line for every step
-rather than leaving it to one caller's preamble.
+**Every step that runs a shell command is a courier** (0.14.1). The list, exhaustively:
+
+| step | label | what the script judges |
+| --- | --- | --- |
+| integration branch + worktree | `integration-worktree` | HEAD sha; `is-ancestor` exit, printed by the shell |
+| unit worktree | `setup:<id>` | read-back `rev-parse HEAD` vs the base, `rev-parse --abbrev-ref HEAD` vs `unit/<id>` |
+| adopted branch tip | `adopt-tip:<id>` | the sha, pre-captured before setup can recreate the branch |
+| provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
+| preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
+| preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |
+| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test |
+| commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
+| `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
+| git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |
+
+What stays **free-form**, and why: the **codex steerers** (they launch and supervise a process and
+judge its artifacts), the **merge/resolve/integration-fix** agents (they run a project's test suite
+and resolve conflicts semantically), the **`gh` projections** (`issue-running:`, `issue-sync:`, the
+conductor's census and triage sweeps — an exact-marker search returns a *candidate*, and deciding it
+is a model's job), and the **spec/dossier writers** (they write prose a model authored). Each names
+its working directory explicitly in the first sentence so STRICT's identity test has something to
+bind to — including `steerCodex`, which composes its own "your cd target is `<worktree>`;
+`<artifactDir>` is scratch, not a checkout" line for every step rather than leaving it to one
+caller's preamble. The conductor's `move-feedback:wN` is the one remaining `mv`: it stays free-form
+because every path it touches is absolute, so its cwd decides nothing.
+
+Why the roster closed: paid conductor fixture `wf_c6971376-1a5`, the run after the guard above
+shipped. Two free-form steps survived it, and both went wrong the same way.
+
+* `provision:preview` never `cd`'d, printed `/workspaces/roadmap-orchestration` from
+  `git rev-parse --show-toplevel` **without reporting it** as the failure STRICT calls it, and then
+  improvised its way to `cd /workspaces/roadmap-orchestration && git worktree add <prevWt>` — no
+  `--detach`, no base sha, in the orchestrator's own checkout. That created a `__preview` *branch*
+  here and left the path registered as a worktree of two repositories, so both waves'
+  `git checkout --detach <tip>` died with "fatal: unable to read tree". Nothing in its brief
+  mentioned worktrees; the *goal* ("provision this checkout") is what let it reach for one.
+* `setup:consolidate-stats-gcd` dropped the `cd` prefix off the commands that mattered, gathered
+  every "proof" that its fork base did not exist (`git branch -a`, `git cat-file -t`, a
+  `--oneline | grep` of an 8-character sha against 7-character output) **in this repo**, and forked
+  the unit from the fixture's `main` HEAD instead — quarantined as "wrong base (got `c4b03e36…`,
+  expected `fb023153…`)". The sha existed; another agent had read it off the integration worktree
+  two minutes earlier.
+
+So the *case* a setup takes is chosen in code from `merged-probe`/`setup-commits` exit codes before
+any command is composed; the one command that case calls for is composed by the script, with the
+"if the worktree is already live, keep it; else add it" branch written as **shell**
+(`test -d … && … || …`) so crash re-entry is never a courier's choice; and the base and branch come
+back from `git -C '<wt>' rev-parse …`, which the script compares. `already-merged` and `has-commits`
+are no longer *states an agent reports* — they are the script's reading of git, and a `has-commits`
+unit is quarantined before a single worktree command exists. The preview's idempotency guard changed
+with them: `git worktree list --porcelain | grep -qx 'worktree <path>'` cannot tell which repository
+a path now belongs to, and a stale record is exactly what suppressed the repair for a second whole
+wave. It asks the question the next step actually needs — can this tree resolve the tip? — and
+rebuilds when it cannot.
+
+**After a courier fails, the script degrades; it never re-prompts the same agent to make it work.**
+The one retry that exists is script-*dispatched*, with a *different* list (the preview sweep), and
+only when the detach already succeeded.
 
 ## `conductor.mjs` — multi-wave dispatch
 
@@ -1194,7 +1247,7 @@ amendments, needs-user calls, and the session integration review.
   unit id + sha, so `resumeFromRunId` replays completed calls free. **Environment probes are the
   exception and must be salted**: a probe reports what the disk and git look like *now*, so replaying
   one from cache is a lie (arc-observed: a resume replayed a pre-rebuild `cd: No such file` and a
-  pre-merge `state:'ready'`). Anything that must vary per launch cannot be generated in-script — it
+  pre-merge worktree report for a unit that had since landed). Anything that must vary per launch cannot be generated in-script — it
   arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
   the harness appends to its environment probes: provisioning, integration setup, the unit-setup
   rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, the host

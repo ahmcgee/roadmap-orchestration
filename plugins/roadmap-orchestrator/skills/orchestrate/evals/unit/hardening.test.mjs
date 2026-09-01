@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
+import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk, courierResult } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -164,7 +164,7 @@ test('4 owed: an owed design unit is re-reconciled once the preview is live agai
 test('5 merge fence: roadmapPaths refusal strips, re-merges, and banks contract/major debt', async () => {
   const { fn, calls } = makeAgent([
     { match: /^merge:a$/, result: () => MERGE_REFUSAL({ roadmapPaths: ['.roadmap/contracts/x.md'] }) },
-    { match: /^strip-roadmap:a$/, result: () => ({ ok: true, sha: BASE_SHA }) },
+    { match: /^strip-roadmap:a$/, result: (p) => courierResult(p, BASE_SHA) },
     // merge:a#restrip is unmatched here on purpose — it falls through to the clean-merge default.
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
@@ -430,8 +430,11 @@ test('11 plan evidence: the planner\'s manifest reaches the implementer; absent 
 // =========================================================================================
 test('12 crash residue: running/merge-ready reopen at wave start and adopt their committed work', async () => {
   for (const residue of ['running', 'merge-ready']) {
+    // 'adopted' is the SCRIPT's reading of "the branch exists with commits beyond base and this
+    // unit may adopt", so the fake states those git facts rather than the state name (0.14.1).
     const { fn, calls } = makeAgent([
-      { match: /^setup:a$/, result: () => ({ ok: true, sha: BASE_SHA, state: 'adopted' }) },
+      { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
+      { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['2'] }) },
     ])
     const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, units: { a: { status: residue } } }))
 

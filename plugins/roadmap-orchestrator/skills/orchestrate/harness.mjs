@@ -693,12 +693,21 @@ const findIssue = (id, cached) =>
 const GH_BEST_EFFORT = 'Do the following on a BEST-EFFORT basis, only AFTER the work above is finished and its ' +
   'result decided: if any gh command errors (no network, auth, rate limit, missing issue), ignore it and carry ' +
   'on — issue state is observability, never a gate, and a wave-tail sweep reconciles anything missed. '
-const ghRunning = (unit) => issueMode
-  ? `\n${GH_BEST_EFFORT}${MARKER_RULE}If and only if you set up a buildable worktree (you reported state 'ready' ` +
-    `or 'adopted'), mark this unit's tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
-    `if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
-    `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. `
-  : ''
+// The unit's issue moves to status:running once the SCRIPT has decided the worktree is buildable.
+// This used to ride on the setup prompt; setup is a closed command list now, and a `gh` find-or-
+// create is one of the two things that genuinely still needs a model (an exact-marker search whose
+// hit is a candidate, not an answer). So it is its own best-effort call — dispatched ONLY in issue
+// mode, so file mode makes no call at all and the offline paid fixtures stay byte-identical.
+const ghUnitRunning = (unit) => run(
+  STRICT +
+  `In the git repository at ${repo}: ${GH_BEST_EFFORT}${MARKER_RULE}The scheduler has confirmed a buildable ` +
+  `worktree for unit ${unit.id}, so mark its tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
+  `if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
+  `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. ` +
+  `Run no other command: no checkout, no branch, no worktree, no merge. Report ok. ` +
+  `Keep \`detail\` to one sentence.`,
+  { model: 'haiku', effort: 'low', phase: 'Setup', label: `issue-running:${unit.id}`, schema: S.ok },
+).catch(() => null)
 const ghMerged = (unit) => issueMode
   ? `\n${GH_BEST_EFFORT}${MARKER_RULE}If and only if the merge LANDED and the full suite PASSED, close this ` +
     `unit's tracking issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
@@ -1136,25 +1145,14 @@ const EVIDENCE = obj({
 })
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
-  ws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' }, detail: { type: 'string' } }, ['ok', 'sha']),
-  // Integration-worktree setup: `ws` plus the one ancestry fact the wave-start tip reconcile needs.
-  // `priorTipAncestorExit` is the raw exit code of `git merge-base --is-ancestor <checkpointed tip>
-  // <intBranch>`: 0 = the branch merely moved ahead, 1 = the checkpointed tip is NOT on the branch,
-  // 128 = it does not resolve. REQUIRED, not optional — the reconcile is a two-way door and the
-  // courier must not be able to leave the deciding fact out.
-  intws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' },
-    priorTipAncestorExit: { type: 'integer' }, detail: { type: 'string' } },
-    ['ok', 'sha', 'priorTipAncestorExit']),
+  // No `ws`/`intws`/`setup` schemas any more (0.14.1): every step that used to report a sha, a
+  // branch state or an ancestry exit code as a JUDGMENT is a courier now, and the script reads
+  // those facts out of the commands' own stdout. See "the courier contract" in reference.md.
   // Closed-list git courier (gitProbe below): exit codes and first stdout lines, verbatim, in the
   // order the script interpolated the commands. Deliberately carries NO verdict field — the whole
   // point is that the courier reports and the SCRIPT judges.
   git: obj({ ok: { type: 'boolean' }, exitCodes: { type: 'array', items: { type: 'integer' } },
     out: arr('string'), detail: { type: 'string' } }, ['ok', 'exitCodes']),
-  // Unit-worktree setup outcome. `state` drives the destructive-re-run guards: 'already-merged'
-  // and 'has-commits' touch nothing; 'adopted' enters the pipeline at verify; 'ready' is fresh.
-  setup: obj({ ok: { type: 'boolean' }, sha: { type: 'string' },
-    state: oneOf(['ready', 'already-merged', 'adopted', 'has-commits']), detail: { type: 'string' } },
-    ['ok', 'sha', 'state']),
   // `feasible:false` is the planner's escape valve for an unsatisfiable spec — without
   // it, an agent that correctly refuses to build has no legal output (eval-observed).
   // Optional `notes` on the tight schemas is a pressure-release: with
@@ -1393,7 +1391,11 @@ const S = {
  *               results are POSITIONAL, the courier never echoes the command text back
  *     opts      the usual run() opts minus `schema` (model/effort/phase/label) — the schema is
  *               built here, sized to the list — plus optional `outMax`, the per-command output
- *               budget (default COURIER_OUT; the launch pack read is the one caller that raises it)
+ *               budget (default COURIER_OUT; the launch pack read is the one caller that raises it),
+ *               and optional `required`, which routes the call through runReq instead of runOr: for
+ *               the couriers whose absent result would be an invented verdict about a unit rather
+ *               than an honest empty answer (adopt-tip). A dead REQUIRED courier halts the wave as
+ *               a platform outage; a dead ordinary one reports `ok:false` and the script decides.
  *     extra     prompt text appended BEFORE the command list (context, allowlist reminders)
  *     ok        every listed command ran and exited 0 — the ONLY blanket verdict offered
  *     exit(i)   the i-th command's integer exit code, or null if it never ran
@@ -1415,9 +1417,14 @@ const courierRun = async (where, commands, opts, extra = '') => {
   if (typeof where !== 'string' || !where.trim())
     throw new Error(`courierRun: \`where\` is required (got ${JSON.stringify(where)}) — a courier with no ` +
       'working directory improvises in its own')
+  const prompt = courierPrompt(where, commands, extra)
+  // `outMax` and `required` steer THIS wrapper; they are not agent() options and never reach it.
+  const { outMax, required, ...rest } = opts
+  const o = { ...rest, schema: courierSchema(commands.length, outMax) }
   return courierShape(
-    await runOr({ ok: false, results: [], detail: 'courier agent died without a report' },
-      courierPrompt(where, commands, extra), { ...opts, schema: courierSchema(commands.length, opts.outMax) }),
+    required
+      ? await runReq(prompt, o)
+      : await runOr({ ok: false, results: [], detail: 'courier agent died without a report' }, prompt, o),
     commands)
 }
 
@@ -1600,17 +1607,30 @@ async function mergedInGit(unit, phase = 'Setup') {
 
 // Optional environment provisioning (plan.provision: {copy: [...gitignored files], setup: "cmd"}).
 // A fresh worktree has no deps/env; without this, the test gate fails for non-code reasons.
+//
+// A COURIER, not a prose brief (0.14.1). This prompt was the LAST free-form step with `cp` in its
+// remit, and wf_c6971376-1a5 is what that cost: the `provision:preview` agent skipped STRICT's cd,
+// printed `/workspaces/roadmap-orchestration` from `git rev-parse --show-toplevel` without
+// reporting it as the failure STRICT says it is, and then improvised its way to a bare
+// `cd /workspaces/roadmap-orchestration && git worktree add <prevWt>` — no `--detach`, no base sha,
+// run in the ORCHESTRATOR'S OWN checkout. That created a `__preview` BRANCH in this repo and left
+// the path registered as a worktree of two different repositories, so both waves' previews died
+// with "fatal: unable to read tree". Nothing in its brief mentioned worktrees; a goal ("provision
+// this checkout") is what let it reach for one. The plan's copy list and setup command are
+// interpolated verbatim and are the whole list; `git` is not on it at all.
 async function provision(where, label) {
   if (!plan.provision) return { ok: true }
   const p = plan.provision
-  return runOr(
-    { ok: false, detail: 'provisioning agent died (no report) — treat as an environment failure' },
-    STRICT +
-    `Provision the checkout at ${where} so its build and tests can run: ` +
-    (p.copy?.length ? `copy these gitignored files from ${repo} into the same relative locations: ${p.copy.join(', ')}. ` : '') +
-    (p.setup ? `Then run, from inside ${where}: ${p.setup}. ` : '') +
-    `Report ok:false with the exact error if any step cannot complete.` + LAUNCH,
-    { model: 'haiku', phase: 'Setup', label, schema: S.ok })
+  const cmds = [
+    // `mkdir -p` on the DESTINATION's parent only — a copy target's directory, never a checkout.
+    ...(p.copy ?? []).map((f) => `mkdir -p "$(dirname '${where}/${f}')" && cp -a '${repo}/${f}' '${where}/${f}'`),
+    ...(p.setup ? [p.setup] : []),
+  ]
+  if (!cmds.length) return { ok: true }
+  return courierRun(where, cmds, { model: 'haiku', phase: 'Setup', label },
+    `These commands copy the gitignored files this checkout needs and run the project's own setup ` +
+    `command. Creating, moving or deleting a git worktree, a branch or a checkout is not among them, ` +
+    `at any path and in any repository. ` + LAUNCH)
 }
 
 // One green-tip advance of the PREVIEW WORKTREE, as a closed command list: detach at `sha`, bring
@@ -2730,73 +2750,105 @@ async function runUnit(unit) {
   // a sweep round would be an invitation to widen the diff, the exact spiral clause it once was.
 
   // The sha assertion below must never trust the SAME agent that could have recreated the branch
-  // (arc-observed: a setup agent deleted its own source branch and recreated it from main).
+  // (arc-observed: a setup agent deleted its own source branch and recreated it from main). One
+  // read-only command, and `required` — an absent answer here would be an invented verdict about
+  // a unit, so a dead courier halts the wave rather than blaming the plan.
   let adoptTip = null
   if (unit.existingBranch) {
-    const rp = await runReq(
-      STRICT +
-      `In the git repository at ${repo}: run \`git rev-parse ${unit.existingBranch}\` and report the sha. ` +
-      `Read-only — change nothing, create nothing. If the ref does not resolve, report ok:false with the exact error.`,
-      { model: 'haiku', effort: 'low', phase: 'Setup', label: `adopt-tip:${unit.id}`, schema: S.ws })
-    if (!rp.ok || !rp.sha)
-      return quarantine(unit, `existingBranch ${unit.existingBranch} does not resolve — fix the plan; nothing was touched`, rp)
-    adoptTip = rp.sha
+    const rp = await courierRun(repo, [`git rev-parse ${unit.existingBranch}^{commit}`],
+      { model: 'haiku', effort: 'low', phase: 'Setup', label: `adopt-tip:${unit.id}`, required: true },
+      `This command only READS. ` + LAUNCH)
+    if (!rp.ok || !/^[0-9a-f]{7,40}$/.test(rp.out(0)))
+      return quarantine(unit, `existingBranch ${unit.existingBranch} does not resolve — fix the plan; nothing was touched`,
+        { detail: rp.detail, out: rp.out(0) })
+    adoptTip = rp.out(0)
   }
 
-  const ws = await runOr(
-    // A dead setup agent must not be read as a green worktree: ok:false routes to quarantine below,
-    // where a null would instead have thrown and blamed the unit for an infrastructure failure.
-    { ok: false, sha: '', state: 'ready', detail: 'setup agent died without a report' },
-    STRICT +
-    `In the git repository at ${repo}, set up the worktree for unit ${unit.id} at ${w} on branch unit/${unit.id} ` +
-    `(fork base ${source}). Work these cases in order and report the FIRST that matches:\n` +
-    // "Already merged" = the tip LANDED via one of our --no-ff merges, i.e. it is the second
-    // parent of a merge commit on the integration branch. is-ancestor alone false-positives on
-    // commit-less branches (eval-observed: a quarantined unit's empty branch, parked at an old
-    // integration commit, reported already-merged and short-circuited to 'merged' on relaunch).
-    `1) Branch unit/${unit.id} exists and its tip is the second parent of a merge commit on ${intBranch} ` +
-    `(\`git log --merges --format=%P ${intBranch} | awk '{print $2}' | grep -q "$(git rev-parse unit/${unit.id})"\` ` +
-    `succeeds) — it is already merged. Touch nothing; report ok:true, state:'already-merged', sha = the branch tip.\n` +
-    // Case 2 tests against base, not source: under self-adoption (existingBranch = the unit's own
-    // branch) source..branch is always empty, and case 3 would delete the work adoption preserves.
-    `2) Branch unit/${unit.id} exists with unmerged work ` +
-    `(\`git rev-list ${base}..unit/${unit.id}\` is non-empty): ` +
-    (adopt
-      ? `adopt it as-is: if a stale worktree occupies ${w}, clear the WORKTREE ONLY first ` +
-        `(\`git worktree remove --force ${w}\`, then \`git worktree prune\`; if the directory still exists, ` +
-        `delete it) — the branch itself must never be touched. Then \`git worktree add ${w} unit/${unit.id}\` ` +
-        `(NO -b, no reset); report ok:true, state:'adopted', sha = the branch tip.\n`
-      : `do NOT touch it — delete nothing; report ok:false, state:'has-commits', sha = the branch tip.\n`) +
-    `3) Otherwise remove any stale branch/worktree remnants and create a fresh worktree ` +
-    `(git worktree add ${w} -b unit/${unit.id} ${source}); report ok:true, state:'ready', sha = HEAD.` +
-    ghRunning(unit) +
-    // Setup is normally worth replaying from cache — it is idempotent and its report is a fact
-    // about a directory that still exists. When the probe says that directory is GONE (a rebuilt
-    // host, a pruned worktree root), the cached report describes a world that no longer exists, so
-    // this one call is salted back into a cache miss. Deliberately conditional: blanket-salting
-    // setup would re-run every unit's worktree creation on every resume.
-    (g0.worktree ? '' : LAUNCH),
-    { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}`, schema: S.setup })
-  // Already merged: unblock dependents, re-run nothing (holds even with existingBranch set).
-  if (ws.state === 'already-merged')
-    return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: ws.sha, note: 'detected already merged at setup' }
+  // WHICH CASE this unit is in used to be the setup agent's to choose, from four cases written as
+  // prose. In wf_c6971376-1a5 that agent forked `consolidate-stats-gcd` from the fixture repo's
+  // `main` HEAD after deciding — from `git branch -a`, `git cat-file -t` and a `--oneline | grep`
+  // of an 8-character sha, every one of them run in the ORCHESTRATOR'S OWN checkout because it had
+  // dropped the cd — that the base sha it was handed "does not exist in repository". The sha
+  // existed; another agent had read it off the integration worktree two minutes earlier. It then
+  // reported `ok:false` alongside `state:'ready'` and a sha from the wrong history.
+  //
+  // So: the case is chosen HERE from git's own exit codes, the ONE command that case calls for is
+  // composed HERE, and the base and branch are read back OUT OF THE WORKTREE by the script. Nothing
+  // about which repository, which base or which case is left to a model.
+  //
+  // `g0` (mergedInGit, salted, run at the top of this function) already answered "does the branch
+  // exist", "did it land through one of our merges" and "is the worktree directory there". Only the
+  // commit count is missing, and only when the branch exists at all — so the common fresh path
+  // spends no extra call.
+  let ahead = 0
+  if (g0.branchSha) {
+    const a = await gitProbe(`setup-commits:${unit.id}`, repo, [`git rev-list --count ${base}..unit/${unit.id}`], 'Setup')
+    if (a.code(0) !== 0)
+      return quarantine(unit, `could not count unit/${unit.id}'s commits beyond ${String(base).slice(0, 12)} — the ` +
+        `branch state is unknown and nothing was touched`, a.raw)
+    ahead = Number(a.line(0)) || 0
+  }
+  // Case 2 counts against `base`, not `source`: under self-adoption (existingBranch = the unit's
+  // own branch) source..branch is always empty, and the fresh path would delete the work adoption
+  // preserves. ('already-merged' is not a case here at all: g0 short-circuited it above, in code.)
+  const state = !g0.branchSha || ahead === 0 ? 'ready' : adopt ? 'adopted' : 'has-commits'
   // Un-adopted commits beyond base: nothing was destroyed — surface for a deliberate decision.
-  if (ws.state === 'has-commits')
+  if (state === 'has-commits')
     return quarantine(unit, `branch unit/${unit.id} has commits beyond its base and was not adopted — nothing was ` +
-      `destroyed; adopt via unit.existingBranch on relaunch, or delete the branch deliberately`, ws)
-  // Trust but verify in code: a fresh 'ready' worktree must sit exactly on the expected base
-  // unless forked from an explicit existingBranch (an eval fixture legitimately differs);
-  // adopted/already-merged branches legitimately diverge, so the assertion is 'ready'-only.
-  if (!ws.ok || (ws.state === 'ready' && !unit.existingBranch && !sameSha(ws.sha, base)))
-    return quarantine(unit, `workspace setup failed or wrong base (got ${ws.sha || 'nothing'}, expected ${source})`, ws)
-  if (adoptTip && !sameSha(ws.sha, adoptTip))
-    return quarantine(unit, `adopt tip mismatch (got ${ws.sha || 'nothing'}, pre-captured ` +
-      `${unit.existingBranch} = ${adoptTip}) — the branch may have been recreated; check reflog / git fsck --unreachable`, ws)
+      `destroyed; adopt via unit.existingBranch on relaunch, or delete the branch deliberately`,
+      { branchSha: g0.branchSha, ahead })
+  // ONE composed command, so crash re-entry never becomes a choice: `test -d … && … || …` is the
+  // "if the worktree is already there, keep it; else add it" branch, decided by the shell.
+  const live = `test -d '${w}' && git -C '${w}' rev-parse --git-dir >/dev/null 2>&1`
+  const dropWt = `git worktree remove --force '${w}' 2>/dev/null; git worktree prune`
+  const create = state === 'adopted'
+    // The BRANCH is never touched — only the worktree pointing at it. No -b, no reset.
+    ? `${live} || { ${dropWt}; git worktree add '${w}' unit/${unit.id}; }`
+    : g0.branchSha
+      // A branch with nothing beyond base holds no work, so the stale remnant is cleared and the
+      // fork redone. This is the only place a unit branch is ever deleted, and only when git has
+      // just said it has zero commits of its own.
+      ? `${dropWt}; git branch -D unit/${unit.id} >/dev/null 2>&1; git worktree add -b unit/${unit.id} '${w}' ${source}`
+      : `${live} || git worktree add -b unit/${unit.id} '${w}' ${source}`
+  const ws = await courierRun(repo, [
+    create,
+    `git -C '${w}' rev-parse HEAD`,
+    `git -C '${w}' rev-parse --abbrev-ref HEAD`,
+  ], { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}` },
+  `The first command sets up the worktree for unit ${unit.id}; the other two report back what it ` +
+  `actually is. Never substitute a different base, a different branch or a different repository ` +
+  `for the ones written here, and never "repair" a failing command — its failure is the answer. ` +
+  // Setup is normally worth replaying from cache — it is idempotent and its report is a fact
+  // about a directory that still exists. When the probe says that directory is GONE (a rebuilt
+  // host, a pruned worktree root), the cached report describes a world that no longer exists, so
+  // this one call is salted back into a cache miss. Deliberately conditional: blanket-salting
+  // setup would re-run every unit's worktree creation on every resume (and the shas the commands
+  // carry already self-salt it whenever the tip moves).
+  (g0.worktree ? '' : LAUNCH))
+  const wsSha = ws.out(1)
+  const wsBranch = ws.out(2)
+  const wsExtra = { detail: ws.detail, sha: wsSha, branch: wsBranch, state }
+  if (!ws.ok)
+    return quarantine(unit, `workspace setup failed: ${ws.detail}`, wsExtra)
+  // The branch NAME is a read-back too, not an assumption: the live failure produced a worktree on
+  // the right branch name over the wrong history, and a variant of it produces the reverse.
+  if (wsBranch !== `unit/${unit.id}`)
+    return quarantine(unit, `the worktree at ${w} is on branch ${wsBranch || 'nothing'}, not unit/${unit.id}`, wsExtra)
+  // A fresh 'ready' worktree must sit exactly on the expected base unless forked from an explicit
+  // existingBranch (an eval fixture legitimately differs); an adopted branch legitimately diverges,
+  // so the assertion is 'ready'-only.
+  if (state === 'ready' && !unit.existingBranch && !sameSha(wsSha, base))
+    return quarantine(unit, `workspace setup failed or wrong base (got ${wsSha || 'nothing'}, expected ${source})`, wsExtra)
+  if (adoptTip && !sameSha(wsSha, adoptTip))
+    return quarantine(unit, `adopt tip mismatch (got ${wsSha || 'nothing'}, pre-captured ` +
+      `${unit.existingBranch} = ${adoptTip}) — the branch may have been recreated; check reflog / git fsck --unreachable`,
+      wsExtra)
+  if (issueMode) await ghUnitRunning(unit)
   const prov = await provision(w, `provision:${unit.id}`)
   if (!prov.ok)
     return quarantine(unit, `environment provisioning failed — fix tooling/provision config, not the spec: ${prov.detail}`, prov)
 
-  if (!unit.existingBranch && ws.state !== 'adopted') {
+  if (!unit.existingBranch && state !== 'adopted') {
   setStage(unit.id, 'plan')
   // Plan first, then the architect plan-check — wrong approaches die before code exists.
   // The IMPLEMENTER plans its own work (0.14.0): the same model family that will build this unit
@@ -2919,10 +2971,16 @@ async function runUnit(unit) {
     // of halting the wave the way runReq would — a single cheap probe dying twice while the rest of
     // the wave runs is not evidence of a platform outage, and the unit's commits are safe either
     // way: it re-enters by adoption next wave and is judged then.
-    const probe = await runOr({ ok: false, sha: '', unknown: true, detail: 'commit probe agent died' },
-      STRICT + `In the worktree at ${w}: report ok:true if \`git rev-list --count ${base}..HEAD\` is greater ` +
-      `than zero, else ok:false, and sha = HEAD. Report only; change nothing.` + LAUNCH,
-      { model: 'haiku', effort: 'low', phase: 'Implement', label: `commit-probe:${unit.id}`, schema: S.ws })
+    // "Is there work on this branch?" was a QUESTION put to a model ("report ok:true if the count
+    // is greater than zero"). It is two read-only commands and a comparison the script makes.
+    const cp = await courierRun(w, [`git rev-list --count ${base}..HEAD`, 'git rev-parse HEAD'],
+      { model: 'haiku', effort: 'low', phase: 'Implement', label: `commit-probe:${unit.id}` },
+      `These commands only READ. Change nothing. ` + LAUNCH)
+    const commits = cp.exit(0) === 0 && /^\d+$/.test(cp.out(0)) ? Number(cp.out(0)) : null
+    // A dead or unreadable probe is `unknown`, never "no commits" — absence of an answer is not
+    // the answer, and the difference decides between a park and a quarantine.
+    const probe = { unknown: commits === null, ok: commits !== null && commits > 0,
+      sha: cp.out(1), detail: cp.detail }
     if (probe.unknown) {
       degrade({ label: `commit-probe:${unit.id}`, model: 'haiku', phase: 'Implement', kind: 'commit-probe-unknown',
         what: `the implement report for ${unit.id} was lost AND the commit probe died — whether the branch holds ` +
@@ -3544,22 +3602,26 @@ async function mergeUnit(unit) {
 
   if (!res.merged && res.roadmapPaths?.length) {
     log(`${unit.id}: unit diff touches orchestrator-owned .roadmap/ (${res.roadmapPaths.join(', ')}) — stripping before merge`)
-    const strip = await run(
-      STRICT +
-      `In the worktree at ${wtOf(unit)} (branch unit/${unit.id}): restore every path under .roadmap/ to its state ` +
-      `at the merge base. Run \`BASE=$(git merge-base ${intBranch} HEAD)\`; then \`git checkout "$BASE" -- .roadmap/\` ` +
-      `(restores modified and deleted paths), and \`git rm -f\` each path listed by ` +
-      `\`git diff --name-only --diff-filter=A "$BASE"..HEAD -- .roadmap/\` (files the branch added; remove any ` +
-      `directories left empty). Commit the result with message "strip .roadmap/ — orchestrator-owned; original ` +
-      `content preserved in prior commits". Touch nothing outside .roadmap/. Report ok plus the new HEAD sha.`,
-      { model: 'haiku', phase: 'Merge', label: `strip-roadmap:${unit.id}`, schema: S.ws },
-    ).catch(() => null)
+    // A closed list, because this is the harness's only DESTRUCTIVE edit to a unit's branch. The
+    // pathspec `-- .roadmap/` is on every command, so "touch nothing outside .roadmap/" is a
+    // property of the commands rather than a promise extracted from an agent.
+    const strip = await courierRun(wtOf(unit), [
+      `BASE=$(git merge-base ${intBranch} HEAD) && { git checkout "$BASE" -- .roadmap/ 2>/dev/null || true; } && ` +
+        `git diff --name-only --diff-filter=A "$BASE"..HEAD -- .roadmap/ | tr '\\n' '\\0' | ` +
+        `xargs -0 -r git rm -f -q --ignore-unmatch --`,
+      'git add -A -- .roadmap/',
+      `git diff --cached --quiet -- .roadmap/ || git commit -q -m 'strip .roadmap/ — orchestrator-owned; ` +
+        `original content preserved in prior commits'`,
+      'git rev-parse HEAD',
+    ], { model: 'haiku', phase: 'Merge', label: `strip-roadmap:${unit.id}` },
+    `Every command carries the \`-- .roadmap/\` pathspec: nothing outside that directory is in scope, ` +
+    `and no other path may be added to any of them. `)
     addDebt(unit.id, res.head, [{
       what: `unit diff touched orchestrator-owned .roadmap/ paths, stripped before merge: ${res.roadmapPaths.join(', ')}`,
       why: 'units may never write .roadmap/; the stripped content survives in the branch history — adjudicate ' +
         'whether it belongs in a contract amendment (the channel it should have used)',
     }], { kind: 'contract', severity: 'major' })
-    if (!strip?.ok)
+    if (!strip.ok)
       return quarantine(unit, `unit diff touches .roadmap/ (${res.roadmapPaths.join(', ')}) and the strip commit ` +
         `failed — nothing merged; the branch is intact`, res)
     res = await withGateSlot(() => runReq(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}#restrip`, schema: S.merge }))
@@ -3738,18 +3800,33 @@ const planCycle = (units, edges) => {
 }
 
 phase('Setup')
-const intSetup = await runOr(
-  { ok: false, sha: '', priorTipAncestorExit: -1, detail: 'integration-worktree setup agent died without a report' },
-  STRICT +
-  `In the git repository at ${repo}: 1) ensure branch ${intBranch} exists — if not, create it at ` +
-  `${integrationTip}; 2) ensure a worktree for it exists at ${intWt} (git worktree add ${intWt} ${intBranch}); ` +
-  `if the path already exists, verify it is a clean checkout of ${intBranch} and reset it if not. ` +
-  `3) Then run exactly \`git merge-base --is-ancestor ${integrationTip} ${intBranch}\` and report its exit code ` +
-  `verbatim in \`priorTipAncestorExit\` (0, 1 or 128 — report what you got; never "fix" a non-zero exit, and ` +
-  `never rewind, reset or force the branch to make it zero). ` +
-  `Report ok:true only when the integration worktree is ready and clean, with its HEAD sha in \`sha\`.` + LAUNCH,
-  { model: 'haiku', phase: 'Setup', label: 'integration-worktree', schema: S.intws })
-if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup.detail ?? intSetup.sha}`)
+// The integration worktree, as a CLOSED COMMAND LIST (0.14.1). It used to be a three-step prose
+// brief — "ensure the branch exists", "verify it is a clean checkout and reset it if not", "report
+// the exit code verbatim" — i.e. three goals and a promise, handed to Haiku. Two of the three were
+// janitorial ("reset it if not"), and the third was the deciding fact of a two-way door. All three
+// are shell now: the branch is created only where `show-ref` says it is absent, the worktree only
+// where the path is not already a checkout, and the ancestry test's exit code is printed by the
+// SHELL (`; echo $?`) rather than transcribed by a model — which also keeps it off the courier's
+// stop-at-first-failure path, since a legitimate `is-ancestor` answer of 1 is not an error.
+const intCmds = [
+  `git show-ref --verify --quiet refs/heads/${intBranch} || git branch ${intBranch} ${integrationTip}`,
+  `test -d '${intWt}' && git -C '${intWt}' rev-parse --git-dir >/dev/null 2>&1 || git worktree add '${intWt}' ${intBranch}`,
+  // Idempotent, and the one thing the merge queue cannot do without: a merge on a detached HEAD
+  // makes a commit no branch can reach (2026-08-28). Already-on-branch exits 0.
+  `git -C '${intWt}' checkout ${intBranch}`,
+  `git -C '${intWt}' rev-parse HEAD`,
+  `git merge-base --is-ancestor ${integrationTip} ${intBranch}; echo $?`,
+]
+const intSetup = await courierRun(repo, intCmds, { model: 'haiku', phase: 'Setup', label: 'integration-worktree' },
+  `This list prepares the integration branch and its worktree and then READS one ancestry fact. ` +
+  `Never "fix" a non-zero exit and never rewind, reset or force a branch to make one zero — the ` +
+  `scheduler reads the exit codes and decides. ` + LAUNCH)
+if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup.detail}`)
+const intSha = intSetup.out(3)
+// The raw exit of `git merge-base --is-ancestor <checkpointed tip> <intBranch>`: 0 = the branch
+// merely moved ahead, 1 = the checkpointed tip is NOT on the branch, 128 = it does not resolve.
+// Anything unparseable is treated as "not an ancestor", which refuses rather than adopts.
+const priorTipAncestorExit = Number.isInteger(Number(intSetup.out(4))) ? Number(intSetup.out(4)) : -1
 // Git is the source of truth for the branch; state.json is bookkeeping. A relaunch with a
 // stale checkpoint would otherwise fork every unit off the old tip — and, if every unit
 // short-circuits at setup, write that stale tip back out, poisoning the next wave.
@@ -3759,17 +3836,17 @@ if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup
 // wave's merged work orphaned, silently, with the log line claiming progress. Adopt only when the
 // checkpointed tip is an ANCESTOR of the live branch tip (exit 0). Anything else means our record
 // and the branch have diverged, which is corruption, not drift — refuse to dispatch on top of it.
-if (!sameSha(intSetup.sha, integrationTip)) {
-  if (intSetup.priorTipAncestorExit === 0) {
-    log(`integration branch is ahead of the checkpointed tip — reconciled to ${intSetup.sha.slice(0, 7)}`)
-    integrationTip = intSetup.sha
+if (!sameSha(intSha, integrationTip)) {
+  if (priorTipAncestorExit === 0) {
+    log(`integration branch is ahead of the checkpointed tip — reconciled to ${intSha.slice(0, 7)}`)
+    integrationTip = intSha
   } else {
     degrade({ label: 'integration-worktree', model: 'haiku', phase: 'Setup', kind: 'tip-regressed',
       what: `checkpointed integration tip ${String(integrationTip).slice(0, 12)} is NOT an ancestor of ` +
-        `${intBranch} (tip ${String(intSetup.sha).slice(0, 12)}, is-ancestor exit ${intSetup.priorTipAncestorExit}) — ` +
+        `${intBranch} (tip ${String(intSha).slice(0, 12)}, is-ancestor exit ${priorTipAncestorExit}) — ` +
         `the branch was rewound, or merges landed where no branch can reach them. Wave halted before dispatch.` })
     throw new Error(`integration tip regressed: the checkpointed tip ${integrationTip} is not an ancestor of ` +
-      `${intBranch} (now ${intSetup.sha}); \`git merge-base --is-ancestor\` exited ${intSetup.priorTipAncestorExit}. ` +
+      `${intBranch} (now ${intSha}); \`git merge-base --is-ancestor\` exited ${priorTipAncestorExit}. ` +
       `Refusing to dispatch a wave on top of a branch our own record cannot reach. Operator: find the merges ` +
       `(\`git reflog ${intBranch}\`, \`git fsck --unreachable\`), decide which history is real, point ${intBranch} ` +
       `at it, and set state.json's integrationTip to match before relaunching. Nothing was changed.`)
@@ -3880,10 +3957,23 @@ if (previewStatus === 'pending') {
   //    the create and leave the wave with no preview worktree at all.
   const wt = await courierRun(repo, [
     previewStopCmd,
-    `git worktree list --porcelain | grep -qx 'worktree ${prevWt}' || git worktree add --detach ${prevWt} ${integrationTip}`,
+    // The guard tests the property the NEXT step actually needs — can the tree at ${prevWt} resolve
+    // this tip? — not merely "is that path in our worktree list". wf_c6971376-1a5: a rogue
+    // `git worktree add` from the orchestrator's own repo re-pointed the path at THAT repository
+    // while our stale list record survived, so `grep -qx` matched, the repair never ran, and both
+    // waves' `git checkout --detach <tip>` died with "fatal: unable to read tree". A worktree that
+    // cannot see the sha is not this repository's worktree, whatever the list says.
+    `git -C '${prevWt}' cat-file -e ${integrationTip}^{commit} 2>/dev/null || ` +
+      `{ git worktree remove --force '${prevWt}' 2>/dev/null; git worktree prune; ` +
+      `git worktree add --detach '${prevWt}' ${integrationTip}; }`,
+    // Read back what the tree can see, so the SCRIPT decides whether the worktree is usable.
+    `git -C '${prevWt}' cat-file -t ${integrationTip}^{commit}`,
   ], { model: 'haiku', phase: 'Preview', label: 'preview-worktree' }, previewSweepRetry + LAUNCH)
+  const wtUsable = wt.ok && wt.out(2) === 'commit'
   // 2. Deps/env, exactly as the integration worktree gets them. 3. Detach + bring the preview up.
-  const pv = wt.ok ? await provision(prevWt, 'provision:preview') : { ok: false, detail: wt.detail }
+  const pv = wtUsable ? await provision(prevWt, 'provision:preview')
+    : { ok: false, detail: wt.ok ? `${prevWt} cannot resolve ${String(integrationTip).slice(0, 12)} — it is not a ` +
+      `worktree of ${repo}` : wt.detail }
   const ps = pv.ok ? await previewAdvance(integrationTip, 'preview-setup', true) : { ok: false, detail: pv.detail }
   if (ps.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
   else {

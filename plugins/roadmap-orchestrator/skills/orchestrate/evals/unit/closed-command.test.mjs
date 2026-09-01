@@ -22,7 +22,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, courierResult, courierCommands, BASE_SHA, INT_SHA, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
+import { makeAgent, courierResult, courierSaying, courierCommands, BASE_SHA, INT_SHA,
+  assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -36,6 +37,7 @@ const runWave = async (agentFn, plan, state, config = {}) =>
 
 const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: 'npm run dev', healthcheck: 'curl -sf http://localhost:5173' }
 const callOf = (calls, label) => calls.find((c) => c.label === label)
+const has = (calls, label) => calls.some((c) => c.label.startsWith(label))
 const promptOf = (calls, label) => callOf(calls, label)?.prompt ?? ''
 // Every courier prompt ends in its numbered command list; this is the list the agent may run, with
 // the script-composed `cd '<where>' && ( … )` guard unwrapped (courierCommands asserts it is there).
@@ -228,10 +230,19 @@ test('preview: the worktree is provisioned like __integration and the operator c
   // The one command that must run in the primary checkout — `git worktree add` cannot run anywhere else.
   const wt = promptOf(calls, 'preview-worktree')
   assert.ok(wt.includes('In /repo:'), 'the worktree is added from the primary checkout')
-  assert.ok(commandsOf(wt).some((c) => c.includes('git worktree add --detach /wt/__preview')),
-    'the preview gets its own worktree')
-  assert.ok(commandsOf(wt).some((c) => c.includes('git worktree list --porcelain')),
-    'idempotent: a relaunch adopts the existing worktree instead of failing')
+  assert.ok(commandsOf(wt).some((c) => c.includes(`git worktree add --detach '/wt/__preview' ${BASE_SHA}`)),
+    'the preview gets its own worktree, at the tip the script named')
+  // CHANGED CONTRACT (0.14.1): the idempotency guard asks whether that tree can RESOLVE the tip,
+  // not whether the path is in our worktree list. Arc-observed (wf_c6971376-1a5): a rogue
+  // `git worktree add` run from the orchestrator's own repo re-pointed the path at THAT repository
+  // while our stale list record survived, so `grep -qx 'worktree <path>'` matched, the repair never
+  // ran, and both waves' previews died on `fatal: unable to read tree`.
+  assert.ok(commandsOf(wt).some((c) => c.includes(`git -C '/wt/__preview' cat-file -e ${BASE_SHA}^{commit} 2>/dev/null ||`)),
+    'idempotent on the fact that matters: a tree that cannot see the tip is rebuilt, not adopted')
+  assert.ok(!commandsOf(wt).some((c) => c.includes('git worktree list --porcelain')),
+    'the list guard is gone — it cannot tell which repository a path now belongs to')
+  assert.equal(commandsOf(wt)[2], `git -C '/wt/__preview' cat-file -t ${BASE_SHA}^{commit}`,
+    'and the tree reports back what it can see, so the SCRIPT decides whether the worktree is usable')
   assert.ok(!commandsOf(wt).some((c) => /checkout|status/.test(c)),
     'nothing checks out or inspects the primary checkout')
 
@@ -331,17 +342,18 @@ test('issue mode: every marker search carries the exact-first-line jq predicate'
 test('issue mode: a label edit resolved by search is gated on the issue not being CLOSED', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, ISSUE_PLAN(), makeState())
-  const setup = calls.find((c) => c.label.startsWith('setup:')).prompt
-  assert.ok(setup.includes('ISSTATE=${HIT##* }'), 'the search reports the state alongside the number')
-  assert.ok(setup.includes('if $ISS is non-empty AND $ISSTATE is not CLOSED'), 'and the edit is gated on it')
+  // The unit's `status:running` edit is its own call since 0.14.1 — setup is a courier now.
+  const p = promptOf(calls, 'issue-running:a')
+  assert.ok(p.includes('ISSTATE=${HIT##* }'), 'the search reports the state alongside the number')
+  assert.ok(p.includes('if $ISS is non-empty AND $ISSTATE is not CLOSED'), 'and the edit is gated on it')
 })
 
 test('issue mode: a cached issue number skips the search entirely', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, ISSUE_PLAN({ units: [unit('a', { issue: 57 })] }), makeState())
-  const setup = calls.find((c) => c.label.startsWith('setup:')).prompt
-  assert.ok(setup.includes('ISS=57;'), 'the Phase-0 cache is exact and immune to search-index lag')
-  assert.ok(!setup.includes(PREDICATE), 'no search is composed when the number is known')
+  const p = promptOf(calls, 'issue-running:a')
+  assert.ok(p.includes('ISS=57;'), 'the Phase-0 cache is exact and immune to search-index lag')
+  assert.ok(!p.includes(PREDICATE), 'no search is composed when the number is known')
 })
 
 test('file mode stays byte-identical: no marker search, no gh, no predicate', async () => {
@@ -423,4 +435,135 @@ test('STRICT: the location test proves WHICH checkout, and a linked worktree is 
   assert.ok(!/is not the described git checkout/.test(p), 'the judgement-call wording is gone')
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
+})
+
+// =========================================================================================
+// 8. Every remaining SHELL step is a courier (0.14.1) — unit setup, provisioning, preview.
+//
+// Paid conductor fixture wf_c6971376-1a5, the run this section exists for:
+//   * The free-form `provision:preview` agent never cd'd, printed
+//     `/workspaces/roadmap-orchestration` from `git rev-parse --show-toplevel` WITHOUT reporting it
+//     as the failure STRICT calls it, and then improvised
+//     `cd /workspaces/roadmap-orchestration && git worktree add <prevWt>` — no `--detach`, no base,
+//     in the ORCHESTRATOR'S OWN checkout. That created a `__preview` branch here and left the path
+//     registered as a worktree of two repositories, so both waves' previews died on
+//     "fatal: unable to read tree".
+//   * The free-form unit-setup agent for `consolidate-stats-gcd` dropped its cd prefix, concluded
+//     from probes run in THIS repo that its base sha "does not exist in repository", and forked the
+//     unit from the fixture's `main` HEAD instead — quarantined as "wrong base
+//     (got c4b03e36…, expected fb023153…)".
+// Both were the §19 failure class: a fact the script could compose, left to model compliance.
+// =========================================================================================
+const gitFacts = (id, { branch = false, ahead = 0, merged = false, wt = true } = {}) => [
+  { match: new RegExp(`^merged-probe:${id}$`),
+    result: () => ({ ok: true, exitCodes: [branch ? 0 : 1, merged ? 0 : 1, wt ? 0 : 1],
+      out: branch ? [BASE_SHA] : [''] }) },
+  { match: new RegExp(`^setup-commits:${id}$`), result: () => ({ ok: true, exitCodes: [0], out: [String(ahead)] }) },
+]
+
+test('unit setup: one composed command, the base the script named, and two read-backs it judges', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan(), makeState())
+  const setup = callOf(calls, 'setup:a')
+  const cmds = commandsOf(setup.prompt)
+  assert.equal(cmds.length, 3, 'set the worktree up, then report what it actually is')
+  assert.ok(cmds[0].endsWith(`git worktree add -b unit/a '/wt/a' ${BASE_SHA}`),
+    `the fork base is the sha the script holds, interpolated — got: ${cmds[0]}`)
+  assert.equal(cmds[1], `git -C '/wt/a' rev-parse HEAD`, 'the base is READ BACK out of the worktree')
+  assert.equal(cmds[2], `git -C '/wt/a' rev-parse --abbrev-ref HEAD`, 'and so is the branch name')
+  assert.ok(!/report the FIRST that matches|state:'ready'/.test(setup.prompt),
+    'the four-case prose ladder is gone — the case is chosen in code before the list is composed')
+  assert.equal(setup.schema.required.join(','), 'ok,results', 'a courier schema: no `state`, no `sha` verdict')
+})
+
+test('unit setup: a read-back HEAD that is not the base is the SCRIPT\'s wrong-base quarantine', async () => {
+  const WRONG = 'c4b03e36c4b03e36c4b03e36c4b03e36c4b03e36'   // the fixture repo's own main HEAD
+  const { fn, calls } = makeAgent([
+    { match: /^setup:a$/, result: courierSaying([[/rev-parse HEAD/, WRONG]]) },
+  ])
+  const state = await runWave(fn, makePlan(), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  assert.ok(state.units.a.reason.includes(`wrong base (got ${WRONG}, expected ${BASE_SHA})`),
+    `the live quarantine, reached from a read-back rather than from an agent's self-report — got: ${state.units.a.reason}`)
+  assert.ok(!has(calls, 'plan:a'), 'nothing is built on a worktree forked from the wrong history')
+})
+
+test('unit setup: a read-back branch that is not unit/<id> quarantines on the branch name alone', async () => {
+  const { fn } = makeAgent([
+    { match: /^setup:a$/, result: courierSaying([[/rev-parse --abbrev-ref HEAD/, 'main']]) },
+  ])
+  const state = await runWave(fn, makePlan(), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  assert.match(state.units.a.reason, /on branch main, not unit\/a/)
+})
+
+test('unit setup: crash re-entry VERIFIES an existing worktree instead of re-adding it', async () => {
+  // No branch yet: the composed command adds only where the path is not already a live checkout.
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan(), makeState())
+  assert.ok(commandsOf(promptOf(calls, 'setup:a'))[0]
+    .startsWith(`test -d '/wt/a' && git -C '/wt/a' rev-parse --git-dir >/dev/null 2>&1 || `),
+    'the "already there?" branch is SHELL, so the courier never chooses between verify and add')
+
+  // Crash residue with commits on the branch: the worktree is rebuilt only if it is not live, and
+  // the BRANCH is never touched — no -b, no -D, no reset.
+  const { fn: fn2, calls: c2 } = makeAgent(gitFacts('a', { branch: true, ahead: 2 }))
+  await runWave(fn2, makePlan(), makeState({ wave: 1, units: { a: { status: 'running' } } }))
+  const adopt = commandsOf(promptOf(c2, 'setup:a'))[0]
+  assert.ok(adopt.includes(`git worktree add '/wt/a' unit/a`), 'adoption attaches to the branch as it stands')
+  assert.ok(!/-b |branch -D/.test(adopt), 'an adopted branch is never recreated or deleted')
+})
+
+test('unit setup: a branch git says has commits is quarantined before any command is composed', async () => {
+  const { fn, calls } = makeAgent(gitFacts('a', { branch: true, ahead: 3 }))
+  const state = await runWave(fn, makePlan(), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  assert.match(state.units.a.reason, /has commits beyond its base/)
+  assert.ok(!has(calls, 'setup:a'), 'no worktree list is even sent — nothing can be destroyed')
+})
+
+test('provision: the plan\'s copy list and setup command, verbatim, and no git anywhere on the list', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW, provision: { copy: ['.env.local'], setup: 'node tools/gen-config.js' } }),
+    makeState())
+  for (const [label, where] of [['provision:integration', '/wt/__integration'], ['provision:a', '/wt/a'],
+    ['provision:preview', '/wt/__preview']]) {
+    const p = promptOf(calls, label)
+    assert.ok(p, `${label} ran`)
+    const cmds = commandsOf(p)
+    assert.deepEqual(cmds, [
+      `mkdir -p "$(dirname '${where}/.env.local')" && cp -a '/repo/.env.local' '${where}/.env.local'`,
+      'node tools/gen-config.js',
+    ], `${label} runs the plan's own commands and nothing else`)
+    // The exact reach the live run improvised its way into. It is not on the list, so it is
+    // outside the remit by construction — and the prompt says so as well.
+    assert.ok(!cmds.some((c) => /\bgit\b/.test(c)), `${label} composes no git command at all`)
+    assert.match(p, /Creating, moving or deleting a git worktree, a branch or a checkout is not among them/,
+      `${label} names the reach that cost two waves' previews`)
+  }
+})
+
+test('preview: a failed worktree courier degrades ONCE — the same agent is never asked to make it work', async () => {
+  const { fn, calls } = makeAgent([{ match: /^preview-worktree$/, result: courierFailingAt(/worktree add/) }])
+  const state = await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  assert.equal(state.preview.status, 'failed')
+  assert.equal(state.degradations.filter((d) => d.kind === 'preview-failed').length, 1, 'recorded once')
+  assert.equal(calls.filter((c) => c.label.startsWith('preview-worktree')).length, 1,
+    'no #retry, no #sweep, no second prompt at the same step')
+  assert.ok(!has(calls, 'provision:preview'), 'and nothing downstream is dispatched into a broken tree')
+  assert.ok(!has(calls, 'preview-setup'), 'least of all the detach that would fail against the wrong repository')
+  assert.equal(state.units.a.status, 'merged', 'the preview is observability: the wave is unaffected')
+})
+
+test('preview: a worktree that cannot resolve the tip is refused, however healthy its exits look', async () => {
+  // The live shape: every command exits 0 (the stale list record satisfied the old guard), but the
+  // tree cannot see the sha, because it belongs to another repository.
+  const { fn, calls } = makeAgent([
+    { match: /^preview-worktree$/, result: courierSaying([[/cat-file -t/, '']]) },
+  ])
+  const state = await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  assert.equal(state.preview.status, 'failed', 'exit 0 is not evidence the tree is ours')
+  assert.match(state.degradations.find((d) => d.kind === 'preview-failed').what,
+    /cannot resolve [0-9a-f]{12} — it is not a worktree of \/repo/)
+  assert.ok(!has(calls, 'preview-setup'), 'the detach that produced "unable to read tree" is never attempted')
 })

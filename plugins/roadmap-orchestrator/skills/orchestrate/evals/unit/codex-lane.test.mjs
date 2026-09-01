@@ -31,7 +31,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk,
+  courierSaying } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -208,7 +209,7 @@ test('e2 no-commit failure: a retry that reports nothing over an empty branch qu
   const { fn, calls } = makeAgent([
     { match: /^codex-build:a$/, result: () => deadRun() },
     { match: /^codex-build-retry:a/, result: () => { throw new Error('steering agent died') } },
-    { match: /^commit-probe:a$/, result: { ok: false, sha: '', detail: 'no commits' } },
+    { match: /^commit-probe:a$/, result: courierSaying([[/rev-list --count/, '0']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
@@ -676,7 +677,8 @@ test('o3c the frontier gate is handed the same digest', async () => {
 
 test('o4 a dead dossier writer falls back to the Haiku writer once — a dossier must exist', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^setup:a$/, result: { ok: true, sha: 'f'.repeat(40), state: 'ready' } },   // wrong base -> quarantine
+    // wrong base -> quarantine, read back out of the worktree by the script
+    { match: /^setup:a$/, result: courierSaying([[/rev-parse HEAD/, 'f'.repeat(40)]]) },
     // Anchored WITHOUT `$` so the adapter's own `#reattempt` dispatch is dead too — the write only
     // gives up after its retry, exactly like every other role.
     { match: /^dossier-write:a(?!#fallback)/, result: () => null },
