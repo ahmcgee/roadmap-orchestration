@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { loadScript } from './load.mjs'
 import {
   makeAgent,
+  sidecarRows,
+  assertAppendVerified,
   BASE_SHA,
   assertAllModelsPinned,
   assertSchemasPresent,
@@ -309,8 +311,11 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
   assert.ok(calls.some((c) => c.label === 'gap-consult:b#1'), 'a contract mismatch pulls the architect in')
   assert.ok(!calls.some((c) => c.label === 'adjudicate:b#1'),
     'and skips Opus triage — no adjudicator confined to this unit may rule on a surface binding every unit')
-  assert.equal((state.escalations ?? []).find((e) => e.unit === 'b')?.boundary, 'contract',
-    'the ledger records which boundary was crossed')
+  assert.equal(sidecarRows(calls, 'escalations').find((e) => e.unit === 'b')?.boundary, 'contract',
+    'the escalation SIDECAR records which boundary was crossed')
+  assert.equal(state.escalationStops?.b, 1,
+    'and state.json keeps only the stop count the three-strikes brake reads')
+  assert.equal(state.escalations, undefined, 'the ruling rows themselves never enter state.json')
   // The post-implement debt-fix sweep is gone with the Claude lane: the Codex brief's SCOPE
   // already demands in-scope fixing before the run reports done, so a surviving confession is
   // out-of-scope BY DECLARATION and goes straight to the ledger. A sweep round here would only
@@ -463,6 +468,10 @@ test('13 checkpoint coalescing: fewer writes than status changes, last write equ
   // "field written after" is the only difference; everything load-bearing must match.
   assert.equal(ret.spend.haiku, emb.spend.haiku + 1, 'only the final checkpoint write postdates the snapshot')
   emb.spend.haiku = ret.spend.haiku
+  // The RETURN value carries this wave's degradations for the conductor; the persisted document
+  // deliberately does not (they are append-only sidecar rows). Compare the rest.
+  delete ret.degradations
+
   assert.deepEqual(emb, ret, 'final checkpoint payload equals the returned state (modulo its own write)')
 })
 
@@ -530,6 +539,10 @@ test('13b large-state checkpoint: fan-out — one bounded writer per part, assem
   // Same accounting as test 13, but the final write is n writers + 1 assembler after the snapshot.
   assert.equal(ret.spend.haiku, reassembled.spend.haiku + n + 1, 'only the final fan-out postdates the snapshot')
   reassembled.spend.haiku = ret.spend.haiku
+  // The RETURN value carries this wave's degradations for the conductor; the persisted document
+  // deliberately does not (they are append-only sidecar rows). Compare the rest.
+  delete ret.degradations
+
   assert.deepEqual(reassembled, ret, 'the parts reassemble to the returned state')
 })
 
@@ -771,23 +784,53 @@ test('21 a stale `deferred` stamp on an in-scope unit is cleared at wave start',
   assert.equal(state.units.a.status, 'merged', 'a unit the plan says is in scope must be dispatched')
 })
 
-// Degradations are arc-cumulative like spend: a per-wave direct-harness run must extend the prior
-// record, never erase it (arc-observed: serialize() dropped prior.degradations, so each wave's
-// state.json write destroyed the previous waves' skill-defect evidence).
-test('22 degradations carry forward: prior entries survive serialize, fresh ones append', async () => {
-  const PRIOR = { script: 'harness', wave: 1, label: 'old:x', model: 'haiku', kind: 'no-report', what: 'w1 loss' }
-
-  // A wave that adds a fresh degradation (lost build report, commits present — the test-18 shape).
-  const { fn } = makeAgent([
+// Degradations are EVENTS, not state. They used to ride inside state.json, arc-cumulative — a third
+// of a 170-190 KB document by wave 19, re-transcribed at every checkpoint, so each row made the next
+// write likelier to fail and each failure appended another row (91 lost checkpoints in one arc).
+// Now: appended ONCE to .roadmap/degradations.jsonl at the moment they happen, carried back to the
+// conductor in the return envelope, and absent from every persisted document.
+test('22 degradations are sidecar rows: appended once, never serialized into state.json', async () => {
+  const { fn, calls } = makeAgent([
     { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
     { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
   ])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, degradations: [PRIOR] }))
-  assert.deepEqual(state.degradations[0], PRIOR, 'prior entry survives verbatim, first')
-  assert.ok(state.degradations.some((d) => d.label === 'codex-build:a'), 'the fresh loss is appended after it')
+  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1 }))
 
-  // A clean wave: the prior record alone still round-trips.
-  const { fn: fn2 } = makeAgent()
-  const clean = await runWave(fn2, makePlan([unit('a')]), makeState({ wave: 1, degradations: [PRIOR] }))
-  assert.deepEqual(clean.degradations, [PRIOR], 'a clean wave neither drops nor duplicates the record')
+  // The envelope carries this wave's rows; the checkpoint document carries none of them.
+  assert.ok(state.degradations.some((d) => d.label === 'codex-build:a'), 'the loss rides back in the return envelope')
+  for (const cp of calls.filter((c) => c.label === 'checkpoint'))
+    assert.ok(!cp.prompt.includes('"degradations"'), 'no checkpoint document ever carries a degradation ledger')
+
+  // One append per row, verified by cksum over the file's tail, and unable to reach prior rows.
+  const rows = sidecarRows(calls, 'degradations')
+  assert.ok(rows.some((d) => d.label === 'codex-build:a' && d.kind === 'schema-retry'),
+    'the row itself, in full, is on disk in .roadmap/degradations.jsonl')
+  assert.deepEqual(rows, state.degradations, 'the sidecar and the envelope agree exactly — one write per event')
+  const app = calls.filter((c) => c.label === 'sidecar:degradations')
+  assert.ok(app.length >= 1, 'the sidecar was written')
+  const body = app[0].prompt.split('<<<APPEND>>>\n')[1]
+  assertAppendVerified(app[0].prompt, '/repo/.roadmap/degradations.jsonl', `${body}\n`, 'the degradation sidecar writer')
+
+  // A clean wave writes nothing at all.
+  const { fn: fn2, calls: calls2 } = makeAgent()
+  const clean = await runWave(fn2, makePlan([unit('a')]), makeState({ wave: 1 }))
+  assert.deepEqual(clean.degradations, [], 'a clean wave has nothing to report')
+  assert.equal(calls2.some((c) => c.label.startsWith('sidecar:')), false, 'and appends nothing')
+})
+
+// A lost sidecar append must NOT degrade — that would recurse into the mechanism that is failing.
+// It is counted instead, in a state field that is loud and cannot feed itself.
+test('22b a sidecar append lost twice is counted in state.sidecarLost, never re-degraded', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:a/, result: () => { throw structuredOutputError() } },
+    { match: /^commit-probe:a$/, result: { ok: true, sha: BASE_SHA } },
+    { match: /^sidecar:degradations$/, result: { ok: false, detail: 'cksum printed 9 120' } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1 }))
+  assert.ok(state.sidecarLost >= 1, 'the loss is counted where a reader will see it')
+  assert.equal(calls.filter((c) => c.label.startsWith('sidecar:')).length,
+    calls.filter((c) => c.label === 'sidecar:degradations').length,
+    'a failed degradation append never queues another one — no recursion')
+  assert.ok(!state.degradations.some((d) => d.kind === 'sidecar-failed'),
+    'and never becomes a degradation itself')
 })

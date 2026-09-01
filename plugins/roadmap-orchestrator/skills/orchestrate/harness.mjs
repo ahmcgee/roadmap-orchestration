@@ -374,13 +374,19 @@ for (const [k, v] of Object.entries(prior.spend ?? {}))
 // the exit gates, or the implementer. Returned in the wave state; the architect triages it
 // at the next boundary and appends un-promoted items to the living .roadmap/debt.md.
 const debtLog = []
-// Escalation ledger. Every ruling on an implementer stop, arc-cumulative: which tier answered it,
-// which boundary it crossed, and who ruled. Two consumers beyond forensics — the three-strikes
-// rule needs a count that survives a unit re-entering in a LATER wave (the in-pipeline counter
-// resets), and escalation-rate-per-unit is the calibration signal that replaced the old
-// self-estimated "0.5-2 agent-hours" sizing heuristic. A unit that stopped five times was
-// under-specified; one that never stopped could have been sized larger.
-const escalationLog = [...(prior.escalations ?? [])]
+// Escalation ledger. Every ruling on an implementer stop: which tier answered it, which boundary it
+// crossed, and who ruled — one JSON line each in the append-only .roadmap/escalations.jsonl sidecar,
+// written at the ruling and never re-transcribed. state.json keeps only the per-unit STOP COUNT,
+// which is the only part the run itself READS: the three-strikes brake needs a count that survives a
+// unit re-entering in a LATER wave (the in-pipeline counter resets), and escalation-rate-per-unit is
+// the calibration signal that replaced the old self-estimated "0.5-2 agent-hours" sizing heuristic.
+// A unit that stopped five times was under-specified; one that never stopped could have been sized
+// larger. Forensics on disk, decisions in state.
+const escalationStops = { ...(prior.escalationStops ?? {}) }
+const escalate = (row) => {
+  escalationStops[row.unit] = (escalationStops[row.unit] ?? 0) + 1
+  sidecarAppend('escalations', { script: 'harness', wave: (prior.wave ?? 0) + 1, ...row })
+}
 // Normalized against the schema enums: an out-of-enum kind (the old 'quality' default was one)
 // rode into state.json and collapsed unpredictably downstream. 'contract' is legal here — the
 // mismatch pathway stamps it directly and the conductor routes on it.
@@ -407,15 +413,20 @@ const asDirectives = (items) => items.map((d) => ({
   what: `Fix now (correctness debt is not bankable): ${d.what}`,
   why: d.why || 'a correctness-kind finding blocks approval; banking it would ship a known bug',
 }))
-// Skill-defect ledger for THIS wave: every time the ORCHESTRATOR's own machinery misbehaves — an
-// agent dies without a report, a schema-retry fires, a salvage rescues a null — record it here
-// instead of silently swallowing it. Rides back in the wave state; the root renders it into
-// .roadmap/skill-feedback.md. Every safety net below is otherwise SILENT, which is exactly how a
-// deterministic schema-cap bug masqueraded as three runs of "network flakiness" (RATIONALE §14).
-// Defects in the ORCHESTRATOR only — product imperfections go to `debt`, a different audience.
+// Skill-defect ledger: every time the ORCHESTRATOR's own machinery misbehaves — an agent dies
+// without a report, a schema-retry fires, a salvage rescues a null — record it instead of silently
+// swallowing it. Every safety net below is otherwise SILENT, which is exactly how a deterministic
+// schema-cap bug masqueraded as three runs of "network flakiness" (RATIONALE §14). Defects in the
+// ORCHESTRATOR only — product imperfections go to `debt`, a different audience.
+// The arc's record is the append-only .roadmap/degradations.jsonl sidecar (sidecarAppend below),
+// written once at the event. THIS array holds this wave's rows only: it is read in-script (the
+// commit-probe dossier mines it for the real cause) and rides back to the conductor in the RETURN
+// value — deliberately NOT in serialize(), so state.json cannot grow with it.
 const degradations = []
 const degrade = (o) => {
-  degradations.push({ script: 'harness', wave: (prior.wave ?? 0) + 1, ...o })
+  const row = { script: 'harness', wave: (prior.wave ?? 0) + 1, ...o }
+  degradations.push(row)
+  sidecarAppend('degradations', row)
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
 
@@ -757,13 +768,15 @@ const serialize = () => ({
   // Debt surfaced THIS wave (not accumulated across waves): the architect triages it at the
   // boundary and appends un-promoted items to the living .roadmap/debt.md ledger.
   debt: debtLog,
-  escalations: escalationLog,
-  // Skill defects — the orchestrator misbehaving, not the product. Arc-cumulative like spend:
-  // prior entries carry forward, this wave's append (without the concat, per-wave direct-harness
-  // runs erased the arc's degradation history each wave). The conductor renders these into
-  // .roadmap/skill-feedback.md and absorbs only the delta past what it dispatched.
-  ...(((prior.degradations?.length ?? 0) + degradations.length)
-    ? { degradations: [...(prior.degradations ?? []), ...degradations] } : {}),
+  // Escalation stop counts per unit, arc-cumulative — the three-strikes brake reads these. The
+  // rulings themselves, and every degradation, are append-only sidecar lines
+  // (.roadmap/escalations.jsonl, .roadmap/degradations.jsonl): NEITHER is serialized here. They
+  // were, and re-transcribing an arc-cumulative ledger at every checkpoint is what drove
+  // state.json to 8 parts and 91 lost checkpoints in one arc.
+  ...(Object.keys(escalationStops).length ? { escalationStops } : {}),
+  // Rows that never reached their sidecar. Loud (a non-zero value means forensics are missing)
+  // and bounded — a sidecar failure must never itself degrade, or it feeds its own ledger.
+  ...(sidecarLost ? { sidecarLost } : {}),
   ...(owed.length ? { owed } : {}),
   ...(boundary ? { boundary } : {}),
   // Codex availability, the conductor's early-return signal: a `halt` here means the wave
@@ -899,6 +912,54 @@ const runVerbatim = async (plan, opts, prefix = '') => {
   if (failed.length) return { ok: false, detail: `${failed.join('; ')} — assembly skipped, previous file left intact` }
   const a = await call(plan.assemble, `${opts.label}:assemble`)
   return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
+}
+// Append-only sidecar write: ONE `>>` here-doc, verified by cksum over the file's TAIL. A sidecar is
+// arc-cumulative and lives only on disk, so the script can never know the whole file — but it knows
+// exactly the bytes it is appending, and `tail -c <bytes>` isolates them, so the same content hash
+// that guards a whole-file write guards an append. Mirrored in both scripts — keep the two in sync
+// (shared-consts.test.mjs enforces it).
+const appendVerbatim = (path, text) => {
+  const ck = cksumOf(`${text}\n`)
+  return `Append to the file ${path} (create it if it is missing) EXACTLY the lines below and nothing else. ` +
+    `NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file: it is append-only ` +
+    `and everything already in it is another agent's record. Append in ONE Bash tool call through a ` +
+    `single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit tool (a ` +
+    `file-write tool re-interprets escapes; escape sequences such as \\n and \\" inside JSON string values are ` +
+    `literal characters to copy, not instructions): run \`cat >> ${path} <<'ROADMAP_APPEND'\` followed by the ` +
+    `lines and a closing \`ROADMAP_APPEND\` line. Then verify: \`tail -c ${ck.bytes} ${path} | cksum\` must ` +
+    `print exactly \`${ck.crc} ${ck.bytes}\`; if it prints anything else, report ok:false with the observed ` +
+    `output in detail. NEVER edit, pad, trim, or rewrite the file to make the numbers match — a mismatch is ` +
+    `reported, not repaired. Retry the append at most once. The lines are every line after the <<<APPEND>>> ` +
+    `marker line to the end of this message, excluding the marker line.\n<<<APPEND>>>\n${text}`
+}
+// Event sidecars. `degradations` and `escalations` used to ride INSIDE state.json, arc-cumulative:
+// by wave 19 of a live arc they were a third of a 170-190 KB document that EVERY checkpoint
+// re-transcribed, so each row made the next write likelier to fail and each failed write appended
+// another row (91 `write-failed` rows in one arc, growing with the wave number). They are EVENTS,
+// not state — ONE JSON line appended at the moment they happen, never rewritten. state.json keeps
+// only what the run's own decisions read; the wave's degradations ride back to the conductor in the
+// RETURN value, in memory, never on disk.
+const sidecarPath = (kind) => `${repo}/.roadmap/${kind}.jsonl`
+let sidecarLost = 0
+let sidecarChain = Promise.resolve()
+const sidecarPending = { degradations: [], escalations: [] }
+// Queue a row and flush on a serial chain: a burst coalesces into one append, and two appends never
+// interleave. A LOST append must NOT call degrade() — that recurses into the very mechanism that is
+// failing. runVerbatim's own single retry is the only retry; after it the rows are counted in
+// `sidecarLost`, which rides in state.json: loud, bounded, and not self-feeding.
+function sidecarAppend(kind, row) {
+  sidecarPending[kind].push(row)
+  sidecarChain = sidecarChain.then(async () => {
+    const rows = sidecarPending[kind].splice(0)
+    if (!rows.length) return
+    const text = rows.map((r) => JSON.stringify(r, (_k, v) => scrubCtrl(v))).join('\n')
+    const r = await runVerbatim({ single: appendVerbatim(sidecarPath(kind), text) },
+      { model: 'haiku', effort: 'low', label: `sidecar:${kind}`, phase: 'Setup', schema: S.ok }, STRICT)
+    if (!r.ok) {
+      sidecarLost += rows.length
+      log(`SIDECAR LOST ${rows.length} ${kind} row(s) — ${r.detail} (see the agent transcript)`)
+    }
+  }).catch(() => null)
 }
 
 // Crash-safety checkpoint of the whole wave state. Coalesced latest-wins (same idiom as the
@@ -1808,7 +1869,7 @@ async function runUnit(unit) {
       // gate, reading an EMPTY escalations ledger, correctly judged the ruling fabricated and
       // demanded an escalation that had already happened. The unit quarantined with its retry
       // budget spent. Two adjudication paths and one ledger is the defect; the gate was right.
-      escalationLog.push({ unit: unit.id, stop: 0, tier: 'decided', boundary: 'none',
+      escalate({ unit: unit.id, stop: 0, tier: 'decided', boundary: 'none',
         by: 'plan-check', gap: `plan-check redirect: ${check.guidance}` })
       // And the ruling lands in the spec for the same reason a tier-1 ladder ruling does: the
       // prompt that carried it does not outlive the session, but every later reader — review,
@@ -1976,7 +2037,7 @@ async function runUnit(unit) {
     else gap = null
     let guidance = null                 // set only when a ruling must be applied as a fix round
     const pinned = envelope?.length ? envelope.join(', ') : 'the files this unit already touches'
-    const priorStops = escalationLog.filter((e) => e.unit === unit.id).length
+    const priorStops = escalationStops[unit.id] ?? 0
     const v = (isMismatch || priorStops >= 2) ? null : await run(
       `You are adjudicating an implementer escalation on unit ${unit.id}. The implementer stopped and reported a ` +
       `decision it says the spec does not settle: "${reported}". Read the spec at ${spec}, the contracts it ` +
@@ -1997,7 +2058,7 @@ async function runUnit(unit) {
     if (v && v.tier !== 'escalate') {
       gapConsulted = true
       guidance = v.guidance
-      escalationLog.push({ unit: unit.id, stop: stops, tier: v.tier, boundary: v.boundary, by: 'opus', gap: reported })
+      escalate({ unit: unit.id, stop: stops, tier: v.tier, boundary: v.boundary, by: 'opus', gap: reported })
       // A "decided" ruling settles something the spec did not. It has to land IN the spec: the
       // implementer's own context may compact before the unit ends, and review, the gate and any
       // later reader see the spec, never this resume prompt.
@@ -2033,7 +2094,7 @@ async function runUnit(unit) {
       // Leaving the trigger unconsumed is the conservative outcome — mismatchEver/gapEver still
       // force the frontier gate, so the decision is adjudicated there instead of being lost.
       if (!gd?.action) break
-      escalationLog.push({ unit: unit.id, stop: stops, tier: 'escalate',
+      escalate({ unit: unit.id, stop: stops, tier: 'escalate',
         boundary: isMismatch ? 'contract' : (v?.boundary ?? 'three-strikes'),
         by: 'fable', action: gd.action, gap: reported })
       if (gd.action === 'quarantine') return quarantine(unit, 'spec-gap consult: the unsettled decision invalidates the unit', gd)
@@ -2579,4 +2640,8 @@ if (C.boundary !== 'off' && !codexHalt) {
 await syncIssues().catch((e) => log(`issue sync failed — continuing (${e?.message ?? e})`))
 checkpoint()                                        // state.json reflects mirror + boundary
 await checkpointChain
-return serialize()
+await sidecarChain                                  // drain pending degradation/escalation appends
+// The RETURN value carries this wave's degradations; serialize() (what lands on disk) does not.
+// The conductor absorbs them in memory for its return envelope and the skill-degradations
+// summary, and strips them before persisting — so no ledger is ever re-transcribed.
+return { ...serialize(), degradations }

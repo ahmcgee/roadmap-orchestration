@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from './load.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
+import { makeAgent, sidecarRows, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -512,7 +512,7 @@ test('14 empty triggers: a literal double-quote pair is not a report', async () 
   assert.ok(!has(calls, 'adjudicate:a#1'), 'an empty gap summons no adjudicator')
   assert.ok(!has(calls, 'gap-consult:a#1'), 'and certainly no frontier consult')
   assert.equal(state.consultsUsed, 0)
-  assert.deepEqual(state.escalations ?? [], [], 'nothing is recorded in the escalation ledger')
+  assert.deepEqual(sidecarRows(calls, 'escalations'), [], 'nothing is recorded in the escalation ledger')
   assert.ok(!(state.debt ?? []).some((d) => /contract mismatch/.test(d.what ?? '')),
     'and no bogus contract-mismatch debt is banked')
   assert.ok(has(calls, 'opus-gate:a#0'), 'an empty trigger does not force the frontier gate either')
@@ -566,7 +566,7 @@ test('16 plan-check rulings are recorded in the same ledger the ladder writes to
   ])
   const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
 
-  const entry = (state.escalations ?? []).find((e) => e.by === 'plan-check')
+  const entry = sidecarRows(calls, 'escalations').find((e) => e.by === 'plan-check')
   assert.ok(entry, 'a plan-check redirect is an adjudication and must leave a trace')
   assert.equal(entry.unit, 'a')
   assert.equal(entry.tier, 'decided')

@@ -127,14 +127,25 @@ const deltaSpend = (sp) => {
   return d
 }
 
+// Debt the conductor has RECEIVED but not yet seen banked. Two reasons it cannot live in
+// `state.debt` alone: the harness rebuilds that field from scratch every wave (so an unbanked item
+// evaporates at the next dispatch), and the clear used to happen BEFORE the bank call with its
+// result never inspected — arc-observed, 23 items vanished at one wave-12 boundary.
+let pendingDebt = []
+// plan.json held unit ids this run never saw, so persist-plan REFUSED to overwrite it. Surfaced on
+// the return envelope: the root merges by hand. No automatic merge — a wrong merge is worse than a
+// refused one.
+const planConflicts = []
 // Skill-defect ledger — the orchestrator misbehaving, not the product (same idiom as harness.mjs).
-// Seeded arc-cumulative from the passed state so a mid-arc relaunch extends the record rather than
-// erasing it, and merged with whatever the child harness reports. The root renders it to
-// .roadmap/skill-feedback.md; the conductor also stamps it there at every persist point, because a
-// run that dies never returns and its evidence would otherwise die with it.
-const degradations = [...(inState.degradations ?? [])]
+// THIS RUN's rows only: the conductor's own plus whatever the child harness returns. The ARC's
+// record is the append-only .roadmap/degradations.jsonl sidecar, written once at the event; nothing
+// re-transcribes it and it never rides in state.json (carrying it there is what made every
+// checkpoint bigger than the last). What is kept here feeds the return envelope and the summary.
+const degradations = []
 const degrade = (o) => {
-  degradations.push({ script: 'conductor', wave: state?.wave ?? 0, ...o })
+  const row = { script: 'conductor', wave: state?.wave ?? 0, ...o }
+  degradations.push(row)
+  sidecarAppend('degradations', row)
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
 
@@ -320,6 +331,64 @@ const runVerbatim = async (plan, opts, prefix = '') => {
   const a = await call(plan.assemble, `${opts.label}:assemble`)
   return a.ok ? a : { ok: false, detail: `assemble: ${a.detail}` }
 }
+// Append-only sidecar write: ONE `>>` here-doc, verified by cksum over the file's TAIL. A sidecar is
+// arc-cumulative and lives only on disk, so the script can never know the whole file — but it knows
+// exactly the bytes it is appending, and `tail -c <bytes>` isolates them, so the same content hash
+// that guards a whole-file write guards an append. Mirrored in both scripts — keep the two in sync
+// (shared-consts.test.mjs enforces it).
+const appendVerbatim = (path, text) => {
+  const ck = cksumOf(`${text}\n`)
+  return `Append to the file ${path} (create it if it is missing) EXACTLY the lines below and nothing else. ` +
+    `NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file: it is append-only ` +
+    `and everything already in it is another agent's record. Append in ONE Bash tool call through a ` +
+    `single-quoted here-doc so the shell interprets nothing — never echo, printf, or a file-write/edit tool (a ` +
+    `file-write tool re-interprets escapes; escape sequences such as \\n and \\" inside JSON string values are ` +
+    `literal characters to copy, not instructions): run \`cat >> ${path} <<'ROADMAP_APPEND'\` followed by the ` +
+    `lines and a closing \`ROADMAP_APPEND\` line. Then verify: \`tail -c ${ck.bytes} ${path} | cksum\` must ` +
+    `print exactly \`${ck.crc} ${ck.bytes}\`; if it prints anything else, report ok:false with the observed ` +
+    `output in detail. NEVER edit, pad, trim, or rewrite the file to make the numbers match — a mismatch is ` +
+    `reported, not repaired. Retry the append at most once. The lines are every line after the <<<APPEND>>> ` +
+    `marker line to the end of this message, excluding the marker line.\n<<<APPEND>>>\n${text}`
+}
+// Agent-authored report text can carry raw control characters (an explorer's `repro` string quoting
+// a \x01 test input, arc-observed). JSON.stringify escapes those correctly — but every file here is
+// written by a Haiku agent TRANSCRIBING the document, and the transcription decodes the escape back
+// into a raw byte, producing a document no JSON parser will read. A control character in a
+// human-readable report is never load-bearing, so it is replaced with a printable token BEFORE
+// serialization, leaving no escape for a transcriber to get wrong. Mirrored from harness.mjs.
+const CTRL_UNSAFE = /[\u0000-\u0007\u000b\u000e-\u001f\u007f]/g
+const scrubCtrl = (v) => (typeof v === 'string'
+  ? v.replace(CTRL_UNSAFE, (c) => `<0x${c.charCodeAt(0).toString(16).padStart(2, '0')}>`)
+  : v)
+// Event sidecars. `degradations` and `escalations` used to ride INSIDE state.json, arc-cumulative:
+// by wave 19 of a live arc they were a third of a 170-190 KB document that EVERY checkpoint
+// re-transcribed, so each row made the next write likelier to fail and each failed write appended
+// another row (91 `write-failed` rows in one arc, growing with the wave number). They are EVENTS,
+// not state — ONE JSON line appended at the moment they happen, never rewritten. state.json keeps
+// only what the run's own decisions read; the wave's degradations ride back to the conductor in the
+// RETURN value, in memory, never on disk.
+const sidecarPath = (kind) => `${repo}/.roadmap/${kind}.jsonl`
+let sidecarLost = 0
+let sidecarChain = Promise.resolve()
+const sidecarPending = { degradations: [], escalations: [] }
+// Queue a row and flush on a serial chain: a burst coalesces into one append, and two appends never
+// interleave. A LOST append must NOT call degrade() — that recurses into the very mechanism that is
+// failing. runVerbatim's own single retry is the only retry; after it the rows are counted in
+// `sidecarLost`, which rides in state.json: loud, bounded, and not self-feeding.
+function sidecarAppend(kind, row) {
+  sidecarPending[kind].push(row)
+  sidecarChain = sidecarChain.then(async () => {
+    const rows = sidecarPending[kind].splice(0)
+    if (!rows.length) return
+    const text = rows.map((r) => JSON.stringify(r, (_k, v) => scrubCtrl(v))).join('\n')
+    const r = await runVerbatim({ single: appendVerbatim(sidecarPath(kind), text) },
+      { model: 'haiku', effort: 'low', label: `sidecar:${kind}`, phase: 'Persist', schema: S.ok }, STRICT)
+    if (!r.ok) {
+      sidecarLost += rows.length
+      log(`SIDECAR LOST ${rows.length} ${kind} row(s) — ${r.detail} (see the agent transcript)`)
+    }
+  }).catch(() => null)
+}
 // Await a verbatim write and ledger any failure as a `write-failed` degradation — a lost persist
 // is exactly the evidence-destroying silence the degradation ledger exists to catch. Never throws.
 const persistVerbatim = async (path, text, opts, extra = '') => {
@@ -418,6 +487,22 @@ S.newIssues = obj({
   opened: { type: 'array', items: obj({ id: { type: 'string' }, number: { type: 'number' } }, ['id', 'number']) },
   detail: { type: 'string' },
 }, ['ok'])
+// bank-debt reports back the markers it VERIFIED are present, so the script clears exactly those and
+// carries the rest. Uncapped for the same reason as S.newIssues: every marker is echoed from a string
+// this script composed and handed in, so there is nothing for the model to overrun.
+S.banked = obj({
+  ok: { type: 'boolean' },
+  banked: { type: 'array', items: obj({ marker: { type: 'string' }, number: { type: 'number' } }, ['marker']) },
+  detail: { type: 'string' },
+}, ['ok', 'banked'])
+// plan-ids: the on-disk unit ids, read back BEFORE persist-plan overwrites plan.json. A courier
+// shape — it reports facts, the script judges. Uncapped: the ids are echoed from a file this
+// script wrote.
+S.planIds = obj({
+  ok: { type: 'boolean' },
+  ids: { type: 'array', items: { type: 'string' } },
+  detail: { type: 'string' },
+}, ['ok', 'ids'])
 
 /* ------------------------------- helpers ------------------------------- */
 // Kebab-sanitize + 60-char cap. Deterministic (no Date/random) so ids are resume-stable.
@@ -508,37 +593,39 @@ const draftSkeleton = (d) => ({
 
 const contractPaths = () => [...new Set(plan.edges.filter((e) => e.contract).map((e) => e.contract))]
 
-// .roadmap/skill-feedback.md — the ORCHESTRATOR's own defect log, and the one artifact meant to
-// leave this repo: the user carries it back to the skill's own repo. It is therefore a LIVING doc
-// (like constraints.md / debt.md), never archived with the arc, and strictly separate from debt.md
-// (product imperfections, a different audience). Written at EVERY persist point, not just on
-// return, because a run that dies never returns and its evidence would die with it. Rendering is a
-// pure function of `degradations`, so a resume rewrites it byte-identically.
-const fmtDegradation = (d) =>
-  `- **${d.kind ?? 'unknown'}** \`${d.label ?? 'agent'}\` (${d.script ?? '?'} · ${d.model ?? '?'} · wave ${d.wave ?? '?'}` +
-  `${d.phase ? ` · ${d.phase}` : ''}) — ${d.what ?? ''}`
-async function writeSkillFeedback() {
+// .roadmap/skill-degradations.md — the MACHINE-owned half of the orchestrator's own defect log.
+// It used to be a marker region INSIDE the hand-written .roadmap/skill-feedback.md, rewritten by an
+// unverified Haiku edit whose content grew with every degradation; twice the growing region ate the
+// hand-written entry above it (the truncated fragment in the shipped ledger is the evidence). Two
+// changes close that for good: the orchestrator never touches skill-feedback.md again — that file is
+// human-owned, full stop — and this one is a WHOLE-FILE cksum-verified write of a summary that
+// CANNOT grow with the row count (one line per distinct kind; the rows themselves are in the
+// append-only sidecar). Written at every persist point, not just on return, because a run that dies
+// never returns. A pure function of `degradations`, so a resume rewrites it byte-identically.
+async function writeSkillDegradations() {
   if (!degradations.length) return
-  const body = degradations.map(fmtDegradation).join('\n')
-  // Marker-region replace, never a whole-file overwrite (the debt.md wave-section idiom): the
-  // file also carries HAND-WRITTEN sections — architect/user observations added while a run is
-  // in flight — and a full rewrite silently destroyed one arc's design-feedback section. Only
-  // the delimited region is the renderer's; everything outside it must survive byte-for-byte.
-  await run(
-    STRICT + `In the file ${repo}/.roadmap/skill-feedback.md: if the file does not exist, create it ` +
-    `starting with this header:\n# Skill feedback — roadmap-orchestrator\n\nDefects in the ORCHESTRATOR ` +
-    `itself (not the product) observed while running this arc. Carry these back to the skill's repository; ` +
-    `they are not product debt and do not belong in debt.md.\n\nThen ensure the file contains exactly one ` +
-    `region delimited by the marker lines \`<!-- roadmap:degradations -->\` and ` +
-    `\`<!-- /roadmap:degradations -->\`: if both markers already exist, replace ONLY the lines between ` +
-    `them; otherwise append the whole delimited region at the end of the file. Everything outside the ` +
-    `markers is hand-written and must survive byte-for-byte — change nothing else in the file. The region, ` +
-    `markers included, is exactly:\n<!-- roadmap:degradations -->\n## Degradations ` +
-    `(${degradations.length})\n\n${body}\n\nEach line names the agent label — find its transcript in the ` +
-    `workflow's agent-*.jsonl to see the real error, which the platform does not expose to the script.\n` +
-    `<!-- /roadmap:degradations -->\n`,
-    { model: 'haiku', effort: 'low', label: 'skill-feedback', phase: 'Persist', schema: S.ok },
-  ).catch(() => null)
+  const byKind = new Map()
+  for (const d of degradations) {
+    const k = d.kind ?? 'unknown'
+    if (!byKind.has(k)) byKind.set(k, { n: 0, last: '' })
+    const e = byKind.get(k)
+    e.n++
+    e.last = `${d.label ?? 'agent'} (${d.script ?? '?'} · ${d.model ?? '?'} · wave ${d.wave ?? '?'})`
+  }
+  const rows = [...byKind].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]))
+    .map(([k, e]) => `| ${k} | ${e.n} | \`${e.last}\` |`)
+  const doc = `# Skill degradations — roadmap-orchestrator\n\n` +
+    `MACHINE-WRITTEN — every persist point overwrites this file. Hand-written observations belong in ` +
+    `\`skill-feedback.md\`, which the orchestrator never touches.\n\n` +
+    `Defects in the ORCHESTRATOR itself (not the product) observed while running this arc. Carry this file and ` +
+    `\`.roadmap/degradations.jsonl\` back to the skill's repository; they are not product debt and do not belong ` +
+    `in debt.md.\n\n## This run: ${degradations.length} degradation(s)\n\n` +
+    `| kind | count | most recent |\n|---|---|---|\n${rows.join('\n')}\n\n` +
+    `Full rows — one JSON line per event, arc-cumulative — are in \`.roadmap/degradations.jsonl\`. Each names ` +
+    `the agent label; find its transcript in the workflow's agent-*.jsonl to see the real error, which the ` +
+    `platform does not expose to the script.\n`
+  await persistVerbatim(`${repo}/.roadmap/skill-degradations.md`, doc,
+    { model: 'haiku', effort: 'low', label: 'skill-degradations', phase: 'Persist', schema: S.ok })
 }
 // log-append: architect journal, tier-3 only (replace-if-header-exists idempotency). A helper
 // because it must fire on TERMINAL tier-3 paths too (cut-line, arc-complete) — the persist
@@ -567,16 +654,23 @@ async function ret(reason, tier, extra = {}) {
   const st = { ...state, spend: { ...(state.spend ?? {}) } }   // tier-4 handoff: boundary + debt stay INTACT (the root consumes them)
   mergeConductorSpend(st)
   st.conductor = { reason, wavesRun, boundaries }
-  if (degradations.length) st.degradations = degradations
+  delete st.degradations   // sidecar-only: an arc-cumulative ledger inside state.json IS the growth loop
+  // Rows that never reached the sidecar. Loud, bounded, and deliberately not a degradation — a
+  // sidecar failure that degraded would feed the ledger it just failed to write.
+  if (sidecarLost) st.sidecarLost = (st.sidecarLost ?? 0) + sidecarLost
   phase('Persist')
-  await writeSkillFeedback()
+  await writeSkillDegradations()
   await persistVerbatim(`${repo}/.roadmap/state.json`, JSON.stringify(st, null, 2),
     { model: 'haiku', effort: 'low', label: `persist-state:w${st.wave}`, phase: 'Persist', schema: S.ok })
+  await sidecarChain   // every event of this run is on disk before the root sees the envelope
   return {
     status: 'conductor-return', reason, wave: st.wave, wavesRun, state: st, plan,
     spendDelta: deltaSpend(st.spend),
     // Always present (empty when clean) so the root never has to wonder whether the run was healthy.
     degradations,
+    // A refused plan.json overwrite is the root's to reconcile — it is the only thing this script
+    // deliberately did NOT persist.
+    ...(planConflicts.length ? { planConflict: planConflicts } : {}),
     // Owed boundary jobs surface on every return — on a terminal one they are the root's to
     // discharge (or explicitly waive in the architect log) before close-out.
     ...(st.owed?.length ? { owed: st.owed } : {}),
@@ -769,16 +863,25 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // 3. Dispatch the wave through the harness. Config is passed UNTOUCHED; boundary:'off' is never
   //    set here (ruling 1). The returned state threads forward (units/spend/wave accumulate).
   phase('Wave')
-  const sentDegradations = state.degradations?.length ?? 0
   state = await workflow({ scriptPath: harnessPath }, { plan: dispatchPlan, state, config: overrides, harnessPath })
   wavesRun++
   const N = state.wave
-  // The harness returns prior+wave degradations (arc-cumulative); absorb only the wave's delta —
-  // the seed at construction already carries what was dispatched, so pushing the full array here
-  // would double-count every prior entry.
-  const newDegradations = (state.degradations ?? []).slice(sentDegradations)
+  // The harness returns THIS WAVE's degradations in its ENVELOPE only — it has already written each
+  // one to the shared sidecar, and its serialize() carries none of them. Absorb them in memory for
+  // the return envelope and the summary, then strip them so nothing threads a ledger back onto disk.
+  const newDegradations = state.degradations ?? []
   for (const d of newDegradations) degradations.push(d)
   if (newDegradations.length) log(`wave ${N}: ${newDegradations.length} harness degradation(s) recorded`)
+  if ('degradations' in state) { state = { ...state }; delete state.degradations }
+
+  // Wave debt reaches DISK the moment it arrives — before the census, before triage, before any
+  // return can skip past the bank. `.roadmap/debt.json` is the wave's raw ledger as received;
+  // debt.md / the roadmap:debt issues remain the durable, human-facing record that bank-debt writes.
+  pendingDebt = [...pendingDebt, ...(state.debt ?? [])]
+  if (pendingDebt.length)
+    await persistVerbatim(`${repo}/.roadmap/debt.json`, JSON.stringify({ wave: N, items: pendingDebt }, null, 2),
+      { model: 'haiku', effort: 'low', label: `persist-debt:w${N}`, phase: 'Persist', schema: S.ok },
+      ' (create parent directories if needed)')
 
   // Codex hard stop (Codex is the only implementer — there is no lane to fall back to). The
   // harness already halted dispatch and parked in-flight units; no census/triage spend against a
@@ -855,6 +958,10 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
           `Use its assessment as a lead to confirm or overturn — not as ground truth: ` +
           `${JSON.stringify({ admit: triageResult.admit, cut: triageResult.cut, notes: triageResult.notes })}.`
       } else if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user') {
+        // An escalating return is a HANDOFF, not an abort: stage first, or the triager's admitted
+        // units, this wave's debt ledger and the journal exist nowhere the root can read them.
+        // `unbanked` is deliberately ignored — a tier-4 return hands `state.debt` back INTACT.
+        await stage(N, 2, collect(2, P, triageResult, null))
         return await ret(er, 2, briefFor(er, P, N, triageResult, null, census))
       }
     }
@@ -883,46 +990,18 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     }
     if (boundaryPlan.escalate) {
       const er = boundaryPlan.escalateReason
-      if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user')
+      if (er === 'contract-amendment' || er === 'contingent-replan' || er === 'needs-user') {
+        await stage(N, 3, collect(3, P, triageResult, boundaryPlan))   // handoff, not abort — see tier 2
         return await ret(er, 3, briefFor(er, P, N, triageResult, boundaryPlan, census))
+      }
       // The journal (waiver justifications included) must survive a terminal boundary — the
       // persist-section writer sits past this return and used to drop it.
       if (er === 'cut-line') { await writeJournal(N, boundaryPlan.journal); return await finish(3) }
     }
   }
   const ranTier = tier
-
-  // Collect the wave's mutations from whichever tier ran.
-  const freshId = makeFreshId()
-  let newSkeletons = []
-  let reviseList = []
-  let cutUnitIds = []
-  let journal = null
-  let arcCompleteFlag = false
-  let feedbackDispositions = triageResult?.feedback ?? []
-  let debtLedger = []
-
-  if (ranTier === 1) {
-    newSkeletons = P.healthFixUnits.map(draftSkeleton)
-  } else if (ranTier === 2) {
-    arcCompleteFlag = !!triageResult.arcComplete
-    const draftById = new Map(P.healthFixUnits.map((d) => [d.id, d]))
-    newSkeletons = [
-      ...(triageResult.admit ?? []).filter((id) => draftById.has(id)).map((id) => draftSkeleton(draftById.get(id))),
-      ...(triageResult.promote ?? []),
-    ]
-    debtLedger = triageResult.debtLedger ?? []
-  } else {
-    arcCompleteFlag = !!boundaryPlan.arcComplete
-    newSkeletons = boundaryPlan.newUnits ?? []
-    reviseList = boundaryPlan.reviseSpecs ?? []
-    cutUnitIds = boundaryPlan.cutUnits ?? []
-    journal = boundaryPlan.journal
-    debtLedger = boundaryPlan.debtLedger ?? []
-  }
-
-  // Assign final ids up front so spec files and plan units agree.
-  const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
+  const collected = collect(ranTier, P, triageResult, boundaryPlan)
+  const { prepared, reviseList, journal, arcCompleteFlag, feedbackDispositions } = collected
 
   // Arc complete: a tier said so, or the boundary produced no new units and no spec revisions.
   // Routed through finish(), which refuses to close over dispatchable work. A tier-3 journal
@@ -933,110 +1012,22 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     return await finish(ranTier)
   }
 
-  // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
-  phase('Spec-expand')
-  await Promise.all(prepared.map((s) => run(specExpandPrompt(s), { model: 'sonnet', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  await Promise.all(reviseList.map((r) => run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
-  mergePlan(prepared, cutUnitIds)
-
-  // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
-  // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
-  // wave. It reports each unit's issue number back, and we CACHE it into plan.units[].issue: without
-  // that, a mid-arc unit has no cached number, gets dropped from the arc-issue task-list rollup (the
-  // sweep skips unknown-number units), and forces a marker-search fallback in every folded clause.
-  // One Haiku call, only when there is new work; a no-op / '' path in file mode.
-  if (issueMode && prepared.length) {
-    const opened = await run(
-      STRICT + GH_BEST_EFFORT +
-      `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
-      `below: search \`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 ` +
-      `--json number --jq '.[0].number'\`; if one already exists, use its number (do NOT create a duplicate); ` +
-      `otherwise create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
-      `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
-      `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
-      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
-      `Report ok:true when every unit has an issue, and in \`opened\` give each unit's {id, number} — the issue ` +
-      `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
-      { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },
-    ).catch(() => null)
-    // Cache the numbers so this wave's persisted plan AND next wave's dispatchPlan carry them.
-    for (const o of opened?.opened ?? []) {
-      const u = plan.units.find((x) => x.id === o.id)
-      if (u && Number.isInteger(o.number)) u.issue = o.number
-    }
-  }
+  // 7. Stage this boundary's decisions on disk — specs, plan, issues, debt, journal.
+  const { unbanked } = await stage(N, ranTier, collected)
 
   // 8. Persist (all awaited before the next dispatch; idempotent by wave-N markers for resume).
   phase('Persist')
-  const waveDebt = state.debt ?? []   // captured before the consumed state clears it
-  // Consumed continuation state: boundary removed + debt cleared (folded), conductor.reason null.
+  // Consumed continuation state: boundary removed + banked debt cleared, conductor.reason null.
   const consumed = { ...state, spend: { ...(state.spend ?? {}) } }
   if (state.boundary) { lastBoundary = state.boundary; lastBoundaryWave = N }
   delete consumed.boundary
-  consumed.debt = []
+  // Only what the banker CONFIRMED is cleared; the rest rides into the next wave's bank attempt.
+  pendingDebt = unbanked
+  consumed.debt = pendingDebt
   mergeConductorSpend(consumed)
   boundaries.push({ wave: N, tier: ranTier, escalated: null })
   consumed.conductor = { reason: null, wavesRun, boundaries }
-  // Skill defects are NOT consumed like debt — they are arc-cumulative and outlive the arc.
-  if (degradations.length) consumed.degradations = degradations
-  await writeSkillFeedback()
-
-  // persist-plan: overwrite plan.json with the merged plan.
-  await persistVerbatim(`${repo}/.roadmap/plan.json`, JSON.stringify(plan, null, 2),
-    { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
-    ' (create parent directories if needed)')
-
-  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
-  // ONE consolidated issue per unit-with-residue, keyed wave+unit (arc-observed: per-finding minting
-  // produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered resume — the
-  // wave+unit key is a pure function of stable ids). FILE MODE -> a <!-- wave N --> section in
-  // debt.md, ALWAYS stamped (even "no new entries" — ruling 7); per-finding lines are fine there,
-  // the volume problem was issues, so the file branch is deliberately untouched.
-  const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
-  if (issueMode) {
-    const byUnit = new Map()
-    for (const d of waveDebt) {
-      const k = d.unit ?? 'general'
-      if (!byUnit.has(k)) byUnit.set(k, [])
-      byUnit.get(k).push(d)
-    }
-    const items = [
-      ...[...byUnit].map(([uid, ds]) => ({ marker: `roadmap:debt wave=${N} unit=${uid}`,
-        title: `[debt] ${uid}: ${ds.length} deferred item${ds.length === 1 ? '' : 's'} (wave ${N})`,
-        labels: ['roadmap:debt',
-          `severity:${ds.some((d) => d.severity === 'major') ? 'major' : 'minor'}`,
-          ...new Set(ds.map((d) => `debt:${debtKind(d.kind)}`))].join(','),
-        body: ds.map(fmtDebt).join('\n') })),
-      ...(debtLedger.length ? [{ marker: `roadmap:debt wave=${N} ledger`,
-        title: `[debt] wave ${N} triage ledger (${debtLedger.length} item${debtLedger.length === 1 ? '' : 's'})`,
-        labels: 'roadmap:debt', body: debtLedger.map((s) => `- ${s}`).join('\n') }] : []),
-    ]
-    if (items.length)
-      await run(
-        STRICT + GH_BEST_EFFORT +
-        `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below: search for an ` +
-        `existing issue whose body carries its marker ` +
-        `(\`gh issue list ${ghRepo}--search '"<marker>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
-        `if one exists, leave it untouched; otherwise create it with title, comma-joined labels, and a body whose ` +
-        `FIRST line is exactly \`<!-- <marker> -->\` followed by the item body. Items:\n${JSON.stringify(items)}\n` +
-        `Report ok:true when every item is present; note any gh failure in detail.`,
-        { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
-      ).catch(() => null)
-  } else {
-    const debtLines = [...waveDebt.map(fmtDebt), ...debtLedger.map((s) => `- ${s}`)]
-    const debtBody = debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries`
-    await run(
-      STRICT + `In the file ${repo}/.roadmap/debt.md (create it if missing): ensure exactly one section marked ` +
-      `\`<!-- wave ${N} -->\`. If a section with that exact marker already exists, replace its body; otherwise ` +
-      `append a new one at the end of the file. The section must be exactly:\n<!-- wave ${N} -->\n${debtBody}\n\n` +
-      `Change nothing else in the file.`,
-      { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
-  }
-
-  // log-append: architect journal, ONLY when tier 3 ran (terminal tier-3 paths write it
-  // before their own returns — see writeJournal).
-  if (ranTier === 3) await writeJournal(N, journal)
+  await writeSkillDegradations()
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
   // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports
@@ -1084,6 +1075,193 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
 // duplicate the ladder's work.
 if (lastBoundary) state = { ...state, boundary: { ...lastBoundary, triaged: true, wave: lastBoundaryWave } }
 return await ret('max-waves', null, {})
+
+
+// The wave's mutations, read off whichever tier ran. Pure — no writes, no agent calls — so an
+// escalating return can collect exactly what the continuation path would have.
+function collect(ranTier, P, triageResult, boundaryPlan) {
+  const freshId = makeFreshId()
+  let newSkeletons = []
+  let reviseList = []
+  let cutUnitIds = []
+  let journal = null
+  let arcCompleteFlag = false
+  let debtLedger = []
+
+  if (ranTier === 1) {
+    newSkeletons = P.healthFixUnits.map(draftSkeleton)
+  } else if (ranTier === 2) {
+    arcCompleteFlag = !!triageResult.arcComplete
+    const draftById = new Map(P.healthFixUnits.map((d) => [d.id, d]))
+    newSkeletons = [
+      ...(triageResult.admit ?? []).filter((id) => draftById.has(id)).map((id) => draftSkeleton(draftById.get(id))),
+      ...(triageResult.promote ?? []),
+    ]
+    debtLedger = triageResult.debtLedger ?? []
+  } else {
+    arcCompleteFlag = !!boundaryPlan.arcComplete
+    newSkeletons = boundaryPlan.newUnits ?? []
+    reviseList = boundaryPlan.reviseSpecs ?? []
+    cutUnitIds = boundaryPlan.cutUnits ?? []
+    journal = boundaryPlan.journal
+    debtLedger = boundaryPlan.debtLedger ?? []
+  }
+
+  // Assign final ids up front so spec files and plan units agree.
+  const prepared = newSkeletons.map((s) => ({ ...s, id: freshId(s.id, s.supersedes) }))
+
+  return { prepared, reviseList, cutUnitIds, journal, debtLedger, arcCompleteFlag,
+    feedbackDispositions: triageResult?.feedback ?? [] }
+}
+
+// Everything a boundary's decisions must leave ON DISK: specs, the merged plan, the issue
+// projection, the debt ledger and the architect journal. Hoisted out of the wave tail so the
+// ESCALATING returns can stage before handing back — arc-observed: a tier-3 needs-user return
+// jumped every one of these, and the boundary's new-unit skeletons, the wave's debt and the journal
+// survived only in the run's journal.jsonl. Returns the debt items whose banking could NOT be
+// confirmed; the caller decides what to do with them, and never clears blind.
+async function stage(N, ranTier, c) {
+  const { prepared, reviseList, cutUnitIds, journal, debtLedger } = c
+  // 7. Materialize — Sonnet renders every new skeleton to a spec, revises where asked; then merge.
+  phase('Spec-expand')
+  await Promise.all(prepared.map((s) => run(specExpandPrompt(s), { model: 'sonnet', label: `spec-expand:${s.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
+  await Promise.all(reviseList.map((r) => run(specRevisePrompt(r), { model: 'sonnet', label: `spec-revise:${r.id}`, phase: 'Spec-expand', schema: S.ok }).catch(() => null)))
+  mergePlan(prepared, cutUnitIds)
+
+  // Issue mode: open a roadmap:unit tracking issue for each new unit added this wave (fix-units and
+  // respecs), idempotent by marker, so the harness's per-unit sync clauses have an issue to edit next
+  // wave. It reports each unit's issue number back, and we CACHE it into plan.units[].issue: without
+  // that, a mid-arc unit has no cached number, gets dropped from the arc-issue task-list rollup (the
+  // sweep skips unknown-number units), and forces a marker-search fallback in every folded clause.
+  // One Haiku call, only when there is new work; a no-op / '' path in file mode.
+  if (issueMode && prepared.length) {
+    const opened = await run(
+      STRICT + GH_BEST_EFFORT +
+      `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
+      `below: search \`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 ` +
+      `--json number --jq '.[0].number'\`; if one already exists, use its number (do NOT create a duplicate); ` +
+      `otherwise create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
+      `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
+      `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
+      `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
+      `Report ok:true when every unit has an issue, and in \`opened\` give each unit's {id, number} — the issue ` +
+      `number you created or found — so the scheduler can cache it. Note any gh failure in detail.`,
+      { model: 'haiku', effort: 'low', label: `issue-new:w${N}`, phase: 'Persist', schema: S.newIssues },
+    ).catch(() => null)
+    // Cache the numbers so this wave's persisted plan AND next wave's dispatchPlan carry them.
+    for (const o of opened?.opened ?? []) {
+      const u = plan.units.find((x) => x.id === o.id)
+      if (u && Number.isInteger(o.number)) u.issue = o.number
+    }
+  }
+
+  phase('Persist')
+  // persist-plan: overwrite plan.json with the merged plan — but never blind. The write is
+  // wholesale, so a plan.json that already carries units this run has not seen (a root edit between
+  // launches, a hand-merged respec) would be destroyed with no trace. The script cannot read a file,
+  // so one Haiku courier reports the on-disk unit ids and the SCRIPT decides. No merge is attempted:
+  // a loud refusal is the whole ask.
+  const onDisk = await run(
+    STRICT + `Read the file ${repo}/.roadmap/plan.json and report facts only — change nothing. In \`ids\`, give ` +
+    `the \`id\` of every entry in its top-level \`units\` array, in file order. If the file does not exist, ` +
+    `report ok:true with an empty \`ids\`. If it exists but will not parse, report ok:false with the parse error ` +
+    `in \`detail\` and an empty \`ids\`.`,
+    { model: 'haiku', effort: 'low', label: `plan-ids:w${N}`, phase: 'Persist', schema: S.planIds },
+  ).catch(() => null)
+  const knownIds = new Set(plan.units.map((u) => u.id))
+  const strangers = (onDisk?.ids ?? []).filter((id) => !knownIds.has(id))
+  if (!onDisk?.ok)
+    // A dead courier is not evidence of a conflict, but it IS evidence the check did not run. The
+    // plan is the arc's spine and a stale plan.json breaks the next resume, so persist — and say so.
+    degrade({ label: `plan-ids:w${N}`, model: 'haiku', phase: 'Persist', kind: 'plan-conflict',
+      what: `could not read the on-disk unit ids of plan.json (${onDisk?.detail ?? 'agent died without a report'}) ` +
+        '— persisting the in-memory plan unchecked' })
+  if (strangers.length) {
+    planConflicts.push({ wave: N, unknownUnits: strangers })
+    degrade({ label: `persist-plan:w${N}`, model: 'haiku', phase: 'Persist', kind: 'plan-conflict',
+      what: `.roadmap/plan.json holds ${strangers.length} unit id(s) this run has never seen ` +
+        `(${strangers.join(', ')}) — REFUSED to overwrite it; the root must merge the two plans by hand` })
+  } else {
+    await persistVerbatim(`${repo}/.roadmap/plan.json`, JSON.stringify(plan, null, 2),
+      { model: 'haiku', effort: 'low', label: `persist-plan:w${N}`, phase: 'Persist', schema: S.ok },
+      ' (create parent directories if needed)')
+  }
+
+  // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
+  // ONE consolidated issue per unit-with-residue, keyed wave+unit (arc-observed: per-finding minting
+  // produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered resume — the
+  // wave+unit key is a pure function of stable ids). FILE MODE -> a <!-- wave N --> section in
+  // debt.md, ALWAYS stamped (even "no new entries" — ruling 7); per-finding lines are fine there,
+  // the volume problem was issues, so the file branch is deliberately untouched.
+  // Nothing is cleared until the banker says the marker is THERE. `unbanked` is what it did not
+  // confirm; the caller carries it rather than dropping it.
+  const unbanked = []
+  const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
+  if (issueMode) {
+    const byUnit = new Map()
+    for (const d of pendingDebt) {
+      const k = d.unit ?? 'general'
+      if (!byUnit.has(k)) byUnit.set(k, [])
+      byUnit.get(k).push(d)
+    }
+    // marker -> the debt rows it carries, so an unconfirmed marker gives its items back verbatim.
+    const rowsFor = new Map()
+    const items = [
+      ...[...byUnit].map(([uid, ds]) => {
+        const marker = `roadmap:debt wave=${N} unit=${uid}`
+        rowsFor.set(marker, ds)
+        return { marker,
+          title: `[debt] ${uid}: ${ds.length} deferred item${ds.length === 1 ? '' : 's'} (wave ${N})`,
+          labels: ['roadmap:debt',
+            `severity:${ds.some((d) => d.severity === 'major') ? 'major' : 'minor'}`,
+            ...new Set(ds.map((d) => `debt:${debtKind(d.kind)}`))].join(','),
+          body: ds.map(fmtDebt).join('\n') }
+      }),
+      ...(debtLedger.length ? [{ marker: `roadmap:debt wave=${N} ledger`,
+        title: `[debt] wave ${N} triage ledger (${debtLedger.length} item${debtLedger.length === 1 ? '' : 's'})`,
+        labels: 'roadmap:debt', body: debtLedger.map((s) => `- ${s}`).join('\n') }] : []),
+    ]
+    if (items.length) {
+      const res = await run(
+        STRICT + GH_BEST_EFFORT +
+        `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below: search for an ` +
+        `existing issue whose body carries its marker ` +
+        `(\`gh issue list ${ghRepo}--search '"<marker>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
+        `if one exists, leave it untouched; otherwise create it with title, comma-joined labels, and a body whose ` +
+        `FIRST line is exactly \`<!-- <marker> -->\` followed by the item body. Items:\n${JSON.stringify(items)}\n` +
+        `Report ok:true when every item is present, and in \`banked\` give one {marker, number} entry for each ` +
+        `item you have CONFIRMED is now present on an issue — its own marker, verbatim, and that issue's number. ` +
+        `Omit any item you could not confirm rather than guessing: an omitted marker is re-banked next wave, a ` +
+        `wrongly-claimed one is lost. Note any gh failure in detail.`,
+        { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.banked },
+      ).catch(() => null)
+      const confirmed = new Set((res?.banked ?? []).map((b) => b.marker))
+      for (const it of items) if (!confirmed.has(it.marker)) unbanked.push(...(rowsFor.get(it.marker) ?? []))
+    }
+  } else {
+    const debtLines = [...pendingDebt.map(fmtDebt), ...debtLedger.map((s) => `- ${s}`)]
+    const debtBody = debtLines.length ? debtLines.join('\n') : `wave ${N}: no new entries`
+    // One section for the whole wave, so the write landing IS the confirmation: no ok, nothing banked.
+    const res = await run(
+      STRICT + `In the file ${repo}/.roadmap/debt.md (create it if missing): ensure exactly one section marked ` +
+      `\`<!-- wave ${N} -->\`. If a section with that exact marker already exists, replace its body; otherwise ` +
+      `append a new one at the end of the file. The section must be exactly:\n<!-- wave ${N} -->\n${debtBody}\n\n` +
+      `Change nothing else in the file.`,
+      { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },
+    ).catch(() => null)
+    if (!res?.ok) unbanked.push(...pendingDebt)
+  }
+  if (unbanked.length)
+    degrade({ label: `bank-debt:w${N}`, model: 'haiku', phase: 'Persist', kind: 'debt-unbanked',
+      what: `${unbanked.length} of ${pendingDebt.length} debt item(s) were not confirmed banked — kept in ` +
+        'state.debt and .roadmap/debt.json, and re-banked at the next boundary' })
+
+  // log-append: architect journal, ONLY when tier 3 ran (terminal tier-3 paths write it
+  // before their own returns — see writeJournal).
+  if (ranTier === 3) await writeJournal(N, journal)
+
+  return { unbanked }
+}
 
 // Reason-specific brief fields for the return envelope. Hoisted (function declaration) so the
 // tier-2/3 escalation returns above can call it before its textual position.
