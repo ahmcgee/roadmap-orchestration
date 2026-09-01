@@ -142,7 +142,8 @@ suite-green tip with `preview: {status: "live"}`, and spend is within a generous
 0. `bash parse.sh && bash unit/run.sh` — green before you spend a run.
 1. `bash setup-fixture.sh /tmp/roadmap-eval`
 2. Read `/tmp/roadmap-eval/repo/.roadmap/{plan,state}.json`, then
-   `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {plan, state, config: {}}})` and wait
+   `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {plan, state, config: {}, launchId: "<fresh value>"}})`
+   and wait
    (~10–25 min at ~16-way concurrency).
 3. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
@@ -197,7 +198,8 @@ per wave:
 
 ```
 Workflow({scriptPath: "<skill dir>/conductor.mjs",
-          args: {plan, state, config: {}, harnessPath: "<skill dir>/harness.mjs"}})
+          args: {plan, state, config: {}, harnessPath: "<skill dir>/harness.mjs",
+                 launchId: "<fresh value — never reused, including on a relaunch>"}})
 ```
 
 `harnessPath` is **required** — the conductor throws without it. Then

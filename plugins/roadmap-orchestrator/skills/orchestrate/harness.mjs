@@ -419,6 +419,25 @@ const degrade = (o) => {
   log(`DEGRADED [${o.label ?? 'agent'} · ${o.model}] ${o.what}`)
 }
 
+// Cache-buster for ENVIRONMENT PROBES only. `resumeFromRunId` replays any agent() call whose
+// (prompt, opts) is byte-identical — which is exactly what makes a resume cheap, and exactly what
+// makes a probe lie: arc-observed twice (2026-08-25/26) a resume replayed a pre-rebuild
+// `cd: No such file` provisioning failure and a pre-merge `state:'ready'`, quarantining units whose
+// real environment was fine. A probe's whole value is what the disk and git look like RIGHT NOW, so
+// every probe prompt carries `args.launchId`, which the ROOT re-generates on every launch AND every
+// resume. WORK-PRODUCT calls never carry it — replaying those for free is the point of resume.
+// A missing launchId DEGRADES to unsalted rather than throwing: the salt is freshness hygiene, and
+// converting one stale-probe defect into a dead arc (every direct harness launch, every older root)
+// is strictly worse than the defect. The degradation says which happened.
+const LAUNCH = A.launchId
+  ? `\nProbe id ${A.launchId} — this line exists only to make this request unique; ignore it.`
+  : ''
+if (!LAUNCH)
+  degrade({ label: 'launch-id', model: 'haiku', phase: 'Setup', kind: 'no-launch-id',
+    what: 'args.launchId absent — environment probes (provisioning, integration setup, the merged/reachability ' +
+      'probes) run UNSALTED, so a resumeFromRunId replay can serve stale disk/git facts from cache. ' +
+      'Root: pass a fresh args.launchId on every launch and every resume.' })
+
 // One code-level retry on structured-output failure: agents deep in tool-work
 // occasionally end their turn without a valid structured report (observed ~1 in 15
 // impl-stage calls across eval runs). A single retry with an explicit report-last
@@ -526,6 +545,19 @@ const EVIDENCE = obj({
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
   ws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' }, detail: { type: 'string' } }, ['ok', 'sha']),
+  // Integration-worktree setup: `ws` plus the one ancestry fact the wave-start tip reconcile needs.
+  // `priorTipAncestorExit` is the raw exit code of `git merge-base --is-ancestor <checkpointed tip>
+  // <intBranch>`: 0 = the branch merely moved ahead, 1 = the checkpointed tip is NOT on the branch,
+  // 128 = it does not resolve. REQUIRED, not optional — the reconcile is a two-way door and the
+  // courier must not be able to leave the deciding fact out.
+  intws: obj({ ok: { type: 'boolean' }, sha: { type: 'string' },
+    priorTipAncestorExit: { type: 'integer' }, detail: { type: 'string' } },
+    ['ok', 'sha', 'priorTipAncestorExit']),
+  // Closed-list git courier (gitProbe below): exit codes and first stdout lines, verbatim, in the
+  // order the script interpolated the commands. Deliberately carries NO verdict field — the whole
+  // point is that the courier reports and the SCRIPT judges.
+  git: obj({ ok: { type: 'boolean' }, exitCodes: { type: 'array', items: { type: 'integer' } },
+    out: arr('string'), detail: { type: 'string' } }, ['ok', 'exitCodes']),
   // Unit-worktree setup outcome. `state` drives the destructive-re-run guards: 'already-merged'
   // and 'has-commits' touch nothing; 'adopted' enters the pipeline at verify; 'ready' is fresh.
   setup: obj({ ok: { type: 'boolean' }, sha: { type: 'string' },
@@ -939,6 +971,49 @@ function checkpoint() {
   }).catch(() => null)
 }
 
+/* ------------------------- git facts, read in code ---------------------- */
+// Every git fact the harness ACTS on comes back through this one shape: the cheapest tier runs
+// EXACTLY the commands the script interpolated, in order, and reports each one's exit code and
+// first stdout line verbatim. It is a courier, not a judge — no "is it merged?" prompt anywhere,
+// because a question shaped like a judgment gets an answer shaped like agreement (2026-08-28: a
+// merge made on a detached HEAD was reported `merged:true` for a commit no branch could reach).
+// Exit codes cannot be talked into the wrong answer. Salted: these are environment facts.
+async function gitProbe(label, dir, cmds, phase) {
+  const r = await runOr({ ok: false, exitCodes: [], out: [] },
+    STRICT +
+    `In the directory ${dir}, run these ${cmds.length} shell commands IN ORDER, exactly as written, and report ` +
+    `only what they did:\n` +
+    cmds.map((c, i) => `${i + 1}) ${c}`).join('\n') + '\n' +
+    `Run no other command. Change NOTHING — no checkout, merge, fetch, reset, repair or cleanup. A command ` +
+    `that fails is not a problem to fix: its failure IS the answer, and you report it. Report \`exitCodes\` as ` +
+    `the ${cmds.length} exit codes ($? immediately after each command) in that same order, and \`out\` as each ` +
+    `command's first line of stdout in that same order (empty string where it printed nothing). ` +
+    `Report ok:true once you have run all ${cmds.length}.` + LAUNCH,
+    { model: 'haiku', effort: 'low', phase, label, schema: S.git })
+  // A dead courier reports nothing, and "nothing" must never read as a git fact: -1 is not 0.
+  return { raw: r, code: (i) => r.exitCodes?.[i] ?? -1, line: (i) => (r.out?.[i] ?? '').trim() }
+}
+
+// "Merged" is a git fact decided in CODE, before dispatch, before any re-verify, before any
+// quarantine. NOT a bare `merge-base --is-ancestor`: a commit-less branch parked at an old
+// integration commit false-positives on it (eval-observed — the same reason the setup prompt's
+// case 1 is written the way it is). The real test is that the branch tip is the SECOND parent of a
+// merge commit on the integration branch, i.e. it landed through one of our own --no-ff merges.
+// Also reports whether the unit's worktree DIRECTORY is there right now, so a cached setup report
+// claiming a checkout that a rebuilt host no longer has cannot be believed.
+async function mergedInGit(unit, phase = 'Setup') {
+  const b = `unit/${unit.id}`
+  const g = await gitProbe(`merged-probe:${unit.id}`, repo, [
+    `git rev-parse --verify --quiet ${b}^{commit}`,
+    `SHA=$(git rev-parse --verify --quiet ${b}^{commit}) && git log --merges --format=%P ${intBranch} | ` +
+      `awk '{print $2}' | grep -qxF "$SHA"`,
+    `test -d ${wtOf(unit)}`,
+  ], phase)
+  // Both halves required: without the branch-exists gate, an unresolvable ref makes command 2's
+  // $SHA empty, and an empty pattern matches the empty second-parent field of every ordinary commit.
+  return { merged: g.code(0) === 0 && g.code(1) === 0, branchSha: g.line(0), worktree: g.code(2) === 0, raw: g.raw }
+}
+
 // Optional environment provisioning (plan.provision: {copy: [...gitignored files], setup: "cmd"}).
 // A fresh worktree has no deps/env; without this, the test gate fails for non-code reasons.
 async function provision(where, label) {
@@ -950,7 +1025,7 @@ async function provision(where, label) {
     `Provision the checkout at ${where} so its build and tests can run: ` +
     (p.copy?.length ? `copy these gitignored files from ${repo} into the same relative locations: ${p.copy.join(', ')}. ` : '') +
     (p.setup ? `Then run, from inside ${where}: ${p.setup}. ` : '') +
-    `Report ok:false with the exact error if any step cannot complete.`,
+    `Report ok:false with the exact error if any step cannot complete.` + LAUNCH,
     { model: 'haiku', phase: 'Setup', label, schema: S.ok })
 }
 
@@ -988,7 +1063,26 @@ function refreshMirror() {
   }).catch(() => null)
 }
 
-async function quarantine(unit, reason, extra) {
+// `mergeReverted` is the ONE legitimate quarantine of a branch git still calls merged: when the
+// integrated suite cannot be saved, the fix agent reverts with `git revert -m 1 HEAD`, which keeps
+// the merge commit in history — so the second-parent test still matches while the unit's code is
+// no longer in the tree. Every other caller runs before any merge could have landed.
+async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
+  // Git decides `merged`, not the pipeline's opinion of the unit. Quarantining a merged unit
+  // re-opens landed work for redesign and (issue mode) relabels a closed issue — arc-observed
+  // 2026-08-25, where a resume replayed a cached pre-merge verdict onto a unit already on the
+  // integration branch. A probe that dies reports nothing, which reads as NOT merged: the
+  // quarantine proceeds, exactly as it did before this guard existed.
+  if (!mergeReverted) {
+    const g = await mergedInGit(unit, 'Quarantine')
+    if (g.merged) {
+      degrade({ label: `quarantine-refused:${unit.id}`, model: 'haiku', phase: 'Quarantine', kind: 'quarantine-refused',
+        what: `refused to quarantine ${unit.id} ("${String(reason).slice(0, 120)}") — git says its branch landed on ` +
+          `${intBranch} (tip ${g.branchSha.slice(0, 7)}). Recorded as merged; the verdict that asked for the ` +
+          `quarantine was reading stale or cached state.` })
+      return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: g.branchSha, note: 'quarantine refused — git says merged' }
+    }
+  }
   // The dossier is the redesign feed, so its content must survive any file-level mishap:
   // the investigator RETURNS findings through the schema (landing in checkpointed
   // state.json), and a separate verbatim-writer renders the file — investigative agents
@@ -1639,6 +1733,15 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
 }
 async function runUnit(unit) {
   setStage(unit.id, 'setup')   // status became 'running' in start() before this call
+  // Merged is settled by GIT, in code, before anything else touches this unit. The setup agent
+  // has its own already-merged case, but it is an agent report and therefore cache-replayable:
+  // on a resume it replayed a pre-merge `state:'ready'` and drove a landed unit back through
+  // build/verify/quarantine (2026-08-25). This probe is salted, so it cannot be replayed.
+  const g0 = await mergedInGit(unit)
+  if (g0.merged) {
+    log(`${unit.id}: already merged in git (${g0.branchSha.slice(0, 7)}) — no dispatch`)
+    return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: g0.branchSha, note: 'git says merged at dispatch' }
+  }
   const spec = specOf(unit)
   const w = wtOf(unit)
   const base = integrationTip   // diff base: the freshest integrated tip we know
@@ -1738,7 +1841,13 @@ async function runUnit(unit) {
       : `do NOT touch it — delete nothing; report ok:false, state:'has-commits', sha = the branch tip.\n`) +
     `3) Otherwise remove any stale branch/worktree remnants and create a fresh worktree ` +
     `(git worktree add ${w} -b unit/${unit.id} ${source}); report ok:true, state:'ready', sha = HEAD.` +
-    ghRunning(unit),
+    ghRunning(unit) +
+    // Setup is normally worth replaying from cache — it is idempotent and its report is a fact
+    // about a directory that still exists. When the probe says that directory is GONE (a rebuilt
+    // host, a pruned worktree root), the cached report describes a world that no longer exists, so
+    // this one call is salted back into a cache miss. Deliberately conditional: blanket-salting
+    // setup would re-run every unit's worktree creation on every resume.
+    (g0.worktree ? '' : LAUNCH),
     { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}`, schema: S.setup })
   // Already merged: unblock dependents, re-run nothing (holds even with existingBranch set).
   if (ws.state === 'already-merged')
@@ -2286,7 +2395,12 @@ async function mergeUnit(unit) {
     : ''
   const mergePromptText =
     STRICT +
-    `In the integration worktree at ${intWt} (branch ${intBranch}): first, if a merge is already in progress ` +
+    `In the integration worktree at ${intWt}: first, confirm HEAD is ON branch ${intBranch} — run ` +
+    `\`git symbolic-ref --quiet --short HEAD\`; a detached HEAD prints nothing. If it prints anything other than ` +
+    `${intBranch}, run \`git checkout ${intBranch}\` before touching anything else, and if that checkout fails, ` +
+    `report merged:false with the exact error. A merge made on a detached HEAD produces a commit no branch can ` +
+    `reach, and the work is lost the moment anything else checks the branch out. Then, if a merge is already ` +
+    `in progress ` +
     `(a MERGE_HEAD exists), clear it with \`git merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
     `of HEAD (\`git merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
     `already landed), skip the merge but still run the project's full test suite (commands: ${brief}) and report ` +
@@ -2356,8 +2470,25 @@ async function mergeUnit(unit) {
       `${repo}/.roadmap/specs/. Re-run the suite. If you cannot make it pass, revert the merge commit ` +
       `(git revert -m 1 HEAD, keeping the branch intact for later redesign) and report suitePass:false.`,
       { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge })
-    if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res)
+    if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res, { mergeReverted: true })
   }
+
+  // `merged:true` is an agent's claim; reachability is the fact. 2026-08-28: a merge ran on a
+  // detached HEAD in the integration worktree, reported merged:true, was recorded as `merged` with
+  // a `mergedAt` no branch pointed at, and the next wave's tip reconcile adopted the branch tip
+  // over it — the whole unit vanished. Nothing below this gate may be written until git agrees the
+  // result is on the branch: HEAD attached to it, the unit branch an ancestor of it, and the
+  // reported head reachable from it.
+  const reach = await gitProbe(`merge-reach:${unit.id}`, intWt, [
+    `test "$(git symbolic-ref --quiet --short HEAD)" = "${intBranch}"`,
+    `git merge-base --is-ancestor unit/${unit.id} ${intBranch}`,
+    `git merge-base --is-ancestor ${res.head} ${intBranch}`,
+  ], 'Merge')
+  if (reach.code(0) !== 0 || reach.code(1) !== 0 || reach.code(2) !== 0)
+    return quarantine(unit, `merge reported success but the result is not reachable from ${intBranch} ` +
+      `(HEAD-on-branch exit ${reach.code(0)}, branch-is-ancestor exit ${reach.code(1)}, head ${res.head} ` +
+      `is-ancestor exit ${reach.code(2)}) — most likely merged on a detached HEAD, leaving a dangling commit. ` +
+      `Nothing is recorded as merged and the unit branch is intact: re-merge it with the branch checked out`, res)
 
   integrationTip = res.head
   if (C.previewRefresh === 'merge') refreshMirror()
@@ -2440,20 +2571,41 @@ function start(unit) {
 
 phase('Setup')
 const intSetup = await runOr(
-  { ok: false, sha: '', detail: 'integration-worktree setup agent died without a report' },
+  { ok: false, sha: '', priorTipAncestorExit: -1, detail: 'integration-worktree setup agent died without a report' },
   STRICT +
   `In the git repository at ${repo}: 1) ensure branch ${intBranch} exists — if not, create it at ` +
   `${integrationTip}; 2) ensure a worktree for it exists at ${intWt} (git worktree add ${intWt} ${intBranch}); ` +
   `if the path already exists, verify it is a clean checkout of ${intBranch} and reset it if not. ` +
-  `Report ok:true only when the integration worktree is ready and clean, with its HEAD sha in \`sha\`.`,
-  { model: 'haiku', phase: 'Setup', label: 'integration-worktree', schema: S.ws })
+  `3) Then run exactly \`git merge-base --is-ancestor ${integrationTip} ${intBranch}\` and report its exit code ` +
+  `verbatim in \`priorTipAncestorExit\` (0, 1 or 128 — report what you got; never "fix" a non-zero exit, and ` +
+  `never rewind, reset or force the branch to make it zero). ` +
+  `Report ok:true only when the integration worktree is ready and clean, with its HEAD sha in \`sha\`.` + LAUNCH,
+  { model: 'haiku', phase: 'Setup', label: 'integration-worktree', schema: S.intws })
 if (!intSetup.ok) throw new Error(`integration worktree setup failed: ${intSetup.detail ?? intSetup.sha}`)
 // Git is the source of truth for the branch; state.json is bookkeeping. A relaunch with a
 // stale checkpoint would otherwise fork every unit off the old tip — and, if every unit
 // short-circuits at setup, write that stale tip back out, poisoning the next wave.
+// STRICTLY ONE-WAY. The reconcile used to fire on mere INEQUALITY and call it "ahead": it moved the
+// tip backwards as readily as forwards. 2026-08-28: a merge landed on a detached HEAD, the
+// checkpointed tip was that dangling commit, and this line adopted the branch tip over it — a whole
+// wave's merged work orphaned, silently, with the log line claiming progress. Adopt only when the
+// checkpointed tip is an ANCESTOR of the live branch tip (exit 0). Anything else means our record
+// and the branch have diverged, which is corruption, not drift — refuse to dispatch on top of it.
 if (!sameSha(intSetup.sha, integrationTip)) {
-  log(`integration branch is ahead of the checkpointed tip — reconciled to ${intSetup.sha.slice(0, 7)}`)
-  integrationTip = intSetup.sha
+  if (intSetup.priorTipAncestorExit === 0) {
+    log(`integration branch is ahead of the checkpointed tip — reconciled to ${intSetup.sha.slice(0, 7)}`)
+    integrationTip = intSetup.sha
+  } else {
+    degrade({ label: 'integration-worktree', model: 'haiku', phase: 'Setup', kind: 'tip-regressed',
+      what: `checkpointed integration tip ${String(integrationTip).slice(0, 12)} is NOT an ancestor of ` +
+        `${intBranch} (tip ${String(intSetup.sha).slice(0, 12)}, is-ancestor exit ${intSetup.priorTipAncestorExit}) — ` +
+        `the branch was rewound, or merges landed where no branch can reach them. Wave halted before dispatch.` })
+    throw new Error(`integration tip regressed: the checkpointed tip ${integrationTip} is not an ancestor of ` +
+      `${intBranch} (now ${intSetup.sha}); \`git merge-base --is-ancestor\` exited ${intSetup.priorTipAncestorExit}. ` +
+      `Refusing to dispatch a wave on top of a branch our own record cannot reach. Operator: find the merges ` +
+      `(\`git reflog ${intBranch}\`, \`git fsck --unreachable\`), decide which history is real, point ${intBranch} ` +
+      `at it, and set state.json's integrationTip to match before relaunching. Nothing was changed.`)
+  }
 }
 const intProv = await provision(intWt, 'provision:integration')
 if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${intProv.detail}`)
@@ -2540,6 +2692,19 @@ for (let changed = true; changed;) {
     // exactly like the 'blocked' class this loop already heals: ready() requires 'pending',
     // and nothing ever restored it. Reset re-enters dispatch; setup then auto-adopts any
     // committed branch work (rung-3 recovery as documented, now actually mechanical).
+    // Crash residue is only residue if the unit did not finish. A `merge-ready` record whose merge
+    // then landed (or a `running` one killed after its merge) reset to `pending` and got rebuilt from
+    // scratch — the 2026-08-25 regression. Git is asked first, in code, and its answer is terminal.
+    if (st === 'running' || st === 'merge-ready') {
+      const g = await mergedInGit(u)
+      if (g.merged) {
+        units.set(u.id, { status: 'merged', branch: `unit/${u.id}`, mergedAt: g.branchSha,
+          note: 'crash residue — git says the branch already merged' })
+        log(`${u.id}: recorded ${st} at the last checkpoint but git says merged (${g.branchSha.slice(0, 7)}) — not re-dispatched`)
+        changed = true
+        continue
+      }
+    }
     if (st === 'deferred' || st === 'running' || st === 'merge-ready' || (st === 'blocked' && !blockedBy(u))) {
       units.set(u.id, { status: 'pending' })
       log(`${u.id}: ${st === 'deferred' ? 'in scope again'
