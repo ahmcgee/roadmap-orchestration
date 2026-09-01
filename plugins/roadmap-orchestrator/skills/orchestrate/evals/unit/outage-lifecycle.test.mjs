@@ -149,8 +149,11 @@ test('a commit probe that ANSWERS "no commits" still quarantines — the old ver
 /* 3. The host preflight: read the box before the box eats the wave        */
 /* ====================================================================== */
 const envProbe = (stdoutFor) => ({ match: /^env-probe:/, result: (p) => courierResult(p, BASE_SHA, stdoutFor) })
-const host = ({ pids = '412\n36792', pid1 = 'init' }) => envProbe((cmd) =>
-  /pids\.current/.test(cmd) ? pids : /^ps -p 1\b/.test(cmd) ? pid1
+// Default host: pid cgroup nearly empty, no zombies, PID 1 = the ordinary devcontainer `sh`
+// supervisor (`while sleep 1 & wait $!; do :; done`) — a name that is NOT on any init list and
+// reaps perfectly well, which is exactly why the name decides nothing.
+const host = ({ pids = '412\n36792', zombies = '0', pid1 = 'sh' }) => envProbe((cmd) =>
+  /pids\.current/.test(cmd) ? pids : /grep -c '\^Z'/.test(cmd) ? zombies : /^ps -p 1\b/.test(cmd) ? pid1
     : /proc\/loadavg/.test(cmd) ? '30.5 20.0 10.0 3/512 1' : /^nproc$/.test(cmd) ? '16' : '')
 
 test('pid-cgroup headroom below the floor halts the wave BEFORE dispatch', async () => {
@@ -168,24 +171,41 @@ test('pid-cgroup headroom below the floor halts the wave BEFORE dispatch', async
   assert.match(d.what, /init: true/, 'and names the operator action')
 })
 
-test('a PID 1 that is not a known init halts, naming the comm it saw', async () => {
-  const { fn } = makeAgent([host({ pid1: 'sleep' })])
+// The reaper axis is judged on the OUTCOME. The first cut of this guard was a known-init
+// allowlist, and it was wrong on the very box the skill runs on: PID 1 = `sh` reaps fine (0
+// zombies, 35 of 36,790 pids after three days), so a name test halts a healthy host while proving
+// nothing about an unlisted one. The two real incidents were ~9,500 and 35,940 zombies.
+test('a pathological zombie count halts, naming the count and PID 1', async () => {
+  const { fn } = makeAgent([host({ zombies: '35940', pid1: 'sleep' })])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
   assert.equal(state.halt.reason, 'env-no-reaper')
   assert.equal(state.units.a.status, 'pending')
   const [d] = kinds(state, 'env-no-reaper')
-  assert.match(d.what, /PID 1 is `sleep`/, 'fail-loud names the unknown comm rather than guessing about it')
-  assert.match(d.what, /envPreflight/, 'and states the escape for a healthy box with an unusual init')
+  assert.match(d.what, /35940 zombie processes/, 'the evidence it judged on is on the record')
+  assert.match(d.what, /PID 1 is `sleep`/, 'PID 1 is reported — the operator needs it — but it decided nothing')
+  assert.match(d.what, /init: true/, 'and the operator action is named')
 })
 
-test('every known init passes, and a healthy box halts nothing', async () => {
-  for (const comm of ['init', 'tini', 'systemd', 'docker-init', 'dumb-init']) {
-    const { fn } = makeAgent([host({ pid1: comm })])
+test('a reaping host never halts, whatever PID 1 is called', async () => {
+  // `sh` is the devcontainer idiom and is on no init list; the control is that it dispatches.
+  for (const pid1 of ['sh', 'sleep', 'init', 'tini', 'bash', 'my-supervisor']) {
+    const { fn } = makeAgent([host({ pid1 })])
     const state = await runWave(fn, makePlan([unit('a')]), makeState())
-    assert.equal(state.halt, undefined, `${comm} is a reaping init`)
-    assert.equal(state.units.a.status, 'merged', `${comm} dispatches normally`)
+    assert.equal(state.halt, undefined, `PID 1 \`${pid1}\` with zero zombies is a reaping host`)
+    assert.equal(state.units.a.status, 'merged', `PID 1 \`${pid1}\` dispatches normally`)
   }
+})
+
+test('a handful of zombies is a transient, not a halt — the threshold is far from both edges', async () => {
+  for (const zombies of ['7', '999']) {
+    const { fn } = makeAgent([host({ zombies })])
+    const state = await runWave(fn, makePlan([unit('a')]), makeState())
+    assert.equal(state.halt, undefined, `${zombies} zombies is under the 1000 floor`)
+  }
+  const { fn } = makeAgent([host({ zombies: '1000' })])
+  assert.equal((await runWave(fn, makePlan([unit('a')]), makeState())).halt.reason, 'env-no-reaper',
+    '1000 is the documented threshold, and it is inclusive')
 })
 
 test('an unlimited cgroup (`max`) and an unreadable one both fail SOFT — unknown is not exhausted', async () => {
@@ -195,7 +215,7 @@ test('an unlimited cgroup (`max`) and an unreadable one both fail SOFT — unkno
 
   // cgroup v1 / a non-Linux host: the file is not there. A guard is a floor under a known fact.
   const { fn } = makeAgent([{ match: /^env-probe:/, result: (p) => {
-    const r = courierResult(p, BASE_SHA, (cmd) => (/^ps -p 1\b/.test(cmd) ? 'init' : ''))
+    const r = courierResult(p, BASE_SHA, (cmd) => (/grep -c '\^Z'/.test(cmd) ? '0' : ''))
     r.results[0] = { ...r.results[0], exitCode: 1, stdout: 'No such file or directory' }
     return r
   } }])
@@ -210,8 +230,10 @@ test('the preflight is a closed command list, salted, and switchable off', async
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'env-probe:w1')
   assert.match(p, /1\. cat \/sys\/fs\/cgroup\/pids\.current \/sys\/fs\/cgroup\/pids\.max/, 'exact commands, not a goal')
-  assert.match(p, /2\. ps -p 1 -o comm=/)
-  assert.match(p, /3\. cat \/proc\/loadavg/, 'the load pair rides the same courier, so lastLoad exists before any lane')
+  assert.match(p, /2\. ps -eo stat= \| grep -c '\^Z' \|\| true/,
+    'the zombie count carries `|| true` — grep -c exits 1 on zero, and the courier stops at the first non-zero exit')
+  assert.match(p, /3\. ps -p 1 -o comm=/)
+  assert.match(p, /4\. cat \/proc\/loadavg/, 'the load pair rides the same courier, so lastLoad exists before any lane')
   assert.match(p, /judge none of it/, 'the pass test is the script\'s, not the courier\'s')
   assert.match(p, /Probe id launch-1/, 'salted like every environment probe — a resume re-reads the box')
 

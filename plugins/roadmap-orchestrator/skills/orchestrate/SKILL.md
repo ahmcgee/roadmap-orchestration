@@ -339,7 +339,7 @@ Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
 cannot resolve it otherwise. **`launchId` must be FRESH on every launch and on every resume** —
 never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
 probes (provisioning, integration setup, the merged/reachability git probes, the per-wave codex
-probe, the host preflight) out of `resumeFromRunId`'s cache: those probes answer "what does the
+probe, the host preflight, the preview worktree + mirror couriers) out of `resumeFromRunId`'s cache: those probes answer "what does the
 disk and git look like right now",
 and a replayed answer is a lie (a resume once replayed a pre-rebuild `cd: No such file` and
 quarantined healthy units). The scripts cannot generate it themselves — `Date.now()` and
@@ -414,7 +414,7 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
   commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
   wait out a usage-limit or platform-outage window, or fix the box (a full pid cgroup and a
-  non-reaping PID 1 both mean: recreate the container with an init as PID 1). Do the action, then
+  ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1). Do the action, then
   relaunch; never route around a halt by re-implementing the work another way.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 

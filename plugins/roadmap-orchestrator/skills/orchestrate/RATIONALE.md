@@ -720,12 +720,19 @@ probe dying twice is not evidence of an outage and the branch's commits are safe
 is only safe because of a wave-scoped `dispatched` set — a park returns the record to `pending`, which
 without it re-dispatches inside the same wave forever.
 
-**The host preflight fails loud on a breach and soft on an unknown.** An unrecognised PID 1 halts,
-naming the comm, because the observed failure (`sleep` as PID 1, orphans never reaped, the pid cgroup
-filling until test lanes died of EAGAIN) looks exactly like every other non-init, and guessing which
-non-inits reap is how it stayed invisible for a week. A fact that could not be *read* degrades
-`env-unprobed` and halts nothing — an unknown is never a breach. `config.envPreflight: 'off'` is the
-documented exit for a healthy box with an unusual init, and the only way past the check.
+**The host preflight judges the reaper on evidence, not on PID 1's name.** The first cut halted on
+an unrecognised PID 1 (`init|tini|systemd|docker-init|dumb-init`) and was wrong on the very box the
+skill runs on: the ordinary devcontainer supervisor is `sh` running
+`while sleep 1 & wait $!; do :; done`, which reaps perfectly — 0 zombies and 35 of 36,790 pids after
+three days of heavy agent runs — and the allowlist would have halted every wave on a healthy host.
+A name proves nothing in either direction, so the guard counts zombies instead
+(`ps -eo stat= | grep -c '^Z' || true` — the `|| true` matters, since `grep -c` exits 1 on zero and
+the courier stops at the first non-zero exit). The threshold is 1000: a reaping host sits at zero to
+a few transient zombies, while the two real incidents were ~9,500 and 35,940, so it is an order of
+magnitude clear of both edges. PID 1's comm is still read and printed in the halt detail — the
+operator wants it — but it decides nothing. A fact that could not be *read* degrades `env-unprobed`
+and halts nothing: an unknown is never a breach. `config.envPreflight: 'off'` remains the documented
+exit, and the only way past the check.
 
 **Load is recorded, never gated on.** The ledger asked for the flake band to wait on
 `loadavg1 < cpuCount/2`. That was wrong on the facts: `runBoundary` runs **after** the scheduler

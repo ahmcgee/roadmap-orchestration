@@ -615,10 +615,19 @@ const PIDS_MAX = '/sys/fs/cgroup/pids.max'
 // Below this fraction of the pid cgroup free, forking is a coin flip: the arc-observed box was at
 // 36,350/36,792 (1.2% free) when three full-suite gates died of EAGAIN in one wave.
 const PIDS_MIN_HEADROOM = 0.2
-// PID 1 must reap orphans. Short and explicit ON PURPOSE — an unknown comm halts loudly rather
-// than being assumed benign, because the observed failure (`sleep infinity` as PID 1) is
-// indistinguishable from any other non-init by inspection.
-const INIT_COMMS = ['init', 'tini', 'systemd', 'docker-init', 'dumb-init']
+// PID 1 must reap orphans — and whether it does is EVIDENCE, not a name. A known-init allowlist
+// (`init|tini|systemd|docker-init|dumb-init`) was the first cut and it was wrong in practice: the
+// ordinary devcontainer idiom is PID 1 = `sh` running `while sleep 1 & wait $!; do :; done`, which
+// reaps perfectly (0 zombies, 35 of 36,790 pids after three days of heavy agent runs) and would
+// have halted every wave on a healthy box. So count the zombies instead. `|| true` because
+// `grep -c` exits 1 when it counts none, and the courier stops at the first non-zero exit — a
+// healthy host must not truncate the command list.
+const ZOMBIE_CMD = "ps -eo stat= | grep -c '^Z' || true"
+// The threshold is deliberately far from both edges: a reaping host sits at 0 to a few transient
+// zombies, while the two real incidents were ~9,500 and 35,940. 1000 is an order of magnitude
+// above any transient burst and an order of magnitude below either incident, so it cannot fire on
+// a healthy box and cannot miss a reaper-less one.
+const ZOMBIE_HALT = 1000
 
 
 /* ------------- shared-red circuit breaker (wave-scoped) ----------------- */
@@ -1524,7 +1533,7 @@ async function previewAdvance(sha, label, first) {
   const attempt = async (sweep) => {
     const cmds = build(sweep)
     const r = await courierRun(prevWt, cmds, { model: 'haiku', phase: 'Preview', label: sweep ? `${label}#sweep` : label },
-      previewSweepRetry)
+      previewSweepRetry + LAUNCH)
     return { ok: r.ok, sha: r.out(cmds.length - 1), detail: r.detail,
       detached: r.exit(sweep ? previewSweepCmds.length : 0) === 0 }
   }
@@ -3289,16 +3298,16 @@ if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${in
 // re-reads the box instead of replaying a stale answer.
 if (C.envPreflight !== 'off') {
   const waveN = (prior.wave ?? 0) + 1
-  // pids.current/pids.max in one `cat` (two lines, in that order); PID 1's comm; then the load
-  // pair, which seeds `lastLoad` so a degradation raised before any test lane can still cite the
-  // host it happened on.
-  const cmds = [`cat ${PIDS_CUR} ${PIDS_MAX}`, 'ps -p 1 -o comm=', ...LOAD_CMDS]
+  // pids.current/pids.max in one `cat` (two lines, in that order); the zombie count; PID 1's comm
+  // (REPORTED, never judged — see ZOMBIE_CMD); then the load pair, which seeds `lastLoad` so a
+  // degradation raised before any test lane can still cite the host it happened on.
+  const cmds = [`cat ${PIDS_CUR} ${PIDS_MAX}`, ZOMBIE_CMD, 'ps -p 1 -o comm=', ...LOAD_CMDS]
   const ep = await courierRun(repo, cmds,
     { model: 'haiku', effort: 'low', phase: 'Setup', label: `env-probe:w${waveN}` },
     `This is a read-only host-health probe. Report what the commands print and judge none of it — ` +
     `whether the numbers are healthy is not yours to assess. Change nothing, kill nothing. ` + LAUNCH)
-  if (ep.exit(2) === 0 && ep.exit(3) === 0)
-    noteLoad({ loadavg1: Number(ep.out(2).split(/\s+/)[0]), cpuCount: Number(ep.out(3)) })
+  if (ep.exit(3) === 0 && ep.exit(4) === 0)
+    noteLoad({ loadavg1: Number(ep.out(3).split(/\s+/)[0]), cpuCount: Number(ep.out(4)) })
 
   // 1. pid-cgroup headroom. `pids.max` reads `max` when the cgroup is unlimited — not a number and
   //    not a problem. An unreadable file (cgroup v1, a non-Linux host) is UNKNOWN, not exhausted:
@@ -3313,27 +3322,28 @@ if (C.envPreflight !== 'off') {
   else if (max !== 'max' && (maxN - curN) / maxN < PIDS_MIN_HEADROOM)
     halt.env = 'env-pids-exhausted'
 
-  // 2. PID 1 must reap. The known-init list is deliberately short and explicit; anything else halts
-  //    NAMING the comm, because the observed failure (`sleep`) looks exactly like every other
-  //    non-init and guessing which non-inits reap is how this defect stayed invisible for a week.
-  //    A box with an unusual but healthy PID 1 is cleared with `config.envPreflight: 'off'`.
-  const comm = ep.out(1).split('\n')[0].trim()
-  if (ep.exit(1) !== 0 || !comm)
+  // 2. Is PID 1 reaping? Judged on the OUTCOME — the zombie count — never on PID 1's name. Its
+  //    comm is read anyway because it is the first thing the operator needs, but it decides
+  //    nothing: the devcontainer `sh`/`sleep` idiom reaps, and an allowlist of init names halts a
+  //    healthy box while proving nothing about an unlisted one.
+  const comm = ep.out(2).split('\n')[0].trim() || '(unread)'
+  const zombies = Number(ep.out(1).split(/\s+/)[0])
+  if (ep.exit(1) !== 0 || !Number.isFinite(zombies))
     degrade({ label: `env-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'env-unprobed',
-      what: `could not read PID 1 (\`ps -p 1 -o comm=\` exited ${ep.exit(1) ?? 'nothing'}) — the wave runs ` +
-        `unguarded on the reaper axis` })
-  else if (!INIT_COMMS.includes(comm)) halt.env = halt.env ?? 'env-no-reaper'
+      what: `could not count zombies (\`${ZOMBIE_CMD}\` exited ${ep.exit(1) ?? 'nothing'}: ` +
+        `${ep.out(1).slice(0, 120) || '(no output)'}) — the wave runs unguarded on the reaper axis` })
+  else if (zombies >= ZOMBIE_HALT) halt.env = halt.env ?? 'env-no-reaper'
 
   if (halt.env)
     degrade({ label: `env-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: halt.env,
       what: (halt.env === 'env-pids-exhausted'
         ? `pid cgroup at ${cur}/${max} — under ${Math.round(PIDS_MIN_HEADROOM * 100)}% headroom, so the next ` +
           `fork storm is a test lane dying of EAGAIN`
-        : `PID 1 is \`${comm}\`, which is not a known init (${INIT_COMMS.join(', ')}) and so does not reap ` +
-          `orphans — killed test runs accumulate as zombies until the pid cgroup is full`) +
+        : `${zombies} zombie processes (PID 1 is \`${comm}\`) — orphans are not being reaped, and killed test ` +
+          `runs will accumulate until the pid cgroup is full`) +
         `. Wave halted before dispatch: units stay pending, state is checkpointed and resumable. Operator: ` +
-        `recreate the container with an init as PID 1 (compose \`init: true\`), or — if this box is healthy ` +
-        `and its PID 1 simply is not on that list — set \`config.envPreflight: 'off'\` in the plan and relaunch.` })
+        `recreate the container with a reaping PID 1 (compose \`init: true\`) — or, if this box is genuinely ` +
+        `healthy, set \`config.envPreflight: 'off'\` in the plan and relaunch.` })
 }
 
 // Codex availability probe — every wave, because auth expires between waves (ChatGPT-plan
@@ -3375,10 +3385,13 @@ if (C.envPreflight !== 'off') {
 if (previewStatus === 'pending') {
   // 1. The worktree itself, from the primary checkout (the only place `git worktree add` can run).
   //    Idempotent by the worktree list, so a relaunch adopts the existing tree instead of failing.
+  //    Salted like every other environment probe: this command's answer is a fact about the DISK,
+  //    and a resume after a container rebuild that replayed a cached "already there" would skip
+  //    the create and leave the wave with no preview worktree at all.
   const wt = await courierRun(repo, [
     previewStopCmd,
     `git worktree list --porcelain | grep -qx 'worktree ${prevWt}' || git worktree add --detach ${prevWt} ${integrationTip}`,
-  ], { model: 'haiku', phase: 'Preview', label: 'preview-worktree' }, previewSweepRetry)
+  ], { model: 'haiku', phase: 'Preview', label: 'preview-worktree' }, previewSweepRetry + LAUNCH)
   // 2. Deps/env, exactly as the integration worktree gets them. 3. Detach + bring the preview up.
   const pv = wt.ok ? await provision(prevWt, 'provision:preview') : { ok: false, detail: wt.detail }
   const ps = pv.ok ? await previewAdvance(integrationTip, 'preview-setup', true) : { ok: false, detail: pv.detail }

@@ -348,7 +348,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 | `codex-unavailable` | the per-wave `codex-probe` found no CLI or no "logged in" line | `codex login` (or `--device-auth` headless), then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
-| `env-no-reaper` | the host preflight: PID 1 is not a known init, so orphans are never reaped | recreate the container with an init as PID 1 (compose `init: true`); if the box is healthy and its PID 1 simply is not on the list, set `config.envPreflight: 'off'` |
+| `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
 | `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
 
 Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
@@ -889,7 +889,7 @@ integration-review material.
 | `codexFixTimeoutMin` | `20` | Resume-round deadline |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
-| `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and PID 1 (`ps -p 1 -o comm=`, halts on anything but `init`/`tini`/`systemd`/`docker-init`/`dumb-init`). An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape for a healthy box with an unusual init, and the only way past the check |
+| `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
 | `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
@@ -950,8 +950,9 @@ amendments, needs-user calls, and the session integration review.
   pre-merge `state:'ready'`). Anything that must vary per launch cannot be generated in-script — it
   arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
   the harness appends to its environment probes: provisioning, integration setup, the unit-setup
-  rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, and the host
-  preflight. Work-product calls never carry it; that is what keeps a resume cheap.
+  rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, the host
+  preflight, and the preview couriers (worktree create, every mirror advance) — a replayed
+  `git worktree add` after a container rebuild would skip the create and leave no preview at all. Work-product calls never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
   `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout and
   `worktreeRoot/__preview` the green-tip preview mirror. Keep `worktreeRoot` outside the repo.

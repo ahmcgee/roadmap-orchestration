@@ -72,17 +72,18 @@ export function assertCksumVerified(prompt, file, content, who) {
 // `codex login status` -> the /logged in/i probe test — runs for real instead of being
 // short-circuited by a canned verdict. A canned {ok:true} here would prove nothing about the code
 // that reads the results, which is the whole point of moving those decisions into the script.
-// The host-health defaults are a HEALTHY box: pid cgroup nearly empty, a reaping PID 1, an idle
-// load. A test that wants a sick box overrides `env-probe:` with its own stdout (see wave-policy).
+// The host-health defaults are a HEALTHY box: pid cgroup nearly empty, ZERO zombies (PID 1 is the
+// ordinary devcontainer `sh` supervisor — a name that decides nothing), an idle load. A test that wants a sick box overrides `env-probe:` with its own stdout (see wave-policy).
 const courierStdout = (cmd, head) =>
   /\brev-parse HEAD\b/.test(cmd) ? head
     : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
       : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
         : /pids\.current/.test(cmd) ? '412\n36792'
-          : /^ps -p 1\b/.test(cmd) ? 'init'
-            : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
-              : /^nproc$/.test(cmd) ? '16'
-                : ''
+          : /grep -c '\^Z'/.test(cmd) ? '0'
+            : /^ps -p 1\b/.test(cmd) ? 'sh'
+              : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
+                : /^nproc$/.test(cmd) ? '16'
+                  : ''
 export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   const block = prompt.split('\nCommands:\n')[1] ?? ''
   const commands = block.split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)

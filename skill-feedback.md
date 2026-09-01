@@ -47,8 +47,8 @@ where the script could have handed it a *closed command list*. That is now the d
   after `merge-reach` proves reachability; reconcile is one-way (ancestor or `tip-regressed` + halt);
   "merged" is decided in code at dispatch, in `quarantine()`, and in the crash-residue loop by the
   second-parent test (bare `is-ancestor` false-positives on commit-less branches — the ledger's ask
-  was corrected). Environment probes (setup/provision/git/codex/env) are salted with `args.launchId`
-  so a resume re-probes live instead of replaying a cached `cd: No such file`.
+  was corrected). Environment probes (setup/provision/git/codex/env/preview) are salted with
+  `args.launchId` so a resume re-probes live instead of replaying a cached `cd: No such file`.
 - **Haiku with destructive reach** — preview `kill -9` of every node process (08-21), tracker
   bootstrap clobbering three issues and issue-new/bank-debt fuzzy marker hits (08-22, 08-23), the
   `.roadmap/` wipe (08-28), the invented codex credential rule (08-26). One fix shape: `courierRun`
@@ -98,7 +98,6 @@ where the script could have handed it a *closed command list*. That is now the d
   sidecars aren't enough; arc-cumulative scope precedent (wave-scoped now to bound the prompt);
   auto-annotating banked debt that a later merge resolved; `rebanked` over-triggers on crash-residue
   re-entry (a prior-state `merge-ready`), bounded because `mismatchEver` still forces the frontier
-  gate; salting the preview couriers (`preview-worktree`, `preview-setup`, `mirror:*`) — the last
-  environment probes still replayable from cache.
+  gate.
 
 **ADDRESSED 2026-09-01 v0.13.0**
