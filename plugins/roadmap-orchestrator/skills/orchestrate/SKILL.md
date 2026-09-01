@@ -34,7 +34,7 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    ladder, the consults, the merge and its suite gate, and the boundary TRIAGE that rules on what
    those roles found. Opus judges; Sonnet gates low-risk units, extracts and compresses; Haiku runs
    closed command lists and writes down what the script already composed — including WHERE each
-   command runs: since 0.14.1 every composed command carries its own `cd '<dir>' && ( … )` guard,
+   command runs: since 0.14.0 every composed command carries its own `cd '<dir>' && ( … )` guard,
    so a courier that skips the instruction fails that command's exit code rather than answering
    from whatever checkout it happened to start in. A codex outage is a hard
    stop to surface to the user, never a licence for a Claude agent to implement in its place.

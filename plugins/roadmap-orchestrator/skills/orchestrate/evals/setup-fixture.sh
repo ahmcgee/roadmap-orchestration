@@ -486,9 +486,9 @@ echo "Fixture ready at $TARGET"
 echo "  repo:  $REPO  (base $BASE)"
 if [ "$MODE" = conductor ]; then
   echo "  mode:  conductor (3 units, architect-log seed, stats.js health-bait, maxWavesPerRun 3)"
-  echo "  next:  launch conductor.mjs ONCE via Workflow with args {plan, state, config: {}, harnessPath}"
+  echo "  next:  launch conductor.mjs ONCE via Workflow with args {roadmapDir, config: {}, harnessPath, launchId}, then persist.mjs"
   echo "         (see evals/README.md), then run: check-conductor.sh $TARGET"
 else
-  echo "  next:  launch the harness with plan/state from $REPO/.roadmap/ (see evals/README.md),"
+  echo "  next:  launch the harness via Workflow with args {roadmapDir: $REPO/.roadmap, config: {}, launchId}, then persist.mjs (see evals/README.md),"
   echo "         then run: check.sh $TARGET"
 fi

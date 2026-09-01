@@ -96,7 +96,7 @@ test('1d the reachability probe runs exactly the three commands, and reads HEAD 
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'merged')
   const reach = calls.find((c) => c.label === 'merge-reach:a')
-  // CHANGED CONTRACT (0.14.1): gitProbe composes the working directory into every numbered command
+  // CHANGED CONTRACT (0.14.0): gitProbe composes the working directory into every numbered command
   // (`cd '<dir>' && ( … )`), so the directory is never the model's to choose — see the courier note.
   assert.match(reach.prompt, /1\) cd '\/wt\/__integration' && \( git symbolic-ref --quiet --short HEAD \)/,
     'HEAD is read as a fact for the failure detail, not compared to the branch — inside the cd guard')

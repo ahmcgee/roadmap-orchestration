@@ -45,7 +45,7 @@ const rawCommandsOf = (prompt) => (prompt.split('\nCommands:\n')[1] ?? '')
   .split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
 
 // A courier fake that fails at `failing` and stops there, exactly as the courier contract says.
-// CHANGED CONTRACT (0.14.1): results are POSITIONAL — no `command` comes back — so the failing slot
+// CHANGED CONTRACT (0.14.0): results are POSITIONAL — no `command` comes back — so the failing slot
 // is found by index against the prompt's own list.
 const courierFailingAt = (failing) => (prompt) => {
   const full = courierResult(prompt, BASE_SHA)
@@ -152,7 +152,7 @@ test('a courier with no working directory throws at compose time rather than shi
 })
 
 test('courier results are POSITIONAL — the command text is never echoed back', async () => {
-  // CHANGED CONTRACT (0.14.1): the schema's `command` field is gone. It cost Haiku output tokens
+  // CHANGED CONTRACT (0.14.0): the schema's `command` field is gone. It cost Haiku output tokens
   // per courier and, capped at 300 characters, failed schema validation outright on the long
   // composed commands (arc-observed in the same fixture: "/results/0/command: must NOT have more
   // than 300 characters", burning the call's schema retries). The script already knows what it
@@ -404,7 +404,7 @@ test('a pass with an empty lane ledger degrades lane-substituted', async () => {
 // =========================================================================================
 // 7. STRICT's location test is mechanical, proves WHICH checkout, and a linked worktree passes it.
 // =========================================================================================
-// CHANGED CONTRACT (0.14.1): `git rev-parse --git-dir` only proved the agent was in SOME checkout,
+// CHANGED CONTRACT (0.14.0): `git rev-parse --git-dir` only proved the agent was in SOME checkout,
 // which is exactly the fact a courier that never cd'd could still report truthfully (arc-observed,
 // wf_106cdf59-c5f: the whole preview list ran in the workflow session's own repo). The test is now
 // an IDENTITY test — `pwd`, and `git rev-parse --show-toplevel` naming which repository.

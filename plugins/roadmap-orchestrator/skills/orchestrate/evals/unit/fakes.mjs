@@ -33,7 +33,7 @@ export const nextSeq = () => __seq++
 export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'utf8' }).trim()
 
 // A COURIER call (harness.mjs `courierRun`) is handed a closed, numbered command list and reports
-// {exitCode, stdout} POSITIONALLY — since 0.14.1 it never echoes the command text back. The fake
+// {exitCode, stdout} POSITIONALLY — since 0.14.0 it never echoes the command text back. The fake
 // replays that exact list back with exit 0 and a
 // plausible stdout, so the scripts' own pattern-matching — `git rev-parse HEAD` -> the mirror sha,
 // `codex login status` -> the /logged in/i probe test — runs for real instead of being

@@ -692,7 +692,7 @@ The rule since 0.13.0, in two halves:
    list* rather than misjudging inside it, containment replaces wording: the preview lives in its own
    worktree so no sanctioned command can reach the operator's checkout. What genuinely needs a model
    — executing test lanes, judging a diff — keeps a model, but never the *choice* of what to run.
-   **And never the choice of WHERE to run it** (0.14.1). The cd instruction lived only in STRICT's
+   **And never the choice of WHERE to run it** (0.14.0). The cd instruction lived only in STRICT's
    prose, and in `wf_106cdf59-c5f` Haiku simply skipped it: the `preview-worktree` courier ran the
    entire list in the orchestrator's own source repo — `git rev-parse --git-dir` passed there, since
    that is a checkout too — so `git worktree add --detach <prevWt> <sha>` failed with "invalid

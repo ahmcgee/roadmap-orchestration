@@ -237,7 +237,7 @@ test('the preflight is a closed command list, salted, and switchable off', async
   const { fn, calls } = makeAgent([host({})])
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'env-probe:w1')
-  // CHANGED CONTRACT (0.14.1): every numbered command carries the script-composed working directory
+  // CHANGED CONTRACT (0.14.0): every numbered command carries the script-composed working directory
   // (`cd '/repo' && ( … )`), so a courier that ignores STRICT's cd sentence fails that command's
   // exit code instead of probing whatever host directory it happened to start in.
   assert.match(p, /1\. cd '\/repo' && \( cat \/sys\/fs\/cgroup\/pids\.current \/sys\/fs\/cgroup\/pids\.max \)/,

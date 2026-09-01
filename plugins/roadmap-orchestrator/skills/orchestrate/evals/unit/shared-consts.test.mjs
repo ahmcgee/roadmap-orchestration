@@ -149,7 +149,7 @@ test('STRICT (location discipline) is byte-identical in harness.mjs and conducto
   assertInSync('The STRICT const', h, c)
   // The clause is worthless if it stops naming the behaviour it forbids.
   assert.match(h, /Never substitute/, 'STRICT still forbids cwd substitution')
-  // CHANGED CONTRACT (0.14.1): the mechanical check proves WHICH checkout, not merely that the agent
+  // CHANGED CONTRACT (0.14.0): the mechanical check proves WHICH checkout, not merely that the agent
   // stands in one — `git rev-parse --git-dir` succeeded in the workflow session's own repo.
   assert.match(h, /`pwd` must print that path exactly/, 'the location proof is an identity test')
   assert.match(h, /--show-toplevel` names WHICH checkout/, 'and it names the repository')
@@ -213,7 +213,7 @@ test('the courier prompt/schema/shape are byte-identical in both scripts', () =>
 
   const [hs, cs] = FILES.map((f) => blockSource(f, 'courierSchema'))
   assert.ok(hs.includes('exitCode'), 'the courier reports exit codes, never a verdict')
-  // CHANGED CONTRACT (0.14.1): results are positional. The `command` echo cost output tokens and,
+  // CHANGED CONTRACT (0.14.0): results are positional. The `command` echo cost output tokens and,
   // capped at 300 characters, failed validation outright on a composed command.
   assert.ok(!hs.includes('command'), 'and never echoes the command text back')
   assertInSync('The courierSchema builder', hs, cs)
