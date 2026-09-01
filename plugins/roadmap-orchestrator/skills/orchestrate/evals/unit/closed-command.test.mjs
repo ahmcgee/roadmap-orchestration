@@ -232,7 +232,7 @@ test('preview: the worktree is provisioned like __integration and the operator c
   assert.ok(wt.includes('In /repo:'), 'the worktree is added from the primary checkout')
   assert.ok(commandsOf(wt).some((c) => c.includes(`git worktree add --detach '/wt/__preview' ${BASE_SHA}`)),
     'the preview gets its own worktree, at the tip the script named')
-  // CHANGED CONTRACT (0.14.1): the idempotency guard asks whether that tree can RESOLVE the tip,
+  // CHANGED CONTRACT (0.14.0): the idempotency guard asks whether that tree can RESOLVE the tip,
   // not whether the path is in our worktree list. Arc-observed (wf_c6971376-1a5): a rogue
   // `git worktree add` run from the orchestrator's own repo re-pointed the path at THAT repository
   // while our stale list record survived, so `grep -qx 'worktree <path>'` matched, the repair never
@@ -342,7 +342,7 @@ test('issue mode: every marker search carries the exact-first-line jq predicate'
 test('issue mode: a label edit resolved by search is gated on the issue not being CLOSED', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, ISSUE_PLAN(), makeState())
-  // The unit's `status:running` edit is its own call since 0.14.1 — setup is a courier now.
+  // The unit's `status:running` edit is its own call since 0.14.0 — setup is a courier now.
   const p = promptOf(calls, 'issue-running:a')
   assert.ok(p.includes('ISSTATE=${HIT##* }'), 'the search reports the state alongside the number')
   assert.ok(p.includes('if $ISS is non-empty AND $ISSTATE is not CLOSED'), 'and the edit is gated on it')
@@ -438,7 +438,7 @@ test('STRICT: the location test proves WHICH checkout, and a linked worktree is 
 })
 
 // =========================================================================================
-// 8. Every remaining SHELL step is a courier (0.14.1) — unit setup, provisioning, preview.
+// 8. Every remaining SHELL step is a courier (0.14.0) — unit setup, provisioning, preview.
 //
 // Paid conductor fixture wf_c6971376-1a5, the run this section exists for:
 //   * The free-form `provision:preview` agent never cd'd, printed

@@ -855,7 +855,7 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 — the echoed command overrunning its cap and burning the call's schema retries. Both are the RATIONALE
 §19 failure class: a fact the script could compose was left to model compliance.
 
-**Every step that runs a shell command is a courier** (0.14.1). The list, exhaustively:
+**Every step that runs a shell command is a courier** (0.14.0). The list, exhaustively:
 
 | step | label | what the script judges |
 | --- | --- | --- |

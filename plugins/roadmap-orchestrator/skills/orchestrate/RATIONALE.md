@@ -712,7 +712,7 @@ The rule since 0.13.0, in two halves:
    minted, a shared-red breaker that emits one finding instead of N unit verdicts, and merged-ness
    decided by git in code at every chokepoint. Prompts may *inform* a brake; they never *are* one.
 
-**0.14.1 closed the roster.** 0.14.0's guard covered the couriers; it left the steps that were still
+**0.14.0 closed the roster.** 0.14.0's guard covered the couriers; it left the steps that were still
 free-form *prose* — unit setup, integration setup, adopt-tip, provisioning, the commit probe, the
 `.roadmap/` strip — relying on STRICT's sentence for their working directory. Paid fixture
 `wf_c6971376-1a5` broke on two of them in one run. `provision:preview` skipped the cd, read

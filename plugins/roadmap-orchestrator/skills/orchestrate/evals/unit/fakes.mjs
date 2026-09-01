@@ -75,7 +75,7 @@ export function courierCommands(prompt) {
 
 // A courier result whose stdout table is the DEFAULT one with `overrides` layered on: a list of
 // [regex, stdout] pairs matched against the unwrapped command. Every closed-list step is a courier
-// since 0.14.1, so a test that wants ONE command to answer differently (an `is-ancestor` of 1, a
+// since 0.14.0, so a test that wants ONE command to answer differently (an `is-ancestor` of 1, a
 // commit count of 0, a HEAD on the wrong base) says exactly that, positionally-agnostic.
 export const courierSaying = (overrides, baseSha = BASE_SHA) => (prompt) =>
   courierResult(prompt, baseSha, (cmd, head, branch) => {
@@ -166,7 +166,7 @@ const DEFAULTS = [
   // priorTipAncestorExit: the exit code of `merge-base --is-ancestor <checkpointed tip> <branch>`.
   // 0 = the checkpointed tip is on the branch, which is the only state the tip reconcile adopts.
   [(l) => l === 'integration-worktree', (b, p) => courierResult(p, b)],
-  // Unit setup is a COURIER now (0.14.1): the fake replays the composed list, and `worktree add`
+  // Unit setup is a COURIER now (0.14.0): the fake replays the composed list, and `worktree add`
   // moves the fake tree to the base/branch the SCRIPT wrote — so a wrong base is a sim failure.
   [(l) => l.startsWith('setup:'), (b, p) => courierResult(p, b)],
   [(l) => l.startsWith('setup-commits:'), () => ({ ok: true, exitCodes: [0], out: ['0'] })],

@@ -44,7 +44,7 @@ test('issue mode: folded gh clauses + one sync sweep', async () => {
   const { fn, calls } = makeAgent()
   const res = await runWave(fn, ISSUE_PLAN(), makeState())
   assert.equal(res.units.a.status, 'merged')
-  // CHANGED CONTRACT (0.14.1): setup is a closed command list, so the `gh` half no longer rides on
+  // CHANGED CONTRACT (0.14.0): setup is a closed command list, so the `gh` half no longer rides on
   // it — it is its own issue-mode-only call, keyed by the id marker and scoped to the repo slug.
   // File mode makes no such call at all, which is what keeps the offline fixtures byte-identical.
   const running = promptOf(calls, 'issue-running:a')

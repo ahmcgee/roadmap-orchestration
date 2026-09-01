@@ -431,7 +431,7 @@ test('11 plan evidence: the planner\'s manifest reaches the implementer; absent 
 test('12 crash residue: running/merge-ready reopen at wave start and adopt their committed work', async () => {
   for (const residue of ['running', 'merge-ready']) {
     // 'adopted' is the SCRIPT's reading of "the branch exists with commits beyond base and this
-    // unit may adopt", so the fake states those git facts rather than the state name (0.14.1).
+    // unit may adopt", so the fake states those git facts rather than the state name (0.14.0).
     const { fn, calls } = makeAgent([
       { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
       { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['2'] }) },

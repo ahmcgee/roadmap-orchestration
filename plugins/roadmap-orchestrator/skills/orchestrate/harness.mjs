@@ -1145,7 +1145,7 @@ const EVIDENCE = obj({
 })
 const S = {
   ok: obj({ ok: { type: 'boolean' }, detail: { type: 'string' } }, ['ok']),
-  // No `ws`/`intws`/`setup` schemas any more (0.14.1): every step that used to report a sha, a
+  // No `ws`/`intws`/`setup` schemas any more (0.14.0): every step that used to report a sha, a
   // branch state or an ancestry exit code as a JUDGMENT is a courier now, and the script reads
   // those facts out of the commands' own stdout. See "the courier contract" in reference.md.
   // Closed-list git courier (gitProbe below): exit codes and first stdout lines, verbatim, in the
@@ -1608,7 +1608,7 @@ async function mergedInGit(unit, phase = 'Setup') {
 // Optional environment provisioning (plan.provision: {copy: [...gitignored files], setup: "cmd"}).
 // A fresh worktree has no deps/env; without this, the test gate fails for non-code reasons.
 //
-// A COURIER, not a prose brief (0.14.1). This prompt was the LAST free-form step with `cp` in its
+// A COURIER, not a prose brief (0.14.0). This prompt was the LAST free-form step with `cp` in its
 // remit, and wf_c6971376-1a5 is what that cost: the `provision:preview` agent skipped STRICT's cd,
 // printed `/workspaces/roadmap-orchestration` from `git rev-parse --show-toplevel` without
 // reporting it as the failure STRICT says it is, and then improvised its way to a bare
@@ -3800,7 +3800,7 @@ const planCycle = (units, edges) => {
 }
 
 phase('Setup')
-// The integration worktree, as a CLOSED COMMAND LIST (0.14.1). It used to be a three-step prose
+// The integration worktree, as a CLOSED COMMAND LIST (0.14.0). It used to be a three-step prose
 // brief — "ensure the branch exists", "verify it is a clean checkout and reset it if not", "report
 // the exit code verbatim" — i.e. three goals and a promise, handed to Haiku. Two of the three were
 // janitorial ("reset it if not"), and the third was the deciding fact of a two-way door. All three

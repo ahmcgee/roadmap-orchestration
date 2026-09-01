@@ -154,7 +154,7 @@ test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
 // 4. setup {ok:false, state:'has-commits'} -> quarantine, no plan/impl.
 // =========================================================================================
 test('4 has-commits setup: quarantine, no plan/impl', async () => {
-  // CHANGED CONTRACT (0.14.1): 'has-commits' is no longer a state an agent REPORTS — it is the
+  // CHANGED CONTRACT (0.14.0): 'has-commits' is no longer a state an agent REPORTS — it is the
   // script's reading of two git probes, so the test states the git facts instead of the verdict.
   const { fn, calls } = makeAgent([
     { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
@@ -185,7 +185,7 @@ test('5 adopt-tip mismatch: recreated-branch quarantine', async () => {
 })
 
 // =========================================================================================
-// 6. Already-merged short-circuits to merged. CHANGED CONTRACT (0.14.1): the setup prompt's
+// 6. Already-merged short-circuits to merged. CHANGED CONTRACT (0.14.0): the setup prompt's
 //    'already-merged' CASE is gone — the second-parent test is `merged-probe`'s exit codes and the
 //    script's reading of them, before a single worktree command is composed.
 // =========================================================================================
@@ -590,7 +590,7 @@ test('14 stringified args: identical result to object args', async () => {
 //     and the wave must halt before dispatch rather than adopt over its own record.
 // =========================================================================================
 const OTHER_SHA = 'ffffffffffffffffffffffffffffffffffffffff'
-// CHANGED CONTRACT (0.14.1): integration setup is a courier, so the ancestry answer is the stdout
+// CHANGED CONTRACT (0.14.0): integration setup is a courier, so the ancestry answer is the stdout
 // of `git merge-base --is-ancestor <tip> <branch>; echo $?` (printed by the SHELL, which also keeps
 // a legitimate answer of 1 off the courier's stop-at-first-failure path) and the tip is the stdout
 // of `git -C <intWt> rev-parse HEAD`.
