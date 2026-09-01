@@ -31,7 +31,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -396,13 +396,19 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   const Q = 'CRITIQUE_QUESTION_MARKER'
   const R = 'CRITIQUE_RISK_MARKER'
   const { fn, calls } = makeAgent([
-    { match: /^codex-spec-review:a$/, result: () => ({ ok: true, questions: [Q], risks: [R], notes: '' }) },
+    { match: /^codex-spec-review:a$/, result: () => codexRoleOk({ questions: [Q], risks: [R], notes: '' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
   const review = calls.find((c) => c.label === 'codex-spec-review:a')
   assert.ok(review, 'the critique fires on a fresh build whose risk is in planCheckRisk')
   assert.equal(review.model, 'haiku', 'it is steered at codexSteerModel like every other codex step')
+  // It reaches Codex through the ROLE ADAPTER, not a bespoke path: the courier's schema is the
+  // adapter's envelope (the caller's S.critique nested under `result`), never S.critique itself.
+  assert.deepEqual(Object.keys(review.schema.properties), ['ok', 'codex', 'result', 'notes'],
+    'the critique rides run(..., {model:"codex"}) — its courier reports the adapter envelope')
+  assert.deepEqual(Object.keys(review.schema.properties.result.properties), ['questions', 'risks', 'notes'],
+    'and the caller\'s own schema is what codex is held to, nested verbatim under `result`')
   // Sandbox: NOT `-s read-only` — that needs the bwrap namespace this devcontainer cannot build
   // (arc-observed EPERM while reading the spec). It runs under C.codexSandbox like the build lane;
   // "change nothing" is carried by the brief text.
@@ -412,14 +418,18 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   // Location: STRICT makes the steerer cd to the first path named; that must be the unit worktree,
   // and the __codex artifact dir must be marked as scratch (arc-observed: Haiku cd'd to wtRoot and
   // refused because it "is not a git repository").
-  const cdIdx = review.prompt.indexOf('Your cd target is the unit worktree')
-  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/a/spec-review'),
+  const cdIdx = review.prompt.indexOf(`Your cd target is ${WT}/a —`)
+  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/roles/codex-spec-review-a'),
     'the worktree is named as the cd target before the artifact dir')
   assert.ok(/scratch artifact directory, NOT a git checkout/.test(review.prompt), 'the artifact dir is marked scratch')
-  // Schema hard-cut: an entry truncated at the 300-char cap is a valid entry (arc-observed: Haiku
-  // reported ok:false and the critique was thrown away).
-  assert.ok(/cut off mid-sentence at its 300-character cap is still a valid entry/.test(review.prompt) &&
+  // Schema hard-cut: an entry truncated at its cap is a valid entry (arc-observed: Haiku reported
+  // ok:false and the critique was thrown away).
+  assert.ok(/cut off\s+mid-sentence at its cap is still a valid entry/.test(review.prompt) &&
     /truncation is never a failure/.test(review.prompt), 'a hard-cut entry is copied through, not failed')
+  // A role collects no git truth: there is no diff base, so nothing here may ask for one or try to
+  // commit on the tree it was pointed at.
+  assert.ok(!/git rev-list --count/.test(review.prompt) && !/commit them yourself/.test(review.prompt),
+    'a read-only role never counts commits and never commits')
 
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check.includes('A second engineer from a different model family'),
@@ -430,17 +440,115 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
 })
 
 test('l2 spec critique is best-effort: a failed critique degrades and the plan-check runs without it', async () => {
+  // Anchored WITHOUT `$` so the adapter's own `#reattempt` dispatch is dead too — the pass only
+  // gives up after its retry.
   const { fn, calls } = makeAgent([
-    { match: /^codex-spec-review:a$/, result: () => ({ ok: false, questions: [], risks: [], notes: 'codex not reachable' }) },
+    { match: /^codex-spec-review:a/, result: () => codexRoleDead() },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
-  assert.ok(state.degradations.some((d) => d.kind === 'codex-spec-review'), 'the skip is ledgered, not silent')
+  assert.ok(has(calls, 'codex-spec-review:a#reattempt'), 'the adapter reaps and retries once before giving up')
+  const d = state.degradations.find((x) => x.kind === 'codex-role')
+  assert.ok(d, 'the skip is ledgered, not silent')
+  assert.equal(d.label, 'codex-spec-review:a', 'and the ledger row names the ROLE that failed')
+  assert.equal(state.halt, undefined, 'a codex role failure is codex\'s, never a platform outage — nothing halts')
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check, 'the plan-check still ran')
   assert.ok(!check.includes('A second engineer from a different model family'),
     'no critique -> the clause is EXACTLY absent, keeping the prompt byte-identical to the no-critique form')
   assert.equal(state.units.a.status, 'merged', 'this pass gates nothing')
+})
+
+// =========================================================================================
+// n. THE CODEX ROLE ADAPTER — `run(brief, {model:'codex', cwd, sandbox, schema, label, …})`.
+//
+// One way to reach Codex from anywhere in the script: a Haiku courier launches `codex exec`
+// exactly as the build lane does (detached, `timeout -k` inside the launch, pidfile,
+// attach-don't-relaunch, reap-then-retry) and hands the caller back an object the PLATFORM
+// validated against the caller's own schema — or null. The spec critique is its first caller and
+// the only one this wave; wave 2 moves the rest of the judgment roles onto it.
+//
+// What these lock is the contract wave-2 callers are written against, and the two brakes that
+// cannot be prose: a role never runs in the operator's checkout, and a role failure is CODEX's,
+// never the platform's.
+// =========================================================================================
+test('n adapter: the caller gets its own schema back, validated — the courier envelope never leaks', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a$/, result: () => codexRoleOk({ questions: ['Q1'], risks: ['R1'], notes: 'n' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  const check = promptOf(calls, 'opus-plan-check:a')
+  assert.ok(check.includes('Q1') && check.includes('R1'), 'the caller reads `result`, not the envelope')
+  assert.ok(!/"ok":true/.test(check) && !/sessionCaptured/.test(check),
+    'the adapter unwraps: `ok`/`codex` are the courier\'s bookkeeping and never reach the caller')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never the repo root', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const p = promptOf(calls, 'codex-spec-review:a')
+
+  assert.ok(p.includes(`-C ${WT}/a `), 'codex is pointed at the cwd the caller named')
+  assert.ok(!/-C \/repo(\s|$)/.test(p), 'never at the operator\'s checkout')
+  assert.ok(p.includes('-s danger-full-access'),
+    'codexSandbox is the environment\'s ruling and overrides the role\'s intent, as in the build lane')
+  assert.ok(!p.includes('-s read-only'), 'so the role\'s read-only intent is carried by the brief, not the flag')
+  // The launch mechanics are the build lane's, not a second implementation of them.
+  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900'])
+    assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
+  assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
+  assert.ok(/if .*codex\.pid already exists/.test(p), 'and the attach-don\'t-relaunch preamble')
+  assert.ok(p.includes(`${WT}/__codex/roles/codex-spec-review-a`),
+    'role artifacts live in the roles namespace under the worktree root, outside every tracked tree')
+})
+
+test('n3 adapter: one reap-first retry, then a tagged failure — and the platform is never halted', async () => {
+  const seen = []
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a/, result: (p, o) => { seen.push(o.label); return codexRoleDead() } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.deepEqual(seen, ['codex-spec-review:a', 'codex-spec-review:a#reattempt'], 'exactly one retry — never a loop')
+  const retry = promptOf(calls, 'codex-spec-review:a#reattempt')
+  assert.ok(retry.includes(`${WT}/__codex/roles/codex-spec-review-a-retry`), 'the retry runs in a FRESH artifact dir')
+  assert.ok(/REAP THE PREVIOUS ATTEMPT FIRST/.test(retry) &&
+    retry.includes(`kill -TERM -- -$(cat ${WT}/__codex/roles/codex-spec-review-a/codex.pid)`),
+    'and reaps the dead run\'s process group before it launches — two codex on one tree is not a state to reason about')
+  assert.ok(/# PRIOR ATTEMPT/.test(retry), 'the brief says so too, so a live sibling is reported as a harness bug')
+
+  // The tagged failure: ONE `codex-role` row, the caller sees null, and nothing wave-level moves.
+  const rows = state.degradations.filter((d) => d.kind === 'codex-role')
+  assert.equal(rows.length, 1, 'the give-up is ledgered exactly once, at the event')
+  assert.ok(/never a Claude platform outage/.test(rows[0].what), 'and says whose failure it was')
+  assert.equal(state.halt, undefined, 'no platform halt, no codex halt — a dead role halts nothing')
+  assert.equal(state.units.a.status, 'merged', 'and the caller\'s coded fallback carries the unit through')
+})
+
+test('n4 adapter: a role never runs in the operator\'s checkout — the cwd brake is code, not prose', async () => {
+  // The one configuration that can point a role at the repo root: a worktree root whose child IS
+  // the repository. The brake throws rather than improvising, and the unit fails loudly.
+  const { fn } = makeAgent()
+  const plan = { repoPath: `${WT}/a`, worktreeRoot: WT, units: [unit('a')], edges: [] }
+  const state = await runWave(fn, plan, makeState())
+
+  assert.equal(state.units.a.status, 'quarantined', 'the throw is not swallowed anywhere')
+  assert.match(state.units.a.reason, /pipeline error/)
+  assert.match(state.units.a.reason, /operator's checkout/,
+    'and the error names what was wrong: a role was pointed at the repo root')
+})
+
+test('n5 adapter: codex dispatches land in their own spend bucket', async () => {
+  const { fn } = makeAgent()
+  const clean = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(clean.spend.codex, 1, 'one role call = one codex exec = one tick in the `codex` bucket')
+
+  const { fn: fn2 } = makeAgent([{ match: /^codex-spec-review:a/, result: () => codexRoleDead() }])
+  const retried = await runWave(fn2, makePlan([unit('a')]), makeState())
+  assert.equal(retried.spend.codex, 2, 'the reattempt is a second codex process and is counted as one')
+  assert.ok(retried.spend.haiku > clean.spend.haiku, 'and each one also costs its own Haiku courier')
 })
 
 // =========================================================================================

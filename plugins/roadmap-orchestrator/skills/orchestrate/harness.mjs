@@ -101,6 +101,12 @@ const C = {
                               //   units are sized by what we can specify, and Codex runs the
                               //   horizon. Per-milestone commits are what make a kill survivable.
   codexFixTimeoutMin: 45,     // resume-round deadline (fix rounds and adjudicated resumes)
+  codexRoleEffort: 'medium',  // model_reasoning_effort for a ROLE run (`run(p, {model:'codex'})`) —
+                              //   a role reads, judges or drafts one artifact, so it is neither a
+                              //   240-minute build nor a trivial errand
+  codexRoleTimeoutMin: 20,    // role deadline. Deliberately far below codexTimeoutMin: a role that
+                              //   has not finished in 20 minutes is stuck, not thinking, and its
+                              //   caller has a coded fallback (or a null) either way
   codexSteerModel: 'haiku',   // steering tier; 'sonnet' if Haiku proves unable to drive it (P2)
   codexMaxConcurrent: 4,      // semaphore on concurrent codex processes (one OpenAI account)
   gateMaxConcurrent: 4,       // semaphore on concurrent TEST lanes (verify, gate re-verify, and the
@@ -182,6 +188,8 @@ const wtOf = (u) => `${wtRoot}/${u.id}`
 // them; kept until close-out (SKILL.md) for post-hoc forensics — a degradation's `what` names
 // the directory to read. Layout: ${wtRoot}/__codex/<unit>/<step>/{brief.txt,schema.json,
 // events.jsonl,last-message.txt,stderr.log,exit-code,session-id,cwd,done.txt,codex.pid,launched-at}
+// Codex ROLE runs (the adapter below `noteCodexMeta`) are not owned by a unit, so they share one
+// namespace: ${wtRoot}/__codex/roles/<label>/ (and <label>-retry), with the same file layout.
 const codexHome = plan.codex?.home ? `CODEX_HOME=${plan.codex.home} ` : ''
 const codexDir = (id, step) => `${wtRoot}/__codex/${id}/${step}`
 // Location discipline for mechanical agents: smoke testing showed that given a bad path
@@ -445,7 +453,10 @@ const ghMerged = (unit) => issueMode
   : ''
 // Per-tier spend tally, returned in the wave state so the session report can show
 // where frontier attention actually went (and the dial can be tuned on evidence).
-const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, planChecks: 0, opusPlanChecks: 0, gateRounds: 0, opusGateRounds: 0 }
+// `codex` counts codex ROLE dispatches (one per `codex exec` the role adapter launched, retries
+// included) — the bucket the 0.14.0 shift off Claude tiers actually shows up in. `codexRuns` below
+// counts every codex PROCESS including the build/fix lane's.
+const spend = { fable: 0, opus: 0, sonnet: 0, haiku: 0, codex: 0, planChecks: 0, opusPlanChecks: 0, gateRounds: 0, opusGateRounds: 0 }
 // Arc-cumulative semantics — relaunches accumulate instead of resetting (arc-observed: cross-crash
 // tallies had to be hand-summed). Tolerant of older state files: unknown numeric keys carry over, junk drops.
 for (const [k, v] of Object.entries(prior.spend ?? {}))
@@ -710,6 +721,11 @@ const scopePrecedent = (unitId) => {
 // impl-stage calls across eval runs). A single retry with an explicit report-last
 // instruction converts a unit-killing flake into an occasional double-cost call.
 const run = async (prompt, opts) => {
+  // `model:'codex'` is not a Claude agent call at all — it goes to the CODEX ROLE ADAPTER
+  // (`codexRole`, below `noteCodexMeta`), which spends one Haiku courier and one `codex exec`,
+  // never throws, and never touches the platform halt. Everything below this line — the spend
+  // tally, the StructuredOutput retry, `agent()` itself — is Claude-only.
+  if (opts.model === 'codex') return codexRole(prompt, opts)
   spend[opts.model] = (spend[opts.model] ?? 0) + 1
   try { return await agent(prompt, opts) }
   catch (e) {
@@ -742,7 +758,18 @@ const run = async (prompt, opts) => {
 // survives the report — this sentinel is the other half of that bargain: when a code-writing
 // agent's report is lost, ASK THE BRANCH what happened instead of assuming the worst.
 const REPORT_LOST = { summary: '(report lost — see degradations)', filesChanged: [], reportLost: true }
+// Both wrappers below are CLAUDE-only recoveries, and reaching either with `model:'codex'` is a
+// caller bug worth failing on rather than absorbing: runOr's salvage would re-launch a whole
+// `codex exec` with a "your report was rejected" sentence stapled to the brief, and runReq would
+// convert a dead OpenAI seat into a PLATFORM outage that halts the wave. A codex role has its own
+// retry and its own tagged failure (see the adapter's header) — call `run()` and branch on null.
+const refuseCodexWrapper = (opts, who) => {
+  if (opts?.model === 'codex')
+    throw new Error(`${who}() is Claude-only — a codex role failure is not a platform outage. Call ` +
+      `run(prompt, {model:'codex', …}) and branch on its null (label: ${opts.label ?? 'unlabeled'}).`)
+}
 const runOr = async (fallback, prompt, opts) => {
+  refuseCodexWrapper(opts, 'runOr')
   const r = await run(prompt, opts).catch((e) => {
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
       what: `threw — ${String(e?.message ?? e).slice(0, 200)}` })
@@ -796,6 +823,7 @@ const platformOutage = (label) =>
   Object.assign(new Error(`platform outage — required result for "${label ?? 'agent'}" never arrived`),
     { name: 'PlatformOutage' })
 const runReq = async (prompt, opts) => {
+  refuseCodexWrapper(opts, 'runReq')
   const r = await run(prompt, opts).catch((e) => {
     const msg = String(e?.message ?? e)
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'threw',
@@ -868,6 +896,25 @@ const CODEX_META = obj({
   timedOut: { type: 'boolean' }, doneMarker: { type: 'boolean' }, limitHit: { type: 'boolean' },
   sessionCaptured: { type: 'boolean' }, error: { type: 'string', maxLength: 300 },
 }, ['exitCode', 'commits'])
+// The same facts for a codex ROLE run, minus the two that only a unit branch can answer:
+// `commits` (there is no diff base) and `doneMarker` (roles carry no DONE-WHEN file). Everything
+// downstream reads `commits` through `typeof m.commits === 'number'`, so its absence is a shape,
+// not a hole. Kept a separate literal rather than derived, so `noteCodexMeta` can be read against
+// either one without chasing a spread.
+const CODEX_ROLE_META = obj({
+  exitCode: { type: 'number' }, turns: { type: 'number' },
+  inputTokens: { type: 'number' }, outputTokens: { type: 'number' },
+  timedOut: { type: 'boolean' }, limitHit: { type: 'boolean' },
+  sessionCaptured: { type: 'boolean' }, error: { type: 'string', maxLength: 300 },
+}, ['exitCode'])
+// The COURIER's own report for a codex role run: the caller's schema nested VERBATIM under
+// `result`, plus the process facts. `result` is deliberately optional — a dead codex has no
+// result, and a courier forced to fill one would be inventing the caller's answer out of a
+// process failure (the §9 rule, across a process boundary).
+const codexRoleReport = (schema) => obj({
+  ok: { type: 'boolean' }, codex: CODEX_ROLE_META, result: schema,
+  notes: { type: 'string', maxLength: 500 },
+}, ['ok', 'codex'])
 const EVIDENCE = obj({
   keyFiles: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 200 } },
   signatures: { type: 'array', maxItems: 15, items: { type: 'string', maxLength: 300 } },
@@ -955,15 +1002,15 @@ const S = {
     directives: directiveArr, debt: gateDebtArr, scopeRulings: scopeRulingArr,
     notes: { type: 'string' },
   }, ['verdict']),
-  // Cross-model spec critique (codex-spec-review) — the steering agent's report. `questions`/
-  // `risks` are sampling arrays (worst-first, verbatim from the critique); best-effort, gates
-  // nothing.
-  specReview: obj({
-    ok: { type: 'boolean' },
+  // Cross-model spec critique (codex-spec-review) — what CODEX itself returns, handed straight
+  // back by the role adapter. `questions`/`risks` are sampling arrays (worst-first, verbatim);
+  // best-effort, gates nothing. There is no `ok` here any more: "the pass did not happen" is the
+  // adapter's null, not a field the critique fills in about itself.
+  critique: obj({
     questions: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 300 } },
     risks: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 300 } },
     notes: { type: 'string', maxLength: 500 },
-  }, ['ok', 'questions']),
+  }, ['questions', 'risks', 'notes']),
   // `blocked` = the tooling itself could not run (env/deps/config) — a third outcome,
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
   verify: obj({
@@ -1897,56 +1944,31 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   return { verdict: oc.verdict, guidance: oc.guidance, notes: oc.notes }
 }
 
-// Cross-model spec critique (best-effort, read-only by INTENT): a short foreground `codex exec`
-// interrogates the spec + plan from the OTHER model family's perspective before the plan-check
-// adjudicates. GPT and Claude miss different things; the plan-check gets the questions as
-// input, never as verdicts. Failure skips with a degradation — this pass gates nothing.
-// "Read-only" lives in the brief ("change nothing"), NOT in the sandbox flag: it runs under
-// C.codexSandbox exactly like the build lane, because `-s read-only` needs the same bwrap
-// namespace that fails in this devcontainer (arc-observed: the critique was skipped for a bwrap
-// EPERM while merely reading the spec). The steerer's Haiku is told two more things it
-// otherwise improvises wrongly on: the cd target is the unit worktree `w` (the artifact dir is
-// scratch, not a git checkout), and an entry the schema cut mid-sentence at its cap is a
-// valid entry, not a failure.
-const specCritique = async (unit, w, implPlan) => {
-  const dir = codexDir(unit.id, 'spec-review')
-  const critBrief =
+// Cross-model spec critique (best-effort, read-only by INTENT): a short `codex exec` interrogates
+// the spec + plan from the OTHER model family's perspective before the plan-check adjudicates. GPT
+// and Claude miss different things; the plan-check gets the questions as input, never as verdicts.
+// A null skips the pass — the adapter has already ledgered why, and this pass gates nothing.
+//
+// It is the first caller of the codex ROLE adapter, and deliberately has no bespoke path left: the
+// launch, the wait, the reap-and-retry, the read-back discipline and the FINAL MESSAGE section all
+// come from `run(..., {model:'codex'})`. What stays here is the only thing that was ever specific
+// to this pass — the task text. "Read-only" is stated as the role's `sandbox` AND carried by the
+// brief ("change nothing"), because `codexSandbox` overrides the former: `-s read-only` needs the
+// same bwrap namespace that fails in this devcontainer (arc-observed: the critique was skipped for
+// a bwrap EPERM while merely reading the spec).
+const specCritique = (unit, w, implPlan) =>
+  run(
     `Read-only critique task for unit ${unit.id}. Read the spec at ${specOf(unit)}, the contract files it ` +
     `references under ${repo}/.roadmap/contracts/, and this implementation plan:\n${JSON.stringify(implPlan)}\n` +
     `You are a second engineer reviewing before implementation begins. Name what you would have to ASK before ` +
     `building this — decisions the spec and plan leave genuinely unsettled (a question you could answer by ` +
     `reading the code is not one), risks the plan underestimates, and acceptance criteria that are missing or ` +
     `untestable as written. Do not propose an alternative design; do not write code; change nothing. ` +
-    `Final message: ONLY a JSON object matching your output schema; every field required (empty arrays/strings ` +
-    `where you have nothing); each entry one or two sentences (max 300 characters); \`notes\` at most one or ` +
-    `two sentences (max 500 characters).`
-  const r = await withCodexSlot(() => runOr({ ok: false, questions: [] },
-    STRICT +
-    `Run a short Codex critique for unit ${unit.id}. Your cd target is the unit worktree ${w} (a git ` +
-    `checkout). ${dir} is a scratch artifact directory, NOT a git checkout — create it with mkdir -p and ` +
-    `never cd into it or judge it; Codex is pointed at the worktree by -C. ` +
-    `1) \`mkdir -p ${dir}\`; write ${dir}/brief.txt ` +
-    `with EXACTLY the content between the <<<BRIEF>>> markers below (excluding the marker lines); write ` +
-    `${dir}/schema.json with exactly this one-line JSON: ${CRITIQUE_OUT}\n` +
-    `2) Run, blocking: \`timeout 900 ${codexHome}codex exec -C ${w} -s ${C.codexSandbox} ` +
-    `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
-    `-c projects."${w}".trust_level="trusted" --skip-git-repo-check --output-schema ${dir}/schema.json ` +
-    `-o ${dir}/last-message.txt --json - < ${dir}/brief.txt > ${dir}/events.jsonl 2> ${dir}/stderr.log\`\n` +
-    `3) Read ONLY \`head -c 4000 ${dir}/last-message.txt\` — never open ${dir}/events.jsonl or any transcript.\n` +
-    `4) Report ok:true with \`questions\` (at most 8) and \`risks\` (at most 5) copied VERBATIM from the ` +
-    `critique (each already one or two sentences, max 300 characters — never expand them), and \`notes\` one ` +
-    `or two sentences (max 500 characters) only if something needs saying. An entry the schema cut off ` +
-    `mid-sentence at its 300-character cap is still a valid entry: copy it through as-is and report ok:true ` +
-    `— truncation is never a failure. If the command failed or the output is missing/unparseable, report ` +
-    `ok:false with a one-sentence \`notes\` saying what happened. ` +
-    `${TERSE}\n<<<BRIEF>>>\n${critBrief}\n<<<BRIEF>>>`,
-    { model: C.codexSteerModel, effort: 'low', phase: 'Implement', label: `codex-spec-review:${unit.id}`, schema: S.specReview }))
-  if (!r.ok)
-    degrade({ label: `codex-spec-review:${unit.id}`, model: C.codexSteerModel, phase: 'Implement', kind: 'codex-spec-review',
-      what: `cross-model spec critique skipped for ${unit.id} (${String(r.notes ?? 'no report').slice(0, 160)}) — ` +
-        `the plan-check runs without it (${dir})` })
-  return r.ok ? r : null
-}
+    `Report at most 8 \`questions\` and at most 5 \`risks\`, worst first, each one or two sentences; \`notes\` ` +
+    `only if something needs saying.`,
+    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.critique, phase: 'Implement',
+      effort: 'low', timeoutMin: 15, label: `codex-spec-review:${unit.id}` },
+  )
 
 /* --------------------------- per-unit pipeline -------------------------- */
 /* --------------------------- codex executor lane ---------------------------
@@ -1994,12 +2016,6 @@ const CODEX_BUDGETS =
   `characters); \`contractMismatch\` and \`specGap\` one or two sentences each (max 300 characters); each ` +
   `\`debt\` entry's \`what\` and \`why\` a sentence or two (max 400 characters each), at most 8 debt entries ` +
   `(consolidate related items); \`notes\` at most a short paragraph (max 2000 characters).`
-// What the spec critique reports (strict mode, same P1 rule as CODEX_OUT).
-const CRITIQUE_OUT = JSON.stringify(strictify(obj({
-  questions: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 300 } },
-  risks: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 300 } },
-  notes: { type: 'string', maxLength: 500 },
-}, [])))
 // The build brief — Goal / Context / Constraints / Method / Done-when / Escalation / Final
 // message (OpenAI's own scoping structure). Artifacts are referenced by path, EXCEPT the scope
 // envelope and the escalation contract, which are inlined because they ARE the guardrails: a
@@ -2104,13 +2120,18 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // pidfile + group kill), poll sleep-free, kill at the deadline, verify the work ON DISK, read
 // back only the allowlisted slivers, and emit the S.implCodex report. The full transcript is
 // never loaded — that is the entire economic point of the lane.
-const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeDir, reapDir, outSchema, reportInstr }) => {
+// `id`/`subject` name the run in prose; `sandbox` and `gitTruth` are what the ROLE adapter varies
+// (a role has no diff base, so it collects no git truth and commits nothing). Every other seam —
+// the reap, the attach-don't-relaunch rule, the detached `timeout -k` launch, the sleep-free wait,
+// the absent-exit-code rule — is shared verbatim, which is the whole point of not forking it.
+const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin,
+  sandbox = C.codexSandbox, gitTruth = true, preamble = '', resumeDir, reapDir, outSchema, reportInstr }) => {
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
       `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} ` +
       `codex exec resume "$(cat ${resumeDir}/session-id)" ` +
-      `-c sandbox_mode="${C.codexSandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
+      `-c sandbox_mode="${sandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
       `-c model_reasoning_effort=${effort} -c projects."${w}".trust_level="trusted" ` +
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
@@ -2135,7 +2156,7 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
   // handed to the next unit (2026-08-25). `timeout` exits 124 on the deadline; the report
   // instruction reads that as timedOut.
   const execCmd =
-    `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${C.codexSandbox} ` +
+    `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
     `-c projects."${w}".trust_level="trusted" ` +
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
@@ -2155,8 +2176,8 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
       `gone — a second Codex writing this worktree while the first is alive corrupts both.\n`
     : ''
   return STRICT +
-    `You are the steering agent for an autonomous Codex CLI run on unit ${unit.id}. You never write product ` +
-    `code yourself — you launch the run, wait for it, verify its work on disk, and report. Do exactly this:\n` +
+    `You are the steering agent for an autonomous Codex CLI run on ${subject}. You never write product ` +
+    `code yourself — you launch the run, wait for it, verify its work on disk, and report. ${preamble}Do exactly this:\n` +
     reap +
     `1) Create the artifact directory: \`mkdir -p ${dir}\`. Write the file ${dir}/brief.txt with EXACTLY the ` +
     `content between the <<<BRIEF>>> markers at the end of this message (excluding the marker lines; if one ` +
@@ -2184,13 +2205,15 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `   - \`grep -m1 -o '"thread_id":"[^"]*"' ${dir}/events.jsonl\` — write the bare id to ${dir}/session-id,\n` +
     `   - \`grep '"turn.completed"' ${dir}/events.jsonl | tail -1\` (usage: input/output tokens, turn count),\n` +
     `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429|thread already' ${dir}/events.jsonl ` +
-    `${dir}/stderr.log | tail -5 | cut -c1-250\` (errors; also decides \`limitHit\`),\n` +
-    `   - git truth in ${w}: \`git rev-list --count ${base}..HEAD\`, \`git diff --name-only ${base}..HEAD\`, ` +
-    `\`git status --porcelain\`, \`git rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
-    `6) If \`git status --porcelain\` shows uncommitted changes, commit them yourself with the message ` +
-    `"${unit.id}: commit work left uncommitted by codex" and say so in \`notes\` — uncommitted work is ` +
-    `invisible to every downstream judge.\n` +
-    `7) ${reportInstr ?? (`Emit the structured report: copy \`summary\`/\`contractMismatch\`/\`specGap\`/\`debt\`/\`notes\` ` +
+    `${dir}/stderr.log | tail -5 | cut -c1-250\` (errors; also decides \`limitHit\`)${gitTruth ? ',' : '.'}\n` +
+    (gitTruth
+      ? `   - git truth in ${w}: \`git rev-list --count ${base}..HEAD\`, \`git diff --name-only ${base}..HEAD\`, ` +
+        `\`git status --porcelain\`, \`git rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
+        `6) If \`git status --porcelain\` shows uncommitted changes, commit them yourself with the message ` +
+        `"${id}: commit work left uncommitted by codex" and say so in \`notes\` — uncommitted work is ` +
+        `invisible to every downstream judge.\n`
+      : '') +
+    `${gitTruth ? 7 : 6}) ${reportInstr ?? (`Emit the structured report: copy \`summary\`/\`contractMismatch\`/\`specGap\`/\`debt\`/\`notes\` ` +
     `through from the final report VERBATIM (never summarize or expand them; empty strings stay empty — ` +
     `each budget already matches your schema: summary max 700 characters, contractMismatch and specGap ` +
     `max 300 characters each, debt entries' what/why max 400 characters each, notes max 2000 characters); ` +
@@ -2198,9 +2221,11 @@ const steerCodex = ({ unit, w, dir, base, briefText, effort, timeoutMin, resumeD
     `is data, not a failure to hide). \`filesChanged\` comes from the git diff you ran, NOT from the report. `)}` +
     `Fill \`codex\` with the process facts you observed: exitCode (the integer in ${dir}/exit-code; -1 ONLY ` +
     `when that file is absent AND step 4's \`kill -0\` proved the pid dead — never because waiting felt long), ` +
-    `commits (the rev-list count), turns/inputTokens/outputTokens from the usage line (0 if ` +
+    (gitTruth ? `commits (the rev-list count), ` : '') +
+    `turns/inputTokens/outputTokens from the usage line (0 if ` +
     `absent), timedOut (you killed it at the deadline, OR ${dir}/exit-code contains 124 — the launcher's own ` +
-    `\`timeout\` fired), doneMarker (${dir}/done.txt existed), limitHit (any error sliver mentioned a usage/` +
+    `\`timeout\` fired), ` + (gitTruth ? `doneMarker (${dir}/done.txt existed), ` : '') +
+    `limitHit (any error sliver mentioned a usage/` +
     `rate limit, quota, or 429), sessionCaptured (${dir}/session-id written non-empty), and \`error\` — ONE ` +
     `of those error lines, the most informative, copied as a SINGLE line of at most 250 characters; never ` +
     `concatenate several of them and never let a newline into it (five 300-character lines joined is 1500 ` +
@@ -2238,23 +2263,28 @@ const withGateSlot = (fn) => {
   p.then(release, release)   // releases a tick AFTER p settles; never delays p itself
   return p
 }
-// Degradation + spend bookkeeping shared by build and fix steps. A dead process is not a dead
-// unit (the branch is judged on its commits); every entry names the artifact dir to read.
-const noteCodexMeta = (unit, r, dir, label) => {
+// Degradation + spend bookkeeping shared by every codex process — build, fix and role alike. A
+// dead process is not a dead unit (the branch is judged on its commits); every entry names the
+// artifact dir to read. `id` names whatever the run was about (a unit id, or a role's label); a
+// ROLE meta carries no `commits` (no diff base exists), so the "what survives" clause is simply
+// absent there rather than guessing at zero.
+const noteCodexMeta = (id, r, dir, label, phase = 'Implement') => {
   const m = r?.codex
   if (!m) return
+  const survived = typeof m.commits === 'number'
+    ? ` — ${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}`
+    : ''
   spend.codexRuns = (spend.codexRuns ?? 0) + 1
   spend.codexInputTokens = (spend.codexInputTokens ?? 0) + (m.inputTokens ?? 0)
   spend.codexOutputTokens = (spend.codexOutputTokens ?? 0) + (m.outputTokens ?? 0)
   if (m.limitHit) {
     halt.codex = halt.codex ?? 'codex-usage-limit'
-    degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-usage-limit',
-      what: `codex reported a usage/rate limit on ${unit.id} (${dir}) — halting new codex dispatch for this ` +
+    degrade({ label, model: 'codex', phase, kind: 'codex-usage-limit',
+      what: `codex reported a usage/rate limit on ${id} (${dir}) — halting new codex dispatch for this ` +
         `wave; state is checkpointed and the arc resumes cleanly after the limit window` })
   } else if (m.timedOut) {
-    degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-timeout',
-      what: `codex run for ${unit.id} exceeded its deadline and was killed (${dir})${loadNote()} — ` +
-        `${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
+    degrade({ label, model: 'codex', phase, kind: 'codex-timeout',
+      what: `codex run for ${id} exceeded its deadline and was killed (${dir})${loadNote()}${survived}` })
   } else if (m.exitCode !== 0) {
     // Two different facts wore one label. `-1` means the exit-code file was ABSENT when the steerer
     // reported — nobody observed the process finish, so this says something about the LIFECYCLE (a
@@ -2262,17 +2292,151 @@ const noteCodexMeta = (unit, r, dir, label) => {
     // Anything > 0 is codex itself reporting failure. One bucket made the arc's 29-row `codex-exec`
     // cluster unreadable and hid the false-death defect inside it.
     const lifecycle = m.exitCode === -1
-    degrade({ label, model: 'codex', phase: 'Implement', kind: lifecycle ? 'codex-lifecycle' : 'codex-exec',
+    degrade({ label, model: 'codex', phase, kind: lifecycle ? 'codex-lifecycle' : 'codex-exec',
       what: (lifecycle
-        ? `no exit-code file for ${unit.id} (${dir}${m.error ? `; ${m.error}` : ''}) — the run was never observed ` +
+        ? `no exit-code file for ${id} (${dir}${m.error ? `; ${m.error}` : ''}) — the run was never observed ` +
           `to finish, so its exit status is unknown; the steering agent reported it dead after \`kill -0\` failed`
-        : `codex exited ${m.exitCode} on ${unit.id} (${dir}${m.error ? `; ${m.error}` : ''})`) +
-        ` — ${m.commits > 0 ? `${m.commits} commit(s) survive and the branch is judged on its merits` : 'no commits survive'}` })
+        : `codex exited ${m.exitCode} on ${id} (${dir}${m.error ? `; ${m.error}` : ''})`) + survived })
   }
   if (m.commits > 0 && r.notes?.includes('left uncommitted by codex'))
-    degrade({ label, model: 'codex', phase: 'Implement', kind: 'codex-uncommitted',
-      what: `codex left uncommitted work on ${unit.id}; the steering agent committed it (${dir}) — a ` +
+    degrade({ label, model: 'codex', phase, kind: 'codex-uncommitted',
+      what: `codex left uncommitted work on ${id}; the steering agent committed it (${dir}) — a ` +
         `discipline signal worth watching, not a failure` })
+}
+
+/* --------------------------- the codex ROLE adapter ---------------------------
+ * `const r = await run(brief, { model: 'codex', cwd, sandbox, schema, label, phase,
+ *                              effort?, timeoutMin? })`
+ *
+ * ONE way to reach Codex from anywhere in the script. `run()` dispatches here on
+ * `model:'codex'`; the caller gets back an object VALIDATED AGAINST ITS OWN `schema`, exactly as
+ * a Claude agent would have returned one, or `null`.
+ *
+ *   brief       the task, handed to Codex verbatim. Write it for GPT, not for a Claude subagent —
+ *               the adapter appends the FINAL MESSAGE section (the strict-mode rule plus the
+ *               budgets it derives from `schema`), so never hand-write those.
+ *   cwd         REQUIRED absolute directory Codex runs in (`-C`): a unit worktree, the integration
+ *               tree, the mirror, the preview tree. Passing the operator's checkout THROWS — there
+ *               is no default, because a defaulted cwd is how a read-only role edits the repo.
+ *   sandbox     the ROLE's intent: 'read-only' for reviewers/explorers, 'workspace-write' for
+ *               writers. `config.codexSandbox`, when set (it is by default), is the ENVIRONMENT's
+ *               ruling and overrides it — exactly as in the build lane, and for the measured
+ *               reason recorded on that knob: bubblewrap needs a user namespace this devcontainer
+ *               cannot build, so `-s read-only` EPERMs while `workspace-write` silently enforces
+ *               nothing. Where the sandbox cannot carry "change nothing", the BRIEF must.
+ *   schema      the caller's own `S.*` schema. It goes to `codex exec --output-schema` (strictified
+ *               — OpenAI strict mode needs every key required at every level) AND, nested under
+ *               `result`, to the courier's StructuredOutput, so the platform validates what comes
+ *               back instead of the harness trusting a copy.
+ *   label       ledger/journal label; also names the artifact dir. Retry runs as `<label>#reattempt`.
+ *   phase       the phase its degradations are filed under.
+ *   effort      `model_reasoning_effort` (default `config.codexRoleEffort`).
+ *   timeoutMin  deadline (default `config.codexRoleTimeoutMin`), enforced by `timeout -k` INSIDE
+ *               the detached launch, so it survives the courier's death.
+ *
+ * FAILURE CONTRACT — the one thing wave-2 callers must handle:
+ *   A codex role failure is CODEX's, never the platform's. It NEVER throws, NEVER sets
+ *   `halt.platform`, and never reaches `runReq`'s outage path (both wrappers refuse `model:'codex'`
+ *   loudly). The adapter reaps, retries ONCE into a fresh artifact dir, and if that also produces
+ *   no result it returns `null` after appending ONE `codex-role` degradation naming the label, both
+ *   dirs and what the courier said. `null` is the whole tagged failure: branch on it with a coded
+ *   fallback where one is honest, or skip/quarantine where it is not — the same choice `runOr` vs
+ *   `runReq` makes for Claude. A usage limit still sets `halt.codex` (one OpenAI account sits behind
+ *   every run) and a halted wave short-circuits to `null` without dispatching.
+ */
+// Every `maxLength` in the caller's schema, keyed by the nearest NAMED field (array items inherit
+// their array's name), smallest bound winning on a name collision. The adapter cannot know a
+// wave-2 role's fields, so it derives the budget clause from the schema itself — which is what
+// keeps every role's prompt in step with its own caps without each caller restating them.
+const capBudgets = (schema, name = null, out = new Map()) => {
+  if (!schema || typeof schema !== 'object') return out
+  if (typeof schema.maxLength === 'number' && name)
+    out.set(name, Math.min(out.get(name) ?? Infinity, schema.maxLength))
+  if (schema.properties) for (const [k, v] of Object.entries(schema.properties)) capBudgets(v, k, out)
+  if (schema.items) capBudgets(schema.items, name, out)
+  return out
+}
+const budgetClause = (schema) => {
+  const caps = [...capBudgets(schema)]
+  return caps.length
+    ? `Budgets — an over-long field is a rejected report, so cut rather than overrun: ` +
+      `${caps.map(([n, m]) => `\`${n}\` at most ${m} characters`).join('; ')}. `
+    : ''
+}
+// The FINAL MESSAGE section every role brief ends with — the role lane's CODEX_BUDGETS, derived
+// from the caller's schema instead of hard-coded to S.impl's caps.
+const roleFinalMessage = (schema) =>
+  `\n\n# FINAL MESSAGE\n` +
+  `Your final message must be ONLY a JSON object matching the output schema you were given; prose ` +
+  `outside it is discarded, and every field is required — emit "" / [] / false where you have ` +
+  `nothing to say. ${budgetClause(schema)}\n`
+// What a role retry says about the attempt it replaces. The build lane's PRIOR_ATTEMPT talks about
+// commits on a branch; a role has neither, so it gets its own two sentences and the same rule: a
+// live sibling is a harness bug to report, never a run to wait on.
+const PRIOR_ROLE_ATTEMPT =
+  `# PRIOR ATTEMPT\n` +
+  `An earlier Codex run of this exact task died and has been killed and reaped. Redo it from the ` +
+  `beginning; nothing it produced is available to you. There must be no other Codex process working ` +
+  `here — if you find one running, that is a HARNESS bug: stop immediately and say so in your final ` +
+  `message rather than waiting for it or working alongside it.\n\n`
+// The courier's report instruction: copy Codex's JSON through, or say plainly that there was none.
+// The courier never judges the content and never fills a gap in it.
+const roleReportInstr = (dir, schema) =>
+  `Emit the structured report. If ${dir}/last-message.txt holds a parseable JSON object, set \`ok\` ` +
+  `true and copy that object into \`result\` field for field, VERBATIM — never summarize, expand, ` +
+  `re-order or re-word it, and never invent a field it does not have. An entry the schema cut off ` +
+  `mid-sentence at its cap is still a valid entry: copy it through as-is and report ok:true — ` +
+  `truncation is never a failure. If that file is absent, empty or unparseable, report \`ok\` false, ` +
+  `omit \`result\` entirely, and write one sentence in \`notes\` (max 500 characters) saying what ` +
+  `happened — that absence is data, not a failure to hide. ${budgetClause(schema)}`
+const codexRole = async (prompt, opts) => {
+  const { cwd, sandbox, schema, label, phase } = opts
+  // Fail loud on a malformed call rather than improvising a default: each of these is a decision
+  // only the caller can make, and the cwd default in particular is the dangerous one.
+  if (!cwd || !sandbox || !schema || !label)
+    throw new Error(`codex role "${label ?? '(unlabeled)'}" needs cwd, sandbox, schema and label — got ` +
+      `${JSON.stringify({ cwd: !!cwd, sandbox: !!sandbox, schema: !!schema, label: !!label })}`)
+  if (cwd === repo)
+    throw new Error(`codex role "${label}" was pointed at the operator's checkout (${repo}). Roles run in a ` +
+      `worktree, the mirror or the preview tree — never in the repo root.`)
+  const dir = codexDir('roles', label.replace(/[^A-Za-z0-9_.-]+/g, '-'))
+  const retryDir = `${dir}-retry`
+  const briefText = `${prompt}${roleFinalMessage(schema)}`
+  const outSchema = JSON.stringify(strictify(schema))
+  // "Usable" is the retry trigger and the return test alike: an `ok` with no `result` is a courier
+  // that contradicted itself, and it buys the same second attempt a dead process does.
+  const usable = (x) => !!x?.ok && !!x.result
+  const attempt = (at, brief, reapDir, l) => withCodexSlot(async () => {
+    spend.codex++
+    const r = await runOr(null, steerCodex({
+      id: label, subject: `role ${label}`, w: cwd, dir: at, briefText: brief, sandbox: C.codexSandbox ?? sandbox,
+      // Arc-observed on the critique before it moved here: STRICT makes the courier cd to the first
+      // path this task names, and Haiku cd'd to the artifact dir and refused because it "is not a
+      // git repository". Name the cd target, and mark the artifact dir as the scratch it is.
+      preamble: `Your cd target is ${cwd} — the directory Codex itself runs in. ${at} is a scratch ` +
+        `artifact directory, NOT a git checkout: create it with mkdir -p and never cd into it or judge ` +
+        `it; Codex is pointed at ${cwd} by -C. `,
+      effort: opts.effort ?? C.codexRoleEffort, timeoutMin: opts.timeoutMin ?? C.codexRoleTimeoutMin,
+      gitTruth: false, reapDir, outSchema, reportInstr: roleReportInstr(at, schema),
+    }), { model: C.codexSteerModel, effort: 'low', phase, label: l, schema: codexRoleReport(schema) })
+    noteCodexMeta(label, r, at, l, phase)
+    return r
+  })
+  const noResult = (why) => {
+    degrade({ label, model: 'codex', phase, kind: 'codex-role',
+      what: `codex role ${label} produced no result (${why}) — its caller sees null. This is a CODEX ` +
+        `failure, never a Claude platform outage: nothing is halted on account of it.` })
+    return null
+  }
+  if (haltReason()) return noResult(`dispatch is halted (${haltReason()}), so it was never launched`)
+  let r = await attempt(dir, briefText, null, label)
+  // One reattempt, reaping the dead pid first — the build lane's rule for the build lane's reason:
+  // this branch is reached by a genuine death and by a courier that only believed one, and two
+  // codex processes on one tree is not a state to reason about. Never past a halt (a usage limit
+  // observed on the first attempt lands here as halt.codex).
+  if (!usable(r) && !haltReason()) r = await attempt(retryDir, `${PRIOR_ROLE_ATTEMPT}${briefText}`, dir, `${label}#reattempt`)
+  if (usable(r)) return r.result
+  return noResult(`${dir}, then ${retryDir}; ${String(r?.notes ?? 'no courier report').slice(0, 160)}`)
 }
 // Dead on arrival with nothing on the branch: worth exactly one more attempt. Never on a lost
 // report (the branch may hold work nobody described), never past a halt, never on a usage limit.
@@ -2287,9 +2451,9 @@ async function buildStep(unit, w, base, implPlan) {
   const briefText = codexBuildBrief(unit, w, dir, base, implPlan)
   const opts = (label) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Implement', label, schema: S.implCodex })
   let r = await withCodexSlot(() => runOr(REPORT_LOST,
-    steerCodex({ unit, w, dir, base, briefText, effort: C.codexEffort, timeoutMin: C.codexTimeoutMin }),
+    steerCodex({ id: unit.id, w, dir, base, briefText, effort: C.codexEffort, timeoutMin: C.codexTimeoutMin }),
     opts(`codex-build:${unit.id}`)))
-  noteCodexMeta(unit, r, dir, `codex-build:${unit.id}`)
+  noteCodexMeta(unit.id, r, dir, `codex-build:${unit.id}`)
   if (worthRetry(r)) {
     // The retry REAPS the previous pid before it launches (reapDir) and says so in its brief
     // (PRIOR_ATTEMPT). Both are unconditional: this branch is reached by a genuine death and by a
@@ -2298,10 +2462,10 @@ async function buildStep(unit, w, base, implPlan) {
     // Claude implementer — there is no Claude lane.
     const dir2 = codexDir(unit.id, 'build-retry')
     r = await withCodexSlot(() => runOr(REPORT_LOST,
-      steerCodex({ unit, w, dir: dir2, base, briefText: codexBuildBrief(unit, w, dir2, base, implPlan, PRIOR_ATTEMPT),
+      steerCodex({ id: unit.id, w, dir: dir2, base, briefText: codexBuildBrief(unit, w, dir2, base, implPlan, PRIOR_ATTEMPT),
         effort: C.codexEffort, timeoutMin: C.codexTimeoutMin, reapDir: dir }),
       opts(`codex-build-retry:${unit.id}`)))
-    noteCodexMeta(unit, r, dir2, `codex-build-retry:${unit.id}`)
+    noteCodexMeta(unit.id, r, dir2, `codex-build-retry:${unit.id}`)
   }
   return r
 }
@@ -2319,9 +2483,9 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
   const opts = (l) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Fix', label: l, schema: S.implCodex })
   const resumeDir = fresh ? null : codexDir(unit.id, 'build')
   let r = await withCodexSlot(() => runOr(REPORT_LOST,
-    steerCodex({ unit, w, dir, base, briefText, effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir }),
+    steerCodex({ id: unit.id, w, dir, base, briefText, effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir }),
     opts(label)))
-  noteCodexMeta(unit, r, dir, label)
+  noteCodexMeta(unit.id, r, dir, label, 'Fix')
   // The same one-shot retry the build step gets, for the same reason: a fix round that died with
   // nothing on the branch used to fall straight through to a re-verify that could only fail, and
   // the `codex-gate-fix`/`codex-gap-fix` rows in one arc's ledger produced no recovery at all.
@@ -2331,10 +2495,10 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
   if (worthRetry(r)) {
     const dir2 = codexDir(unit.id, `${step}-retry`)
     r = await withCodexSlot(() => runOr(REPORT_LOST,
-      steerCodex({ unit, w, dir: dir2, base, briefText: `${PRIOR_ATTEMPT}${briefText}`,
+      steerCodex({ id: unit.id, w, dir: dir2, base, briefText: `${PRIOR_ATTEMPT}${briefText}`,
         effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dir }),
       opts(`${label}#reattempt`)))
-    noteCodexMeta(unit, r, dir2, `${label}#reattempt`)
+    noteCodexMeta(unit.id, r, dir2, `${label}#reattempt`, 'Fix')
   }
   return r
 }

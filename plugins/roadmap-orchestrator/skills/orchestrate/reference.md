@@ -243,8 +243,10 @@ Fields the scripts add:
   **arc-cumulative** (seeded from the passed state), so a mid-arc relaunch extends the forensics
   rather than erasing them.
 - **`spend`** — per-tier agent counts (`fable`/`opus`/`sonnet`/`haiku`) plus `opusPlanChecks`,
-  `planChecks` (Fable only), `opusGateRounds`, `gateRounds` (Fable), and — on a conductor run —
-  `boundaryTriages` (tier-2) and `boundaryFables` (tier-3). **Arc-cumulative**: it seeds from the
+  `planChecks` (Fable only), `opusGateRounds`, `gateRounds` (Fable), `codex` (role dispatches
+  through the adapter — **not** a Claude tier, so the conductor's Claude budget arithmetic ignores
+  it), `codexRuns`/`codexInputTokens`/`codexOutputTokens` (every codex process, build lane
+  included), and — on a conductor run — `boundaryTriages` (tier-2) and `boundaryFables` (tier-3). **Arc-cumulative**: it seeds from the
   passed state and accumulates across relaunches, so a single wave's delta is the difference
   between two successive checkpoints. This is the session report's "where did frontier attention
   go" table.
@@ -267,8 +269,10 @@ Fields the scripts add:
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
   env-no-reaper | codex-exec | codex-lifecycle |
-  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
-  Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`
+  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
+  Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
+  directory to read; `codex-role` is a role that produced no result after its one retry — its
+  caller got `null`, and nothing was halted on account of it; `codex-exec`
   (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
   finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
   the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
@@ -517,6 +521,42 @@ its brief that the earlier attempt is dead and a live sibling is a harness bug t
 `halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
 wait out the window. Never a quarantine, never a substitute implementer.
 
+**The codex ROLE adapter — `run(brief, {model:'codex', …})`.** The build/fix lane is not the only
+way to reach Codex. Any call site can dispatch a judgment or drafting ROLE to Codex and get back an
+object validated against its own schema, exactly as it would from a Claude agent:
+
+```
+const r = await run(brief, { model: 'codex', cwd, sandbox, schema, label, phase,
+                             effort?, timeoutMin? })   // -> schema-shaped object, or null
+```
+
+`cwd` is **required** — a unit worktree, the integration tree, the mirror or the preview tree; the
+operator's checkout **throws**, because a defaulted cwd is how a read-only role edits the repo.
+`sandbox` states the role's intent (`read-only` for reviewers/explorers, `workspace-write` for
+writers) and `codexSandbox` overrides it exactly as in the build lane, so an instruction not to
+write must also live in the brief. `schema` is the caller's own `S.*`: it becomes
+`codex exec --output-schema` (strictified for OpenAI strict mode) *and*, nested under `result`, the
+courier's own structured output — so the platform validates what comes back rather than the harness
+trusting a copy. The adapter appends the brief's `# FINAL MESSAGE` section itself, including a
+budget line derived from the schema's own caps; never hand-write those. Mechanically it **is** the
+build lane, not a second implementation of it: one Haiku courier under `withCodexSlot`, the
+detached `timeout -k` launch, the pidfile, attach-don't-relaunch, the absent-exit-code-means-RUNNING
+rule, reap-then-retry. Artifacts: `<worktreeRoot>/__codex/roles/<label>/` (retry: `<label>-retry`).
+
+**Failure contract** — the one thing a caller must handle. A codex role failure is *codex's*, never
+the platform's: the adapter never throws for a failed run, never sets `halt.platform`, and never
+rides `runReq`'s outage path — `runOr` and `runReq` both **refuse** `model:'codex'` loudly, since
+either recovery would be the wrong one (a re-launched `codex exec` with "your report was rejected"
+stapled on; a dead OpenAI seat halting the wave as a Claude outage). It reaps and retries **once**
+into a fresh dir; if that also yields nothing it appends one `codex-role` degradation and returns
+**`null`**. `null` is the whole tagged failure — branch on it with a coded fallback where one is
+honest, skip where it is not. A usage limit still sets `halt.codex` (one OpenAI account behind every
+run), and a halted wave returns `null` without dispatching. Spend: every role dispatch, retries
+included, ticks `spend.codex`.
+
+Today the **spec critique** is the adapter's only caller — deliberately, so there is exactly one way
+to call Codex and no bespoke path left beside it.
+
 **The process outlives its steerer, safely.** The deadline rides *inside* the launched command
 line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
 agent can no longer leave a detached codex running unbounded on an OpenAI seat already handed to
@@ -538,10 +578,10 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   clauses that contradict a referenced contract or documented codebase reality, stale premises —
   **plus the frontier-only grounds**: overengineering and complexity that does not earn its keep,
   structure that makes the next change harder, missed reuse or a simpler shape, doors quietly
-  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort; read-only by brief
-  — "change nothing" — not by sandbox: it runs under `codexSandbox` like the build lane, because
-  `-s read-only` needs the bwrap namespace the devcontainer cannot build) runs first; its questions/risks feed the plan-check as adjudication input — cross-model
-  disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
+  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort) runs first —
+  a codex ROLE (see the adapter above) asking for `read-only`, which `codexSandbox` overrides, so
+  "change nothing" is carried by the brief; a `null` skips the pass. Its questions/risks feed the
+  plan-check as adjudication input — cross-model disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
   unit** (plus infeasible plans and `planCheck:'always-fable'`); only low-risk units ride
   **Opus-first** (`approve`/`redirect`/`escalate`; Opus may not quarantine — kill decisions are
   frontier-only). `planCheckRisk` decides which tiers get *any* check.
@@ -887,6 +927,8 @@ integration-review material.
 | `codexNetwork` | `false` | Adds `-c sandbox_workspace_write.network_access=true` (needed when builds must install packages) |
 | `codexTimeoutMin` | `240` | Build deadline before the steering agent kills the process group and assesses what's on disk. Sized for long-horizon units; per-milestone commits are what make a kill survivable |
 | `codexFixTimeoutMin` | `20` | Resume-round deadline |
+| `codexRoleEffort` | `'medium'` | `model_reasoning_effort` for a codex ROLE run (`run(…, {model:'codex'})`); a caller may override per role |
+| `codexRoleTimeoutMin` | `20` | Role deadline. Far below `codexTimeoutMin` on purpose: a role that has not finished in 20 minutes is stuck, not thinking, and its caller has a fallback either way |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
 | `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
@@ -929,7 +971,7 @@ health check.
 
 | Tier | Does | Never does |
 |---|---|---|
-| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus the read-only cross-model spec critique. Runs its own implement→test→fix loop inside the brief's pinned scope | Judgment: it never reviews, gates, plans the roadmap, or adjudicates its own escalations |
+| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus any ROLE dispatched through the adapter (today: the read-only cross-model spec critique). Runs its own implement→test→fix loop inside the brief's pinned scope | Judgment: it never reviews, gates, plans the roadmap, or adjudicates its own escalations |
 | `fable` | Plan pack, plan-checks for med/high-risk units (taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
 | `opus` | Unit plans (brief-authoring), Opus-first plan-check (low-risk singles) + exit gate, conflict resolution, the wave-tail runtime explorer + health assessor (incl. drafting consolidation fix-units), the conductor's tier-2 boundary triager | Implementation (Codex's) |
 | `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression, the conductor's skeleton→spec expansion | — |
