@@ -126,10 +126,11 @@ const DEFAULTS = [
   // Closed-list git couriers (gitProbe): exit codes in the order the script interpolated the
   // commands, nothing interpreted. `merged-probe:` -> branch exists (0), NOT a second parent of any
   // merge commit on the integration branch (1), worktree directory present (0) — i.e. an ordinary
-  // unmerged unit. `merge-reach:` -> HEAD on the integration branch (0), unit branch an ancestor
-  // (0), reported head reachable (0) — i.e. a merge that really landed on the branch.
+  // unmerged unit. `merge-reach:` -> HEAD's branch name (exit 0, reported only), unit branch an
+  // ancestor of the integration branch (0), reported head reachable from it (0) — i.e. a merge
+  // that really landed. Only the last two decide; the first is evidence for the failure detail.
   [(l) => l.startsWith('merged-probe:'), () => ({ ok: true, exitCodes: [0, 1, 0], out: [] })],
-  [(l) => l.startsWith('merge-reach:'), () => ({ ok: true, exitCodes: [0, 0, 0], out: [] })],
+  [(l) => l.startsWith('merge-reach:'), () => ({ ok: true, exitCodes: [0, 0, 0], out: ['roadmap/session-test'] })],
 
   [(l) => l.startsWith('opus-plan-check:'), () => ({ verdict: 'approve', trigger: 'none', guidance: '' })],
   [(l) => l.startsWith('plan-check:'), () => ({ verdict: 'approve', guidance: '' })],

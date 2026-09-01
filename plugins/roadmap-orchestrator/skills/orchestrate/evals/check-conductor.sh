@@ -279,17 +279,28 @@ else
   pass "(f) final state carries the boundary block intact (untriaged review evidence)"
 fi
 
-# --- carried-over sanity: green-tip mirror (preview) ----------------------------
+# --- carried-over sanity: green-tip mirror (the __preview worktree) --------------
+# The mirror is $WT/__preview, detached at the green tip; the operator's checkout is never
+# moved and must still be on the branch the fixture left it on.
 TIP=$(sfield x "s.integrationTip")
-if git -C "$REPO" symbolic-ref -q HEAD >/dev/null 2>&1; then
-  flunk "primary checkout is a detached-HEAD mirror (still on a branch)"
+PREV="$WT/__preview"
+if [ ! -d "$PREV" ]; then
+  flunk "preview worktree exists at $PREV"
+elif git -C "$PREV" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  flunk "preview mirror is a detached-HEAD checkout (still on a branch)"
 else
-  pass "primary checkout is a detached-HEAD mirror"
+  pass "preview mirror is a detached-HEAD checkout"
 fi
-HEAD_SHA=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+HEAD_SHA=$(git -C "$PREV" rev-parse HEAD 2>/dev/null)
 [ -n "$TIP" ] && [ "$HEAD_SHA" = "$TIP" ] \
   && pass "mirror rides the integration tip ($TIP)" \
   || flunk "mirror rides the integration tip (HEAD=$HEAD_SHA tip=$TIP)"
+# The operator's checkout is never touched — that is what __preview exists for. The fixture
+# leaves $REPO on `main`; an arc that moves it has broken the invariant, not just the mirror.
+REPO_REF=$(git -C "$REPO" symbolic-ref -q --short HEAD 2>/dev/null)
+[ "$REPO_REF" = main ] \
+  && pass "primary checkout untouched by the run (still on main)" \
+  || flunk "primary checkout untouched by the run (expected main, got: ${REPO_REF:-detached HEAD})"
 PV_STATUS=$(sfield x "(s.preview||{}).status")
 PV_SHA=$(sfield x "(s.preview||{}).sha")
 [ "$PV_STATUS" = live ] && pass "state.json preview.status is live" || flunk "state.json preview.status is live (got: $PV_STATUS)"

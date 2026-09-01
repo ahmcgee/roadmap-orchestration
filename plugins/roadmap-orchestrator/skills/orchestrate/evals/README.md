@@ -212,14 +212,16 @@ the spiral, made measurable; `gate-good` needing any fix round is the noise trip
 Two paths are probed implicitly. **Provisioning**: the suite requires a gitignored `.env.local` and a
 generated config that only exist if the plan's `provision` block ran in each worktree — if it
 regresses, every unit reads `blocked`. **The green-tip mirror**: the plan carries an api-kind
-`preview` block (no processes, nothing flaky to babysit), so the harness must detach the primary
-checkout and advance it merge by merge.
+`preview` block (no processes, nothing flaky to babysit), so the harness must detach the
+`worktrees/__preview` worktree and advance it merge by merge — while leaving the primary checkout
+exactly where the fixture left it (`main`), which `check.sh` also grades.
 
 `check.sh` grades the end state deterministically (git facts, files, `state.json`) at **zero model
 tokens**: statuses match the table, the planted violation never reaches integration unfixed, dossiers
 exist for quarantines, the full suite passes on the integration worktree, the wave-tail boundary phase
-ran (`boundary` block + `feedback/{health,explorer}/wave-1.md`), HEAD is detached at the final
-suite-green tip with `preview: {status: "live"}`, and spend is within a generous envelope.
+ran (`boundary` block + `feedback/{health,explorer}/wave-1.md`), `__preview`'s HEAD is detached at the
+final suite-green tip with `preview: {status: "live"}` while the primary checkout is still on `main`,
+and spend is within a generous envelope.
 
 **Run:**
 
@@ -283,7 +285,8 @@ Expected shape: an **autonomous 2-wave run ending `arc-complete`**.
   `explorer/wave-2.md` **EXIST**, the final state carries the `boundary` block intact (untriaged
   review evidence for the root), and wave-1's evidence moved into `feedback/triaged/1/`. Probe (f) is
   **not** "no wave-2 files".
-- Carried over: integration suite passes, mirror detached at the tip, `preview.status` live, spend
+- Carried over: integration suite passes, `__preview` detached at the tip with the primary checkout
+  untouched, `preview.status` live, spend
   envelope (WARN if `fable > 6`).
 
 **Run:** as above, but launch the **conductor ONCE** — it loops the waves itself; do *not* launch it

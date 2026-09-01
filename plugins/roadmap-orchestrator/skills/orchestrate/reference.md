@@ -707,13 +707,17 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   `quarantine()` **refuses** it (recording a `quarantine-refused` degradation) rather than
   re-opening landed work. The single exception is a merge the integration fix **reverted**: `git
   revert -m 1` leaves the merge commit in history, so that one caller quarantines explicitly.
-- **A merge is not merged until git says it is reachable.** After the suite passes, `merge-reach:<id>`
-  checks three things by exit code — HEAD is *on* the integration branch, the unit branch is an
-  ancestor of it, and the reported head sha is reachable from it — and only then are `status:
-  'merged'`, `mergedAt` and the new integration tip written. (The merge prompt itself now has to
-  put HEAD on the branch first.) A merge made on a detached HEAD leaves a commit no branch can
-  reach; it is quarantined with the three exit codes in its reason, and the branch is left intact
-  to re-merge.
+- **A merge is not merged until git says it is reachable.** After the suite passes,
+  `merge-reach:<id>` judges **reachability, and nothing else**: the unit branch must be an ancestor
+  of the integration branch and the reported head sha must be reachable from it, both by exit code,
+  and only then are `status: 'merged'`, `mergedAt` and the new integration tip written. Where HEAD
+  points is *reported* in the same probe but decides nothing — it rides along in the quarantine
+  reason as evidence. (The merge prompt still has to put HEAD on the branch first: that is how the
+  result becomes reachable, not a separate thing to grade afterwards. Demanding attachment *at
+  probe time* false-negatived a clean, landed merge in a paid run.) A merge left where no branch
+  can reach it is quarantined with both decisive exit codes leading its reason — the
+  `quarantine-refused` note truncates that reason at 120 chars, so the evidence goes first — and
+  the branch is left intact to re-merge.
 - **The wave-start tip reconcile is one-way.** The integration-worktree setup courier reports the
   exit code of `git merge-base --is-ancestor <the state's integrationTip> <integration branch>`. The live tip
   is adopted **only** on exit 0 (the branch moved ahead). Anything else means our record and the

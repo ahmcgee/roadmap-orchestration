@@ -42,48 +42,70 @@ const MERGED = probe([0, 0, 0], [UNIT_TIP, '', ''])
 // =========================================================================================
 // 1. A merge is not merged until git says the commit is reachable from the branch.
 // =========================================================================================
-test('1a detached-HEAD merge: merged:true with an unreachable commit quarantines, and the tip does not move', async () => {
+// `merge-reach:` runs three commands: [0] `git symbolic-ref --quiet --short HEAD` — REPORTED, it
+// decides nothing; [1] unit branch is-ancestor of the integration branch; [2] the reported head
+// is-ancestor of it. Only [1] and [2] are the verdict. Demanding [0] be the branch false-negatived
+// a clean, landed merge in paid run wf_bb1301d7-70e.
+test('1a a merge made on a detached HEAD but landed on the branch is MERGED — attachment decides nothing', async () => {
   const { fn, calls } = makeAgent([
     { match: /^merge:a$/, result: () => ({ merged: true, suitePass: true, head: NEW_SHA, detail: '' }) },
-    // HEAD is not on the integration branch; the merge commit is dangling.
-    { match: /^merge-reach:a$/, result: () => probe([1, 1, 1]) },
+    // HEAD is detached (symbolic-ref exits 1, prints nothing) — but the merge IS reachable.
+    { match: /^merge-reach:a$/, result: () => probe([1, 0, 0], ['']) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
+  assert.equal(state.units.a.status, 'merged', 'reachable is merged, wherever HEAD happens to point')
+  assert.equal(state.units.a.mergedAt, NEW_SHA)
+  assert.equal(state.integrationTip, NEW_SHA, 'and the tip advances')
+  assert.ok(!has(calls, 'dossier:a'), 'nothing is quarantined')
+})
+
+test('1b a merge commit no branch can reach quarantines, and the tip does not move', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^merge:a$/, result: () => ({ merged: true, suitePass: true, head: NEW_SHA, detail: '' }) },
+    // The unit branch never landed and the merge commit is dangling.
+    { match: /^merge-reach:a$/, result: () => probe([1, 1, 1], ['']) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'quarantined', 'an unreachable merge is never recorded as merged')
   assert.equal(state.units.a.mergedAt, undefined, 'and carries no mergedAt')
   assert.equal(state.integrationTip, BASE_SHA, 'the integration tip never adopts a commit no branch can reach')
-  assert.match(state.units.a.reason, /not reachable from roadmap\/session-test/)
+  assert.match(state.units.a.reason, /NOT reachable from roadmap\/session-test/)
+  assert.match(state.units.a.reason, /HEAD was detached/, 'where HEAD pointed rides along as evidence')
   assert.ok(has(calls, 'dossier:a'), 'it quarantines through the normal dossier path')
 })
 
-test('1b reachability is three separate facts: a reported head off the branch also refuses', async () => {
+test('1c a reported head off the branch also refuses, even with HEAD attached', async () => {
   const { fn } = makeAgent([
     { match: /^merge:a$/, result: () => ({ merged: true, suitePass: true, head: NEW_SHA, detail: '' }) },
     // HEAD attached and the branch is an ancestor, but the sha the agent reported is not.
-    { match: /^merge-reach:a$/, result: () => probe([0, 0, 1]) },
+    { match: /^merge-reach:a$/, result: () => probe([0, 0, 1], ['roadmap/session-test']) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'quarantined')
-  assert.match(state.units.a.reason, /head cafebabe.* is-ancestor exit 1/)
+  assert.match(state.units.a.reason, /head cafebabe is-ancestor exit 1/)
+  // `quarantine-refused` truncates this reason at 120 chars; both decisive exit codes must survive
+  // that cut, or the degradation row cannot be acted on (paid-run-observed: it could not be).
+  assert.match(state.units.a.reason.slice(0, 120), /unit\/a is-ancestor exit 0/)
+  assert.match(state.units.a.reason.slice(0, 120), /head cafebabe is-ancestor exit 1/)
 })
 
-test('1c a reachable merge still merges, and the courier ran the exact commands', async () => {
+test('1d the reachability probe runs exactly the three commands, and reads HEAD without judging it', async () => {
   const { fn, calls } = makeAgent([
     { match: /^merge:a$/, result: () => ({ merged: true, suitePass: true, head: NEW_SHA, detail: '' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   assert.equal(state.units.a.status, 'merged')
-  assert.equal(state.units.a.mergedAt, NEW_SHA)
-  assert.equal(state.integrationTip, NEW_SHA)
   const reach = calls.find((c) => c.label === 'merge-reach:a')
-  assert.match(reach.prompt, /test "\$\(git symbolic-ref --quiet --short HEAD\)" = "roadmap\/session-test"/)
+  assert.match(reach.prompt, /1\) git symbolic-ref --quiet --short HEAD/,
+    'HEAD is read as a fact for the failure detail, not compared to the branch')
+  assert.ok(!/test "\$\(git symbolic-ref/.test(reach.prompt), 'and never as a pass/fail test')
   assert.match(reach.prompt, /git merge-base --is-ancestor unit\/a roadmap\/session-test/)
   assert.match(reach.prompt, new RegExp(`git merge-base --is-ancestor ${NEW_SHA} roadmap/session-test`))
   assert.match(reach.prompt, /Change NOTHING/, 'the courier may not repair what it finds')
   assert.equal(reach.model, 'haiku', "couriering exit codes is the cheapest tier's job")
 })
 
-test('1d the merge agent must put HEAD on the integration branch before merging', async () => {
+test('1e the merge agent must put HEAD on the integration branch before merging', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   const merge = calls.find((c) => c.label === 'merge:a')

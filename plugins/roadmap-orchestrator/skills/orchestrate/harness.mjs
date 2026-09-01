@@ -1626,7 +1626,7 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
       degrade({ label: `quarantine-refused:${unit.id}`, model: 'haiku', phase: 'Quarantine', kind: 'quarantine-refused',
         what: `refused to quarantine ${unit.id} ("${String(reason).slice(0, 120)}") — git says its branch landed on ` +
           `${intBranch} (tip ${g.branchSha.slice(0, 7)}). Recorded as merged; the verdict that asked for the ` +
-          `quarantine was reading stale or cached state.` })
+          `quarantine disagrees with git — most often a stale or cached read.` })
       return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: g.branchSha, note: 'quarantine refused — git says merged' }
     }
   }
@@ -3557,22 +3557,32 @@ async function mergeUnit(unit) {
     if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res, { mergeReverted: true })
   }
 
-  // `merged:true` is an agent's claim; reachability is the fact. 2026-08-28: a merge ran on a
-  // detached HEAD in the integration worktree, reported merged:true, was recorded as `merged` with
-  // a `mergedAt` no branch pointed at, and the next wave's tip reconcile adopted the branch tip
-  // over it — the whole unit vanished. Nothing below this gate may be written until git agrees the
-  // result is on the branch: HEAD attached to it, the unit branch an ancestor of it, and the
-  // reported head reachable from it.
+  // `merged:true` is an agent's claim; REACHABILITY is the fact — and reachability is the WHOLE
+  // fact. 2026-08-28: a merge ran on a detached HEAD in the integration worktree, reported
+  // merged:true, was recorded as `merged` with a `mergedAt` no branch pointed at, and the next
+  // wave's tip reconcile adopted the branch tip over it — the whole unit vanished.
+  // 2026-09-01: this gate ALSO demanded HEAD still be ATTACHED to the integration branch at probe
+  // time, which was never the invariant. Paid run wf_bb1301d7-70e: the integration worktree's
+  // history held a clean `Merge branch 'unit/add-multiply'` with HEAD on the branch, the
+  // attachment test came back 1 anyway, and a landed merge went down the quarantine path — rescued
+  // only by quarantine()'s mergedInGit refusal. What the merge prompt asks for (check the branch
+  // out first) is how to make the result reachable; it is not the same claim as where HEAD happens
+  // to point once the merge is done. So HEAD is a REPORTED fact here that decides nothing, kept
+  // for the degradation detail, and the verdict is ancestry alone: the unit branch is an ancestor
+  // of the integration branch, and the head the agent reported is reachable from it.
   const reach = await gitProbe(`merge-reach:${unit.id}`, intWt, [
-    `test "$(git symbolic-ref --quiet --short HEAD)" = "${intBranch}"`,
+    'git symbolic-ref --quiet --short HEAD',
     `git merge-base --is-ancestor unit/${unit.id} ${intBranch}`,
     `git merge-base --is-ancestor ${res.head} ${intBranch}`,
   ], 'Merge')
-  if (reach.code(0) !== 0 || reach.code(1) !== 0 || reach.code(2) !== 0)
-    return quarantine(unit, `merge reported success but the result is not reachable from ${intBranch} ` +
-      `(HEAD-on-branch exit ${reach.code(0)}, branch-is-ancestor exit ${reach.code(1)}, head ${res.head} ` +
-      `is-ancestor exit ${reach.code(2)}) — most likely merged on a detached HEAD, leaving a dangling commit. ` +
-      `Nothing is recorded as merged and the unit branch is intact: re-merge it with the branch checked out`, res)
+  // The decisive exit codes lead: quarantine-refused truncates this reason at 120 chars, and a
+  // reason whose evidence falls off that cliff is a degradation row nobody can act on.
+  if (reach.code(1) !== 0 || reach.code(2) !== 0)
+    return quarantine(unit, `unit/${unit.id} is-ancestor exit ${reach.code(1)}, head ` +
+      `${String(res.head).slice(0, 8)} is-ancestor exit ${reach.code(2)} — the merge reported success but is NOT ` +
+      `reachable from ${intBranch} (HEAD was ${reach.line(0) || 'detached'}), most likely a dangling merge commit. ` +
+      `Nothing is recorded as merged and the unit branch is intact: re-merge it and leave the result on ` +
+      `${intBranch}`, res)
 
   integrationTip = res.head
   if (C.previewRefresh === 'merge') refreshMirror()
