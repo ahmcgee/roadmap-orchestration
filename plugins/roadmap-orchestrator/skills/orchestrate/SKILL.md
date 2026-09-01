@@ -210,9 +210,13 @@ Read their outputs, then decide:
   that's a spec defect, not an execution risk.
 - **Plan the arc's preview.** Decide how the integrated result is exercised — dev server, built
   CLI, or, for a library-only arc, driving the public API/REPL (`kind: api`, almost always
-  possible) — and fill the plan's `preview` block. The harness keeps the primary checkout riding
-  the latest suite-green integration tip, so the user watches real states from their own repo and
-  each wave's explorer hunts what tests and diffs can't show. While provisioning: have Haiku
+  possible) — and fill the plan's `preview` block. The harness gives the preview **its own
+  worktree** at `worktreeRoot/__preview`, rides it on the latest suite-green integration tip, and
+  runs every `preview` command there — the user's checkout is never touched, so they can keep
+  working and switching branches while the arc runs. Each wave's explorer then hunts what tests and
+  diffs can't show. **Declare `preview.ports`** (the ports the preview actually listens on) whenever
+  you know them: they are the only listeners the harness's one-shot port sweep may kill, and an
+  undeclared port is a port the sweep will leave alone rather than guess at. While provisioning: have Haiku
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.
@@ -220,7 +224,8 @@ Read their outputs, then decide:
   the template instead — but still create `feedback/{explorer,health,triaged}/` for internal wave
   evidence.)
   Kill any stale `worktreeRoot/__preview.pid` left by a dead arc: the whole process **group**
-  (`kill -TERM -- -$(cat …)`), since a single-pid kill strands its child listeners.
+  (`kill -TERM -- -$(cat …)`), since a single-pid kill strands its child listeners. A stale
+  `worktreeRoot/__preview` worktree is adopted, not recreated, so it needs no cleanup.
 - **Seed `.roadmap/architect-log.md`** — your handoff brief to the boundary ladder: the decisions
   you made and *why*, a watch-list for the arc, and explicit **dismissal criteria** (what counts
   as noise a lower tier may drop without you). Opus drafts it from your Phase-0 reasoning; it
@@ -302,8 +307,9 @@ user**: present the decomposition, contracts, cut-line interpretation, and your 
 batched, once. Discipline the questions: only ask what you couldn't resolve yourself, rank by
 impact × uncertainty, cap around five, and attach your recommended answer to each so the user can
 mostly confirm. Also tell them two things concretely: where the preview will be reachable
-(`preview.howToAccess`, plus the fact that their checkout will ride the integration tip detached
-during waves — don't switch branches), and the absolute path of `.roadmap/feedback/user/` — they
+(`preview.howToAccess`, served from its own worktree at `worktreeRoot/__preview` — their own
+checkout is untouched, so they can keep working in it), and the absolute path of
+`.roadmap/feedback/user/` — they
 can copy `TEMPLATE.md` there at any time; notes are batched into your next triage, never injected
 mid-run. (**Issue mode**: instead, point them at the `roadmap-bug` issue template to report bugs
 and `roadmap-unit` to propose new units — both are read at your next boundary (and open `roadmap:bug`
@@ -518,8 +524,8 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
 4. **Close out the arc.** `.roadmap/` is arc-scoped working state, not permanent documentation —
    left raw, a later run reads the stale `state.json` and forks worktrees from a dead integration
    tip, and retired "frozen" contracts masquerade as binding. After `main` advances: stop the
-   preview process (kill the whole **group** recorded in `worktreeRoot/__preview.pid`) and
-   re-attach the primary checkout to `main`; archive the arc (plan, brief, specs, contracts, state,
+   preview process (kill the whole **group** recorded in `worktreeRoot/__preview.pid`) and remove
+   its worktree (`git worktree remove --force worktreeRoot/__preview`); archive the arc (plan, brief, specs, contracts, state,
    `architect-log.md`, dossiers, feedback — triaged and pending alike — report) into
    `.roadmap/archive/<date>-<cutline>/` in one commit; keep the living documents
    (`constraints.md`, `debt.md`, `skill-feedback.md`, notes) at top level — unresolved debt is a

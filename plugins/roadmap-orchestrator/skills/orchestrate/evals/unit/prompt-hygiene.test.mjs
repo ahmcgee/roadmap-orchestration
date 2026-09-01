@@ -81,6 +81,7 @@ const FIX_ROUNDS = [
   // Anchored at ^verify: so it never catches `opus-gate-verify:`/`gate-verify:`.
   { match: /^verify:.*#0$/, result: {
     pass: false, blocked: false, failures: ['assert: expected 1, got 2'],
+    lanes: [{ command: 'npm run test:ci', exitCode: 1 }],
     contractSurfaceTouched: false, diffFiles: [] } },
   // opus exit gate revises once -> `codex-opus-gate-fix:`
   { match: /^opus-gate:.*#0$/, result: {

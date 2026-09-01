@@ -136,10 +136,12 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   },
   "preview": {                     // optional but encouraged — how the *integrated arc* is
     "kind": "server",              //   exercised. server | cli | api. Planned at Phase 0.
-    "setup": "npm run build",      // optional one-time step at wave setup
+                                   //   EVERY command below is run from the preview's own worktree
+                                   //   at worktreeRoot/__preview — never the user's checkout.
+    "setup": "npm run build",      // optional one-time step at preview setup
     "start": "npm run dev",        // server kind: long-running; the harness daemonizes it
                                    //   (log + pidfile at worktreeRoot/__preview.{log,pid},
-                                   //   outside the repo so they never dirty the checkout)
+                                   //   outside every worktree so a mirror advance never touches them)
     "stop": "",                    // optional; default kills the whole preview process GROUP.
                                    //   A custom stop MUST group-kill too — a single-pid kill
                                    //   strands child listeners and leaves ports held.
@@ -147,6 +149,13 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   for hot-reloading servers; absent + server kind → stop/start
     "howToAccess": "http://localhost:5173",  // URL or drive-the-surface instructions — shown to
                                    //   the user at dispatch AND to the wave explorer
+    "ports": [5173],               // optional; the ports the preview OWNS. The only listeners the
+                                   //   one-shot port sweep may kill, interpolated as a literal
+                                   //   list. Absent → derived from a :PORT in howToAccess; nothing
+                                   //   derivable → the sweep may only kill the pidfile's process
+                                   //   group. NEVER inferred by an agent (asked to free "the
+                                   //   preview's ports", Haiku swept three guesses and then
+                                   //   `ps | grep | kill -9`, killing the workflow itself).
     "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
@@ -217,7 +226,7 @@ Fields the scripts add:
   accumulator.
 - **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
-  write-failed | preview-failed | correctness-debt-banked | scope-growth | tip-regressed |
+  write-failed | preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | codex-exec |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
   Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
@@ -238,9 +247,12 @@ Fields the scripts add:
   over ~24 KB is split on line boundaries and fanned out — one Haiku writer per `<file>.partK`, then
   one assembler that `cat`s the parts, cksum-checks the whole, and `rm -f`s the parts; a lost part
   or a mismatch skips assembly / leaves the parts, so the entry names the part and the previous file
-  stays intact. A `preview-failed` entry means the mirror never came up — the entry
-  carries the porcelain diagnosis and exact operator guidance (carried-modification vs real local
-  edits), and the boundary records owed explorer/design markers instead of silently no-opping.
+  stays intact. A `preview-failed` entry means the mirror never came up — the entry names which of
+  the three setup steps failed (worktree / provisioning / bring-up) with the failing command's exit
+  code, and the boundary records owed explorer/design markers instead of silently no-opping; the
+  user's own checkout is never involved either way. A `lane-substituted` entry means a verify
+  reported `pass` with an empty lane ledger, so the green cannot be attributed to any command —
+  the exit gate is the one that rules on lane coverage, so this never gates the unit.
   **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
   `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
   conductor return carries the array, empty when the run was clean.
@@ -282,10 +294,21 @@ green-tip mirror has: **observability, never a gate.** Every `gh` write is best-
 records a `gh-sync` degradation and continues; no unit or wave outcome ever depends on it.
 
 **Idempotent by marker, not by number.** Every unit issue body opens with a machine marker
-`<!-- roadmap:unit id=<unit-id> -->`. Sync agents **find-or-create** by that marker
-(`gh issue list --search '"roadmap:unit id=<id>"' --state all`), so a stale or absent `unit.issue`
-cache is harmless and a resumed/re-run wave never double-creates. Same discipline as the harness's
-wave-N section markers.
+`<!-- roadmap:unit id=<unit-id> -->`, and every debt issue with `<!-- roadmap:debt arc=<arc>
+wave=<N> unit=<id>|ledger -->` (the **arc key** — `plan.trackingIssue`, else `plan.milestone` — is
+load-bearing: without it a `wave=3 ledger` search matched a *previous* arc's wave 3 and silently
+skipped creation). Sync agents **find-or-create** by that marker, so a stale or absent `unit.issue`
+cache is harmless and a resumed/re-run wave never double-creates.
+
+**A search hit is a CANDIDATE, never a match.** `--search '"<marker>" in:body'` is GitHub full-text
+search: it *tokenizes* the marker, so `id=raise-verbs` matched an unrelated open agenda issue and a
+Phase-0 bootstrap "reused" three live issues — overwriting bodies, swapping `status:merged` for
+`status:pending`, re-milestoning them. The exactness test therefore lives in the **shell string the
+script composes**, not in model compliance: every site emits one canonical search whose `jq`
+predicate requires the candidate body's **first line** to equal the marker comment exactly, printing
+`<number> <OPEN|CLOSED>` for the single exact match and *nothing at all* otherwise. No exact match
+means ABSENT, and absent means create. Two standing bars ride with it: **never edit the labels,
+milestone, title or body of a CLOSED issue**, and **never remove a `status:merged` label**.
 
 **Labels** (all skill-managed, prefixed so teardown is a prefix sweep and default repo labels never
 collide):
@@ -439,9 +462,15 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   `exitGate: 'always-fable'`, `risk: high`, the diff touches a frozen contract surface, or the
   unit falls in the deterministic `gateAuditRate` sample. Opus non-convergence also falls through
   to Fable.
-- **Verify — three outcomes, not two.** Cheapest-first: lint/typecheck the changed files →
-  unit-scoped tests + the spec's acceptance checks. The full suite runs **only at the merge gate**,
-  never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
+- **Verify — three outcomes, not two.** Cheapest-first: lint/typecheck the changed files → then
+  **exactly the acceptance-check commands the spec names, verbatim, in order**. Every command and
+  its exit code comes back in `verify.lanes`, and `pass` is true only if every exit code is 0.
+  Substituting a narrower or cheaper lane is the failure this closes (a verifier ran `test:unit`
+  where the spec said `test:ci` and left a red seal invisible for a whole unit), so **both exit
+  gates check the lane ledger against the spec's list before weighing anything else** — a named
+  check missing from `lanes` means UNVERIFIED whatever `pass` says. The script cannot assert
+  coverage itself: the commands live in the spec markdown, not in `plan.json`. The full suite runs
+  **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
   enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
   `provision` block.
@@ -535,13 +564,21 @@ The harness collects the wave's items into the returned state's `debt` array; at
 are promoted into fix units or appended to `debt.md`. Debt is durable where feedback is consumed;
 a resolved item is annotated, not deleted.
 
-**The green-tip mirror.** When `plan.preview` exists, the harness detaches the *primary checkout*
-at the integration tip and, after each suite-green merge, has Haiku advance it (coalescing
-latest-wins — merges never wait for it) and refresh the preview there. The user watches from their
-own repo and only ever sees real suite-green states. The `main` ref never moves (detached HEAD) and
-the merge queue stays in `__integration`, so user git activity can at worst stale the mirror (one
-detach-checkout heals it), never derail the queue. **The preview is observability, never a gate**:
-setup/refresh/healthcheck failures set `preview.status: "failed"`, log, and continue.
+**The green-tip mirror.** When `plan.preview` exists, the harness gives the preview **its own
+worktree** at `worktreeRoot/__preview` (added detached from the primary checkout, then provisioned
+exactly like `__integration`), stands the preview up there, and after each suite-green merge has
+Haiku advance it (coalescing latest-wins — merges never wait for it) and refresh the preview. The
+user watches at `preview.howToAccess` and only ever sees real suite-green states, **with their own
+checkout untouched** — they can keep working and switching branches while an arc runs.
+
+The advance is a **closed command list** (`git checkout --detach <sha>`, the bring-up commands, then
+`git rev-parse HEAD` for the script to read back), not a goal with a "never stash, reset, or force"
+rider: the mirror used to run in the primary checkout, where the harness's own tracked
+`.roadmap/state.json` made git refuse the detach, and a Haiku agent told to make it work anyway
+deleted 163 untracked `.roadmap/` files. A failed bring-up earns exactly one script-dispatched
+retry whose only kill targets are the pidfile's process group and the literal `preview.ports`.
+**The preview is observability, never a gate**: setup/refresh/healthcheck failures set
+`preview.status: "failed"`, log, and continue.
 
 ## `conductor.mjs` — multi-wave dispatch
 
@@ -749,8 +786,8 @@ amendments, needs-user calls, and the session integration review.
   the harness appends to provisioning, integration setup, and the git probes. Work-product calls
   never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
-  `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout. Keep
-  `worktreeRoot` outside the repo.
+  `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout and
+  `worktreeRoot/__preview` the green-tip preview mirror. Keep `worktreeRoot` outside the repo.
 - **Worktrees contain only committed state.** Gitignored and uncommitted files do not materialize in
   them. Three consequences: plan artifacts are read from the *primary* checkout by absolute path
   (deliberate — don't "fix" it); gitignored files the build/tests need must be in `provision.copy`; and

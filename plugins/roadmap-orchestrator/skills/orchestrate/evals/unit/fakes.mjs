@@ -45,9 +45,35 @@ export function assertCksumVerified(prompt, file, content, who) {
   assert.match(prompt, /Retry the write at most once/, `${who} is capped at one retry`)
 }
 
+// A COURIER call (harness.mjs `courierRun`) is handed a closed, numbered command list and reports
+// {command, exitCode, stdout} per command. The fake replays that exact list back with exit 0 and a
+// plausible stdout, so the scripts' own pattern-matching — `git rev-parse HEAD` -> the mirror sha,
+// `codex login status` -> the /logged in/i probe test — runs for real instead of being
+// short-circuited by a canned verdict. A canned {ok:true} here would prove nothing about the code
+// that reads the results, which is the whole point of moving those decisions into the script.
+const courierStdout = (cmd, head) =>
+  /\brev-parse HEAD\b/.test(cmd) ? head
+    : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
+      : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
+        : ''
+export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
+  const block = prompt.split('\nCommands:\n')[1] ?? ''
+  const commands = block.split('\n').map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]).filter(Boolean)
+  assert.ok(commands.length, 'fakes.courierResult: no numbered `Commands:` block — not a courier prompt')
+  // A detach in the list MOVES the fake tree, so a later `git rev-parse HEAD` reads the target
+  // back. Anything cheaper would let a mirror advance "succeed" against a sha it never reached —
+  // exactly the read-back check the script relies on.
+  let head = baseSha
+  return { ok: true, results: commands.map((command) => {
+    const m = /checkout --detach (\S+)/.exec(command)
+    if (m) head = m[1]
+    return { command, exitCode: 0, stdout: stdoutFor(command, head) }
+  }) }
+}
+
 // ---- built-in default results, keyed by harness label prefix ---------------------------
-// Each entry: [labelMatches(label) -> bool, (baseSha) -> freshResultObject]. Colons in the
-// prefixes disambiguate siblings (`gate:` never matches `gate-verify:` etc.), but the list is
+// Each entry: [labelMatches(label) -> bool, (baseSha, prompt, opts) -> freshResultObject]. Colons in
+// the prefixes disambiguate siblings (`gate:` never matches `gate-verify:` etc.), but the list is
 // ordered specific-first defensively. Every generator returns a FRESH object per call so the
 // harness can never mutate a shared canned result across units.
 const DEFAULTS = [
@@ -79,7 +105,7 @@ const DEFAULTS = [
   // Codex lane: the steering agent's report = S.impl + process metadata. The default is a clean
   // one-commit run; tests probing failure axes (exit!=0, no commits, limitHit, timeout) override
   // with their own `codex` block.
-  [(l) => l.startsWith('codex-probe:'), () => ({ ok: true })],
+  [(l) => l.startsWith('codex-probe:'), (b, p) => courierResult(p, b)],
   // The cross-model spec critique fires on EVERY fresh build whose risk is in planCheckRisk
   // (the shipped default is all three tiers), so it needs a default or every wave records four
   // spurious degradations. Clean-and-silent: ok with nothing to say, so the plan-check prompt
@@ -97,8 +123,9 @@ const DEFAULTS = [
   [(l) => l.startsWith('integration-fix:'), (b) => mergeOk(b)],
 
 
-  [(l) => l.startsWith('mirror:'), (b) => ({ ok: true, sha: b })],
-  [(l) => l === 'preview-setup', (b) => ({ ok: true, sha: b })],
+  [(l) => l.startsWith('mirror:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('preview-setup'), (b, p) => courierResult(p, b)],
+  [(l) => l === 'preview-worktree', (b, p) => courierResult(p, b)],
   [(l) => l.startsWith('provision:'), () => ({ ok: true })],
   [(l) => l === 'checkpoint', () => ({ ok: true })],
   // Large-payload fan-out: `<label>:partK` writers, their one-shot `<label>:partK#retry` re-runs,
@@ -121,15 +148,16 @@ const DEFAULTS = [
   [(l) => l.startsWith('design:'), (b) => ({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
 ]
 
-const verifyOk = () => ({ pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] })
+export const verifyOk = () => ({ pass: true, blocked: false, failures: [],
+  lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] })
 const implOk = () => ({ summary: 'done', filesChanged: [] })
 export const codexMetaOk = () => ({ exitCode: 0, commits: 1, turns: 1, inputTokens: 0, outputTokens: 0,
   timedOut: false, doneMarker: true, limitHit: false, sessionCaptured: true, error: '' })
 export const implCodexOk = () => ({ ...implOk(), codex: codexMetaOk() })
 const mergeOk = (b) => ({ merged: true, suitePass: true, head: b, detail: '' })
 
-const defaultFor = (label, baseSha) => {
-  for (const [matches, make] of DEFAULTS) if (matches(label)) return make(baseSha)
+const defaultFor = (label, baseSha, prompt, opts) => {
+  for (const [matches, make] of DEFAULTS) if (matches(label)) return make(baseSha, prompt, opts)
   return undefined
 }
 
@@ -166,7 +194,7 @@ export function makeAgent(rules = [], baseSha = BASE_SHA) {
       if (rule) {
         producer = rule.result
       } else {
-        const d = defaultFor(label, baseSha)
+        const d = defaultFor(label, baseSha, prompt, opts)
         if (d === undefined)
           throw new Error(`fakes.makeAgent: unmatched label "${label}" — no rule and no built-in default (fail-loud)`)
         producer = d

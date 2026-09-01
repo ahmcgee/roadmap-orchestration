@@ -15,6 +15,11 @@
 //                      executes it)
 //   (c) TERSE        — same FIRST SENTENCE only (the tails legitimately diverge: the harness copy
 //                      adds a findings-specific clause that has no analogue in the conductor)
+//   (d) markerFind + MARKER_RULE — byte-identical source/value. These compose the gh find-or-create
+//                      search, and its jq predicate is the ONLY thing standing between "adopt by
+//                      marker" and GitHub's tokenizing full-text search adopting an unrelated issue
+//                      (three live issues clobbered, 2026-08-22). A predicate that drifts in one
+//                      script is a silent re-opening of that hole in half the sites.
 //
 // Extraction anchors on distinctive syntax rather than line numbers so the tests survive edits
 // around the constants and fail with a readable, file-naming diff when a copy actually drifts.
@@ -199,10 +204,29 @@ test('TERSE opens with the same first sentence in both scripts', () => {
       `${f}'s TERSE lost the "no undeclared keys" rule`)
 })
 
+test('MARKER_RULE (the find-or-create obligations) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'MARKER_RULE'))
+  assertInSync('The MARKER_RULE const', h, c)
+  assert.match(h, /FIRST line/, 'the rule still names what makes a candidate an actual match')
+  assert.match(h, /never fall back to `\.\[0\]\.number`/, 'the fuzzy fallback is still forbidden by name')
+  assert.match(h, /CLOSED issue/, 'the closed-issue edit bar survives')
+  assert.match(h, /status:merged/, 'and the merged-label bar with it')
+})
+
+test('markerFind (the exact-marker search) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => constExpr(f, 'markerFind'))
+  // The predicate itself, not merely the command shape: `--json number,body,state` is what makes
+  // the body readable, and the split/compare is what makes the match exact.
+  assert.match(h, /--json number,body,state/, 'the search fetches the body it must verify')
+  assert.match(h, /split\("\\\\n"\)\[0\]/, 'it compares the candidate body\'s FIRST LINE')
+  assert.ok(!/--jq '\.\[0\]\.number'/.test(h), 'the first-fuzzy-hit form is gone')
+  assertInSync('The markerFind search builder', h, c)
+})
+
 test('both scripts still declare every shared constant this suite guards', () => {
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK', 'CK_TABLE', 'cksumOf'])
+    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK', 'CK_TABLE', 'cksumOf', 'markerFind', 'MARKER_RULE'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

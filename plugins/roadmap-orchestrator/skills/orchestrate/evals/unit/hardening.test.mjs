@@ -46,7 +46,7 @@ const owedFor = (state, job) => (state.owed ?? []).find((o) => o.job === job)
 // code-writing report is the steering agent's S.implCodex shape (S.impl + the `codex` process
 // meta) — `implCodexOk()` builds a fresh clean one per call.
 const IMPL_OK = () => implCodexOk()
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
+const VERIFY_OK = { pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] }
 const MERGE_REFUSAL = (extra) => ({ merged: false, suitePass: false, head: BASE_SHA, detail: '', ...extra })
 
 // A design authority + preview block: the design reconcile is the owed ledger's most load-bearing
@@ -62,7 +62,7 @@ const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: '
 // =========================================================================================
 test('1 owed: a preview-down wave owes explorer and design (and degrades preview-setup loudly)', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^preview-setup$/, result: () => ({ ok: false, sha: '', detail: 'dirty' }) },
+    { match: /^preview-setup/, result: () => ({ ok: false, results: [], detail: 'start failed' }) },
   ])
   const plan = makePlan([unit('ui', { design: ['checkin#chrome'] })], [], { preview: PREVIEW, designAuthorities: AUTH })
   const state = await runWave(fn, plan, makeState())
@@ -82,12 +82,15 @@ test('1 owed: a preview-down wave owes explorer and design (and degrades preview
   assert.ok(!has(calls, 'design:'), 'no live preview -> no design reconcile call')
   assert.ok(state.degradations.some((d) => d.label === 'preview-setup' && d.kind === 'preview-failed'),
     'the dead mirror is a skill defect with operator instructions, not a log line')
-  // Regression pin (paid-eval-observed, fixed 2026-08-03): the dirty-primary check must EXCLUDE
-  // .roadmap/ — the conductor's own persist writers dirty it every boundary, and an unscoped
-  // porcelain gate killed the preview on every wave after the first in the conductor fixture.
+  // Regression pin, superseding the old ".roadmap must be excluded from the porcelain check"
+  // pin: the preview no longer runs in the primary checkout at all, so orchestrator-owned dirt
+  // cannot block it and there is nothing to exclude. The stronger property is that NO preview
+  // prompt names the primary checkout as somewhere to cd or check out (2026-08-28, twice: a
+  // Haiku mirror agent deleted 163 untracked .roadmap/ files to get a refused detach to work).
   const ps = calls.find((c) => c.label === 'preview-setup')
-  assert.ok(ps.prompt.includes(":(exclude).roadmap"),
-    'the porcelain pre-check is scoped to real user edits — orchestrator-owned dirt never blocks the mirror')
+  assert.ok(ps.prompt.startsWith(`Start by \`cd\``) && ps.prompt.includes('In /wt/__preview:'),
+    'the preview bring-up runs in the preview worktree')
+  assert.ok(!ps.prompt.includes('In /repo:'), 'the primary checkout is never the preview courier\'s cwd')
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
 })
