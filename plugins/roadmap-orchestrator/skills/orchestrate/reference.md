@@ -357,7 +357,7 @@ re-establishes each from its own probes. Checkpoints land at every status change
 stage transition, coalesced latest-wins — the file can trail the newest event by one write.
 
 In **issue mode** `state.units[id].issue` caches the unit's issue number (convenience only; see
-`plan.units[].issue`). `degradations` gains the `gh-sync` kind (below).
+`plan.units[].issue`). The degradation ledger gains the `gh-sync` kind (below).
 
 ## GitHub issue tracking
 
@@ -949,8 +949,9 @@ amendments, needs-user calls, and the session integration review.
   one from cache is a lie (arc-observed: a resume replayed a pre-rebuild `cd: No such file` and a
   pre-merge `state:'ready'`). Anything that must vary per launch cannot be generated in-script — it
   arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
-  the harness appends to provisioning, integration setup, and the git probes. Work-product calls
-  never carry it; that is what keeps a resume cheap.
+  the harness appends to its environment probes: provisioning, integration setup, the unit-setup
+  rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, and the host
+  preflight. Work-product calls never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
   `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout and
   `worktreeRoot/__preview` the green-tip preview mirror. Keep `worktreeRoot` outside the repo.

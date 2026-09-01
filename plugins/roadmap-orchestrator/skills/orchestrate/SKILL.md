@@ -142,8 +142,11 @@ Read their outputs, then decide:
   is safe to guard. Still grep the tree at Phase 0 and record any pre-existing duplicates in the
   conventions contract, so no unit "fixes" them by renumbering.
 - **Set `plan.scopeAllow` for the repo's evidence/test conventions** (e.g.
-  `["docs/evidence/**", "**/test/**", "**/*.test.*"]`). Every unit's pinned scope envelope is stated
-  to the implementer and diff files beyond it raise `scope-growth` for the exit gate to adjudicate.
+  `["docs/evidence/**", "**/test/**", "**/*.test.*"]`) — and **record the key explicitly even when the
+  answer is `[]`**, so the next reader can tell "this repo has no by-convention files" from "nobody
+  decided" (arc-observed: a 19-wave arc where Phase 0 simply never set it, and every unit's own test
+  files read as growth). Every unit's pinned scope envelope is stated to the implementer, and diff
+  files beyond it raise `scope-growth` for the exit gate to adjudicate.
   Files matching `scopeAllow` are in scope by convention and never counted as growth — otherwise a
   unit's own evidence screenshots, transcripts and sibling test files raise the signal on every wave
   (arc-observed: 7 `scope-growth` degradations in one wave, nearly all noise) and drown the real one
@@ -246,7 +249,9 @@ Read their outputs, then decide:
   targeting the *seams* between units. You plan them; schedule an early unit to write them; the
   merge gate runs them.
 - **Resolve the cut line** into an explicit in-scope set (ancestor-closed under the DAG), and jot
-  next-session notes for what falls beyond it while the context is hot.
+  next-session notes for what falls beyond it while the context is hot. The cut line is what you will
+  judge DRAINED against later — once it is, relaunch with `admissions: 'closed'` (see "Closing
+  admissions") rather than letting the boundary tiers keep minting units past it.
 
 **Fidelity audit — proportionate to the source material.** Your plan pack is built from
 compressed extractions, and compression loss is silent: a dropped constraint resurfaces later as
@@ -333,8 +338,9 @@ Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
 `harnessPath` is not optional — the conductor dispatches each wave via that child script and
 cannot resolve it otherwise. **`launchId` must be FRESH on every launch and on every resume** —
 never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
-probes (provisioning, integration setup, the merged/reachability git probes) out of
-`resumeFromRunId`'s cache: those probes answer "what does the disk and git look like right now",
+probes (provisioning, integration setup, the merged/reachability git probes, the per-wave codex
+probe, the host preflight) out of `resumeFromRunId`'s cache: those probes answer "what does the
+disk and git look like right now",
 and a replayed answer is a lie (a resume once replayed a pre-rebuild `cd: No such file` and
 quarantined healthy units). The scripts cannot generate it themselves — `Date.now()` and
 `Math.random()` do not exist in a workflow script, so it has to arrive in `args`. Omitting it does
@@ -376,7 +382,10 @@ Judgment returns to you with `status: 'conductor-return'`, a `reason`, and the r
 **On every wake, first read two things**: `.roadmap/architect-log.md` (the ladder's journal — what
 the boundary agents decided in your stead, and why) and the returned state's `boundary`/`debt`
 residue. That residue is **intact** on a terminal boundary; on a continuation boundary the
-conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on the `reason`:
+conductor already banked the wave's debt (`.roadmap/debt.md`, or `roadmap:debt` issues) and cleared
+**only what the banker confirmed** — anything it did not name stays in `state.debt`, re-banks next
+boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt is already on disk at
+`.roadmap/debt.json`, written the moment the wave returned. Then act on the `reason`:
 
 - **`arc-complete`** — the boundary yielded no further work; the arc is at its cut line. Go to
   **Session end**. The final wave's boundary evidence rode back untriaged, deliberately. Any `stuck`
@@ -442,8 +451,9 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   (out-of-scope-file · needs-migration-or-ruling · pre-existing-untouched), because "minor" alone
   is never a reason to bank and correctness findings can never bank through a gate approve. Banked
   debt goes to the living `.roadmap/debt.md` ledger (or, in issue mode, ONE consolidated
-  `roadmap:debt` issue per unit-residue, keyed `wave=<N> unit=<id>`; a consolidation fix-unit that
-  resolves specific issues names them in its `closes` field so the merge path closes them);
+  `roadmap:debt` issue per unit-residue, keyed `arc=<tracking issue or milestone> wave=<N>
+  unit=<id>`; a consolidation fix-unit that resolves specific issues names them in its `closes`
+  field so the merge path closes them);
   annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
   it's large; findings at a superseded sha are discounted, not re-litigated. Consumed feedback moves to
   `feedback/triaged/<wave>/` (issue mode: the `roadmap:bug` issues are closed with a disposition
@@ -459,9 +469,10 @@ Every return carries a **`degradations`** array (this run's rows). Each one is a
 moment it happens, to `.roadmap/degradations.jsonl` — the arc's full record — and a per-kind count
 summary is rendered to `.roadmap/skill-degradations.md` at every persist point, so it survives a run
 that dies. `skill-feedback.md` is yours and the user's: the scripts never write it. Each entry is
-`{script, wave, phase, label, model, kind, what}`, where `kind` is `schema-retry` (a report was
-rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the platform
-does not expose why**), `salvage-failed`, or `threw`.
+`{script, wave, phase, label, model, kind, what}`. The `kind` you will meet most are `schema-retry` (a
+report was rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the
+platform does not expose why**), `salvage-failed` and `threw`; `reference.md` enumerates the full set,
+including the halt kinds, the codex kinds, and the refusals below.
 
 Your duties:
 
@@ -507,6 +518,15 @@ is wrong across sessions; the journal does not survive the host process). Work t
    merges landed on a detached HEAD and are dangling). Nothing was changed. Find the merges
    (`git reflog <integration branch>`, `git fsck --unreachable`), decide which history is real,
    point the branch at it, and set `state.json`'s `integrationTip` to match before relaunching.
+
+   Two more refusals read the same way — the run declining to destroy something rather than failing.
+   A **`plan-conflict`** degradation means `.roadmap/plan.json` on disk holds unit ids this run has
+   never seen, so the conductor skipped the write instead of overwriting them; the return envelope's
+   `planConflict` names them, and merging the two plans is yours before you relaunch. A
+   **`debt-unbanked`** degradation means the banker did not confirm every item it was given: the
+   unconfirmed ones stay in `state.debt` and `.roadmap/debt.json` and re-bank at the next boundary, so
+   nothing is lost — but a repeat at the same wave means the ledger write itself is failing, and the
+   `write-failed` entries beside it are the thing to read.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately

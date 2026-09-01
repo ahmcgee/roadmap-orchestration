@@ -158,6 +158,14 @@ ergonomics polish, and marginal coverage on a healthy suite are noise to cut *ev
 real*. They bank to the debt ledger instead, so nothing is lost, and the triager sets `arcComplete`. An
 arc that never dries is a failure mode, not diligence.
 
+**And the brake is now code, not only prompt (0.13.0).** The cut line binding the *default* still
+needs a triager to apply it, and an Opus turn can reason its way past a prose brake — observed: 7
+drafts admitted at wave 18 and 8 at wave 19, after the architect had already logged PLAN DRAINED.
+`admissions: 'closed'` is enforced where units are minted, so neither tier can mint one whatever it
+concludes (drafts and promotions bank as debt lines instead), and `tier1MaxDrafts` stops the
+mechanical tier admitting a whole batch with no judgment at all. See §19: prompts may *inform* a
+brake; they never *are* one.
+
 ## 8. Why the final wave's boundary is never suppressed
 
 It is tempting to have the conductor predict finality and set `boundary: 'off'` on the last wave. It
@@ -223,7 +231,10 @@ by tier:
   **every `run()` whose result is dereferenced must funnel through it.** Where a fallback is
   meaningful (the census) it degrades; where inventing one would silently admit or drop work (the
   triage tiers) it returns `triage-degraded` and hands the boundary to the root. A blip must never
-  cost an arc.
+  cost an arc. **0.13.0 split this in two** (§19): `runOr` keeps the cases where a coded fallback is
+  an honest answer, and `runReq` covers the results a caller dereferences where any fallback would be
+  an invented *verdict about a unit* — it parks the wave instead of quarantining seven units for the
+  platform's outage.
 
 ## 9a. Observability — a silent safety net is its own failure mode
 
@@ -248,16 +259,23 @@ Three platform facts make this sharper than it sounds:
 3. **`spend` counts calls, not health.** A run that burned two retries and a salvage looked identical
    to a clean one.
 
-Hence: `degradations` in the returned state, a `log()` line at the moment of every degradation (so a
-long run is legible while it runs, not only afterwards), and `.roadmap/skill-feedback.md` written at
-every persist point — *not* only on return, because a run that dies never returns and its evidence
-would die with it.
+Hence: a `log()` line at the moment of every degradation (so a long run is legible while it runs, not
+only afterwards); the row appended *there and then* to `.roadmap/degradations.jsonl`, because a run
+that dies never returns and its evidence would die with it; this run's rows on the return envelope for
+the root to read; and a per-kind count summary rewritten to `.roadmap/skill-degradations.md` at every
+persist point. What the scripts do **not** write is `skill-feedback.md`.
 
 `skill-feedback.md` is deliberately **not** `debt.md`. Debt is about the product and is triaged into fix
 units by the architect. Skill feedback is about the *orchestrator*, has a different audience (whoever
 maintains this skill), and must leave the product repo entirely. Mixing them buries the rarer and more
 valuable signal in the commoner one. It is a living document and is **never archived** with the arc — a
 defect log you archive is a defect log you have decided not to fix.
+
+It is also deliberately **hand-written**. It used to carry a machine-maintained marker region rewritten
+whole by an unverified Haiku pass, and that pass ate a hand-written entry. The machine half now lives in
+files the scripts own outright — `skill-degradations.md` (the per-kind summary) and the
+`degradations.jsonl` / `escalations.jsonl` sidecars — and no prompt in either script can reach
+`skill-feedback.md`; a sim asserts it.
 
 ## 10. H-7 — the phantom ledger reference (resolved)
 
@@ -321,8 +339,10 @@ trim, or rewrite the file to make the numbers match: a mismatch is reported, not
 write had no verification at all before this and showed the same de-escaping through a file-write
 tool; it now uses the identical here-doc + cksum instruction, which is why the legacy prompt shape was
 deliberately dropped.
-Deferred (YAGNI-with-a-backlog): move `degradations`/`escalations` to an append-only sidecar so
-checkpoints send only deltas — the arc-cumulative arrays are most of what makes state large.
+**Landed in 0.13.0** (§19), because the arc-cumulative arrays were most of what made state large:
+`degradations`/`escalations` moved to append-only sidecars, and `state.json` now carries only the
+per-unit escalation stop counts the three-strikes brake reads. Still deferred from that batch: delta
+checkpoints, if the sidecars alone turn out not to be enough.
 
 Two guards exist because they were each learned the hard way:
 
@@ -339,20 +359,27 @@ code.
 
 ## 12. Why the preview is observability and never a gate
 
-The green-tip mirror rides the *primary checkout* at the latest suite-green integration tip, so the user
-watches real states from their own repo and `.roadmap/feedback/user/` is in the tree they are standing in.
-Every path is best-effort: setup, refresh, and healthcheck failures log and continue. **No unit outcome may
-ever depend on the preview** — gating an arc on its own observability is how an observability feature
-becomes an outage.
+The green-tip mirror rides **its own worktree** at `worktreeRoot/__preview`, detached at the latest
+suite-green integration tip. It used to ride the *primary checkout*, so the user watched real states from
+the repo they were standing in — and that is precisely what made the harness's own tracked
+`.roadmap/state.json` block the detach, which is what made a Haiku agent told to make the checkout work
+anyway delete 163 untracked `.roadmap/` files. The mirror moved rather than the prompt getting another
+prohibition (§19: containment, where the failure mode is acting outside the sanctioned set). The user's
+checkout is now never a checkout target at all, so they can keep working and switching branches while an
+arc runs. Every path is best-effort: setup, refresh, and healthcheck failures log and continue. **No unit
+outcome may ever depend on the preview** — gating an arc on its own observability is how an observability
+feature becomes an outage.
 
-The `main` ref never moves (detached HEAD) and the merge queue stays in `__integration`, so user git
-activity can at worst stale the mirror (one detach-checkout heals it), never derail the queue. This works
-because units never touch `.roadmap/`, so the harness's dirty `state.json` checkpoint is identical across
-tips and survives each checkout.
+The `main` ref never moves (the mirror is always detached) and the merge queue stays in `__integration`,
+so at worst the mirror goes stale and one detach-checkout heals it; nothing can derail the queue.
 
 Process lifecycle: the preview is started with `setsid`, making the recorded pid a **process-group leader**.
 Every stop must kill the **group** (`kill -TERM -- -$(cat …)`) — a single-pid kill strands child listeners
-and leaves ports held. This bites at Phase 0, on resume, and at close-out.
+and leaves ports held. This bites at Phase 0, on resume, and at close-out. What a stop may **not** do is go
+hunting for the listener: the one-shot sweep's only kill targets are the pidfile's process group and the
+literal ports `plan.preview.ports` declares. Asked instead to free "the preview's ports", Haiku swept three
+guessed ports and then `ps | grep | kill -9`, killing the workflow itself. An undeclared port is a port the
+sweep leaves alone — a missed listener is cheap, and a name-sweep is not.
 
 ## 13. Why `.roadmap/` must be closed out
 
@@ -517,7 +544,9 @@ each deliberate:
   unavailability is a HARD STOP — the per-wave probe or a usage-limit observation halts dispatch,
   parks in-flight units (`status:'pending', parked:true` → re-entry by adoption), and
   early-returns `codex-unavailable`/`codex-usage-limit` to the root. Auth is a human act; the
-  orchestrator never routes around a halt with a substitute implementer.
+  orchestrator never routes around a halt with a substitute implementer. (0.13.0 generalized this
+  single `codexHalt` flag into a halt record `{codex, env, platform}` with a fixed precedence — see
+  §19; the codex semantics above are unchanged.)
 - **The review spiral, named.** Three prompt clauses compounded: (1) "an imperfection in a file
   you are already touching is yours to fix" made the eligible-fix set a function of the diff's
   own growth; (2) "over-reporting costs nothing" licensed unbounded findings; (3) findings became
@@ -621,3 +650,98 @@ bars inventing follow-up work. Any new resume path must do the same.
 **Test quality was not the failure mode.** The generated suites were sound — exact Result-shape
 assertions, negative paths, a table of invalid inputs — under a brief that had *weakened* the
 mutation-check clause. The degenerate behaviour to design against is unbounded scope, not slop.
+
+## 19. Couriers, not janitors — the 0.13.0 batch
+
+The workflow script has no filesystem and no shell — `run()` is `agent()`. Every side effect the
+orchestrator has (a checkpoint, a checkout, a port freed, a login checked, a merge asserted) is a model
+acting on the script's behalf. Through 0.12.0 the harness handed those actions to the cheapest tier as
+*goals* — "clean up leftover listeners", "find the issue for this unit", "make the checkout work",
+"report ok only if logged in" — and every incident in the 2026-08-21→28 ledger was that tier reaching
+for the biggest tool that satisfied the goal: `kill -9` of every node process, `rm -f` over untracked
+`.roadmap/`, adopting a fuzzy search hit, inventing a credential requirement. A "never do X" clause
+did not help; a prohibition only works if honoured, and a courier that has been given a goal will
+rationalise past it.
+
+The rule since 0.13.0, in two halves:
+
+1. **The cheapest tier receives a closed command list, never a goal.** `courierRun` is the one shape:
+   the script composes the exact commands (including the judgment — a jq predicate, a regex the prompt
+   states, a literal port list), the agent runs exactly those, in order, and returns verbatim
+   `{exitCode, stdout}` per command; the script decides. Where the failure mode is *acting outside the
+   list* rather than misjudging inside it, containment replaces wording: the preview lives in its own
+   worktree so no sanctioned command can reach the operator's checkout. What genuinely needs a model
+   — executing test lanes, judging a diff — keeps a model, but never the *choice* of what to run.
+2. **Every wave-level brake lives in code.** Through 0.12.0 the harness had one wave-level flag
+   (`codexHalt`); host health, platform outages, shared reds, scope precedent and admissions were
+   either absent or prose inside a triager prompt that an Opus turn could reason its way past — which
+   is how waves 18/19 grew the denominator for twelve hours after PLAN DRAINED. Now: a halt record
+   `{codex, env, platform}` that `ready()` consults, `admissions:'closed'` enforced where units are
+   minted, a shared-red breaker that emits one finding instead of N unit verdicts, and merged-ness
+   decided by git in code at every chokepoint. Prompts may *inform* a brake; they never *are* one.
+
+Corollaries the ledger forced: a model's death is a platform fact, never a unit verdict (park, don't
+quarantine); events (degradations, escalations, debt) are appended once at the event, never
+re-transcribed with state; nothing is cleared that a writer did not confirm.
+
+**Git questions were asked as judgments.** The recurring defect was never that Haiku is cheap — it was
+that "is this unit merged?", "did the merge land?", "has the tip moved?" were put to a model as
+questions to *answer*. Every git fact the script acts on now arrives as exit codes from commands the
+script itself wrote, and the script judges — at dispatch, inside `quarantine()`, and in the
+crash-residue loop. The test is deliberately the **second-parent** one rather than a bare
+`merge-base --is-ancestor`, which false-positives on a commit-less branch parked at an old integration
+commit (the ledger asked for `is-ancestor`; the ask was wrong). The one exception to the quarantine
+refusal is `git revert -m 1`, which keeps the merge commit while removing the code, so that caller
+still quarantines explicitly. The wave-start tip reconcile is one-way for the same reason: adopting a
+live sha on mere *inequality* is what let a rewound branch orphan the previous wave's merges.
+
+**Events are not state.** Degradations and escalations rode inside `state.json`, arc-cumulative, so
+every checkpoint re-transcribed every prior row — a third of a 170–190 KB document by wave 19 — and
+each failure appended a row that made the next write likelier to fail. They now append once, at the
+event, cksum-verified over the file's **tail**: the script cannot know an append-only file's prior
+content, but it knows exactly the bytes it is adding. A sidecar failure is deliberately **not** a
+degradation — that would feed the ledger it just failed to write — so it logs and increments
+`sidecarLost` instead. The other half of the rule is that nothing is cleared that a writer did not
+confirm: debt clears per verified marker and the rest re-banks next boundary, `plan.json` is refused
+rather than overwritten when disk holds ids this run never saw, and an escalating return stages its
+specs, plan, issues and debt *before* handing back, because a handoff is not an abort.
+
+**Two null wrappers, and one deliberate middle case.** `agent()` resolving to `null` (§9) now has two
+answers, and choosing between them is a real decision. `runOr` is for questions where a coded fallback
+is an *honest* answer — a dead census is an empty census. `runReq` is for results the caller
+dereferences, where any fallback would be an invented *verdict about a unit*: verify, both exit gates,
+the plan and plan-check, the merge and its suite. Seven such sites used to dereference a null straight
+into `quarantine('pipeline error')`, so one quota outage was recorded as seven unit failures. The
+trigger is **structural** — a required result still missing after its salvage — never text-matching,
+because a null carries no error object at all; quota/limit text exists only on the throw path, where
+it is a fast path and never the sole signal. The commit probe is the one deliberate middle case: a
+dead probe returns `unknown` and parks that unit alone rather than halting the wave, since one cheap
+probe dying twice is not evidence of an outage and the branch's commits are safe either way. Parking
+is only safe because of a wave-scoped `dispatched` set — a park returns the record to `pending`, which
+without it re-dispatches inside the same wave forever.
+
+**The host preflight fails loud on a breach and soft on an unknown.** An unrecognised PID 1 halts,
+naming the comm, because the observed failure (`sleep` as PID 1, orphans never reaped, the pid cgroup
+filling until test lanes died of EAGAIN) looks exactly like every other non-init, and guessing which
+non-inits reap is how it stayed invisible for a week. A fact that could not be *read* degrades
+`env-unprobed` and halts nothing — an unknown is never a breach. `config.envPreflight: 'off'` is the
+documented exit for a healthy box with an unusual init, and the only way past the check.
+
+**Load is recorded, never gated on.** The ledger asked for the flake band to wait on
+`loadavg1 < cpuCount/2`. That was wrong on the facts: `runBoundary` runs **after** the scheduler
+drains, so the band's co-tenants are its own siblings and the preview, not live gates. The general
+form: the wave's own concurrency is what produces the load, so waiting on it is waiting on ourselves.
+The brake that does work is a semaphore on the *lanes* (`gateMaxConcurrent`) while unit dispatch stays
+unbounded. The numbers are recorded on every verify, once per flake band, and inside the
+`verify-blocked` / `codex-timeout` entries, so a wall-clock verdict is auditable after the fact instead
+of being a mystery.
+
+**Tier 1 is bounded, not trusted.** Mechanical admission carries no judgment and no cut line, so a
+*batch* of drafts is exactly the denominator growth the cut line exists to stop; above
+`tier1MaxDrafts` the wave buys an Opus triage instead. None of this weakens termination, and the
+checks are worth restating because they are easy to break: `admissions:'closed'` and `tier1MaxDrafts`
+only ever *reduce* unit creation; duplicate drafts are dropped, not renamed into extra units (`x` /
+`x-2` was one live pair of issues); banked lines are written after the wave's predicates are computed,
+so they cannot feed the same boundary they were minted at; and a shared red arrives at triage as a
+**finding**, which the cut line brakes, never as debt — §14's "debt never creates a wave" guarantee is
+untouched.

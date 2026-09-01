@@ -186,7 +186,7 @@ test('4b a running record whose branch did NOT land still resets to pending and 
 // =========================================================================================
 // 5. Environment probes are salted out of resume's cache; work product is not.
 // =========================================================================================
-const PROBE_LABELS = ['integration-worktree', 'provision:integration', 'merged-probe:a', 'provision:a', 'merge-reach:a']
+const PROBE_LABELS = ['integration-worktree', 'provision:integration', 'merged-probe:a', 'provision:a', 'merge-reach:a', 'codex-probe:w1']
 const WORK_LABELS = ['plan:a', 'codex-build:a', 'verify:a', 'opus-gate:a', 'merge:a']
 
 test('5a every environment probe carries args.launchId; no work-product call does', async () => {

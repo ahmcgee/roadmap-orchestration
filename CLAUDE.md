@@ -11,6 +11,13 @@ bind you here. In this repo, `SKILL.md`, `reference.md`, `harness.mjs`, `conduct
 What still binds you: a script change is not done until the three-tier eval ladder passes —
 `evals/parse.sh` → `evals/unit/run.sh` → the paid fixtures (`evals/README.md`).
 
+- **The script has no shell — `run()` is `agent()`, so every side effect is a model acting for it.**
+  Read `RATIONALE.md` §19 ("Couriers, not janitors") before touching a prompt or a brake: the cheapest
+  tier gets a closed command list the script composed, never a goal, and every wave-level brake lives
+  in code. Don't "improve" a courier prompt back into a goal ("clean up the leftover listeners", "find
+  the issue for this unit", "make the checkout work"), and don't relocate a code brake into prose — a
+  prohibition only works if it is honoured, and the 2026-08 ledger is what happens when it isn't.
+
 ## GitHub issue tracking — non-obvious traps
 
 Issue mode (`plan.tracking:"issues"`) mirrors the work into GitHub issues. What will bite you:

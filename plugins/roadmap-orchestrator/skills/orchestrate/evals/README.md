@@ -24,6 +24,13 @@ shipping; never ship on an upper rung alone.
    `issue-mode.test.mjs` locks the GitHub issue-mode projection — file-mode byte-identity (no `gh`
    text, no sync sweep), the folded gh clauses on setup/merge/dossier, the single wave-tail sync
    sweep, and best-effort degradation (a failed sweep records `gh-sync` but never gates a unit).
+   `git-truth.test.mjs` locks **git as the source of truth**: a merge made on a detached HEAD or one
+   whose head sha is unreachable is quarantined rather than recorded `merged`; `merged` is decided in
+   code by the **second-parent** test (not `merge-base --is-ancestor`, which false-positives on a
+   commit-less branch) at dispatch, in `quarantine()` and in the crash-residue loop; a dead probe is
+   never a git fact; `quarantine()` refuses a branch git says landed, with the reverted-merge carve-out;
+   the wave-start tip reconcile is one-way; and each environment probe it lists carries
+   `args.launchId` while no work-product call does.
    `closed-command.test.mjs` locks the **closed-command-list discipline**: every courier prompt hands
    over a numbered list and forbids everything outside it; no command list names a destructive reach
    (`rm -rf`, `git clean/stash/reset`, `pkill`, `ps aux`); the codex probe's pass condition is decided
@@ -41,6 +48,16 @@ shipping; never ship on an upper rung alone.
    absent exit-code file means RUNNING (`-1` needs a dead pid), a re-dispatched steer prompt attaches
    instead of launching a second process, and both the build and fix retries reap the previous pid;
    debt dedupes and `rebanked` ghosts stop forcing a `contract-amendment` return.
+   `wave-policy.test.mjs` locks the **wave-level brakes that used to be prose**: the
+   `gateMaxConcurrent` semaphore on test lanes (and that it adds no extra checkpoint fan-out), load
+   recorded on every lane but never gated on, the shared-red breaker collapsing N identical
+   out-of-scope failures into ONE finding (never debt, so the termination guarantee holds), and scope
+   rulings carried to sibling gates as precedent. Every brake has a control pinning the counterfactual.
+   `admissions.test.mjs` locks the **conductor's admission code path**: `admissions:'closed'` stops
+   tiers 1 and 2 minting units — drafts and promotions become debt lines banked into *both* channels —
+   while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
+   finding routes to tier 3 instead of being auto-admitted; and duplicate drafts are dropped, not
+   renamed into extra units.
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not
@@ -74,7 +91,14 @@ shipping; never ship on an upper rung alone.
    create with the `<!-- roadmap:unit id=… -->` body marker, find-by-marker AND find-by-number, the
    `status:*` transitions, close-completed, the quarantine comment, debt-issue idempotency, and the
    bug census — against a real repo, asserting issue facts (like `check.sh` asserts git facts) at
-   **zero model tokens**. `roadmap:bug` is dual-consumed, so the same `--label roadmap:bug --state open`
+   **zero model tokens**. Its marker checks are the exact `markerFind` search the scripts compose,
+   predicate included, and must stay byte-compatible with it: a **decoy** issue whose body only
+   *mentions* the marker (not on its first line) must read as ABSENT even though GitHub's tokenized
+   search returns it — that is the shape that clobbered three live issues on 2026-08-22 — the search
+   reports `<number> <OPEN|CLOSED>` so an editing site can refuse a CLOSED issue, and the debt marker
+   is **arc-keyed** (`roadmap:debt arc=<arc> wave=<N> unit=<id>|ledger`), because without the arc key a
+   `wave=N ledger` search matched a previous arc's wave N and silently skipped creation.
+   `roadmap:bug` is dual-consumed, so the same `--label roadmap:bug --state open`
    list check stands in for *both* the wave-boundary census and the Phase-0 candidate-scope read — the
    Phase-0 reading is architect/main-loop prose (not scheduler code), so no sim can cover it; this paid
    check plus the between-sessions smoke are its only coverage. It **mutates the target tracker**, so it is opt-in and self-cleaning:
@@ -90,6 +114,7 @@ shipping; never ship on an upper rung alone.
 | `conductor.mjs` only | parse + sims + the **conductor** fixture |
 | a prompt/schema in one script | parse + sims + that script's fixture |
 | a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** (gh mechanics), then the **issue-mode paid arc** as source of truth |
+| a courier command list, an environment probe, or a wave-level brake | parse + sims (`closed-command`, `git-truth`, `outage-lifecycle`, `wave-policy`, `admissions` are the pins — a change that loosens one should fail one) + that script's fixture |
 | `evals/*` plumbing only | parse + sims + a spot-run of the touched fixture |
 
 Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.

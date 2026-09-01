@@ -3353,7 +3353,7 @@ if (C.envPreflight !== 'off') {
     { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}` },
     `This is a read-only availability probe. Report what the commands print and judge none of it — which ` +
     `credential provider is in use (ChatGPT plan, API key, device auth) is not yours to assess and not a ` +
-    `failure of any kind. Change nothing. `)
+    `failure of any kind. Change nothing. ` + LAUNCH)
   // Mechanical, and deliberately spelled out: `codex login status` prints "Not logged in" when it
   // is not, and a bare /logged in/i test matches that substring.
   const status = cp.out(1)
