@@ -87,8 +87,11 @@ test('1 owed: a preview-down wave owes explorer and design (and degrades preview
   // cannot block it and there is nothing to exclude. The stronger property is that NO preview
   // prompt names the primary checkout as somewhere to cd or check out (2026-08-28, twice: a
   // Haiku mirror agent deleted 163 untracked .roadmap/ files to get a refused detach to work).
+  // CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d): couriers no longer lead with STRICT's `cd`/`pwd`
+  // proof — they lead with the "do not cd or pwd first" preamble instead, since the guard already
+  // rides inside every numbered command.
   const ps = calls.find((c) => c.label === 'preview-setup')
-  assert.ok(ps.prompt.startsWith(`Start by \`cd\``) && ps.prompt.includes('In /wt/__preview:'),
+  assert.ok(ps.prompt.startsWith('Do not `cd` anywhere') && ps.prompt.includes('In /wt/__preview:'),
     'the preview bring-up runs in the preview worktree')
   assert.ok(!ps.prompt.includes('In /repo:'), 'the primary checkout is never the preview courier\'s cwd')
   assertAllModelsPinned(calls)

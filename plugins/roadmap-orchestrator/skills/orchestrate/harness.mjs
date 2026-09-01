@@ -128,8 +128,21 @@ const courierSchema = (n, outMax = COURIER_OUT) => obj({
   }, ['exitCode', 'stdout']) },
   detail: { type: 'string', maxLength: 300 },
 }, ['ok', 'results'])
+// COURIERS CARRY NO IDENTITY CHECK — cdGuard already composes `cd '<where>' && ( <cmd> )` into every
+// numbered command below, so a courier's own starting cwd is never load-bearing; STRICT's `pwd`/
+// `--show-toplevel` proof exists for prompts where the SCRIPT never composes the destination.
+// Asking a courier to prove it stood there BEFORE running the command it was just told to trust
+// invited a literal-minded read: wf_318afa1b-e9d's `provision:integration` courier ran only `pwd`,
+// saw a shell cwd that did not match, and reported a fabricated "working directory mismatch" —
+// never running the composed command at all. Mirrored in conductor.mjs — keep the two in sync
+// (shared-consts.test.mjs enforces the courierPrompt block as a whole).
 const courierPrompt = (where, commands, extra = '', outMax = COURIER_OUT) =>
-  STRICT +
+  'Do not `cd` anywhere and do not run `pwd` — do not inspect, probe or verify anything before the ' +
+  'commands below or between them. Every numbered command already begins with its own working-directory ' +
+  'guard, so there is nothing left for you to check about where you are. Run exactly the numbered ' +
+  'command(s) at the end of this message, in that order; stop at the first non-zero exit and run nothing ' +
+  'else. A command that fails is a RESULT to report — its real exit code and output — never a problem ' +
+  'for you to solve. ' +
   `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
   `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
   `flags, not a command you think would help. Each one already carries its own \`cd\` prefix: run it exactly as ` +

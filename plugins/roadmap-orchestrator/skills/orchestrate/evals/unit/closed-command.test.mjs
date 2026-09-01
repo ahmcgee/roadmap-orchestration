@@ -414,27 +414,46 @@ test('a pass with an empty lane ledger degrades lane-substituted', async () => {
 })
 
 // =========================================================================================
-// 7. STRICT's location test is mechanical, proves WHICH checkout, and a linked worktree passes it.
+// 7. CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d): couriers carry NO identity check at all — cdGuard
+// already composes the destination into every numbered command, so a courier proving its OWN
+// starting cwd first is theatre a literal-minded Haiku turned into a refusal: the
+// `provision:integration` courier ran only `pwd`, saw the session's own shell cwd, and reported a
+// fabricated "working directory mismatch" without ever running the composed command. This test used
+// to pin STRICT's pwd/toplevel proof at the head of this exact prompt; now it pins the opposite —
+// the "do not cd or pwd first" preamble, and STRICT's identity clause gone.
 // =========================================================================================
-// CHANGED CONTRACT (0.14.0): `git rev-parse --git-dir` only proved the agent was in SOME checkout,
-// which is exactly the fact a courier that never cd'd could still report truthfully (arc-observed,
-// wf_106cdf59-c5f: the whole preview list ran in the workflow session's own repo). The test is now
-// an IDENTITY test — `pwd`, and `git rev-parse --show-toplevel` naming which repository.
-test('STRICT: the location test proves WHICH checkout, and a linked worktree is explicitly valid', async () => {
+test('courier prompts (provision:integration) carry no STRICT identity check', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan({ provision: { setup: 'npm ci' } }), makeState())
   const p = promptOf(calls, 'provision:integration')
-  assert.ok(p.startsWith('Start by `cd`'), 'STRICT still leads')
-  assert.match(p, /`pwd` must print that path exactly, character for character/,
-    'the proof is an identity, not merely "the command succeeded"')
-  assert.match(p, /`git rev-parse --show-toplevel` names WHICH checkout you are in/,
-    'and it names the repository, so being in SOME checkout is no longer a pass')
-  assert.ok(!/--git-dir`: a NON-ZERO exit is the only failure/.test(p),
-    'the old succeeds-anywhere test is gone')
-  assert.match(p, /A LINKED WORKTREE IS VALID/, 'the case that failed is named — every unit tree is one')
-  assert.ok(!/is not the described git checkout/.test(p), 'the judgement-call wording is gone')
+  assert.ok(p.startsWith('Do not `cd` anywhere'), 'the courier preamble leads, not STRICT')
+  assert.match(p, /do not run `pwd`/, 'the courier is told not to run pwd at all')
+  assert.match(p, /Every numbered command already begins with its own working-directory/,
+    'the guard is IN the command, never a thing to prove first')
+  assert.ok(!/`pwd` must print that path exactly/.test(p), 'no pwd identity proof survives')
+  assert.ok(!/--show-toplevel` names WHICH checkout/.test(p), 'no checkout-identity proof survives')
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
+})
+
+// =========================================================================================
+// 7b. The same guarantee, generically: NO courier prompt in a driven wave carries STRICT's identity
+// clause, and EVERY courier prompt carries the "do not cd or pwd first" preamble instead. A courier
+// prompt is identified structurally (it ends in the numbered `\nCommands:\n` list courierPrompt
+// always appends) rather than by hand-picked label, so a future courier call site is covered
+// automatically instead of silently falling outside this suite.
+// =========================================================================================
+test('no courier prompt anywhere in a wave carries STRICT\'s identity check', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ provision: { setup: 'npm ci' } }), makeState())
+  const courierCalls = calls.filter((c) => c.prompt.includes('\nCommands:\n'))
+  assert.ok(courierCalls.length >= 3, 'this drive should exercise several courier prompts')
+  for (const c of courierCalls) {
+    assert.ok(!/`pwd` must print that path exactly/.test(c.prompt), `${c.label}: no pwd identity proof`)
+    assert.ok(!/--show-toplevel` names WHICH checkout/.test(c.prompt), `${c.label}: no checkout-identity proof`)
+    assert.match(c.prompt, /Do not `cd` anywhere and do not run `pwd`/,
+      `${c.label}: carries the "do not cd or pwd first" clause`)
+  }
 })
 
 // =========================================================================================

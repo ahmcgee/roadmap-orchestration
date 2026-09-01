@@ -239,8 +239,9 @@ test('the preflight is a closed command list, salted, and switchable off', async
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'env-probe:w1')
   // CHANGED CONTRACT (0.14.0): every numbered command carries the script-composed working directory
-  // (`cd '/repo' && ( … )`), so a courier that ignores STRICT's cd sentence fails that command's
-  // exit code instead of probing whatever host directory it happened to start in.
+  // (`cd '/repo' && ( … )`), so a courier that never cd's itself first (0.14.0 update, wf_318afa1b-e9d:
+  // couriers are told NOT to cd or pwd — the guard rides inside each command) still fails that
+  // command's own exit code instead of probing whatever host directory it happened to start in.
   assert.match(p, /1\. cd '\/repo' && \( cat \/sys\/fs\/cgroup\/pids\.current \/sys\/fs\/cgroup\/pids\.max \)/,
     'exact commands, not a goal, and the cwd is part of the command')
   assert.match(p, /2\. cd '\/repo' && \( ps -eo stat= \| grep -c '\^Z' \|\| true \)/,

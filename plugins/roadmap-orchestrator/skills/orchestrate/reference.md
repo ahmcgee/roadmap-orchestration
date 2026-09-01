@@ -829,10 +829,11 @@ output**; the *script* judges. Three rules make that hold, and all three are cod
    cd '<where>' && ( <cmd> )
    ```
 
-   (`cdGuard`, mirrored in both scripts). STRICT's `cd` sentence stays as the *explanation*; this is
-   the *mechanism*. A courier that ignores the sentence now produces a non-zero exit of that
-   numbered command — which the stop-at-first-failure rule already handles — instead of a plausible
-   answer from the wrong repository. `where` is **required**: an empty or undefined path throws at
+   (`cdGuard`, mirrored in both scripts). Because the guard is *in the command*, the courier prompt
+   tells the courier not to `cd` or `pwd` first — there is nothing left about its own location to
+   prove. A courier that ignores the guard anyway produces a non-zero exit of that numbered command
+   — which the stop-at-first-failure rule already handles — instead of a plausible answer from the
+   wrong repository. `where` is **required**: an empty or undefined path throws at
    compose time, in `cdGuard` and again in `courierRun`, because an undefined path interpolated into
    a prompt is precisely how an agent ends up improvising in its own cwd. `gitProbe` composes the
    same guard.
@@ -841,11 +842,15 @@ output**; the *script* judges. Three rules make that hold, and all three are cod
    it sent, and anything that needs to name a command in a degradation detail composes it from that
    list (`courierShape`'s `detail` does exactly this, from the *unwrapped* command, so the guard
    never leaks into an operator-facing message).
-3. **STRICT proves WHICH checkout, not merely that there is one.** `pwd` must print the named path
-   character for character, and where that path is inside a checkout, `git rev-parse --show-toplevel`
-   must print that same path or a directory it sits under. A linked worktree is explicitly valid.
-   The old test — `git rev-parse --git-dir` exiting zero — was true of *any* checkout, including the
-   Claude Code session's own, which is what let a courier report facts about the wrong repo.
+3. **Couriers carry no identity check at all** (0.14.0). STRICT's `pwd`/`--show-toplevel` proof —
+   still used verbatim for the free-form prompts where the script never composes the destination
+   (codex steerers, gh projections, spec/dossier writers) — used to lead every courier prompt too,
+   and it was the wrong check for one: `cdGuard` already names and enforces the destination, so a
+   courier proving its *own* starting cwd first is pure theatre. `wf_318afa1b-e9d`'s
+   `provision:integration` courier took it literally — ran only `pwd`, saw the workflow session's
+   own shell cwd, and reported a fabricated "working directory mismatch" without ever running the
+   composed command. The courier preamble now says the opposite: don't `cd`, don't run `pwd`, don't
+   inspect or verify anything first — every numbered command already carries its own guard.
 
 Why: in the paid conductor fixture `wf_106cdf59-c5f` the `preview-worktree` courier never `cd`'d,
 ran the whole list in the orchestrator's own source repo, and `git worktree add --detach <prevWt>
