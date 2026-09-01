@@ -428,14 +428,16 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   `feedback/triaged/<wave>/` (issue mode: the `roadmap:bug` issues are closed with a disposition
   comment). Triage silently — contact the user **only** for a critical call you genuinely cannot make.
 
-### When the skill itself misbehaves — `.roadmap/skill-feedback.md`
+### When the skill itself misbehaves — `.roadmap/degradations.jsonl`
 
 The scripts' safety nets are *silent by design*: a dead agent degrades to a coded fallback so a blip
 never costs an arc. That silence is dangerous — it once let a deterministic bug masquerade as three
 runs of "network flakiness" — so every degradation is now **recorded, not swallowed**. Read it.
 
-Every return carries a **`degradations`** array (also in the state, and rendered to
-`.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies): each entry is
+Every return carries a **`degradations`** array (this run's rows). Each one is also appended, at the
+moment it happens, to `.roadmap/degradations.jsonl` — the arc's full record — and a per-kind count
+summary is rendered to `.roadmap/skill-degradations.md` at every persist point, so it survives a run
+that dies. `skill-feedback.md` is yours and the user's: the scripts never write it. Each entry is
 `{script, wave, phase, label, model, kind, what}`, where `kind` is `schema-retry` (a report was
 rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the platform
 does not expose why**), `salvage-failed`, or `threw`.
@@ -451,10 +453,12 @@ Your duties:
   nowhere else. **Do not attribute it to the network without looking** — a repeated failure at the
   *same label* is a bug in the skill, not weather.
 - **A repeated `schema-retry` on one label means a cap is wrong**, not that the model is verbose.
-- **Carry it upstream.** `.roadmap/skill-feedback.md` is a **living document** — it is about the
-  *orchestrator*, not the product, so it never goes in `debt.md` and is **never archived with the
-  arc**. Report it at Session end and tell the user to take it to the skill's own repository. This
-  is the only channel by which the skill learns from its own failures.
+- **Carry it upstream.** `.roadmap/skill-feedback.md` (hand-written), `skill-degradations.md` and
+  `degradations.jsonl` (machine-written) are **living documents** — they are about the *orchestrator*,
+  not the product, so they never go in `debt.md` and are **never archived with the arc**. Add your own
+  observations to `skill-feedback.md`; report all three at Session end and tell the user to take them
+  to the skill's own repository. This is the only channel by which the skill learns from its own
+  failures.
 
 ### If a run dies mid-run — recovery ladder
 
@@ -507,7 +511,7 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
    ledger's state; gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
    the conductor's ladder breakdown from the final state's `conductor` block plus
-   `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/skill-feedback.md` entries, and
+   `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/degradations.jsonl` entries, and
    which stage's judgment they cost you**; notes for the next session. Partial completion with
    honest dossiers is a good outcome — a silent one is not.
    **Census every continuation brief before you trust it.** Next-session notes, a continuation
@@ -528,9 +532,10 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    its worktree (`git worktree remove --force worktreeRoot/__preview`); archive the arc (plan, brief, specs, contracts, state,
    `architect-log.md`, dossiers, feedback — triaged and pending alike — report) into
    `.roadmap/archive/<date>-<cutline>/` in one commit; keep the living documents
-   (`constraints.md`, `debt.md`, `skill-feedback.md`, notes) at top level — unresolved debt is a
-   first-class input to the next arc's Phase 0, and `skill-feedback.md` belongs to the *skill*, not
-   this arc, so archiving it would bury the only record of how the orchestrator failed;
+   (`constraints.md`, `debt.md`, `skill-feedback.md`, `skill-degradations.md`,
+   `degradations.jsonl`, `escalations.jsonl`, notes) at top level — unresolved debt is a
+   first-class input to the next arc's Phase 0, and the skill-defect record belongs to the *skill*,
+   not this arc, so archiving it would bury the only account of how the orchestrator failed;
    remove unit worktrees and merged `unit/*` branches (keep quarantined
    branches — their dossiers point at them), and sweep `worktreeRoot/__codex/` with them — the
    codex briefs/events/session artifacts are per-arc forensics whose value ends at close-out

@@ -31,6 +31,27 @@ export const nextSeq = () => __seq++
 // cksumOf (which the workflow sandbox needs because it has no crypto) against coreutils.
 export const sysCksum = (text) => execSync('cksum', { input: text, encoding: 'utf8' }).trim()
 
+// The rows a run appended to an event sidecar (.roadmap/<kind>.jsonl), parsed back out of the
+// `sidecar:<kind>` writer prompts. This is the ONLY place degradations and escalations are recorded
+// now — state.json carries neither — so a test that used to read state.escalations reads this.
+export const sidecarRows = (calls, kind) => calls
+  .filter((c) => c.label === `sidecar:${kind}`)
+  .flatMap((c) => c.prompt.split('<<<APPEND>>>\n')[1].split('\n').filter(Boolean).map((l) => JSON.parse(l)))
+
+// An append prompt must be cksum-verified over the file's TAIL (the script cannot know the whole
+// file) and must never touch what is already there.
+export function assertAppendVerified(prompt, file, content, who) {
+  const pair = sysCksum(content)
+  const [crc, bytes] = pair.split(' ')
+  assert.ok(prompt.includes(`cat >> ${file} <<'ROADMAP_APPEND'`), `${who} appends through a quoted here-doc`)
+  assert.ok(prompt.includes(`\`tail -c ${bytes} ${file} | cksum\` must print exactly \`${crc} ${bytes}\``),
+    `${who} verifies the appended bytes by cksum of the file's tail (${pair})`)
+  assert.match(prompt, /NEVER read, rewrite, reorder, deduplicate, sort or truncate what is already in the file/,
+    `${who} cannot reach the rows already on disk`)
+  assert.match(prompt, /NEVER edit, pad, trim, or rewrite the file to make the numbers match/,
+    `${who} is forbidden from repairing a mismatch`)
+}
+
 // A verbatim writer prompt (single, partK, or assembler) must verify its file by cksum against the
 // system-computed pair for `content` and must never repair a mismatch. Byte count alone was gamed
 // live (un-escaped JSON, tail padded to the expected count, ok:true, unparseable state.json).
@@ -132,7 +153,9 @@ const DEFAULTS = [
   // and `<label>:assemble` (harness checkpoint and the conductor's persist-state/persist-plan
   // alike; the conductor labels are matched by prefix in conductor.test.mjs's rules()).
   [(l) => l.startsWith('checkpoint:part') || l === 'checkpoint:assemble', () => ({ ok: true })],
-  [(l) => l === 'skill-feedback', () => ({ ok: true })],   // conductor's degradation-region writer
+  // Event sidecars: one cksum-verified `>>` append per degradation/escalation burst, in both scripts.
+  [(l) => l.startsWith('sidecar:'), () => ({ ok: true })],
+  [(l) => l === 'skill-degradations', () => ({ ok: true })],   // conductor's per-kind count summary
   [(l) => l.startsWith('dossier-write:'), () => ({ ok: true })],
   [(l) => l.startsWith('issue-sync:'), () => ({ ok: true })],   // issue-mode wave-tail projection sweep
   [(l) => l.startsWith('explorer-write:'), () => ({ ok: true })],

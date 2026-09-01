@@ -25,10 +25,23 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   each triage, carries across waves and arcs, read at Phase 0 as
                        #   candidate scope. Distinct from feedback — kept, not consumed.
                        #   FILE MODE ONLY — issue mode uses roadmap:debt issues instead.
-  skill-feedback.md    # LIVING. Defects in the ORCHESTRATOR itself (not the product): every
-                       #   degradation the scripts recorded. Written at every persist point so
-                       #   it survives a run that dies. Never archived — it belongs to the
+  skill-feedback.md    # LIVING, HAND-WRITTEN, and never touched by the scripts. Your and the
+                       #   user's observations about the ORCHESTRATOR itself. Belongs to the
                        #   skill's repo, not to this arc. Never mixed into debt.md.
+  skill-degradations.md # LIVING, MACHINE-written (whole-file, cksum-verified, overwritten at
+                       #   every persist point). A per-KIND count summary of the degradations
+                       #   this run recorded — bounded by the number of kinds, never by the
+                       #   number of rows — plus a pointer to the sidecar below. Carry it back
+                       #   to the skill's repo alongside skill-feedback.md.
+  degradations.jsonl   # LIVING, APPEND-ONLY. One JSON line per degradation, written at the
+                       #   moment it happens by both scripts and never re-transcribed. This is
+                       #   the full record; state.json carries none of it.
+  escalations.jsonl    # LIVING, APPEND-ONLY. One JSON line per escalation-ladder ruling
+                       #   ({unit, stop, tier, boundary, by, gap}). state.json keeps only the
+                       #   per-unit stop COUNTS the three-strikes brake reads.
+  debt.json            # The wave's debt exactly as the conductor received it, written the
+                       #   moment the wave returns — before any triage or early return can jump
+                       #   the bank. debt.md / roadmap:debt issues stay the durable ledger.
   specs/<unit>.md      # goal, constraints, contract references, acceptance criteria
                        #   (individually gradeable clauses — the gate grades them one by one),
                        #   plus the Codex-ready sections (SKILL.md Phase 0): Done-when with at
@@ -59,8 +72,9 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   archive/<arc>/       # closed-out arcs
 ```
 
-**Arc-scoped vs living.** Everything above except `constraints.md`, `debt.md` and
-`skill-feedback.md` (and notes) is arc-scoped and archived at close-out. Contracts retire with their
+**Arc-scoped vs living.** Everything above except `constraints.md`, `debt.md`,
+`skill-feedback.md`, `skill-degradations.md`, `degradations.jsonl` and `escalations.jsonl`
+(and notes) is arc-scoped and archived at close-out. Contracts retire with their
 arc: once merged, the code and its tests are the source of truth. The detection rule is mechanical:
 top-level `state.json` present → arc in flight, resume or ask; absent → plan fresh, treating
 `archive/` + the living docs as prior knowledge.
@@ -224,10 +238,21 @@ Fields the scripts add:
   go" table.
 - **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
   accumulator.
-- **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
+- **`escalationStops`** — `{unitId: count}`, arc-cumulative. The only escalation state the run
+  itself reads (the three-strikes brake, which must survive a unit re-entering in a later wave).
+  The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
+- **`sidecarLost`** — present only when non-zero: rows that never reached a sidecar after their one
+  retry. A sidecar failure is deliberately NOT a degradation (that would feed the ledger it just
+  failed to write), so this counter is how it stays loud.
+- **`degradations`** — **NOT a state.json field.** Degradations are events, not state: each is
+  appended once, as it happens, to `.roadmap/degradations.jsonl`, and the wave/run carries only its
+  own rows in memory (the harness's return envelope, and every conductor return). They used to ride
+  inside `state.json`, arc-cumulative — a third of a 170–190 KB document by wave 19, re-transcribed
+  at every checkpoint, so each row made the next write likelier to fail and each failed write
+  appended another row. Shape: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
   write-failed | preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
-  quarantine-refused | no-launch-id | codex-exec |
+  quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | codex-exec |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
   Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
   `codex-timeout` with surviving commits mean the branch was judged on its merits (a dead process
@@ -240,7 +265,12 @@ Fields the scripts add:
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
   and a resume can serve them from cache.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
-  unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
+  unaffected; the wave-tail sweep reconciles what it can. A `plan-conflict` entry means `plan.json`
+  on disk held unit ids this run has never seen, so the conductor REFUSED to overwrite it (the
+  return envelope's `planConflict` names them; merge the two plans by hand) — or that the courier
+  that checks this could not read the file, so the write went ahead unchecked. A `debt-unbanked`
+  entry means the banker did not confirm every item; the unconfirmed ones stay in `state.debt` and
+  in `.roadmap/debt.json` and are re-banked at the next boundary. A `write-failed` entry means a state/plan
   checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
   write heals it. Every verbatim write goes through a single-quoted here-doc and is verified by
   `cksum` (content hash + length, never a bare byte count — a byte count was gamed live); a payload
@@ -253,9 +283,14 @@ Fields the scripts add:
   user's own checkout is never involved either way. A `lane-substituted` entry means a verify
   reported `pass` with an empty lane ledger, so the green cannot be attributed to any command —
   the exit gate is the one that rules on lane coverage, so this never gates the unit.
-  **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
-  `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
-  conductor return carries the array, empty when the run was clean.
+  An **append sidecar** (`degradations.jsonl`) is written the same way, except that a single
+  `cat >> … <<'ROADMAP_APPEND'` is verified by `cksum` over the file's TAIL (`tail -c <bytes>`) —
+  the script cannot know an append-only file's prior content, but it knows exactly the bytes it is
+  adding. The writer is forbidden from reading, reordering or truncating what is already there.
+  A per-kind count summary is rendered to `.roadmap/skill-degradations.md` (whole-file,
+  cksum-verified) at every persist point, so it survives a run that dies; `skill-feedback.md` is
+  hand-written and the scripts never touch it. **Arc-cumulative** (unlike `debt`, it is never
+  consumed). Every conductor return carries this run's array, empty when the run was clean.
 
   A **`no-report`** entry means `agent()` resolved to `null` and **the platform does not expose why**
   — the entry names the agent's `label`, and the real error is only in that agent's `agent-*.jsonl`
@@ -404,8 +439,9 @@ mode keeps the local fast-forward-on-confirmation.
 
 **Dropped in issue mode:** `debt.md` and `feedback/user/` (issues are canonical). Internal
 explorer/health/design findings stay files (ephemeral working evidence); `constraints.md` stays
-(living); `skill-feedback.md` stays a file — it is about the *orchestrator*, must leave the product
-repo, and is therefore **never** a product-repo issue.
+(living); the skill-defect record (`skill-feedback.md`, `skill-degradations.md`,
+`degradations.jsonl`) stays in files — it is about the *orchestrator*, must leave the product repo,
+and is therefore **never** a product-repo issue.
 
 ## `harness.mjs` — the per-unit pipeline (one wave)
 
@@ -655,13 +691,25 @@ boundary as a continuation. So the final boundary is restored onto the returned 
 `{triaged: true, wave: N}` — the evidence is there to read, but it has already been dispositioned
 (findings banked, feedback moved), so do not re-action it.
 
-**Persistence.** At a **continuation** boundary the conductor runs five Haiku verbatim-writers, all
-awaited before the next dispatch and idempotent by wave-N markers: `persist-plan` (the merged
-`plan.json`) → `bank-debt` (a `<!-- wave N -->` section in `debt.md`, **always stamped**, even "no new
+**Persistence.** The wave's debt hits disk first, at RECEIPT: `persist-debt` writes
+`.roadmap/debt.json` the moment the harness returns, before the census — so no return, however early,
+can lose it. Then, at a **continuation** boundary, the conductor runs the Haiku verbatim-writers, all
+awaited before the next dispatch and idempotent by wave-N markers: `plan-ids` (a read-only courier
+reporting the unit ids already in `plan.json`) → `persist-plan` (the merged `plan.json`, **skipped and
+degraded as `plan-conflict` if disk holds ids this run never saw** — no merge is attempted, the root
+reconciles) → `bank-debt` (a `<!-- wave N -->` section in `debt.md`, **always stamped**, even "no new
 entries") → `log-append` (a `## Wave N` section in `architect-log.md`, **tier-3 only**) →
 `move-feedback` (this wave's evidence + actioned/dismissed user notes → `feedback/triaged/N/`) →
-`persist-state` (the **consumed** state: `boundary` removed, `debt` cleared). An **early return**
-persists only `state.json`, with `boundary` and `debt` left **INTACT** — the root consumes them.
+`persist-state` (the **consumed** state: `boundary` removed, and **only the debt the banker confirmed**
+cleared — anything it did not name stays in `state.debt` and is re-banked next wave).
+
+**Staging on an escalating return.** `plan-ids`/`persist-plan`, `bank-debt`, `issue-new`, spec
+expansion and `log-append` run **before** a tier-2 or tier-3 `contract-amendment` /
+`contingent-replan` / `needs-user` return too — an escalating return is a handoff, not an abort
+(arc-observed: a `needs-user` return jumped all of them, so the boundary's new-unit skeletons, the
+wave's debt ledger and the architect journal existed only in the run's `journal.jsonl`). Such a
+return still persists `state.json` with `boundary` and `debt` left **INTACT** — the root consumes
+them, and re-banking is idempotent by marker.
 In **issue mode** these writers also project to GitHub: `bank-debt` creates/updates `roadmap:debt`
 issues (find-or-create by a stable marker) for the wave's un-swept debt instead of writing `debt.md`,
 `move-feedback` closes/comments the triaged `roadmap:bug` issues instead of moving files, and
@@ -682,6 +730,8 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   state,             // final persisted state (incl. the `conductor` block)
   plan,              // the conductor's merged working plan
   spendDelta,        // per-key nonzero delta of state.spend vs the launch state
+  degradations,      // this run's rows (empty when clean); the arc's full record is degradations.jsonl
+  planConflict,      // present ONLY when persist-plan refused: [{wave, unknownUnits}] — merge by hand
   /* + reason-specific brief: */
   // contingent-replan → { edges }
   // contract-amendment → { debt, contracts }

@@ -183,6 +183,33 @@ test('runVerbatim (the fan-out executor) has byte-identical source in both scrip
   assertInSync('The runVerbatim function source (comments included)', h, c)
 })
 
+test('appendVerbatim (the sidecar append) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'appendVerbatim', '(path, text)'))
+  assert.ok(h.includes("cat >> ${path} <<'ROADMAP_APPEND'"), 'the append is a quoted here-doc, never an edit tool')
+  assert.ok(h.includes('tail -c ${ck.bytes} ${path} | cksum'),
+    'and is verified by cksum over the TAIL — the only part of an append-only file the script can know')
+  assert.ok(!h.includes('cat > ${path}'), 'an append never truncates the file')
+  assert.match(h, /NEVER read, rewrite, reorder, deduplicate, sort or truncate/,
+    'the writer cannot reach the rows already on disk')
+  // Both scripts append to the SAME .roadmap/degradations.jsonl, interleaved within one run — a
+  // divergent append prompt means one of them can corrupt the other's rows.
+  assertInSync('The appendVerbatim function source (comments included)', h, c)
+})
+
+test('scrubCtrl (control-character scrubbing) is byte-identical in both scripts', () => {
+  // scrubCtrl is a multi-line arrow with no `+` continuation, so it is sliced by its own anchors.
+  const scrub = (file) => {
+    const m = /const CTRL_UNSAFE = .*\n(?:const scrubCtrl = [\s\S]*?\n {2}: v\))/.exec(SRC[file])
+    assert.ok(m, `no CTRL_UNSAFE/scrubCtrl pair in ${file}`)
+    return m[0]
+  }
+  const [hf, cf] = FILES.map(scrub)
+  assertInSync('The CTRL_UNSAFE + scrubCtrl pair', hf, cf)
+  // Both scripts hand transcribed documents to the same Haiku writers; a raw control byte survives
+  // JSON.stringify as an escape the transcriber then DECODES, producing an unparseable file.
+  assert.match(hf, /padStart\(2, '0'\)/, 'the replacement token is still a printable <0xNN>')
+})
+
 test('TERSE opens with the same first sentence in both scripts', () => {
   // Only the OPENING sentence is shared: the harness copy adds "keep each finding to a sentence or
   // two", which is meaningless for the conductor's prompts. The first sentence is the part that
