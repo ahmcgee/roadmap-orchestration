@@ -138,3 +138,27 @@ test('validation: malformed `closes` throws before any agent call', async () => 
     )
   }
 })
+
+// =========================================================================================
+// 5. THE CWD RESET (0.14.0, wf_318afa1b-e9d). `gh` has no `-C`, and without `--repo` it reads the
+// repository out of its working directory — which does not survive from one Bash call to the next.
+// So every gh command the harness composes carries GH_HERE's `cd '<repo>' &&`, on a plan WITH a
+// repoSlug as much as one without: the guard costs nothing and the slug is optional. Run in issue
+// mode, where the gh clauses actually exist (the file-mode sim above proves they do not).
+// =========================================================================================
+test('issue mode: every composed gh command carries its own working directory', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, ISSUE_PLAN(), makeState())
+  let seen = 0
+  for (const c of calls) {
+    if (c.model === 'codex') continue
+    const text = c.prompt.split('<<<BRIEF>>>')[0]
+    // A composed command opens with a backtick. `\`gh ` is therefore a gh command with nothing in
+    // front of it; every legitimate one opens with GH_HERE's cd (or a `HIT=$(` capture around it).
+    const bare = text.match(/`gh [^`\n]*/g)
+    assert.equal(bare, null, `${c.label} composes \`${bare?.[0]}\` — a bare gh reads the repository ` +
+      'from wherever it happens to be standing, and that is not its own choice')
+    seen += (text.match(/`(?:HIT=\$\()?cd '\/repo' && gh /g) ?? []).length
+  }
+  assert.ok(seen >= 3, `the issue-mode drive should compose several guarded gh commands (saw ${seen})`)
+})

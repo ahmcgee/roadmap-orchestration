@@ -74,21 +74,27 @@ const arr = (t) => ({ type: 'array', items: { type: t } })
 const oneOf = (vals) => ({ type: 'string', enum: vals })
 
 /* ------------------------- courier vocabulary -------------------------- */
-// Location discipline for mechanical agents: given a bad path — or, worse, none it recognises —
-// an agent improvises in its own cwd and reports plausible success. So the check is an IDENTITY
-// test, not a liveness one: `git rev-parse --git-dir` used to satisfy it from ANY checkout, the
-// workflow session's own included (wf_106cdf59-c5f). Fail-loud beats adaptive. Every prompt
-// carrying this must name the directory it wants as the agent's working directory; where the
-// SCRIPT composes the commands, cdGuard makes that mechanical instead of merely instructed.
-const STRICT = 'Start by `cd` to the exact absolute path this task names as your working directory, then PROVE ' +
-  'you are there before doing anything else: `pwd` must print that path exactly, character for character. If the ' +
-  'cd fails, or `pwd` prints anything else, report ok/pass as false with what it actually printed and stop — ' +
-  'never carry on in the directory you happened to start in. Where that path is inside a git checkout, ' +
-  '`git rev-parse --show-toplevel` names WHICH checkout you are in, and it must print either that same path or a ' +
-  'directory the path sits under; anything else is the wrong repository and is a failure to report. A LINKED ' +
-  'WORKTREE IS VALID — its `.git` is a FILE and the toplevel it prints is the worktree\'s own root, which is not ' +
-  'a defect and must never be reported as one. Never substitute your current working directory, the enclosing ' +
-  'project, or any other repository. '
+// Location discipline for mechanical agents. THE MECHANISM, established 2026-09-02 (conductor run
+// wf_318afa1b-e9d): the Bash tool's working directory RESETS between tool calls. That agent ran
+// `cd <fixture> && pwd`, got the fixture back, and its very next call — `git rev-parse
+// --show-toplevel`, no cd — printed the orchestrator's own repo. Every relative command after it
+// ran here; it reported four wave-1 feedback files "missing (idempotent skip)" and ok:true while
+// the fixture's files sat untouched. So "cd first, then prove you are there" was structurally
+// UNSATISFIABLE across calls, and every "the agent ran in the wrong cwd" incident in the ledger is
+// this one fact. The only rule that survives a reset is: the cd is IN the command. STRICT now says
+// that; where the SCRIPT composes the commands, cdGuard makes it mechanical rather than instructed.
+const STRICT = 'THE WORKING DIRECTORY DOES NOT PERSIST BETWEEN COMMANDS. Every command you run starts wherever ' +
+  'your session began, not where the previous one left off, so a `cd` you ran earlier buys you nothing and a bare ' +
+  'relative path silently runs in some other repository. EVERY command must therefore be SELF-CONTAINED: begin it ' +
+  'with `cd <the exact absolute path this task names as your working directory> && `, or address every path ' +
+  'absolutely (`git -C <path> ...`). Never rely on an earlier `cd`. PROVE the location IN THE SAME COMMAND as the ' +
+  'work it guards, never in a command of its own: `cd <path> && pwd` must print that path exactly, character for ' +
+  'character, and where the path is inside a git checkout `cd <path> && git rev-parse --show-toplevel` names WHICH ' +
+  'checkout you are in — it must print either that same path or a directory the path sits under. If a cd fails, or ' +
+  'either proof prints anything else, report ok/pass as false with what it actually printed and stop — never carry ' +
+  'on in the directory you happened to start in. A LINKED WORKTREE IS VALID — its `.git` is a FILE and the toplevel ' +
+  'it prints is the worktree\'s own root, which is not a defect and must never be reported as one. Never ' +
+  'substitute your current working directory, the enclosing project, or any other repository. '
 // EVERY prompt whose schema carries a maxLength must also carry this. A cap is a contract with the
 // model, and the prompt is the only place that contract is communicated — a capped field with no
 // matching instruction is a trap: the agent overruns it, burns its schema-retries, and dies
@@ -685,7 +691,13 @@ const ghRepo = plan.repoSlug ? `--repo ${plan.repoSlug} ` : ''
 // exactly the marker comment. Prints `<number> <OPEN|CLOSED>` for the one exact match, or nothing.
 // Duplicated across harness.mjs and conductor.mjs (neither can import the other) — keep them in
 // sync; shared-consts.test.mjs fails the build if they drift.
-const markerFind = (marker) => `gh issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
+// `gh` has no `-C`: without `--repo` it reads the repository out of its WORKING DIRECTORY, and a Bash
+// tool's working directory RESETS between commands (wf_318afa1b-e9d). So every gh command this script
+// composes carries its own `cd`, exactly as cdGuard does for a courier's list — redundant when a
+// repoSlug supplies `--repo`, load-bearing when the plan has none, and free either way.
+// Mirrored in the other workflow script — keep the two in sync (shared-consts.test.mjs enforces it).
+const GH_HERE = `cd '${repo}' && gh`
+const markerFind = (marker) => `${GH_HERE} issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
   `--json number,body,state --jq '[.[] | select(((.body // "") | split("\\n")[0] | sub("\\r$"; "")) == ` +
   `"<!-- ${marker} -->")] | .[0] | select(. != null) | "\\(.number) \\(.state)"'`
 // The obligations that ride with every markerFind. Duplicated in both scripts — keep them in sync.
@@ -705,7 +717,9 @@ const findIssue = (id, cached) =>
     : `HIT=$(${markerFind(`roadmap:unit id=${id}`)} 2>/dev/null); ISS=\${HIT%% *}; ISSTATE=\${HIT##* }; `
 const GH_BEST_EFFORT = 'Do the following on a BEST-EFFORT basis, only AFTER the work above is finished and its ' +
   'result decided: if any gh command errors (no network, auth, rate limit, missing issue), ignore it and carry ' +
-  'on — issue state is observability, never a gate, and a wave-tail sweep reconciles anything missed. '
+  'on — issue state is observability, never a gate, and a wave-tail sweep reconciles anything missed. ' +
+  `Write every gh command you compose yourself as \`${GH_HERE} …\`: your working directory does not persist ` +
+  'between commands, and without `--repo` gh reads the repository from wherever it happens to be standing. '
 // The unit's issue moves to status:running once the SCRIPT has decided the worktree is buildable.
 // This used to ride on the setup prompt; setup is a closed command list now, and a `gh` find-or-
 // create is one of the two things that genuinely still needs a model (an exact-marker search whose
@@ -716,7 +730,7 @@ const ghUnitRunning = (unit) => run(
   `In the git repository at ${repo}: ${GH_BEST_EFFORT}${MARKER_RULE}The scheduler has confirmed a buildable ` +
   `worktree for unit ${unit.id}, so mark its tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
   `if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
-  `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. ` +
+  `\`${GH_HERE} issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. ` +
   `Run no other command: no checkout, no branch, no worktree, no merge. Report ok. ` +
   `Keep \`detail\` to one sentence.`,
   { model: 'haiku', effort: 'low', phase: 'Setup', label: `issue-running:${unit.id}`, schema: S.ok },
@@ -724,12 +738,12 @@ const ghUnitRunning = (unit) => run(
 const ghMerged = (unit) => issueMode
   ? `\n${GH_BEST_EFFORT}${MARKER_RULE}If and only if the merge LANDED and the full suite PASSED, close this ` +
     `unit's tracking issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
-    `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:running,status:merge-ready --add-label status:merged\` ` +
-    `then \`gh issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. ` +
+    `\`${GH_HERE} issue edit ${ghRepo}"$ISS" --remove-label status:running,status:merge-ready --add-label status:merged\` ` +
+    `then \`${GH_HERE} issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. ` +
     (unit.closes?.length
       ? `Under the same condition (merge landed, suite passed), also close each issue this unit RESOLVES: ` +
         unit.closes.map((n) =>
-          `\`gh issue close ${ghRepo}${n} --reason completed --comment "Resolved by unit ${unit.id} (merged into ${intBranch})."\``).join('; ') +
+          `\`${GH_HERE} issue close ${ghRepo}${n} --reason completed --comment "Resolved by unit ${unit.id} (merged into ${intBranch})."\``).join('; ') +
         ` — skip any already closed. `
       : '')
   : ''
@@ -1418,10 +1432,11 @@ const S = {
  * THE SCRIPT decides what the output means: pattern-match `exit(i)`/`out(i)`, never ask the agent
  * for a verdict about the commands it ran. Callers that need a value read it out of the output of
  * a command they put on the list for that purpose (`git rev-parse HEAD`, `codex login status`).
- * No conductor copy of courierRun itself: nothing over there runs a command list except the launch
- * pack read, which calls agent() directly. The PROMPT, SCHEMA and SHAPE (courierPrompt /
- * courierSchema / courierShape) are mirrored in both scripts — keep those in sync
- * (shared-consts.test.mjs enforces it).
+ * The conductor carries a byte-identical copy of this function (0.14.0: its `move-feedback` step
+ * became a courier) alongside the PROMPT, SCHEMA and SHAPE (courierPrompt / courierSchema /
+ * courierShape) — keep all four in sync (shared-consts.test.mjs enforces it). Only the `required`
+ * branch is harness-specific: over there `runReq` is a throwing stub, since the conductor has no
+ * wave-level halt record for a dead required courier to set.
  */
 const courierRun = async (where, commands, opts, extra = '') => {
   // Fail loud at compose time. cdGuard would catch this too, but only once there is a command to
@@ -1733,9 +1748,9 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
     (issueMode
       ? `\n${GH_BEST_EFFORT}${MARKER_RULE}Then reflect the quarantine on the unit's tracking issue, keeping it ` +
         `OPEN: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
-        `\`gh issue edit ${ghRepo}"$ISS" ` +
+        `\`${GH_HERE} issue edit ${ghRepo}"$ISS" ` +
         `--remove-label status:running,status:merge-ready --add-label status:quarantined\` and post the dossier ` +
-        `as a comment: \`gh issue comment ${ghRepo}"$ISS" --body-file ${dossierPath}\`. `
+        `as a comment: \`${GH_HERE} issue comment ${ghRepo}"$ISS" --body-file ${dossierPath}\`. `
       : '')
   // Codex writes it directly — it has a shell, so the file lands as a heredoc instead of being
   // transcribed by a courier. cwd is the INTEGRATION worktree, not the unit's: quarantine is
@@ -2013,10 +2028,10 @@ async function syncIssues() {
     `the one exact match and nothing at all when there is none); ` +
     `if found and NOT closed, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
     `and ensure \`wave:${N}\` on any unit that is running or beyond: pending/running/merge-ready/blocked/` +
-    `quarantined stay OPEN; merged → add \`status:merged\` then \`gh issue close ${ghRepo}<n> --reason completed\`; ` +
-    `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. For any ` +
+    `quarantined stay OPEN; merged → add \`status:merged\` then \`${GH_HERE} issue close ${ghRepo}<n> --reason completed\`; ` +
+    `deferred → add \`status:deferred\` then \`${GH_HERE} issue close ${ghRepo}<n> --reason "not planned"\`. For any ` +
     `changed unit whose row carries a \`closes\` array and whose status is merged, also ensure each listed issue ` +
-    `number is closed (\`gh issue close ${ghRepo}<n> --reason completed --comment "Resolved by unit <id>."\`) — ` +
+    `number is closed (\`${GH_HERE} issue close ${ghRepo}<n> --reason completed --comment "Resolved by unit <id>."\`) — ` +
     `skip numbers already closed. Skip any unit ` +
     `whose issue is not found, and do NOT touch any unit not listed here — they were reconciled in an earlier ` +
     `wave. Changed units:\n${JSON.stringify(changed)}\n` +
@@ -2382,11 +2397,13 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `   - \`grep -h -iE 'turn.failed|"type":"error"|usage limit|rate limit|quota|429|thread already' ${dir}/events.jsonl ` +
     `${dir}/stderr.log | tail -5 | cut -c1-250\` (errors; also decides \`limitHit\`)${gitTruth ? ',' : '.'}\n` +
     (gitTruth
-      ? `   - git truth in ${w}: \`git rev-list --count ${base}..HEAD\`, \`git diff --name-only ${base}..HEAD\`, ` +
-        `\`git status --porcelain\`, \`git rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
-        `6) If \`git status --porcelain\` shows uncommitted changes, commit them yourself with the message ` +
-        `"${id}: commit work left uncommitted by codex" and say so in \`notes\` — uncommitted work is ` +
-        `invisible to every downstream judge.\n`
+      ? `   - git truth in ${w} — every one of these carries its own \`-C\`, because your working directory ` +
+        `does not survive from one command to the next: \`git -C '${w}' rev-list --count ${base}..HEAD\`, ` +
+        `\`git -C '${w}' diff --name-only ${base}..HEAD\`, \`git -C '${w}' status --porcelain\`, ` +
+        `\`git -C '${w}' rev-parse HEAD\`, and whether ${dir}/done.txt exists.\n` +
+        `6) If \`git -C '${w}' status --porcelain\` shows uncommitted changes, commit them yourself — ` +
+        `\`git -C '${w}' add -A && git -C '${w}' commit -m "${id}: commit work left uncommitted by codex"\` — ` +
+        `and say so in \`notes\`: uncommitted work is invisible to every downstream judge.\n`
       : '') +
     `${gitTruth ? 7 : 6}) ${reportInstr ?? (`Emit the structured report: copy \`summary\`/\`contractMismatch\`/\`specGap\`/\`debt\`/\`notes\` ` +
     `through from the final report VERBATIM (never summarize or expand them; empty strings stay empty — ` +
@@ -3182,7 +3199,7 @@ async function runUnit(unit) {
     const v = (isMismatch || priorStops >= 2) ? null : await run(
       `You are adjudicating an implementer escalation on unit ${unit.id}. The implementer stopped and reported a ` +
       `decision it says the spec does not settle: "${reported}". Read the spec at ${spec}, the contracts it ` +
-      `references, and \`git diff ${base}..HEAD\` in ${w} as needed. Rule with \`tier\`:\n` +
+      `references, and \`git -C '${w}' diff ${base}..HEAD\` as needed. Rule with \`tier\`:\n` +
       `- "cited" — the spec, a contract, the conventions or the existing code DOES settle this and the ` +
       `implementer missed it. Most escalations are this. Put the exact location and the answer in \`guidance\`.\n` +
       `- "decided" — a genuine gap, but the decision stays inside this unit's pinned scope (${pinned}) and is ` +
@@ -3227,8 +3244,8 @@ async function runUnit(unit) {
                  `${v.boundary}. Its reading: ${v.guidance}\n`
                : `This is the third stop on this unit — the earlier ones were adjudicated below you. Weigh whether ` +
                  `the unit itself is specified wrongly, not just this decision.\n`)) +
-        `Read the spec at ${spec} and the contracts it references, and \`git diff ${base}..HEAD\` ` +
-        `in ${w} as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
+        `Read the spec at ${spec} and the contracts it references, and \`git -C '${w}' diff ${base}..HEAD\` ` +
+        `as needed. Decide: "confirm" if the decision stands as built; "redirect" with brief guidance if it ` +
         `(or a better alternative) must be steered — the engineer applies your guidance as one fix round; ` +
         `"quarantine" only if the unsettled decision invalidates the unit's premise. Do not write code.`,
         { model: 'fable', effort: C.fableEffort, phase: 'Escalate', label: `gap-consult:${unit.id}#${stops}`, schema: S.directive })
@@ -3382,8 +3399,8 @@ async function runUnit(unit) {
   const dietRefused = !digestUsable || unit.risk !== 'low'
   const firstGateModel = digestUsable ? (C.gateModel?.[unit.risk] ?? 'opus') : 'opus'
   const firstGateRead = dietRefused
-    ? `read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. `
-    : `read \`git diff --stat ${base}..HEAD\` and then, IN FULL, the diff of every file the review digest's ` +
+    ? `read \`git -C '${w}' diff ${base}..HEAD\` in full and whatever surrounding code you need. `
+    : `read \`git -C '${w}' diff --stat ${base}..HEAD\` and then, IN FULL, the diff of every file the review digest's ` +
       `findings, contract touches or scope notes name — expanding to the complete diff the moment anything ` +
       `looks off, the digest looks thin for the size of the change, or an acceptance criterion is not settled ` +
       `by what you have read. The raw diff is one command away and reading it is never wrong: this is where to ` +
@@ -3510,11 +3527,11 @@ async function runUnit(unit) {
   // Opus-approved unit is the false economy the audit is meant to avoid); every forced gate
   // keeps the byte-identical full-read instruction, since summarising their diff hides misses.
   const diffRead = auditOnly
-    ? `read \`git diff --stat ${base}..HEAD\`, the spec's acceptance criteria, and the verification evidence ` +
+    ? `read \`git -C '${w}' diff --stat ${base}..HEAD\`, the spec's acceptance criteria, and the verification evidence ` +
       `first, then read in full the diff of every file where a spec or contract violation would be consequential ` +
       `— expand to the complete diff the moment anything looks off. You are auditing an Opus-approved unit for ` +
       `systematic rubber-stamping, not re-gating from scratch. `
-    : `read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. `
+    : `read \`git -C '${w}' diff ${base}..HEAD\` in full and whatever surrounding code you need. `
   for (let g = 0; g < C.maxGateRounds; g++) {
     spend.gateRounds++
     bumpRound(unit.id, 'gate')
@@ -3576,7 +3593,8 @@ async function mergeUnit(unit) {
   // by the merge agent, the strip preserves the content in branch history, and the
   // kind:'contract' debt entry routes adjudication to the architect (root return).
   const roadmapCheck =
-    `check \`git diff --name-only $(git merge-base HEAD unit/${unit.id})..unit/${unit.id} -- .roadmap/\` — if it ` +
+    `check \`git -C '${intWt}' diff --name-only $(git -C '${intWt}' merge-base HEAD unit/${unit.id})..unit/${unit.id} ` +
+    `-- .roadmap/\` — if it ` +
     `lists ANY path, do NOT merge; touch nothing and report merged:false with those exact paths in \`roadmapPaths\`. `
   // Plan-driven prefix-uniqueness guard, '' when unset so the prompt stays byte-identical on
   // plans without numbered sequences (arc-observed: next-free-at-dispatch numbering collided
@@ -3587,30 +3605,35 @@ async function mergeUnit(unit) {
   // wave — 8 gate-approved units quarantined, zero merges, ~5h burned.
   const prefixClause = plan.prefixUniqueGlobs?.length
     ? ` Then, if you performed the merge, before the suite: for each of these globs — ${plan.prefixUniqueGlobs.join(', ')} — ` +
-      `list the matching filenames in the PRE-MERGE tip (\`git ls-tree -r --name-only HEAD^1 -- '<glob>'\`) and in ` +
+      `list the matching filenames in the PRE-MERGE tip (\`git -C '${intWt}' ls-tree -r --name-only HEAD^1 -- '<glob>'\`) and in ` +
       `the MERGED tree (same command with HEAD), extract each filename's leading digit run, and compute the set of ` +
       `digit runs shared by two or more files in each list. Digit runs already duplicated in the pre-merge tip are ` +
       `grandfathered and never refuse. If the merged tree has a duplicated digit run that the pre-merge tip did ` +
-      `NOT already have, the merge is REFUSED: undo it with \`git reset --hard ORIG_HEAD\` and report merged:false ` +
+      `NOT already have, the merge is REFUSED: undo it with \`git -C '${intWt}' reset --hard ORIG_HEAD\` and report merged:false ` +
       `with every filename of the NEW collision(s) in \`prefixCollision\`.`
     : ''
   const mergePromptText =
     STRICT +
-    `In the integration worktree at ${intWt}: first, confirm HEAD is ON branch ${intBranch} — run ` +
-    `\`git symbolic-ref --quiet --short HEAD\`; a detached HEAD prints nothing. If it prints anything other than ` +
-    `${intBranch}, run \`git checkout ${intBranch}\` before touching anything else, and if that checkout fails, ` +
+    `In the integration worktree at ${intWt} — every command below already carries \`-C '${intWt}'\`, and any ` +
+    `command of your own must carry it too or start with \`cd '${intWt}' && \`, because your working directory ` +
+    `does not survive from one command to the next. First, confirm HEAD is ON branch ${intBranch} — run ` +
+    `\`git -C '${intWt}' symbolic-ref --quiet --short HEAD\`; a detached HEAD prints nothing. If it prints anything other than ` +
+    `${intBranch}, run \`git -C '${intWt}' checkout ${intBranch}\` before touching anything else, and if that checkout fails, ` +
     `report merged:false with the exact error. A merge made on a detached HEAD produces a commit no branch can ` +
     `reach, and the work is lost the moment anything else checks the branch out. Then, if a merge is already ` +
     `in progress ` +
-    `(a MERGE_HEAD exists), clear it with \`git merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
-    `of HEAD (\`git merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
-    `already landed), skip the merge but still run the project's full test suite (commands: ${brief}) and report ` +
+    `(a MERGE_HEAD exists), clear it with \`git -C '${intWt}' merge --abort\`. Then, if unit/${unit.id} is already an ancestor ` +
+    `of HEAD (\`git -C '${intWt}' merge-base --is-ancestor unit/${unit.id} HEAD\` succeeds — a crash-replay after this merge ` +
+    `already landed), skip the merge but still run the project's full test suite (each command as ` +
+    `\`cd '${intWt}' && <command>\`; commands: ${brief}) and report ` +
     `merged:true with the current HEAD sha. Otherwise ${roadmapCheck}Only if it lists nothing, merge branch ` +
     `unit/${unit.id} ` +
-    `(git merge --no-ff unit/${unit.id}). If the merge conflicts, abort it (git merge --abort) and report ` +
+    `(\`git -C '${intWt}' merge --no-ff unit/${unit.id}\`). If the merge conflicts, abort it ` +
+    `(\`git -C '${intWt}' merge --abort\`) and report ` +
     `merged:false naming the conflicting paths in detail — do not resolve conflicts yourself. If it merges ` +
-    `cleanly, run the project's full test suite (commands: ${brief}) and report the result.${prefixClause} ` +
-    `Report the current HEAD sha either way.` + ghMerged(unit)
+    `cleanly, run the project's full test suite (each command as \`cd '${intWt}' && <command>\`; commands: ` +
+    `${brief}) and report the result.${prefixClause} ` +
+    `Report the current HEAD sha (\`git -C '${intWt}' rev-parse HEAD\`) either way.` + ghMerged(unit)
   let res = await withGateSlot(() => runReq(mergePromptText, { model: 'haiku', phase: 'Merge', label: `merge:${unit.id}`, schema: S.merge }))
 
   if (!res.merged && res.roadmapPaths?.length) {
@@ -3653,7 +3676,9 @@ async function mergeUnit(unit) {
   if (!res.merged) {
     res = await withGateSlot(() => runReq(
       `In the integration worktree at ${intWt} (branch ${intBranch}): merge branch unit/${unit.id}, resolving ` +
-      `conflicts. First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
+      `conflicts. Your working directory does not survive from one command to the next, so run every git command ` +
+      `as \`git -C '${intWt}' …\` and every other command as \`cd '${intWt}' && <command>\`. ` +
+      `First ${roadmapCheck}Both sides are intentional work — consult ${specOf(unit)}, the specs of ` +
       `recently merged units ` +
       `under ${repo}/.roadmap/specs/, and the contracts under ${repo}/.roadmap/contracts/ to decide each ` +
       `resolution. Then run the full test suite.${prefixClause} If you are genuinely unsure a resolution is ` +
@@ -3673,8 +3698,11 @@ async function mergeUnit(unit) {
       `The integrated test suite fails after merging unit/${unit.id} into ${intBranch} (worktree ${intWt}). ` +
       `Evidence: ${res.detail}. First check whether the failure predates this merge. If the merge caused it, ` +
       `diagnose and fix on ${intBranch} — this may be a cross-unit interaction; the specs of all units live under ` +
-      `${repo}/.roadmap/specs/. Re-run the suite. If you cannot make it pass, revert the merge commit ` +
-      `(git revert -m 1 HEAD, keeping the branch intact for later redesign) and report suitePass:false.`,
+      `${repo}/.roadmap/specs/. Your working directory does not survive from one command to the next, so run ` +
+      `every git command as \`git -C '${intWt}' …\` and every other command as \`cd '${intWt}' && <command>\`. ` +
+      `Re-run the suite. If you cannot make it pass, revert the merge commit ` +
+      `(\`git -C '${intWt}' revert -m 1 HEAD\`, keeping the branch intact for later redesign) and report ` +
+      `suitePass:false.`,
       { model: 'opus', effort: C.opusEffort, phase: 'Merge', label: `integration-fix:${unit.id}`, schema: S.merge }))
     if (!res.suitePass) return quarantine(unit, 'broke the integrated suite', res, { mergeReverted: true })
   }

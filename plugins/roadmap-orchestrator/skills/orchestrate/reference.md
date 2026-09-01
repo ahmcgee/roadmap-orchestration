@@ -855,8 +855,13 @@ output**; the *script* judges. Three rules make that hold, and all three are cod
    list (`courierShape`'s `detail` does exactly this, from the *unwrapped* command, so the guard
    never leaks into an operator-facing message).
 3. **Couriers carry no identity check at all** (0.14.0). STRICT's `pwd`/`--show-toplevel` proof —
-   still used verbatim for the free-form prompts where the script never composes the destination
-   (codex steerers, gh projections, spec/dossier writers) — used to lead every courier prompt too,
+   still used for the free-form prompts where the script never composes the destination
+   (codex steerers, gh projections, spec/dossier writers), though **inside** the command it guards
+   since 0.14.0: the Bash tool's working directory does **not** persist between tool calls, so an
+   earlier `cd` is worth nothing and "cd first, then prove you are there" was asking for something
+   the tool cannot do (`wf_318afa1b-e9d`). What STRICT states now is that every command must be
+   self-contained — `cd '<path>' && …` or an absolute path — and that the proof rides in the same
+   command as the work. It used to lead every courier prompt too,
    and it was the wrong check for one: `cdGuard` already names and enforces the destination, so a
    courier proving its *own* starting cwd first is pure theatre. `wf_318afa1b-e9d`'s
    `provision:integration` courier took it literally — ran only `pwd`, saw the workflow session's
@@ -886,6 +891,7 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 | commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
 | `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
 | git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |
+| feedback archive (conductor) | `move-feedback:w<N>` | the closing `ls -1` of `triaged/<N>/` vs the list it sent |
 
 What stays **free-form**, and why: the **codex steerers** (they launch and supervise a process and
 judge its artifacts), the **merge/resolve/integration-fix** agents (they run a project's test suite
@@ -895,8 +901,10 @@ is a model's job), and the **spec/dossier writers** (they write prose a model au
 its working directory explicitly in the first sentence so STRICT's identity test has something to
 bind to — including `steerCodex`, which composes its own "your cd target is `<worktree>`;
 `<artifactDir>` is scratch, not a checkout" line for every step rather than leaving it to one
-caller's preamble. The conductor's `move-feedback:wN` is the one remaining `mv`: it stays free-form
-because every path it touches is absolute, so its cwd decides nothing.
+caller's preamble. Everything a free-form prompt *names* is self-contained too: every composed git
+command carries `-C '<path>'`, every composed `gh` carries `cd '<repo>' &&` (gh has no `-C`, and
+without `--repo` it reads the repository out of the working directory), and a project suite command
+is handed over as `cd '<worktree>' && <command>`.
 
 Why the roster closed: paid conductor fixture `wf_c6971376-1a5`, the run after the guard above
 shipped. Two free-form steps survived it, and both went wrong the same way.
@@ -1082,7 +1090,12 @@ between the boundary's decision and the file — **spec revision** (Sonnet, the 
 judgment: it edits three sections in place around material it must not touch, such as an architect
 ruling the harness appended mid-wave; it reports its post-edit `cksum` for the record, but there is
 no expected value to check it against), and **move-feedback** (this wave's evidence + the actioned/dismissed
-user notes → `feedback/triaged/N/`). A failed *expansion* withholds its unit; a failed *revision*
+user notes → `feedback/triaged/N/`, as a **courier** since 0.14.0 — a closed list of self-contained
+`test -e … && git mv …` commands the script judges by the closing `ls -1`; the destination basename is
+role-qualified (`explorer-wave-N.md`, `health-wave-N.md`, …) because all three renderings are called
+`wave-N.md` and a flat move had the last silently overwrite the first. A source that never existed is
+an ordinary skip; one that existed and did not land is a `feedback-unmoved` degradation, never an arc
+outcome). A failed *expansion* withholds its unit; a failed *revision*
 degrades (`spec-unrevised`) and the unit dispatches on its previous spec — an amendment is not an
 authority.
 

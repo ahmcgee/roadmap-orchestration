@@ -112,8 +112,14 @@ test('1e the merge agent must put HEAD on the integration branch before merging'
   await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
   const merge = calls.find((c) => c.label === 'merge:a')
   assert.match(merge.prompt, /confirm HEAD is ON branch roadmap\/session-test/)
-  assert.match(merge.prompt, /git checkout roadmap\/session-test/)
+  assert.match(merge.prompt, /git -C '\/wt\/__integration' checkout roadmap\/session-test/)
   assert.match(merge.prompt, /detached HEAD produces a commit no branch can reach/)
+  // 0.14.0: the merge agent's cwd resets between Bash calls, so nothing it is told to run may
+  // depend on standing anywhere — every composed git command carries the integration worktree.
+  for (const m of merge.prompt.matchAll(/`(git (?!-C)[^`]*)`/g))
+    assert.fail(`the merge prompt composes a cwd-dependent git command: \`${m[1]}\``)
+  assert.match(merge.prompt, /each command as `cd '\/wt\/__integration' && <command>`/,
+    'and the project suite is run the same way')
 })
 
 // =========================================================================================

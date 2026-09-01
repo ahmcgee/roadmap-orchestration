@@ -73,19 +73,23 @@ const oneOf = (vals) => ({ type: 'string', enum: vals })
 const strArr = (maxItems, maxLength) => ({ type: 'array', maxItems, items: { type: 'string', maxLength } })
 
 /* ------------------------- courier vocabulary -------------------------- */
-// Location discipline for mechanical agents (copied from harness.mjs): given a bad path — or none
-// it recognises — Haiku improvises in its cwd and reports plausible success. The check is an
-// IDENTITY test, not a liveness one: `git rev-parse --git-dir` passed from ANY checkout, the
-// workflow session's own included. Every prompt carrying this names its working directory.
-const STRICT = 'Start by `cd` to the exact absolute path this task names as your working directory, then PROVE ' +
-  'you are there before doing anything else: `pwd` must print that path exactly, character for character. If the ' +
-  'cd fails, or `pwd` prints anything else, report ok/pass as false with what it actually printed and stop — ' +
-  'never carry on in the directory you happened to start in. Where that path is inside a git checkout, ' +
-  '`git rev-parse --show-toplevel` names WHICH checkout you are in, and it must print either that same path or a ' +
-  'directory the path sits under; anything else is the wrong repository and is a failure to report. A LINKED ' +
-  'WORKTREE IS VALID — its `.git` is a FILE and the toplevel it prints is the worktree\'s own root, which is not ' +
-  'a defect and must never be reported as one. Never substitute your current working directory, the enclosing ' +
-  'project, or any other repository. '
+// Location discipline for mechanical agents (copied from harness.mjs). The Bash tool's working
+// directory RESETS between tool calls — arc-observed here, in this script's own `move-feedback:w1`
+// (wf_318afa1b-e9d): it cd'd to the fixture, then read `/workspaces/roadmap-orchestration` out of
+// the NEXT call's `git rev-parse --show-toplevel`, checked four relative paths in the wrong repo
+// and reported them missing. An earlier `cd` is worth nothing, so every command must carry its own.
+const STRICT = 'THE WORKING DIRECTORY DOES NOT PERSIST BETWEEN COMMANDS. Every command you run starts wherever ' +
+  'your session began, not where the previous one left off, so a `cd` you ran earlier buys you nothing and a bare ' +
+  'relative path silently runs in some other repository. EVERY command must therefore be SELF-CONTAINED: begin it ' +
+  'with `cd <the exact absolute path this task names as your working directory> && `, or address every path ' +
+  'absolutely (`git -C <path> ...`). Never rely on an earlier `cd`. PROVE the location IN THE SAME COMMAND as the ' +
+  'work it guards, never in a command of its own: `cd <path> && pwd` must print that path exactly, character for ' +
+  'character, and where the path is inside a git checkout `cd <path> && git rev-parse --show-toplevel` names WHICH ' +
+  'checkout you are in — it must print either that same path or a directory the path sits under. If a cd fails, or ' +
+  'either proof prints anything else, report ok/pass as false with what it actually printed and stop — never carry ' +
+  'on in the directory you happened to start in. A LINKED WORKTREE IS VALID — its `.git` is a FILE and the toplevel ' +
+  'it prints is the worktree\'s own root, which is not a defect and must never be reported as one. Never ' +
+  'substitute your current working directory, the enclosing project, or any other repository. '
 // EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
 // A cap is a contract with the model, and the prompt is the only place that contract is stated — a
 // capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
@@ -116,6 +120,10 @@ const cdGuard = (where, cmd) => {
       'a path the script did not compose is a path the model will improvise')
   return `cd '${where.replace(/'/g, "'\\''")}' && ( ${cmd} )`
 }
+// POSIX single-quoting for the paths and bodies THIS script interpolates into a composed command —
+// the same escape cdGuard applies to its directory. A feedback filename and a triage reason are both
+// model-supplied text, and text that reaches a shell unquoted is a command the script did not write.
+const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`
 const courierSchema = (n, outMax = COURIER_OUT) => obj({
   ok: { type: 'boolean' },
   results: { type: 'array', maxItems: n, items: obj({
@@ -311,8 +319,16 @@ const repo = inPlan.repoPath   // absolute path to the repository (agents read .
 // failure records a `gh-sync` degradation and continues.
 const issueMode = inPlan.tracking === 'issues'
 const ghRepo = inPlan.repoSlug ? `--repo ${inPlan.repoSlug} ` : ''
+// `gh` has no `-C`: without `--repo` it reads the repository out of its WORKING DIRECTORY, and a Bash
+// tool's working directory RESETS between commands (wf_318afa1b-e9d). So every gh command this script
+// composes carries its own `cd`, exactly as cdGuard does for a courier's list — redundant when a
+// repoSlug supplies `--repo`, load-bearing when the plan has none, and free either way.
+// Mirrored in the other workflow script — keep the two in sync (shared-consts.test.mjs enforces it).
+const GH_HERE = `cd '${repo}' && gh`
 const GH_BEST_EFFORT = 'Do the GitHub-issue steps below on a BEST-EFFORT basis: if any gh command errors (no ' +
-  'network, auth, rate limit, missing issue), ignore it and carry on — issue state is observability, never a gate. '
+  'network, auth, rate limit, missing issue), ignore it and carry on — issue state is observability, never a gate. ' +
+  `Write every gh command you compose yourself as \`${GH_HERE} …\`: your working directory does not persist ` +
+  'between commands, and without `--repo` gh reads the repository from wherever it happens to be standing. '
 // Find-or-create by BODY MARKER, made mechanical. `--search '"<marker>" in:body'` is GitHub
 // FULL-TEXT search: it tokenizes the marker, so `id=raise-verbs` matched an unrelated open agenda
 // issue, `id=sweep-truth` a closed unit from a prior arc, and a Phase-0 bootstrap "reused" three
@@ -323,7 +339,7 @@ const GH_BEST_EFFORT = 'Do the GitHub-issue steps below on a BEST-EFFORT basis: 
 // exactly the marker comment. Prints `<number> <OPEN|CLOSED>` for the one exact match, or nothing.
 // Duplicated across harness.mjs and conductor.mjs (neither can import the other) — keep them in
 // sync; shared-consts.test.mjs fails the build if they drift.
-const markerFind = (marker) => `gh issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
+const markerFind = (marker) => `${GH_HERE} issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
   `--json number,body,state --jq '[.[] | select(((.body // "") | split("\\n")[0] | sub("\\r$"; "")) == ` +
   `"<!-- ${marker} -->")] | .[0] | select(. != null) | "\\(.number) \\(.state)"'`
 // The obligations that ride with every markerFind. Duplicated in both scripts — keep them in sync.
@@ -495,6 +511,35 @@ const runOr = async (fallback, prompt, opts) => {
     degrade({ label: opts.label, model: opts.model, phase: opts.phase, kind: 'salvage-failed',
       what: 'salvage retry also produced no report — degrading to the coded fallback' })
   return retried ?? fallback
+}
+
+/* ------------------------------ the courier -----------------------------
+ * Mirrored from harness.mjs — see the long rationale there. The conductor gained a courier in
+ * 0.14.0: `move-feedback` was this script's last free-form shell step, and wf_318afa1b-e9d is what
+ * that cost (its `cd` did not survive to the next tool call, so every relative path it checked was
+ * checked in the orchestrator's own repo and four wave-1 files were reported "missing"). The body
+ * below is byte-identical to the harness's copy; shared-consts.test.mjs enforces that.
+ */
+// The `required` branch is HARNESS-ONLY: a required courier's death is a wave-level platform halt,
+// and this script has no halt record. Nothing here passes `required`; the stub keeps the copy below
+// byte-identical with the harness's and fails loudly rather than with a bare ReferenceError.
+const runReq = () => { throw new Error('runReq: required couriers are harness-only — the conductor has no halt record') }
+const courierRun = async (where, commands, opts, extra = '') => {
+  // Fail loud at compose time. cdGuard would catch this too, but only once there is a command to
+  // wrap — an empty list with an undefined `where` would otherwise ship a prompt naming `In
+  // undefined:` and get whatever the agent's cwd happened to be.
+  if (typeof where !== 'string' || !where.trim())
+    throw new Error(`courierRun: \`where\` is required (got ${JSON.stringify(where)}) — a courier with no ` +
+      'working directory improvises in its own')
+  const prompt = courierPrompt(where, commands, extra)
+  // `outMax` and `required` steer THIS wrapper; they are not agent() options and never reach it.
+  const { outMax, required, ...rest } = opts
+  const o = { ...rest, schema: courierSchema(commands.length, outMax) }
+  return courierShape(
+    required
+      ? await runReq(prompt, o)
+      : await runOr({ ok: false, results: [], detail: 'courier agent died without a report' }, prompt, o),
+    commands)
 }
 
 // Spec writers may touch exactly one file under specs/ — never the rest of the orchestrator's dir.
@@ -788,7 +833,7 @@ const censusPrompt = (N) => STRICT +
   `Take a wave-${N} census of a roadmap build's pending bug reports and quarantine dossiers. Report identifiers ` +
   `only — read no contents, change nothing:\n` +
   (issueMode
-    ? `1) List open user bug issues: \`gh issue list ${ghRepo}--label roadmap:bug --state open --limit 1000 ` +
+    ? `1) List open user bug issues: \`${GH_HERE} issue list ${ghRepo}--label roadmap:bug --state open --limit 1000 ` +
       `--json number --jq '.[].number'\` — put each issue NUMBER (as a string) in \`pendingUserFeedback\` (empty ` +
       `array if none or if gh fails). gh defaults to 30 results, so always pass the --limit shown; if the ` +
       `returned count EQUALS the limit the listing is truncated — re-run with the limit doubled until the count ` +
@@ -805,9 +850,9 @@ const censusPrompt = (N) => STRICT +
 const opusTriagePrompt = (N, P) =>
   `You are the wave-${N} boundary triager for a roadmap build, standing in for the architect. Read, in this order: ` +
   `${repo}/.roadmap/architect-log.md FIRST (inherited rationale + dismissal criteria), then ` +
-  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`gh issue list ' + ghRepo + '--label roadmap:debt --state open --limit 1000` — if exactly 1000 come back the listing is truncated: re-run with a higher limit; never trust a result equal to its limit)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
+  `${repo}/.roadmap/state.json, ${repo}/.roadmap/plan.json, ${issueMode ? 'the open roadmap:debt issues (`' + GH_HERE + ' issue list ' + ghRepo + '--label roadmap:debt --state open --limit 1000` — if exactly 1000 come back the listing is truncated: re-run with a higher limit; never trust a result equal to its limit)' : `${repo}/.roadmap/debt.md`}, this wave's feedback at ` +
   `${repo}/.roadmap/feedback/{explorer,health}/wave-${N}.md plus ` +
-  `${issueMode ? `the open user bug issues named in the evidence below (read each with \`gh issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
+  `${issueMode ? `the open user bug issues named in the evidence below (read each with \`${GH_HERE} issue view ${ghRepo}<n>\`)` : `any user notes under ${repo}/.roadmap/feedback/user/`}, and the specs/contracts under ${repo}/.roadmap/{specs,contracts} as needed. ` +
   `The wave's structured boundary evidence (authoritative — the files are for detail):\n` +
   `${JSON.stringify({ findings: P.findings, drafts: P.healthFixUnits, flakeFlips: P.flakeFlips, debt: P.nonContractDebt, userFeedback: P.userFeedback, owed: P.owedJobs })}\n` +
   `Weigh explorer/health findings, dispose of debt and non-contract feedback, and decide which health-assessor ` +
@@ -1293,40 +1338,79 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   snapshot(consumed)   // the crash-recovery record for everything this boundary decided
 
   // move-feedback: consumed user notes + this wave's explorer/health renderings -> triaged/N/.
-  // ISSUE MODE: still archive the internal explorer/health/design files, but dispose of user bug reports
-  // by closing/commenting the roadmap:bug ISSUES instead of moving user-note files.
+  // A COURIER since 0.14.0 (RATIONALE §19). This was the last free-form shell step in either
+  // script, left that way on the argument that "every path it touches is absolute, so its cwd
+  // decides nothing" — and the prompt promptly let the model write relative ones. wf_318afa1b-e9d:
+  // `move-feedback:w1` cd'd to the fixture once, then ran `mkdir -p .roadmap/feedback/triaged/1`
+  // and four `[ -f ".roadmap/…" ]` probes in SEPARATE tool calls, each of which started back in
+  // the orchestrator's own repo (the Bash tool resets cwd between calls). It reported all four
+  // files "MISSING (idempotent skip)" and ok:true; nothing moved.
+  // Each move is one self-contained command that always exits 0 and prints MOVED/ABSENT/FAILED, so
+  // a missing file never stops the list, and the final `ls` of the destination is what the SCRIPT
+  // judges — including the crash-replay case, where a file is ABSENT because a previous attempt
+  // already moved it. ISSUE MODE: user bug reports are ISSUES, so the disposal half is gh commands
+  // appended to the same closed list, each `|| echo GH-FAIL` — best-effort made mechanical instead
+  // of promised in prose. In file mode those commands are simply absent, so the prompt carries no
+  // gh text at all (which is what keeps the offline paid fixtures byte-identical).
   const consumedFiles = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed').map((f) => f.file)
-  if (issueMode) {
-    const disposed = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed')
-      .map((f) => ({ number: f.file, action: f.action, reason: String(f.reason ?? '').slice(0, 140) }))
-    const deferred = feedbackDispositions.filter((f) => f.action === 'deferred').map((f) => String(f.file))
-    await run(
-      STRICT + `Your working directory is the git repository at ${repo}. ` +
-      `Archive this wave's internal feedback renderings into ${repo}/.roadmap/feedback/triaged/${N}/ ` +
-      `(create that directory). Move these files if they exist — skip any missing (idempotent): ` +
-      `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md. ` +
-      `Use \`git mv\` when possible, else \`mv\`. ` + GH_BEST_EFFORT +
-      `Then dispose of the triaged user bug ISSUES: for each {number, action, reason} below, run ` +
-      `\`gh issue comment ${ghRepo}<number> --body "Triaged wave ${N}: <action> — <reason>"\` then ` +
-      `\`gh issue close ${ghRepo}<number> --reason completed\`: ${JSON.stringify(disposed)}. ` +
-      (deferred.length ? `Leave these deferred issues OPEN, adding the label status:deferred: ${deferred.join(', ')}. ` : '') +
-      `Create no other files and move nothing else.`,
-      { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
+  const fbDir = `${repo}/.roadmap/feedback`
+  const triagedDir = `${fbDir}/triaged/${N}`
+  // The destination basename is ROLE-QUALIFIED: explorer/, health/ and design/ each render a file
+  // called `wave-<N>.md`, so the flat `mv … triaged/<N>/` the free-form prompt asked for had the
+  // last two silently overwrite the first — three renderings in, one file out.
+  // `note: true` marks a user file the CENSUS observed on disk this wave, so its absence at move
+  // time is a defect worth a degradation. An internal rendering exists only if its boundary role
+  // ran, so a missing one is an ordinary idempotent skip.
+  const fbSources = [
+    { path: `${fbDir}/explorer/wave-${N}.md`, as: `explorer-wave-${N}.md`, note: false },
+    { path: `${fbDir}/health/wave-${N}.md`, as: `health-wave-${N}.md`, note: false },
+    { path: `${fbDir}/design/wave-${N}.md`, as: `design-wave-${N}.md`, note: false },
+    { path: `${fbDir}/health/wave-${N}-flake.md`, as: `health-wave-${N}-flake.md`, note: false },
+    ...(issueMode ? [] : consumedFiles.map((f) => ({ path: `${fbDir}/user/${f}`, as: `user-${f}`, note: true }))),
+  ]
+  const ghDispose = issueMode
+    ? feedbackDispositions.flatMap((f) => {
+      const n = String(f.file)
+      if (f.action === 'actioned' || f.action === 'dismissed') {
+        const body = `Triaged wave ${N}: ${f.action} — ${String(f.reason ?? '').slice(0, 140).replace(/\s+/g, ' ')}`
+        return [`gh issue comment ${ghRepo}${shq(n)} --body ${shq(body)} || echo GH-FAIL`,
+          `gh issue close ${ghRepo}${shq(n)} --reason completed || echo GH-FAIL`]
+      }
+      if (f.action === 'deferred') return [`gh issue edit ${ghRepo}${shq(n)} --add-label status:deferred || echo GH-FAIL`]
+      return []
+    })
+    : []
+  const fbCmds = [
+    `mkdir -p ${shq(triagedDir)}`,
+    ...fbSources.map(({ path, as }) =>
+      `test -e ${shq(path)} || { echo ABSENT; exit 0; }; ` +
+      `git mv -f ${shq(path)} ${shq(`${triagedDir}/${as}`)} 2>/dev/null || ` +
+      `mv -f ${shq(path)} ${shq(`${triagedDir}/${as}`)} || { echo FAILED; exit 0; }; echo MOVED`),
+    `ls -1 ${shq(triagedDir)}`,
+    ...ghDispose,
+  ]
+  const LS = 1 + fbSources.length   // index of the `ls` whose output is the archive's contents
+  const mv = await courierRun(repo, fbCmds,
+    { model: 'haiku', effort: 'low', phase: 'Persist', label: `move-feedback:w${N}` },
+    `This archives wave ${N}'s consumed feedback. Each move command reports MOVED, ABSENT or FAILED and ` +
+    `always exits 0 — an absent file is an expected result, not a failure to repair. `)
+  const archived = new Set(mv.out(LS).split('\n').map((l) => l.trim()).filter(Boolean))
+  const unmoved = (what) => degrade({ label: `move-feedback:w${N}`, model: 'haiku', phase: 'Persist',
+    kind: 'feedback-unmoved', what })
+  if (!mv.ok) {
+    // Never a wave outcome: the boundary's decisions are already staged and returned. The evidence
+    // simply stays where it is, and next wave's census sees it again.
+    unmoved(`wave ${N} feedback was not archived into triaged/${N}/ — ${mv.detail}`.slice(0, 300))
   } else {
-    await run(
-      STRICT + `Your working directory is the git repository at ${repo}. ` +
-      `Move consumed wave-${N} feedback into ${repo}/.roadmap/feedback/triaged/${N}/ (create that directory). ` +
-      `Move these files if they exist — skip any that are missing (this is idempotent): ` +
-      `${repo}/.roadmap/feedback/explorer/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}.md, ` +
-      `${repo}/.roadmap/feedback/design/wave-${N}.md, ${repo}/.roadmap/feedback/health/wave-${N}-flake.md` +
-      `${consumedFiles.length ? `, and these user notes from ${repo}/.roadmap/feedback/user/: ${consumedFiles.join(', ')}` : ''}. ` +
-      `Use \`git mv\` when possible, else \`mv\`. Create no other files and move nothing else.`,
-      { model: 'haiku', effort: 'low', label: `move-feedback:w${N}`, phase: 'Persist', schema: S.ok },
-    ).catch(() => null)
+    fbSources.forEach(({ path, as, note }, i) => {
+      if (archived.has(as)) return                          // moved now, or by an earlier attempt
+      if (mv.out(i + 1) === 'ABSENT' && !note) return       // that role never rendered one
+      unmoved(`wave ${N}: ${path} is not in triaged/${N}/ as ${as} (${mv.out(i + 1) || 'no report'})`)
+    })
+    if (ghDispose.some((_, i) => /GH-FAIL/.test(mv.out(LS + 1 + i))))
+      degrade({ label: `move-feedback:w${N}`, model: 'haiku', phase: 'Persist', kind: 'gh-sync',
+        what: `wave ${N}: a roadmap:bug disposal command failed — issue state is observability and gates nothing` })
   }
-
 
   state = consumed   // thread the consumed state into the next wave
 }

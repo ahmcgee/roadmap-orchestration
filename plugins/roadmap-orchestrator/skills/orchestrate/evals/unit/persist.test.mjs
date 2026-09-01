@@ -21,7 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, courierOk } from './fakes.mjs'
 
 const SKILL = fileURLToPath(new URL('../../', import.meta.url))
 const HARNESS = path.join(SKILL, 'harness.mjs')
@@ -241,7 +241,7 @@ async function conductorRun({ onDisk } = {}) {
       newUnits: [{ id: 'ic-v2', title: 'respec', risk: 'low', goal: 'g', acceptance: ['a'], supersedes: 'ic' }],
       reviseSpecs: [], cutUnits: [], debtLedger: ['LEDGER-ITEM'],
       journal: 'JOURNAL-TEXT', escalate: false, arcComplete: false, notes: '' } },
-    { match: /^move-feedback:/, result: { ok: true } },
+    { match: /^move-feedback:/, result: courierOk },
   ])
   const waveState = {
     ...mkState({ wave: 1, units: { a: { status: 'merged' }, ic: { status: 'quarantined' } } }),

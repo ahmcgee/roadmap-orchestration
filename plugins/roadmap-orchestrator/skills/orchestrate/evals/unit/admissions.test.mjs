@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, courierOk } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -72,7 +72,8 @@ function rules({ census, triage: tr, boundary } = {}) {
   list.push({ match: /^census:/, result: CENSUS_EMPTY })
   list.push({ match: /^triage:/, result: TRIAGE_OK })
   list.push({ match: /^boundary:/, result: BOUNDARY_OK })
-  list.push({ match: /^(bank-debt|move-feedback):/, result: OK })
+  list.push({ match: /^bank-debt:/, result: OK })
+  list.push({ match: /^move-feedback:/, result: courierOk })
   return list
 }
 

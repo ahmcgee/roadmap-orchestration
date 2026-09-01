@@ -457,6 +457,35 @@ test('no courier prompt anywhere in a wave carries STRICT\'s identity check', as
 })
 
 // =========================================================================================
+// 7c. THE CWD RESET (0.14.0, conductor run wf_318afa1b-e9d). The Bash tool's working directory does
+// NOT survive from one tool call to the next: an agent ran `cd <fixture> && pwd`, got the fixture,
+// and its very next call — `git rev-parse --show-toplevel`, no cd — printed the orchestrator's own
+// repository. Every "the agent ran in the wrong cwd" incident in the 2026-08 ledger is that one
+// fact, and it is why the cd has to be IN the command. Couriers get that from cdGuard. This pins the
+// other half: no FREE-FORM prompt may compose a git command whose meaning depends on where the
+// agent happens to be standing. Codex is exempt — `codex exec -C <worktree>` gives it a real shell
+// with a persistent cwd — so `model:'codex'` calls and the `<<<BRIEF>>>` a steerer carries for one
+// are excluded, and nothing else is.
+// =========================================================================================
+test('no free-form prompt composes a cwd-dependent git command', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ provision: { setup: 'npm ci' }, preview: PREVIEW }), makeState())
+  let checked = 0
+  for (const c of calls) {
+    if (c.model === 'codex') continue                       // its own shell, its own cwd
+    const text = c.prompt.split('<<<BRIEF>>>')[0]           // the brief a steerer carries is Codex's
+    checked++
+    for (const m of text.matchAll(/`(git (?!-C\b)[^`\n]*)`/g))
+      assert.fail(`${c.label} composes \`${m[1]}\` — no -C, no cd, and the agent's cwd is not its own`)
+    // `gh` has no -C at all: without --repo it reads the repository out of the working directory,
+    // so every composed gh command carries GH_HERE's `cd '<repo>' &&` instead.
+    for (const m of text.matchAll(/`(gh [^`\n]*)`/g))
+      assert.fail(`${c.label} composes \`${m[1]}\` — a bare gh reads the repo from wherever it stands`)
+  }
+  assert.ok(checked > 5, 'this drive should exercise a good spread of free-form prompts')
+})
+
+// =========================================================================================
 // 8. Every remaining SHELL step is a courier (0.14.0) — unit setup, provisioning, preview.
 //
 // Paid conductor fixture wf_c6971376-1a5, the run this section exists for:

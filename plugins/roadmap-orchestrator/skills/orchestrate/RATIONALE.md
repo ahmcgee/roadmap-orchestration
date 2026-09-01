@@ -733,6 +733,27 @@ a model for something a command list cannot express: launching and judging a Cod
 project's suite and resolving its conflicts, and adjudicating a `gh` full-text search hit that is
 only ever a *candidate*.
 
+**Then the mechanism turned up** (2026-09-02, late in the same batch). Everything above treated "the
+agent ran in the wrong directory" as a compliance failure — a courier that skipped a sentence, a setup agent that dropped a prefix — and
+answered it with more emphasis and, eventually, with `cdGuard`. The guard was right for the wrong
+reason. In conductor run `wf_318afa1b-e9d` the `move-feedback:w1` agent's FIRST Bash call was
+`cd <fixture> && pwd`, which printed the fixture; its NEXT call, `git rev-parse --show-toplevel`
+with no cd, printed `/workspaces/roadmap-orchestration`. **The Bash tool's working directory resets
+between tool calls.** Every relative command after that — `mkdir -p .roadmap/feedback/triaged/1`,
+four `[ -f ".roadmap/feedback/…" ]` probes — ran in the orchestrator's own repo; the agent reported
+all four files "MISSING (idempotent skip)", returned `ok:true`, and the fixture's wave-1 feedback
+was never moved. So STRICT's opening ("start by `cd`… then PROVE you are there before doing anything
+else") was not being ignored: it was structurally **unsatisfiable**, since the proof and the work are
+different calls and the cd does not survive between them. No amount of wording could have fixed it,
+and the composed `cd '<where>' && ( … )` guard worked all along only because it happens to be the
+one form that survives a reset. STRICT now states the mechanism and the only rule that follows from
+it — every command is self-contained: `cd '<path>' && …`, or `git -C '<path>' …`, with the identity
+proof in the SAME command as the work. The same change closed the last two holes: the
+conductor's `move-feedback` (the final free-form shell step in either script, exempted because "every
+path it touches is absolute" — which the prompt never made true) became a courier, and every command
+a free-form prompt still NAMES was made self-contained, including `gh`, which has no `-C` and reads
+its repository out of the working directory whenever the plan carries no `repoSlug`.
+
 Corollaries the ledger forced: a model's death is a platform fact, never a unit verdict (park, don't
 quarantine); events (degradations, escalations, debt) are recorded once at the event, never
 re-transcribed with state; nothing is cleared that a writer did not confirm.

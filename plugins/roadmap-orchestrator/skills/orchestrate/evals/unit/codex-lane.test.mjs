@@ -32,7 +32,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk,
-  courierSaying } from './fakes.mjs'
+  courierSaying, courierOk } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -615,8 +615,9 @@ test('o2 gate diet: gateModel by risk, and only a low-risk unit trades the raw d
 
   assert.equal(gate(calls, 'lo').model, 'sonnet', 'a low-risk unit takes the cheap first-pass gate')
   assert.equal(gate(calls, 'mid').model, 'opus', 'med keeps Opus')
-  assert.match(gate(calls, 'lo').prompt, /git diff --stat/, 'and reads a diet, expanding on suspicion')
-  assert.match(gate(calls, 'mid').prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/,
+  assert.match(gate(calls, 'lo').prompt, /git -C '\/wt\/lo' diff --stat/,
+    'and reads a diet, expanding on suspicion — with the worktree in the command, not in an earlier cd')
+  assert.match(gate(calls, 'mid').prompt, /read `git -C '\/wt\/mid' diff [0-9a-f]+\.\.HEAD` in full/,
     'while med keeps the raw diff in front of it')
   for (const id of ['lo', 'mid']) {
     const p = gate(calls, id).prompt
@@ -638,7 +639,7 @@ test('o3 a dead reviewer buys MORE Claude: Opus gate, raw diff, and a review-ski
   assert.ok(has(calls, 'codex-review:lo#reattempt'), 'the adapter retries once before giving up')
   const g = calls.find((c) => c.label === 'opus-gate:lo#0')
   assert.equal(g.model, 'opus', 'no digest -> Opus, whatever the unit\'s risk')
-  assert.match(g.prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/, 'and on the raw diff, not a diet')
+  assert.match(g.prompt, /read `git -C '[^']+' diff [0-9a-f]+\.\.HEAD` in full/, 'and on the raw diff, not a diet')
   assert.match(g.prompt, /No cross-model review digest exists/, 'told plainly that nothing was pre-checked')
   const d = (state.degradations ?? []).filter((x) => x.kind === 'review-skipped')
   assert.equal(d.length, 1, 'the skip is ledgered — a spend audit has to see why the gate got expensive')
@@ -657,7 +658,7 @@ test('o3b a digest the reviewer graded `blocking` or high-risk refuses the diet 
     await runWave(fn, makePlan([unit('lo')]), makeState())
     const g = calls.find((c) => c.label === 'opus-gate:lo#0')
     assert.equal(g.model, 'opus', `${JSON.stringify(digest)} must not ride the cheap tier`)
-    assert.match(g.prompt, /read `git diff [0-9a-f]+\.\.HEAD` in full/,
+    assert.match(g.prompt, /read `git -C '[^']+' diff [0-9a-f]+\.\.HEAD` in full/,
       `${JSON.stringify(digest)} must not ride the diet — the gate has to be able to disagree`)
   }
 })
@@ -819,7 +820,8 @@ async function driveConductorWith(waveState) {
   const state = makeState({ spend: {}, wave: 0 })
   const { fn: agentFn, calls } = makeAgent([
     ...packRules(plan, state),
-    { match: /^(bank-debt|move-feedback):/, result: { ok: true } },
+    { match: /^bank-debt:/, result: { ok: true } },
+    { match: /^move-feedback:/, result: courierOk },
   ])
   const runner = await loadScript(CONDUCTOR)
   const res = await runner({

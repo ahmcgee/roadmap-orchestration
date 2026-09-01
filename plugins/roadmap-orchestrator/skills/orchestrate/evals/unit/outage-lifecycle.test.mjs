@@ -23,7 +23,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, courierResult, courierSaying, BASE_SHA, implCodexOk, codexMetaOk,
-  structuredOutputError } from './fakes.mjs'
+  structuredOutputError, courierOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -396,7 +396,8 @@ async function driveConductorWith(waveState, extraState = {}) {
   const state = makeState({ spend: {}, wave: 0, ...extraState })
   const { fn: agentFn, calls } = makeAgent([
     ...packRules(plan, state),
-    { match: /^(bank-debt|move-feedback):/, result: { ok: true } },
+    { match: /^bank-debt:/, result: { ok: true } },
+    { match: /^move-feedback:/, result: courierOk },
   ])
   const runner = await loadScript(CONDUCTOR)
   const res = await runner({

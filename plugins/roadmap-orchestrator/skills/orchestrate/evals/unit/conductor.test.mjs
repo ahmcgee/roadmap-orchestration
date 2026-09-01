@@ -33,7 +33,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, specWriteOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, specWriteOk, courierOk, courierSaying, courierCommands } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -122,7 +122,8 @@ function rules({ census, triage, boundary } = {}) {
   // with a partial list. File mode names no markers, and reads `ok` alone.
   list.push({ match: /^bank-debt:/, result: (prompt) => ({ ok: true,
     banked: [...prompt.matchAll(/"marker":"([^"]+)"/g)].map((m, i) => ({ marker: m[1], number: 100 + i })) }) })
-  list.push({ match: /^move-feedback:/, result: OK })
+  // move-feedback is a COURIER (0.14.0): a closed archive list, judged by the script.
+  list.push({ match: /^move-feedback:/, result: courierOk })
   return list
 }
 
@@ -941,27 +942,158 @@ test('file mode: the triage prompt never mentions the closes field', async () =>
 })
 
 /* ============================================================================== */
-/* 11. Feedback move to triaged/<wave>/                                            */
+/* 11. Feedback archive to triaged/<wave>/ — a COURIER, not a free-form `mv`        */
 /* ============================================================================== */
-test('user feedback reported by census is moved to feedback/triaged/1/', async () => {
+// CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d). `move-feedback` was the last free-form shell step in
+// either script, exempted on the argument that "every path it touches is absolute, so its cwd
+// decides nothing". The prompt did not make that true, and the model did not either: the agent ran
+// `cd <fixture> && pwd`, then `mkdir -p .roadmap/feedback/triaged/1` and four
+// `[ -f ".roadmap/feedback/…" ]` probes in SEPARATE Bash calls — and the tool's working directory
+// RESETS between calls, so every one of them ran in the orchestrator's own repo. It reported all
+// four files "MISSING (idempotent skip)" and ok:true while the fixture's wave-1 evidence sat
+// untouched. The archive is a closed command list now, each command carrying its own cd.
+const archiveRun = ({ plan, notes = ['note-1.md'], feedback, moveRule, extraRules = [] } = {}) => conduct({
+  plan,
+  agentRules: [
+    ...(moveRule ? [{ match: /^move-feedback:/, result: moveRule }] : []),
+    ...extraRules,
+    ...rules({
+      census: censusFeedback(notes),
+      triage: triageAdmit(['consolidate-gcd'],
+        { feedback: feedback ?? notes.map((f) => ({ file: f, action: 'actioned' })) }),
+    }),
+  ],
+  waveHandler: waves(
+    mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
+    mkState({ wave: 2, boundary: boundaryBlock() }),
+  ),
+})
+const archiveCmds = (agent) => courierCommands(prompt(firstLabel(agent.calls, /^move-feedback:w1\b/)))
+
+test('the feedback archive is a courier: a closed list, every command carrying its own cd', async () => {
   // Pending user feedback is a judgment signal → tier 2; the draft survives only via an
   // explicit admit (ruling 3), and the consumed note is named by a triage disposition.
-  const { agent } = await conduct({
-    agentRules: rules({
-      census: censusFeedback(['note-1.md']),
-      triage: triageAdmit(['consolidate-gcd'], { feedback: [{ file: 'note-1.md', action: 'actioned' }] }),
-    }),
-    waveHandler: waves(
-      mkState({ boundary: boundaryBlock({ fixUnits: [draft('consolidate-gcd')] }) }),
-      mkState({ wave: 2, boundary: boundaryBlock() }),
-    ),
-  })
+  const { agent } = await archiveRun()
   const mv = firstLabel(agent.calls, /^move-feedback:w1\b/)
-  assert.ok(mv, 'consumed feedback triggers a move')
-  assert.equal(mv.model, 'haiku', 'the mover is haiku')
-  assert.ok(prompt(mv).includes('triaged/1'), 'feedback moves under feedback/triaged/1/')
-  assert.ok(prompt(mv).includes('note-1.md'), 'the consumed user note is named in the move')
+  assert.ok(mv, 'consumed feedback triggers an archive')
+  assert.equal(mv.model, 'haiku', 'the archiver is haiku')
+  // courierCommands asserts the `cd '<where>' && ( … )` guard on every numbered line and strips it.
+  const cmds = archiveCmds(agent)
+  assert.ok(prompt(mv).includes("cd '/repo' && ("), 'the working directory is composed in, not asked for')
+  for (const c of cmds) {
+    // The exact 2026-09-02 defect: a second tool call, a relative `.roadmap/` path, the wrong repo.
+    assert.doesNotMatch(c, /(^|[\s'"])\.roadmap\//, `a relative .roadmap/ path survived: ${c}`)
+    assert.doesNotMatch(c, /(^|;|&&|\|\|)\s*cd\s/, `the courier is never asked to cd for itself: ${c}`)
+  }
+  assert.equal(cmds[0], "mkdir -p '/repo/.roadmap/feedback/triaged/1'", 'the destination is created first')
+  assert.ok(cmds.some((c) => c.includes("'/repo/.roadmap/feedback/explorer/wave-1.md'")),
+    "this wave's explorer rendering is on the list")
+  assert.ok(cmds.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")),
+    'and so is the consumed user note, by absolute path')
+  assert.equal(cmds.at(-1), "ls -1 '/repo/.roadmap/feedback/triaged/1'",
+    'the list ends with the read-back the SCRIPT judges — never an agent verdict about the move')
 })
+
+test('every archive move is self-contained: it always exits 0 and reports MOVED/ABSENT/FAILED', async () => {
+  const { agent } = await archiveRun()
+  const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
+  assert.equal(moves.length, 5, 'four internal renderings plus the one consumed user note')
+  for (const c of moves) {
+    assert.match(c, /echo ABSENT; exit 0/, 'a missing source is a RESULT, never a non-zero exit that halts the list')
+    assert.match(c, /echo FAILED; exit 0/, 'and neither is a failed move')
+    assert.match(c, /git mv -f '[^']+' '[^']+' 2>\/dev\/null \|\| mv -f /, 'git mv where the file is tracked, else mv')
+  }
+  // explorer/, health/ and design/ all render `wave-<N>.md`: a flat move into triaged/<N>/ had the
+  // last two silently overwrite the first, so the destination basename is role-qualified.
+  const dests = moves.map((c) => /git mv -f '[^']+' '([^']+)'/.exec(c)[1])
+  assert.deepStrictEqual([...new Set(dests)].length, dests.length, 'no two sources land on the same path')
+  assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/explorer-wave-1.md'))
+  assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/health-wave-1.md'))
+  assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/user-note-1.md'))
+})
+
+test('a rendering that was never written is an ordinary skip; a consumed user note that vanished degrades', async () => {
+  // design/wave-1.md exists only when the design role ran, so ABSENT there is the idempotent case
+  // the old prompt was reaching for. A user note is different: the CENSUS saw it on disk this wave.
+  const { result } = await archiveRun({ moveRule: courierSaying([[/feedback\/(design|user)\//, 'ABSENT']]) })
+  const rows = (result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved')
+  assert.equal(rows.length, 1, 'only the user note degrades')
+  assert.match(rows[0].what, /note-1\.md/, 'and the degradation names the file that never landed')
+  assert.equal(rows[0].label, 'move-feedback:w1')
+})
+
+test('a move that FAILED degrades even though the courier exited clean, and never fails the arc', async () => {
+  const { result, workflow } = await archiveRun({ moveRule: courierSaying([[/feedback\/explorer\//, 'FAILED']]) })
+  const rows = (result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved')
+  assert.equal(rows.length, 1)
+  assert.match(rows[0].what, /explorer\/wave-1\.md/, 'the unmoved file is named')
+  assert.equal(workflow.calls.length, 2, 'the wave still dispatched — an unarchived note is never an arc outcome')
+})
+
+test('file mode: the archive list carries no gh command at all', async () => {
+  const { agent } = await archiveRun()
+  assert.doesNotMatch(prompt(firstLabel(agent.calls, /^move-feedback:w1\b/)), /\bgh /,
+    'a gh clause in file mode is what would break the offline paid fixtures')
+})
+
+test('issue mode: roadmap:bug disposal rides the same closed list, best-effort per command', async () => {
+  const { agent } = await archiveRun({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r' }),
+    notes: ['41'],
+    feedback: [{ file: '41', action: 'actioned', reason: 'fixed by consolidate-gcd' },
+      { file: '42', action: 'deferred' }],
+    extraRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } }],
+  })
+  const cmds = archiveCmds(agent)
+  assert.ok(cmds.includes("gh issue comment --repo o/r '41' --body 'Triaged wave 1: actioned — fixed by consolidate-gcd' || echo GH-FAIL"),
+    'the comment is composed whole — number, body and repo, nothing left to the model')
+  assert.ok(cmds.includes("gh issue close --repo o/r '41' --reason completed || echo GH-FAIL"))
+  assert.ok(cmds.includes("gh issue edit --repo o/r '42' --add-label status:deferred || echo GH-FAIL"),
+    'a deferred bug stays open and gets the label')
+  // `|| echo GH-FAIL` IS the best-effort rule: a gh failure is a zero exit with a token the script
+  // reads, so it can never halt the archive list ahead of it or gate the wave.
+  for (const c of cmds.filter((x) => x.startsWith('gh '))) assert.match(c, /\|\| echo GH-FAIL$/)
+  assert.ok(!cmds.some((c) => c.includes('/feedback/user/')),
+    'in issue mode a user bug report is an ISSUE, so there is no user note to move')
+})
+
+test('issue mode: a failed gh disposal records gh-sync and nothing else', async () => {
+  const { result, workflow } = await archiveRun({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r' }),
+    notes: ['41'],
+    feedback: [{ file: '41', action: 'actioned', reason: 'r' }],
+    extraRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } }],
+    moveRule: courierSaying([[/^gh issue close/, 'GH-FAIL']]),
+  })
+  const kinds = (result.degradations ?? []).map((d) => d.kind)
+  assert.ok(kinds.includes('gh-sync'), 'the failed close is recorded')
+  assert.ok(!kinds.includes('feedback-unmoved'), 'and the renderings still archived fine')
+  assert.equal(workflow.calls.length, 2, 'issue state gates nothing')
+})
+
+/* ============================================================================== */
+/* 11b. Nothing this script composes may depend on where the agent is standing      */
+/* ============================================================================== */
+// The other half of the wf_318afa1b-e9d finding. Couriers get their location from cdGuard; the
+// conductor's remaining free-form prompts (census, triage, boundary, the spec writers, the gh
+// projections) must carry it in every command they name, because the Bash tool's working directory
+// resets between calls. Run in BOTH modes: file mode has no gh text at all, and issue mode is where
+// a bare `gh` would silently read whatever repository the agent happened to land in.
+for (const [mode, plan] of [['file', undefined], ['issue', mkPlan({ tracking: 'issues', repoSlug: 'o/r' })]]) {
+  test(`${mode} mode: no conductor prompt composes a cwd-dependent git or gh command`, async () => {
+    const { agent } = await archiveRun({
+      plan,
+      extraRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } }],
+    })
+    for (const c of agent.calls) {
+      const text = c.prompt.split('\nCommands:\n')[0]   // a courier's list is cdGuard's business
+      const git = text.match(/`git (?!-C\b)[^`\n]*/g)
+      assert.equal(git, null, `${c.label} composes \`${git?.[0]}\` with no -C and no cd`)
+      const gh = text.match(/`gh [^`\n]*/g)
+      assert.equal(gh, null, `${c.label} composes \`${gh?.[0]}\` — a bare gh reads the repo from its cwd`)
+    }
+  })
+}
 
 /* ============================================================================== */
 /* 12. State threaded verbatim wave→wave (minus consumed boundary/debt)            */

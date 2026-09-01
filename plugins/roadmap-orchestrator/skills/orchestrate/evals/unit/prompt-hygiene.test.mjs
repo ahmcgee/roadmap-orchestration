@@ -42,7 +42,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk, courierOk } from './fakes.mjs'
 // The introspection + assertion toolkit lives in hygiene-lib.mjs so other suites
 // (codex-lane.test.mjs holds the embedded Codex brief to the same bar) share one copy.
 import {
@@ -218,7 +218,7 @@ async function driveConductor() {
     // The staging writers. Absent, these labels fell through to makeAgent's throw and were silently
     // swallowed by the old fire-and-forget `.catch(() => null)` — since 0.14.0 an unconfirmed spec
     // withholds its unit, so the fixture has to say what the writer did.
-    { match: /^move-feedback:/, result: { ok: true } },
+    { match: /^move-feedback:/, result: courierOk },
     // Tier 2 (wave 2): nothing left worth a wave → arc-complete.
     {
       match: /^triage:w2$/,

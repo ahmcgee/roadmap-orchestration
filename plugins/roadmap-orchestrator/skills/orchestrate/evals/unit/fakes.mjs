@@ -59,7 +59,12 @@ const courierStdout = (cmd, head, branch) =>
                       : /^ps -p 1\b/.test(cmd) ? 'sh'
                         : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
                           : /^nproc$/.test(cmd) ? '16'
-                            : ''
+                            // move-feedback: each archive command is self-contained and always
+                            // exits 0, printing MOVED / ABSENT / FAILED. The default is a file
+                            // that was there and moved; a test wanting the other outcomes says so
+                            // with courierSaying, and courierResult keeps the fake archive in step.
+                            : /^test -e '[^']+' \|\| \{ echo ABSENT/.test(cmd) ? 'MOVED'
+                              : ''
 // Every numbered command the script composes, with its `cd '<where>' && ( … )` guard STRIPPED back
 // off — the guard is the script's, the inner command is what a test (and the fake's own stdout
 // table) is about. A line that does not carry the guard is a defect the tests want to see, so the
@@ -83,6 +88,10 @@ export const courierSaying = (overrides, baseSha = BASE_SHA) => (prompt) =>
     return courierStdout(cmd, head, branch)
   })
 
+// The plain "the list ran and every command exited 0" courier answer, for the labels a test does
+// not care to steer. Same thing as `courierSaying([])`, named for what it means at a call site.
+export const courierOk = (prompt) => courierResult(prompt, BASE_SHA)
+
 export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   const commands = courierCommands(prompt)
   assert.ok(commands.length, 'fakes.courierResult: no numbered `Commands:` block — not a courier prompt')
@@ -95,6 +104,10 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   // `rev-parse --abbrev-ref HEAD`) mean something in a sim: a script that composed the wrong base
   // or the wrong branch fails its own comparison here rather than being waved through.
   let branch = ''
+  // …and a move-feedback move MOVES its file into the fake archive, so the list's closing `ls -1`
+  // prints exactly what landed there. That is the read-back the conductor judges: a script that
+  // composed the wrong destination, or dropped the `ls`, fails its own check here.
+  const archived = []
   // Positional: {exitCode, stdout} only — the schema has no `command` field, so neither does this.
   // A test that needs to know WHICH slot is which reads courierCommands(prompt) by index.
   return { ok: true, results: commands.map((command) => {
@@ -106,7 +119,12 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
     const ab = /worktree add (?:--detach )?'[^']*' ([^\s;}]+)/.exec(command)
     if (nb) branch = nb[1]
     else if (ab && !/^[0-9a-f]{40}$/.test(ab[1])) branch = ab[1]
-    return { exitCode: 0, stdout: stdoutFor(command, head, branch) }
+    const stdout = stdoutFor(command, head, branch)
+    // The archive's destination basename is role-qualified, so it is read off the mv, not the src.
+    const mvf = /^test -e '[^']+' \|\| \{ echo ABSENT; exit 0; \}; git mv -f '[^']+' '([^']+)'/.exec(command)
+    if (mvf && stdout === 'MOVED') archived.push(mvf[1].slice(mvf[1].lastIndexOf('/') + 1))
+    if (/^ls -1 '/.test(command)) return { exitCode: 0, stdout: archived.join('\n') }
+    return { exitCode: 0, stdout }
   }) }
 }
 

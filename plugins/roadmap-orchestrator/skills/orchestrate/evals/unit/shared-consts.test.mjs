@@ -153,9 +153,20 @@ test('STRICT (location discipline) is byte-identical in harness.mjs and conducto
   assertInSync('The STRICT const', h, c)
   // The clause is worthless if it stops naming the behaviour it forbids.
   assert.match(h, /Never substitute/, 'STRICT still forbids cwd substitution')
-  // CHANGED CONTRACT (0.14.0): the mechanical check proves WHICH checkout, not merely that the agent
-  // stands in one — `git rev-parse --git-dir` succeeded in the workflow session's own repo.
-  assert.match(h, /`pwd` must print that path exactly/, 'the location proof is an identity test')
+  // CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d): THE BASH TOOL'S WORKING DIRECTORY RESETS BETWEEN
+  // TOOL CALLS. `move-feedback:w1` ran `cd <fixture> && pwd`, got the fixture back, and its very
+  // next call — `git rev-parse --show-toplevel`, no cd — printed the orchestrator's own repo; every
+  // relative path it then checked was checked here, and it reported four files missing. So the old
+  // opening ("start by `cd`… then PROVE you are there before doing anything else") was structurally
+  // unsatisfiable across calls, and no amount of emphasis could have fixed it. The rule STRICT
+  // states now is the only one that survives a reset: every command carries its own cd.
+  assert.match(h, /DOES NOT PERSIST BETWEEN COMMANDS/, 'STRICT leads with the cwd-reset mechanism')
+  assert.match(h, /SELF-CONTAINED/, 'and with the one rule that survives it')
+  assert.doesNotMatch(h, /Start by `cd`/,
+    'the cd-once-then-prove opening is gone — it asked for something the tool cannot do')
+  // The identity proof survives, but INSIDE the command it guards rather than as a command of its own.
+  assert.match(h, /`cd <path> && pwd` must print that path exactly/,
+    'the location proof is an identity test, in the same command as the work')
   assert.match(h, /--show-toplevel` names WHICH checkout/, 'and it names the repository')
 })
 
@@ -228,6 +239,16 @@ test('the courier prompt/schema/shape are byte-identical in both scripts', () =>
 
   const [ho, co] = FILES.map((f) => constValue(f, 'COURIER_OUT'))
   assertInSync('The COURIER_OUT default budget', ho, co)
+
+  // The RUNNER too, since 0.14.0: the conductor's `move-feedback` became a courier, so both scripts
+  // now dispatch closed command lists and both must dispatch them the same way (positional results,
+  // the runOr fallback that keeps a dead courier from becoming a dead arc, the compose-time throw on
+  // an empty `where`). Only the `required` branch differs in effect — over there `runReq` is a
+  // throwing stub, because the conductor has no wave-level halt record for a dead courier to set.
+  const [hn, cn] = FILES.map((f) => fnSource(f, 'courierRun', "async (where, commands, opts, extra = '')"))
+  assert.ok(hn.includes('courierPrompt(where, commands, extra)'), 'the runner composes the courier prompt')
+  assert.ok(hn.includes('courier agent died without a report'), 'and never lets a dead courier read as a fact')
+  assertInSync('The courierRun runner', hn, cn)
 })
 
 test('the launch pack read is byte-identical in both scripts', () => {
@@ -311,7 +332,7 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
-      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'readPackFile', 'readPack',
+      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
       'markerFind', 'MARKER_RULE', 'planCycle'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })
