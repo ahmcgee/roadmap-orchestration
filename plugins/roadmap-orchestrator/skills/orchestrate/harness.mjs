@@ -111,23 +111,58 @@ const repo = plan.repoPath          // absolute path to the repository
 const wtRoot = plan.worktreeRoot    // absolute path OUTSIDE the repository
 const intBranch = prior.integrationBranch
 const intWt = `${wtRoot}/__integration`
-// Preview process artifacts live OUTSIDE the repo so mirror checkouts never touch them.
+// The preview gets its OWN worktree, exactly like the merge queue's __integration. It used to be
+// the operator's PRIMARY checkout — which is also where checkpoint() writes the tracked
+// .roadmap/state.json, so git refused the detach ("local changes … would be overwritten"),
+// explorer and design silently went owed, and a Haiku agent told to make the checkout work
+// anyway deleted 163 untracked .roadmap/ files to get past it (twice, 2026-08-28). A dedicated
+// worktree puts the operator's tree outside the harness's reach by construction: no preview
+// prompt names ${repo} as a checkout target any more.
+const prevWt = `${wtRoot}/__preview`
+// Preview process artifacts live OUTSIDE every worktree so a mirror checkout never touches them.
 const prevPid = `${wtRoot}/__preview.pid`
 const prevLog = `${wtRoot}/__preview.log`
-// Preview process control, shared by first setup and every mirror restart. setsid makes the
-// recorded pid a process-group leader so stop can kill the whole tree, not just the parent —
-// a single-pid kill strands child listeners and leaves ports held. All best-effort.
-const previewStartCmd = (start) => `\`setsid nohup ${start} > ${prevLog} 2>&1 & echo $! > ${prevPid}\``
-// Eval-observed: repeating the long pidfile path buries the STRICT preamble's cd target, so
-// the stop text names it exactly once and uses pronouns after.
+// The ports the preview owns — the ONLY listeners a sweep may ever kill. Declared by the architect
+// (plan.preview.ports) or, failing that, read off the URL in howToAccess. NEVER inferred by an
+// agent: asked to free "the preview's ports", Haiku swept 3000/5173/8000 and then escalated to
+// `ps | grep | kill -9`, killing every node process on the host — this workflow included.
+const previewPorts = [...new Set(
+  (plan.preview?.ports ?? [...String(plan.preview?.howToAccess ?? '').matchAll(/:(\d{2,5})\b/g)].map((m) => Number(m[1])))
+    .filter((p) => Number.isInteger(p) && p > 0 && p < 65536))]
+// Preview process control, shared by first setup and every mirror restart. Every entry below is a
+// LITERAL command string the script composes, because these ride in a courier's closed command
+// list (see `courier`) rather than in prose an agent has to interpret. setsid makes the recorded
+// pid a process-group leader so stop can kill the whole tree, not just the parent — a single-pid
+// kill strands child listeners and leaves ports held.
+const previewStartCmd = (start) => `setsid nohup ${start} > ${prevLog} 2>&1 & echo $! > ${prevPid}`
 const previewStopCmd =
-  `kill the whole preview process group recorded in the pidfile at ${prevPid}, if that file exists: ` +
-  `\`kill -TERM -- -$(cat <pidfile>)\` (the leading minus targets the group), falling back to \`pkill -g\` on ` +
-  `the same pid and then a plain \`kill\` of it; ignore all kill errors, then delete the pidfile`
+  `if [ -f ${prevPid} ]; then kill -TERM -- -$(cat ${prevPid}) 2>/dev/null || kill -TERM $(cat ${prevPid}) ` +
+  `2>/dev/null || true; rm -f ${prevPid}; fi`
+// The complete, closed kill set: the pidfile's own process group and the declared ports, nothing
+// else. Dispatched by the SCRIPT as a one-shot retry when a bring-up fails — never left standing
+// inside a bring-up prompt as a licence to "clean up".
+const previewSweepCmds = [previewStopCmd, ...previewPorts.map((p) => `fuser -k ${p}/tcp || true`)]
+// The allowlist clause carried by every preview courier. A prohibition list is weaker than an
+// allowlist, so this states the closed set first and only then names the two hammers that were
+// actually reached for.
 const previewSweepRetry =
-  `If the start or its healthcheck fails because a port is already in use, sweep leftover listeners exactly once ` +
-  `(kill the old pidfile's process group if ${prevPid} exists, otherwise \`fuser -k\` / \`lsof\` the preview's ` +
-  `ports), retry the start once, then report ok:false with the exact error. `
+  `The ONLY processes you may kill are the ones the listed commands name: the process group recorded in ` +
+  `${prevPid}` +
+  (previewPorts.length ? `, and listeners on the preview's own ports (${previewPorts.join(', ')}). ` : ' — no others. ') +
+  `Never sweep by process NAME (\`pkill\`, \`killall\`) and never \`ps | grep | kill\`: a name sweep once killed ` +
+  `every node process on this host, this workflow included. If a port is held by something the listed commands ` +
+  `do not identify, leave it alone and report the failing exit code. `
+// The commands that bring the preview up in whatever tree ${prevWt} currently holds. `first` adds
+// the one-time setup step and forces a stop/start (a `refresh` command presumes a live process).
+const previewBringUp = (first) => {
+  const p = plan.preview
+  const cmds = []
+  if (first && p.setup) cmds.push(p.setup)
+  if (!first && p.refresh) cmds.push(p.refresh)
+  else if (p.start) cmds.push(p.stop || previewStopCmd, previewStartCmd(p.start))
+  if (p.healthcheck) cmds.push(`for i in 1 2 3 4 5; do ${p.healthcheck} && break; sleep 3; done; ${p.healthcheck}`)
+  return cmds
+}
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
 const wtOf = (u) => `${wtRoot}/${u.id}`
 // Codex process artifacts live OUTSIDE the repo, same contract as the preview pidfile: brief +
@@ -140,9 +175,11 @@ const codexHome = plan.codex?.home ? `CODEX_HOME=${plan.codex.home} ` : ''
 const codexDir = (id, step) => `${wtRoot}/__codex/${id}/${step}`
 // Location discipline for mechanical agents: smoke testing showed that given a bad path
 // they improvise in their cwd and report plausible success. Fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails or the directory ' +
-  'is not the described git checkout, report ok/pass as false with the exact error and stop. Never substitute ' +
-  'your current working directory, the enclosing project, or any other repository. '
+const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
+  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
+  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
+  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
+  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
 // Report discipline for the code-writing agents: commit first (the commit is the deliverable,
 // and it is what makes a killed unit recoverable), then keep the structured report short. The
 // platform's schema-retry resends an over-long payload verbatim until the unit dies, so an
@@ -193,6 +230,16 @@ const DEBT_DISCIPLINE = 'Debt discipline: banking is the DEFAULT for anything ou
   'tidiness are debt even in scope, unless leaving one would make the NEXT change to that file materially ' +
   'wrong or unsafe — not merely less pleasant. A correctness-kind item is never bankable — you may not ' +
   'approve while one exists; revise or escalate instead. '
+// The lane-coverage bar, carried by both exit gates. The verifier reports which commands it ran;
+// the gate is the only reader that also has the spec in front of it, so the gate is where "did you
+// run what the spec named" is decided. Arc-observed (2026-08-26/27): the verifier substituted
+// `test:unit` for the spec's `test:ci`, the architecture-lane row-shape seal was red the whole
+// time, and the gate found it only because it re-read the spec.
+const LANE_BAR = 'The verification evidence carries `lanes`: every command the verifier actually ran and the exit ' +
+  'code it returned. Check that ledger against the acceptance checks the spec names BEFORE you weigh anything ' +
+  'else. A check the spec names that `lanes` does not contain — or a narrower, faster or cheaper substitute for ' +
+  'one — means this unit is UNVERIFIED whatever `pass` says: issue a revise directive naming the exact command ' +
+  'to run, and do not approve on the strength of a lane that was never run. '
 // The pinned scope envelope, stated to every code-writing agent (the Codex brief's Constraints
 // block; FIX_SCOPE is the fix-round counterpart). Scope is computed ONCE per unit before the
 // first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry
@@ -336,24 +383,46 @@ const designClause = (unit) => unit.design?.length
 // sweep (syncIssues) — no unit or wave outcome may ever depend on issue state.
 const issueMode = plan.tracking === 'issues'
 const ghRepo = plan.repoSlug ? `--repo ${plan.repoSlug} ` : ''
-// Resolve a unit's issue number into $ISS. Prefer the cached number (recorded at Phase 0 — exact and
-// immune to GitHub search-index lag on a just-created issue); fall back to the body marker for resume
-// or when the cache is absent. Either way the semantics are find-by-id, never thread-a-dependency.
+// Find-or-create by BODY MARKER, made mechanical. `--search '"<marker>" in:body'` is GitHub
+// FULL-TEXT search: it tokenizes the marker, so `id=raise-verbs` matched an unrelated open agenda
+// issue, `id=sweep-truth` a closed unit from a prior arc, and a Phase-0 bootstrap "reused" three
+// live issues — overwriting title and body, swapping status:merged for status:pending, moving them
+// into the new milestone (2026-08-22; 8 of 11 mis-resolved again on 2026-08-23). A hit is therefore
+// a CANDIDATE ONLY, and the exactness test belongs in the shell string THIS SCRIPT composes rather
+// than in model compliance: the jq predicate below requires the candidate body's FIRST LINE to be
+// exactly the marker comment. Prints `<number> <OPEN|CLOSED>` for the one exact match, or nothing.
+// Duplicated across harness.mjs and conductor.mjs (neither can import the other) — keep them in
+// sync; shared-consts.test.mjs fails the build if they drift.
+const markerFind = (marker) => `gh issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
+  `--json number,body,state --jq '[.[] | select(((.body // "") | split("\\n")[0] | sub("\\r$"; "")) == ` +
+  `"<!-- ${marker} -->")] | .[0] | select(. != null) | "\\(.number) \\(.state)"'`
+// The obligations that ride with every markerFind. Duplicated in both scripts — keep them in sync.
+const MARKER_RULE = 'Run that search command EXACTLY as written: its jq predicate is what makes the match ' +
+  'trustworthy, requiring the candidate body\'s FIRST line to be exactly the marker comment. Never widen the ' +
+  'search, never fall back to `.[0].number`, and never adopt an issue you found some other way — no exact ' +
+  'match means ABSENT, and absent means create. Never edit the labels, milestone, title or body of a CLOSED ' +
+  'issue, and never remove a `status:merged` label. '
+// Resolve a unit's issue number into $ISS and its state into $ISSTATE. Prefer the cached number
+// (recorded at Phase 0 — exact and immune to GitHub search-index lag on a just-created issue); fall
+// back to the exact-marker search for resume or when the cache is absent. Either way the semantics
+// are find-by-id, never thread-a-dependency. $ISSTATE is empty on the cached path (unknown, and the
+// cache only ever holds an issue this arc opened) and OPEN/CLOSED on the search path.
 const findIssue = (id, cached) =>
   cached != null
-    ? `ISS=${cached}; `
-    : `ISS=$(gh issue list ${ghRepo}--search '"roadmap:unit id=${id}" in:body' --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null); `
+    ? `ISS=${cached}; ISSTATE=; `
+    : `HIT=$(${markerFind(`roadmap:unit id=${id}`)} 2>/dev/null); ISS=\${HIT%% *}; ISSTATE=\${HIT##* }; `
 const GH_BEST_EFFORT = 'Do the following on a BEST-EFFORT basis, only AFTER the work above is finished and its ' +
   'result decided: if any gh command errors (no network, auth, rate limit, missing issue), ignore it and carry ' +
   'on — issue state is observability, never a gate, and a wave-tail sweep reconciles anything missed. '
 const ghRunning = (unit) => issueMode
-  ? `\n${GH_BEST_EFFORT}If and only if you set up a buildable worktree (you reported state 'ready' or 'adopted'), ` +
-    `mark this unit's tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
-    `if $ISS is non-empty, run \`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. `
+  ? `\n${GH_BEST_EFFORT}${MARKER_RULE}If and only if you set up a buildable worktree (you reported state 'ready' ` +
+    `or 'adopted'), mark this unit's tracking issue in progress: ${findIssue(unit.id, unit.issue)}` +
+    `if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
+    `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:pending --add-label status:running\`. `
   : ''
 const ghMerged = (unit) => issueMode
-  ? `\n${GH_BEST_EFFORT}If and only if the merge LANDED and the full suite PASSED, close this unit's tracking ` +
-    `issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
+  ? `\n${GH_BEST_EFFORT}${MARKER_RULE}If and only if the merge LANDED and the full suite PASSED, close this ` +
+    `unit's tracking issue as done: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run ` +
     `\`gh issue edit ${ghRepo}"$ISS" --remove-label status:running,status:merge-ready --add-label status:merged\` ` +
     `then \`gh issue close ${ghRepo}"$ISS" --reason completed --comment "Merged into ${intBranch}."\`. ` +
     (unit.closes?.length
@@ -604,12 +673,24 @@ const S = {
   // never conflated with a failing assertion. Routed to env-quarantine, not fix rounds.
   verify: obj({
     pass: { type: 'boolean' }, blocked: { type: 'boolean' },
-    failures: arr('string'), contractSurfaceTouched: { type: 'boolean' },
+    failures: arr('string'),
+    // The LANE LEDGER: every acceptance-check command the verifier actually ran, verbatim, with the
+    // exit code it returned. Without it "the tests scoped to this unit" was prose the verifier
+    // interpreted, and it interpreted it cheaply — running `test:unit` where the spec said
+    // `test:ci`, leaving an architecture-lane seal red for a whole unit until the architect gate
+    // found it. The script cannot assert coverage itself: which commands a spec's acceptance checks
+    // name lives in the spec markdown, not in plan.json (units carry no gate-command field). So the
+    // ledger is reported here and the EXIT GATES assert it against the spec they already read
+    // (LANE_BAR); the script's own check is only the degenerate one — a pass with no lanes at all.
+    lanes: { type: 'array', maxItems: 12, items: obj({
+      command: { type: 'string', maxLength: 300 }, exitCode: { type: 'number' },
+    }, ['command', 'exitCode']) },
+    contractSurfaceTouched: { type: 'boolean' },
     // The diff's name-only file list — the objective input to the code-side scope-growth check
     // (envelope pinning + the scope-creep gate annotation). A completeness list, never capped.
     diffFiles: arr('string'),
     notes: { type: 'string' },
-  }, ['pass', 'blocked', 'failures', 'contractSurfaceTouched', 'diffFiles']),
+  }, ['pass', 'blocked', 'failures', 'lanes', 'contractSurfaceTouched', 'diffFiles']),
   // (The standalone adversarial-review stage — and its S.review schema — was removed with the
   // codex executor: the gates carry the hunting clauses. See RATIONALE §17.)
   gate: obj({
@@ -682,6 +763,84 @@ const S = {
     visionUsed: { type: 'boolean' },
     shaObserved: { type: 'string' }, notes: { type: 'string', maxLength: 500 },
   }, ['findings', 'fixUnits', 'visionUsed']),
+}
+
+/* ------------------------------ the courier -----------------------------
+ * The ONE canonical way to have a cheap agent run shell on the script's behalf.
+ *
+ * Ground truth: this script has no filesystem and no shell — `run()` IS `agent()`. So every git,
+ * gh, kill and test command necessarily passes through a model, and the only deterministic levers
+ * are which tier runs it, how mechanically it is phrased, and WHAT LITERAL STRINGS the script
+ * computes and injects. The rule this helper exists to enforce: the cheapest tier is never handed
+ * a GOAL with destructive reach ("clean up the ports", "make the checkout work", "find the
+ * issue") — it is handed a CLOSED LIST of exact commands whose verbatim output the script judges.
+ * A prohibition list is weaker than an allowlist: what is absent from `commands` is outside the
+ * agent's remit by construction, so `rm`, `find -delete`, `git clean/stash/reset`, `pkill` and
+ * `ps | grep | kill` need no "never" clause here — they are simply not on the list. Three
+ * arc-observed disasters (a host-wide `kill -9`, 163 deleted untracked files, a wave halted by an
+ * invented credential requirement) were all a goal-shaped prompt at Haiku.
+ *
+ *   courierRun(where, commands, opts, extra) -> { ok, results, exit(i), out(i), detail }
+ *     where     absolute path the agent cds to (STRICT verifies it is a git checkout)
+ *     commands  ordered array of exact command strings; index i is stable and load-bearing
+ *     opts      the usual run() opts minus `schema` (model/effort/phase/label) — the schema is
+ *               built here, sized to the list
+ *     extra     prompt text appended BEFORE the command list (context, allowlist reminders)
+ *     ok        every listed command ran and exited 0 — the ONLY blanket verdict offered
+ *     exit(i)   the i-th command's integer exit code, or null if it never ran
+ *     out(i)    the i-th command's captured output, trimmed ('' if it never ran)
+ *
+ * THE SCRIPT decides what the output means: pattern-match `exit(i)`/`out(i)`, never ask the agent
+ * for a verdict about the commands it ran. Callers that need a value read it out of the output of
+ * a command they put on the list for that purpose (`git rev-parse HEAD`, `codex login status`).
+ * No conductor copy: nothing in conductor.mjs runs a command list — its Haiku writers all go
+ * through persistVerbatim or the gh clauses. Add one there only when a real site needs it.
+ */
+// Per-command output budget. Enough for a `codex login status`, a porcelain status, a rev-parse or
+// a failing command's error tail; a test lane's full output does not belong in a courier report.
+const COURIER_OUT = 1200
+const courierSchema = (n) => obj({
+  ok: { type: 'boolean' },
+  results: { type: 'array', maxItems: n, items: obj({
+    command: { type: 'string', maxLength: 300 },
+    exitCode: { type: 'number' },
+    stdout: { type: 'string', maxLength: COURIER_OUT },
+  }, ['command', 'exitCode', 'stdout']) },
+  detail: { type: 'string', maxLength: 300 },
+}, ['ok', 'results'])
+const courierPrompt = (where, commands, extra = '') =>
+  STRICT +
+  `In ${where}: run EXACTLY the ${commands.length} numbered command(s) at the end of this message, in that ` +
+  `order, and run NOTHING ELSE — not a variation, not a repair, not a cleanup, not a retry with different ` +
+  `flags, not a command you think would help. Anything absent from that list is outside your remit: a command ` +
+  `that fails is a RESULT to report, never a problem for you to solve. Stop at the first non-zero exit and ` +
+  `report what you have. You are a courier, not an operator — no judgement of yours is wanted here, only the ` +
+  `exact output. Report \`results\`: one entry per command you actually ran, in list order, each ` +
+  `{command (copied verbatim, max 300 characters), exitCode (the integer the shell returned), stdout (that ` +
+  `command's combined stdout and stderr, first ${COURIER_OUT} characters — truncate, never summarise or ` +
+  `paraphrase)}. Report ok:true when you ran the list and reported it faithfully; ok is about YOUR REPORT, not ` +
+  `about whether the commands succeeded — the scheduler reads the exit codes itself. Keep \`detail\` to one ` +
+  `sentence (max 300 characters), for something the results genuinely cannot carry. ` + TERSE + extra +
+  `\nCommands:\n${commands.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+const courierRun = async (where, commands, opts, extra = '') => {
+  const n = commands.length
+  const r = await runOr({ ok: false, results: [], detail: 'courier agent died without a report' },
+    courierPrompt(where, commands, extra), { ...opts, schema: courierSchema(n) })
+  const results = (Array.isArray(r?.results) ? r.results : []).slice(0, n)
+  const bad = results.findIndex((x) => x?.exitCode !== 0)
+  const out = (i) => String(results[i]?.stdout ?? '').trim()
+  const short = results.length < n
+  return {
+    ok: bad < 0 && !short,
+    results,
+    exit: (i) => (typeof results[i]?.exitCode === 'number' ? results[i].exitCode : null),
+    out,
+    detail: bad >= 0
+      ? `\`${commands[bad]}\` exited ${results[bad].exitCode} — ${out(bad).slice(0, 300) || '(no output)'}`
+      : short
+        ? `only ${results.length}/${n} commands reported — ${String(r?.detail ?? 'no reason given').slice(0, 200)}`
+        : String(r?.detail ?? ''),
+  }
 }
 
 /* --------------------------- live wave state --------------------------- */
@@ -954,37 +1113,43 @@ async function provision(where, label) {
     { model: 'haiku', phase: 'Setup', label, schema: S.ok })
 }
 
-// Green-tip mirror advance: detach the primary checkout at a suite-green tip and refresh
-// the preview process there. Coalescing latest-wins chain — merges never wait for it, and
-// an advance that finds the mirror already at target is a no-op. Failure leaves the mirror
-// stale (or 'failed' at setup) and the wave continues: observability, never a gate.
-const previewRestart = () => {
-  const p = plan.preview
-  if (p.refresh) return `Then run, from inside ${repo}: ${p.refresh}. `
-  if (!p.start) return ''
-  return `Then restart the preview: ${p.stop || previewStopCmd}; then start it again from inside ${repo} with ` +
-    `${previewStartCmd(p.start)}. ${previewSweepRetry}`
+// One green-tip advance of the PREVIEW WORKTREE, as a closed command list: detach at `sha`, bring
+// the preview back up, read HEAD back. `rm`, `find -delete`, `git clean/stash/reset` and
+// `git checkout -- <path>` are outside that list by construction, which is the point — the old
+// prompt's "never stash, reset, or force" was honoured exactly as well as any other "never" handed
+// to Haiku (twice it deleted files instead). The sweep retry fires only when the detach itself
+// already succeeded: a failed detach is never a port problem.
+async function previewAdvance(sha, label, first) {
+  const build = (sweep) => [
+    ...(sweep ? previewSweepCmds : []),
+    `git checkout --detach ${sha}`,
+    ...previewBringUp(first),
+    'git rev-parse HEAD',
+  ]
+  const attempt = async (sweep) => {
+    const cmds = build(sweep)
+    const r = await courierRun(prevWt, cmds, { model: 'haiku', phase: 'Preview', label: sweep ? `${label}#sweep` : label },
+      previewSweepRetry)
+    return { ok: r.ok, sha: r.out(cmds.length - 1), detail: r.detail,
+      detached: r.exit(sweep ? previewSweepCmds.length : 0) === 0 }
+  }
+  const a = await attempt(false)
+  return a.ok || !a.detached ? a : attempt(true)
 }
-const previewHealth = () => plan.preview.healthcheck
-  ? `Then verify it responds: ${plan.preview.healthcheck} (retry a few times over ~15 seconds before concluding failure). `
-  : ''
+
+// Green-tip mirror advance: move the preview worktree to a suite-green tip and refresh the preview
+// process there. Coalescing latest-wins chain — merges never wait for it, and an advance that finds
+// the mirror already at target is a no-op. Failure leaves the mirror stale (or 'failed' at setup)
+// and the wave continues: observability, never a gate.
 function refreshMirror() {
   if (previewStatus !== 'live') return
   previewTarget = integrationTip
   previewChain = previewChain.then(async () => {
     if (previewSha === previewTarget) return   // coalesce: latest-wins
     const sha = previewTarget
-    const r = await run(
-      STRICT +
-      `In the git repository at ${repo} (the primary checkout, currently a detached-HEAD preview mirror): ` +
-      `run \`git checkout --detach ${sha}\`. If git refuses (for example locally-modified files), report ` +
-      `ok:false with the exact error — never stash, reset, or force. ` +
-      previewRestart() + previewHealth() +
-      `Report ok plus the checkout's HEAD sha.`,
-      { model: 'haiku', phase: 'Preview', label: `mirror:${sha.slice(0, 7)}`, schema: S.ws },
-    ).catch(() => null)
-    if (r?.ok && sameSha(r.sha, sha)) previewSha = sha
-    else log(`preview mirror stale (advance to ${sha.slice(0, 7)} failed: ${r?.detail ?? r?.sha ?? 'agent error'})`)
+    const r = await previewAdvance(sha, `mirror:${sha.slice(0, 7)}`, false)
+    if (r.ok && sameSha(r.sha, sha)) previewSha = sha
+    else log(`preview mirror stale (advance to ${sha.slice(0, 7)} failed: ${r.detail || r.sha || 'agent error'})`)
   }).catch(() => null)
 }
 
@@ -1012,8 +1177,9 @@ async function quarantine(unit, reason, extra) {
     `# ${unit.id} — quarantine dossier\n\nReason: ${reason}\n\n## Attempted\n${dossier.attempted}\n\n` +
     `## Evidence\n${dossier.evidence}\n\n## Hypothesis\n${dossier.hypothesis}\n` +
     (issueMode
-      ? `\n${GH_BEST_EFFORT}Then reflect the quarantine on the unit's tracking issue, keeping it OPEN: ` +
-        `${findIssue(unit.id, unit.issue)}if $ISS is non-empty, run \`gh issue edit ${ghRepo}"$ISS" ` +
+      ? `\n${GH_BEST_EFFORT}${MARKER_RULE}Then reflect the quarantine on the unit's tracking issue, keeping it ` +
+        `OPEN: ${findIssue(unit.id, unit.issue)}if $ISS is non-empty AND $ISSTATE is not CLOSED, run ` +
+        `\`gh issue edit ${ghRepo}"$ISS" ` +
         `--remove-label status:running,status:merge-ready --add-label status:quarantined\` and post the dossier ` +
         `as a comment: \`gh issue comment ${ghRepo}"$ISS" --body-file ${dossierPath}\`. `
       : ''),
@@ -1188,10 +1354,11 @@ async function syncIssues() {
     STRICT +
     `In the git repository at ${repo}, reconcile the GitHub issue projection after wave ${N} of this roadmap ` +
     `build. Best-effort throughout: if a gh command fails (a rate limit included), note it and keep going — never ` +
-    `error out; issue state is observability, not a gate. For each CHANGED unit below, resolve its issue number — ` +
-    `use its \`issue\` field if non-null, else search by body marker ` +
-    `(\`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
-    `if found, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
+    `error out; issue state is observability, not a gate. ${MARKER_RULE}For each CHANGED unit below, resolve its ` +
+    `issue number — use its \`issue\` field if non-null, else run the exact-marker search ` +
+    `(\`${markerFind('roadmap:unit id=<id>')}\`, substituting the unit's id; it prints \`<number> <state>\` for ` +
+    `the one exact match and nothing at all when there is none); ` +
+    `if found and NOT closed, make its labels match its status — remove any other \`status:*\` label, add the one that matches, ` +
     `and ensure \`wave:${N}\` on any unit that is running or beyond: pending/running/merge-ready/blocked/` +
     `quarantined stay OPEN; merged → add \`status:merged\` then \`gh issue close ${ghRepo}<n> --reason completed\`; ` +
     `deferred → add \`status:deferred\` then \`gh issue close ${ghRepo}<n> --reason "not planned"\`. For any ` +
@@ -1879,16 +2046,27 @@ async function runUnit(unit) {
   for (let round = 0; round <= C.maxFixRounds; round++) {
     verify = await run(
       STRICT +
-      `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files, then run the tests ` +
-      `scoped to this unit plus the acceptance checks listed in ${spec} (commands and conventions: ${brief}). ` +
-      `Do NOT run the full project suite — that happens at merge. Report \`diffFiles\` = the exact output ` +
+      `In the worktree at ${w}: check cheapest-first — lint/typecheck the changed files first, then run EXACTLY ` +
+      `the acceptance-check commands ${spec} names, verbatim, in the order it names them (commands and ` +
+      `conventions: ${brief}). NEVER substitute a narrower, faster or cheaper lane for one the spec names: ` +
+      `running \`test:unit\` where the spec says \`test:ci\` is a false green, and it once hid a red seal for a ` +
+      `whole unit. If the spec names no runnable command at all, run the tests scoped to this unit and say so in ` +
+      `\`notes\`. Do NOT run the full project suite — that happens at merge. Report \`lanes\` = every command you ` +
+      `ran, in run order, each {command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every ` +
+      `one of those exit codes is 0. Report \`diffFiles\` = the exact output ` +
       `lines of \`git diff --name-only ${base}..HEAD\`, and check whether that diff touches any path under ` +
       `.roadmap/ (report that as contractSurfaceTouched — ` +
       `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
       `verbatim error output, never paraphrased. If the tooling itself cannot run (missing dependency, broken ` +
       `command, environment failure) — as opposed to an assertion failing — report blocked:true and stop. ` +
-      `Do not fix anything.`,
+      `Do not fix anything. ` + TERSE,
       { model: 'haiku', phase: 'Verify', label: `verify:${unit.id}#${round}`, schema: S.verify })
+    // The only coverage assertion the SCRIPT can make: a pass with no lane ledger at all is not
+    // evidence of anything. Coverage against the spec's named list is the exit gates' (LANE_BAR).
+    if (verify.pass && !verify.lanes?.length)
+      degrade({ label: `verify:${unit.id}#${round}`, model: 'haiku', phase: 'Verify', kind: 'lane-substituted',
+        what: `unit ${unit.id} verified pass with an empty \`lanes\` ledger — no acceptance-check command was ` +
+          `reported, so the green is unattributable and the exit gate must demand the spec's named lanes` })
     if (verify.blocked)
       return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', verify)
     // Adopted/existing-branch entry has no plan pass: the envelope is the diff AT ENTRY —
@@ -1943,10 +2121,13 @@ async function runUnit(unit) {
   if (!verify.pass) return quarantine(unit, 'verification never passed', verify)
   const gateReverify = (label) => run(
     STRICT +
-    `In ${w}: re-run lint/typecheck on the changed files, the unit-scoped tests, and the acceptance checks ` +
-    `from ${spec} (commands: ${brief}). Report failures verbatim, and \`diffFiles\` = the exact output lines ` +
+    `In ${w}: re-run lint/typecheck on the changed files, then EXACTLY the acceptance-check commands ${spec} ` +
+    `names, verbatim, in the order it names them (commands: ${brief}). Never substitute a narrower, faster or ` +
+    `cheaper lane for one the spec names. Report \`lanes\` = every command you ran, in run order, each ` +
+    `{command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every one of those exit codes ` +
+    `is 0. Report failures verbatim, and \`diffFiles\` = the exact output lines ` +
     `of \`git diff --name-only ${base}..HEAD\`. blocked:true if the tooling itself cannot ` +
-    `run. Fix nothing.`,
+    `run. Fix nothing. ` + TERSE,
     { model: 'haiku', phase: 'Verify', label, schema: S.verify })
 
   // Implementer-pulled consult (10a): a specGap on an all-green unit still gets frontier
@@ -2114,7 +2295,7 @@ async function runUnit(unit) {
         `are Opus, so escalate to the frontier architect the moment the call exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then read \`git diff ${base}..HEAD\` in full and whatever surrounding code you need. ` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
@@ -2213,7 +2394,7 @@ async function runUnit(unit) {
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
-      `${JSON.stringify(verify)}. Grade each of the spec's acceptance criteria individually before forming your ` +
+      `${JSON.stringify(verify)}. ${LANE_BAR}Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
@@ -2465,57 +2646,56 @@ if (!intProv.ok) throw new Error(`integration worktree provisioning failed: ${in
 // human act — the harness never attempts it.
 {
   const waveN = (prior.wave ?? 0) + 1
-  const cp = await runOr({ ok: false, detail: 'codex probe agent died without a report' },
-    STRICT +
-    `In the git repository at ${repo}: run \`${codexHome}codex --version\` and \`${codexHome}codex login status\`. ` +
-    `Report ok:true ONLY if the codex CLI is present AND the login status says logged in; otherwise ok:false ` +
-    `with the exact command output (one or two lines, verbatim) in detail. Read-only — change nothing.`,
-    { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}`, schema: S.ok })
-  if (!cp.ok) {
+  // Two commands, and the PASS CONDITION IS DECIDED HERE, not by the agent. Asked to judge
+  // "is it logged in", Haiku saw `Logged in using ChatGPT`, invented a requirement that the
+  // credential be Anthropic's, returned ok:false, and halted a wave whose auth had just driven
+  // 111 codex runs (2026-08-26). The courier reports exit codes and verbatim output; the pass test
+  // below is the script's. Any credential provider passes — that judgement is not delegated.
+  const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`]
+  const cp = await courierRun(repo, cmds,
+    { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}` },
+    `This is a read-only availability probe. Report what the commands print and judge none of it — which ` +
+    `credential provider is in use (ChatGPT plan, API key, device auth) is not yours to assess and not a ` +
+    `failure of any kind. Change nothing. `)
+  // Mechanical, and deliberately spelled out: `codex login status` prints "Not logged in" when it
+  // is not, and a bare /logged in/i test matches that substring.
+  const status = cp.out(1)
+  const loggedIn = /logged in/i.test(status) && !/not\s+logged\s+in/i.test(status)
+  if (!(cp.exit(0) === 0 && loggedIn)) {
     codexHalt = 'codex-unavailable'
+    const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
+      : `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
-      what: `codex CLI unavailable (${String(cp.detail ?? '').slice(0, 200)}) — wave halted before dispatch; ` +
+      what: `codex CLI unavailable (${why}) — wave halted before dispatch; ` +
         `state is checkpointed and resumable. Operator: codex login (or codex login --device-auth headless), ` +
         `then relaunch the arc.` })
   }
 }
 
-// Preview setup: detach the primary checkout at the wave-start tip and stand the preview
-// up there. Failure never gates the wave — throwing here would gate the arc on its own
-// observability.
+// Preview setup: provision the preview's OWN worktree at the wave-start tip and stand the preview
+// up there. Nothing here touches the operator's checkout — that is the whole point of __preview.
+// Failure never gates the wave: throwing here would gate the arc on its own observability.
 if (previewStatus === 'pending') {
-  const p = plan.preview
-  const ps = await run(
-    STRICT +
-    `Set up the arc's preview mirror: cd to the PRIMARY repository checkout at ${repo} and stay there for ` +
-    `every git command. Then, ${previewStopCmd} (the pidfile lives OUTSIDE the repo). ` +
-    `Then run \`git status --porcelain -- ':(exclude).roadmap'\` — .roadmap/ is the orchestrator's own working ` +
-    `state, EXPECTED to be dirty mid-arc; it carries across detaches and must never block the mirror ` +
-    `(eval-observed: gating on it killed the preview on every wave after the first). If that command reports ` +
-    `ANY entries — real local edits outside .roadmap/ — do NOT detach: report ok:false, and in ` +
-    `\`detail\` give the exact porcelain output plus, for each modified tracked path, whether ` +
-    `\`git diff ${integrationTip} -- <path>\` is empty (empty means the local content is byte-identical to the ` +
-    `target tip — a carried modification left by a stale detach point; non-empty means real local edits). ` +
-    `If it reports nothing, run \`git checkout --detach ${integrationTip}\` — if git refuses, report ok:false ` +
-    `with the exact error. Either way never stash, reset, or force. ` +
-    (p.setup ? `Then run, from inside ${repo}: ${p.setup}. ` : '') +
-    (p.start ? `Then start the preview from inside ${repo} with ${previewStartCmd(p.start)}. ${previewSweepRetry}` : '') +
-    previewHealth() +
-    `Report ok plus the checkout's HEAD sha.`,
-    { model: 'haiku', phase: 'Preview', label: 'preview-setup', schema: S.ws },
-  ).catch(() => null)
-  if (ps?.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
+  // 1. The worktree itself, from the primary checkout (the only place `git worktree add` can run).
+  //    Idempotent by the worktree list, so a relaunch adopts the existing tree instead of failing.
+  const wt = await courierRun(repo, [
+    previewStopCmd,
+    `git worktree list --porcelain | grep -qx 'worktree ${prevWt}' || git worktree add --detach ${prevWt} ${integrationTip}`,
+  ], { model: 'haiku', phase: 'Preview', label: 'preview-worktree' }, previewSweepRetry)
+  // 2. Deps/env, exactly as the integration worktree gets them. 3. Detach + bring the preview up.
+  const pv = wt.ok ? await provision(prevWt, 'provision:preview') : { ok: false, detail: wt.detail }
+  const ps = pv.ok ? await previewAdvance(integrationTip, 'preview-setup', true) : { ok: false, detail: pv.detail }
+  if (ps.ok && sameSha(ps.sha, integrationTip)) { previewStatus = 'live'; previewSha = integrationTip }
   else {
     previewStatus = 'failed'
     // Loud, not a log line: a dead mirror silently no-ops the explorer AND the design reconcile
     // for the whole wave (arc-observed) — the boundary's owed markers re-queue those jobs, and
-    // this entry tells the operator exactly what to do with the primary checkout.
+    // this entry tells the operator which of the three steps failed and where to look.
     degrade({ label: 'preview-setup', model: 'haiku', phase: 'Preview', kind: 'preview-failed',
-      what: `preview mirror never came up (${String(ps?.detail ?? ps?.sha ?? 'agent died without a report').slice(0, 300)}) ` +
-        `— the wave runs without runtime observability and the boundary will record owed explorer/design markers. ` +
-        `Operator: if the diagnosis shows modified paths byte-identical to the target tip (a carried modification ` +
-        `from a stale detach point), a plain \`git checkout --detach ${integrationTip}\` in the primary checkout is ` +
-        `safe; real local edits are yours to commit or stash — the harness never will.` })
+      what: `preview mirror never came up (${String(ps.detail || ps.sha || 'no report').slice(0, 300)}) — the wave ` +
+        `runs without runtime observability and the boundary will record owed explorer/design markers. Operator: ` +
+        `the preview lives in its own worktree at ${prevWt} (log ${prevLog}, pidfile ${prevPid}); your own ` +
+        `checkout is never touched. Inspect or \`git worktree remove --force ${prevWt}\` and relaunch.` })
   }
 }
 

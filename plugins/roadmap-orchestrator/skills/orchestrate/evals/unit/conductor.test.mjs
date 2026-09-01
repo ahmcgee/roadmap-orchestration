@@ -699,10 +699,14 @@ test('issue mode: bank-debt consolidates one issue per unit-residue plus one led
   const bank = firstLabel(agent.calls, /^bank-debt:w1\b/)
   assert.ok(bank, 'bank-debt fires')
   const p = prompt(bank)
-  assert.ok(p.includes('roadmap:debt wave=1 unit=u1'), 'u1 residue keyed wave+unit')
-  assert.ok(p.includes('roadmap:debt wave=1 unit=u2'), 'u2 residue keyed wave+unit')
-  assert.ok(p.includes('roadmap:debt wave=1 ledger'), 'triage-ledger leftovers get one wave issue')
+  // ARC-keyed: `wave=1 ledger` alone matched a PREVIOUS arc's wave 1 and would have skipped
+  // creation silently (skill-feedback 2026-08-22); the per-unit marker collides the same way
+  // whenever a unit id recurs across arcs. The arc key is trackingIssue (else milestone).
+  assert.ok(p.includes('roadmap:debt arc=5 wave=1 unit=u1'), 'u1 residue keyed arc+wave+unit')
+  assert.ok(p.includes('roadmap:debt arc=5 wave=1 unit=u2'), 'u2 residue keyed arc+wave+unit')
+  assert.ok(p.includes('roadmap:debt arc=5 wave=1 ledger'), 'the triage ledger is arc-keyed too')
   assert.doesNotMatch(p, /wave=1 (i|L)=\d/, 'index-keyed markers are gone')
+  assert.doesNotMatch(p, /marker": "roadmap:debt wave=/, 'no arc-free marker survives anywhere')
 
   const items = JSON.parse(p.slice(p.indexOf('Items:\n') + 'Items:\n'.length, p.lastIndexOf('\nReport ok:true')))
   assert.equal(items.length, 3, 'three issues, not four findings')
@@ -959,7 +963,9 @@ test('persist-state of a large state fans out to part writers + one assembler, S
   const bodies = writers.map((w, k) => {
     const file = `/repo/.roadmap/state.json.part${k + 1}`
     assert.ok(w.prompt.includes(`cat > ${file} <<'ROADMAP_PART'`), `writer ${k + 1} targets its own part file`)
-    assert.ok(w.prompt.length <= 24000 + 1500, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
+    // Slack covers STRICT + the copy/verify boilerplate; it grew when STRICT's checkout test
+    // became a mechanical `git rev-parse --git-dir` instead of a judgement call.
+    assert.ok(w.prompt.length <= 24000 + 2000, `writer ${k + 1} stays near the chunk bound (${w.prompt.length})`)
     const marker = `<<<PART ${k + 1}/${writers.length}>>>\n`
     const body = w.prompt.slice(w.prompt.indexOf(marker) + marker.length)
     assertCksumVerified(w.prompt, file, `${body}\n`, `writer ${k + 1}`)

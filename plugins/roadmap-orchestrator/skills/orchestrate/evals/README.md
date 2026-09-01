@@ -24,6 +24,15 @@ shipping; never ship on an upper rung alone.
    `issue-mode.test.mjs` locks the GitHub issue-mode projection — file-mode byte-identity (no `gh`
    text, no sync sweep), the folded gh clauses on setup/merge/dossier, the single wave-tail sync
    sweep, and best-effort degradation (a failed sweep records `gh-sync` but never gates a unit).
+   `closed-command.test.mjs` locks the **closed-command-list discipline**: every courier prompt hands
+   over a numbered list and forbids everything outside it; no command list names a destructive reach
+   (`rm -rf`, `git clean/stash/reset`, `pkill`, `ps aux`); the codex probe's pass condition is decided
+   in the script (any credential provider passes, "Not logged in" does not); the preview runs in its
+   own `__preview` worktree and the primary checkout is never a checkout target; the port sweep kills
+   only the pidfile's group and the literal `preview.ports`; every marker search carries the
+   exact-first-line jq predicate with the CLOSED-issue bar; verify reports a lane ledger and both exit
+   gates check it. Each property is one of the four arc-observed disasters a goal-shaped Haiku prompt
+   produced — the file's header names them with dates.
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not

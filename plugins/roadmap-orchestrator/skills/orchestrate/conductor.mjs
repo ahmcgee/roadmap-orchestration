@@ -68,6 +68,29 @@ const issueMode = inPlan.tracking === 'issues'
 const ghRepo = inPlan.repoSlug ? `--repo ${inPlan.repoSlug} ` : ''
 const GH_BEST_EFFORT = 'Do the GitHub-issue steps below on a BEST-EFFORT basis: if any gh command errors (no ' +
   'network, auth, rate limit, missing issue), ignore it and carry on — issue state is observability, never a gate. '
+// Find-or-create by BODY MARKER, made mechanical. `--search '"<marker>" in:body'` is GitHub
+// FULL-TEXT search: it tokenizes the marker, so `id=raise-verbs` matched an unrelated open agenda
+// issue, `id=sweep-truth` a closed unit from a prior arc, and a Phase-0 bootstrap "reused" three
+// live issues — overwriting title and body, swapping status:merged for status:pending, moving them
+// into the new milestone (2026-08-22; 8 of 11 mis-resolved again on 2026-08-23). A hit is therefore
+// a CANDIDATE ONLY, and the exactness test belongs in the shell string THIS SCRIPT composes rather
+// than in model compliance: the jq predicate below requires the candidate body's FIRST LINE to be
+// exactly the marker comment. Prints `<number> <OPEN|CLOSED>` for the one exact match, or nothing.
+// Duplicated across harness.mjs and conductor.mjs (neither can import the other) — keep them in
+// sync; shared-consts.test.mjs fails the build if they drift.
+const markerFind = (marker) => `gh issue list ${ghRepo}--search '"${marker}" in:body' --state all --limit 30 ` +
+  `--json number,body,state --jq '[.[] | select(((.body // "") | split("\\n")[0] | sub("\\r$"; "")) == ` +
+  `"<!-- ${marker} -->")] | .[0] | select(. != null) | "\\(.number) \\(.state)"'`
+// The obligations that ride with every markerFind. Duplicated in both scripts — keep them in sync.
+const MARKER_RULE = 'Run that search command EXACTLY as written: its jq predicate is what makes the match ' +
+  'trustworthy, requiring the candidate body\'s FIRST line to be exactly the marker comment. Never widen the ' +
+  'search, never fall back to `.[0].number`, and never adopt an issue you found some other way — no exact ' +
+  'match means ABSENT, and absent means create. Never edit the labels, milestone, title or body of a CLOSED ' +
+  'issue, and never remove a `status:merged` label. '
+// The arc key every marker this script mints is scoped by. Without it, `roadmap:debt wave=3 ledger`
+// searched across ARCS and matched a prior arc's wave 3 (#1011), which would have silently skipped
+// creation; the per-unit `wave=N unit=<id>` marker collides the same way whenever a unit id recurs.
+const arcKey = inPlan.trackingIssue ?? inPlan.milestone
 
 // Working plan — cloned so wave-to-wave mutation (merged units, edges, cut lines) never aliases
 // the caller's object. This is what is persisted and returned; the transient contingent
@@ -191,9 +214,11 @@ const runOr = async (fallback, prompt, opts) => {
 
 // Location discipline for mechanical writers (copied from harness.mjs): given a bad path,
 // Haiku will improvise in its cwd and report plausible success — fail-loud beats adaptive.
-const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails or the directory ' +
-  'is not the described git checkout, report ok/pass as false with the exact error and stop. Never substitute ' +
-  'your current working directory, the enclosing project, or any other repository. '
+const STRICT = 'Start by `cd` to the exact absolute path named in this task — if the cd fails, report ok/pass as ' +
+  'false with the exact error and stop. Then confirm the directory is a git checkout MECHANICALLY, with ' +
+  '`git rev-parse --git-dir`: a NON-ZERO exit is the only failure. A LINKED WORKTREE IS VALID — its `.git` is a ' +
+  'FILE and the command prints a path under `.git/worktrees/`, which is not a defect and must never be reported ' +
+  'as one. Never substitute your current working directory, the enclosing project, or any other repository. '
 // EVERY prompt whose schema carries a maxLength must also carry this (same const as harness.mjs).
 // A cap is a contract with the model, and the prompt is the only place that contract is stated — a
 // capped field with no matching instruction is a trap. Arc-observed: this prompt set had a 600-char
@@ -947,11 +972,12 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // One Haiku call, only when there is new work; a no-op / '' path in file mode.
   if (issueMode && prepared.length) {
     const opened = await run(
-      STRICT + GH_BEST_EFFORT +
+      STRICT + GH_BEST_EFFORT + MARKER_RULE +
       `Open a GitHub tracking issue for each new roadmap unit added in wave ${N}, idempotently. For each unit ` +
-      `below: search \`gh issue list ${ghRepo}--search '"roadmap:unit id=<id>" in:body' --state all --limit 1 ` +
-      `--json number --jq '.[0].number'\`; if one already exists, use its number (do NOT create a duplicate); ` +
-      `otherwise create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
+      `below: run \`${markerFind('roadmap:unit id=<id>')}\`, substituting that unit's id in BOTH places. If it ` +
+      `prints a \`<number> <state>\` pair, the issue already exists: report that number and change NOTHING about ` +
+      `the issue — no duplicate, no edit, whether it is open or closed. If it prints nothing at all, the issue is ` +
+      `ABSENT: create it with title "[unit] <id>", labels \`roadmap:unit,status:pending,risk:<risk>,wave:${N}\`` +
       `${inPlan.milestone ? `, assigned to milestone "${inPlan.milestone}" (\`--milestone\` takes the milestone NAME)` : ''}, and a body ` +
       `whose FIRST line is exactly \`<!-- roadmap:unit id=<id> -->\` followed by the full contents of ` +
       `${repo}/.roadmap/specs/<id>.md. Units:\n${JSON.stringify(prepared.map((s) => ({ id: s.id, risk: s.risk ?? 'low' })))}\n` +
@@ -987,9 +1013,10 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
     ' (create parent directories if needed)')
 
   // bank-debt: the durable technical-debt record. ISSUE MODE -> find-or-create roadmap:debt issues:
-  // ONE consolidated issue per unit-with-residue, keyed wave+unit (arc-observed: per-finding minting
-  // produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered resume — the
-  // wave+unit key is a pure function of stable ids). FILE MODE -> a <!-- wave N --> section in
+  // ONE consolidated issue per unit-with-residue, keyed arc+wave+unit (arc-observed: per-finding
+  // minting produced 650+ issues in one arc, and index-keyed markers duplicated on a reordered
+  // resume — the arc+wave+unit key is a pure function of stable ids, and the arc half is what stops
+  // a search from matching the SAME wave number in a previous arc). FILE MODE -> a <!-- wave N --> section in
   // debt.md, ALWAYS stamped (even "no new entries" — ruling 7); per-finding lines are fine there,
   // the volume problem was issues, so the file branch is deliberately untouched.
   const debtKind = (k) => (['correctness', 'test', 'structure', 'ergonomics'].includes(k) ? k : 'structure')
@@ -1001,23 +1028,23 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
       byUnit.get(k).push(d)
     }
     const items = [
-      ...[...byUnit].map(([uid, ds]) => ({ marker: `roadmap:debt wave=${N} unit=${uid}`,
+      ...[...byUnit].map(([uid, ds]) => ({ marker: `roadmap:debt arc=${arcKey} wave=${N} unit=${uid}`,
         title: `[debt] ${uid}: ${ds.length} deferred item${ds.length === 1 ? '' : 's'} (wave ${N})`,
         labels: ['roadmap:debt',
           `severity:${ds.some((d) => d.severity === 'major') ? 'major' : 'minor'}`,
           ...new Set(ds.map((d) => `debt:${debtKind(d.kind)}`))].join(','),
         body: ds.map(fmtDebt).join('\n') })),
-      ...(debtLedger.length ? [{ marker: `roadmap:debt wave=${N} ledger`,
+      ...(debtLedger.length ? [{ marker: `roadmap:debt arc=${arcKey} wave=${N} ledger`,
         title: `[debt] wave ${N} triage ledger (${debtLedger.length} item${debtLedger.length === 1 ? '' : 's'})`,
         labels: 'roadmap:debt', body: debtLedger.map((s) => `- ${s}`).join('\n') }] : []),
     ]
     if (items.length)
       await run(
-        STRICT + GH_BEST_EFFORT +
-        `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below: search for an ` +
-        `existing issue whose body carries its marker ` +
-        `(\`gh issue list ${ghRepo}--search '"<marker>" in:body' --state all --limit 1 --json number --jq '.[0].number'\`); ` +
-        `if one exists, leave it untouched; otherwise create it with title, comma-joined labels, and a body whose ` +
+        STRICT + GH_BEST_EFFORT + MARKER_RULE +
+        `Project wave-${N} technical debt into GitHub issues, idempotently. For EACH item below run ` +
+        `\`${markerFind('<marker>')}\`, substituting that item's marker in BOTH places. If it prints a ` +
+        `\`<number> <state>\` pair the item is already banked: leave that issue completely untouched. If it ` +
+        `prints nothing at all, create the issue with the item's title, comma-joined labels, and a body whose ` +
         `FIRST line is exactly \`<!-- <marker> -->\` followed by the item body. Items:\n${JSON.stringify(items)}\n` +
         `Report ok:true when every item is present; note any gh failure in detail.`,
         { model: 'haiku', effort: 'low', label: `bank-debt:w${N}`, phase: 'Persist', schema: S.ok },

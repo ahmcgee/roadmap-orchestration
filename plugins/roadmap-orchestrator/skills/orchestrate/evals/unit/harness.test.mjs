@@ -20,8 +20,8 @@ import {
 // friends, driven by cheap Haiku steering agents. `impl:`/`fix:`/`review:`/`debt-fix:` no longer
 // exist anywhere in the harness, so every assertion below reads the steering labels instead.
 // Verify results must carry `diffFiles` (S.verify requires it — it feeds envelope pinning).
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
-const VERIFY_FAIL = (failures = ['boom']) => ({ pass: false, blocked: false, failures, contractSurfaceTouched: false, diffFiles: [] })
+const VERIFY_OK = { pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] }
+const VERIFY_FAIL = (failures = ['boom']) => ({ pass: false, blocked: false, failures, lanes: [{ command: 'npm run test:ci', exitCode: 1 }], contractSurfaceTouched: false, diffFiles: [] })
 // There is no review stage any more, so a fix round is forced by failing the mechanical verify
 // once and passing on the next round — the only remaining route into the polish loop's fix step.
 const failThenPass = (failures = ['boom']) => {
@@ -134,7 +134,7 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
 // =========================================================================================
 test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], contractSurfaceTouched: false, diffFiles: [] }) },
+    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.units.a.status, 'quarantined')
@@ -647,7 +647,7 @@ test('15 integration-tip reconciliation: reported git sha overrides checkpointed
 // 16. Preview failure never gates: preview.status 'failed', unit still merges.
 // =========================================================================================
 test('16 preview failure: status failed, unit outcome unchanged', async () => {
-  const { fn } = makeAgent([{ match: /^preview-setup$/, result: () => ({ ok: false, sha: BASE_SHA }) }])
+  const { fn } = makeAgent([{ match: /^preview-setup/, result: () => ({ ok: false, results: [] }) }])
   const plan = makePlan([unit('a')], [], { preview: { kind: 'server', start: 'run', howToAccess: 'http://x' } })
   const state = await runWave(fn, plan, makeState())
   assert.equal(state.preview.status, 'failed', 'preview marked failed')

@@ -55,9 +55,9 @@ const promptOf = (calls, label) => calls.find((c) => c.label === label)?.prompt 
 const labels = (calls) => calls.map((c) => c.label)
 
 // S.verify REQUIRES diffFiles (the objective input to envelope pinning + the scope-growth check).
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
+const VERIFY_OK = { pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] }
 const VERIFY_FAIL = (failures = ['assert: expected 1, got 2']) =>
-  ({ pass: false, blocked: false, failures, contractSurfaceTouched: false, diffFiles: [] })
+  ({ pass: false, blocked: false, failures, lanes: [{ command: 'npm run test:ci', exitCode: 1 }], contractSurfaceTouched: false, diffFiles: [] })
 // There is no review stage: the ONLY route into the polish loop's fix step is a failing verify.
 const failThenPass = () => { let n = 0; return () => (n++ === 0 ? VERIFY_FAIL() : VERIFY_OK) }
 // A codex run that died with nothing on the branch — the one shape that earns the fresh retry.
