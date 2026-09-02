@@ -2852,12 +2852,23 @@ async function runUnit(unit) {
       // just said it has zero commits of its own.
       ? `${dropWt}; git branch -D unit/${unit.id} >/dev/null 2>&1; git worktree add -b unit/${unit.id} '${w}' ${source}`
       : `${live} || git worktree add -b unit/${unit.id} '${w}' ${source}`
+  // The adopt-tip invariant is SCOPED BY CASE, and the re-entry half needs a fact only the
+  // worktree can answer, so it rides this same list. At the initial fork the worktree was just
+  // created from existingBranch, so HEAD must BE that tip (checked in code below, no command
+  // needed). On RE-ENTRY of an adopted unit the worktree is checked out on unit/<id>, whose tip
+  // legitimately moves the moment a fix round commits — so what still has to hold is ANCESTRY:
+  // the pre-captured existingBranch tip is reachable from HEAD. A recreated or force-moved
+  // existingBranch is not an ancestor and still quarantines. `; echo $?` for the same reason the
+  // integration-worktree probe uses it: a legitimate answer of 1 is not a courier failure, so the
+  // exit code is printed by the SHELL and kept off the stop-at-first-failure path.
+  const ancestryAt = adoptTip && state === 'adopted' ? 3 : -1
   const ws = await courierRun(repo, [
     create,
     `git -C '${w}' rev-parse HEAD`,
     `git -C '${w}' rev-parse --abbrev-ref HEAD`,
+    ...(ancestryAt < 0 ? [] : [`git -C '${w}' merge-base --is-ancestor ${adoptTip} HEAD; echo $?`]),
   ], { model: 'haiku', phase: 'Setup', label: `setup:${unit.id}` },
-  `The first command sets up the worktree for unit ${unit.id}; the other two report back what it ` +
+  `The first command sets up the worktree for unit ${unit.id}; the others report back what it ` +
   `actually is. Never substitute a different base, a different branch or a different repository ` +
   `for the ones written here, and never "repair" a failing command — its failure is the answer. ` +
   // Setup is normally worth replaying from cache — it is idempotent and its report is a fact
@@ -2881,10 +2892,20 @@ async function runUnit(unit) {
   // so the assertion is 'ready'-only.
   if (state === 'ready' && !unit.existingBranch && !sameSha(wsSha, base))
     return quarantine(unit, `workspace setup failed or wrong base (got ${wsSha || 'nothing'}, expected ${source})`, wsExtra)
-  if (adoptTip && !sameSha(wsSha, adoptTip))
-    return quarantine(unit, `adopt tip mismatch (got ${wsSha || 'nothing'}, pre-captured ` +
+  // Adopt-tip, the fork half: a worktree just created FROM existingBranch must be exactly its tip.
+  if (adoptTip && ancestryAt < 0 && !sameSha(wsSha, adoptTip))
+    return quarantine(unit, `adopt tip mismatch (got ${wsSha || 'nothing'}, forked from pre-captured ` +
       `${unit.existingBranch} = ${adoptTip}) — the branch may have been recreated; check reflog / git fsck --unreachable`,
       wsExtra)
+  // …and the re-entry half: unit/<id> may have grown commits (a fix round that landed before the
+  // wave was parked — wf_ec56ce3b-59f quarantined exactly that), but it must still CONTAIN the
+  // pre-captured tip. Exit 0 = ancestor; 1 = diverged; 128 = unresolvable; anything unparseable is
+  // read as "not an ancestor", which refuses rather than waves through.
+  if (ancestryAt >= 0 && ws.out(ancestryAt) !== '0')
+    return quarantine(unit, `adopt tip mismatch (unit/${unit.id} is at ${wsSha || 'nothing'}, which does not ` +
+      `contain pre-captured ${unit.existingBranch} = ${adoptTip}; \`merge-base --is-ancestor\` exited ` +
+      `${ws.out(ancestryAt) || 'nothing'}) — the branch may have been recreated or force-moved; check reflog / ` +
+      `git fsck --unreachable`, wsExtra)
   if (issueMode) await ghUnitRunning(unit)
   const prov = await provision(w, `provision:${unit.id}`)
   if (!prov.ok)

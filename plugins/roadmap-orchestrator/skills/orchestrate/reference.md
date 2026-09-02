@@ -883,7 +883,7 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 | --- | --- | --- |
 | integration branch + worktree | `integration-worktree` | HEAD sha; `is-ancestor` exit, printed by the shell |
 | unit worktree | `setup:<id>` | read-back `rev-parse HEAD` vs the base, `rev-parse --abbrev-ref HEAD` vs `unit/<id>` |
-| adopted branch tip | `adopt-tip:<id>` | the sha, pre-captured before setup can recreate the branch |
+| adopted branch tip | `adopt-tip:<id>` | the sha, pre-captured before setup can recreate the branch — the worktree must **equal** it at the initial fork, and (on re-entry of an adopted unit, whose branch has since grown fix commits) must merely **contain** it, `merge-base --is-ancestor` on the `setup:<id>` list |
 | provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
 | preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
 | preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |

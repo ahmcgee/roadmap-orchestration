@@ -557,9 +557,31 @@ test('unit setup: crash re-entry VERIFIES an existing worktree instead of re-add
   // the BRANCH is never touched — no -b, no -D, no reset.
   const { fn: fn2, calls: c2 } = makeAgent(gitFacts('a', { branch: true, ahead: 2 }))
   await runWave(fn2, makePlan(), makeState({ wave: 1, units: { a: { status: 'running' } } }))
-  const adopt = commandsOf(promptOf(c2, 'setup:a'))[0]
-  assert.ok(adopt.includes(`git worktree add '/wt/a' unit/a`), 'adoption attaches to the branch as it stands')
-  assert.ok(!/-b |branch -D/.test(adopt), 'an adopted branch is never recreated or deleted')
+  const cmds2 = commandsOf(promptOf(c2, 'setup:a'))
+  assert.ok(cmds2[0].includes(`git worktree add '/wt/a' unit/a`), 'adoption attaches to the branch as it stands')
+  assert.ok(!/-b |branch -D/.test(cmds2[0]), 'an adopted branch is never recreated or deleted')
+  assert.equal(cmds2.length, 3,
+    'no existingBranch, so there is no captured tip to test ancestry against — the list is unchanged')
+})
+
+test('unit setup: an ADOPTED existingBranch unit tests ancestry, not equality, against the captured tip', async () => {
+  // The fork case (a fresh worktree made FROM existingBranch) still demands HEAD == that tip, and
+  // needs no command for it — the read-back is the whole comparison. Re-entry cannot: the worktree
+  // is on unit/<id>, whose tip moves with every fix round, so the script composes the ancestry test
+  // and reads the exit code the SHELL printed (`; echo $?`, off the stop-at-first-failure path).
+  const { fn, calls } = makeAgent(gitFacts('a', { branch: true, ahead: 2 }))
+  await runWave(fn, { ...makePlan(), units: [unit('a', { existingBranch: 'adopt/a' })] }, makeState())
+  const cmds = commandsOf(promptOf(calls, 'setup:a'))
+  assert.equal(cmds.length, 4, 'the three worktree commands plus the one ancestry read')
+  assert.equal(cmds[3], `git -C '/wt/a' merge-base --is-ancestor ${BASE_SHA} HEAD; echo $?`,
+    `the captured tip is interpolated by the script, tested INSIDE the unit worktree — got: ${cmds[3]}`)
+
+  // A fresh fork from the same existingBranch composes no ancestry command at all.
+  const { fn: fn2, calls: c2 } = makeAgent()
+  await runWave(fn2, { ...makePlan(), units: [unit('a', { existingBranch: 'adopt/a' })] }, makeState())
+  const forkCmds = commandsOf(promptOf(c2, 'setup:a'))
+  assert.equal(forkCmds.length, 3, 'at the fork, equality is the invariant and the read-back already proves it')
+  assert.ok(forkCmds[0].endsWith(`git worktree add -b unit/a '/wt/a' adopt/a`), 'forked from existingBranch')
 })
 
 test('unit setup: a branch git says has commits is quarantined before any command is composed', async () => {

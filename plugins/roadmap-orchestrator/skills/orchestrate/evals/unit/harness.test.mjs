@@ -184,6 +184,41 @@ test('5 adopt-tip mismatch: recreated-branch quarantine', async () => {
   assert.ok(!has(calls, 'codex-build:'), 'quarantined before any pipeline work')
 })
 
+// The adopt-tip invariant is EQUALITY at the fork (test 5 above) and ANCESTRY on re-entry (5b/5c).
+// wf_ec56ce3b-59f: a relaunch re-entered a parked `existingBranch` unit whose earlier fix round had
+// already landed two commits on unit/<id>, and the equality form quarantined it as "recreated" —
+// destroying no work but refusing to continue any. On re-entry the worktree is on unit/<id>, not on
+// existingBranch, so the fact that still has to hold is that unit/<id> CONTAINS the captured tip.
+const adoptedReentry = (id, ancestorExit, head) => [
+  // branch exists with commits beyond base + an existingBranch => the script's 'adopted' case.
+  { match: new RegExp(`^merged-probe:${id}$`), result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [head] }) },
+  { match: new RegExp(`^setup-commits:${id}$`), result: () => ({ ok: true, exitCodes: [0], out: ['2'] }) },
+  { match: new RegExp(`^setup:${id}$`),
+    result: courierSaying([[/rev-parse HEAD/, head], [/merge-base --is-ancestor/, String(ancestorExit)]]) },
+]
+
+test('5b adopted re-entry: a unit branch that grew fix commits past existingBranch is NOT a mismatch', async () => {
+  const NEW = 'f3adb46f3adb46f3adb46f3adb46f3adb46f3adb'   // two fix commits past the captured tip
+  const { fn, calls } = makeAgent(adoptedReentry('a', 0, NEW))
+  const state = await runWave(fn, makePlan([unit('a', { existingBranch: 'adopt/a' })]), makeState())
+  assert.notEqual(state.units.a.status, 'quarantined',
+    `an adopted branch ahead of its captured tip is the normal case — got: ${state.units.a.reason}`)
+  assert.ok(has(calls, 'verify:a'), 'the unit re-enters the pipeline with its prior commits intact')
+  const ancestry = calls.find((c) => c.label === 'setup:a').prompt
+  assert.match(ancestry, /merge-base --is-ancestor [0-9a-f]{40} HEAD; echo \$\?/,
+    'the ancestry fact is a command the SCRIPT composed, with the exit code printed by the shell')
+})
+
+test('5c adopted re-entry: a recreated existingBranch (not an ancestor) still quarantines', async () => {
+  const NEW = 'f3adb46f3adb46f3adb46f3adb46f3adb46f3adb'
+  const { fn, calls } = makeAgent(adoptedReentry('a', 1, NEW))
+  const state = await runWave(fn, makePlan([unit('a', { existingBranch: 'adopt/a' })]), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  assert.match(state.units.a.reason, /does not contain pre-captured adopt\/a/)
+  assert.match(state.units.a.reason, /recreated or force-moved/)
+  assert.ok(!has(calls, 'verify:a'), 'quarantined before any pipeline work')
+})
+
 // =========================================================================================
 // 6. Already-merged short-circuits to merged. CHANGED CONTRACT (0.14.0): the setup prompt's
 //    'already-merged' CASE is gone — the second-parent test is `merged-probe`'s exit codes and the

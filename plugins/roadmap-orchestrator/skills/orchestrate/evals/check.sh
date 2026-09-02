@@ -122,10 +122,15 @@ PV_SHA=$(node -e "const s=require('$STATE');console.log((s.preview||{}).sha||'')
 # results ride the returned state's `boundary` block and are rendered to feedback/ by Haiku
 # verbatim-writers. healthCheck defaults on, so the health file is always written; the fixture
 # plan carries a live api-kind preview, so the runtime explorer runs and its file is too.
+# The wave number is READ, never assumed: a fixture that halted (a codex usage limit) and was
+# relaunched legitimately finishes on wave 2, and its boundary is written under THAT wave.
+# check-conductor.sh keys its own final-wave probes the same way, for the same reason.
+WAVE=$(node -e "const s=require('$STATE');console.log(Number(s.wave)||0)")
+[ "$WAVE" -ge 1 ] || flunk "state.json carries a wave number (got: $WAVE)"
 BOUNDARY=$(node -e "const s=require('$STATE');console.log(s.boundary?'present':'absent')")
-[ "$BOUNDARY" = present ] && pass "state.json carries a boundary block (wave-tail phase ran)" || flunk "state.json carries a boundary block (got: $BOUNDARY)"
-expect "wave-1 health feedback written" test -f "$REPO/.roadmap/feedback/health/wave-1.md"
-expect "wave-1 explorer feedback written" test -f "$REPO/.roadmap/feedback/explorer/wave-1.md"
+[ "$BOUNDARY" = present ] && pass "state.json carries a boundary block (wave-$WAVE tail phase ran)" || flunk "state.json carries a boundary block (got: $BOUNDARY)"
+expect "wave-$WAVE health feedback written" test -f "$REPO/.roadmap/feedback/health/wave-$WAVE.md"
+expect "wave-$WAVE explorer feedback written" test -f "$REPO/.roadmap/feedback/explorer/wave-$WAVE.md"
 
 # --- integrated result --------------------------------------------------------
 expect "integration branch exists" git -C "$REPO" rev-parse --verify roadmap/eval
