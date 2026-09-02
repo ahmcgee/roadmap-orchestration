@@ -7,8 +7,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, BASE_SHA, courierSaying, assertAllModelsPinned, assertSchemasPresent } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -44,11 +44,14 @@ test('issue mode: folded gh clauses + one sync sweep', async () => {
   const { fn, calls } = makeAgent()
   const res = await runWave(fn, ISSUE_PLAN(), makeState())
   assert.equal(res.units.a.status, 'merged')
-  // running folded into setup, keyed by the id marker; scoped to the repo slug.
-  const setup = promptOf(calls, 'setup:')
-  assert.match(setup, /roadmap:unit id=a/)
-  assert.match(setup, /status:running/)
-  assert.match(setup, /--repo o\/r/)
+  // CHANGED CONTRACT (0.14.0): setup is a closed command list, so the `gh` half no longer rides on
+  // it — it is its own issue-mode-only call, keyed by the id marker and scoped to the repo slug.
+  // File mode makes no such call at all, which is what keeps the offline fixtures byte-identical.
+  const running = promptOf(calls, 'issue-running:a')
+  assert.match(running, /roadmap:unit id=a/)
+  assert.match(running, /status:running/)
+  assert.match(running, /--repo o\/r/)
+  assert.ok(!/gh issue/.test(promptOf(calls, 'setup:')), 'the setup courier carries no gh clause of its own')
   // merged+close folded into the merge agent.
   const merge = promptOf(calls, 'merge:')
   assert.match(merge, /gh issue close/)
@@ -88,7 +91,7 @@ test('issue mode: failed sweep records gh-sync degradation, unit still merged', 
 // =========================================================================================
 test('issue mode: quarantine dossier-writer carries the gh clause', async () => {
   // A fresh 'ready' worktree on the wrong base quarantines before any build.
-  const { fn, calls } = makeAgent([{ match: /^setup:/, result: { ok: true, sha: 'f'.repeat(40), state: 'ready' } }])
+  const { fn, calls } = makeAgent([{ match: /^setup:/, result: courierSaying([[/rev-parse HEAD/, 'f'.repeat(40)]]) }])
   const res = await runWave(fn, ISSUE_PLAN(), makeState())
   assert.equal(res.units.a.status, 'quarantined')
   const dossier = promptOf(calls, 'dossier-write:')
@@ -134,4 +137,28 @@ test('validation: malformed `closes` throws before any agent call', async () => 
       /closes/,
     )
   }
+})
+
+// =========================================================================================
+// 5. THE CWD RESET (0.14.0, wf_318afa1b-e9d). `gh` has no `-C`, and without `--repo` it reads the
+// repository out of its working directory — which does not survive from one Bash call to the next.
+// So every gh command the harness composes carries GH_HERE's `cd '<repo>' &&`, on a plan WITH a
+// repoSlug as much as one without: the guard costs nothing and the slug is optional. Run in issue
+// mode, where the gh clauses actually exist (the file-mode sim above proves they do not).
+// =========================================================================================
+test('issue mode: every composed gh command carries its own working directory', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, ISSUE_PLAN(), makeState())
+  let seen = 0
+  for (const c of calls) {
+    if (c.model === 'codex') continue
+    const text = c.prompt.split('<<<BRIEF>>>')[0]
+    // A composed command opens with a backtick. `\`gh ` is therefore a gh command with nothing in
+    // front of it; every legitimate one opens with GH_HERE's cd (or a `HIT=$(` capture around it).
+    const bare = text.match(/`gh [^`\n]*/g)
+    assert.equal(bare, null, `${c.label} composes \`${bare?.[0]}\` — a bare gh reads the repository ` +
+      'from wherever it happens to be standing, and that is not its own choice')
+    seen += (text.match(/`(?:HIT=\$\()?cd '\/repo' && gh /g) ?? []).length
+  }
+  assert.ok(seen >= 3, `the issue-mode drive should compose several guarded gh commands (saw ${seen})`)
 })

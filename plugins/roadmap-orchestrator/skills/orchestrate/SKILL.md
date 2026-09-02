@@ -24,12 +24,20 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
 1. **Every delegation names its model explicitly.** The scripts already do. Any agent *you*
    spawn must too — and never a typed agent (Explore, Plan, …) without a pinned model: they
    inherit *your* model and silently bill recon sweeps at frontier prices.
-2. **Frontier never generates volume — and Claude never implements.** You, and every `fable`
+2. **Claude decides, Codex drafts and executes, Haiku only couriers.** You, and every `fable`
    agent, produce plans, contracts, specs, directives, verdicts, reports — never code, never
-   bulk text. The Codex CLI writes ALL implementation and fixes (steered by Haiku agents);
-   Opus plans units and judges; Sonnet extracts and compresses; Haiku runs commands. A codex
-   outage is a hard stop to surface to the user, never a licence for a Claude agent to
-   implement in its place.
+   bulk text. The Codex CLI writes ALL implementation and fixes, plans each unit's own work,
+   runs the spec's verification lanes, reads the diff into a pre-gate review digest and — since
+   0.14.0 — drafts at the boundary too (the wave-tail explorer, health assessor, flake band and
+   design reconciler, each writing its own report); every one of those is steered by a Haiku agent.
+   Claude keeps every surface that can REJECT work: the plan-check, both exit gates, the escalation
+   ladder, the consults, the merge and its suite gate, and the boundary TRIAGE that rules on what
+   those roles found. Opus judges; Sonnet gates low-risk units, extracts and compresses; Haiku runs
+   closed command lists and writes down what the script already composed — including WHERE each
+   command runs: since 0.14.0 every composed command carries its own `cd '<dir>' && ( … )` guard,
+   so a courier that skips the instruction fails that command's exit code rather than answering
+   from whatever checkout it happened to start in. A codex outage is a hard
+   stop to surface to the user, never a licence for a Claude agent to implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
    outcome that feeds redesign, not a failure to retry around.
@@ -99,9 +107,11 @@ Logged in → record `plan.codex: { home: <the CODEX_HOME path or null> }` and c
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
 `codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Auth is
 a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
-early-returns `codex-unavailable` / `codex-usage-limit` with state checkpointed; both are
+early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
 resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
-route around by re-implementing with Claude.
+route around by re-implementing with Claude. The same shape covers the host and the platform:
+`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
+(required agent results stopped arriving) park the wave the same way — see `state.halt`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -140,8 +150,11 @@ Read their outputs, then decide:
   is safe to guard. Still grep the tree at Phase 0 and record any pre-existing duplicates in the
   conventions contract, so no unit "fixes" them by renumbering.
 - **Set `plan.scopeAllow` for the repo's evidence/test conventions** (e.g.
-  `["docs/evidence/**", "**/test/**", "**/*.test.*"]`). Every unit's pinned scope envelope is stated
-  to the implementer and diff files beyond it raise `scope-growth` for the exit gate to adjudicate.
+  `["docs/evidence/**", "**/test/**", "**/*.test.*"]`) — and **record the key explicitly even when the
+  answer is `[]`**, so the next reader can tell "this repo has no by-convention files" from "nobody
+  decided" (arc-observed: a 19-wave arc where Phase 0 simply never set it, and every unit's own test
+  files read as growth). Every unit's pinned scope envelope is stated to the implementer, and diff
+  files beyond it raise `scope-growth` for the exit gate to adjudicate.
   Files matching `scopeAllow` are in scope by convention and never counted as growth — otherwise a
   unit's own evidence screenshots, transcripts and sibling test files raise the signal on every wave
   (arc-observed: 7 `scope-growth` degradations in one wave, nearly all noise) and drown the real one
@@ -210,9 +223,13 @@ Read their outputs, then decide:
   that's a spec defect, not an execution risk.
 - **Plan the arc's preview.** Decide how the integrated result is exercised — dev server, built
   CLI, or, for a library-only arc, driving the public API/REPL (`kind: api`, almost always
-  possible) — and fill the plan's `preview` block. The harness keeps the primary checkout riding
-  the latest suite-green integration tip, so the user watches real states from their own repo and
-  each wave's explorer hunts what tests and diffs can't show. While provisioning: have Haiku
+  possible) — and fill the plan's `preview` block. The harness gives the preview **its own
+  worktree** at `worktreeRoot/__preview`, rides it on the latest suite-green integration tip, and
+  runs every `preview` command there — the user's checkout is never touched, so they can keep
+  working and switching branches while the arc runs. Each wave's explorer then hunts what tests and
+  diffs can't show. **Declare `preview.ports`** (the ports the preview actually listens on) whenever
+  you know them: they are the only listeners the harness's one-shot port sweep may kill, and an
+  undeclared port is a port the sweep will leave alone rather than guess at. While provisioning: have Haiku
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.
@@ -220,7 +237,8 @@ Read their outputs, then decide:
   the template instead — but still create `feedback/{explorer,health,triaged}/` for internal wave
   evidence.)
   Kill any stale `worktreeRoot/__preview.pid` left by a dead arc: the whole process **group**
-  (`kill -TERM -- -$(cat …)`), since a single-pid kill strands its child listeners.
+  (`kill -TERM -- -$(cat …)`), since a single-pid kill strands its child listeners. A stale
+  `worktreeRoot/__preview` worktree is adopted, not recreated, so it needs no cleanup.
 - **Seed `.roadmap/architect-log.md`** — your handoff brief to the boundary ladder: the decisions
   you made and *why*, a watch-list for the arc, and explicit **dismissal criteria** (what counts
   as noise a lower tier may drop without you). Opus drafts it from your Phase-0 reasoning; it
@@ -239,7 +257,9 @@ Read their outputs, then decide:
   targeting the *seams* between units. You plan them; schedule an early unit to write them; the
   merge gate runs them.
 - **Resolve the cut line** into an explicit in-scope set (ancestor-closed under the DAG), and jot
-  next-session notes for what falls beyond it while the context is hot.
+  next-session notes for what falls beyond it while the context is hot. The cut line is what you will
+  judge DRAINED against later — once it is, relaunch with `admissions: 'closed'` (see "Closing
+  admissions") rather than letting the boundary tiers keep minting units past it.
 
 **Fidelity audit — proportionate to the source material.** Your plan pack is built from
 compressed extractions, and compression loss is silent: a dropped constraint resurfaces later as
@@ -302,8 +322,9 @@ user**: present the decomposition, contracts, cut-line interpretation, and your 
 batched, once. Discipline the questions: only ask what you couldn't resolve yourself, rank by
 impact × uncertainty, cap around five, and attach your recommended answer to each so the user can
 mostly confirm. Also tell them two things concretely: where the preview will be reachable
-(`preview.howToAccess`, plus the fact that their checkout will ride the integration tip detached
-during waves — don't switch branches), and the absolute path of `.roadmap/feedback/user/` — they
+(`preview.howToAccess`, served from its own worktree at `worktreeRoot/__preview` — their own
+checkout is untouched, so they can keep working in it), and the absolute path of
+`.roadmap/feedback/user/` — they
 can copy `TEMPLATE.md` there at any time; notes are batched into your next triage, never injected
 mid-run. (**Issue mode**: instead, point them at the `roadmap-bug` issue template to report bugs
 and `roadmap-unit` to propose new units — both are read at your next boundary (and open `roadmap:bug`
@@ -312,24 +333,84 @@ itself a deliverable.
 
 ## Phase 1…n — Execute waves
 
-Read `.roadmap/plan.json` and `.roadmap/state.json`, then launch the **conductor** in the
-background and stay quiet — it notifies you when the whole run finishes, not each wave.
+Launch the **conductor** in the background and stay quiet — it notifies you when the whole run
+finishes, not each wave. **Do not read `plan.json` or `state.json` first**: the envelope names the
+directory and the script reads the pack itself, cksum-verified, on a floor-tier agent. Pasting those
+documents into `args` put the whole pack through this session — the most expensive tier in the
+system — on every launch and every resume.
 
 ```
 Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
-           args: { plan, state, config,
-                   harnessPath: "<this skill's directory>/harness.mjs" } })
+           args: { roadmapDir: "<repoPath>/.roadmap",
+                   config,
+                   harnessPath: "<this skill's directory>/harness.mjs",
+                   launchId: "<a value you have never used before — a timestamp is fine>" } })
 ```
 
-`harnessPath` is not optional — the conductor dispatches each wave via that child script and
-cannot resolve it otherwise. Record the returned `runId` and `scriptPath` into `state.json`'s
+`roadmapDir` and `harnessPath` are both required — the first is the pack the script reads at launch,
+the second is the child script it dispatches each wave with. **`launchId` must be FRESH on every
+launch and on every resume** —
+never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
+probes (the launch pack read itself, provisioning, integration setup, the merged/reachability git
+probes, the per-wave codex probe, the host preflight, the preview worktree + mirror couriers) out of
+`resumeFromRunId`'s cache: those probes answer "what does the disk and git look like right now",
+and a replayed answer is a lie (a resume once replayed a pre-rebuild `cd: No such file` and
+quarantined healthy units). The scripts cannot generate it themselves — `Date.now()` and
+`Math.random()` do not exist in a workflow script, so it has to arrive in `args`. Omitting it does
+not fail the run: the harness records one `no-launch-id` degradation and runs the probes unsalted. Record the returned `runId` and `scriptPath` into `state.json`'s
 optional `run` field at launch: that `runId` identifies the whole multi-wave run, so a
 same-session `resumeFromRunId` replays every completed wave and crash forensics are one `cat`
 away.
 
+### After every run — persist
+
+**The scripts write no STATE under `.roadmap/`.** They have no filesystem, so every byte of it used
+to go through a model transcribing a document — the second-largest model cost in the system, and it
+occasionally lost the document anyway. State, the merged plan, the debt and log sections and both
+event ledgers now ride home in the return value, and one command turns them into files at zero model
+cost. (What the scripts still put there is content a model actually *authored*: a spec, a quarantine
+dossier, a boundary role's own report, and the feedback `move-feedback` archives.)
+
+```
+node <this skill's directory>/persist.mjs \
+     --run <the run's workflow transcript directory> \
+     --script <this skill's directory>/conductor.mjs \
+     --args '<the exact envelope you launched with>'
+```
+
+Run it **after every Workflow return, and after every crash** — before you read `.roadmap/` for
+anything, and before any relaunch. It replays the run against its own journal (no model is called),
+then writes `state.json`, `plan.json`, `debt.json`, the `debt.md` and `architect-log.md` sections,
+`skill-degradations.md`, and appends `degradations.jsonl` / `escalations.jsonl`. Re-running it over
+the same run is a no-op, so persisting twice is safe.
+
+Read its last line:
+
+- **`OK …`** (exit 0) — everything landed; the files named on that line are current.
+- **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
+  call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
+  recovery ladder below, then persist again.
+- **`PLAN-CONFLICT unknownUnits=…`** — `.roadmap/plan.json` holds unit ids this run never saw (a
+  root edit between launches, a hand-merged respec). The file was left exactly as it was; merge the
+  two plans by hand before relaunching.
+- **exit 1** — nothing was written and the reason is on stderr. The most common is a partial with no
+  snapshot at all (the run died before its first status change): relaunch and persist again.
+
 **Do not** pass `config: { boundary: 'off' }` to end the arc — arc-completeness is detected
 post-hoc, and the final wave's untriaged boundary evidence is handed to you deliberately as
-integration-review input. (You may pass it on a relaunch you *know* is final.)
+integration-review input. (You may pass it on a relaunch you *know* is final. Owed boundary jobs
+still run in that wave — an explorer or design reconcile that never ran is a debt the last boundary
+pays, not one it defers to a boundary that will never come.)
+
+**Closing admissions.** Once you have judged the plan DRAINED — every unit you meant to build is
+terminal, and what is left arriving is polish — relaunch with
+`config: { conductor: { admissions: 'closed' } }`. Under it the boundary tiers still run and still
+judge, but they may not mint units: every draft they would have admitted and every unit they would
+have promoted is banked to the debt ledger with its origin, and the arc closes on the next dry
+boundary. Without it, a healthy assessor drafts something every wave and the denominator grows as
+fast as the numerator — arc-observed, ~93% merged for 12+ hours after the plan was already drained.
+The one thing `closed` does not bank is a finding graded `blocker`: that routes to the Fable
+boundary tier for a ruling instead of being auto-admitted.
 
 Between waves the conductor triages each boundary through a tiered ladder — script, then Opus,
 then Fable — escalating only as far as the boundary demands, and returning to you only for the
@@ -337,7 +418,8 @@ calls that are yours. The ladder's routing table, config knobs, and the per-unit
 harness runs are in `reference.md`. What you need at the keyboard is what comes back.
 
 **Fallback — per-wave harness dispatch.** You can still launch `harness.mjs` directly per wave
-(`args: { plan, state, config }`, no `harnessPath`) and triage every boundary yourself; setting
+(`args: { roadmapDir, config, launchId }`, no `harnessPath` — it reads the same pack, and
+`persist.mjs --script harness.mjs` writes its return) and triage every boundary yourself; setting
 `boundaryTriage: 'root'` gets the same effect without leaving the conductor. If you take the
 fallback path you inherit the conductor's duties back — in particular withholding contingent
 dependents (`reference.md`), which the harness's scheduler does not do for you.
@@ -348,7 +430,10 @@ Judgment returns to you with `status: 'conductor-return'`, a `reason`, and the r
 **On every wake, first read two things**: `.roadmap/architect-log.md` (the ladder's journal — what
 the boundary agents decided in your stead, and why) and the returned state's `boundary`/`debt`
 residue. That residue is **intact** on a terminal boundary; on a continuation boundary the
-conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on the `reason`:
+conductor already banked the wave's debt (`.roadmap/debt.md`, or `roadmap:debt` issues) and cleared
+**only what the banker confirmed** — anything it did not name stays in `state.debt`, re-banks next
+boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt is already on disk at
+`.roadmap/debt.json`, written the moment the wave returned. Then act on the `reason`:
 
 - **`arc-complete`** — the boundary yielded no further work; the arc is at its cut line. Go to
   **Session end**. The final wave's boundary evidence rode back untriaged, deliberately. Any `stuck`
@@ -362,8 +447,12 @@ conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on 
   left. Read the learnings, revise the downstream specs, relaunch.
 - **`needs-user`** — a call only the user can make; the question is in the escalating agent's
   `notes`. Get the answer, fold it in, relaunch.
+- **`plan-cycle`** — the merged plan's dependency graph closed a loop, so no wave could be
+  dispatched (the harness throws on a cyclic plan, which would take the whole run down). `edges` and
+  `units` name the loop. Remove or repoint one edge in `.roadmap/plan.json`, then relaunch — the
+  boundary's specs, plan, issues and debt were all staged before the return, so nothing is lost.
 - **`max-waves` / `agent-budget`** — the run hit its wave cap or its pre-dispatch budget guard
-  with work remaining. State is already persisted and consumed; relaunch fresh (a new run resets
+  with work remaining. Persist, then relaunch fresh (a new run resets
   the per-run agent counter). `max-waves` carries the final wave's `boundary` back marked
   `triaged:true` — read it for context, but its findings are already banked and its feedback
   already moved, so it is not yours to triage again.
@@ -372,6 +461,13 @@ conductor already banked debt to `.roadmap/debt.md` and cleared it. Then act on 
 - **`triage-degraded`** — the boundary evidence is good but the triage agent itself died (a
   terminal API error). Nothing was admitted or dropped. Triage this boundary by hand, as for
   `boundary-degraded`, then relaunch.
+- **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`,
+  `env-no-reaper`, `platform-outage`) — the wave stopped dispatching and handed you a
+  **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
+  commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
+  wait out a usage-limit or platform-outage window, or fix the box (a full pid cgroup and a
+  ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1). Do the action, then
+  relaunch; never route around a halt by re-implementing the work another way.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
 **Nothing to replan?** Just relaunch the conductor. Keep your own turns terse — on a relaunch wake
@@ -381,10 +477,11 @@ plenty.
 ### On the wakes where you do triage
 
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
-harness has already *run* the boundary jobs (Opus runtime explorer against the live preview, Opus
-health assessor against the integration tip, Haiku full-suite flake re-runs); their results are in
-the returned state's `boundary` block and in `feedback/{explorer,health,design}/wave-<n>.md`
-(`design/` appears only on waves that merged a design-cited unit). If that
+harness has already *run* the boundary jobs (a codex runtime explorer against the live preview, a
+codex health assessor against the integration tip, codex full-suite flake re-runs); their results are
+in the returned state's `boundary` block, and each role wrote its own
+`feedback/{explorer,health,design}/wave-<n>.md` (`design/` appears only on waves that merged a
+design-cited unit; the flake band's record is `feedback/health/wave-<n>-flake.md`). If that
 block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
 
 - **Quarantines**: read the dossiers in `.roadmap/quarantine/` — the *reason* routes the action.
@@ -407,24 +504,28 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   (out-of-scope-file · needs-migration-or-ruling · pre-existing-untouched), because "minor" alone
   is never a reason to bank and correctness findings can never bank through a gate approve. Banked
   debt goes to the living `.roadmap/debt.md` ledger (or, in issue mode, ONE consolidated
-  `roadmap:debt` issue per unit-residue, keyed `wave=<N> unit=<id>`; a consolidation fix-unit that
-  resolves specific issues names them in its `closes` field so the merge path closes them);
+  `roadmap:debt` issue per unit-residue, keyed `arc=<tracking issue or milestone> wave=<N>
+  unit=<id>`; a consolidation fix-unit that resolves specific issues names them in its `closes`
+  field so the merge path closes them);
   annotate an entry resolved when a fix unit lands. Sonnet-compress the batch first if
   it's large; findings at a superseded sha are discounted, not re-litigated. Consumed feedback moves to
   `feedback/triaged/<wave>/` (issue mode: the `roadmap:bug` issues are closed with a disposition
   comment). Triage silently — contact the user **only** for a critical call you genuinely cannot make.
 
-### When the skill itself misbehaves — `.roadmap/skill-feedback.md`
+### When the skill itself misbehaves — `.roadmap/degradations.jsonl`
 
 The scripts' safety nets are *silent by design*: a dead agent degrades to a coded fallback so a blip
 never costs an arc. That silence is dangerous — it once let a deterministic bug masquerade as three
 runs of "network flakiness" — so every degradation is now **recorded, not swallowed**. Read it.
 
-Every return carries a **`degradations`** array (also in the state, and rendered to
-`.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies): each entry is
-`{script, wave, phase, label, model, kind, what}`, where `kind` is `schema-retry` (a report was
-rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the platform
-does not expose why**), `salvage-failed`, or `threw`.
+Every return carries a **`degradations`** array (this run's rows). `persist.mjs` appends each one to
+`.roadmap/degradations.jsonl` — the arc's full record — and renders a per-kind count summary to
+`.roadmap/skill-degradations.md`. `skill-feedback.md` is yours and the user's: nothing in the
+orchestrator can write it. Each entry is
+`{script, wave, phase, label, model, kind, what}`. The `kind` you will meet most are `schema-retry` (a
+report was rejected and retried), `no-report` (the agent died and `agent()` returned `null` — **the
+platform does not expose why**), `salvage-failed` and `threw`; `reference.md` enumerates the full set,
+including the halt kinds, the codex kinds, and the refusals below.
 
 Your duties:
 
@@ -437,28 +538,58 @@ Your duties:
   nowhere else. **Do not attribute it to the network without looking** — a repeated failure at the
   *same label* is a bug in the skill, not weather.
 - **A repeated `schema-retry` on one label means a cap is wrong**, not that the model is verbose.
-- **Carry it upstream.** `.roadmap/skill-feedback.md` is a **living document** — it is about the
-  *orchestrator*, not the product, so it never goes in `debt.md` and is **never archived with the
-  arc**. Report it at Session end and tell the user to take it to the skill's own repository. This
-  is the only channel by which the skill learns from its own failures.
+- **Carry it upstream.** `.roadmap/skill-feedback.md` (hand-written), `skill-degradations.md` and
+  `degradations.jsonl` (machine-written) are **living documents** — they are about the *orchestrator*,
+  not the product, so they never go in `debt.md` and are **never archived with the arc**. Add your own
+  observations to `skill-feedback.md`; report all three at Session end and tell the user to take them
+  to the skill's own repository. This is the only channel by which the skill learns from its own
+  failures.
 
 ### If a run dies mid-run — recovery ladder
 
 The conductor and its child harness share one journal, so `resumeFromRunId` replays every
 completed wave *and* every completed unit within the in-flight wave for free — but it is
 **same-session only, even when the crash notification recommends otherwise** (that recommendation
-is wrong across sessions; the journal does not survive the host process). Work the ladder in order:
+is wrong across sessions; the journal does not survive the host process).
+
+**Run `persist.mjs` first, always** (the command above, with the same `--run` directory and the same
+envelope). A crashed run leaves no state on disk by itself; the persister is what turns whatever the
+journal holds into a `state.json`, marked `partial: {stoppedAt: <label>}` when the replay could not
+reach the end. That file is what rung 3 relaunches from. Then work the ladder in order:
 
 1. **Same session, run still alive** — nothing to do; it will notify you when the run finishes.
 2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in `state.json`'s
    `run` field. Best-effort: if it doesn't cleanly resume, drop to rung 3.
-3. **Adopt rejected, or a new session** — launch a **fresh conductor** from the latest checkpointed
-   `state.json`. This behaves like a resume, not a restart: the conductor persists the merged plan
-   and consumed state *before* every dispatch, so you resume from the last completed boundary; and
-   within the in-flight wave, the harness's setup guards short-circuit work already done (a merged
-   unit branch short-circuits to `merged`; a crashed `running` unit auto-adopts its committed
-   branch and re-enters at verify — its `stage` field and `git log unit/<id>` show how far it got).
-   The loss bound is only the in-flight wave's uncached agent calls.
+3. **Adopt rejected, or a new session** — launch a **fresh conductor** against the `state.json`
+   `persist.mjs` just wrote. This behaves like a resume, not a restart: a continuation boundary
+   snapshots the consumed state, so a partial persist lands the last completed boundary; and
+   within the in-flight wave, the harness asks **git** what already finished before it dispatches
+   anything (a branch that landed on the integration branch is recorded `merged` and never
+   re-dispatched — including one the persisted state still records as `running`/`merge-ready`; a crashed `running`
+   unit whose branch did *not* land auto-adopts its committed work and re-enters at verify — its
+   `stage` field and `git log unit/<id>` show how far it got). The loss bound is only the in-flight
+   wave's uncached agent calls. Pass a **fresh `launchId`** on the relaunch: it is what stops those
+   git/disk probes being served from the dead run's cache.
+
+   A wave that halts immediately with **`integration tip regressed`** is not a crash — it is the
+   harness refusing to build on a branch its own record cannot reach (the branch was rewound, or
+   merges landed on a detached HEAD and are dangling). Nothing was changed. Find the merges
+   (`git reflog <integration branch>`, `git fsck --unreachable`), decide which history is real,
+   point the branch at it, and set `state.json`'s `integrationTip` to match before relaunching.
+
+   Two more refusals read the same way — the run declining to destroy something rather than failing.
+   A **`plan-conflict`** degradation means `.roadmap/plan.json` on disk holds unit ids this run has
+   never seen, so `persist.mjs` skipped the write instead of overwriting them (it says so on stdout
+   too); merging the two plans is yours before you relaunch. A **`debt-unbanked`** degradation means
+   the issue-mode banker did not confirm every item it was given: the unconfirmed ones stay in
+   `state.debt` and `.roadmap/debt.json` and re-bank at the next boundary, so nothing is lost — but
+   a repeat at the same wave means the `gh` projection is failing, and the `gh-sync` entries beside
+   it are the thing to read.
+
+   A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
+   copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
+   dispatch a wave from a document nobody could vouch for. Check the file parses and that
+   `roadmapDir` is right, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately
@@ -482,9 +613,13 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    skipped-reconcile failure the marker exists to prevent.
 2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
-   ledger's state; gate spend broken down by Opus-gate vs escalated Fable gate, and consult spend;
+   ledger's state; **where the run's attention actually went** — Claude spend broken out by tier
+   (`spend.fable`/`opus`/`sonnet`/`haiku`) beside `spend.codex` and `spend.codexRuns`, so the
+   Claude-versus-codex ratio is on the page and not left to be inferred; gate spend broken down by
+   first-pass gate (`spend.opusGateRounds`, whatever tier `gateModel` sent it to) vs escalated
+   Fable gate (`spend.gateRounds`), and consult spend;
    the conductor's ladder breakdown from the final state's `conductor` block plus
-   `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/skill-feedback.md` entries, and
+   `spend.boundaryTriages` / `spend.boundaryFables`; **any `.roadmap/degradations.jsonl` entries, and
    which stage's judgment they cost you**; notes for the next session. Partial completion with
    honest dossiers is a good outcome — a silent one is not.
    **Census every continuation brief before you trust it.** Next-session notes, a continuation
@@ -501,13 +636,14 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
 4. **Close out the arc.** `.roadmap/` is arc-scoped working state, not permanent documentation —
    left raw, a later run reads the stale `state.json` and forks worktrees from a dead integration
    tip, and retired "frozen" contracts masquerade as binding. After `main` advances: stop the
-   preview process (kill the whole **group** recorded in `worktreeRoot/__preview.pid`) and
-   re-attach the primary checkout to `main`; archive the arc (plan, brief, specs, contracts, state,
+   preview process (kill the whole **group** recorded in `worktreeRoot/__preview.pid`) and remove
+   its worktree (`git worktree remove --force worktreeRoot/__preview`); archive the arc (plan, brief, specs, contracts, state,
    `architect-log.md`, dossiers, feedback — triaged and pending alike — report) into
    `.roadmap/archive/<date>-<cutline>/` in one commit; keep the living documents
-   (`constraints.md`, `debt.md`, `skill-feedback.md`, notes) at top level — unresolved debt is a
-   first-class input to the next arc's Phase 0, and `skill-feedback.md` belongs to the *skill*, not
-   this arc, so archiving it would bury the only record of how the orchestrator failed;
+   (`constraints.md`, `debt.md`, `skill-feedback.md`, `skill-degradations.md`,
+   `degradations.jsonl`, `escalations.jsonl`, notes) at top level — unresolved debt is a
+   first-class input to the next arc's Phase 0, and the skill-defect record belongs to the *skill*,
+   not this arc, so archiving it would bury the only account of how the orchestrator failed;
    remove unit worktrees and merged `unit/*` branches (keep quarantined
    branches — their dossiers point at them), and sweep `worktreeRoot/__codex/` with them — the
    codex briefs/events/session artifacts are per-arc forensics whose value ends at close-out

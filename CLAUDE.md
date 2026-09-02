@@ -5,11 +5,22 @@ This repo is the **source** of the `roadmap-orchestrator` skill, not a consumer 
 Prohibitions written *inside* the skill (`plugins/roadmap-orchestrator/skills/orchestrate/`) —
 "don't rewrite the scripts", "`unit/` is owned separately, not a place to edit" — address agents
 who **installed** the skill from the marketplace and are running an arc with it. They do **not**
-bind you here. In this repo, `SKILL.md`, `reference.md`, `harness.mjs`, `conductor.mjs`, and
-`evals/**` are all yours to change deliberately.
+bind you here. In this repo, `SKILL.md`, `reference.md`, `harness.mjs`, `conductor.mjs`,
+`persist.mjs`, `script-loader.mjs` and `evals/**` are all yours to change deliberately.
+
+`persist.mjs` is the exception to the bullet below: it is an ordinary Node process, not a workflow
+script, and it **never calls a model** — its `agent` is a lookup in the run's journal. Keep it a
+pure replay; don't add couriers to it.
 
 What still binds you: a script change is not done until the three-tier eval ladder passes —
 `evals/parse.sh` → `evals/unit/run.sh` → the paid fixtures (`evals/README.md`).
+
+- **The script has no shell — `run()` is `agent()`, so every side effect is a model acting for it.**
+  Read `RATIONALE.md` §19 ("Couriers, not janitors") before touching a prompt or a brake: the cheapest
+  tier gets a closed command list the script composed, never a goal, and every wave-level brake lives
+  in code. Don't "improve" a courier prompt back into a goal ("clean up the leftover listeners", "find
+  the issue for this unit", "make the checkout work"), and don't relocate a code brake into prose — a
+  prohibition only works if it is honoured, and the 2026-08 ledger is what happens when it isn't.
 
 ## GitHub issue tracking — non-obvious traps
 

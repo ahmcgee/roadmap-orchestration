@@ -41,8 +41,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk, courierOk } from './fakes.mjs'
 // The introspection + assertion toolkit lives in hygiene-lib.mjs so other suites
 // (codex-lane.test.mjs holds the embedded Codex brief to the same bar) share one copy.
 import {
@@ -81,6 +81,7 @@ const FIX_ROUNDS = [
   // Anchored at ^verify: so it never catches `opus-gate-verify:`/`gate-verify:`.
   { match: /^verify:.*#0$/, result: {
     pass: false, blocked: false, failures: ['assert: expected 1, got 2'],
+    lanes: [{ command: 'npm run test:ci', exitCode: 1 }],
     contractSurfaceTouched: false, diffFiles: [] } },
   // opus exit gate revises once -> `codex-opus-gate-fix:`
   { match: /^opus-gate:.*#0$/, result: {
@@ -129,9 +130,12 @@ test('harness: every capped-schema prompt states the length contract', async () 
   // The code-writing family is now the CODEX STEERING family: `impl`/`debt-fix`/`fix`/`gate-fix`/
   // `opus-gate-fix` no longer exist, and `codex-spec-review` is a new capped schema (S.specReview)
   // that must not be allowed to slip in untested — a capped schema no drive reaches is exactly the
-  // trap this file exists to catch.
+  // trap this file exists to catch. 0.14.0 adds four more: `plan`, `verify` and `flake` became
+  // codex ROLES (so their courier carries the adapter envelope, which is itself capped), and
+  // `codex-review` is a brand-new capped schema — the pre-gate digest the exit gate now eats.
   const seen = new Set(capped.map((c) => c.label.split(':')[0].split('#')[0]))
   for (const required of ['codex-build', 'codex-fix', 'codex-gate-fix', 'codex-opus-gate-fix', 'codex-spec-review',
+    'plan', 'verify', 'codex-review',
     'opus-gate', 'gate', 'explorer', 'health', 'flake', 'design'])
     assert.ok(seen.has(required), `harness: expected to exercise a capped '${required}' prompt; saw ${[...seen]}`)
 })
@@ -198,7 +202,11 @@ async function driveConductor() {
     }
   })
 
+  const hygienePlan = makePlan([unit('ok'), unit('broken')])
+  const hygieneState = makeState()
   const { fn: agentFn, calls } = makeAgent([
+    // The launch pack read — the conductor's first act, and itself a capped-schema prompt.
+    ...packRules(hygienePlan, hygieneState),
     // Tier 3 (wave 1): respec the quarantine so the arc continues into wave 2.
     {
       match: /^boundary:w1$/,
@@ -207,6 +215,10 @@ async function driveConductor() {
         reviseSpecs: [], cutUnits: [], debtLedger: [], journal: 'j', escalate: false, arcComplete: false, notes: '',
       },
     },
+    // The staging writers. Absent, these labels fell through to makeAgent's throw and were silently
+    // swallowed by the old fire-and-forget `.catch(() => null)` — since 0.14.0 an unconfirmed spec
+    // withholds its unit, so the fixture has to say what the writer did.
+    { match: /^move-feedback:/, result: courierOk },
     // Tier 2 (wave 2): nothing left worth a wave → arc-complete.
     {
       match: /^triage:w2$/,
@@ -219,7 +231,7 @@ async function driveConductor() {
 
   const runner = await loadScript(CONDUCTOR)
   await runner({
-    args: { plan: makePlan([unit('ok'), unit('broken')]), state: makeState(), config: {}, harnessPath: HARNESS_PATH },
+    args: { roadmapDir: `${hygienePlan.repoPath}/.roadmap`, launchId: 'sim-launch', config: {}, harnessPath: HARNESS_PATH },
     agent: agentFn,
     workflow: workflowFn,
   })

@@ -26,7 +26,10 @@ G=(--repo "$REPO")
 RUN="eval-$$-$(git rev-parse --short HEAD 2>/dev/null || echo x)"   # unique namespace for this run
 UMARK="roadmap:unit id=${RUN}-u1"
 QMARK="roadmap:unit id=${RUN}-q1"
-DMARK="roadmap:debt run=${RUN}"
+# Debt markers are ARC-keyed (`arc=<trackingIssue|milestone> wave=<N> unit=<id>|ledger`): without the
+# arc key a `wave=N ledger` search matched a PREVIOUS arc's wave N and silently skipped creation.
+DMARK="roadmap:debt arc=${RUN} wave=1 ledger"
+XMARK="roadmap:unit id=${RUN}-decoy"
 echo "issue-mode eval against $REPO (namespace $RUN)"
 
 fail=0
@@ -50,11 +53,23 @@ teardown() {
 trap teardown EXIT
 
 # find-by-marker with a short retry — GitHub's search index can lag a just-created issue.
+#
+# This is the EXACT search the scripts compose (harness/conductor `markerFind`), predicate included.
+# `--search` is full-text and tokenizes the marker, so a hit is a CANDIDATE only: the jq predicate
+# requires the candidate body's FIRST LINE to equal the marker comment, and prints nothing at all
+# when no candidate qualifies. Keep this filter byte-compatible with `markerFind` — it is the shape
+# assertion, and a drift here means the live search is no longer the one under test.
+JQ_EXACT='[.[] | select(((.body // "") | split("\n")[0] | sub("\r$"; "")) == "<!-- __MARK__ -->")] | .[0] | select(. != null) | "\(.number) \(.state)"'
+marker_search() {   # -> "<number> <OPEN|CLOSED>" or nothing
+  local mark=$1
+  gh issue list "${G[@]}" --search "\"$mark\" in:body" --state all --limit 30 \
+    --json number,body,state --jq "${JQ_EXACT/__MARK__/$mark}" 2>/dev/null
+}
 find_by_marker() {
-  local mark=$1 n=""
+  local mark=$1 hit=""
   for _ in 1 2 3 4 5; do
-    n=$(gh issue list "${G[@]}" --search "\"$mark\" in:body" --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null)
-    [ -n "$n" ] && { echo "$n"; return 0; }
+    hit=$(marker_search "$mark")
+    [ -n "$hit" ] && { echo "${hit%% *}"; return 0; }
     sleep 2
   done
   return 1
@@ -108,6 +123,31 @@ gh issue edit "${G[@]}" "$Q1" --remove-label status:pending --add-label status:q
 gh issue comment "${G[@]}" "$Q1" --body "Quarantine dossier: unsatisfiable spec." >/dev/null 2>&1
 if [ "$(state_of "$Q1")" = OPEN ]; then case ",$(labels_of "$Q1")," in *,status:quarantined,*) pass "quarantine -> open + status:quarantined + comment";; *) flunk "quarantine label";; esac
 else flunk "quarantine issue must stay open"; fi
+
+# 5b. The exactness bar, in the shape that actually bit: an issue whose body MENTIONS the marker but
+# does not OPEN with it must read as ABSENT. GitHub's tokenized search returns it; the jq predicate
+# is what rejects it. Without this, a Phase-0 bootstrap "reuses" a live issue (2026-08-22: three
+# clobbered — bodies overwritten, status:merged swapped for status:pending, re-milestoned).
+X1=$(gh issue create "${G[@]}" --title "[decoy] ${RUN}" --label "roadmap:unit" \
+  --body "some preamble line
+<!-- $XMARK -->
+the marker is here, but not on the first line" 2>/dev/null | grep -oE '[0-9]+$')
+[ -n "$X1" ] && CREATED_ISSUES+=("$X1")
+sleep 2
+RAW=$(gh issue list "${G[@]}" --search "\"$XMARK\" in:body" --state all --limit 30 --json number --jq '.[0].number' 2>/dev/null)
+DECOY=$(marker_search "$XMARK")
+if [ -z "$DECOY" ]; then
+  pass "exact-marker predicate rejects a body that only MENTIONS the marker (raw search returned '${RAW:-nothing}')"
+else
+  flunk "exact-marker predicate adopted a non-first-line marker (got '$DECOY') — find-or-create would clobber it"
+fi
+
+# 5c. State rides back with the number, so an editing site can refuse a CLOSED issue.
+CSTATE=$(marker_search "$UMARK")
+case "$CSTATE" in
+  "$U1 CLOSED") pass "marker search reports state alongside the number (merged unit reads CLOSED)";;
+  *) flunk "marker search state field (got '$CSTATE', want '$U1 CLOSED')";;
+esac
 
 # 6. bank-debt idempotency: create-by-marker twice, expect exactly one issue.
 gh issue list "${G[@]}" --search "\"$DMARK\" in:body" --state all --limit 1 --json number --jq '.[0].number' >/dev/null 2>&1

@@ -25,10 +25,24 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   each triage, carries across waves and arcs, read at Phase 0 as
                        #   candidate scope. Distinct from feedback — kept, not consumed.
                        #   FILE MODE ONLY — issue mode uses roadmap:debt issues instead.
-  skill-feedback.md    # LIVING. Defects in the ORCHESTRATOR itself (not the product): every
-                       #   degradation the scripts recorded. Written at every persist point so
-                       #   it survives a run that dies. Never archived — it belongs to the
+  skill-feedback.md    # LIVING, HAND-WRITTEN, and never touched by the scripts. Your and the
+                       #   user's observations about the ORCHESTRATOR itself. Belongs to the
                        #   skill's repo, not to this arc. Never mixed into debt.md.
+  skill-degradations.md # LIVING, MACHINE-written by persist.mjs (whole file, every run). A
+                       #   per-KIND count summary of the degradations that run recorded —
+                       #   bounded by the number of kinds, never by the number of rows — plus a
+                       #   pointer to the ledger below. Carry it back to the skill's repo
+                       #   alongside skill-feedback.md.
+  degradations.jsonl   # LIVING, APPEND-ONLY. One JSON line per degradation, appended by
+                       #   persist.mjs from the run's return envelope. This is the full record;
+                       #   state.json carries none of it.
+  escalations.jsonl    # LIVING, APPEND-ONLY. One JSON line per escalation-ladder ruling
+                       #   ({unit, stop, tier, boundary, by, gap}), same route. state.json keeps
+                       #   only the per-unit stop COUNTS the three-strikes brake reads.
+  debt.json            # The wave's debt exactly as the conductor received it, for the returns
+                       #   that hand back BEFORE the bank (a halt, an escalation, arc-complete).
+                       #   Absent once a boundary has banked — debt.md / roadmap:debt issues are
+                       #   the durable ledger.
   specs/<unit>.md      # goal, constraints, contract references, acceptance criteria
                        #   (individually gradeable clauses — the gate grades them one by one),
                        #   plus the Codex-ready sections (SKILL.md Phase 0): Done-when with at
@@ -44,13 +58,16 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   tier-3 agent appends a `## Wave N` section each time it runs.
                        #   Read FIRST by both boundary agents — it is the only channel by
                        #   which your steering reaches them.
-  state.json           # harness-owned after wave 1; you write the initial one.
+  state.json           # written by persist.mjs after every run; you write the initial one.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
-  quarantine/<unit>.md # dossiers written by the harness
+  quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
-    explorer/*.md      #   per-wave runtime exploration findings (harness-run Opus, wave-tail)
-    health/*.md        #   per-wave code/test/structure/ergonomics health findings (Opus)
-    design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (Opus);
+    explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
+                       #   writes this file ITSELF — see "Who writes .roadmap/")
+    health/*.md        #   per-wave code/test/structure/ergonomics health findings (codex role)
+    health/*-flake.md  #   the flake band's re-run record (codex role, which writes this file
+                       #   ITSELF; its own file, so the health role owns wave-<n>.md end to end)
+    design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (codex role);
                        #   written only on waves that merged a design-cited unit
     user/*.md          #   FILE MODE: the user drops notes here AT ANY TIME (copying TEMPLATE.md);
                        #   read at the next boundary — never an input to a running wave. ISSUE
@@ -59,8 +76,45 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   archive/<arc>/       # closed-out arcs
 ```
 
-**Arc-scoped vs living.** Everything above except `constraints.md`, `debt.md` and
-`skill-feedback.md` (and notes) is arc-scoped and archived at close-out. Contracts retire with their
+**Who writes `.roadmap/`.** No workflow script writes a byte of *state*: `persist.mjs` writes all of
+that, after the run.
+A workflow script has no filesystem, so every byte it wanted on disk used to go through a model
+transcribing a document; that transport was the second-largest model cost in the system, and it
+occasionally lost the document anyway. The scripts now **return** everything (state, merged plan,
+debt, the debt.md and architect-log sections, both event ledgers) and the root runs
+
+```
+node <skill dir>/persist.mjs --run <workflow transcript dir> \
+     --script <harness.mjs|conductor.mjs> --args '<the launch envelope>'
+```
+
+after every Workflow return **and after every crash**. It replays the run against its own journal
+(the platform records every agent result; a nested `workflow()` child shares the parent's journal,
+so one directory covers a conductor run and every wave in it), calls no model, and writes the files
+with `fs`. It is idempotent: re-running it over the same run replaces the same sections and appends
+no duplicate ledger rows. A replay that runs out of journal — a crash — writes the last snapshot the
+script logged, marked `partial: {stoppedAt: <label>}`, and exits 2; relaunch with `resumeFromRunId`
+and run it again. Exit 0 = complete, 2 = partial, 1 = error (nothing written).
+
+**Journal order is the clock.** A script is a deterministic function of (args, agent results) only
+*up to completion order*: the harness merges units through one serial chain in the order their
+pipelines reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds
+— so which unit finishes first decides what the rest of the wave is asked. The journal is written in
+completion order, so the replay uses it as its clock: a lookup resolves only when the cursor reaches
+that prompt's record, every earlier record having been consumed by its own lookup first, and pending
+lookups wait. A record nothing asks for (a superseded launch's prompt in a resumed run, an agent
+whose transcript carries no prompt) is stepped over once the run is quiescent, so the clock cannot
+deadlock; a lookup for a record the cursor already passed is a real divergence and stops the replay
+with `partial: {stoppedAt: "<label> (out of journal order)"}`. A nested `workflow()` child shares
+the journal and so shares the one cursor.
+
+What the scripts still delegate to a model is what a model must actually *do*: author a spec, write a
+quarantine dossier or a feedback report, move consumed feedback, and project state into GitHub
+issues. Those are agent work, not transport.
+
+**Arc-scoped vs living.** Everything above except `constraints.md`, `debt.md`,
+`skill-feedback.md`, `skill-degradations.md`, `degradations.jsonl` and `escalations.jsonl`
+(and notes) is arc-scoped and archived at close-out. Contracts retire with their
 arc: once merged, the code and its tests are the source of truth. The detection rule is mechanical:
 top-level `state.json` present → arc in flight, resume or ask; absent → plan fresh, treating
 `archive/` + the living docs as prior knowledge.
@@ -136,10 +190,12 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   },
   "preview": {                     // optional but encouraged — how the *integrated arc* is
     "kind": "server",              //   exercised. server | cli | api. Planned at Phase 0.
-    "setup": "npm run build",      // optional one-time step at wave setup
+                                   //   EVERY command below is run from the preview's own worktree
+                                   //   at worktreeRoot/__preview — never the user's checkout.
+    "setup": "npm run build",      // optional one-time step at preview setup
     "start": "npm run dev",        // server kind: long-running; the harness daemonizes it
                                    //   (log + pidfile at worktreeRoot/__preview.{log,pid},
-                                   //   outside the repo so they never dirty the checkout)
+                                   //   outside every worktree so a mirror advance never touches them)
     "stop": "",                    // optional; default kills the whole preview process GROUP.
                                    //   A custom stop MUST group-kill too — a single-pid kill
                                    //   strands child listeners and leaves ports held.
@@ -147,6 +203,13 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   for hot-reloading servers; absent + server kind → stop/start
     "howToAccess": "http://localhost:5173",  // URL or drive-the-surface instructions — shown to
                                    //   the user at dispatch AND to the wave explorer
+    "ports": [5173],               // optional; the ports the preview OWNS. The only listeners the
+                                   //   one-shot port sweep may kill, interpolated as a literal
+                                   //   list. Absent → derived from a :PORT in howToAccess; nothing
+                                   //   derivable → the sweep may only kill the pidfile's process
+                                   //   group. NEVER inferred by an agent (asked to free "the
+                                   //   preview's ports", Haiku swept three guesses and then
+                                   //   `ps | grep | kill -9`, killing the workflow itself).
     "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
@@ -202,42 +265,113 @@ Fields the scripts add:
   the sanctioned exit. Non-empty `owed` on a terminal return
   is yours: discharge it (run the job) or waive it explicitly in the architect log before
   close-out.
+- **`sharedReds`** — present when the wave's circuit breaker took over a shared pre-existing red:
+  `{spec, units, wave}` per entry. A red claimed by ≥2 units whose diffs all leave it alone is one
+  assertion, not N unit defects — it is degraded once (`shared-red`), suppressed in every affected
+  unit's fix rounds (they proceed on their remaining failures, and are never quarantined for it),
+  and handed to the boundary as a **finding**. Never a debt item: a finding rides the
+  promote/escalation path, which the cut line brakes, so the breaker cannot reopen the
+  "debt creates a wave" hole.
+- **`scopeRulings`** — this wave's exit-gate verdicts on out-of-scope files: `{unit, file, verdict:
+  "approve" | "revert"}` per entry. Previously only the *breach* was recorded (`scope-growth`) and
+  never the ruling, so two identical breaches in one wave could get opposite answers. Each gate is
+  now shown its siblings' rulings as precedent, and the record is here to audit. Wave-scoped —
+  it describes this wave's diffs and does not accumulate.
 - **`conductor`** — `{ reason, wavesRun, boundaries: [{ wave, tier, escalated }] }`. `reason` is
   `null` in flight and the frozen return reason on return; `tier` is the ladder rung that handled
   each boundary; `escalated` is the reason a tier handed up/out, else `null`. `boundaries` is
   **arc-cumulative** (seeded from the passed state), so a mid-arc relaunch extends the forensics
   rather than erasing them.
 - **`spend`** — per-tier agent counts (`fable`/`opus`/`sonnet`/`haiku`) plus `opusPlanChecks`,
-  `planChecks` (Fable only), `opusGateRounds`, `gateRounds` (Fable), and — on a conductor run —
-  `boundaryTriages` (tier-2) and `boundaryFables` (tier-3). **Arc-cumulative**: it seeds from the
+  `planChecks` (Fable only), `opusGateRounds`, `gateRounds` (Fable), `codex` (role dispatches
+  through the adapter — **not** a Claude tier, so the conductor's Claude budget arithmetic ignores
+  it), `codexRuns`/`codexInputTokens`/`codexOutputTokens` (every codex process, build lane
+  included), and — on a conductor run — `boundaryTriages` (tier-2) and `boundaryFables` (tier-3). **Arc-cumulative**: it seeds from the
   passed state and accumulates across relaunches, so a single wave's delta is the difference
-  between two successive checkpoints. This is the session report's "where did frontier attention
-  go" table.
+  between two successive persisted states. This is the session report's "where did frontier
+  attention go" table — and, since 0.14.0, its "how much of the run left Claude entirely" table:
+  read the four Claude tiers *beside* `codex` + `codexRuns`, because that ratio is the whole point
+  of the shift and the only place it is visible. `sonnet` now includes first-pass exit gates on
+  low-risk units (see `gateModel`). Two legacy NAMES survive their literal meaning and are kept
+  because the paid fixtures' round-ceiling graders and every resume journal key on them:
+  `opusGateRounds` counts **first-pass** exit-gate rounds whatever tier `gateModel` sent them to,
+  and the per-unit `rounds.opusGate` is the same count per unit. The tier that actually ran is in
+  the per-tier counters, never inferred from those two names.
 - **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
   accumulator.
-- **`degradations`** — the ORCHESTRATOR misbehaving, not the product: `{script, wave, phase, label,
+- **`escalationStops`** — `{unitId: count}`, arc-cumulative. The only escalation state the run
+  itself reads (the three-strikes brake, which must survive a unit re-entering in a later wave).
+  The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
+- **`partial`** — written only by `persist.mjs`, and only when a replay could not reach the run's
+  return value: `{stoppedAt: <agent label>}`. The state beside it is the last snapshot the script
+  logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again.
+- **`degradations` / `escalations`** — **NOT state.json fields.** They are events, not state: each
+  run collects its own rows in memory, hands them back on the return envelope, and `persist.mjs`
+  appends them to `.roadmap/{degradations,escalations}.jsonl`. They used to ride inside `state.json`,
+  arc-cumulative — a third of a 170–190 KB document by wave 19, re-transcribed at every write, so
+  each row made the next write likelier to fail and each failed write appended another row.
+  Degradation shape: `{script, wave, phase, label,
   model, kind, what}` per entry, `kind ∈ schema-retry | no-report | salvage-failed | threw | gh-sync |
-  write-failed | preview-failed | correctness-debt-banked | scope-growth | codex-exec |
-  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-spec-review`.
-  Codex-kind entries name the `__codex/<unit>/<step>/` artifact directory to read; `codex-exec`/
-  `codex-timeout` with surviving commits mean the branch was judged on its merits (a dead process
-  is not a dead unit); `codex-unavailable`/`codex-usage-limit` accompany a wave halt (see
-  `state.codex` below); `scope-growth` means a diff reached beyond its pinned envelope and the
-  gate adjudicated it.
+  preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
+  quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
+  duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
+  env-no-reaper | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
+  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
+  Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
+  directory to read; `codex-role` is a role that produced no result after its one retry — its
+  caller got `null`, and nothing was halted on account of it. Four 0.14.0 kinds are what the
+  harness *did about* such a null on the roles that have a coded answer: `review-skipped` (no
+  pre-gate digest, so the exit gate reads the raw diff at Opus whatever the risk — less evidence
+  buys more Claude, never less scrutiny), `verify-unrun` (the unit is recorded `blocked`, **not**
+  quarantined: nothing about it was judged, its commits are intact, and the wave-start loop
+  re-opens it next wave), `dossier-write-fallback` (codex did not write the quarantine dossier,
+  so the Haiku writer it replaced runs once — a dossier must exist) and `health-skipped` (no
+  wave-tail health report, so an empty draft set at this boundary means UNASSESSED rather than
+  "nothing to consolidate"). `codex-exec`
+  (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
+  finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
+  the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
+  (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`, `env-no-reaper`,
+  `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
+  fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
+  treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
+  died, so whether the branch holds work is unknown and the unit parked rather than being
+  quarantined for building nothing; `scope-growth` means a diff reached beyond its pinned envelope and the
+  gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
+  so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the recorded
+  integration tip (`state.json`'s `integrationTip`) is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
+  reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
+  landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
+  **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
+  and a resume can serve them from cache. A `verify-blocked` entry accompanies an environment
+  quarantine and carries the host's load; a `shared-red` entry names the one spec several units
+  failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
+  one batch, which are dropped rather than renamed into extra units.
+
+  **Host load is recorded, never gated on.** Every test lane reports `loadavg1` and `cpuCount`
+  (`cat /proc/loadavg`, `nproc`) into its verify result, the flake band reports one `loads` sample
+  per run, and the `verify-blocked` and `codex-timeout` entries cite them. The wave's own
+  concurrency is what produces the load, so waiting on it would be waiting on our own siblings —
+  `gateMaxConcurrent` is the actual brake. The numbers exist so a wall-clock verdict is auditable
+  after the fact instead of a mystery.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
-  unaffected; the wave-tail sweep reconciles what it can. A `write-failed` entry means a state/plan
-  checkpoint write did not confirm — the on-disk copy may trail the run until the next successful
-  write heals it. Every verbatim write goes through a single-quoted here-doc and is verified by
-  `cksum` (content hash + length, never a bare byte count — a byte count was gamed live); a payload
-  over ~24 KB is split on line boundaries and fanned out — one Haiku writer per `<file>.partK`, then
-  one assembler that `cat`s the parts, cksum-checks the whole, and `rm -f`s the parts; a lost part
-  or a mismatch skips assembly / leaves the parts, so the entry names the part and the previous file
-  stays intact. A `preview-failed` entry means the mirror never came up — the entry
-  carries the porcelain diagnosis and exact operator guidance (carried-modification vs real local
-  edits), and the boundary records owed explorer/design markers instead of silently no-opping.
-  **Arc-cumulative** (unlike `debt`, it is never consumed) and rendered to
-  `.roadmap/skill-feedback.md` at every persist point, so it survives a run that dies. Every
-  conductor return carries the array, empty when the run was clean.
+  unaffected; the wave-tail sweep reconciles what it can. A `plan-conflict` entry is written by
+  `persist.mjs` (`script: 'persist'`): `plan.json` on disk held unit ids the run has never seen, so
+  the overwrite was REFUSED and the file left exactly as it was — merge the two plans by hand.
+  A `debt-unbanked` entry means the issue-mode banker did not confirm every item; the unconfirmed
+  ones stay in `state.debt` and in `.roadmap/debt.json` and are re-banked at the next boundary.
+  (File mode has no such entry: its `debt.md` section is data on the return envelope, and a
+  deterministic writer cannot half-land one.) A `preview-failed` entry means the mirror never came up — the entry names which of
+  the three setup steps failed (worktree / provisioning / bring-up) with the failing command's exit
+  code, and the boundary records owed explorer/design markers instead of silently no-opping; the
+  user's own checkout is never involved either way. A `lane-substituted` entry means a verify
+  reported `pass` with an empty lane ledger, so the green cannot be attributed to any command —
+  the exit gate is the one that rules on lane coverage, so this never gates the unit.
+  Both ledgers are appended by `persist.mjs`, one JSON line per row, and a per-kind count summary of
+  the run is rendered to `.roadmap/skill-degradations.md`; `skill-feedback.md` is hand-written and
+  nothing in the orchestrator can reach it. **Arc-cumulative** (unlike `debt`, they are never
+  consumed). Every conductor return carries this run's array, empty when the run was clean.
 
   A **`no-report`** entry means `agent()` resolved to `null` and **the platform does not expose why**
   — the entry names the agent's `label`, and the real error is only in that agent's `agent-*.jsonl`
@@ -250,17 +384,31 @@ dependency is `merged`. While `running` a unit also carries a `stage` field
 (`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
 replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`, the per-unit
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
-it) and, on a codex halt, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
+it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
 `units[id].codexSession = {id, cwd, wave}` is forensics only — session ids are nondeterministic
 and never enter a prompt; fix prompts reference the session-id FILE. The wave state also carries
-**`codex`**: `{probed, available, halt?}` — `halt ∈ codex-unavailable | codex-usage-limit` is the
-conductor's early-return signal (re-auth / wait out the limit window, then relaunch; everything
-resumes cleanly). Checkpoints land at every status change **and** every stage transition,
-coalesced latest-wins — the file can trail the newest event by one write.
+**`codex`**: `{probed, available}`, and — only when the wave halted — **`halt`**:
+`{reason, codex?, env?, platform?}`. One record for every wave-level brake; `reason` is the winning
+slot (precedence `platform > env > codex`, decided in the harness so nothing downstream duplicates
+it) and it IS the conductor's early-return reason, read verbatim by the root:
+
+| `reason` | who set it | how the root clears it |
+|---|---|---|
+| `codex-unavailable` | the per-wave `codex-probe` found no CLI or no "logged in" line | `codex login` (or `--device-auth` headless), then relaunch |
+| `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
+| `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
+| `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
+| `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
+
+Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
+with their commits intact, the full state rides home on the return envelope, and no slot carries
+forward — the next wave re-establishes each from its own probes. A free `log` snapshot is emitted at
+every status change **and** every stage transition, so a run that dies before returning still has a
+recent state for `persist.mjs` to land as `partial`.
 
 In **issue mode** `state.units[id].issue` caches the unit's issue number (convenience only; see
-`plan.units[].issue`). `degradations` gains the `gh-sync` kind (below).
+`plan.units[].issue`). The degradation ledger gains the `gh-sync` kind (below).
 
 ## GitHub issue tracking
 
@@ -276,10 +424,21 @@ green-tip mirror has: **observability, never a gate.** Every `gh` write is best-
 records a `gh-sync` degradation and continues; no unit or wave outcome ever depends on it.
 
 **Idempotent by marker, not by number.** Every unit issue body opens with a machine marker
-`<!-- roadmap:unit id=<unit-id> -->`. Sync agents **find-or-create** by that marker
-(`gh issue list --search '"roadmap:unit id=<id>"' --state all`), so a stale or absent `unit.issue`
-cache is harmless and a resumed/re-run wave never double-creates. Same discipline as the harness's
-wave-N section markers.
+`<!-- roadmap:unit id=<unit-id> -->`, and every debt issue with `<!-- roadmap:debt arc=<arc>
+wave=<N> unit=<id>|ledger -->` (the **arc key** — `plan.trackingIssue`, else `plan.milestone` — is
+load-bearing: without it a `wave=3 ledger` search matched a *previous* arc's wave 3 and silently
+skipped creation). Sync agents **find-or-create** by that marker, so a stale or absent `unit.issue`
+cache is harmless and a resumed/re-run wave never double-creates.
+
+**A search hit is a CANDIDATE, never a match.** `--search '"<marker>" in:body'` is GitHub full-text
+search: it *tokenizes* the marker, so `id=raise-verbs` matched an unrelated open agenda issue and a
+Phase-0 bootstrap "reused" three live issues — overwriting bodies, swapping `status:merged` for
+`status:pending`, re-milestoning them. The exactness test therefore lives in the **shell string the
+script composes**, not in model compliance: every site emits one canonical search whose `jq`
+predicate requires the candidate body's **first line** to equal the marker comment exactly, printing
+`<number> <OPEN|CLOSED>` for the single exact match and *nothing at all* otherwise. No exact match
+means ABSENT, and absent means create. Two standing bars ride with it: **never edit the labels,
+milestone, title or body of a CLOSED issue**, and **never remove a `status:merged` label**.
 
 **Labels** (all skill-managed, prefixed so teardown is a prefix sweep and default repo labels never
 collide):
@@ -335,7 +494,7 @@ is real; flooding it shortens arc lifetime):
 | `status:merged` + close-completed | the **merge** agent (clean-merge + suite-pass path) | live, common case |
 | `status:quarantined` + dossier comment | the **quarantine dossier-writer** (fires on every quarantine path) | live, per unit |
 | reconcile the wave's **changed** unit issues + refresh the tracking-issue task list | one **issue-sync sweep** (Haiku) at the harness wave-tail | 1 agent / wave |
-| debt issues, feedback close/comment, new unit/fix-unit issues | the conductor's boundary writers (`bank-debt` → debt issues, `move-feedback` → feedback closes, `persist-plan` → new-unit issues) | boundary |
+| debt issues, feedback close/comment, new unit/fix-unit issues | the conductor's boundary projectors (`bank-debt` → debt issues, `move-feedback` → feedback closes, `issue-new` → new-unit issues) | boundary |
 | labels/milestone/arc-issue/unit-issue creation, template PR | main loop + one-time Haiku (Phase 0) | once |
 | close issues + milestone + arc issue, open the integration PR | close-out sequence | session end |
 
@@ -375,17 +534,31 @@ mode keeps the local fast-forward-on-confirmation.
 
 **Dropped in issue mode:** `debt.md` and `feedback/user/` (issues are canonical). Internal
 explorer/health/design findings stay files (ephemeral working evidence); `constraints.md` stays
-(living); `skill-feedback.md` stays a file — it is about the *orchestrator*, must leave the product
-repo, and is therefore **never** a product-repo issue.
+(living); the skill-defect record (`skill-feedback.md`, `skill-degradations.md`,
+`degradations.jsonl`) stays in files — it is about the *orchestrator*, must leave the product repo,
+and is therefore **never** a product-repo issue.
 
 ## `harness.mjs` — the per-unit pipeline (one wave)
 
-Every ready unit runs: worktree setup → Opus implementation plan (brief-authoring: written for an
-implementer that cannot ask questions) → codex spec-critique (read-only, cross-model, best-effort)
-→ **plan-check** → **one background `codex exec` build** (the unit's whole implement→test→fix
-inner loop, driven by a Haiku steering agent) → mechanical verify/fix loop (bounded; fixes ride
-`codex exec resume`) → **exit gate** → serial merge onto the integration branch with the full
-suite as the gate. Then, at the wave tail, the **boundary phase**.
+Every ready unit runs: worktree setup → **codex implementation plan** (the implementer plans its
+own work, read-only, brief-authoring: written for an implementer that cannot ask questions) →
+codex spec-critique (read-only, cross-model, best-effort) → **plan-check** (Claude, unchanged) →
+**one background `codex exec` build** (the unit's whole implement→test→fix inner loop, driven by a
+Haiku steering agent) → **codex verify**/fix loop (bounded; fixes ride `codex exec resume`) →
+**codex pre-gate review** (read-only, cross-model, producing the digest the gate eats) → **exit
+gate** (Claude) → serial merge onto the integration branch with the full suite as the gate. Then,
+at the wave tail, the **boundary phase**.
+
+**The 0.14.0 division of labour, in one line: Claude decides, Codex drafts and executes, Haiku only
+couriers.** Every judgment surface that can *reject* work stays Claude — the plan-check, both exit
+gates, the escalation ladder, the consults, the merge and its suite gate, and the boundary TRIAGE
+that rules on what the wave-tail roles found. What moved onto the role adapter is what a
+shell-capable executor does better and cheaper: planning its own work, running the spec's lanes,
+reading the diff to produce a review digest, writing the quarantine dossier, and every wave-tail
+boundary job — explorer, health, flake and design. The economics behind
+it: Claude Code weekly limits are the scarce resource, Opus calls dominate that spend, and codex
+quota is plentiful. **Fable's allocation is untouched** — boundaries, consults, the frontier gate
+and the high-risk plan-check are exactly where they were.
 
 **Codex is THE implementer — there is no Claude implementation lane.** The steering agent writes
 `brief.txt` + a strict-mode `--output-schema`, launches codex in the background (`setsid` +
@@ -396,15 +569,77 @@ back only an allowlist (final message head, session id, one usage line, an error
 **S.impl is the seam**: verify, gates, consults, merge and every trigger work unchanged, and
 nothing downstream learns who wrote the code. Artifacts live under `<worktreeRoot>/__codex/<unit>/
 <step>/` — outside the repo, so the NOROADMAP write-bar and merge fence are structurally
-unreachable; degradations name the directory to read. There is **no adversarial review stage**:
+unreachable; degradations name the directory to read. The Claude adversarial review stage is still gone:
 the build already ran its own test-fix loop, and the exit gates carry the hunting clauses with
-authority. Failure policy: exit≠0/timeout with commits ⇒ judge the branch (a dead process is not
-a dead unit); with no commits ⇒ ONE fresh retry, then the commit-probe/quarantine path; a
-usage/rate limit or a failed per-wave `codex-probe` ⇒ **hard stop** — new dispatch halts,
-in-flight units **park** (`status:'pending', parked:true`, re-entering by adoption next wave),
-the wave state carries `codex.halt`, and the conductor early-returns it to the root
-(`codex-unavailable` / `codex-usage-limit`) for the human to re-auth or wait out the window.
-Never a quarantine, never a substitute implementer.
+authority. What 0.14.0 puts back in front of the gate is a **cross-model** read — a codex role, the
+other model family, producing a digest the gate adjudicates — which is a different thing from the
+stage that was removed: it costs no Claude tokens, it cannot issue a directive, and its output is
+consumed as evidence rather than re-derived by the gate. Failure policy: exit≠0/timeout with commits ⇒ judge the branch (a dead process is not
+a dead unit); with no commits ⇒ ONE retry — for the build step AND for every fix round — which
+first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file) and tells codex in
+its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
+`blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
+`codex-probe` ⇒ **hard stop** — new dispatch halts, in-flight units **park**
+(`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
+`halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
+wait out the window. Never a quarantine, never a substitute implementer.
+
+**The codex ROLE adapter — `run(brief, {model:'codex', …})`.** The build/fix lane is not the only
+way to reach Codex. Any call site can dispatch a judgment or drafting ROLE to Codex and get back an
+object validated against its own schema, exactly as it would from a Claude agent:
+
+```
+const r = await run(brief, { model: 'codex', cwd, sandbox, schema, label, phase,
+                             effort?, timeoutMin? })   // -> schema-shaped object, or null
+```
+
+`cwd` is **required** — a unit worktree, the integration tree, the mirror or the preview tree; the
+operator's checkout **throws**, because a defaulted cwd is how a read-only role edits the repo.
+`sandbox` states the role's intent (`read-only` for reviewers/explorers, `workspace-write` for
+writers) and `codexSandbox` overrides it exactly as in the build lane, so an instruction not to
+write must also live in the brief. `schema` is the caller's own `S.*`: it becomes
+`codex exec --output-schema` (strictified for OpenAI strict mode) *and*, nested under `result`, the
+courier's own structured output — so the platform validates what comes back rather than the harness
+trusting a copy. The adapter appends the brief's `# FINAL MESSAGE` section itself, including a
+budget line derived from the schema's own caps; never hand-write those. Mechanically it **is** the
+build lane, not a second implementation of it: one Haiku courier under `withCodexSlot`, the
+detached `timeout -k` launch, the pidfile, attach-don't-relaunch, the absent-exit-code-means-RUNNING
+rule, reap-then-retry. Artifacts: `<worktreeRoot>/__codex/roles/<label>/` (retry: `<label>-retry`).
+
+**Failure contract** — the one thing a caller must handle. A codex role failure is *codex's*, never
+the platform's: the adapter never throws for a failed run, never sets `halt.platform`, and never
+rides `runReq`'s outage path — `runOr` and `runReq` both **refuse** `model:'codex'` loudly, since
+either recovery would be the wrong one (a re-launched `codex exec` with "your report was rejected"
+stapled on; a dead OpenAI seat halting the wave as a Claude outage). It reaps and retries **once**
+into a fresh dir; if that also yields nothing it appends one `codex-role` degradation and returns
+**`null`**. `null` is the whole tagged failure — branch on it with a coded fallback where one is
+honest, skip where it is not. A usage limit still sets `halt.codex` (one OpenAI account behind every
+run), and a halted wave returns `null` without dispatching. Spend: every role dispatch, retries
+included, ticks `spend.codex`.
+
+Callers today: the **spec critique** (`codex-spec-review:<id>`), the per-unit `plan`/`replan`,
+`verify`, pre-gate `codex-review` and `dossier-write` roles, and the four **boundary roles** — the
+wave-tail runtime `explorer`, the `health` assessor, the `flake` band and the `design` reconciler,
+which moved off Opus (the flake band off Haiku) in 0.14.0. Each boundary role runs in the tree it
+judges (explorer and design in the preview worktree, which is where a shell may reach the running
+product; health and flake in the integration worktree), declares `workspace-write` because each
+writes exactly one file — its own report under `.roadmap/feedback/<job>/wave-<n>.md`, or
+`health/wave-<n>-flake.md` for the flake band — and carries every other restraint in its brief,
+since `codexSandbox` overrides the declared intent anyway. `codexBoundaryTimeoutMin` (45) is their
+deadline rather than the 20-minute `codexRoleTimeoutMin`: driving a product end to end, or running
+the full suite N times over, is real work and not a one-artifact errand. On `null`: explorer, flake
+and design go **owed** exactly as a skipped job does,
+and health additionally records a `health-skipped` degradation — without it an empty draft set reads
+to the triager as "nothing to consolidate" rather than "nobody looked".
+
+**The process outlives its steerer, safely.** The deadline rides *inside* the launched command
+line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
+agent can no longer leave a detached codex running unbounded on an OpenAI seat already handed to
+the next unit. The steerer's liveness rule is the other half: **an absent `exit-code` file means
+RUNNING, never dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails,
+and elapsed time is never evidence. And the steer prompt is idempotent by construction: if
+`<dir>/codex.pid` already exists it attaches instead of launching, so any re-dispatch of the same
+prompt (a schema retry, a salvage, a replay) cannot put two codex processes in one worktree.
 
 **Warm lanes are gone** (0.11.0). They existed to amortize one fixed cold start — read the brief,
 explore the codebase, rediscover conventions — across a chain of units too small to absorb it
@@ -418,27 +653,88 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   clauses that contradict a referenced contract or documented codebase reality, stale premises —
   **plus the frontier-only grounds**: overengineering and complexity that does not earn its keep,
   structure that makes the next change harder, missed reuse or a simpler shape, doors quietly
-  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort; read-only by brief
-  — "change nothing" — not by sandbox: it runs under `codexSandbox` like the build lane, because
-  `-s read-only` needs the bwrap namespace the devcontainer cannot build) runs first; its questions/risks feed the plan-check as adjudication input — cross-model
-  disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
+  closed. A **cross-model spec critique** (`codex-spec-review:<id>`, best-effort) runs first —
+  a codex ROLE (see the adapter above) asking for `read-only`, which `codexSandbox` overrides, so
+  "change nothing" is carried by the brief; a `null` skips the pass. Its questions/risks feed the
+  plan-check as adjudication input — cross-model disagreement is signal. Routing: **Fable takes every `med`/`high`-risk
   unit** (plus infeasible plans and `planCheck:'always-fable'`); only low-risk units ride
   **Opus-first** (`approve`/`redirect`/`escalate`; Opus may not quarantine — kill decisions are
   frontier-only). `planCheckRisk` decides which tiers get *any* check.
-- **Exit gate** (once the fix loop converges). **Opus-first**: a fresh adversarial Opus (not the
-  implementer) grades each acceptance criterion and returns `approve` / `revise` (a mechanical fix
-  it specifies itself → free Opus fix → re-verify → re-gate, bounded by `maxGateRounds`) /
-  `escalate`, naming the trigger: `stuck`, `hard-tradeoff`, `foundational`, or `oversight`. The
-  **Fable** gate (`approve | revise | quarantine`) is reached unconditionally when
+- **Pre-gate review** (`codex-review:<id>`, read-only). A codex ROLE — the *other* model family —
+  reads the full diff once against the spec, the frozen contracts, the conventions contract and the
+  pinned scope, and returns a **digest built for the gate to consume**: `specFindings` (criteria
+  the runnable checks pass and the spec's PROSE still forbids — the `gate-bad` class),
+  `conventionFindings` (a catalogued shared helper reimplemented inside the diff — the
+  `gate-convention` class), `contractTouches`, `scopeNotes`, an `unread` honesty list, and a
+  `verdict` (`clean`/`concerns`/`blocking`) + `risk` grade. This is **not** the pre-0.13 adversarial
+  review stage (RATIONALE §17): that one graded the same diff the gate re-read with authority and
+  only widened it. This one is what makes the gate's diet affordable, and its two scalars are read
+  by the *script*, not by a prompt.
+- **Exit gate** (once the fix loop converges). **First-pass tier by `gateModel`** — Sonnet for
+  low-risk, Opus for med/high: a fresh adversarial Claude (not the implementer, not the reviewer)
+  grades each acceptance criterion and returns `approve` / `revise` (a mechanical fix it specifies
+  itself → free codex fix → re-verify → re-gate, bounded by `maxGateRounds`) / `escalate`, naming
+  the trigger: `stuck`, `hard-tradeoff`, `foundational`, or `oversight`. **The gate diet:** it
+  adjudicates the review digest, the lane ledger, this wave's scope precedent and the contract
+  notes; the **raw diff stays in front of med/high-risk units**, and a low-risk gate starts from
+  `git diff --stat` plus the full diff of every file the digest names, expanding on the least
+  suspicion. Two conditions refuse the diet outright and put **Opus back in front of the raw diff**:
+  no digest at all (the reviewer died → a `review-skipped` row), and a digest the reviewer itself
+  graded `blocking` or high-risk. That is the anti-rubber-stamp rule, and it is code, not prose —
+  **the gate must be able to disagree with the review**, and a gate that cannot see the diff cannot.
+  A digest is handed to both gates as *evidence to adjudicate, never a verdict and never coverage*.
+  The **Fable** gate (`approve | revise | quarantine`) is reached unconditionally when
   `exitGate: 'always-fable'`, `risk: high`, the diff touches a frozen contract surface, or the
-  unit falls in the deterministic `gateAuditRate` sample. Opus non-convergence also falls through
-  to Fable.
-- **Verify — three outcomes, not two.** Cheapest-first: lint/typecheck the changed files →
-  unit-scoped tests + the spec's acceptance checks. The full suite runs **only at the merge gate**,
-  never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
+  unit falls in the deterministic `gateAuditRate` sample — **unchanged by 0.14.0**. First-pass
+  non-convergence also falls through to Fable.
+- **Verify — a codex role, and three outcomes, not two.** One brief serves the polish loop and
+  every gate re-verify (they only ever differed in tense), and the verifier reads the
+  acceptance-check commands out of the **spec itself** rather than being handed a transcription of
+  them. It keeps its `gateMaxConcurrent` slot: a codex lane spends the box's cores exactly as a
+  Haiku one did. `LOAD_CMDS` stays inline in the brief rather than becoming a second courier call —
+  the number that matters is the load *while* the lanes ran, which only the process that ran them
+  can sample. A verify that never *ran* (the role produced nothing after its retry) is **not** a
+  verdict: the unit is recorded `blocked` with a `verify-unrun` row and re-enters dispatch next
+  wave — deliberately not the env-blocked quarantine below it, because `blocked:true` is a verifier
+  that ran and found the tooling broken, while a dead role is a fact about codex.
+  Cheapest-first: lint/typecheck the changed files → then
+  **exactly the acceptance-check commands the spec names, verbatim, in order**. Every command and
+  its exit code comes back in `verify.lanes`, and `pass` is true only if every exit code is 0.
+  Substituting a narrower or cheaper lane is the failure this closes (a verifier ran `test:unit`
+  where the spec said `test:ci` and left a red seal invisible for a whole unit), so **both exit
+  gates check the lane ledger against the spec's list before weighing anything else** — a named
+  check missing from `lanes` means UNVERIFIED whatever `pass` says. The script cannot assert
+  coverage itself: the commands live in the spec markdown, not in `plan.json`. The full suite runs
+  **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
   enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
   `provision` block.
+- **Git decides `merged`, in code, before anything else.** At dispatch, before every quarantine,
+  and for every `running`/`merge-ready` crash-residue record, a closed-list Haiku courier
+  (`merged-probe:<id>`) runs the exact commands the script interpolated and reports their **exit
+  codes verbatim**; the script judges. The test is that the unit branch's tip is the **second
+  parent of a merge commit** on the integration branch — deliberately *not* a bare
+  `merge-base --is-ancestor`, which false-positives on a commit-less branch parked at an old
+  integration commit. A unit git already calls merged returns `merged` without dispatching, and
+  `quarantine()` **refuses** it (recording a `quarantine-refused` degradation) rather than
+  re-opening landed work. The single exception is a merge the integration fix **reverted**: `git
+  revert -m 1` leaves the merge commit in history, so that one caller quarantines explicitly.
+- **A merge is not merged until git says it is reachable.** After the suite passes,
+  `merge-reach:<id>` judges **reachability, and nothing else**: the unit branch must be an ancestor
+  of the integration branch and the reported head sha must be reachable from it, both by exit code,
+  and only then are `status: 'merged'`, `mergedAt` and the new integration tip written. Where HEAD
+  points is *reported* in the same probe but decides nothing — it rides along in the quarantine
+  reason as evidence. (The merge prompt still has to put HEAD on the branch first: that is how the
+  result becomes reachable, not a separate thing to grade afterwards. Demanding attachment *at
+  probe time* false-negatived a clean, landed merge in a paid run.) A merge left where no branch
+  can reach it is quarantined with both decisive exit codes leading its reason — the
+  `quarantine-refused` note truncates that reason at 120 chars, so the evidence goes first — and
+  the branch is left intact to re-merge.
+- **The wave-start tip reconcile is one-way.** The integration-worktree setup courier reports the
+  exit code of `git merge-base --is-ancestor <the state's integrationTip> <integration branch>`. The live tip
+  is adopted **only** on exit 0 (the branch moved ahead). Anything else means our record and the
+  branch have diverged — the harness records a `tip-regressed` degradation and **throws before
+  dispatch** rather than forking a wave off a history that orphans the last one.
 - **Merge & quarantine.** Serial queue: Haiku checks the unit diff for `.roadmap/` paths (a hit
   refuses the merge, a strip commit restores the paths to the merge base — content preserved in
   branch history — and a `kind:'contract'` debt entry routes adjudication to you: NOROADMAP made
@@ -465,12 +761,16 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   fired zero times in 92 units while every real failure was a silent design decision under a spec
   that didn't cover it.
 - **Boundary phase** (wave tail, strictly after every merge and mirror advance; gates nothing). In
-  parallel: the **Opus runtime explorer** against the live preview (drives it via
-  `preview.howToAccess`; ≤10 findings with severity, exact repro, observed vs expected; an empty
-  report is legitimate), the **Opus health assessor** against the integration tip, and Haiku
-  full-suite **flake re-runs** (`flakeReruns`). Results land in the returned state's `boundary`
-  block and, via Haiku verbatim-writers, in `feedback/{explorer,health,design}/wave-<n>.md`
-  (`design/` only on waves that merged a design-cited unit).
+  parallel: the **runtime explorer** against the live preview (drives it via `preview.howToAccess`;
+  ≤10 findings with severity, exact repro, observed vs expected; an empty report is legitimate), the
+  **health assessor** against the integration tip, and full-suite **flake re-runs** (`flakeReruns`;
+  a null leaves the job `owed`, exactly as before). All four boundary jobs — explorer, health, flake
+  and the design reconciler — are **codex roles** (0.14.0; the three investigators were Opus and the
+  flake band Haiku through 0.13.x); their results land in the returned state's `boundary` block, and
+  each role writes its own `feedback/{explorer,health,design}/wave-<n>.md` rather than paying a Haiku
+  transcriber for it (`design/` only on waves that merged a design-cited unit). The flake band's
+  record is its own file, `feedback/health/wave-<n>-flake.md`, so two writers never share the health
+  report's path.
 
 **The health assessor is empowered, not advisory.** It judges what no per-unit gate can see: test
 health (coverage gaps, brittleness — assertions on implementation detail, over-mocking,
@@ -496,6 +796,13 @@ the `maxBlockingFindings` cap, banked rather than dropped), and the health asses
 enforced by schema and code, not just prompt:
 - `bankReason` is a closed set — `out-of-scope-file | needs-migration-or-ruling |
   pre-existing-untouched` — REQUIRED on gate debt entries.
+- **Items are deduped** on `(unit, kind, hash(what))` — the ledger was a pure append with no
+  identity, and a resume (which replays a cached implementer report byte-identically) banked the
+  same item twice. A reworded finding is a new item; a literal replay is not.
+- An item banked against a unit whose work has **already landed** (`merge-ready`/`merged`) is
+  stamped **`rebanked: true`** — a ghost of a finding the branch resolved. It stays in the ledger
+  (dropping evidence is worse) but the conductor's contract-debt filter ignores it, so a resolved
+  ghost can no longer force a `contract-amendment` return.
 - **Correctness debt never banks through an approve.** A gate that approves while holding a
   `kind:'correctness'` item is coerced to `revise` (the items become directives) within the
   existing `maxGateRounds`; at the cap the Opus gate escalates to the frontier gate, and the
@@ -507,13 +814,130 @@ The harness collects the wave's items into the returned state's `debt` array; at
 are promoted into fix units or appended to `debt.md`. Debt is durable where feedback is consumed;
 a resolved item is annotated, not deleted.
 
-**The green-tip mirror.** When `plan.preview` exists, the harness detaches the *primary checkout*
-at the integration tip and, after each suite-green merge, has Haiku advance it (coalescing
-latest-wins — merges never wait for it) and refresh the preview there. The user watches from their
-own repo and only ever sees real suite-green states. The `main` ref never moves (detached HEAD) and
-the merge queue stays in `__integration`, so user git activity can at worst stale the mirror (one
-detach-checkout heals it), never derail the queue. **The preview is observability, never a gate**:
-setup/refresh/healthcheck failures set `preview.status: "failed"`, log, and continue.
+**The green-tip mirror.** When `plan.preview` exists, the harness gives the preview **its own
+worktree** at `worktreeRoot/__preview` (added detached from the primary checkout, then provisioned
+exactly like `__integration`), stands the preview up there, and after each suite-green merge has
+Haiku advance it (coalescing latest-wins — merges never wait for it) and refresh the preview. The
+user watches at `preview.howToAccess` and only ever sees real suite-green states, **with their own
+checkout untouched** — they can keep working and switching branches while an arc runs.
+
+The advance is a **closed command list** (`git checkout --detach <sha>`, the bring-up commands, then
+`git rev-parse HEAD` for the script to read back), not a goal with a "never stash, reset, or force"
+rider: the mirror used to run in the primary checkout, where the harness's own tracked
+`.roadmap/state.json` made git refuse the detach, and a Haiku agent told to make it work anyway
+deleted 163 untracked `.roadmap/` files. A failed bring-up earns exactly one script-dispatched
+retry whose only kill targets are the pidfile's process group and the literal `preview.ports`.
+**The preview is observability, never a gate**: setup/refresh/healthcheck failures set
+`preview.status: "failed"`, log, and continue.
+
+### The courier contract (`courierRun`, and every closed list that isn't one)
+
+A courier is handed a **closed list of exact commands** and returns their **exit codes and verbatim
+output**; the *script* judges. Three rules make that hold, and all three are code, not prose:
+
+1. **The working directory is composed into every command.** Each numbered command goes out as
+
+   ```
+   cd '<where>' && ( <cmd> )
+   ```
+
+   (`cdGuard`, mirrored in both scripts). Because the guard is *in the command*, the courier prompt
+   tells the courier not to `cd` or `pwd` first — there is nothing left about its own location to
+   prove. A courier that ignores the guard anyway produces a non-zero exit of that numbered command
+   — which the stop-at-first-failure rule already handles — instead of a plausible answer from the
+   wrong repository. `where` is **required**: an empty or undefined path throws at
+   compose time, in `cdGuard` and again in `courierRun`, because an undefined path interpolated into
+   a prompt is precisely how an agent ends up improvising in its own cwd. `gitProbe` composes the
+   same guard.
+2. **Results are positional.** `results[i]` corresponds to `commands[i]`; the courier reports
+   `{exitCode, stdout}` and **never echoes the command text back** — the script already has the list
+   it sent, and anything that needs to name a command in a degradation detail composes it from that
+   list (`courierShape`'s `detail` does exactly this, from the *unwrapped* command, so the guard
+   never leaks into an operator-facing message).
+3. **Couriers carry no identity check at all** (0.14.0). STRICT's `pwd`/`--show-toplevel` proof —
+   still used for the free-form prompts where the script never composes the destination
+   (codex steerers, gh projections, spec/dossier writers), though **inside** the command it guards
+   since 0.14.0: the Bash tool's working directory does **not** persist between tool calls, so an
+   earlier `cd` is worth nothing and "cd first, then prove you are there" was asking for something
+   the tool cannot do (`wf_318afa1b-e9d`). What STRICT states now is that every command must be
+   self-contained — `cd '<path>' && …` or an absolute path — and that the proof rides in the same
+   command as the work. It used to lead every courier prompt too,
+   and it was the wrong check for one: `cdGuard` already names and enforces the destination, so a
+   courier proving its *own* starting cwd first is pure theatre. `wf_318afa1b-e9d`'s
+   `provision:integration` courier took it literally — ran only `pwd`, saw the workflow session's
+   own shell cwd, and reported a fabricated "working directory mismatch" without ever running the
+   composed command. The courier preamble now says the opposite: don't `cd`, don't run `pwd`, don't
+   inspect or verify anything first — every numbered command already carries its own guard.
+
+Why: in the paid conductor fixture `wf_106cdf59-c5f` the `preview-worktree` courier never `cd`'d,
+ran the whole list in the orchestrator's own source repo, and `git worktree add --detach <prevWt>
+<sha>` failed with "invalid reference" against a repository that had never heard of that sha; a
+setup courier in the same run reported that repo's HEAD as a unit branch's tip and the unit was
+quarantined. The same transcript shows `/results/0/command: must NOT have more than 300 characters`
+— the echoed command overrunning its cap and burning the call's schema retries. Both are the RATIONALE
+§19 failure class: a fact the script could compose was left to model compliance.
+
+**Every step that runs a shell command is a courier** (0.14.0). The list, exhaustively:
+
+| step | label | what the script judges |
+| --- | --- | --- |
+| integration branch + worktree | `integration-worktree` | HEAD sha; `is-ancestor` exit, printed by the shell |
+| unit worktree | `setup:<id>` | read-back `rev-parse HEAD` vs the base, `rev-parse --abbrev-ref HEAD` vs `unit/<id>` |
+| adopted branch tip | `adopt-tip:<id>` | the sha, pre-captured before setup can recreate the branch — the worktree must **equal** it at the initial fork, and (on re-entry of an adopted unit, whose branch has since grown fix commits) must merely **contain** it, `merge-base --is-ancestor` on the `setup:<id>` list |
+| provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
+| preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
+| preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |
+| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test |
+| commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
+| `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
+| git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |
+| feedback archive (conductor) | `move-feedback:w<N>` | the closing `ls -1` of `triaged/<N>/` vs the list it sent |
+
+What stays **free-form**, and why: the **codex steerers** (they launch and supervise a process and
+judge its artifacts), the **merge/resolve/integration-fix** agents (they run a project's test suite
+and resolve conflicts semantically), the **`gh` projections** (`issue-running:`, `issue-sync:`, the
+conductor's census and triage sweeps — an exact-marker search returns a *candidate*, and deciding it
+is a model's job), and the **spec/dossier writers** (they write prose a model authored). Each names
+its working directory explicitly in the first sentence so STRICT's identity test has something to
+bind to — including `steerCodex`, which composes its own "your cd target is `<worktree>`;
+`<artifactDir>` is scratch, not a checkout" line for every step rather than leaving it to one
+caller's preamble. Everything a free-form prompt *names* is self-contained too: every composed git
+command carries `-C '<path>'`, every composed `gh` carries `cd '<repo>' &&` (gh has no `-C`, and
+without `--repo` it reads the repository out of the working directory), and a project suite command
+is handed over as `cd '<worktree>' && <command>`.
+
+Why the roster closed: paid conductor fixture `wf_c6971376-1a5`, the run after the guard above
+shipped. Two free-form steps survived it, and both went wrong the same way.
+
+* `provision:preview` never `cd`'d, printed `/workspaces/roadmap-orchestration` from
+  `git rev-parse --show-toplevel` **without reporting it** as the failure STRICT calls it, and then
+  improvised its way to `cd /workspaces/roadmap-orchestration && git worktree add <prevWt>` — no
+  `--detach`, no base sha, in the orchestrator's own checkout. That created a `__preview` *branch*
+  here and left the path registered as a worktree of two repositories, so both waves'
+  `git checkout --detach <tip>` died with "fatal: unable to read tree". Nothing in its brief
+  mentioned worktrees; the *goal* ("provision this checkout") is what let it reach for one.
+* `setup:consolidate-stats-gcd` dropped the `cd` prefix off the commands that mattered, gathered
+  every "proof" that its fork base did not exist (`git branch -a`, `git cat-file -t`, a
+  `--oneline | grep` of an 8-character sha against 7-character output) **in this repo**, and forked
+  the unit from the fixture's `main` HEAD instead — quarantined as "wrong base (got `c4b03e36…`,
+  expected `fb023153…`)". The sha existed; another agent had read it off the integration worktree
+  two minutes earlier.
+
+So the *case* a setup takes is chosen in code from `merged-probe`/`setup-commits` exit codes before
+any command is composed; the one command that case calls for is composed by the script, with the
+"if the worktree is already live, keep it; else add it" branch written as **shell**
+(`test -d … && … || …`) so crash re-entry is never a courier's choice; and the base and branch come
+back from `git -C '<wt>' rev-parse …`, which the script compares. `already-merged` and `has-commits`
+are no longer *states an agent reports* — they are the script's reading of git, and a `has-commits`
+unit is quarantined before a single worktree command exists. The preview's idempotency guard changed
+with them: `git worktree list --porcelain | grep -qx 'worktree <path>'` cannot tell which repository
+a path now belongs to, and a stale record is exactly what suppressed the repair for a second whole
+wave. It asks the question the next step actually needs — can this tree resolve the tip? — and
+rebuilds when it cannot.
+
+**After a courier fails, the script degrades; it never re-prompts the same agent to make it work.**
+The one retry that exists is script-*dispatched*, with a *different* list (the preview sweep), and
+only when the detach already succeeded.
 
 ## `conductor.mjs` — multi-wave dispatch
 
@@ -526,9 +950,28 @@ remains the fallback/recovery path; every conductor knob is inert there.
 ```jsonc
 Workflow({
   scriptPath: "<conductor.mjs>",
-  args: { plan, state, config, harnessPath }   // harnessPath REQUIRED — throws without it
+  args: { roadmapDir, launchId, config, harnessPath }
+  // roadmapDir  REQUIRED — absolute path of the arc's .roadmap directory. The script's FIRST act
+  //             is a Haiku courier that cats plan.json and state.json there and reports each
+  //             file's real `cksum`, which the script verifies IN CODE (one courier per file, in
+  //             parallel; a mismatch is re-read once — over line ranges if the file is simply too
+  //             big for one response — and then the launch throws `pack-unreadable`). The root
+  //             used to paste both documents into `args`, which put the whole pack through the
+  //             most expensive tier in the system on every launch and every resume.
+  // harnessPath REQUIRED — throws without it.
+  // launchId    a per-launch nonce, FRESH on every launch and every resume. It salts the pack
+  //             read (disk holds the LAST run's plan, so a replayed pack is a stale plan) and is
+  //             passed through to each wave, where the harness appends it to its ENVIRONMENT
+  //             probes so resumeFromRunId cannot serve a stale disk/git fact from cache. Absent ->
+  //             one `no-launch-id` degradation and unsalted probes, never a throw.
 })
 ```
+
+**The nested launch.** The conductor dispatches each wave with `plan` and `state` already in memory
+— its plan is mutated wave to wave and deliberately does not round-trip through disk — so a nested
+`workflow()` call passes both in `args` and reads no pack. The rule, in one line: **both in memory =>
+nested; neither => root, read the pack.** One without the other throws. `harness.mjs` launched
+directly (the fallback path) is a root launch and takes the same envelope, minus `harnessPath`.
 
 `config` is threaded to the harness **untouched** (the conductor never sets `boundary:'off'`
 itself). A bounded loop (≤ `maxWavesPerRun`) dispatches a wave, takes its returned state, and feeds
@@ -540,12 +983,15 @@ free.
 | # | Route | When |
 |---|---|---|
 | — | return `contingent-replan` | a contingent edge crossed (`from` merged, `to` withheld this wave or out of scope) |
-| — | return `contract-amendment` | any `kind:'contract'` debt this wave |
+| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates) |
 | — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
 | — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — escape hatch) |
 | **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
-| **2** | Opus boundary triager | any judgment (explorer/health findings, flake flips, non-contract debt, user-feedback files), or `fixUnitAdmit:'triage'` + drafts present |
-| **1** | script (mechanical) | only health fix-unit **drafts**, or nothing — admitted with no frontier tokens |
+| **2** | Opus boundary triager | any judgment (explorer/health findings, flake flips, non-contract debt, user-feedback files), or `fixUnitAdmit:'triage'` + drafts present, or more than `tier1MaxDrafts` drafts |
+| **1** | script (mechanical) | at most `tier1MaxDrafts` health fix-unit **drafts**, or nothing — admitted with no frontier tokens |
+
+Tier 3 also takes the wave when `admissions:'closed'` and a finding is graded `blocker` — see
+**Admissions** below.
 
 - **Tier 2 (Opus)** weighs findings, disposes of debt and non-contract feedback, and admits or cuts
   health-assessor drafts (drafts are the default action). It may **not** kill a unit, amend a
@@ -558,13 +1004,45 @@ free.
   convergence brake generalized: once the plan's own units are all terminal, debt is NOT promoted;
   it banks (to `roadmap:debt` issues in issue mode, `debt.md` in file mode) and the arc completes. So
   termination is preserved and outstanding debt is picked up at the next session's Phase 0.
+
+**Admissions (`conductor.admissions`).** Debt is braked; *drafts* were not. Explorer/health/design
+drafts are findings, not debt, so the debt brake above never touched them — a healthy assessor
+drafts something every wave, and after the plan drains that grows the denominator forever (observed:
+7 drafts admitted at wave 18 and 8 at wave 19 after the architect had already logged PLAN DRAINED).
+`admissions:'closed'` closes that in **code**: tiers 1 and 2 set `newSkeletons = []`, every draft
+the tier admitted and every skeleton it promoted becomes a **debt line** (banked with its origin,
+never dropped), and the boundary then finds nothing new and closes the arc. The line is banked into
+`state.debt` *and* the wave's pending-debt buffer, because the two terminate differently: a terminal
+return hands `state.debt` to the root intact, while a continuation banks the buffer through
+`bank-debt` — the receipt-time snapshot is taken before the boundary mints anything, so one channel
+alone would lose the line. A continuation overwrites `state.debt` from the buffer, so the pair
+never double-banks. The tiers still
+*run* — closed admissions never route work away from judgment, only stop judgment minting units.
+The single exception is a finding graded **`blocker`**, which routes the wave to tier 3 so the
+architect tier rules on it rather than the script auto-admitting it.
+
+**Shared reds.** A `sharedReds` entry in the wave state (one failing spec that broke ≥2 units'
+gates and lies in none of their diffs — see the harness's circuit breaker) arrives at triage as a
+**finding**, tagged `source:'shared-red'`, never as a debt item: a finding rides the promote path,
+which the cut line brakes, whereas admitting it as debt would reopen the "debt creates a wave" hole.
+
+**Duplicate drafts.** A draft filed twice in one batch (same id, or same title once kebabbed) is
+**dropped** before ids are assigned, and the drop records a `duplicate-draft` degradation. Only a
+`supersedes` respec keeps the id-suffixing path — that one legitimately re-files a topic.
 - **Tier 3 (Fable)** handles quarantine respecs and Opus escalations, routing each quarantine by its
   dossier *reason*, and appends the architect journal. It emits **skeletons only** plus a `journal`
   — never code, never a contract amendment. `supersedes` retires the old unit (`inScope:false`) and
   repoints its edges; new ids are kebab-sanitized and collision-suffixed; a respec **never** reuses a
   failed id.
-- After a tier runs, **Sonnet** renders every new skeleton to `.roadmap/specs/<id>.md` and a pure-code
-  merge appends the units and edges. **Arc-completeness is post-hoc**: a tier says so, or the boundary
+- After a tier runs, every new skeleton becomes `.roadmap/specs/<id>.md` and a pure-code
+  merge appends the units and edges. **No spec, no unit**: the spec file's content is composed in
+  code from the skeleton and written verbatim by Haiku through a quoted here-doc, then **verified by
+  `cksum`** — the courier reports what `cksum < <file>` printed and the *script* compares it with
+  `cksumOf` of the bytes it composed, because an `ok:true` from a cheap writer is not evidence. A
+  mismatch buys one resample under a deliberately **differing** prompt (so `resumeFromRunId` cannot
+  serve the bad sample back); after that the skeleton never reaches the merge — it is degraded
+  (`spec-unwritten`) and banked as debt for the next boundary to re-draft, because `specs/<id>.md`
+  is the authority the planner, Codex and both exit gates build and grade against. **Arc-completeness is post-hoc**: a tier says so, or the boundary
   produced no new units and no spec revisions. Both paths are then filtered through a satisfiability
   census — if any in-scope unit is still non-terminal *and* dispatchable, the return is `arc-stalled`
   instead, carrying `outstanding`. Units wedged behind an unresolved quarantine can never move, so
@@ -576,6 +1054,18 @@ conductor sets aside any contingent `to`-unit whose `from` is not yet merged, vi
 keeps running. **A direct per-wave harness launch inherits this duty** — withhold contingent
 dependents yourself or the harness will launch them early.
 
+**Cycle guard.** Before every dispatch the conductor runs `planCycle` over the plan it is about to
+hand the harness; on a cycle it returns **`plan-cycle`** with the loop's `edges` and `units` and
+dispatches nothing. This is a hard escalation to the root (repoint or remove one edge in
+`plan.json`, relaunch), not something the ladder can resolve. It exists because the harness *throws*
+on a cyclic plan and that throw, inside the nested `workflow()`, kills the whole conductor run with
+no return envelope — a boundary's staged specs, plan, debt and journal survive only in the
+platform's journal. The two use the **same** `planCycle` (byte-identical in both scripts,
+`shared-consts.test.mjs`): a cycle reaching the harness's throw is a conductor bug, or a plan a root
+launched at the harness directly, which is the root's error to fix. `mergePlan` also refuses to wire
+an edge into or out of an already-**merged** unit, which is what closed the first observed cycle:
+merged work cannot come to depend on new work, and a dependency on merged work is already satisfied.
+
 **Budget guard.** For waves after the first, a pre-dispatch guard refuses to start a wave that could
 cross the 1000-call cap: `runLocalCalls + 8 + dispatchable×perUnitCallEstimate + agentBudgetReserve
 > 1000` → return `agent-budget`. Exhausting `maxWavesPerRun` returns `max-waves`. Both mean *relaunch
@@ -585,17 +1075,42 @@ boundary as a continuation. So the final boundary is restored onto the returned 
 `{triaged: true, wave: N}` — the evidence is there to read, but it has already been dispositioned
 (findings banked, feedback moved), so do not re-action it.
 
-**Persistence.** At a **continuation** boundary the conductor runs five Haiku verbatim-writers, all
-awaited before the next dispatch and idempotent by wave-N markers: `persist-plan` (the merged
-`plan.json`) → `bank-debt` (a `<!-- wave N -->` section in `debt.md`, **always stamped**, even "no new
-entries") → `log-append` (a `## Wave N` section in `architect-log.md`, **tier-3 only**) →
-`move-feedback` (this wave's evidence + actioned/dismissed user notes → `feedback/triaged/N/`) →
-`persist-state` (the **consumed** state: `boundary` removed, `debt` cleared). An **early return**
-persists only `state.json`, with `boundary` and `debt` left **INTACT** — the root consumes them.
-In **issue mode** these writers also project to GitHub: `bank-debt` creates/updates `roadmap:debt`
-issues (find-or-create by a stable marker) for the wave's un-swept debt instead of writing `debt.md`,
-`move-feedback` closes/comments the triaged `roadmap:bug` issues instead of moving files, and
-`issue-new` opens a `roadmap:unit` issue for each new fix-unit/respec. All best-effort (`gh-sync`).
+**Persistence — none of it here.** The conductor writes nothing under `.roadmap/`. Everything a
+boundary decides rides home on the return envelope and `persist.mjs` puts it on disk (see "Who
+writes `.roadmap/`"): the final `state`, the merged `plan`, `debt` (→ `debt.json`), `debtSections`
+(→ the `<!-- wave N -->` sections of `debt.md`, **always stamped**, even "no new entries"),
+`journalEntries` (→ the `## Wave N` sections of `architect-log.md`, **tier-3 only**), and both event
+ledgers. A **continuation** boundary also logs a snapshot of the consumed state (`boundary` removed,
+banked debt cleared) so a crash in a LATER wave still lands what this one decided.
+
+What still runs as an agent call at a boundary, because the bytes have to reach disk mid-run
+(`persist.mjs` only replays *after* a run, and the next wave reads these files): **spec expansion**
+— a Haiku verbatim write of content this script composes, cksum-verified, so no model stands
+between the boundary's decision and the file — **spec revision** (Sonnet, the one that stays a
+judgment: it edits three sections in place around material it must not touch, such as an architect
+ruling the harness appended mid-wave; it reports its post-edit `cksum` for the record, but there is
+no expected value to check it against), and **move-feedback** (this wave's evidence + the actioned/dismissed
+user notes → `feedback/triaged/N/`, as a **courier** since 0.14.0 — a closed list of self-contained
+`test -e … && git mv …` commands the script judges by the closing `ls -1`; the destination basename is
+role-qualified (`explorer-wave-N.md`, `health-wave-N.md`, …) because all three renderings are called
+`wave-N.md` and a flat move had the last silently overwrite the first. A source that never existed is
+an ordinary skip; one that existed and did not land is a `feedback-unmoved` degradation, never an arc
+outcome). A failed *expansion* withholds its unit; a failed *revision*
+degrades (`spec-unrevised`) and the unit dispatches on its previous spec — an amendment is not an
+authority.
+
+**Staging on an escalating return.** Spec expansion, `issue-new`, the debt collection and the
+journal all happen **before** a tier-2 or tier-3 `contract-amendment` / `contingent-replan` /
+`needs-user` return too — an escalating return is a handoff, not an abort (arc-observed: a
+`needs-user` return jumped all of them, so the boundary's new-unit skeletons, the wave's debt ledger
+and the architect journal existed only in the run's `journal.jsonl`). Such a return hands back
+`state` with `boundary` and `debt` left **INTACT** — the root consumes them, and re-banking is
+idempotent by marker.
+In **issue mode** the boundary also projects to GitHub: `bank-debt` creates/updates `roadmap:debt`
+issues (find-or-create by a stable marker) for the wave's un-swept debt *instead of* the `debt.md`
+sections, `move-feedback` closes/comments the triaged `roadmap:bug` issues instead of moving files,
+and `issue-new` opens a `roadmap:unit` issue for each new fix-unit/respec. All best-effort
+(`gh-sync`).
 `issue-new` **reports each created issue's number back, and the conductor caches it into
 `plan.units[].issue`** — so a mid-arc unit is a first-class citizen: it appears in the arc-issue
 task-list rollup and its folded per-unit clauses hit the cached number instead of a marker search.
@@ -606,14 +1121,28 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
 ```jsonc
 { status: 'conductor-return',
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
-                     //   | max-waves | agent-budget | boundary-degraded | triage-degraded
+                     //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
+                     //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
+                     //     | env-no-reaper | platform-outage — state.halt.reason, returned verbatim
   wave, wavesRun,
-  state,             // final persisted state (incl. the `conductor` block)
-  plan,              // the conductor's merged working plan
+  state,             // the final state (incl. the `conductor` block) -> .roadmap/state.json
+  plan,              // the conductor's merged working plan -> .roadmap/plan.json (refused if the
+                     //   file on disk holds unit ids this run never saw)
   spendDelta,        // per-key nonzero delta of state.spend vs the launch state
+  spendReport,       // arc-cumulative, split the way 0.14.0 makes decisions about it:
+                     //   { claude: {fable, opus, sonnet, haiku, total},
+                     //     codex:  {roles, processes, inputTokens, outputTokens} }.
+                     //   Claude tiers are the weekly-limited resource; codex is the plentiful
+                     //   one work moved onto, and `claude.total` never counts a codex run
+  degradations,      // this run's rows (empty when clean) -> degradations.jsonl + skill-degradations.md
+  escalations,       // this run's ladder rulings -> escalations.jsonl
+  debt,              // the wave ledger as received -> debt.json (empty once a boundary banked it)
+  debtSections,      // [{wave, body}] -> the <!-- wave N --> sections of debt.md (file mode only)
+  journalEntries,    // [{wave, journal}] -> the ## Wave N sections of architect-log.md (tier 3 only)
   /* + reason-specific brief: */
   // contingent-replan → { edges }
+  // plan-cycle       → { edges, units }  // the loop, for the root to repoint in plan.json
   // contract-amendment → { debt, contracts }
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
@@ -621,13 +1150,33 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }
   // root-triage       → { pendingFeedback, quarantined }
+  // <halt>            → { parked }  // the unit ids that parked; see state.halt above
   // triage-degraded   → { pendingFeedback, quarantined }
 }
 ```
 
 **`agent()` resolves to `null` on a terminal API error — it does not throw.** A bare `.catch()`
 therefore does not cover that path, so every `run()` whose result is *dereferenced* must go through
-`runOr(fallback, …)`. A dead **census** degrades to an empty one (the authoritative evidence is the
+one of two wrappers, and which one is a real decision:
+
+- **`runOr(fallback, …)`** where a coded fallback is an HONEST answer to the question asked (a dead
+  census is an empty census; a dead boundary job is a job that did not run).
+- **`runReq(…)`** where the caller dereferences the result and no fallback would be honest —
+  verify, both exit gates, the plan and plan-check, the merge and its suite gate. Inventing a
+  verdict there converts a platform failure into a judgment about a unit. `runReq` salvages once,
+  then sets `halt.platform` and throws a tagged `PlatformOutage`, which the scheduler turns into a
+  **park** (`status:'pending', parked:true`) and the conductor returns to the root as
+  `platform-outage`. The trigger is STRUCTURAL — a required result missing after its salvage —
+  because a null carries no error object at all; quota/limit/connection TEXT exists only on the
+  throw path, where it is used as a fast path (halt without burning a second agent), never as the
+  sole signal.
+
+The one deliberate exception is the **commit probe** after a lost implement report: a dead probe
+returns an `unknown` state that parks the unit alone rather than halting the wave — one cheap probe
+dying twice is not evidence of an outage, and the branch's commits are safe either way. It used to
+read as "no commits" and quarantine a branch that held every milestone (2026-08-25).
+
+A dead **census** degrades to an empty one (the authoritative evidence is the
 in-memory state; user-feedback files stay on disk for the next boundary). A dead **triage tier** has
 no safe fallback — inventing an empty verdict would silently admit or drop work the root never saw —
 so it returns **`triage-degraded`**, and the root triages that boundary by hand exactly as it would
@@ -638,7 +1187,10 @@ finality, so arc-completeness is post-hoc and the last wave's evidence is handed
 integration-review material.
 
 **Forensic labels** (for journal reading / `resumeFromRunId` replay): `census:w<N>`, `triage:w<N>`,
-`boundary:w<N>`, `spec-expand:<id>`, `spec-revise:<id>`, and the five persistence writers.
+`boundary:w<N>`, `spec-expand:<id>` (`#rewrite` on a cksum resample), `spec-revise:<id>`, and
+`move-feedback:w<N>` — plus, in issue mode only, `issue-new:w<N>` and `bank-debt:w<N>`. 0.14.0
+deleted the state/plan/debt/log writers that used to sit beside them, so in file mode
+`move-feedback` is the conductor's only remaining Persist-phase agent.
 
 ## Config knobs (defaults in the harness; override via `plan.config` or the Workflow `config` arg)
 
@@ -654,18 +1206,23 @@ integration-review material.
 | `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work |
 | `codexNetwork` | `false` | Adds `-c sandbox_workspace_write.network_access=true` (needed when builds must install packages) |
 | `codexTimeoutMin` | `240` | Build deadline before the steering agent kills the process group and assesses what's on disk. Sized for long-horizon units; per-milestone commits are what make a kill survivable |
-| `codexFixTimeoutMin` | `20` | Resume-round deadline |
+| `codexFixTimeoutMin` | `45` | Resume-round deadline. Also the deadline for `verify`, the one per-unit role that runs test suites, since a lane legitimately spends most of an hour unlike the 20-minute `codexRoleTimeoutMin` readers (the flake band takes `codexBoundaryTimeoutMin` with the rest of the boundary) |
+| `codexRoleEffort` | `'medium'` | `model_reasoning_effort` for a codex ROLE run (`run(…, {model:'codex'})`) — since 0.14.0 that is the spec critique, plan/replan, verify, the pre-gate review, the quarantine dossier write and the flake band. One knob for all of them; a caller may override per role, and there is deliberately no separate planning-effort dial until a workload proves one is needed |
+| `codexRoleTimeoutMin` | `20` | Role deadline. Far below `codexTimeoutMin` on purpose: a role that has not finished in 20 minutes is stuck, not thinking, and its caller has a fallback either way |
+| `codexBoundaryTimeoutMin` | `45` | Deadline for the four wave-tail BOUNDARY roles (explorer, health, flake, design). Longer than `codexRoleTimeoutMin` because they drive a product end to end, read a whole integrated tree, or run the full suite N times over; still far below `codexTimeoutMin` |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
+| `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
+| `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'high'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Fable 5's `high` default; these fire only on the hard calls, so they run there rather than on the floor |
 | `gateEffort` | `'high'` | Effort on forced Fable exit-gate calls (the frontier gate) |
-| `implementEffort` | `'medium'` | Opus reasoning effort for the code-authoring pipeline (plan/replan/implement, the post-impl debt-fix sweep, + every fix loop). Opus 5 holds coding quality at `medium` at a fraction of the tokens (its `low`/`medium` punch well above prior models'); raise per-arc via `plan.config` if a workload proves effort-sensitive |
-| `opusEffort` | `'medium'` | Effort for every other Opus call — boundary assessors (explorer/health/design), the adversarial review, the Opus-first plan-check and exit gate, and merge-conflict/integration fixes. Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth |
+| `opusEffort` | `'medium'` | Effort for every Opus call the harness makes — the Opus-first plan-check, the first-pass exit gate wherever `gateModel` puts it on Opus, and merge-conflict/integration fixes (the boundary assessors moved to Codex in 0.14.0, so this no longer reaches them). Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth. (`implementEffort` was **removed** in 0.14.0: it only ever drove plan/replan, and the implementer plans its own work on codex now — a codex role's effort is `codexRoleEffort`. Setting it is inert.) |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
-| `gateAuditRate` | `0.10` | Fraction of Opus-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables |
+| `gateModel` | `{low:'sonnet', med:'opus', high:'opus'}` | Claude tier for the **first-pass exit gate**, by unit risk. Affordable because the codex pre-gate review hands the gate a digest; the raw diff stays in front of med/high units regardless. An override **replaces** the whole map (the config spread is shallow), so name every tier you care about; an unknown tier falls back to `'opus'`. Two conditions override it back to Opus-on-the-raw-diff in **code**, never by prompt: no digest at all, or a digest the reviewer graded `blocking`/high-risk. The frontier (Fable) gate's own routing is untouched by this knob |
+| `gateAuditRate` | `0.10` | Fraction of first-pass-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); `0` disables |
 | `auditEffort` | `'high'` | Effort for audit-*only* Fable gates (the 10% anti-rubber-stamp sample). Defaults to full effort; these already read diff-stat-first, so dial down (e.g. `'medium'`) to keep the sample cheaper than a forced full gate |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` \| `'wave'` \| `'off'`. Inert without a `plan.preview` block |
 | `boundary` | `'on'` | The wave-tail boundary phase. `'off'` only for a relaunch you know is final |
@@ -681,23 +1238,32 @@ integration-review material.
 | `agentBudgetReserve` | `200` | Headroom below the 1000-call cap |
 | `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit |
 | `fixUnitAdmit` | `'auto'` | `'auto'` tier-1 mechanical admit of health drafts · `'triage'` force ≥Opus veto when drafts are present |
+| `admissions` | `'open'` | `'open'` normal · `'closed'` tiers 1 and 2 admit **no** new units — drafts and promotions become debt lines in `state.debt`. Enforced in code, not prompt. Flip it once the plan is DRAINED |
+| `tier1MaxDrafts` | `3` | Above this many drafts, tier 1 hands the wave to tier 2 so the cut line is actually applied instead of a batch being admitted mechanically |
 | `fableEffort` | `'high'` | Effort for the Fable boundary agent (the respec/escalation arbiter) — Fable 5's `high` default |
 
 **Spend direction when tuning:** extra frontier budget goes to the **planning side** (spec detail,
 plan-checks, Phase-0 interrogation), never to more mid-flight touchpoints — gate non-convergence is
-evidence of an under-specified plan, and the fix is a better plan. Frontier *saved* at the Opus-first
-gate is simply saved: per-unit quality is held by the Opus gate, systemic quality by the between-wave
-health check.
+evidence of an under-specified plan, and the fix is a better plan. Frontier *saved* at the first-pass
+gate is simply saved: per-unit quality is held by that gate plus the cross-model review digest in
+front of it, systemic quality by the between-wave health check. **Where to spend a downgrade, and
+where never to:** `gateModel` is the dial for per-unit gate cost, and the paid fixtures are its
+tripwire — `gate-bad` and `gate-convention` merging unfixed means the diet went too far, and
+`gate-good` picking up fix rounds means it is over-blocking. Never dial the *frontier* gate's
+routing (`exitGate`, `gateAuditRate`, the forced-Fable triggers) to save tokens: those are the
+anti-rubber-stamp checks on everything below them.
 
 ## Model tiers — the economic contract
 
 | Tier | Does | Never does |
 |---|---|---|
-| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus the read-only cross-model spec critique. Runs its own implement→test→fix loop inside the brief's pinned scope | Judgment: it never reviews, gates, plans the roadmap, or adjudicates its own escalations |
+| codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`), plus every ROLE dispatched through the adapter — the cross-model spec critique, the unit's own implementation **plan**/replan, **verify** and every gate re-verify, the **pre-gate review digest**, the quarantine **dossier write**, and the four wave-tail **boundary
+roles** (runtime explorer, health assessor, flake band, design reconciler), each of which writes its
+own report file. Runs its own implement→test→fix loop inside the brief's pinned scope | **Decide.** It advises — a review digest, a critique, a plan — but nothing it says is a verdict: it never gates, never approves a merge, never rules on an escalation, never plans the roadmap, and never adjudicates its own findings |
 | `fable` | Plan pack, plan-checks for med/high-risk units (taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
-| `opus` | Unit plans (brief-authoring), Opus-first plan-check (low-risk singles) + exit gate, conflict resolution, the wave-tail runtime explorer + health assessor (incl. drafting consolidation fix-units), the conductor's tier-2 boundary triager | Implementation (Codex's) |
-| `sonnet` | Roadmap normalization, dossier compression, feedback-batch compression, the conductor's skeleton→spec expansion | — |
-| `haiku` | Codex steering (launch/poll/kill/disk-verify/report), git mechanics, running suites (incl. flake re-runs), state checkpoints, mirror advance / preview refresh, verbatim writing of dossiers / findings / the debt ledger, the conductor's census + persistence writers | Judgment |
+| `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, the escalation ladder's adjudicator (`adjudicate:<id>#<stop>`, effort `high` — not `opusEffort`), merge-conflict resolution and the one integration fix, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
+| `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's spec **revisions** | Spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
+| `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack read, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
 
 **Root-only, never delegated down the ladder**: the Phase-0 plan pack, contingent replans, contract
 amendments, needs-user calls, and the session integration review.
@@ -708,10 +1274,18 @@ amendments, needs-user calls, and the session integration review.
   (frontier) silently. Same for any agent you spawn yourself; never a bare typed agent.
 - `schema:` on every call — handoffs are validated structures; the scripts never parse prose.
 - No `Date.now()` / `Math.random()` / filesystem in a workflow script. Prompts are deterministic per
-  unit id + sha, so `resumeFromRunId` replays completed calls free.
+  unit id + sha, so `resumeFromRunId` replays completed calls free. **Environment probes are the
+  exception and must be salted**: a probe reports what the disk and git look like *now*, so replaying
+  one from cache is a lie (arc-observed: a resume replayed a pre-rebuild `cd: No such file` and a
+  pre-merge worktree report for a unit that had since landed). Anything that must vary per launch cannot be generated in-script — it
+  arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
+  the harness appends to its environment probes: provisioning, integration setup, the unit-setup
+  rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, the host
+  preflight, and the preview couriers (worktree create, every mirror advance) — a replayed
+  `git worktree add` after a container rebuild would skip the create and leave no preview at all. Work-product calls never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
-  `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout. Keep
-  `worktreeRoot` outside the repo.
+  `worktreeRoot/<unit-id>` instead; `worktreeRoot/__integration` is the merge checkout and
+  `worktreeRoot/__preview` the green-tip preview mirror. Keep `worktreeRoot` outside the repo.
 - **Worktrees contain only committed state.** Gitignored and uncommitted files do not materialize in
   them. Three consequences: plan artifacts are read from the *primary* checkout by absolute path
   (deliberate — don't "fix" it); gitignored files the build/tests need must be in `provision.copy`; and

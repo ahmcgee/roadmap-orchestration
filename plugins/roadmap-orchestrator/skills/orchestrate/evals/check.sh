@@ -82,23 +82,34 @@ else
   flunk "gate-convention handled (got: $GC)"
 fi
 
-# --- green-tip mirror (preview) -------------------------------------------------
-# The fixture plan carries an api-kind preview block, so the harness must detach the
-# primary checkout at the final suite-green tip (state.json's integrationTip — the branch
-# tip can sit ahead of it when a final merge was reverted; the mirror tracks green only).
+# --- green-tip mirror (the __preview worktree) ----------------------------------
+# The fixture plan carries an api-kind preview block, so the harness must detach the PREVIEW
+# WORKTREE ($WT/__preview) at the final suite-green tip (state.json's integrationTip — the
+# branch tip can sit ahead of it when a final merge was reverted; the mirror tracks green
+# only). Since 0.13.0 the mirror is that worktree and never the operator's checkout, so the
+# primary checkout staying exactly where the fixture left it is itself an assertion.
 # The load-bearing property is checked implicitly above: unit statuses must match the
 # table exactly — the preview may never alter any outcome (feedback accumulates; it
 # never steers).
 TIP=$(node -e "const s=require('$STATE');console.log(s.integrationTip||'')")
-if git -C "$REPO" symbolic-ref -q HEAD >/dev/null 2>&1; then
-  flunk "primary checkout is a detached-HEAD mirror (still on a branch)"
+PREV="$WT/__preview"
+if [ ! -d "$PREV" ]; then
+  flunk "preview worktree exists at $PREV"
+elif git -C "$PREV" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  flunk "preview mirror is a detached-HEAD checkout (still on a branch)"
 else
-  pass "primary checkout is a detached-HEAD mirror"
+  pass "preview mirror is a detached-HEAD checkout"
 fi
-HEAD_SHA=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+HEAD_SHA=$(git -C "$PREV" rev-parse HEAD 2>/dev/null)
 [ -n "$TIP" ] && [ "$HEAD_SHA" = "$TIP" ] \
   && pass "mirror rides the integration tip ($TIP)" \
   || flunk "mirror rides the integration tip (HEAD=$HEAD_SHA tip=$TIP)"
+# The operator's checkout is never touched — that is what __preview exists for. The fixture
+# leaves $REPO on `main`; an arc that moves it has broken the invariant, not just the mirror.
+REPO_REF=$(git -C "$REPO" symbolic-ref -q --short HEAD 2>/dev/null)
+[ "$REPO_REF" = main ] \
+  && pass "primary checkout untouched by the run (still on main)" \
+  || flunk "primary checkout untouched by the run (expected main, got: ${REPO_REF:-detached HEAD})"
 PV_STATUS=$(node -e "const s=require('$STATE');console.log((s.preview||{}).status||'absent')")
 PV_SHA=$(node -e "const s=require('$STATE');console.log((s.preview||{}).sha||'')")
 [ "$PV_STATUS" = live ] && pass "state.json preview.status is live" || flunk "state.json preview.status is live (got: $PV_STATUS)"
@@ -111,10 +122,15 @@ PV_SHA=$(node -e "const s=require('$STATE');console.log((s.preview||{}).sha||'')
 # results ride the returned state's `boundary` block and are rendered to feedback/ by Haiku
 # verbatim-writers. healthCheck defaults on, so the health file is always written; the fixture
 # plan carries a live api-kind preview, so the runtime explorer runs and its file is too.
+# The wave number is READ, never assumed: a fixture that halted (a codex usage limit) and was
+# relaunched legitimately finishes on wave 2, and its boundary is written under THAT wave.
+# check-conductor.sh keys its own final-wave probes the same way, for the same reason.
+WAVE=$(node -e "const s=require('$STATE');console.log(Number(s.wave)||0)")
+[ "$WAVE" -ge 1 ] || flunk "state.json carries a wave number (got: $WAVE)"
 BOUNDARY=$(node -e "const s=require('$STATE');console.log(s.boundary?'present':'absent')")
-[ "$BOUNDARY" = present ] && pass "state.json carries a boundary block (wave-tail phase ran)" || flunk "state.json carries a boundary block (got: $BOUNDARY)"
-expect "wave-1 health feedback written" test -f "$REPO/.roadmap/feedback/health/wave-1.md"
-expect "wave-1 explorer feedback written" test -f "$REPO/.roadmap/feedback/explorer/wave-1.md"
+[ "$BOUNDARY" = present ] && pass "state.json carries a boundary block (wave-$WAVE tail phase ran)" || flunk "state.json carries a boundary block (got: $BOUNDARY)"
+expect "wave-$WAVE health feedback written" test -f "$REPO/.roadmap/feedback/health/wave-$WAVE.md"
+expect "wave-$WAVE explorer feedback written" test -f "$REPO/.roadmap/feedback/explorer/wave-$WAVE.md"
 
 # --- integrated result --------------------------------------------------------
 expect "integration branch exists" git -C "$REPO" rev-parse --verify roadmap/eval
@@ -171,9 +187,10 @@ process.exit(bad)
 " || fail=1
 
 # --- spend sanity (informational thresholds, generous by design) ---------------
-# The wave-tail boundary phase adds ~2 Opus (explorer + health) + ~2-3 Haiku (flake re-run +
-# verbatim writers) per wave; the envelope below bounds fable/gateRounds/consults only, none
-# of which the boundary touches, so no threshold widening is needed for it.
+# Since 0.14.0 the wave-tail boundary phase spends CODEX, not Claude: explorer, health, flake and
+# design are codex roles that write their own reports, and the Haiku transcription writers are
+# gone. The envelope below bounds fable/gateRounds/consults only, none of which the boundary
+# touches, so no threshold widening is needed for it.
 node -e "
 const s = require('$STATE'); const sp = s.spend || {}
 console.log('spend:', JSON.stringify(sp))

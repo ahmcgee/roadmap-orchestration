@@ -8,8 +8,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk, courierResult } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -46,7 +46,7 @@ const owedFor = (state, job) => (state.owed ?? []).find((o) => o.job === job)
 // code-writing report is the steering agent's S.implCodex shape (S.impl + the `codex` process
 // meta) — `implCodexOk()` builds a fresh clean one per call.
 const IMPL_OK = () => implCodexOk()
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
+const VERIFY_OK = { pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] }
 const MERGE_REFUSAL = (extra) => ({ merged: false, suitePass: false, head: BASE_SHA, detail: '', ...extra })
 
 // A design authority + preview block: the design reconcile is the owed ledger's most load-bearing
@@ -62,7 +62,7 @@ const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: '
 // =========================================================================================
 test('1 owed: a preview-down wave owes explorer and design (and degrades preview-setup loudly)', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^preview-setup$/, result: () => ({ ok: false, sha: '', detail: 'dirty' }) },
+    { match: /^preview-setup/, result: () => ({ ok: false, results: [], detail: 'start failed' }) },
   ])
   const plan = makePlan([unit('ui', { design: ['checkin#chrome'] })], [], { preview: PREVIEW, designAuthorities: AUTH })
   const state = await runWave(fn, plan, makeState())
@@ -82,12 +82,18 @@ test('1 owed: a preview-down wave owes explorer and design (and degrades preview
   assert.ok(!has(calls, 'design:'), 'no live preview -> no design reconcile call')
   assert.ok(state.degradations.some((d) => d.label === 'preview-setup' && d.kind === 'preview-failed'),
     'the dead mirror is a skill defect with operator instructions, not a log line')
-  // Regression pin (paid-eval-observed, fixed 2026-08-03): the dirty-primary check must EXCLUDE
-  // .roadmap/ — the conductor's own persist writers dirty it every boundary, and an unscoped
-  // porcelain gate killed the preview on every wave after the first in the conductor fixture.
+  // Regression pin, superseding the old ".roadmap must be excluded from the porcelain check"
+  // pin: the preview no longer runs in the primary checkout at all, so orchestrator-owned dirt
+  // cannot block it and there is nothing to exclude. The stronger property is that NO preview
+  // prompt names the primary checkout as somewhere to cd or check out (2026-08-28, twice: a
+  // Haiku mirror agent deleted 163 untracked .roadmap/ files to get a refused detach to work).
+  // CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d): couriers no longer lead with STRICT's `cd`/`pwd`
+  // proof — they lead with the "do not cd or pwd first" preamble instead, since the guard already
+  // rides inside every numbered command.
   const ps = calls.find((c) => c.label === 'preview-setup')
-  assert.ok(ps.prompt.includes(":(exclude).roadmap"),
-    'the porcelain pre-check is scoped to real user edits — orchestrator-owned dirt never blocks the mirror')
+  assert.ok(ps.prompt.startsWith('Do not `cd` anywhere') && ps.prompt.includes('In /wt/__preview:'),
+    'the preview bring-up runs in the preview worktree')
+  assert.ok(!ps.prompt.includes('In /repo:'), 'the primary checkout is never the preview courier\'s cwd')
   assertAllModelsPinned(calls)
   assertSchemasPresent(calls)
 })
@@ -161,7 +167,7 @@ test('4 owed: an owed design unit is re-reconciled once the preview is live agai
 test('5 merge fence: roadmapPaths refusal strips, re-merges, and banks contract/major debt', async () => {
   const { fn, calls } = makeAgent([
     { match: /^merge:a$/, result: () => MERGE_REFUSAL({ roadmapPaths: ['.roadmap/contracts/x.md'] }) },
-    { match: /^strip-roadmap:a$/, result: () => ({ ok: true, sha: BASE_SHA }) },
+    { match: /^strip-roadmap:a$/, result: (p) => courierResult(p, BASE_SHA) },
     // merge:a#restrip is unmatched here on purpose — it falls through to the clean-merge default.
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
@@ -215,7 +221,8 @@ test('7 merge prompt: the prefix clause appears only when plan.prefixUniqueGlobs
   assert.ok(withGlobs.includes('migrations/*'), 'the globs themselves are named')
   // Twice arc-observed: a GLOBAL uniqueness check refused every merge in a wave on duplicate
   // pairs the repo's history already held. The check must diff pre-merge tip vs merged tree.
-  assert.ok(withGlobs.includes('git ls-tree -r --name-only HEAD^1'), 'the pre-merge tip is the comparison base')
+  assert.ok(withGlobs.includes("git -C '/wt/__integration' ls-tree -r --name-only HEAD^1"),
+    'the pre-merge tip is the comparison base — and the worktree rides in the command')
   assert.ok(withGlobs.includes('grandfathered and never refuse'), 'pre-existing duplicates are grandfathered')
   assert.ok(withGlobs.includes('NOT already have'), 'only a duplicate the merge introduces refuses')
 })
@@ -427,8 +434,11 @@ test('11 plan evidence: the planner\'s manifest reaches the implementer; absent 
 // =========================================================================================
 test('12 crash residue: running/merge-ready reopen at wave start and adopt their committed work', async () => {
   for (const residue of ['running', 'merge-ready']) {
+    // 'adopted' is the SCRIPT's reading of "the branch exists with commits beyond base and this
+    // unit may adopt", so the fake states those git facts rather than the state name (0.14.0).
     const { fn, calls } = makeAgent([
-      { match: /^setup:a$/, result: () => ({ ok: true, sha: BASE_SHA, state: 'adopted' }) },
+      { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
+      { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['2'] }) },
     ])
     const state = await runWave(fn, makePlan([unit('a')]), makeState({ wave: 1, units: { a: { status: residue } } }))
 
@@ -469,35 +479,6 @@ test('13b merge fence: prefixCollision still quarantines when prefixUniqueGlobs 
 })
 
 // =========================================================================================
-// 13. state.json must survive an agent TRANSCRIBING it. Agent-authored report text can carry raw
-//     control characters (arc-observed: an explorer `repro` quoting a \x01 test input).
-//     JSON.stringify escapes them correctly as \u0001 — but the checkpoint is written by a Haiku
-//     agent copying the document, and that transcription decoded the escape back into a raw byte,
-//     leaving a state.json no parser would read. An unresumable arc is far worse than a lossy
-//     repro string, and a control character in a report is never load-bearing.
-// =========================================================================================
-test('13 checkpoint: control characters never reach the state.json payload', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^codex-build:a$/, result: () => ({ ...IMPL_OK(),
-      // A confessed debt entry DOES reach state.json — that is the path that corrupted it.
-      debt: [{ what: 'repro: f("a\x01b")', why: 'control chars in a quoted repro, arc-observed "\x1f"' }] }) },
-  ])
-  await runWave(fn, makePlan([unit('a')]), makeState())
-
-  const writes = calls.filter((c) => c.label === 'checkpoint')
-  assert.ok(writes.length, 'the wave checkpoints at least once')
-  for (const w of writes) {
-    assert.ok(!/[\x01\x1f]/.test(w.prompt),
-      'no raw control character may appear in the document handed to the transcriber')
-    assert.ok(!/\\u0001/.test(w.prompt),
-      'nor an escape a transcriber could decode back into one')
-  }
-  const payload = writes.at(-1).prompt
-  assert.ok(payload.includes('<0x01>') && payload.includes('<0x1f>'),
-    'they are replaced with a printable token, so the evidence survives in readable form')
-})
-
-// =========================================================================================
 // 14. The empty-trigger artifact. Codex emits the two-character string `""` when it means "nothing
 //     to report" (arc-observed) — truthy, so it fired the contractMismatch AND specGap triggers,
 //     summoned an adjudicator for a stop with no content, and banked a bogus `major` debt entry.
@@ -512,7 +493,7 @@ test('14 empty triggers: a literal double-quote pair is not a report', async () 
   assert.ok(!has(calls, 'adjudicate:a#1'), 'an empty gap summons no adjudicator')
   assert.ok(!has(calls, 'gap-consult:a#1'), 'and certainly no frontier consult')
   assert.equal(state.consultsUsed, 0)
-  assert.deepEqual(state.escalations ?? [], [], 'nothing is recorded in the escalation ledger')
+  assert.deepEqual(state.escalations, [], 'nothing is recorded in the escalation ledger')
   assert.ok(!(state.debt ?? []).some((d) => /contract mismatch/.test(d.what ?? '')),
     'and no bogus contract-mismatch debt is banked')
   assert.ok(has(calls, 'opus-gate:a#0'), 'an empty trigger does not force the frontier gate either')
@@ -566,7 +547,7 @@ test('16 plan-check rulings are recorded in the same ledger the ladder writes to
   ])
   const state = await runWave(fn, makePlan([unit('a', { risk: 'high' })]), makeState())
 
-  const entry = (state.escalations ?? []).find((e) => e.by === 'plan-check')
+  const entry = state.escalations.find((e) => e.by === 'plan-check')
   assert.ok(entry, 'a plan-check redirect is an adjudication and must leave a trace')
   assert.equal(entry.unit, 'a')
   assert.equal(entry.tier, 'decided')

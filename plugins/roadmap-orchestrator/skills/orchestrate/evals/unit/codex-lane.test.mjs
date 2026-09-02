@@ -30,8 +30,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadScript } from './load.mjs'
-import { makeAgent, makeWorkflow, BASE_SHA, implCodexOk, codexMetaOk } from './fakes.mjs'
+import { loadScript } from '../../script-loader.mjs'
+import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk,
+  courierSaying, courierOk } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -55,9 +56,9 @@ const promptOf = (calls, label) => calls.find((c) => c.label === label)?.prompt 
 const labels = (calls) => calls.map((c) => c.label)
 
 // S.verify REQUIRES diffFiles (the objective input to envelope pinning + the scope-growth check).
-const VERIFY_OK = { pass: true, blocked: false, failures: [], contractSurfaceTouched: false, diffFiles: [] }
+const VERIFY_OK = { pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] }
 const VERIFY_FAIL = (failures = ['assert: expected 1, got 2']) =>
-  ({ pass: false, blocked: false, failures, contractSurfaceTouched: false, diffFiles: [] })
+  ({ pass: false, blocked: false, failures, lanes: [{ command: 'npm run test:ci', exitCode: 1 }], contractSurfaceTouched: false, diffFiles: [] })
 // There is no review stage: the ONLY route into the polish loop's fix step is a failing verify.
 const failThenPass = () => { let n = 0; return () => (n++ === 0 ? VERIFY_FAIL() : VERIFY_OK) }
 // A codex run that died with nothing on the branch — the one shape that earns the fresh retry.
@@ -88,7 +89,7 @@ test('a lane shape: probe + codex-build replace the Claude implementation lane e
   assert.equal(calls.find((c) => c.label === 'codex-build:a').model, 'haiku')
   assert.equal(state.codex.available, true, 'a green probe records availability in the wave state')
   assert.equal(state.codex.probed, 1)
-  assert.equal(state.codex.halt, undefined, 'nothing halted')
+  assert.equal(state.halt, undefined, 'nothing halted')
 })
 
 // Rounds counters are the measurable ceiling on runaway revision loops (the paid fixtures assert
@@ -148,6 +149,36 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
 })
 
 // =========================================================================================
+// b2. session-id capture. Fixture wf_26d28b9e-4ed: add-divide's build dir had a thread.started
+//    line in events.jsonl but no session-id file — the steerer (Haiku) skipped the read-back
+//    instruction that used to be the only place this got written, and COMMAND R's resume silently
+//    fell back to a fresh session. The launch line now captures it itself: codex is backgrounded
+//    and raced by a bounded loop, in the SAME sh -c, that greps events.jsonl for thread_id and
+//    writes session-id the moment it appears — a closed command, not a step the steerer can skip.
+// =========================================================================================
+test('b2 session-id capture: the launch line races codex with a bounded thread_id watcher, never the steerer', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const p = promptOf(calls, 'codex-build:a')
+  assert.ok(p, 'the build steering call fired')
+
+  const dir = `${WT}/__codex/a/build`
+  assert.ok(p.includes('CPID=$!'), 'codex is backgrounded so the watcher loop can race it')
+  assert.ok(p.includes('wait $CPID'), 'the script still waits on codex for the real exit code')
+  assert.ok(
+    p.includes(`grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl`),
+    'the launch line greps events.jsonl for thread_id'
+  )
+  assert.ok(p.includes(`cut -d\\" -f4 > ${dir}/session-id`), 'a match is written to session-id, bare id only')
+  assert.ok(/\[ ! -s \S*\/session-id \]/.test(p), 'the loop stops once session-id is already non-empty')
+
+  // The steerer is never asked to write session-id itself — that used to be a step-5 read-back
+  // instruction, and Haiku skipped it once (the fixture above). One canonical capture point.
+  assert.ok(!p.includes('write the bare id to'), 'the steerer prompt no longer instructs the model to write session-id')
+  assert.equal((p.match(/thread_id/g) ?? []).length, 1, 'thread_id is read in exactly one place: the launch line')
+})
+
+// =========================================================================================
 // c. Determinism. Prompts are deterministic functions of unit ids and shas so resumeFromRunId
 //    can replay completed calls from the journal. A session id, a timestamp or a counter leaking
 //    into a prompt breaks replay silently — the second run just re-does paid work.
@@ -178,7 +209,8 @@ test('d probe failure: nothing dispatches, units stay pending, the wave halts re
   assert.ok(!has(calls, 'setup:'), 'ready() gates on the halt, so not even a worktree is built')
   assert.equal(state.units.a.status, 'pending', 'a lapsed login is not a unit defect — never quarantine')
   assert.equal(state.units.b.status, 'pending')
-  assert.equal(state.codex.halt, 'codex-unavailable')
+  assert.equal(state.halt.reason, 'codex-unavailable')
+  assert.equal(state.halt.codex, 'codex-unavailable')
   assert.equal(state.codex.available, false)
 
   const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
@@ -207,7 +239,7 @@ test('e2 no-commit failure: a retry that reports nothing over an empty branch qu
   const { fn, calls } = makeAgent([
     { match: /^codex-build:a$/, result: () => deadRun() },
     { match: /^codex-build-retry:a/, result: () => { throw new Error('steering agent died') } },
-    { match: /^commit-probe:a$/, result: { ok: false, sha: '', detail: 'no commits' } },
+    { match: /^commit-probe:a$/, result: courierSaying([[/rev-list --count/, '0']]) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
@@ -242,14 +274,18 @@ test('f limitHit: halts new dispatch mid-wave; the in-flight unit finishes, the 
   const state = await runWave(fn, makePlan([unit('a'), unit('b')],
     [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }]), makeState(), { warmLanes: false })
 
-  assert.equal(state.codex.halt, 'codex-usage-limit')
+  assert.equal(state.halt.reason, 'codex-usage-limit')
+  assert.equal(state.halt.codex, 'codex-usage-limit')
   assert.equal(state.codex.available, false)
   assert.ok(state.degradations.some((d) => d.kind === 'codex-usage-limit'), 'the limit is ledgered for the root')
 
-  // What the code ACTUALLY does with the unit that observed the limit: its build already
-  // returned a report, so runUnit never sees `parked` and the unit rides verify -> gate -> merge
-  // to completion. Parking only bites a unit that still needs a codex step (see f2).
-  assert.equal(state.units.a.status, 'merged', 'the unit whose build already reported is finished, not discarded')
+  // CHANGED CONTRACT (0.14.0): the unit that observed the limit no longer rides to completion.
+  // VERIFY is a codex role now, so with codex halted there is no way to check the branch, and
+  // nothing may be gated or merged on evidence that was never gathered. It PARKS instead — commits
+  // intact, adopted next wave — which is the same answer every other halted codex step gives.
+  assert.equal(state.units.a.status, 'pending', 'the unit whose next step is codex parks; it is never discarded')
+  assert.equal(state.units.a.parked, true)
+  assert.match(state.units.a.note, /codex-usage-limit/, 'and the note names the halt that stopped it')
   assert.equal(state.units.b.status, 'pending', 'ready() gates on the halt — b is never dispatched')
   assert.ok(!has(calls, 'codex-build:b'), 'and it certainly never reaches codex')
   assert.ok(!has(calls, 'setup:b'))
@@ -394,13 +430,19 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   const Q = 'CRITIQUE_QUESTION_MARKER'
   const R = 'CRITIQUE_RISK_MARKER'
   const { fn, calls } = makeAgent([
-    { match: /^codex-spec-review:a$/, result: () => ({ ok: true, questions: [Q], risks: [R], notes: '' }) },
+    { match: /^codex-spec-review:a$/, result: () => codexRoleOk({ questions: [Q], risks: [R], notes: '' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
   const review = calls.find((c) => c.label === 'codex-spec-review:a')
   assert.ok(review, 'the critique fires on a fresh build whose risk is in planCheckRisk')
   assert.equal(review.model, 'haiku', 'it is steered at codexSteerModel like every other codex step')
+  // It reaches Codex through the ROLE ADAPTER, not a bespoke path: the courier's schema is the
+  // adapter's envelope (the caller's S.critique nested under `result`), never S.critique itself.
+  assert.deepEqual(Object.keys(review.schema.properties), ['ok', 'codex', 'result', 'notes'],
+    'the critique rides run(..., {model:"codex"}) — its courier reports the adapter envelope')
+  assert.deepEqual(Object.keys(review.schema.properties.result.properties), ['questions', 'risks', 'notes'],
+    'and the caller\'s own schema is what codex is held to, nested verbatim under `result`')
   // Sandbox: NOT `-s read-only` — that needs the bwrap namespace this devcontainer cannot build
   // (arc-observed EPERM while reading the spec). It runs under C.codexSandbox like the build lane;
   // "change nothing" is carried by the brief text.
@@ -410,14 +452,18 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   // Location: STRICT makes the steerer cd to the first path named; that must be the unit worktree,
   // and the __codex artifact dir must be marked as scratch (arc-observed: Haiku cd'd to wtRoot and
   // refused because it "is not a git repository").
-  const cdIdx = review.prompt.indexOf('Your cd target is the unit worktree')
-  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/a/spec-review'),
+  const cdIdx = review.prompt.indexOf(`Your cd target is ${WT}/a —`)
+  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/roles/codex-spec-review-a'),
     'the worktree is named as the cd target before the artifact dir')
   assert.ok(/scratch artifact directory, NOT a git checkout/.test(review.prompt), 'the artifact dir is marked scratch')
-  // Schema hard-cut: an entry truncated at the 300-char cap is a valid entry (arc-observed: Haiku
-  // reported ok:false and the critique was thrown away).
-  assert.ok(/cut off mid-sentence at its 300-character cap is still a valid entry/.test(review.prompt) &&
+  // Schema hard-cut: an entry truncated at its cap is a valid entry (arc-observed: Haiku reported
+  // ok:false and the critique was thrown away).
+  assert.ok(/cut off\s+mid-sentence at its cap is still a valid entry/.test(review.prompt) &&
     /truncation is never a failure/.test(review.prompt), 'a hard-cut entry is copied through, not failed')
+  // A role collects no git truth: there is no diff base, so nothing here may ask for one or try to
+  // commit on the tree it was pointed at.
+  assert.ok(!/git rev-list --count/.test(review.prompt) && !/commit them yourself/.test(review.prompt),
+    'a read-only role never counts commits and never commits')
 
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check.includes('A second engineer from a different model family'),
@@ -428,17 +474,255 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
 })
 
 test('l2 spec critique is best-effort: a failed critique degrades and the plan-check runs without it', async () => {
+  // Anchored WITHOUT `$` so the adapter's own `#reattempt` dispatch is dead too — the pass only
+  // gives up after its retry.
   const { fn, calls } = makeAgent([
-    { match: /^codex-spec-review:a$/, result: () => ({ ok: false, questions: [], risks: [], notes: 'codex not reachable' }) },
+    { match: /^codex-spec-review:a/, result: () => codexRoleDead() },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
 
-  assert.ok(state.degradations.some((d) => d.kind === 'codex-spec-review'), 'the skip is ledgered, not silent')
+  assert.ok(has(calls, 'codex-spec-review:a#reattempt'), 'the adapter reaps and retries once before giving up')
+  const d = state.degradations.find((x) => x.kind === 'codex-role')
+  assert.ok(d, 'the skip is ledgered, not silent')
+  assert.equal(d.label, 'codex-spec-review:a', 'and the ledger row names the ROLE that failed')
+  assert.equal(state.halt, undefined, 'a codex role failure is codex\'s, never a platform outage — nothing halts')
   const check = promptOf(calls, 'opus-plan-check:a')
   assert.ok(check, 'the plan-check still ran')
   assert.ok(!check.includes('A second engineer from a different model family'),
     'no critique -> the clause is EXACTLY absent, keeping the prompt byte-identical to the no-critique form')
   assert.equal(state.units.a.status, 'merged', 'this pass gates nothing')
+})
+
+// =========================================================================================
+// n. THE CODEX ROLE ADAPTER — `run(brief, {model:'codex', cwd, sandbox, schema, label, …})`.
+//
+// One way to reach Codex from anywhere in the script: a Haiku courier launches `codex exec`
+// exactly as the build lane does (detached, `timeout -k` inside the launch, pidfile,
+// attach-don't-relaunch, reap-then-retry) and hands the caller back an object the PLATFORM
+// validated against the caller's own schema — or null. The spec critique is its first caller and
+// the only one this wave; wave 2 moves the rest of the judgment roles onto it.
+//
+// What these lock is the contract wave-2 callers are written against, and the two brakes that
+// cannot be prose: a role never runs in the operator's checkout, and a role failure is CODEX's,
+// never the platform's.
+// =========================================================================================
+test('n adapter: the caller gets its own schema back, validated — the courier envelope never leaks', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a$/, result: () => codexRoleOk({ questions: ['Q1'], risks: ['R1'], notes: 'n' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  const check = promptOf(calls, 'opus-plan-check:a')
+  assert.ok(check.includes('Q1') && check.includes('R1'), 'the caller reads `result`, not the envelope')
+  assert.ok(!/"ok":true/.test(check) && !/sessionCaptured/.test(check),
+    'the adapter unwraps: `ok`/`codex` are the courier\'s bookkeeping and never reach the caller')
+  assert.equal(state.units.a.status, 'merged')
+})
+
+test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never the repo root', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const p = promptOf(calls, 'codex-spec-review:a')
+
+  assert.ok(p.includes(`-C ${WT}/a `), 'codex is pointed at the cwd the caller named')
+  assert.ok(!/-C \/repo(\s|$)/.test(p), 'never at the operator\'s checkout')
+  assert.ok(p.includes('-s danger-full-access'),
+    'codexSandbox is the environment\'s ruling and overrides the role\'s intent, as in the build lane')
+  assert.ok(!p.includes('-s read-only'), 'so the role\'s read-only intent is carried by the brief, not the flag')
+  // The launch mechanics are the build lane's, not a second implementation of them.
+  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900'])
+    assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
+  assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
+  assert.ok(/if .*codex\.pid already exists/.test(p), 'and the attach-don\'t-relaunch preamble')
+  assert.ok(p.includes(`${WT}/__codex/roles/codex-spec-review-a`),
+    'role artifacts live in the roles namespace under the worktree root, outside every tracked tree')
+})
+
+test('n3 adapter: one reap-first retry, then a tagged failure — and the platform is never halted', async () => {
+  const seen = []
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a/, result: (p, o) => { seen.push(o.label); return codexRoleDead() } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.deepEqual(seen, ['codex-spec-review:a', 'codex-spec-review:a#reattempt'], 'exactly one retry — never a loop')
+  const retry = promptOf(calls, 'codex-spec-review:a#reattempt')
+  assert.ok(retry.includes(`${WT}/__codex/roles/codex-spec-review-a-retry`), 'the retry runs in a FRESH artifact dir')
+  assert.ok(/REAP THE PREVIOUS ATTEMPT FIRST/.test(retry) &&
+    retry.includes(`kill -TERM -- -$(cat ${WT}/__codex/roles/codex-spec-review-a/codex.pid)`),
+    'and reaps the dead run\'s process group before it launches — two codex on one tree is not a state to reason about')
+  assert.ok(/# PRIOR ATTEMPT/.test(retry), 'the brief says so too, so a live sibling is reported as a harness bug')
+
+  // The tagged failure: ONE `codex-role` row, the caller sees null, and nothing wave-level moves.
+  const rows = state.degradations.filter((d) => d.kind === 'codex-role')
+  assert.equal(rows.length, 1, 'the give-up is ledgered exactly once, at the event')
+  assert.ok(/never a Claude platform outage/.test(rows[0].what), 'and says whose failure it was')
+  assert.equal(state.halt, undefined, 'no platform halt, no codex halt — a dead role halts nothing')
+  assert.equal(state.units.a.status, 'merged', 'and the caller\'s coded fallback carries the unit through')
+})
+
+test('n4 adapter: a role never runs in the operator\'s checkout — the cwd brake is code, not prose', async () => {
+  // The one configuration that can point a role at the repo root: a worktree root whose child IS
+  // the repository. The brake throws rather than improvising, and the unit fails loudly.
+  const { fn } = makeAgent()
+  const plan = { repoPath: `${WT}/a`, worktreeRoot: WT, units: [unit('a')], edges: [] }
+  const state = await runWave(fn, plan, makeState())
+
+  assert.equal(state.units.a.status, 'quarantined', 'the throw is not swallowed anywhere')
+  assert.match(state.units.a.reason, /pipeline error/)
+  assert.match(state.units.a.reason, /operator's checkout/,
+    'and the error names what was wrong: a role was pointed at the repo root')
+})
+
+test('n5 adapter: codex dispatches land in their own spend bucket', async () => {
+  const { fn, calls } = makeAgent()
+  const clean = await runWave(fn, makePlan([unit('a')]), makeState())
+  // One tick per codex exec the ADAPTER launched. A clean single-unit wave dispatches six roles:
+  // the spec critique, the plan, the verify and the pre-gate review from the per-unit pipeline,
+  // plus the wave-tail health assessor and flake band. (The build/fix lane has its own `codexRuns`
+  // counter — it is not a role.)
+  assert.equal(clean.spend.codex, 6, 'one role call = one codex exec = one tick in the `codex` bucket')
+  assert.deepEqual(
+    calls.filter((c) => c.schema?.properties?.result).map((c) => c.label).sort(),
+    ['codex-review:a', 'codex-spec-review:a', 'flake:w1', 'health:w1', 'plan:a', 'verify:a#0'],
+    'and those six are exactly the roles the per-unit pipeline plus the boundary dispatches')
+
+  const { fn: fn2 } = makeAgent([{ match: /^codex-spec-review:a/, result: () => codexRoleDead() }])
+  const retried = await runWave(fn2, makePlan([unit('a')]), makeState())
+  assert.equal(retried.spend.codex, 7, 'the reattempt is a second codex process and is counted as one')
+  assert.ok(retried.spend.haiku > clean.spend.haiku, 'and each one also costs its own Haiku courier')
+
+  // The boundary roles ride the same bucket — that is the whole point of the 0.14.0 shift. With the
+  // wave-tail band switched off, only the four per-unit roles tick, and the Opus bill is unmoved:
+  // the health assessor that used to be an Opus investigator costs that tier nothing now.
+  const { fn: fn3 } = makeAgent()
+  const noBoundary = await runWave(fn3, makePlan([unit('a')]), makeState(), { healthCheck: 'off' })
+  assert.equal(noBoundary.spend.codex, 4, 'the health assessor and the flake band are codex dispatches')
+  assert.equal(noBoundary.spend.opus, clean.spend.opus, 'and neither costs the Opus tier anything')
+})
+
+// =========================================================================================
+// o. THE 0.14.0 PER-UNIT SHIFT — plan/replan, verify, the pre-gate review, the dossier write and
+//    the flake band all run on the codex role adapter, and the exit gate eats a DIGEST instead of
+//    the raw diff. What these lock is the part that cannot be recovered from a prompt diff: which
+//    tier each role reaches, which tree it runs in, and — the load-bearing half — that every path
+//    where evidence goes MISSING routes to MORE Claude scrutiny, never less.
+// =========================================================================================
+const ROLE_LABELS = (calls) => calls.filter((c) => c.schema?.properties?.result).map((c) => c.label)
+
+test('o1 moved roles: each one reaches codex, in the right tree, with the sandbox it intended', async () => {
+  // codexSandbox is the ENVIRONMENT's ruling and normally overrides every role's intent, so it is
+  // pinned to null here — that is the only way a role's own `sandbox` argument becomes observable,
+  // and the intent is what a future environment with working user namespaces will actually enforce.
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState(), { codexSandbox: null })
+
+  const roles = ROLE_LABELS(calls)
+  for (const l of ['plan:a', 'verify:a#0', 'codex-review:a', 'flake:w1'])
+    assert.ok(roles.includes(l), `${l} must dispatch through the codex role adapter, not a Claude agent`)
+
+  const where = { 'plan:a': `${WT}/a`, 'verify:a#0': `${WT}/a`, 'codex-review:a': `${WT}/a`,
+    'flake:w1': `${WT}/__integration` }
+  const sand = { 'plan:a': 'read-only', 'verify:a#0': 'workspace-write', 'codex-review:a': 'read-only',
+    'flake:w1': 'workspace-write' }
+  for (const [label, cwd] of Object.entries(where)) {
+    const p = promptOf(calls, label)
+    assert.ok(p.includes(`-C ${cwd} `), `${label} runs codex in ${cwd}`)
+    assert.ok(p.includes(`-s ${sand[label]} `), `${label} declares sandbox ${sand[label]}`)
+    assert.ok(!/-C \/repo(\s|$)/.test(p), `${label} must never be pointed at the operator's checkout`)
+  }
+  // The two readers say so in the BRIEF as well: codexSandbox normally overrides `-s`, so where the
+  // sandbox cannot carry "change nothing", the brief has to.
+  for (const l of ['plan:a', 'codex-review:a'])
+    assert.match(promptOf(calls, l), /Read-only\. Change nothing|Read-only\. Write no code/,
+      `${l} carries its read-only intent in the brief, not only in the flag`)
+})
+
+test('o2 gate diet: gateModel by risk, and only a low-risk unit trades the raw diff for the digest', async () => {
+  const gate = (calls, id) => calls.find((c) => c.label === `opus-gate:${id}#0`)
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('lo'), unit('mid', { risk: 'med' })]), makeState())
+
+  assert.equal(gate(calls, 'lo').model, 'sonnet', 'a low-risk unit takes the cheap first-pass gate')
+  assert.equal(gate(calls, 'mid').model, 'opus', 'med keeps Opus')
+  assert.match(gate(calls, 'lo').prompt, /git -C '\/wt\/lo' diff --stat/,
+    'and reads a diet, expanding on suspicion — with the worktree in the command, not in an earlier cd')
+  assert.match(gate(calls, 'mid').prompt, /read `git -C '\/wt\/mid' diff [0-9a-f]+\.\.HEAD` in full/,
+    'while med keeps the raw diff in front of it')
+  for (const id of ['lo', 'mid']) {
+    const p = gate(calls, id).prompt
+    assert.match(p, /A cross-model reviewer/, `${id}'s gate is handed the digest`)
+    assert.match(p, /"verdict":"clean"/, 'verbatim, as the object the reviewer emitted')
+    assert.match(p, /never as a verdict and never as coverage/,
+      'and told it is evidence to adjudicate — this sentence is what stands between a diet and a rubber stamp')
+  }
+  // The knob is a plan/config map, and an override replaces it wholesale.
+  const { fn: fn2, calls: c2 } = makeAgent()
+  await runWave(fn2, makePlan([unit('lo')]), makeState(), { gateModel: { low: 'opus' } })
+  assert.equal(gate(c2, 'lo').model, 'opus', 'gateModel is a knob, not a hardcode')
+})
+
+test('o3 a dead reviewer buys MORE Claude: Opus gate, raw diff, and a review-skipped row', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-review:lo/, result: () => codexRoleDead() }])
+  const state = await runWave(fn, makePlan([unit('lo')]), makeState())
+
+  assert.ok(has(calls, 'codex-review:lo#reattempt'), 'the adapter retries once before giving up')
+  const g = calls.find((c) => c.label === 'opus-gate:lo#0')
+  assert.equal(g.model, 'opus', 'no digest -> Opus, whatever the unit\'s risk')
+  assert.match(g.prompt, /read `git -C '[^']+' diff [0-9a-f]+\.\.HEAD` in full/, 'and on the raw diff, not a diet')
+  assert.match(g.prompt, /No cross-model review digest exists/, 'told plainly that nothing was pre-checked')
+  const d = (state.degradations ?? []).filter((x) => x.kind === 'review-skipped')
+  assert.equal(d.length, 1, 'the skip is ledgered — a spend audit has to see why the gate got expensive')
+  assert.match(d[0].what, /never less scrutiny/, 'and the row states the direction the fallback moves in')
+  assert.equal(state.halt, undefined, 'a dead codex role halts nothing')
+  assert.equal(state.units.lo.status, 'merged')
+})
+
+test('o3b a digest the reviewer graded `blocking` or high-risk refuses the diet too', async () => {
+  for (const digest of [{ verdict: 'blocking' }, { risk: 'high' }]) {
+    const { fn, calls } = makeAgent([
+      { match: /^codex-review:lo/, result: () => reviewDigestOk(digest) },
+      // a blocking digest is still only ADVICE: the gate rules, and here it approves.
+      { match: /^opus-gate:lo/, result: () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [] }) },
+    ])
+    await runWave(fn, makePlan([unit('lo')]), makeState())
+    const g = calls.find((c) => c.label === 'opus-gate:lo#0')
+    assert.equal(g.model, 'opus', `${JSON.stringify(digest)} must not ride the cheap tier`)
+    assert.match(g.prompt, /read `git -C '[^']+' diff [0-9a-f]+\.\.HEAD` in full/,
+      `${JSON.stringify(digest)} must not ride the diet — the gate has to be able to disagree`)
+  }
+})
+
+test('o3c the frontier gate is handed the same digest', async () => {
+  const MARK = 'DIGEST_SPEC_FINDING_MARKER'
+  const { fn, calls } = makeAgent([
+    { match: /^codex-review:hi/, result: () => reviewDigestOk({ verdict: 'concerns',
+      specFindings: [{ criterion: 'rounds half away from zero', what: MARK, evidence: 'Math.round(-0.5)' }] }) },
+  ])
+  await runWave(fn, makePlan([unit('hi', { risk: 'high' })]), makeState())
+  const p = promptOf(calls, 'gate:hi#0')
+  assert.ok(p, 'a high-risk unit still goes straight to the frontier gate')
+  assert.match(p, /A cross-model reviewer/)
+  assert.ok(p.includes(MARK), 'with the reviewer\'s findings verbatim')
+})
+
+test('o4 a dead dossier writer falls back to the Haiku writer once — a dossier must exist', async () => {
+  const { fn, calls } = makeAgent([
+    // wrong base -> quarantine, read back out of the worktree by the script
+    { match: /^setup:a$/, result: courierSaying([[/rev-parse HEAD/, 'f'.repeat(40)]]) },
+    // Anchored WITHOUT `$` so the adapter's own `#reattempt` dispatch is dead too — the write only
+    // gives up after its retry, exactly like every other role.
+    { match: /^dossier-write:a(?!#fallback)/, result: () => null },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'quarantined')
+  const fb = calls.find((c) => c.label === 'dossier-write:a#fallback')
+  assert.ok(fb, 'the Haiku writer this replaced is still there as the fallback')
+  assert.equal(fb.model, 'haiku')
+  assert.equal(calls.filter((c) => c.label === 'dossier-write:a#fallback').length, 1, 'exactly once — never a loop')
+  const d = (state.degradations ?? []).filter((x) => x.kind === 'dossier-write-fallback')
+  assert.equal(d.length, 1, 'and the fallback is ledgered, not silent')
 })
 
 // =========================================================================================
@@ -562,14 +846,18 @@ test('k3 gate directives past the cap are banked as debt, not dropped', async ()
 // =========================================================================================
 async function driveConductorWith(waveState) {
   const { fn: workflowFn } = makeWorkflow(() => waveState)
+  const plan = makePlan([unit('a'), unit('b')])
+  const state = makeState({ spend: {}, wave: 0 })
   const { fn: agentFn, calls } = makeAgent([
-    { match: /^(persist-plan|persist-state|bank-debt|log-append|move-feedback):/, result: { ok: true } },
+    ...packRules(plan, state),
+    { match: /^bank-debt:/, result: { ok: true } },
+    { match: /^move-feedback:/, result: courierOk },
   ])
   const runner = await loadScript(CONDUCTOR)
   const res = await runner({
     args: {
-      plan: makePlan([unit('a'), unit('b')]),
-      state: makeState({ spend: {}, wave: 0 }),
+      roadmapDir: `${plan.repoPath}/.roadmap`,
+      launchId: 'sim-launch',
       config: {},
       harnessPath: HARNESS_PATH,
     },
@@ -584,7 +872,8 @@ test('j conductor: a codex halt early-returns at tier 4, before any census or tr
     integrationBranch: 'roadmap/session-codex', integrationTip: BASE_SHA, consultsUsed: 0,
     spend: {}, wave: 1, debt: [],
     units: { a: { status: 'pending', parked: true, note: 'parked mid-polish: codex-usage-limit' }, b: { status: 'pending' } },
-    codex: { probed: 1, available: false, halt: 'codex-usage-limit' },
+    halt: { reason: 'codex-usage-limit', codex: 'codex-usage-limit' },
+    codex: { probed: 1, available: false },
   })
 
   assert.equal(res.reason, 'codex-usage-limit', 'the halt value IS the return reason — the root reads it verbatim')
@@ -592,7 +881,7 @@ test('j conductor: a codex halt early-returns at tier 4, before any census or tr
   assert.ok(!has(calls, 'census:'), 'no census against a wave the root must hand to a human')
   assert.ok(!has(calls, 'triage:'), 'and certainly no boundary triage')
   assert.ok(!has(calls, 'boundary:'))
-  assert.ok(has(calls, 'persist-state:'), 'state is still persisted — the halt must be resumable')
+  assert.ok(res.state?.units, 'the full wave state rides home on the envelope — the halt must be resumable')
   const b = res.state.conductor?.boundaries ?? []
   assert.deepEqual(b.map((x) => x.tier), [4], 'recorded as a tier-4 boundary outcome')
   assert.equal(b[0].escalated, 'codex-usage-limit')
@@ -603,7 +892,8 @@ test('j2 conductor: the unavailable-probe halt returns its own reason, not a gen
     integrationBranch: 'roadmap/session-codex', integrationTip: BASE_SHA, consultsUsed: 0,
     spend: {}, wave: 1, debt: [],
     units: { a: { status: 'pending' }, b: { status: 'pending' } },
-    codex: { probed: 1, available: false, halt: 'codex-unavailable' },
+    halt: { reason: 'codex-unavailable', codex: 'codex-unavailable' },
+    codex: { probed: 1, available: false },
   })
   assert.equal(res.reason, 'codex-unavailable', 're-auth and wait-out-the-limit are different human actions')
   assert.deepEqual(res.parked, [], 'a pre-dispatch halt parks nothing — the units never started')
@@ -620,4 +910,88 @@ test('j3 conductor: a healthy wave still reaches the census (the halt guard is n
     boundary: { explorer: null, health: { findings: [], fixUnits: [] }, flake: null },
   })
   assert.ok(has(calls, 'census:w1'), 'without a halt the boundary runs normally — j/j2 are not vacuous')
+})
+
+// =========================================================================================
+// p. The four BOUNDARY roles on the adapter (0.14.0). The wave-tail explorer, health assessor and
+//    design reconciler were Opus investigators, and the flake band a Haiku test-runner; all four
+//    had a Haiku verbatim-writer transcribe their structured result to
+//    `.roadmap/feedback/<job>/wave-N.md`. They are codex roles now and each writes its own report,
+//    so what has to stay pinned is: WHERE each one runs, WHAT it may write, and what a dead one
+//    costs the wave. The judgment that reads their output — the conductor's tier-2/tier-3 triagers
+//    — is deliberately untouched.
+// =========================================================================================
+const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: 'npm run dev' }
+const AUTH_P = [{ id: 'checkin', source: 'design-project', path: 'apps/web/src/design/checkin/', covers: ['/checkin'] }]
+const boundaryPlan = () => makePlan([unit('ui', { design: ['checkin#chrome'] })], [],
+  { designAuthorities: AUTH_P, preview: PREVIEW })
+
+test('p1 boundary roles: each is a codex dispatch, in the tree it judges', async () => {
+  const { fn, calls } = makeAgent()
+  // `codexSandbox: null` drops the ENVIRONMENT's override so the role's own declared intent is what
+  // reaches the command line — the only way to observe it (the shipped default is
+  // 'danger-full-access' for the measured reason on that knob, and it wins by design).
+  await runWave(fn, boundaryPlan(), makeState(), { codexSandbox: null })
+
+  for (const [label, cwd] of [['explorer:w1', `${WT}/__preview`], ['health:w1', `${WT}/__integration`],
+    ['flake:w1', `${WT}/__integration`], ['design:w1', `${WT}/__preview`]]) {
+    const c = calls.find((x) => x.label === label)
+    assert.ok(c, `${label} ran`)
+    assert.equal(c.model, 'haiku', `${label} is steered by the codex courier, not an Opus turn`)
+    assert.ok(c.prompt.includes(`codex exec -C ${cwd} -s workspace-write`),
+      `${label} runs codex in ${cwd} and declares workspace-write (it writes exactly one file: its report)`)
+    assert.ok(c.prompt.includes(`${WT}/__codex/roles/${label.replace(':', '-')}`),
+      `${label} gets its own artifact dir under the roles namespace`)
+  }
+  // The preview tree is where a shell may reach the running product; the operator's checkout never is.
+  for (const label of ['explorer:w1', 'design:w1'])
+    assert.ok(!calls.find((c) => c.label === label).prompt.includes('codex exec -C /repo '),
+      `${label} must never be pointed at the operator's checkout`)
+})
+
+test('p2 boundary roles: each writes its own report, and no transcription courier survives', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, boundaryPlan(), makeState())
+
+  for (const [label, path] of [['explorer:w1', '/repo/.roadmap/feedback/explorer/wave-1.md'],
+    ['health:w1', '/repo/.roadmap/feedback/health/wave-1.md'],
+    ['design:w1', '/repo/.roadmap/feedback/design/wave-1.md'],
+    // The flake band's record is its OWN file, not a section inside the health report: the health
+    // assessor owns that path end to end, and two writers on one path lose a section.
+    ['flake:w1', '/repo/.roadmap/feedback/health/wave-1-flake.md']])
+    assert.ok(calls.find((c) => c.label === label).prompt.includes(path),
+      `${label} is told to write ${path} itself`)
+
+  for (const gone of ['explorer-write:', 'health-write:', 'design-write:', 'flake-write:'])
+    assert.ok(!has(calls, gone), `${gone} is a removed label — the role has a filesystem now`)
+})
+
+test('p3 boundary roles: a dead explorer or design role goes OWED, exactly as a skipped one did', async () => {
+  const { fn } = makeAgent([
+    { match: /^explorer:w1/, result: () => codexRoleDead() },
+    { match: /^design:w1/, result: () => codexRoleDead() },
+  ])
+  const state = await runWave(fn, boundaryPlan(), makeState())
+
+  const owed = Object.fromEntries((state.owed ?? []).map((o) => [o.job, o]))
+  assert.ok(owed.explorer, 'the explorer is owed at the next boundary')
+  assert.ok(owed.design, 'so is the design reconcile')
+  assert.deepEqual(owed.design.units, ['ui'], 'and it names the surfaces that went unchecked')
+  assert.equal(state.halt, undefined, 'a dead codex role halts nothing — that is the adapter contract')
+  // One `codex-role` row per dead role, from the adapter, plus the design job's own no-report row.
+  const kinds = (state.degradations ?? []).map((d) => d.kind)
+  assert.equal(kinds.filter((k) => k === 'codex-role').length, 2, 'each dead role is ledgered once, at the event')
+  assert.ok(kinds.includes('no-report'), 'and the unchecked design surfaces are named for the operator')
+})
+
+test('p4 boundary roles: a dead health role degrades `health-skipped` and yields no drafts', async () => {
+  const { fn } = makeAgent([{ match: /^health:w1/, result: () => codexRoleDead() }])
+  const state = await runWave(fn, boundaryPlan(), makeState())
+
+  assert.equal(state.boundary.health, null, 'no drafts — an empty draft set here means UNASSESSED')
+  const row = (state.degradations ?? []).find((d) => d.kind === 'health-skipped')
+  assert.ok(row, 'and the ledger says so, so a triager cannot read silence as "nothing to consolidate"')
+  assert.match(row.what, /UNASSESSED/)
+  assert.ok(state.boundary.explorer, 'the boundary itself proceeds — a skipped assessment is not a failed wave')
+  assert.ok((state.owed ?? []).some((o) => o.job === 'health'), 'and it is re-queued')
 })

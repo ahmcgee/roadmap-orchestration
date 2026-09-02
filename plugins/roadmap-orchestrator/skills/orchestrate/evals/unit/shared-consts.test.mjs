@@ -10,11 +10,24 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) WRITE_CHUNK + CK_TABLE + cksumOf + writeVerbatim + runVerbatim — byte-identical value and
-//                      byte-identical source (the in-script cksum, the split AND the fan-out that
-//                      executes it)
+//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_EXTRA + cdGuard +
+//                      courierPrompt/courierSchema/courierShape +
+//                      readPackFile + readPack — byte-identical value and byte-identical source.
+//                      This is the LAUNCH PACK read: both scripts open by having a Haiku courier
+//                      cat plan.json/state.json and then verifying the transcription against the
+//                      file's own `cksum`. A copy that drifts is a copy that trusts a document the
+//                      other would have rejected.
 //   (c) TERSE        — same FIRST SENTENCE only (the tails legitimately diverge: the harness copy
 //                      adds a findings-specific clause that has no analogue in the conductor)
+//   (d) markerFind + MARKER_RULE — byte-identical source/value. These compose the gh find-or-create
+//                      search, and its jq predicate is the ONLY thing standing between "adopt by
+//                      marker" and GitHub's tokenizing full-text search adopting an unrelated issue
+//                      (three live issues clobbered, 2026-08-22). A predicate that drifts in one
+//                      script is a silent re-opening of that hole in half the sites.
+//   (e) planCycle    — byte-identical source. The conductor refuses to dispatch a cyclic plan
+//                      (`plan-cycle`); the harness throws on one that reached it anyway. If the two
+//                      disagree about what a cycle is, the conductor dispatches a plan the harness
+//                      then kills the whole run on (wf_c6971376-1a5).
 //
 // Extraction anchors on distinctive syntax rather than line numbers so the tests survive edits
 // around the constants and fail with a readable, file-naming diff when a copy actually drifts.
@@ -68,8 +81,8 @@ function constValue(file, name) {
 
 // The full source text of a top-level arrow function, from its declaration line through the
 // closing brace at the SAME indent. Each guarded function is declared identically in both files:
-//   const writeVerbatim = (path, text, extra = '') => {
-//   const runVerbatim = async (plan, opts, prefix = '') => {
+//   const courierShape = (r, commands) => {
+//   const readPackFile = async (path, ranges, label, extra) => {
 // ... so the declaration line (with `sig`, the exact parameter list) is the anchor; the terminator is
 // the first later line that is exactly the declaration's indent followed by `}`.
 function fnSource(file, name, sig) {
@@ -88,6 +101,19 @@ function fnSource(file, name, sig) {
   for (let i = start + 1; i < lines.length; i++)
     if (lines[i] === close) return lines.slice(start, i + 1).join('\n')
   assert.fail(`no closing \`}\` at indent ${JSON.stringify(indent)} for ${name} in ${file}`)
+}
+
+// The full source text of a top-level declaration whose body is an EXPRESSION rather than a block
+// (`const courierPrompt = (…) =>\n  STRICT + …`, `const PACK_FILES = [...]`). fnSource cannot slice
+// those — there is no `=> {` and no closing brace at the declaration's indent — so the block runs
+// from the declaration line to the line before the next top-level declaration or comment.
+function blockSource(file, name) {
+  const lines = SRC[file].split('\n')
+  const start = lines.findIndex((l) => l.startsWith(`const ${name} = `))
+  assert.notEqual(start, -1, `could not find a top-level \`const ${name} = \` in ${file}`)
+  let end = start + 1
+  while (end < lines.length && !/^(const |let |function |\/\*|\/\/)/.test(lines[end])) end++
+  return lines.slice(start, end).join('\n')
 }
 
 /* ------------------------------ diff reporting ------------------------------ */
@@ -127,15 +153,50 @@ test('STRICT (location discipline) is byte-identical in harness.mjs and conducto
   assertInSync('The STRICT const', h, c)
   // The clause is worthless if it stops naming the behaviour it forbids.
   assert.match(h, /Never substitute/, 'STRICT still forbids cwd substitution')
+  // CHANGED CONTRACT (0.14.0, wf_318afa1b-e9d): THE BASH TOOL'S WORKING DIRECTORY RESETS BETWEEN
+  // TOOL CALLS. `move-feedback:w1` ran `cd <fixture> && pwd`, got the fixture back, and its very
+  // next call — `git rev-parse --show-toplevel`, no cd — printed the orchestrator's own repo; every
+  // relative path it then checked was checked here, and it reported four files missing. So the old
+  // opening ("start by `cd`… then PROVE you are there before doing anything else") was structurally
+  // unsatisfiable across calls, and no amount of emphasis could have fixed it. The rule STRICT
+  // states now is the only one that survives a reset: every command carries its own cd.
+  assert.match(h, /DOES NOT PERSIST BETWEEN COMMANDS/, 'STRICT leads with the cwd-reset mechanism')
+  assert.match(h, /SELF-CONTAINED/, 'and with the one rule that survives it')
+  assert.doesNotMatch(h, /Start by `cd`/,
+    'the cd-once-then-prove opening is gone — it asked for something the tool cannot do')
+  // The identity proof survives, but INSIDE the command it guards rather than as a command of its own.
+  assert.match(h, /`cd <path> && pwd` must print that path exactly/,
+    'the location proof is an identity test, in the same command as the work')
+  assert.match(h, /--show-toplevel` names WHICH checkout/, 'and it names the repository')
 })
 
-test('WRITE_CHUNK is the same threshold in both scripts', () => {
-  const [h, c] = FILES.map((f) => constValue(f, 'WRITE_CHUNK'))
-  assert.equal(typeof h, 'number', 'WRITE_CHUNK is a number')
-  assertInSync('The WRITE_CHUNK threshold', h, c)
-  // A divergent threshold is worse than a divergent prompt: the two scripts would split the SAME
-  // state.json differently, so a resume could rewrite the file with a different part boundary.
-  assert.ok(h > 1000 && h < 32000, 'WRITE_CHUNK sits below the ~32k output-token response cap')
+test('cdGuard (the composed working directory) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'cdGuard', '(where, cmd)'))
+  assertInSync('The cdGuard composer', h, c)
+  // The guard is the MECHANISM behind STRICT's cd sentence: the working directory is composed into
+  // every command the script hands out, so a courier that ignores the prose fails that command's
+  // exit code instead of answering plausibly from the wrong repository (wf_106cdf59-c5f).
+  const cdGuard = Function(`"use strict"; return (${h.replace('const cdGuard = ', '')});`)()
+  assert.equal(cdGuard('/repo', 'git rev-parse HEAD'), "cd '/repo' && ( git rev-parse HEAD )",
+    'the guard is `cd \'<where>\' && ( <cmd> )` — a failed cd is a non-zero exit of THAT command')
+  assert.equal(cdGuard("/o'dd", 'ls'), "cd '/o'\\''dd' && ( ls )", 'a single quote in the path is escaped')
+  assert.throws(() => cdGuard('', 'ls'), /explicit absolute working directory/,
+    'an empty path throws at compose time rather than shipping an improvisable prompt')
+})
+
+test('READ_CHUNK is the same launch-pack budget in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'READ_CHUNK'))
+  assert.equal(typeof h, 'number', 'READ_CHUNK is a number')
+  assertInSync('The READ_CHUNK budget', h, c)
+  // A divergent budget is worse than a divergent prompt: the two scripts would fan the SAME
+  // plan.json out over different line ranges, so one could read a file the other could not.
+  assert.ok(h > 1000 && h < 32000, 'READ_CHUNK sits below the ~32k output-token response cap')
+})
+
+test('PACK_FILES is the same pack in both scripts', () => {
+  const [h, c] = FILES.map((f) => blockSource(f, 'PACK_FILES'))
+  assert.match(h, /\['plan\.json', 'state\.json'\]/, 'the pack is the plan and the state, in that order')
+  assertInSync('The PACK_FILES list', h, c)
 })
 
 // The in-script POSIX cksum. `CK_TABLE` is an IIFE (`const CK_TABLE = (() => {` … `})()`), so it
@@ -158,24 +219,72 @@ test('cksumOf (the in-script POSIX cksum) has byte-identical source in both scri
   assertInSync('The cksumOf function source', h, c)
 })
 
-test('writeVerbatim has byte-identical source in both scripts', () => {
-  const [h, c] = FILES.map((f) => fnSource(f, 'writeVerbatim', "(path, text, extra = '')"))
-  assert.ok(h.includes('<<<PART'), 'the chunked branch is present')
-  assert.ok(h.includes('<<<DOCUMENT>>>'), 'the sub-threshold branch hands one writer the whole document')
-  assert.ok(h.includes('cksum < ${file}'), 'every writer verifies by cksum')
-  assert.ok(!h.includes('wc -c'), 'no writer verifies by byte count (gamed live)')
-  // Comments included, deliberately: they are part of what the two copies must keep in sync, and a
-  // reader who updates one rationale without the other has already half-forked the function.
-  assertInSync('The writeVerbatim function source (comments included)', h, c)
+test('the courier prompt/schema/shape are byte-identical in both scripts', () => {
+  const [hp, cp] = FILES.map((f) => blockSource(f, 'courierPrompt'))
+  assert.ok(hp.includes('run NOTHING ELSE'), 'the closed-list discipline is stated')
+  assert.ok(hp.includes('cdGuard(where, c)'), 'every numbered command is composed with its own cd guard')
+  assert.ok(hp.includes('\\nCommands:\\n'), 'the numbered command list is the last thing in the prompt')
+  assertInSync('The courierPrompt builder', hp, cp)
+
+  const [hs, cs] = FILES.map((f) => blockSource(f, 'courierSchema'))
+  assert.ok(hs.includes('exitCode'), 'the courier reports exit codes, never a verdict')
+  // CHANGED CONTRACT (0.14.0): results are positional. The `command` echo cost output tokens and,
+  // capped at 300 characters, failed validation outright on a composed command.
+  assert.ok(!hs.includes('command'), 'and never echoes the command text back')
+  assertInSync('The courierSchema builder', hs, cs)
+
+  const [hh, ch] = FILES.map((f) => fnSource(f, 'courierShape', '(r, commands)'))
+  assert.ok(hh.includes('raw'), 'the untouched capture is exposed for callers to whom whitespace is content')
+  assertInSync('The courierShape reader', hh, ch)
+
+  const [ho, co] = FILES.map((f) => constValue(f, 'COURIER_OUT'))
+  assertInSync('The COURIER_OUT default budget', ho, co)
+
+  // The RUNNER too, since 0.14.0: the conductor's `move-feedback` became a courier, so both scripts
+  // now dispatch closed command lists and both must dispatch them the same way (positional results,
+  // the runOr fallback that keeps a dead courier from becoming a dead arc, the compose-time throw on
+  // an empty `where`). Only the `required` branch differs in effect — over there `runReq` is a
+  // throwing stub, because the conductor has no wave-level halt record for a dead courier to set.
+  const [hn, cn] = FILES.map((f) => fnSource(f, 'courierRun', "async (where, commands, opts, extra = '')"))
+  assert.ok(hn.includes('courierPrompt(where, commands, extra)'), 'the runner composes the courier prompt')
+  assert.ok(hn.includes('courier agent died without a report'), 'and never lets a dead courier read as a fact')
+  assertInSync('The courierRun runner', hn, cn)
 })
 
-test('runVerbatim (the fan-out executor) has byte-identical source in both scripts', () => {
-  const [h, c] = FILES.map((f) => fnSource(f, 'runVerbatim', "async (plan, opts, prefix = '')"))
-  assert.ok(h.includes('parallel('), 'part writers fan out through the platform `parallel` primitive')
-  assert.ok(h.includes(':assemble') && h.includes(':part'), 'sub-agent labels derive from the caller label')
-  // The two scripts must fail the same way: a lost part skips assembly (previous file left intact)
-  // in both, or a resume could see a partial file from one script and a complete one from the other.
-  assertInSync('The runVerbatim function source (comments included)', h, c)
+test('the launch pack read is byte-identical in both scripts', () => {
+  const [he, ce] = FILES.map((f) => constValue(f, 'PACK_EXTRA'))
+  assert.match(he, /verbatim/, 'the courier is told to copy the document through verbatim')
+  assert.match(he, /truncated copy is worse than no copy/, 'and to refuse rather than truncate')
+  assertInSync('The PACK_EXTRA clause', he, ce)
+
+  const [hf, cf] = FILES.map((f) => fnSource(f, 'readPackFile', 'async (path, ranges, label, extra)'))
+  assert.ok(hf.includes('cksum < ${path}'), 'the file is verified against its own cksum, not a byte count')
+  assert.ok(hf.includes('sed -n'), 'content is read over explicit line ranges')
+  assertInSync('The readPackFile reader (comments included)', hf, cf)
+
+  const [hr, cr] = FILES.map((f) => fnSource(f, 'readPack', 'async ()'))
+  assert.ok(hr.includes('pack-unreadable'), 'an unverifiable pack fails the launch loudly')
+  assert.ok(hr.includes('#retry') && hr.includes('#split'), 'both second attempts are present')
+  // The two scripts read the SAME two files at launch. A divergent verification means one of them
+  // would dispatch a wave from a document the other would have refused.
+  assertInSync('The readPack reader (comments included)', hr, cr)
+})
+
+test('planCycle (the plan-graph cycle detector) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => fnSource(f, 'planCycle', '(units, edges)'))
+  assertInSync('The planCycle detector', h, c)
+  // Not merely "both have a function": the two scripts must AGREE on what a cycle is. The conductor
+  // refuses to dispatch one (`plan-cycle`); the harness throws on one that reached it anyway. A copy
+  // that drifts means one of them dispatches a plan the other would have refused, and the harness's
+  // throw inside the nested workflow() takes the whole conductor run down (wf_c6971376-1a5).
+  const planCycle = Function(`"use strict"; return (${h.replace('const planCycle = ', '')});`)()
+  const u = (...ids) => ids.map((id) => ({ id }))
+  assert.equal(planCycle(u('a', 'b'), [{ from: 'a', to: 'b' }]), null, 'a DAG has no cycle')
+  const two = planCycle(u('a', 'b'), [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }])
+  assert.deepStrictEqual(two.units.sort(), ['a', 'b'], 'a 2-cycle names both units')
+  assert.equal(two.edges.length, 2, 'and both edges, so the root knows which one to repoint')
+  assert.equal(planCycle(u('a'), [{ from: 'a', to: 'ghost' }]), null,
+    'an edge naming an unknown unit is ignored here — the harness rejects those separately')
 })
 
 test('TERSE opens with the same first sentence in both scripts', () => {
@@ -199,10 +308,31 @@ test('TERSE opens with the same first sentence in both scripts', () => {
       `${f}'s TERSE lost the "no undeclared keys" rule`)
 })
 
+test('MARKER_RULE (the find-or-create obligations) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'MARKER_RULE'))
+  assertInSync('The MARKER_RULE const', h, c)
+  assert.match(h, /FIRST line/, 'the rule still names what makes a candidate an actual match')
+  assert.match(h, /never fall back to `\.\[0\]\.number`/, 'the fuzzy fallback is still forbidden by name')
+  assert.match(h, /CLOSED issue/, 'the closed-issue edit bar survives')
+  assert.match(h, /status:merged/, 'and the merged-label bar with it')
+})
+
+test('markerFind (the exact-marker search) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => constExpr(f, 'markerFind'))
+  // The predicate itself, not merely the command shape: `--json number,body,state` is what makes
+  // the body readable, and the split/compare is what makes the match exact.
+  assert.match(h, /--json number,body,state/, 'the search fetches the body it must verify')
+  assert.match(h, /split\("\\\\n"\)\[0\]/, 'it compares the candidate body\'s FIRST LINE')
+  assert.ok(!/--jq '\.\[0\]\.number'/.test(h), 'the first-fuzzy-hit form is gone')
+  assertInSync('The markerFind search builder', h, c)
+})
+
 test('both scripts still declare every shared constant this suite guards', () => {
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'WRITE_CHUNK', 'CK_TABLE', 'cksumOf'])
+    for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
+      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
+      'markerFind', 'MARKER_RULE', 'planCycle'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })

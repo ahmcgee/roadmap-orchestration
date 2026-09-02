@@ -24,33 +24,81 @@ with an arc. **Cleared 2026-08-16 of everything predating the skill update of 20
 
 **ADDRESSED 2026-08-16 v0.11.1**
 
-## 2026-08-16 (agent-competence arc, waves 2–3, observed after the v0.11.1 fixes) — triaged
+## 2026-08-16 → 08-28 (agent-competence arc, waves 2–19, skill 0.12.0) — triaged 2026-09-01
 
-47 degradations, collapsed by cause. Raw dump dropped after triage.
+188 degradations + 22 narrative entries, collapsed by cause. Raw dump dropped after triage
+(committed as 746c412). Root cause under most of it: the workflow script has no filesystem or
+shell — `run()` is `agent()` — so every write, checkout, sweep and probe was a model given a *goal*
+where the script could have handed it a *closed command list*. That is now the design rule
+(RATIONALE §19: "couriers, not janitors"; brakes in code, not prose).
 
-- **`write-failed` checkpoint ×28 + `schema-retry` on `checkpoint` ×5.** State grew to 3–6 parts
-  (~75–145 KB: escalations + degradations ride inside state.json) and the ONE Haiku writer reported
-  "cannot complete within token budget" / "cannot reliably reconstruct 5–6 parts", or gave up and
-  returned prose. The here-doc + byte-count fix makes the append mechanical but still asks one agent
-  to emit the whole document. Fix: fan the parts out — one writer per part to `state.json.partK`, an
-  assembler that `cat`s; a failed part never assembles. Live-validated 2026-08-16: byte-count
-  verification was GAMED (a writer un-escaped JSON, then padded to hit `wc -c`; assembled file did
-  not parse) → every writer now verifies by `cksum` (CRC computed in-script), the single-write path
-  too; a lost part is retried once with a fresh agent (2 of 16 live part writes mis-transcribed,
-  all caught). Deferred: sidecar ledger so checkpoints send only deltas.
-- **`codex-spec-review` skipped ×4**, three causes: (a) the critique hardcodes `-s read-only` while
-  the build lane honours `codexSandbox` (danger-full-access, because bwrap can't build a namespace
-  here) → "bwrap namespace permission error"; (b) Codex hard-cut a risk at the 300-char schema cap and
-  the steerer called that ok:false; (c) ×2 the steerer `cd`'d to `wtRoot` (first path named is the
-  `__codex` scratch dir) and refused "not a git repository" though `-C ${w}` was passed.
-- **`scope-growth` ×7**, mostly noise: evidence screenshots (`docs/evidence/<unit>/*.png`), rehearsal
-  transcripts, test helpers/siblings — files the spec requires. Fix: `plan.scopeAllow` globs excluded
-  from `scopeGrew` so the two real cases (a unit reaching into 4 src files elsewhere) stay visible.
-- **`codex-exec` ×2 on `rehearsal-probes`** — build and build-retry both died before the first turn
-  with no exit-code file (the `sh -c` wrapper itself was killed). Not addressed: the steerer already
-  tails stderr into `notes`, and the following fix round succeeded — the existing path did the right
-  thing. Watch for recurrence.
-- `codex-timeout` ×3 with surviving commits (`web-message-bounds` on build AND gate-fix0 — a
-  unit-sizing signal for the architect), `codex-uncommitted` ×1 — working as designed.
+- **`write-failed` ×91 (checkpoint + persist), rising to 35/wave by wave 17.** Not a writer defect:
+  degradations + escalations rode inside state.json (~⅓ of a 170–190 KB, 7–8-part document by
+  wave 19), so per-checkpoint loss ≈ n·p² and every failed write appended a row that made the next
+  write likelier to fail. Fix: events are appended once, at the event, to `.roadmap/degradations.jsonl`
+  / `escalations.jsonl` (cksum over the file's tail); state.json carries only the stop counts and is
+  back to 1–3 parts. The skill-feedback marker region — an unverified Haiku rewrite that ate a
+  hand-written entry (the truncated fragment in this dump) — is gone: the scripts never write
+  `skill-feedback.md`; the per-kind summary lands in `.roadmap/skill-degradations.md`.
+- **A merge on a detached HEAD orphaned, then the tip reconciled BACKWARDS (08-28); resume
+  re-verified and quarantined merged units (08-25, 08-26 ×2).** The merge step never asserted HEAD was
+  on the integration branch or that the merge commit was reachable; the wave-start reconcile adopted
+  the live sha on mere inequality. Fix: merge attaches HEAD to the branch and `merged` is written only
+  after `merge-reach` proves reachability; reconcile is one-way (ancestor or `tip-regressed` + halt);
+  "merged" is decided in code at dispatch, in `quarantine()`, and in the crash-residue loop by the
+  second-parent test (bare `is-ancestor` false-positives on commit-less branches — the ledger's ask
+  was corrected). Environment probes (setup/provision/git/codex/env/preview) are salted with
+  `args.launchId` so a resume re-probes live instead of replaying a cached `cd: No such file`.
+- **Haiku with destructive reach** — preview `kill -9` of every node process (08-21), tracker
+  bootstrap clobbering three issues and issue-new/bank-debt fuzzy marker hits (08-22, 08-23), the
+  `.roadmap/` wipe (08-28), the invented codex credential rule (08-26). One fix shape: `courierRun`
+  (closed command list in, verbatim `{exitCode, stdout}` out, script judges). Codex probe passes on
+  `/logged in/i`; STRICT checks `git rev-parse --git-dir` (linked worktrees valid); the exact
+  first-line marker match is a jq predicate the script composes, at all six `gh` sites, and CLOSED
+  issues are never edited; debt markers are arc-keyed (the per-unit marker was arc-free too — worse
+  than filed); the port sweep is a literal allowlist from `plan.preview.ports` with name-sweeps
+  forbidden; the preview lives in `__preview`, so nothing the harness does can touch the operator's
+  checkout — that one move closes the kill-9, the wipe and the refused-checkout entries together.
+  The ledger's "plain `run()` with no agent" is impossible; containment is the substitute.
+- **Agent death → unit verdict (08-25 ×2, quota outage).** Seven bare `run()` sites dereferenced a
+  null and fell into `quarantine('pipeline error')`; the dead commit probe became "nothing was
+  built". Fix: `runReq` + a platform halt that parks units (`platform-outage`), mirroring the codex
+  halt; nulls carry no error text, so the trigger is structural, text-matching only on the throw
+  path. Codex lifecycle: `timeout -k` inside the detached launch so the deadline survives steerer
+  death; `-1` only after `kill -0` fails; steer prompts are idempotent (pid file → attach), which also
+  closes an unfiled second double-codex route (every `schema-retry` on a `codex-build:*` steerer
+  re-ran the launch); build-retry reaps first; `fixStep` retries once; the one `codex-exec` bucket
+  splits into a NEW kind `codex-lifecycle` (`-1`, no exit file — nobody observed the run finish, so
+  its status is unknown, not bad) and `codex-exec` proper (`>0`, codex reporting failure) — the 29
+  rows were mostly the former.
+- **Wave-level brakes that were prose (08-22 pids, 08-25 shared red, 08-23 precedent, 08-28
+  admissions).** The harness had one wave-level flag (`codexHalt`). Now a halt record
+  `{codex, env, platform}`; a pids/PID-1 preflight parks before dispatch; `gateMaxConcurrent`
+  semaphore; a shared-red breaker collapses N identical out-of-scope failures into ONE finding (never
+  debt, so the termination guarantee holds); scope rulings are recorded and shown to sibling gates as
+  precedent; `admissions:'closed'` + `tier1MaxDrafts` enforced in code and covering `promote`;
+  duplicate drafts are dropped instead of renamed (`x`/`x-2` was #1261/#1262); owed explorer/design
+  run at the final wave; persist-plan refuses instead of overwriting root-admitted units; escalating
+  returns stage specs/plan/issues/debt first; bank-debt clears only confirmed markers and debt is
+  persisted on receipt.
+- **Corrected or stale as filed:** the "`.git` directory" STRICT wording no longer existed; mirror
+  advance was already sha-gated; contracts/specs were already threaded by absolute root path (gap
+  only in boundary agents with a relative `plan.conventions`); `scope-growth` ×22 was ~15 incidents
+  (the re-emit guard double-counted 4→5 files) on an arc where Phase 0 never set `scopeAllow`; the
+  flake band did NOT run beside live gates — `runBoundary` runs after the scheduler drains, its
+  co-tenants were its own siblings + preview, so load is recorded, not gated on, and `LOAD_CMDS`
+  stayed one shared command vocabulary (the preflight courier seeds the sample before any lane runs)
+  rather than becoming a per-lane courier — an agent per lane, sampling before the suite instead of
+  during; "the degradations ledger already carries sibling rulings" — it carried breaches, never
+  verdicts.
+- **Working as designed / watch:** `codex-timeout` ×10 with surviving commits (unit-sizing signal);
+  `codex-uncommitted` ×4; the one `preview-failed` was the root-checkout mirror, now structural.
+- **Deferred (backlog, not dropped):** per-unit gate commands in `plan.json` so lane *coverage* is
+  script-asserted rather than gate-asserted; delta checkpoints reduced by the root at wave end
+  (superseded in 0.14.0: no checkpoints at all; `persist.mjs` replays the journal);
+  arc-cumulative scope precedent (wave-scoped now to bound the prompt);
+  auto-annotating banked debt that a later merge resolved; `rebanked` over-triggers on crash-residue
+  re-entry (a prior-state `merge-ready`), bounded because `mismatchEver` still forces the frontier
+  gate.
 
-**ADDRESSED 2026-08-16 v0.12.0** (all but codex-exec, deliberately)
+**ADDRESSED 2026-09-01 v0.13.0**
