@@ -265,7 +265,7 @@ test('the deadline rides inside the launched command line, so it survives the st
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexTimeoutMin: 30 })
   const p = promptOf(calls, 'codex-build:a')
-  assert.match(p, /setsid nohup sh -c 'timeout -k 30 1800 codex exec /,
+  assert.match(p, /setsid nohup sh -c 'echo \$\$ > \/wt\/__codex\/a\/build\/codex\.pid; timeout -k 30 1800 codex exec /,
     'timeout wraps codex INSIDE the detached sh -c — the steerer\'s death cannot outlive the deadline')
   assert.match(p, /exit-code contains 124/, 'and the launcher\'s own deadline is read back as timedOut')
 })
@@ -274,8 +274,43 @@ test('a resumed session is wrapped too — the wedge is on the resume path as of
   const { fn, calls } = makeAgent([{ match: /^verify:a#0$/, result: VERIFY_FAIL }])
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexFixTimeoutMin: 10 })
   const p = promptOf(calls, 'codex-fix:a#0')
-  assert.match(p, /COMMAND R: cd \/wt\/a && setsid nohup sh -c 'timeout -k 30 600 codex exec resume/)
-  assert.match(p, /COMMAND F: setsid nohup sh -c 'timeout -k 30 600 codex exec -C/)
+  const D = '/wt/__codex/a/fix0'
+  assert.match(p, new RegExp(`COMMAND R: cd /wt/a && setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
+    'timeout -k 30 600 codex exec resume'))
+  assert.match(p, new RegExp(`COMMAND F: setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
+    'timeout -k 30 600 codex exec -C'))
+  // COMMAND R used to run codex in the sh's FOREGROUND (`…; echo $? > exit-code`), which left the
+  // resume path with no CPID to forward a TERM to. Both commands are now the same shape.
+  assert.equal(p.split('& CPID=$!;').length - 1, 2, 'both launch commands background codex and hold its pid')
+})
+
+// The launch line, pinned as one shape across all three sites. 2026-09-02: `… & echo $! > codex.pid`
+// recorded the pid of the fork setsid makes under job control — a process dead within a second — so
+// `tail --pid`, `kill -0` and every group kill in the steer prompt hung off a corpse: 82 phantom
+// `codex-lifecycle` rows, a second codex launched into a live worktree per "reattempt", and "exit
+// 137" manufactured by the reap fallback. 3 waves, 14 of 20 units, none of the deaths real.
+test('every codex launch: the detached shell writes its OWN pid, forwards TERM, and waits twice', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a#0$/, result: VERIFY_FAIL }])
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const prompts = calls.filter((c) => /^codex-(build|fix):a/.test(c.label))
+  assert.ok(prompts.length >= 2, `build and fix both steer a codex run (saw ${prompts.length})`)
+  for (const { label, prompt } of prompts) {
+    // Every `setsid nohup sh -c '` opens a launch; its body must start with the pidfile write.
+    const bodies = prompt.split("setsid nohup sh -c '").slice(1)
+    assert.ok(bodies.length >= 1, `${label}: at least one launch command`)
+    for (const body of bodies) {
+      assert.match(body, /^echo \$\$ > \S+\/codex\.pid; /,
+        `${label}: the detached shell records its own pid as its FIRST act, before anything else`)
+      assert.match(body, /& CPID=\$!; /, `${label}: codex is backgrounded and its pid held`)
+      assert.match(body, /trap "kill -TERM \$CPID" TERM;/,
+        `${label}: the sh forwards a group TERM to timeout->codex, which is in its OWN process group`)
+      assert.match(body,
+        /wait \$CPID; RC=\$\?; if \[ \$RC -gt 128 \]; then wait \$CPID; RC=\$\?; fi; echo \$RC > \S+\/exit-code' &/,
+        `${label}: the trap-interrupted wait is followed by a second one that collects the real status`)
+    }
+    assert.ok(!/echo \$! >/.test(prompt),
+      `${label}: NEVER \`echo $! >\` after the \`&\` — under job control that names a fork that is already dead`)
+  }
 })
 
 test('an absent exit-code file is RUNNING: -1 needs a dead pid, never a long wait', async () => {

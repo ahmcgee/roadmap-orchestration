@@ -116,6 +116,14 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
 
   for (const required of [
     'setsid',                 // process-group leader, so the deadline kill can take the whole tree
+    "sh -c 'echo $$ > ",      // …and the pid recorded is the DETACHED SHELL'S OWN, written as its
+                              //   first act. `… & echo $! > codex.pid` named the fork setsid makes
+                              //   under job control — dead within a second, so every liveness check
+                              //   in this prompt was reading a corpse (2026-09-02, 3 waves lost).
+    'trap "kill -TERM $CPID" TERM;',   // `timeout` sits in its own process group, so a group kill
+                                       //   reaches this sh and stops unless the sh forwards it on
+    'wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi;',  // trap-interrupted wait,
+                                       //   then a second one for codex's real status
     '--json',                 // events.jsonl is the only machine-readable channel
     '-o ',                    // the final message lands in a file, never in the steering context
     '--output-schema',        // the report is schema-constrained at the codex end too
@@ -129,6 +137,8 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
                               //   back with the config wherever namespaces actually work.
     'tail --pid',             // sleep-free polling (a bare sleep loop burns steering turns)
   ]) assert.ok(p.includes(required), `the steering prompt must pin \`${required}\``)
+  assert.ok(!p.includes('echo $! >'),
+    'and NEVER `echo $! >` after the `&` — the pid that recorded was dead before the first poll')
 
   // Artifacts live OUTSIDE the repo, under the worktree root — structurally invisible to the
   // NOROADMAP write-bar and to the merge fence.
@@ -529,9 +539,15 @@ test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never t
   assert.ok(p.includes('-s danger-full-access'),
     'codexSandbox is the environment\'s ruling and overrides the role\'s intent, as in the build lane')
   assert.ok(!p.includes('-s read-only'), 'so the role\'s read-only intent is carried by the brief, not the flag')
-  // The launch mechanics are the build lane's, not a second implementation of them.
-  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900'])
+  // The launch mechanics are the build lane's, not a second implementation of them — including the
+  // self-written pidfile, the TERM forward and the double wait, which the roles get for free only
+  // because the seam is shared.
+  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900',
+    `sh -c 'echo $$ > ${WT}/__codex/roles/codex-spec-review-a/codex.pid; `,
+    'trap "kill -TERM $CPID" TERM;',
+    'wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi;'])
     assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
+  assert.ok(!p.includes('echo $! >'), 'and never the $! pidfile the build lane no longer writes either')
   assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
   assert.ok(/if .*codex\.pid already exists/.test(p), 'and the attach-don\'t-relaunch preamble')
   assert.ok(p.includes(`${WT}/__codex/roles/codex-spec-review-a`),

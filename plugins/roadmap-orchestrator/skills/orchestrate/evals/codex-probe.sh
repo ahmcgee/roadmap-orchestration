@@ -6,8 +6,9 @@
 #
 # What it pins, against a scratch git repo at an UNTRUSTED path:
 #   P1.1  binary + auth present
-#   P1.2  the harness's exact invocation shape (setsid nohup sh -c 'codex exec ... --json -
-#         < brief.txt', -o last-message, --output-schema, exit-code marker file) completes
+#   P1.2  the harness's exact invocation shape (setsid nohup sh -c 'echo $$ > codex.pid;
+#         timeout -k … codex exec … --json - < brief.txt &' + TERM trap + double wait,
+#         -o last-message, --output-schema, exit-code marker file) completes
 #   P1.3  --json event vocabulary: first event is thread.started with a thread_id
 #   P1.4  turn.completed carries a usage object
 #   P1.5  last-message.txt is JSON valid against the written --output-schema
@@ -100,18 +101,29 @@ Do exactly the following, in order:
 EOF
 
 # ---- P1.2 launch with the exact harness invocation shape --------------------
+# The detached shell writes its OWN pid as its first act, and never `echo $!` after the `&`: this
+# script's shell has job control on too, so the backgrounded job is already a process-group leader,
+# setsid FORKS, and `$!` names a parent that is dead within a second (2026-09-02 — the pid every
+# liveness check in the harness hung off, so P1.8 below was passing on a corpse). The `trap` and the
+# double `wait` are the harness's too: `timeout` sits in its own process group, so the group kill at
+# the deadline reaches this sh and nothing beneath it unless the sh forwards the signal itself.
 date +%s > "$D/launched-at"
 HOMEPREFIX=""
 [ -n "${CODEX_HOME:-}" ] && HOMEPREFIX="CODEX_HOME=$CODEX_HOME "
-setsid nohup sh -c "${HOMEPREFIX}codex exec \
+setsid nohup sh -c "echo \$\$ > '$D/codex.pid'; ${HOMEPREFIX}timeout -k 30 900 codex exec \
   -C '$W' -s workspace-write \
   -c model_reasoning_effort=low \
   -c 'projects.\"$W\".trust_level=\"trusted\"' \
   --skip-git-repo-check \
   --output-schema '$D/schema.json' \
   -o '$D/last-message.txt' \
-  --json - < '$D/brief.txt' > '$D/events.jsonl' 2> '$D/stderr.log'; echo \$? > '$D/exit-code'" \
-  >/dev/null 2>&1 & echo $! > "$D/codex.pid"
+  --json - < '$D/brief.txt' > '$D/events.jsonl' 2> '$D/stderr.log' & \
+  CPID=\$!; trap \"kill -TERM \$CPID\" TERM; \
+  wait \$CPID; RC=\$?; if [ \$RC -gt 128 ]; then wait \$CPID; RC=\$?; fi; echo \$RC > '$D/exit-code'" \
+  >/dev/null 2>&1 &
+# The pidfile is written by that shell, not by us — give it a bounded moment before P1.8 reads it.
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$D/codex.pid" ] && break; sleep 1; done
+[ -s "$D/codex.pid" ] || bad "P1.2 the detached shell never wrote $D/codex.pid within 10s"
 
 # ---- P1.8 poll idiom --------------------------------------------------------
 POLL_OK=1
