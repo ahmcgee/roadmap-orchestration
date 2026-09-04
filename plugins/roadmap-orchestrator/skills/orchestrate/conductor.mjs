@@ -1176,7 +1176,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // durable, human-facing record.
   pendingDebt = [...pendingDebt, ...(state.debt ?? [])]
 
-  // Wave-level halt (`state.halt.reason`, one of: codex-unavailable / codex-usage-limit — Codex is
+  // Wave-level halt (`state.halt.reason`, one of: codex-unavailable — the wave-start probe failed
+  // (CLI, credential, or its exec smoke) or the mid-wave backend breaker tripped — / codex-usage-limit;
+  // Codex is
   // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper —
   // the box cannot support the work; platform-outage — required agent results stopped arriving).
   // The harness already halted dispatch and parked in-flight units; no census/triage spend against

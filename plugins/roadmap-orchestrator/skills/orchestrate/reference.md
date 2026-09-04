@@ -337,7 +337,12 @@ Fields the scripts add:
   fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
   treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
   died, so whether the branch holds work is unknown and the unit parked rather than being
-  quarantined for building nothing; `scope-growth` means a diff reached beyond its pinned envelope and the
+  quarantined for building nothing; `codex-unavailable` is also emitted MID-WAVE by the codex
+  backend breaker — the codex counterpart of `platform-outage`: ≥2 consecutive codex runs across
+  DIFFERENT units or roles failing with `turn.failed` and the same HTTP status is a provider
+  outage, not N unit defects, so dispatch halts and the affected units PARK (`pending` +
+  `parked`) instead of being quarantined or blocked;
+  `scope-growth` means a diff reached beyond its pinned envelope and the
   gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
   so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the recorded
   integration tip (`state.json`'s `integrationTip`) is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
@@ -395,7 +400,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 
 | `reason` | who set it | how the root clears it |
 |---|---|---|
-| `codex-unavailable` | the per-wave `codex-probe` found no CLI or no "logged in" line | `codex login` (or `--device-auth` headless), then relaunch |
+| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "reply pong"` **smoke** exited non-zero (the CLI and the credential can both be fine while the Codex BACKEND is down) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
@@ -579,10 +584,18 @@ a dead unit); with no commits ⇒ ONE retry — for the build step AND for every
 first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file) and tells codex in
 its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
 `blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
-`codex-probe` ⇒ **hard stop** — new dispatch halts, in-flight units **park**
+`codex-probe` (three commands: `--version`, `login status`, and a bounded read-only
+`codex exec … "reply pong"` **smoke** whose pass test is its exit code) ⇒ **hard stop** — new
+dispatch halts, in-flight units **park**
 (`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
 `halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
-wait out the window. Never a quarantine, never a substitute implementer.
+wait out the window. Never a quarantine, never a substitute implementer. An outage that STARTS
+mid-wave is caught by the **codex backend breaker** (the codex counterpart of `platform-outage`):
+≥2 consecutive codex results on DIFFERENT units or roles carrying `turn.failed` and the SAME HTTP
+status set `halt.codex = 'codex-unavailable'`, and every codex-shaped dead end in the unit pipeline
+— a dead plan role, a dead replan, a build that came back with the outage on it — then PARKS
+instead of quarantining. Any codex result without the signature clears the run, and two failures
+from the same unit are one unit's story: distinctness is by id.
 
 **The codex ROLE adapter — `run(brief, {model:'codex', …})`.** The build/fix lane is not the only
 way to reach Codex. Any call site can dispatch a judgment or drafting ROLE to Codex and get back an
@@ -887,7 +900,7 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 | provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
 | preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
 | preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |
-| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test |
+| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test, the smoke's exit code |
 | commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
 | `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
 | git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |

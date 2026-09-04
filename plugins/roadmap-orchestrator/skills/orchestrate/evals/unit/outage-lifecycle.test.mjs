@@ -23,7 +23,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, courierResult, courierSaying, BASE_SHA, implCodexOk, codexMetaOk,
-  structuredOutputError, courierOk } from './fakes.mjs'
+  structuredOutputError, courierOk, codexRoleDead } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -124,6 +124,102 @@ test('a quota error on the throw path halts immediately, without burning a salva
   assert.equal(state.halt.reason, 'platform-outage')
   assert.ok(!has(calls, 'gate:a#0#salvage'), 'a platform that just said it is down is not asked twice')
   assert.equal(state.units.a.parked, true)
+})
+
+/* ====================================================================== */
+/* 1b. The codex BACKEND breaker — section 1's rule, for the other provider */
+/* ====================================================================== */
+// 2026-09-03, from ~14:43 UTC: every codex run failed with `turn.failed: unexpected status 404 Not
+// Found … chatgpt.com/backend-api/codex/responses`, while `codex login status` still said "Logged
+// in" so the wave-start probe passed. The wave ran to the end on a dead backend: 23 `codex-exec`
+// rows, five units BLOCKED at verify, one QUARANTINED as "the planner died twice", the whole
+// boundary owed, and a tier-4 return that spent Fable on nothing. The breaker is deliberately the
+// same design as `haltPlatform` above — a provider's death is a fact about the PROVIDER — and
+// differs only in its signal: text, but text plus repetition across DIFFERENT work.
+const ERR_404 = 'turn.failed: unexpected status 404 Not Found (chatgpt.com/backend-api/codex/responses)'
+const ERR_503 = 'turn.failed: unexpected status 503 Service Unavailable'
+const outageRun = (error) => () =>
+  ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 1, commits: 0, doneMarker: false, error } })
+
+test('two units 404ing back to back trip the breaker: both PARK, neither is quarantined', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-(build|build-retry|fix):/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'the same status on two different units is the provider')
+  assert.equal(state.halt.reason, 'codex-unavailable')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'pending', `${id} parks — an outage is never a verdict about a unit`)
+    assert.equal(state.units[id].parked, true, `${id} carries the park flag, so it re-enters by adoption`)
+    assert.ok(!has(calls, `dossier:${id}`), `${id} gets no redesign dossier over a provider outage`)
+  }
+  const d = kinds(state, 'codex-unavailable')
+  assert.equal(d.length, 1, 'the breaker speaks once, however many runs go on to fail')
+  assert.match(d[0].what, /consecutive codex runs across different units failed with HTTP 404/)
+  assert.match(d[0].what, /provider outage, not unit defects/)
+  assert.match(d[0].what, /units park/)
+})
+
+// The unit that hit the FIRST 404 is the hard case: nothing was known to be wrong when its own run
+// came back, and by the time a sibling tripped the breaker its retry had already been skipped by
+// `haltReason()`. Its outcome after that must be a park — the 2026-09-03 arc quarantined exactly
+// this unit as "the planner died twice".
+test('the unit that failed FIRST parks too, and nothing is dispatched past the halt', async () => {
+  const seen = []
+  const { fn, calls } = makeAgent([{ match: /^codex-(build|build-retry|fix):/,
+    result: (p, opts) => { seen.push(opts.label); return outageRun(ERR_404)() } }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.units.a.status, 'pending')
+  assert.equal(state.units.a.parked, true)
+  assert.equal(state.units.b.status, 'pending')
+  assert.equal(state.units.b.parked, true)
+  assert.equal(state.halt.codex, 'codex-unavailable')
+  // Distinctness is by unit, so two ids among the launched runs is what tripped it — and after
+  // that no third run may exist: `worthRetry` gates on `!haltReason()`.
+  const ids = [...new Set(seen.map((l) => l.replace(/^codex-[a-z-]+:/, '').replace(/#.*$/, '')))]
+  assert.deepEqual(ids.sort(), ['a', 'b'], 'both units did run before anything halted')
+  assert.ok(!has(calls, 'verify:'), 'nothing downstream is asked to judge work the outage prevented')
+})
+
+test('a plan role that dies under the outage parks the unit — never "the planner died twice"', async () => {
+  const { fn, calls } = makeAgent([{ match: /^plan:/, result: () => codexRoleDead({ error: ERR_404 }) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'roles count toward the census — the provider is the provider')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'pending', `${id} parks`)
+    assert.equal(state.units[id].parked, true)
+    assert.ok(!/planner died twice/.test(state.units[id].reason ?? ''), `${id} is not blamed for the outage`)
+  }
+  assert.ok(!has(calls, 'dossier:'), 'no dossier is written for a provider outage')
+})
+
+test('one unit 404ing while another succeeds is NOT an outage — the unit-level handling stands', async () => {
+  const { fn } = makeAgent([{ match: /^codex-(build|build-retry):a/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt, undefined, 'one unit failing is that unit — a breaker that trips here is useless')
+  assert.equal(state.units.b.status, 'merged', 'and the healthy unit finishes normally')
+  assert.notEqual(state.units.a.parked, true, 'the failing unit is judged as before, never parked on an outage')
+  assert.ok(kinds(state, 'codex-exec').length, 'its own failure is ledgered the way it always was')
+})
+
+test('two units failing with DIFFERENT statuses is not one outage', async () => {
+  const { fn } = makeAgent([
+    { match: /^codex-(build|build-retry|fix):a/, result: outageRun(ERR_404) },
+    { match: /^codex-(build|build-retry|fix):b/, result: outageRun(ERR_503) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt, undefined, 'a 404 and a 503 are two facts, not one provider verdict')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0)
+})
+
+test('one unit failing twice is one unit — distinctness is by id, not by run', async () => {
+  const { fn } = makeAgent([{ match: /^codex-(build|build-retry|fix):a/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.halt, undefined, 'a build and its retry both 404ing is still one unit\'s story')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0)
 })
 
 /* ====================================================================== */
