@@ -54,18 +54,23 @@ const courierStdout = (cmd, head, branch) =>
             // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
             : /rev-list --count/.test(cmd) ? '1'
               : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
-                : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
-                  : /pids\.current/.test(cmd) ? '412\n36792'
-                    : /grep -c '\^Z'/.test(cmd) ? '0'
-                      : /^ps -p 1\b/.test(cmd) ? 'sh'
-                        : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
-                          : /^nproc$/.test(cmd) ? '16'
-                            // move-feedback: each archive command is self-contained and always
-                            // exits 0, printing MOVED / ABSENT / FAILED. The default is a file
-                            // that was there and moved; a test wanting the other outcomes says so
-                            // with courierSaying, and courierResult keeps the fake archive in step.
-                            : /^test -e '[^']+' \|\| \{ echo ABSENT/.test(cmd) ? 'MOVED'
-                              : ''
+                // The wave-start BACKEND SMOKE (`codex exec … "reply pong"`). A healthy provider
+                // answers; the test that matters is the exit code, which courierResult defaults
+                // to 0 — a test wanting the 2026-09-03 outage overrides this one command.
+                : /codex exec\b/.test(cmd) ? 'pong'
+                  : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
+                    : /pids\.current/.test(cmd) ? '412\n36792'
+                      : /grep -c '\^Z'/.test(cmd) ? '0'
+                        : /^ps -p 1\b/.test(cmd) ? 'sh'
+                          : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
+                            : /^nproc$/.test(cmd) ? '16'
+                              // move-feedback: each archive command is self-contained and always
+                              // exits 0, printing MOVED / ABSENT / FAILED. The default is a file
+                              // that was there and moved; a test wanting the other outcomes says
+                              // so with courierSaying, and courierResult keeps the fake archive
+                              // in step.
+                              : /^test -e '[^']+' \|\| \{ echo ABSENT/.test(cmd) ? 'MOVED'
+                                : ''
 // Every numbered command the script composes, with its `cd '<where>' && ( … )` guard STRIPPED back
 // off — the guard is the script's, the inner command is what a test (and the fake's own stdout
 // table) is about. A line that does not carry the guard is a defect the tests want to see, so the

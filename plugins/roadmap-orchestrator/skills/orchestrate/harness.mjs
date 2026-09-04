@@ -2542,6 +2542,48 @@ const withGateSlot = (fn) => {
   p.then(release, release)   // releases a tick AFTER p settles; never delays p itself
   return p
 }
+// ---- the CODEX BACKEND breaker: the codex counterpart of haltPlatform() ----------------------
+// A provider's death is a fact about the PROVIDER, never a verdict on a unit. `haltPlatform`
+// (above) says exactly that for the Claude platform; this says it for Codex, and the design is
+// deliberately the same shape: one wave-level halt, dispatch stops, in-flight units PARK with
+// their commits intact, and the operator waits the outage out instead of reading N quarantines.
+//
+// 2026-09-03, from ~14:43 UTC: every codex run died with `turn.failed: unexpected status 404 Not
+// Found … chatgpt.com/backend-api/codex/responses` while `codex login status` still said "Logged
+// in". The wave ran to the end on a dead backend — 23 `codex-exec` rows, five units BLOCKED at
+// verify, one QUARANTINED as "the planner died twice", the whole boundary owed, and a tier-4
+// return with nothing to judge. The wave-start smoke (below) catches an outage that is already
+// underway; this catches one that STARTS mid-wave.
+//
+// It differs from `haltPlatform` in its SIGNAL only, and it can afford to: a codex failure
+// carries the one error line the steerer copies back, where an `agent()` null carries no error
+// object at all (which is why runReq's trigger is structural instead). So the trigger here is
+// text — but text plus REPETITION ACROSS DIFFERENT WORK, which is the part that makes it safe.
+// One unit's 404 could be that unit's bad luck; the same HTTP status on two different units or
+// roles back-to-back cannot be a unit defect, because no defect is shared by work that has
+// nothing in common but the provider.
+const outageStatus = (err) => {
+  const s = String(err ?? '')
+  if (!/turn\.failed/i.test(s)) return null
+  return (/unexpected status\s+([45]\d\d)\b/i.exec(s) ?? /\b([45]\d\d)\b/.exec(s))?.[1] ?? null
+}
+// CONSECUTIVE is load-bearing in both directions: any codex result WITHOUT the signature clears
+// the run (an outage has to be happening now, not to have happened once an hour ago), and
+// distinctness is by `id` — a unit id, or a role's label — so a unit whose build and its retry
+// both 404 is still ONE unit's story and never trips this alone.
+const CODEX_OUTAGE_RUN = 2
+const codexOutage = { status: null, ids: [], tripped: false }
+// True once the wave has established that CODEX ITSELF is down: the wave-start smoke failed, or
+// the breaker tripped. Every codex-shaped dead end in the unit pipeline reads this and PARKS
+// instead of judging — see `outagePark` below.
+const codexOutaged = () => halt.codex === 'codex-unavailable' || codexOutage.tripped
+// The park a codex outage earns, in the shape every other halted step already returns: back to
+// `pending` with `parked:true`, no dossier, no verdict, no retry. The unit re-enters by adoption
+// next wave with whatever commits are on its branch.
+const outagePark = (label) => ({ status: 'pending', parked: true,
+  note: `parked at ${label}: ${haltReason() ?? 'codex-unavailable'} (codex provider outage — nothing ` +
+    `about this unit was judged)` })
+
 // Degradation + spend bookkeeping shared by every codex process — build, fix and role alike. A
 // dead process is not a dead unit (the branch is judged on its commits); every entry names the
 // artifact dir to read. `id` names whatever the run was about (a unit id, or a role's label); a
@@ -2576,6 +2618,25 @@ const noteCodexMeta = (id, r, dir, label, phase = 'Implement') => {
         ? `no exit-code file for ${id} (${dir}${m.error ? `; ${m.error}` : ''}) — the run was never observed ` +
           `to finish, so its exit status is unknown; the steering agent reported it dead after \`kill -0\` failed`
         : `codex exited ${m.exitCode} on ${id} (${dir}${m.error ? `; ${m.error}` : ''})`) + survived })
+  }
+  // The breaker, fed by every codex result there is — build, fix, verify, plan, boundary role.
+  // Roles are best-effort and their failures are never unit verdicts, but they COUNT: a dead
+  // backend kills an explorer exactly as readily as a build, and the census is about the provider.
+  const status = outageStatus(m.error)
+  if (!status) { codexOutage.status = null; codexOutage.ids = [] }
+  else {
+    if (codexOutage.status !== status) { codexOutage.status = status; codexOutage.ids = [] }
+    if (!codexOutage.ids.includes(id)) codexOutage.ids.push(id)
+    if (codexOutage.ids.length >= CODEX_OUTAGE_RUN && !codexOutage.tripped) {
+      codexOutage.tripped = true
+      // `??` and not `=`: a usage limit already recorded is the more specific truth and keeps the
+      // slot, exactly as `haltPlatform` refuses to overwrite an outage it already declared.
+      halt.codex = halt.codex ?? 'codex-unavailable'
+      degrade({ label, model: 'codex', phase, kind: 'codex-unavailable',
+        what: `${codexOutage.ids.length} consecutive codex runs across different units failed with HTTP ` +
+          `${status} (turn.failed) — a provider outage, not unit defects; dispatch halts, units park, ` +
+          `relaunch after the outage. Failing ids: ${codexOutage.ids.join(', ')}.` })
+    }
   }
   if (m.commits > 0 && r.notes?.includes('left uncommitted by codex'))
     degrade({ label, model: 'codex', phase, kind: 'codex-uncommitted',
@@ -3028,6 +3089,10 @@ async function runUnit(unit) {
   // unit does not get built, and the dossier says infrastructure rather than blaming the spec.
   // Never a platform halt: a dead codex role is CODEX's failure (the adapter has already ledgered
   // it) and the rest of the wave's Claude pipeline is unaffected.
+  // …unless CODEX ITSELF is down, in which case "the planner died twice" is the outage saying so
+  // twice and not a fact about this unit at all. 2026-09-03: a 404'd backend quarantined a unit on
+  // exactly this line. Park instead — no dossier, no verdict, re-entry by adoption next wave.
+  if (!implPlan && codexOutaged()) return outagePark(`plan:${unit.id}`)
   if (!implPlan)
     return quarantine(unit, 'no implementation plan was produced (the codex planner died twice) — ' +
       'infrastructure, not the spec; relaunch to retry', { role: `plan:${unit.id}` })
@@ -3083,6 +3148,7 @@ async function runUnit(unit) {
           phase: 'Implement', label: `replan:${unit.id}` })
       // The architect redirected and the revision never came back. Building the plan the architect
       // just rejected is the one thing that must not happen here.
+      if (!implPlan && codexOutaged()) return outagePark(`replan:${unit.id}`)
       if (!implPlan)
         return quarantine(unit, 'the architect redirected the plan and the revision never came back (the codex ' +
           'planner died twice) — infrastructure, not the plan; relaunch to retry', check)
@@ -3098,6 +3164,14 @@ async function runUnit(unit) {
   // Dispatch halted (a codex probe failure, a usage limit, a sick host, a dead platform): PARK,
   // don't judge. The unit re-enters by adoption next wave with whatever commits exist.
   if (impl.parked) return { status: 'pending', parked: true, note: `parked before implement: ${haltReason()}` }
+  // The build RAN and the backend was dead under it — either this unit's own run carries the
+  // outage signature, or a sibling's did and tripped the breaker while this one was in flight
+  // (in which case `worthRetry`'s `!haltReason()` has already skipped its retry, so what came
+  // back is a single dead run). Park on the same terms as the entry-time halt above: the commit
+  // probe below decides between "judge the branch" and "nothing was built", and neither of those
+  // is an answerable question while the provider is down.
+  if (codexOutaged() && (impl.reportLost || outageStatus(impl.codex?.error)))
+    return outagePark(`implement:${unit.id}`)
   // The report died. Ask the branch whether the WORK died with it: commits present means the
   // implementer finished and only its report was lost, so the diff must be judged on its merits by
   // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
@@ -4077,29 +4151,68 @@ if (C.envPreflight !== 'off') {
 // human act — the harness never attempts it.
 {
   const waveN = (prior.wave ?? 0) + 1
-  // Two commands, and the PASS CONDITION IS DECIDED HERE, not by the agent. Asked to judge
+  // THREE commands, and the PASS CONDITION IS DECIDED HERE, not by the agent. Asked to judge
   // "is it logged in", Haiku saw `Logged in using ChatGPT`, invented a requirement that the
   // credential be Anthropic's, returned ok:false, and halted a wave whose auth had just driven
   // 111 codex runs (2026-08-26). The courier reports exit codes and verbatim output; the pass test
   // below is the script's. Any credential provider passes — that judgement is not delegated.
-  const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`]
+  //
+  // The third command is the SMOKE, and it exists because the first two answer a question that
+  // was not the one being asked. 2026-09-03: the ChatGPT Codex backend 404'd
+  // (`turn.failed: unexpected status 404 Not Found … chatgpt.com/backend-api/codex/responses`)
+  // while `codex --version` printed a version and `codex login status` still said "Logged in" —
+  // the credential was valid, the SERVICE was gone. The probe passed, the wave ran, and it cost
+  // 23 `codex-exec` rows, five BLOCKED units, one quarantine and a whole owed boundary. A binary
+  // that exists and a token that parses are not availability; the only thing that proves Codex
+  // can do work is Codex doing a trivial piece of work, so the probe asks it for one word.
+  // Bounded (`timeout 120`, `low` effort, a one-word answer) and read-only by intent — the
+  // sandbox flag is composed the way the harness composes it EVERYWHERE (`config.codexSandbox`
+  // overriding the role's stated intent), because `-s read-only` needs the bwrap user namespace
+  // this devcontainer cannot build and would EPERM on a healthy box: a probe that halts every
+  // wave on a working host is worse than the outage it was written for.
+  const smokeDir = `${wtRoot}/__codex/roles/probe-w${waveN}`
+  const smoke =
+    `${codexHome}timeout 120 codex exec -C ${repo} -s ${C.codexSandbox ?? 'read-only'} ` +
+    `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
+    `-c projects."${repo}".trust_level="trusted" ` +
+    `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
+    `-o ${smokeDir}/last-message.txt 'Reply with exactly the word pong'`
+  const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`,
+    `mkdir -p ${smokeDir} && ${smoke}`]
   const cp = await courierRun(repo, cmds,
     { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}` },
     `This is a read-only availability probe. Report what the commands print and judge none of it — which ` +
     `credential provider is in use (ChatGPT plan, API key, device auth) is not yours to assess and not a ` +
-    `failure of any kind. Change nothing. ` + LAUNCH)
+    `failure of any kind. The third command asks Codex itself for one word; whether it answers with that ` +
+    `word is not yours to assess either — report its exit code and its output, nothing more. ` +
+    `Change nothing. ` + LAUNCH)
   // Mechanical, and deliberately spelled out: `codex login status` prints "Not logged in" when it
   // is not, and a bare /logged in/i test matches that substring.
   const status = cp.out(1)
   const loggedIn = /logged in/i.test(status) && !/not\s+logged\s+in/i.test(status)
-  if (!(cp.exit(0) === 0 && loggedIn)) {
+  // The smoke's pass test is THE SCRIPT'S, and it is the exit code — never a reading of the text.
+  // "Did it say pong?" is a judgment, and a judgment is what a courier must never be handed; a
+  // backend that 404s cannot produce a zero exit, which is the whole signal.
+  const smokeOk = cp.exit(2) === 0
+  // The BACKEND is what failed only when the CLI and the credential both passed first — a courier
+  // that stopped at command 1 reported nothing about the smoke, and reading its missing exit code
+  // as an outage would send the operator to wait out a provider that is perfectly healthy.
+  const backendDown = cp.exit(0) === 0 && loggedIn && !smokeOk
+  if (!(cp.exit(0) === 0 && loggedIn && smokeOk)) {
     halt.codex = 'codex-unavailable'
+    // Three distinct whys, in the order they are established, because they call for DIFFERENT
+    // operator actions: install, re-login, or wait. Collapsing the third into the second is what
+    // would send a human to `codex login` during a provider outage that no login can fix.
     const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
-      : `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
+      : !loggedIn ? `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
+      : `backend/exec smoke failed — \`codex exec … "reply pong"\` exited ` +
+        `${cp.exit(2) ?? 'nothing (no report)'}: …${cp.out(2).slice(-300) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
       what: `codex CLI unavailable (${why}) — wave halted before dispatch; the wave state returns ` +
-        `intact and is resumable. Operator: codex login (or codex login --device-auth headless), ` +
-        `then relaunch the arc.` })
+        `intact and is resumable. Operator: ` + (backendDown
+          ? `the CLI and the credential are both fine and re-logging in will not help — this is the ` +
+            `Codex BACKEND. Wait out the outage, then relaunch the arc.`
+          : `codex login (or codex login --device-auth headless), then relaunch the arc.`) })
   }
 }
 

@@ -565,7 +565,35 @@ each deliberate:
   early-returns `codex-unavailable`/`codex-usage-limit` to the root. Auth is a human act; the
   orchestrator never routes around a halt with a substitute implementer. (0.13.0 generalized this
   single `codexHalt` flag into a halt record `{codex, env, platform}` with a fixed precedence — see
-  §19; the codex semantics above are unchanged.)
+  §19; the codex semantics above are unchanged. 2026-09 added the two checks that make
+  "unavailable" mean the SERVICE and not just the CLI — see below.)
+- **A live CLI and a live credential are not availability** (2026-09-03). From ~14:43 UTC the
+  ChatGPT Codex backend returned `turn.failed: unexpected status 404 Not Found …
+  chatgpt.com/backend-api/codex/responses` for every run. `codex --version` printed a version;
+  `codex login status` printed "Logged in"; the wave-start probe therefore passed and the wave ran
+  to the end on a dead provider — 23 `codex-exec` rows, five units BLOCKED at verify, one
+  QUARANTINED as "the planner died twice", the whole boundary owed, and a tier-4 return that spent
+  Fable on a boundary with nothing in it. The probe had been answering a question nobody asked. The
+  fix is two checks, deliberately placed at the two moments an outage can begin:
+  **(1) the probe's third command is a real, bounded, read-only `codex exec … "reply pong"`**, and
+  the pass test is the SCRIPT'S and is the *exit code* — asking a courier whether the reply says
+  "pong" would be handing it a judgment, and the whole signal is that a 404'd backend cannot exit
+  zero. Its sandbox flag is composed the way every other codex invocation composes it
+  (`config.codexSandbox` overriding the stated `read-only` intent) for the measured reason on that
+  knob: `-s read-only` needs a bwrap user namespace this devcontainer cannot build, and a probe
+  that EPERMs on a healthy box halts every wave forever, which is strictly worse than the outage.
+  **(2) a mid-wave breaker**, the exact counterpart of `haltPlatform` (§19): a provider's death is
+  a fact about the PROVIDER, never a verdict on a unit. It differs only in its signal, and can
+  afford to — a codex failure carries the error line the steerer copies back, where an `agent()`
+  null carries no error object at all. So the trigger is text *plus repetition across different
+  work*: ≥2 consecutive codex results, on DIFFERENT units or roles, carrying `turn.failed` and the
+  SAME HTTP status. One unit's 404 is that unit's bad luck; the same status on two unrelated pieces
+  of work has nothing to explain it but the provider. Any clean codex result clears the run (an
+  outage has to be happening *now*), and distinctness is by id, so a build and its retry both
+  404ing is still one unit's story. Once it trips, the codex-shaped dead ends in the unit pipeline
+  — a dead plan role, a dead replan, a build that came back with the outage on it — PARK instead of
+  quarantining, including the unit that hit the FIRST failure and was still in flight when a
+  sibling tripped the breaker. That unit is precisely the one the 2026-09-03 arc quarantined.
 - **The review spiral, named.** Three prompt clauses compounded: (1) "an imperfection in a file
   you are already touching is yours to fix" made the eligible-fix set a function of the diff's
   own growth; (2) "over-reporting costs nothing" licensed unbounded findings; (3) findings became

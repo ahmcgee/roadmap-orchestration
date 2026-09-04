@@ -32,7 +32,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk,
-  courierSaying, courierOk } from './fakes.mjs'
+  courierSaying, courierOk, courierResult } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -229,8 +229,36 @@ test('d probe failure: nothing dispatches, units stay pending, the wave halts re
 
   const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
   assert.ok(d, 'the halt is a loud, operator-actionable degradation')
+  // A courier that never reported has told us nothing about the BACKEND — only that the probe
+  // itself did not run — so the remedy stays the credential one. Reading a missing smoke exit
+  // code as an outage would park an operator in front of a provider that is perfectly healthy.
   assert.ok(/codex login/.test(d.what), 'and it names the exact remedy the human has to perform')
   assert.equal(state.boundary, undefined, 'boundary spend against a halted wave buys nothing the relaunch will not')
+})
+
+// The 2026-09-03 backend outage: `codex --version` and `codex login status` both passed and the
+// wave ran anyway, on a backend that 404'd every single run. The probe's third command is a real
+// bounded `codex exec`, and its pass test is its EXIT CODE — so a live CLI with a live credential
+// in front of a dead service halts the wave here, before a single unit is dispatched.
+test('d2 probe smoke: a dead BACKEND halts before dispatch, exactly as a dead CLI does', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-probe:/, result: (p) => {
+    // Commands 1 and 2 pass exactly as they did on the day; only the smoke fails, non-zero.
+    const r = courierResult(p, BASE_SHA)
+    return { ok: true, results: [r.results[0], r.results[1], { exitCode: 1,
+      stdout: 'ERROR: turn.failed: unexpected status 404 Not Found: chatgpt.com/backend-api/codex/responses' }] }
+  } }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'a backend that cannot answer is codex being unavailable')
+  assert.equal(state.codex.available, false)
+  assert.equal(state.units.a.status, 'pending', 'a provider outage is not a unit defect')
+  assert.equal(state.units.b.status, 'pending')
+  assert.ok(!has(calls, 'codex-build:'), 'nothing is dispatched onto a dead backend')
+  assert.ok(!(state.degradations ?? []).some((d) => d.kind === 'codex-exec'),
+    'and there are no codex-exec rows at all — the 23 of them are the incident this prevents')
+  const rows = (state.degradations ?? []).filter((d) => d.kind === 'codex-unavailable')
+  assert.equal(rows.length, 1, 'one row, naming which of the three probe commands failed')
+  assert.match(rows[0].what, /backend\/exec smoke failed/)
 })
 
 // =========================================================================================

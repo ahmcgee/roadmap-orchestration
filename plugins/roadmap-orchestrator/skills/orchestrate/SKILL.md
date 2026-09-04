@@ -101,15 +101,23 @@ brake is a tier-2 guarantee and is unaffected.
 
 **Codex preflight (REQUIRED — refuse to dispatch without it).** The implementer for every unit
 is the `codex` CLI, launched by cheap steering agents inside unit worktrees; there is no Claude
-implementation lane. Probe once: `command -v codex && codex --version && codex login status`
-(prefix `CODEX_HOME=<home>` if the environment uses a non-default home — check `$CODEX_HOME`).
-Logged in → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
+implementation lane. Probe once: `command -v codex && codex --version && codex login status`,
+then — because a valid credential proves nothing about the SERVICE (2026-09-03: the ChatGPT Codex
+backend 404'd every run while `login status` still said "Logged in") — one real bounded run:
+`timeout 120 codex exec --skip-git-repo-check 'Reply with exactly the word pong'`. The pass test
+is its **exit code**, not its wording. (Prefix `CODEX_HOME=<home>` on all of them if the
+environment uses a non-default home — check `$CODEX_HOME`.)
+All three green → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
-`codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Auth is
-a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
+`codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Smoke
+non-zero with the first two green → **stop before dispatch** too, but say the opposite thing: the
+CLI and the credential are fine, the Codex backend is down, and no login will help — wait it out.
+Auth is a human act — never attempt the login yourself. Mid-arc, the harness re-probes (all three
+commands) each wave, and a backend that dies mid-wave trips a breaker on ≥2 consecutive codex
+failures across different units with the same HTTP status; either way it
 early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
-resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
-route around by re-implementing with Claude. The same shape covers the host and the platform:
+resumable pauses (re-auth, or wait for the limit window or the outage, then relaunch), never
+failures to route around by re-implementing with Claude. The same shape covers the host and the platform:
 `env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
 (required agent results stopped arriving) park the wave the same way — see `state.halt`.
 
@@ -489,8 +497,12 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   `env-no-reaper`, `platform-outage`) — the wave stopped dispatching and handed you a
   **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
   commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
-  wait out a usage-limit or platform-outage window, or fix the box (a full pid cgroup and a
-  ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1). Do the action, then
+  wait out a usage-limit, platform-outage or Codex-backend-outage window, or fix the box (a full
+  pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1).
+  `codex-unavailable` covers two of those, so read the degradation's `what` before acting: a failed
+  `--version`/`login status` is a re-login, while a failed exec smoke or a tripped backend breaker
+  (≥2 consecutive `turn.failed` runs on different units, same HTTP status) is the provider — no
+  login helps, wait. Do the action, then
   relaunch; never route around a halt by re-implementing the work another way.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
