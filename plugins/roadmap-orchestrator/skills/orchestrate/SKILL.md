@@ -403,7 +403,9 @@ the same run is a no-op, so persisting twice is safe.
 
 Read its last line:
 
-- **`OK …`** (exit 0) — everything landed; the files named on that line are current.
+- **`OK …`** (exit 0) — everything landed; the files named on that line are current. A trailing
+  `removed=state.partial.json` means an earlier refusal's parked prefix was stale once this whole
+  state landed, and was deleted.
 - **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
   call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
   recovery ladder below, then persist again.
@@ -472,6 +474,9 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
 - **`arc-complete`** — the boundary yielded no further work; the arc is at its cut line. Go to
   **Session end**. The final wave's boundary evidence rode back untriaged, deliberately. Any `stuck`
   ids are in-scope units wedged behind an unresolved quarantine — adjudicate them before closing.
+  `arcSummary` is the tally to report from: `{merged, quarantined, blocked, deferred,
+  pendingFeedback, wavesRun}` — read `blocked` as well as `quarantined`, since a unit whose tooling
+  never came back is neither built nor failed and appears in no other bucket.
 - **`arc-stalled`** — a tier called the arc done while in-scope, dispatchable units remained
   (`outstanding`). The tier was wrong, not the plan: confirm the units are still wanted and
   relaunch. Arc-observed — this fired twice before the census existed, caught only by hand.
@@ -508,7 +513,15 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   `--version`/`login status` is a re-login, while a failed exec smoke or a tripped backend breaker
   (≥2 consecutive `turn.failed` runs on different units or roles, same HTTP status) is the provider —
   no login helps, wait. Do the action, then relaunch; never route around a halt by re-implementing
-  the work another way.
+  the work another way. `env-verify-blocked` is the **top rung of a three-rung ladder**, and the
+  lower two need no wake at all: the FIRST verify a unit's tooling blocks (or a verify role that
+  never ran, `verify-unrun`) leaves that unit **`blocked`** — commits intact, no dossier, nothing
+  judged about the work — and the next wave's start loop re-opens and re-verifies it; a SECOND
+  block on a later wave quarantines it with an *environment* dossier; two DISTINCT units blocked in
+  one wave is the host fact that halts here. So `blocked` in a returned state is an ordinary,
+  self-healing outcome rather than something to adjudicate — the conductor's `arcSummary` gives it a
+  bucket of its own beside `merged`/`quarantined`/`deferred`, and a unit still sitting there when
+  the arc closes is one whose environment never got fixed.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
 **Nothing to replan?** Just relaunch the conductor. Keep your own turns terse — on a relaunch wake
@@ -661,7 +674,8 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    boundary jobs never ran: discharge each (run the job yourself against the final tip) or waive
    it explicitly in the architect log — an owed job silently dropped at close-out is exactly the
    skipped-reconcile failure the marker exists to prevent.
-2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
+2. **Report** plainly: merged / quarantined (with dossier pointers) / blocked (the `arcSummary`
+   bucket: verified-tooling failures whose environment was never fixed) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
    ledger's state; **where the run's attention actually went** — Claude spend broken out by tier
    (`spend.fable`/`opus`/`sonnet`/`haiku`) beside `spend.codex` and `spend.codexRuns`, so the

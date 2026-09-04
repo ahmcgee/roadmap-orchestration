@@ -473,3 +473,34 @@ test('a script that throws BEFORE its first snapshot leaves state.json untouched
   assert.match(out, /boom before any snapshot/, 'the refusal names the error')
   assert.equal(read(roadmapDir, 'state.json'), '{"keep":"me"}\n', 'a partial with nothing in it overwrites nothing')
 })
+
+/* ==================== the parked partial is cleaned up on success ==================== */
+// A refusal parks its prefix in `state.partial.json` and prints the cure. Once that cure runs and a
+// WHOLE state lands, the parked file is stale — evidence of a divergence already resolved — and
+// leaving it beside a current `state.json` is how a later reader (or a root working the recovery
+// ladder) relaunches from the wrong file. So a successful persist removes it, and says it did.
+test('the --returned cure clears the state.partial.json the refusal parked, and names it', async () => {
+  const { runDir, roadmapDir, script } = outOfOrderRun()
+  const args = { roadmapDir }
+  assert.match(persistArgv(['--run', runDir, '--script', script, '--args', JSON.stringify(args)], 2),
+    /^PARTIAL-REFUSED /m, 'setup: the refusal parks the prefix')
+  assert.ok(existsSync(path.join(roadmapDir, 'state.partial.json')))
+
+  const out = persistReturned(path.dirname(roadmapDir), mkState({ wave: 3 }), args)
+  assert.match(out, /^OK .*removed=state\.partial\.json$/m, 'the OK line says the stale park is gone')
+  assert.equal(existsSync(path.join(roadmapDir, 'state.partial.json')), false, 'and it really is gone')
+  assert.equal(JSON.parse(read(roadmapDir, 'state.json')).wave, 3, 'the whole state is what stands')
+})
+
+test('a completed REPLAY clears it too, and a run with none to clear says nothing about it', async () => {
+  const { runDir, roadmapDir, args } = await conductorRun()
+  writeFileSync(path.join(roadmapDir, 'state.partial.json'), '{"wave":0,"partial":{"stoppedAt":"stale"}}\n')
+
+  const out = persist(runDir, CONDUCTOR, args)
+  assert.match(out, /^OK reason=max-waves .*removed=state\.partial\.json$/m)
+  assert.equal(existsSync(path.join(roadmapDir, 'state.partial.json')), false)
+
+  const again = persist(runDir, CONDUCTOR, args)
+  assert.match(again, /^OK reason=max-waves /m, 'and re-persisting stays idempotent')
+  assert.doesNotMatch(again, /removed=/, 'with no removal to report the second time')
+})

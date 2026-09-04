@@ -30,6 +30,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
@@ -37,6 +38,9 @@ import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, specWriteOk,
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
+// The real file on disk — read as TEXT for the drift guards, never loaded (the conductor dispatches
+// to HARNESS_PATH, a stand-in the workflow fake intercepts).
+const HARNESS_SRC = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
 /* ----------------------------- canned agent results ----------------------------- */
 const CENSUS_EMPTY = { ok: true, pendingUserFeedback: [], quarantineDossiers: [] }
@@ -1292,7 +1296,7 @@ test('the conductor opens exactly one workflow nesting level (always the harness
 
 /* --------------------- arc-completeness is status-aware ---------------------- */
 // Arc-completeness read only what the boundary agents EMITTED — never unit statuses — and
-// arcSummary buckets merged/quarantined/deferred, so pending/running/blocked in-scope units were
+// arcSummary is a tally of finished work, so pending/running in-scope units were
 // invisible to the tier that declared the arc done. 2026-07-18: tier-2 called arc-complete with
 // four in-scope, satisfiable units outstanding; only the root caught it.
 const unitOf = (id, o = {}) => ({ id, title: id, risk: 'low', kind: 'code', inScope: true, ...o })
@@ -1326,6 +1330,39 @@ test('a fully merged arc still closes as arc-complete', async () => {
   const state = mkState({ units: { 'seed-unit': { status: 'merged' } } })
   const { result } = await conduct({ plan, state, waveHandler: waves(state) })
   assert.equal(result.reason, 'arc-complete')
+})
+
+// `blocked` is an ORDINARY outcome since a first blocked verify stopped quarantining: the unit
+// keeps its commits and is re-verified next wave. arcSummary bucketed merged/quarantined/deferred
+// only, so a unit that ended the run blocked was named in NO bucket of the root-facing summary —
+// neither built, nor failed, nor cut — and the root had to read state.units to discover it.
+test('arcSummary names a unit that ended the arc blocked, in its own bucket', async () => {
+  // `wedged` is blocked behind a quarantine that was never respecced: it can never move, so the arc
+  // closes (it rides back in `stuck`) — and the summary must still say what became of it.
+  const plan = mkPlan({
+    units: [unitOf('seed-unit'), unitOf('dead'), unitOf('wedged')],
+    edges: [{ from: 'dead', to: 'wedged', type: 'semantic', mode: 'contract' }],
+  })
+  const state = mkState({ units: {
+    'seed-unit': { status: 'merged' }, dead: { status: 'quarantined' }, wedged: { status: 'blocked' },
+  } })
+  const { result } = await conduct({ plan, state, waveHandler: waves(state) })
+
+  assert.equal(result.reason, 'arc-complete')
+  assert.deepStrictEqual(result.arcSummary.blocked, ['wedged'], 'the blocked unit has a bucket of its own')
+  assert.deepStrictEqual(result.arcSummary.merged, ['seed-unit'])
+  assert.deepStrictEqual(result.arcSummary.quarantined, [{ id: 'dead' }])
+  assert.deepStrictEqual(result.arcSummary.deferred, [], 'and it is not silently counted as cut work')
+})
+
+test('arcSummary carries the blocked bucket on the arc-stalled return too', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('leftover')] })
+  const state = mkState({ units: { 'seed-unit': { status: 'merged' }, leftover: { status: 'blocked' } } })
+  const { result } = await conduct({ plan, state, waveHandler: waves(state) })
+
+  assert.equal(result.reason, 'arc-stalled', 'a blocked unit is still dispatchable work')
+  assert.deepStrictEqual(result.outstanding, ['leftover'])
+  assert.deepStrictEqual(result.arcSummary.blocked, ['leftover'])
 })
 
 /* ============================================================================== */
@@ -1574,4 +1611,58 @@ test('a cyclic plan handed in by the ROOT is refused before the first dispatch',
   })
   assert.equal(result.reason, 'plan-cycle')
   assert.equal(workflow.calls.length, 0, 'no wave runs at all')
+})
+
+/* ------------------ plan.preview.start is checked at INTAKE ------------------- */
+// The harness wraps the start string in `sh -c '<start>'`, so a single quote in it closes the
+// wrapper's quote and hands the tail to the courier's shell as commands. The harness throws on
+// that — but only when wave 1 dispatches, i.e. after Phase 0's planning and spec-writing are
+// already spent. The conductor mirrors the check the moment the launch pack is read, so a
+// one-line plan defect costs one Haiku pack read instead of an arc.
+const previewPlan = (start) => mkPlan({ preview: { kind: 'server', start, howToAccess: 'http://localhost:5173' } })
+
+test('a plan.preview.start carrying a single quote is refused at intake, before any wave', async () => {
+  await assert.rejects(
+    () => conduct({ plan: previewPlan("node -e 'require(\"./dev\")'"), state: mkState({ units: {} }) }),
+    (e) => {
+      assert.match(e.message, /plan\.preview\.start contains a single quote/, 'the throw names the field')
+      assert.match(e.message, /Use double quotes, or move the command into a package script/, 'and states the fix')
+      assert.match(e.message, /node -e /, 'echoing the offending value back')
+      return true
+    })
+})
+
+test('the refusal fires at intake, not at dispatch: no wave, no census, no boundary', async () => {
+  const agent = makeAgent([...packRules(previewPlan("start 'x'"), mkState({ units: {} })), ...rules()])
+  const workflow = makeWorkflow(waves(mkState()))
+  const run = await loadScript(CONDUCTOR)
+  await assert.rejects(() => run({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'sim-launch', config: {}, harnessPath: HARNESS_PATH },
+    agent: agent.fn, workflow: workflow.fn, log: () => {}, phase: () => {},
+  }), /single quote/)
+  assert.equal(workflow.calls.length, 0, 'nothing is dispatched')
+  assert.equal(hasLabel(agent.calls, /^census:/), false, 'and no paid boundary work is started')
+})
+
+test('an ordinary preview start passes intake untouched', async () => {
+  const { result } = await conduct({
+    plan: previewPlan('DEV_SLOT=9 npm run dev -- --host'),
+    state: mkState({ units: { 'seed-unit': { status: 'merged' } } }),
+  })
+  assert.equal(result.reason, 'arc-complete', 'shell metacharacters other than a single quote are fine')
+})
+
+test('the conductor and the harness refuse it in the SAME words', async () => {
+  // Two standalone workflow scripts that cannot import from each other: the duplication is
+  // permanent, so the drift guard is a text comparison. A conductor that refused a start the
+  // harness accepts (or the reverse) would be a plan defect that moves rather than one that is fixed.
+  // The source text as WRITTEN: both copies live in a template literal, so the wrapping backticks
+  // around the shell snippet are backslash-escaped in the file.
+  const sentence = 'contains a single quote — it is run as \\`sh -c \'<start>\'\\` (which is why '
+  const tail = 'Use double quotes, or move the command into a package script: '
+  for (const f of [CONDUCTOR, HARNESS_SRC]) {
+    const src = readFileSync(f, 'utf8')
+    assert.ok(src.includes(sentence), `${f} no longer states the single-quote refusal in the shared words`)
+    assert.ok(src.includes(tail), `${f} no longer states the shared fix`)
+  }
 })

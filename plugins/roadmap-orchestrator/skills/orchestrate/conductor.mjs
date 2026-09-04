@@ -321,6 +321,17 @@ const readPack = async () => {
 }
 const { plan: inPlan, state: inState } = await readPack()
 
+// Plan-pack intake check, mirrored VERBATIM from harness.mjs's plan validation (keep the two
+// messages in sync). The harness throws on an unquotable `plan.preview.start` too, but it only sees
+// the plan when wave 1 dispatches — by which point Phase 0's planning, spec-writing and pack read
+// are all spent, and the arc dies on a one-line plan defect. Checking it here costs the pack read
+// alone. It is a THROW rather than a `ret()`: nothing has been staged yet at intake, so there is no
+// wave state to hand back, and the fix is an edit to plan.json before the next launch.
+if (typeof inPlan.preview?.start === 'string' && inPlan.preview.start.includes("'"))
+  throw new Error(`plan.preview.start contains a single quote — it is run as \`sh -c '<start>'\` (which is why ` +
+    `\`VAR=value cmd\` and \`&&\` chains work there) and a single quote cannot survive that wrapping. ` +
+    `Use double quotes, or move the command into a package script: ${inPlan.preview.start}`)
+
 // Conductor config: defaults, then plan.config.conductor, then the caller's config.conductor.
 const CC = {
   maxWavesPerRun: 3,           // wave-loop bound; exhaustion -> max-waves (a fresh relaunch resets the 1000-agent counter)
@@ -726,7 +737,7 @@ function withhold() {
 }
 
 // Arc-completeness was STATUS-BLIND: the decision read only what the boundary agents emitted, and
-// arcSummary buckets merged/quarantined/deferred, so a pending/running/blocked in-scope unit was
+// arcSummary is a tally of finished work, so a pending/running in-scope unit was
 // invisible to the triager that declared the arc done. 2026-07-18: four in-scope, satisfiable units
 // were still outstanding when tier-2 called arc-complete, and the root caught it by hand.
 //
@@ -825,10 +836,16 @@ function noteJournal(N, journal) {
   if (at >= 0) journalEntries[at] = { wave: N, journal }
   else journalEntries.push({ wave: N, journal })
 }
+// The root-facing tally of where the arc's units ENDED UP. `blocked` is a bucket of its own because
+// it is an ordinary, non-terminal outcome now: a FIRST blocked verify leaves the unit `blocked` with
+// its commits intact for the next wave-start loop to re-open, and only a second one quarantines it.
+// Without the bucket a run that stops on `maxWavesPerRun` (or closes with a blocked unit wedged
+// behind a dependency) named that unit in no summary at all — it was neither merged, nor
+// quarantined, nor deferred, and the root had to go read state.units to find it.
 const arcSummary = (census) => {
   const u = state.units ?? {}
   const ids = (s) => Object.entries(u).filter(([, r]) => r?.status === s).map(([id]) => id)
-  return { merged: ids('merged'), quarantined: ids('quarantined').map((id) => ({ id })), deferred: ids('deferred'), pendingFeedback: census.pendingUserFeedback ?? [], wavesRun }
+  return { merged: ids('merged'), quarantined: ids('quarantined').map((id) => ({ id })), blocked: ids('blocked'), deferred: ids('deferred'), pendingFeedback: census.pendingUserFeedback ?? [], wavesRun }
 }
 
 // Freeze the current `state` (or a supplied variant) with the conductor block and build the return

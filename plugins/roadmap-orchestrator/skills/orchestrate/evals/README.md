@@ -108,8 +108,9 @@ shipping; never ship on an upper rung alone.
    `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
    `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library.
 
-   **Inventory, post-0.14.0.** The suite is **306 sims** — every `*.test.mjs` under `unit/`, which is
-   exactly what `run.sh` globs. `unit/load.mjs` no longer exists: it moved up to
+   **Inventory, as of 0.15.0.** The suite is every `*.test.mjs` under `unit/`, which is exactly what
+   `run.sh` globs — it prints the live count on its own tail line, so no number is repeated here to
+   go stale (it crossed 380 partway through 0.15.0). `unit/load.mjs` no longer exists: it moved up to
    `../script-loader.mjs`, so `persist.mjs` and the sims compile a script through one module rather
    than two copies. The **writer sims are gone**, and deliberately so — checkpoint coalescing,
    checkpoint fan-out, part-retry, single-write and failed-write in the harness, the
@@ -505,9 +506,16 @@ what it pinned, which the codex executor lane's design depends on:
   outside cwd is blocked.
 - **Untrusted paths** run cleanly with `-c 'projects."<path>".trust_level="trusted"'` —
   no interactive trust prompt, no sandbox downgrade observed.
-- **Poll idiom**: `timeout 90 tail --pid=$(cat pidfile) -f /dev/null` in a loop over the
-  `exit-code` marker file works; the `echo $? > exit-code` inside the backgrounded
-  `sh -c` is the disk-verified done signal.
+- **Poll idiom**: `timeout 90 tail --pid=$(cat <dir>/codex.pid) -f /dev/null`, in a loop over the
+  `<dir>/exit-code` marker file, works — that is what the probe pinned, and it still holds. The
+  *shape around it* has moved on twice since, so read the emitted prompt, not this bullet, for the
+  literal line: codex is **backgrounded inside** the detached `sh -c` (`… & CPID=$!`), the pidfile
+  is written by that shell itself as its first act (`echo $$ > <dir>/codex.pid`, never `echo $! >`
+  after the `&`), and the disk-verified done signal is `echo $RC > <dir>/exit-code` at the end of
+  that same shell — where `RC` comes from `wait $CPID` plus a re-wait gated on the TERM trap's own
+  flag (`trap "kill -TERM $CPID; T=1" TERM; wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID;
+  RC=$?; fi`). The probe's original `echo $? > exit-code` after a *foreground* `codex` predates all
+  of that. The steerer's rule on top: an absent `exit-code` means RUNNING, never dead.
 
 ### P2 — Haiku steering a real codex build (pinned 2026-08-11)
 

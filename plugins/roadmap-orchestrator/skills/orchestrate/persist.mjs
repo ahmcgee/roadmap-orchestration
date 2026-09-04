@@ -39,9 +39,14 @@
 // two shapes a completed replay produces) and it skips the replay entirely, feeding that value
 // through the normal writers. `--run`/`--script` are not needed then.
 //
+// A run that lands a WHOLE `state.json` — a complete replay, or `--returned` — also removes any
+// `state.partial.json` an earlier refusal parked: that prefix is stale the moment a real state is
+// written, and a stale one beside a current state.json invites relaunching from the wrong file. The
+// OK line says `removed=state.partial.json` when there was one, and nothing when there was not.
+//
 // Exit codes: 0 = complete, 2 = partial (written, or REFUSED and parked in state.partial.json),
 // 1 = error (nothing written).
-import { readFile, writeFile, readdir, mkdir, appendFile } from 'node:fs/promises'
+import { readFile, writeFile, readdir, mkdir, appendFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { loadScript } from './script-loader.mjs'
@@ -395,6 +400,16 @@ const journalEntries = ret.journalEntries ?? []
 
 await write('state.json', json(state))
 
+// A refused partial parks its snapshot in `state.partial.json` and leaves `state.json` alone; the
+// cure the refusal prints is this run (`--returned`, or a replay that now reaches the end). Once a
+// WHOLE state has landed, that parked prefix is stale — diagnostic-only evidence of a divergence
+// already resolved — and leaving it beside a current state.json is how a later reader (or a root
+// working the recovery ladder) mistakes it for a live one. Removed idempotently: the ordinary run
+// has none, and `force` makes a concurrent removal a no-op rather than a crash after the write.
+const partialFile = path.join(roadmapDir, 'state.partial.json')
+const removedPartial = existsSync(partialFile)
+if (removedPartial) await rm(partialFile, { force: true })
+
 // plan.json — never blind. A plan on disk carrying unit ids this run has never seen is a root edit
 // or a hand-merged respec, and overwriting it would destroy work with no trace. A loud refusal is
 // the whole ask: no merge is attempted, because a wrong merge is worse than a refused one.
@@ -456,4 +471,5 @@ if (degradations.length) await write('skill-degradations.md', skillDegradationsD
 await appendRows('degradations.jsonl', degradations)
 await appendRows('escalations.jsonl', escalations)
 
-console.log(`OK ${isConductor ? `reason=${ret.reason} ` : ''}wave=${state?.wave ?? '?'} wrote=${wrote.join(',')}`)
+console.log(`OK ${isConductor ? `reason=${ret.reason} ` : ''}wave=${state?.wave ?? '?'} wrote=${wrote.join(',')}` +
+  `${removedPartial ? ' removed=state.partial.json' : ''}`)

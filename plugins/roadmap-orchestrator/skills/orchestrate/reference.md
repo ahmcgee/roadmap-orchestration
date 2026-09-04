@@ -61,7 +61,8 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
   state.json           # written by persist.mjs after every run; you write the initial one.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
   state.partial.json   # DIAGNOSTIC ONLY: a partial persist.mjs REFUSED to write over state.json.
-                       #   Nothing reads it; never relaunch from it (see "Who writes .roadmap/")
+                       #   Nothing reads it; never relaunch from it (see "Who writes .roadmap/").
+                       #   Removed by the next persist that lands a WHOLE state.json
   quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
     explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
@@ -123,7 +124,10 @@ node <skill dir>/persist.mjs --returned <that value, as a .json file> \
 The value may be a conductor `{status: "conductor-return", state, plan, …}` envelope or a
 directly-launched harness's wave state — the same two shapes a completed replay produces. Persist
 first, *then* investigate the divergence (a script edited since the journal was written is the usual
-cause).
+cause). Landing a whole `state.json` — by this route or by a replay that now reaches the end — also
+**removes the parked `state.partial.json`**, and the `OK` line says `removed=state.partial.json`
+when it did: the prefix is stale the moment a real state exists, and a stale one sitting beside a
+current state.json is how the wrong file gets relaunched from.
 
 **Journal order is the clock.** A script is a deterministic function of (args, agent results) only
 *up to completion order*: the harness merges units through one serial chain in the order their
@@ -365,8 +369,8 @@ Fields the scripts add:
   return value: `{stoppedAt: <agent label>}`. The state beside it is the last snapshot the script
   logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again. A partial
   that would regress `state.json` is refused and parked in `state.partial.json` instead — that file
-  carries the same marker, and is diagnostic only: nothing reads it, and nothing should relaunch
-  from it.
+  carries the same marker, and is diagnostic only: nothing reads it, nothing should relaunch
+  from it, and the next persist that lands a whole `state.json` deletes it.
 - **`degradations` / `escalations`** — **NOT state.json fields.** They are events, not state: each
   run collects its own rows in memory, hands them back on the return envelope, and `persist.mjs`
   appends them to `.roadmap/{degradations,escalations}.jsonl`. They used to ride inside `state.json`,
@@ -377,7 +381,7 @@ Fields the scripts add:
   preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
-  env-no-reaper | env-verify-blocked | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  env-no-reaper | env-verify-blocked | feedback-unmoved | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
   Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
@@ -726,18 +730,40 @@ and design go **owed** exactly as a skipped job does,
 and health additionally records a `health-skipped` degradation — without it an empty draft set reads
 to the triager as "nothing to consolidate" rather than "nobody looked".
 
-**The process outlives its steerer, safely.** The deadline rides *inside* the launched command
-line, so a dead steering agent can no longer leave a detached codex running unbounded on an OpenAI
-seat already handed to the next unit. All three launch sites (build, the `COMMAND R` resume, and the
-preview) share one shape:
+**The process outlives its steerer, safely.** All three launch sites — the codex build, the
+`COMMAND R` resume, and the preview server — share exactly one thing, the **detachment idiom**:
+
+```
+setsid nohup sh -c 'echo $$ > <pidfile>; …' &
+```
+
+That is the whole of what they have in common, and it is deliberate: what follows the `;` differs
+because the two kinds of process want opposite lifetimes.
+
+The two **codex** sites add a deadline and a reaped exit status, so a dead steering agent can no
+longer leave a detached codex running unbounded on an OpenAI seat already handed to the next unit:
 
 ```
 setsid nohup sh -c 'echo $$ > <dir>/codex.pid;
                     timeout -k 30 <timeoutMin×60> codex exec … & CPID=$!;
+                    ( … session-id capture …  ) &        # BUILD SITE ONLY
                     trap "kill -TERM $CPID; T=1" TERM;
                     wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;
                     echo $RC > <dir>/exit-code' &
 ```
+
+The **preview** has none of that half — no `timeout`, no trap, no `wait`, no `exit-code` file — and
+must not: a dev server is *meant* to outlive the wave that started it, so there is no deadline to
+enforce and no exit status to collect. Its whole line is
+`setsid nohup sh -c 'echo $$ > <preview pidfile>; <plan.preview.start>' > <log> 2>&1 &`, and its
+liveness is the pidfile and the healthcheck alone.
+
+The **build site alone** carries the extra background subshell: it polls `events.jsonl` for the
+first `"thread_id"` and writes it to `<dir>/session-id` (once, up to 120 tries a second apart). It
+is a *subshell* precisely so the capture runs while the main line is already blocked in `wait`, and
+it lives at the build site because that is the only launch that starts a new codex session — the
+resume site consumes that file (`codex exec resume "$(cat <dir>/session-id)"`) rather than writing
+it, and a steering agent never captures it by hand.
 
 **The detached shell writes its OWN pid, as its first act — never `echo $! >` after the `&`.** The
 steering agent's Bash shell has job control on, so a backgrounded job is *already* a process-group
@@ -1274,6 +1300,9 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // contract-amendment → { debt, contracts }
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
+  //   arcSummary = { merged: [id], quarantined: [{id}], blocked: [id], deferred: [id],
+  //                  pendingFeedback: [...], wavesRun }   // `blocked` is its own bucket: a unit
+  //                  whose verify tooling could not run is neither built nor failed nor cut
   // max-waves         → state.boundary restored, marked {triaged:true, wave}
   // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }
