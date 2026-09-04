@@ -229,7 +229,11 @@ Read their outputs, then decide:
   working and switching branches while the arc runs. Each wave's explorer then hunts what tests and
   diffs can't show. **Declare `preview.ports`** (the ports the preview actually listens on) whenever
   you know them: they are the only listeners the harness's one-shot port sweep may kill, and an
-  undeclared port is a port the sweep will leave alone rather than guess at. While provisioning: have Haiku
+  undeclared port is a port the sweep will leave alone rather than guess at. `preview.start` is run as
+  `sh -c '<start>'` inside a detached shell, so `VAR=value cmd` and `&&` chains are fine and a **single
+  quote is not** (it throws at plan load — use double quotes or a package script); never prefix it with
+  `nohup`/`setsid` yourself. `preview.healthcheck` is retried for ~60 s; a stack that builds before it
+  listens and needs longer must carry its own patient loop inside that command. While provisioning: have Haiku
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.

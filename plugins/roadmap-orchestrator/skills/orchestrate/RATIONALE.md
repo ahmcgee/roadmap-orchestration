@@ -383,9 +383,16 @@ feature becomes an outage.
 The `main` ref never moves (the mirror is always detached) and the merge queue stays in `__integration`,
 so at worst the mirror goes stale and one detach-checkout heals it; nothing can derail the queue.
 
-Process lifecycle: the preview is started with `setsid`, making the recorded pid a **process-group leader**.
-Every stop must kill the **group** (`kill -TERM -- -$(cat …)`) — a single-pid kill strands child listeners
-and leaves ports held. This bites at Phase 0, on resume, and at close-out. What a stop may **not** do is go
+Process lifecycle: the preview is started as `setsid nohup sh -c 'echo $$ > <pidfile>; <start>' &`, so the
+recorded pid is that detached shell's own and is a **process-group leader**. Both halves of that line are
+2026-09-02 scars. `… & echo $! > <pidfile>` recorded a pid that was dead within a second — under job control
+a backgrounded job is already a group leader, so `setsid` forks and `$!` names the parent that exits at once
+(the same defect cost the codex lane three waves; see §19). And `setsid nohup <start>` made `nohup` exec the
+plan's string directly, so a start beginning with an env assignment failed outright
+("nohup: failed to run command 'DEV_SLOT=9'") and every wave of that arc ran with no preview at all; under
+`sh -c` the string is shell input, which is why `plan.preview.start` may not contain a single quote (it throws
+at plan load). Every stop must kill the **group** (`kill -TERM -- -$(cat …)`) — a single-pid kill strands
+child listeners and leaves ports held. This bites at Phase 0, on resume, and at close-out. What a stop may **not** do is go
 hunting for the listener: the one-shot sweep's only kill targets are the pidfile's process group and the
 literal ports `plan.preview.ports` declares. Asked instead to free "the preview's ports", Haiku swept three
 guessed ports and then `ps | grep | kill -9`, killing the workflow itself. An undeclared port is a port the
