@@ -105,8 +105,11 @@ EOF
 # script's shell has job control on too, so the backgrounded job is already a process-group leader,
 # setsid FORKS, and `$!` names a parent that is dead within a second (2026-09-02 — the pid every
 # liveness check in the harness hung off, so P1.8 below was passing on a corpse). The `trap` and the
-# double `wait` are the harness's too: `timeout` sits in its own process group, so the group kill at
-# the deadline reaches this sh and nothing beneath it unless the sh forwards the signal itself.
+# second `wait` are the harness's too: `timeout` sits in its own process group, so the group kill at
+# the deadline reaches this sh and nothing beneath it unless the sh forwards the signal itself. The
+# re-wait is gated on the trap's flag, not on `RC > 128`: only a trap-interrupted wait leaves the
+# child unreaped, and re-waiting one that WAS reaped (an outright SIGKILL) reports whatever the
+# shell remembers of a finished job rather than its true 137.
 date +%s > "$D/launched-at"
 HOMEPREFIX=""
 [ -n "${CODEX_HOME:-}" ] && HOMEPREFIX="CODEX_HOME=$CODEX_HOME "
@@ -118,8 +121,8 @@ setsid nohup sh -c "echo \$\$ > '$D/codex.pid'; ${HOMEPREFIX}timeout -k 30 900 c
   --output-schema '$D/schema.json' \
   -o '$D/last-message.txt' \
   --json - < '$D/brief.txt' > '$D/events.jsonl' 2> '$D/stderr.log' & \
-  CPID=\$!; trap \"kill -TERM \$CPID\" TERM; \
-  wait \$CPID; RC=\$?; if [ \$RC -gt 128 ]; then wait \$CPID; RC=\$?; fi; echo \$RC > '$D/exit-code'" \
+  CPID=\$!; trap \"kill -TERM \$CPID; T=1\" TERM; \
+  wait \$CPID; RC=\$?; if [ -n \"\$T\" ]; then wait \$CPID; RC=\$?; fi; echo \$RC > '$D/exit-code'" \
   >/dev/null 2>&1 &
 # The pidfile is written by that shell, not by us — give it a bounded moment before P1.8 reads it.
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$D/codex.pid" ] && break; sleep 1; done

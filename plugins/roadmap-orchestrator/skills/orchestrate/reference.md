@@ -651,8 +651,8 @@ preview) share one shape:
 ```
 setsid nohup sh -c 'echo $$ > <dir>/codex.pid;
                     timeout -k 30 <timeoutMin×60> codex exec … & CPID=$!;
-                    trap "kill -TERM $CPID" TERM;
-                    wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi;
+                    trap "kill -TERM $CPID; T=1" TERM;
+                    wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;
                     echo $RC > <dir>/exit-code' &
 ```
 
@@ -662,10 +662,13 @@ leader, `setsid` must FORK, and `$!` names a parent that is dead within a second
 fact then hangs off a corpse: 2026-09-02 that cost 3 waves and 14 of 20 units, quarantined on deaths
 that never happened, while each "reattempt" launched a second codex into a worktree the first was
 still writing. After `setsid`, that `$$` is also the pgid `kill -TERM -- -<pid>` targets. The `trap`
-and the double `wait` are what make a genuine reap reach *codex*: `timeout` puts itself in its own
-process group, so a group kill stops at the detached shell unless the shell forwards the signal on;
-the first `wait` is interrupted by the trap and returns >128, the second collects the child's real
-status.
+and the conditional second `wait` are what make a genuine reap reach *codex*: `timeout` puts itself
+in its own process group, so a group kill stops at the detached shell unless the shell forwards the
+signal on. The re-wait is gated on the trap's own flag `T`, **never on `RC > 128`**: only a
+trap-interrupted `wait` leaves the child unreaped, so only there does waiting again collect its real
+status. A child killed outright — an OOM `SIGKILL`, or `timeout -k` escalating — is already reaped
+and returns a true 137, and re-waiting that pid reports whatever the shell remembers of a finished
+job instead. `RC > 128` cannot tell the two apart; the flag records which actually happened.
 
 The steerer's liveness rule is the other half: **an absent `exit-code` file means RUNNING, never
 dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails, and elapsed time

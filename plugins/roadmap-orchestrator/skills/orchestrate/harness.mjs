@@ -2337,8 +2337,8 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
       `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
-      `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; trap "kill -TERM $CPID" TERM; ` +
-      `wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &\n` +
+      `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; trap "kill -TERM $CPID; T=1" TERM; ` +
+      `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &\n` +
       `COMMAND F: `
     : `use this launch command:\n`
   // Resume-collision rule (arc-observed: one gate-fix resume died at once with "thread already
@@ -2380,13 +2380,18 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   // minutes after each steerer reported the process dead. `sh -c 'echo $$ > …; …'` records the
   // shell that survives, and after setsid that `$$` is also the pgid the group kill targets.
   //
-  // The `trap` + double `wait` is the other half, and it is what makes a GENUINE reap work.
-  // `timeout` puts ITSELF in its own process group, so `kill -TERM -- -$(cat codex.pid)` reaches the
-  // detached sh and stops there — `timeout → codex` beneath it survived a group kill (verified with
-  // a stand-in sleep). Forwarding the signal from the sh is the fix that stays inside the closed
-  // command list (`pkill -s` would not). The first `wait` is interrupted by the trap and returns
-  // >128; the second collects the child's real status once the forwarded TERM has landed, so the
-  // exit-code file carries what happened to codex rather than what happened to the wait.
+  // The `trap` + conditional second `wait` is the other half, and it is what makes a GENUINE reap
+  // work. `timeout` puts ITSELF in its own process group, so `kill -TERM -- -$(cat codex.pid)`
+  // reaches the detached sh and stops there — `timeout → codex` beneath it survived a group kill
+  // (verified with a stand-in sleep). Forwarding the signal from the sh is the fix that stays inside
+  // the closed command list (`pkill -s` would not). The second `wait` is gated on the trap's own
+  // flag `T`, never on `RC > 128`. Only a trap-INTERRUPTED wait leaves the child unreaped, and only
+  // there is re-waiting correct; a child killed outright (an OOM `SIGKILL`, or `timeout -k`
+  // escalating) is already reaped by the first wait and returns a true 137. `RC > 128` cannot tell
+  // those two states apart, so it re-waited a reaped pid — whose status is then whatever the shell
+  // happens to remember about a finished job (POSIX licenses 127 for a pid it no longer knows;
+  // dash here returns the remembered 137). The flag decides on what actually happened instead of
+  // guessing from a number two different things produce.
   const execCmd =
     `${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
     `timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
@@ -2400,8 +2405,8 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `L=$(grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl 2>/dev/null); ` +
     `if [ -n "$L" ]; then printf "%s" "$L" | cut -d\\" -f4 > ${dir}/session-id; fi; ` +
     `sleep 1; i=$((i+1)); done ) & ` +
-    `trap "kill -TERM $CPID" TERM; ` +
-    `wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &`
+    `trap "kill -TERM $CPID; T=1" TERM; ` +
+    `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &`
   // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
   // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
   // steerer that concluded "dead" while the process was alive once launched a second codex into the

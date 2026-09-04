@@ -302,11 +302,14 @@ test('every codex launch: the detached shell writes its OWN pid, forwards TERM, 
       assert.match(body, /^echo \$\$ > \S+\/codex\.pid; /,
         `${label}: the detached shell records its own pid as its FIRST act, before anything else`)
       assert.match(body, /& CPID=\$!; /, `${label}: codex is backgrounded and its pid held`)
-      assert.match(body, /trap "kill -TERM \$CPID" TERM;/,
+      assert.match(body, /trap "kill -TERM \$CPID; T=1" TERM;/,
         `${label}: the sh forwards a group TERM to timeout->codex, which is in its OWN process group`)
       assert.match(body,
-        /wait \$CPID; RC=\$\?; if \[ \$RC -gt 128 \]; then wait \$CPID; RC=\$\?; fi; echo \$RC > \S+\/exit-code' &/,
-        `${label}: the trap-interrupted wait is followed by a second one that collects the real status`)
+        /wait \$CPID; RC=\$\?; if \[ -n "\$T" \]; then wait \$CPID; RC=\$\?; fi; echo \$RC > \S+\/exit-code' &/,
+        `${label}: the second wait is gated on the trap's FLAG, never on RC > 128 — only a ` +
+        'trap-interrupted wait leaves the child unreaped, and re-waiting a SIGKILLed (already ' +
+        'reaped) child reports whatever the shell remembers rather than its true 137')
+      assert.ok(!body.includes('-gt 128'), `${label}: no exit-code test may stand in for the flag`)
     }
     assert.ok(!/echo \$! >/.test(prompt),
       `${label}: NEVER \`echo $! >\` after the \`&\` — under job control that names a fork that is already dead`)

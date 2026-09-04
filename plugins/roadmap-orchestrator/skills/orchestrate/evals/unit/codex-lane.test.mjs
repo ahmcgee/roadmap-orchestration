@@ -120,10 +120,14 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
                               //   first act. `… & echo $! > codex.pid` named the fork setsid makes
                               //   under job control — dead within a second, so every liveness check
                               //   in this prompt was reading a corpse (2026-09-02, 3 waves lost).
-    'trap "kill -TERM $CPID" TERM;',   // `timeout` sits in its own process group, so a group kill
-                                       //   reaches this sh and stops unless the sh forwards it on
-    'wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi;',  // trap-interrupted wait,
-                                       //   then a second one for codex's real status
+    'trap "kill -TERM $CPID; T=1" TERM;',   // `timeout` sits in its own process group, so a group
+                                            //   kill reaches this sh and stops unless the sh
+                                            //   forwards it on — and records that it did
+    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;',  // re-wait ONLY on the trap's
+                                       //   own flag: a trap-interrupted wait has not reaped the
+                                       //   child, but a SIGKILLed one HAS, and re-waiting a reaped
+                                       //   pid reports whatever the shell remembers — which an
+                                       //   `RC > 128` test cannot tell apart from the real thing
     '--json',                 // events.jsonl is the only machine-readable channel
     '-o ',                    // the final message lands in a file, never in the steering context
     '--output-schema',        // the report is schema-constrained at the codex end too
@@ -544,8 +548,8 @@ test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never t
   // because the seam is shared.
   for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900',
     `sh -c 'echo $$ > ${WT}/__codex/roles/codex-spec-review-a/codex.pid; `,
-    'trap "kill -TERM $CPID" TERM;',
-    'wait $CPID; RC=$?; if [ $RC -gt 128 ]; then wait $CPID; RC=$?; fi;'])
+    'trap "kill -TERM $CPID; T=1" TERM;',
+    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;'])
     assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
   assert.ok(!p.includes('echo $! >'), 'and never the $! pidfile the build lane no longer writes either')
   assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
