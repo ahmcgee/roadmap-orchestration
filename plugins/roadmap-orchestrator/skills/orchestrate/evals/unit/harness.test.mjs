@@ -135,16 +135,37 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
 })
 
 // =========================================================================================
-// 3. verify.blocked -> env quarantine, zero fix rounds, dossier + dossier-write both issued.
+// 3. verify.blocked -> the unit BLOCKS (zero fix rounds, no dossier); a REPEAT quarantines.
+// CHANGED CONTRACT (2026-09-04): tooling that could not run is a fact about the host, never a
+// verdict about the unit, so the first blocked verify leaves the unit `blocked` with its commits
+// intact and it is re-verified next wave. Only a second blocked verify — the tally start() carries
+// across the wave boundary — buys the environment quarantine and its dossier pair.
 // =========================================================================================
-test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
-  ])
+const blockedVerify = () =>
+  ({ pass: false, blocked: true, failures: ['ENOTFOUND registry.npmjs.org'], lanes: [], contractSurfaceTouched: false, diffFiles: [] })
+
+test('3a blocked verify: the unit blocks with its commits, no fix rounds, no dossier', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: blockedVerify }])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
-  assert.equal(state.units.a.status, 'quarantined')
+  assert.equal(state.units.a.status, 'blocked', 'an environment failure is not a verdict about the unit')
+  assert.equal(state.units.a.branch, 'unit/a', 'and its branch — with its commits — is named on the record')
+  assert.equal(state.units.a.rounds?.verifyBlocked, 1, 'the blocked verify is tallied so a repeat is countable')
+  assert.ok(!has(calls, 'codex-fix:'), 'no fix rounds on a blocked verify')
+  assert.ok(!has(calls, 'dossier:a'), 'and no dossier — nothing about the unit was judged')
+  const d = (state.degradations ?? []).find((x) => x.kind === 'verify-blocked')
+  assert.match(d.what, /BLOCKED, not\s+quarantined/, 'the ledger says what happened')
+  assert.match(d.what, /ENOTFOUND registry\.npmjs\.org/, 'and carries the verifier\'s own first failure line')
+})
+
+test('3b blocked AGAIN next wave: env quarantine with dossier pair, no fix', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: blockedVerify }])
+  // Wave 2 for this unit: it entered blocked, with one blocked verify already on its record.
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', rounds: { verifyBlocked: 1 } } } }))
+  assert.equal(state.units.a.status, 'quarantined', 'twice is not transient — it is this checkout\'s problem')
   assert.match(state.units.a.reason, /blocked/)
   assert.match(state.units.a.reason, /environment/)
+  assert.equal(state.units.a.rounds?.verifyBlocked, 2, 'the tally carried across the wave boundary')
   assert.ok(!has(calls, 'codex-fix:'), 'no fix rounds on a blocked verify')
   assert.ok(has(calls, 'dossier:a'), 'investigative dossier issued')
   assert.ok(has(calls, 'dossier-write:a'), 'verbatim dossier writer issued')

@@ -101,9 +101,9 @@ test('load facts: a blocked verify degrades with the host load attached', async 
     result: () => ({ pass: false, blocked: true, failures: ['runner missing'], lanes: [], contractSurfaceTouched: false, diffFiles: [], loadavg1: 34.5, cpuCount: 16 }),
   }])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
-  assert.equal(state.units.a.status, 'quarantined', 'a blocked verify is still an environment quarantine')
+  assert.equal(state.units.a.status, 'blocked', 'a blocked verify blocks the unit — it is never a verdict about it')
   const d = (state.degradations ?? []).find((x) => x.kind === 'verify-blocked')
-  assert.ok(d, 'the environment verdict is ledgered, not silent')
+  assert.ok(d, 'the environment fact is ledgered, not silent')
   assert.match(d.what, /host load 34\.5 on 16 cpu/, 'and carries the load, so the verdict is auditable after the fact')
 })
 

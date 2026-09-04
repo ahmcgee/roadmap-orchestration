@@ -28,6 +28,10 @@
 //                      (`plan-cycle`); the harness throws on one that reached it anyway. If the two
 //                      disagree about what a cycle is, the conductor dispatches a plan the harness
 //                      then kills the whole run on (wf_c6971376-1a5).
+//   (f) HOST_BAR     — byte-identical value, plus the sites that must interpolate it. The harness
+//                      states it to the tiers that ADJUDICATE spec text, the conductor to the tiers
+//                      that WRITE it; a copy that drifts, or one nobody interpolates, re-opens the
+//                      2026-09-04 quarantine (an unsatisfiable "quiet host" acceptance clause).
 //
 // Extraction anchors on distinctive syntax rather than line numbers so the tests survive edits
 // around the constants and fail with a readable, file-naming diff when a copy actually drifts.
@@ -333,6 +337,36 @@ test('both scripts still declare every shared constant this suite guards', () =>
   for (const f of FILES)
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
       'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
-      'markerFind', 'MARKER_RULE', 'planCycle'])
+      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
+})
+
+test('HOST_BAR (host facts are never a verdict) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'HOST_BAR'))
+  assertInSync('The HOST_BAR const', h, c)
+  // A bar that stops naming what it forbids stops working. Arc-observed 2026-09-04: an Opus
+  // plan-check adjudicated an acceptance criterion as "no vitest, playwright, test-ci or dev-stack
+  // process anywhere on the host"; the harness's own preview dev-stack is always live and
+  // `gateMaxConcurrent` lanes overlap by design, so the verifier reported blocked and the unit was
+  // quarantined for a defect no unit had.
+  assert.match(h, /never a verdict and never a precondition/, 'HOST_BAR still states the rule')
+  assert.match(h, /wall-clock ceiling/, 'and still names the wall-clock form of it')
+  assert.match(h, /unsatisfiable by construction/, 'and still says such a clause is the SPEC\'s defect')
+  // The two scripts carry it to different tiers: the harness adjudicates spec text (plan-checks,
+  // exit gates, the verifier), the conductor WRITES it (the boundary tiers author acceptance
+  // criteria; spec-revise rewrites them). A copy nobody interpolates is a copy that does nothing.
+  for (const [file, sites] of [
+    ['harness.mjs', 3],   // both plan-checks + the verifier brief (both gates share one LANE_BAR line pair)
+    ['conductor.mjs', 3], // opusTriagePrompt, fableBoundaryPrompt, specRevisePrompt
+  ]) {
+    const used = (SRC[file].match(/\$\{HOST_BAR\}/g) ?? []).length
+    assert.ok(used >= sites, `${file} interpolates HOST_BAR at only ${used} site(s) — expected at least ${sites}`)
+  }
+  for (const anchor of ['const opusTriagePrompt', 'const fableBoundaryPrompt', 'const specRevisePrompt']) {
+    const at = SRC['conductor.mjs'].indexOf(anchor)
+    assert.notEqual(at, -1, `${anchor} is gone from conductor.mjs`)
+    const body = SRC['conductor.mjs'].slice(at, SRC['conductor.mjs'].indexOf('\nconst ', at + 1))
+    assert.ok(body.includes('${HOST_BAR}'),
+      `${anchor} writes spec text (goals, acceptance criteria) without being told that host facts are never a verdict`)
+  }
 })

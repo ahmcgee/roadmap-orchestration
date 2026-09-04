@@ -99,6 +99,19 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
   'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
   'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
   'unexpected key is rejected as hard as an over-long one. '
+// Host facts are never a verdict (same const as harness.mjs — shared-consts.test.mjs enforces it).
+// The harness carries it to every tier that ADJUDICATES spec text (both plan-checks, both exit
+// gates, the verifier); the conductor carries it to the tiers that WRITE spec text — a boundary
+// that authors acceptance criteria, and the reviser that rewrites them. Arc-observed 2026-09-04:
+// an acceptance clause requiring "no vitest, playwright, test-ci or dev-stack process anywhere on
+// the host" is unsatisfiable on the box this skill runs on, and cost a unit a quarantine.
+const HOST_BAR = 'Host facts are never a verdict and never a precondition. The orchestrator\'s own preview ' +
+  'dev-stack is always live, verification lanes for sibling units overlap by design, and the host\'s load ' +
+  '(loadavg1/cpuCount) is on the record precisely so a wall-clock claim can be judged against it. So never ' +
+  'require a quiet host, the absence of other processes (a dev server, a sibling unit\'s test lane, another ' +
+  'test runner), or a wall-clock ceiling as an acceptance clause or as a precondition for verification: a ' +
+  'spec or plan clause that does is unsatisfiable by construction, and it is a SPEC DEFECT for the ' +
+  'adjudicating tier to resolve through its verdict — never something the implementer or the verifier absorbs. '
 // The ONE canonical way to have a cheap agent run shell on this script's behalf: a CLOSED LIST of
 // exact commands whose verbatim output the SCRIPT judges, never a goal with destructive reach.
 // Mirrored from harness.mjs — see the long rationale there; keep the two in sync
@@ -878,7 +891,7 @@ const opusTriagePrompt = (N, P) =>
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
-  `\`promote\`. SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
+  `\`promote\`. ${HOST_BAR}SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
   `left to run (a next wave is happening anyway), fold this wave's debt — even minor items — into one or more ` +
   `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. ` +
   `${issueMode ? 'When a unit you `promote` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
@@ -927,7 +940,7 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
   `quarantined id. Emit new work as full skeletons in \`newUnits\` (each with a NEW kebab id), spec adjustments in ` +
-  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ` +
+  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ${HOST_BAR}` +
   `${issueMode ? 'When a `newUnit` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
   `Whenever a \`newUnit\` REPLACES a ` +
   `quarantined unit, set its \`supersedes\` field to that unit's id so the failed unit is retired and its edges ` +
@@ -1019,7 +1032,7 @@ const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
   `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
-  `architect ruling, for instance) is not yours to edit. Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
+  `architect ruling, for instance) is not yours to edit. ${HOST_BAR}Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
   `and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 characters). Nothing is compared ` +
   `against it — the revised content is yours to compose, so there is no expected value — it is recorded so a ` +
   `later reader can tell WHICH version of this spec they are looking at. Report ok:false with the exact error ` +
@@ -1177,8 +1190,10 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   pendingDebt = [...pendingDebt, ...(state.debt ?? [])]
 
   // Wave-level halt (`state.halt.reason`, one of: codex-unavailable / codex-usage-limit — Codex is
-  // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper —
-  // the box cannot support the work; platform-outage — required agent results stopped arriving).
+  // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper /
+  // env-verify-blocked — the box cannot support the work (the last one: two units' verification
+  // tooling failed to run in one wave, which is a host fact, not two unit defects);
+  // platform-outage — required agent results stopped arriving).
   // The harness already halted dispatch and parked in-flight units; no census/triage spend against
   // a wave the root must hand to the human anyway (re-auth, recreate the container, or wait out the
   // outage window, then relaunch — state and parked units resume cleanly). The harness picks the
