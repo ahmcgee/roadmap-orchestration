@@ -60,6 +60,8 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   which your steering reaches them.
   state.json           # written by persist.mjs after every run; you write the initial one.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
+  state.partial.json   # DIAGNOSTIC ONLY: a partial persist.mjs REFUSED to write over state.json.
+                       #   Nothing reads it; never relaunch from it (see "Who writes .roadmap/")
   quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
     explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
@@ -96,6 +98,33 @@ no duplicate ledger rows. A replay that runs out of journal — a crash — writ
 script logged, marked `partial: {stoppedAt: <label>}`, and exits 2; relaunch with `resumeFromRunId`
 and run it again. Exit 0 = complete, 2 = partial, 1 = error (nothing written).
 
+**A partial never regresses `state.json`.** Two partials are refused outright — parked in
+`state.partial.json` beside it, with `state.json` untouched, on a
+`PARTIAL-REFUSED stoppedAt=… why=… wrote=state.partial.json` line (still exit 2):
+
+- `why=divergence` — the miss is marked `(out of journal order)`. **That is the REPLAY diverging,
+  not the run failing:** the live run did not stop there, so its own returned state is further along
+  than any prefix reachable here. (2026-09-02: a wave-1 halt was written over a returned wave-3
+  state, and relaunching from that file would have re-forked every unit from the plan-pack tip.)
+- `why=newer-on-disk` — `state.json` already holds a better record: a later wave, or the same wave
+  written whole (no `partial` marker). A `partial` marker at the same wave is *this* partial, so
+  re-persisting a crashed run stays idempotent.
+
+**The cure for either is `--returned`, not a hand edit.** The run's return value is in the task
+output; hand it over as a JSON file and the replay is skipped entirely, the value going through the
+same writers (state, the plan-conflict check, `debt.json`, the `debt.md` and `architect-log.md`
+sections, `skill-degradations.md`, both ledgers) — so nothing the run decided is lost:
+
+```
+node <skill dir>/persist.mjs --returned <that value, as a .json file> \
+     --args '<the launch envelope>'          # --run / --script not needed; --args still is
+```
+
+The value may be a conductor `{status: "conductor-return", state, plan, …}` envelope or a
+directly-launched harness's wave state — the same two shapes a completed replay produces. Persist
+first, *then* investigate the divergence (a script edited since the journal was written is the usual
+cause).
+
 **Journal order is the clock.** A script is a deterministic function of (args, agent results) only
 *up to completion order*: the harness merges units through one serial chain in the order their
 pipelines reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds
@@ -105,8 +134,9 @@ that prompt's record, every earlier record having been consumed by its own looku
 lookups wait. A record nothing asks for (a superseded launch's prompt in a resumed run, an agent
 whose transcript carries no prompt) is stepped over once the run is quiescent, so the clock cannot
 deadlock; a lookup for a record the cursor already passed is a real divergence and stops the replay
-with `partial: {stoppedAt: "<label> (out of journal order)"}`. A nested `workflow()` child shares
-the journal and so shares the one cursor.
+with `partial: {stoppedAt: "<label> (out of journal order)"}` — which is refused rather than written
+over `state.json`, because a diverged prefix is behind the state the run itself returned (see the
+refusal rules above). A nested `workflow()` child shares the journal and so shares the one cursor.
 
 What the scripts still delegate to a model is what a model must actually *do*: author a spec, write a
 quarantine dossier or a feedback report, move consumed feedback, and project state into GitHub
@@ -304,7 +334,10 @@ Fields the scripts add:
   The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
 - **`partial`** — written only by `persist.mjs`, and only when a replay could not reach the run's
   return value: `{stoppedAt: <agent label>}`. The state beside it is the last snapshot the script
-  logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again.
+  logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again. A partial
+  that would regress `state.json` is refused and parked in `state.partial.json` instead — that file
+  carries the same marker, and is diagnostic only: nothing reads it, and nothing should relaunch
+  from it.
 - **`degradations` / `escalations`** — **NOT state.json fields.** They are events, not state: each
   run collects its own rows in memory, hands them back on the return envelope, and `persist.mjs`
   appends them to `.roadmap/{degradations,escalations}.jsonl`. They used to ride inside `state.json`,

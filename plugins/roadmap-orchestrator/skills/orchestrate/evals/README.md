@@ -236,7 +236,13 @@ and spend is within a generous envelope.
    grades `state.json`:
    `node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/harness.mjs
    --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>"}'`
-   → `OK …`. A `PARTIAL` line means the run died; the marker names where.
+   → `OK …`. A `PARTIAL` line means the run died; the marker names where. A **`PARTIAL-REFUSED
+   … why=divergence`** line means something else entirely: the replay diverged from the run (an
+   `(out of journal order)` miss), **not** a run failure — nothing was written over `state.json`,
+   and the fix is to feed the run's returned value straight in, `node <skill dir>/persist.mjs
+   --returned <that value, as a .json file> --args '<the same envelope>'`, before grading. Then
+   investigate the divergence: on this ladder it almost always means the script changed since the
+   journal was written, and the fixture must be re-run.
 4. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
 **Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
@@ -313,8 +319,11 @@ node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill di
 `workflow()` child shares its parent's journal, so the conductor's transcript dir already holds
 every wave's harness calls — do not persist per wave. A `PARTIAL stoppedAt=…` line means the replay
 hit a cache miss (the run died, or the script changed since the journal was written): it writes the
-last `snapshot()`'s state marked `partial: {stoppedAt}`, and exits 2 rather than 0. Run the
-persister after **every** return and after a crash. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
+last `snapshot()`'s state marked `partial: {stoppedAt}`, and exits 2 rather than 0. A
+`PARTIAL-REFUSED …` line means that partial would have regressed `state.json` (a replay divergence,
+or a newer state already on disk); it parks the partial in `state.partial.json`, and you re-run with
+`--returned <the run's return value, as a .json file>` — same `--args`, no `--run`/`--script` — to
+land the real thing. Run the persister after **every** return and after a crash. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
 
 **Cost:** the larger of the two by some margin — it runs the whole harness once per wave, so it
 multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19) — again a

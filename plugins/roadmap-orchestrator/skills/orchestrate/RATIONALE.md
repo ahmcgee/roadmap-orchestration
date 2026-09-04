@@ -919,6 +919,18 @@ clock. And a lookup for a record the cursor has already passed is reported as a 
 (`<label> (out of journal order)`) rather than silently served out of sequence: a silent reorder is
 the bug, so the replay must never be able to commit one.
 
+**And a divergence is not a run failure, so it may not overwrite the run's state.** Reporting the
+divergence was only half the fix: the partial was still written to `state.json`, and on 2026-09-02 a
+wave-1 halt landed over a returned wave-3 state — a relaunch from that file would have re-forked
+every unit from the plan-pack tip. The asymmetry is the point. An out-of-order miss says the REPLAY
+stopped, never the run; the run's own return value is strictly further along, and the root has it in
+the task output. So the two partials that would regress the file — an out-of-order miss, and any
+partial behind a `state.json` already on disk (a later wave, or the same wave written whole) — are
+refused, parked in `state.partial.json` for the investigation, and answered by `--returned`: the
+run's actual return value fed through the same writers, replay skipped. That keeps the repair inside
+the persister rather than in a hand-edited `state.json`, which is what loses the ledger appends, the
+debt sections and the log entries that ride the same envelope.
+
 **A role with a filesystem writes its own report, but not in its own voice.** The transcription
 courier was the price of a script with no filesystem, and a Codex role has one, so the finding and
 the file now come out of the same process. The rendering stays script-dictated (`reportWrite`)

@@ -390,9 +390,26 @@ Read its last line:
 - **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
   call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
   recovery ladder below, then persist again.
+- **`PARTIAL-REFUSED stoppedAt=<label> why=<divergence|newer-on-disk>`** (exit 2) — the partial
+  would have REGRESSED `state.json`, so it was parked in `state.partial.json` and `state.json` was
+  left untouched. `why=divergence` means the miss was `(out of journal order)`: **the replay
+  diverged, the run did not fail** — the run's own returned state is further along than anything
+  replayable. `why=newer-on-disk` means `state.json` already holds a later wave, or the same wave
+  written whole. Either way, persist the value the run **returned** (it is in the task output) —
+
+  ```
+  node <this skill's directory>/persist.mjs --returned <that value, as a .json file> \
+       --args '<the exact envelope you launched with>'
+  ```
+
+  which skips the replay and writes every document from that value (`--run`/`--script` are not
+  needed; `--args` still is). *Then* investigate the divergence — a script edited since the journal
+  was written is the usual cause. Never relaunch from `state.partial.json`, and never hand-edit
+  `state.json` in its place: the ledger appends, debt sections and log entries only land if the
+  persister writes them.
 - **`PLAN-CONFLICT unknownUnits=…`** — `.roadmap/plan.json` holds unit ids this run never saw (a
   root edit between launches, a hand-merged respec). The file was left exactly as it was; merge the
-  two plans by hand before relaunching.
+  two plans by hand before relaunching. (This fires on the `--returned` path too.)
 - **exit 1** — nothing was written and the reason is on stderr. The most common is a partial with no
   snapshot at all (the run died before its first status change): relaunch and persist again.
 
@@ -555,7 +572,10 @@ is wrong across sessions; the journal does not survive the host process).
 **Run `persist.mjs` first, always** (the command above, with the same `--run` directory and the same
 envelope). A crashed run leaves no state on disk by itself; the persister is what turns whatever the
 journal holds into a `state.json`, marked `partial: {stoppedAt: <label>}` when the replay could not
-reach the end. That file is what rung 3 relaunches from. Then work the ladder in order:
+reach the end. That file is what rung 3 relaunches from. If it answers `PARTIAL-REFUSED` instead,
+the replay diverged or disk is already ahead — re-run it with `--returned <the run's return value>`
+(above) before you touch the ladder, so rung 3 relaunches from the run's real state. Then work the
+ladder in order:
 
 1. **Same session, run still alive** — nothing to do; it will notify you when the run finishes.
 2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in `state.json`'s
