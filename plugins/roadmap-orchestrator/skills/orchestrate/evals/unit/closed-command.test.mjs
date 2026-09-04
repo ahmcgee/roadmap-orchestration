@@ -252,7 +252,7 @@ test('codex probe: the prompt forbids judging the credential provider at all', a
   assert.match(cmds[1], /codex login status$/)
   // The smoke is CLOSED and BOUNDED: a deadline, the harness's own sandbox composition, a
   // one-word prompt, and no way for it to become anything else.
-  assert.match(cmds[2], /timeout 120 codex exec -C \/repo /, 'bounded, and pointed at the repo by -C')
+  assert.match(cmds[2], /timeout 120 codex exec -C \/wt\/__codex\/roles\/probe-w1 /, 'bounded, and pointed at its own scratch dir by -C — never the checkout')
   assert.match(cmds[2], /--skip-git-repo-check/)
   assert.match(cmds[2], /'Reply with exactly the word pong'$/, 'and it asks for exactly one word')
   assert.ok(!/-a\b|--dangerously-bypass|--full-auto/.test(cmds[2]),

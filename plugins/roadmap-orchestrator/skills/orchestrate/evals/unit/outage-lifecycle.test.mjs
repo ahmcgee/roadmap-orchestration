@@ -154,7 +154,7 @@ test('two units 404ing back to back trip the breaker: both PARK, neither is quar
   }
   const d = kinds(state, 'codex-unavailable')
   assert.equal(d.length, 1, 'the breaker speaks once, however many runs go on to fail')
-  assert.match(d[0].what, /consecutive codex runs across different units failed with HTTP 404/)
+  assert.match(d[0].what, /consecutive codex runs across different units or roles failed with HTTP 404/)
   assert.match(d[0].what, /provider outage, not unit defects/)
   assert.match(d[0].what, /units park/)
 })

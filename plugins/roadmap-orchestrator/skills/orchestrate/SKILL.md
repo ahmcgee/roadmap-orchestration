@@ -114,7 +114,7 @@ non-zero with the first two green → **stop before dispatch** too, but say the 
 CLI and the credential are fine, the Codex backend is down, and no login will help — wait it out.
 Auth is a human act — never attempt the login yourself. Mid-arc, the harness re-probes (all three
 commands) each wave, and a backend that dies mid-wave trips a breaker on ≥2 consecutive codex
-failures across different units with the same HTTP status; either way it
+failures across different units or roles with the same HTTP status; either way it
 early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
 resumable pauses (re-auth, or wait for the limit window or the outage, then relaunch), never
 failures to route around by re-implementing with Claude. The same shape covers the host and the platform:

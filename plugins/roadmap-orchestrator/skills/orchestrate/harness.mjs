@@ -2633,7 +2633,7 @@ const noteCodexMeta = (id, r, dir, label, phase = 'Implement') => {
       // slot, exactly as `haltPlatform` refuses to overwrite an outage it already declared.
       halt.codex = halt.codex ?? 'codex-unavailable'
       degrade({ label, model: 'codex', phase, kind: 'codex-unavailable',
-        what: `${codexOutage.ids.length} consecutive codex runs across different units failed with HTTP ` +
+        what: `${codexOutage.ids.length} consecutive codex runs across different units or roles failed with HTTP ` +
           `${status} (turn.failed) — a provider outage, not unit defects; dispatch halts, units park, ` +
           `relaunch after the outage. Failing ids: ${codexOutage.ids.join(', ')}.` })
     }
@@ -4169,12 +4169,14 @@ if (C.envPreflight !== 'off') {
   // sandbox flag is composed the way the harness composes it EVERYWHERE (`config.codexSandbox`
   // overriding the role's stated intent), because `-s read-only` needs the bwrap user namespace
   // this devcontainer cannot build and would EPERM on a healthy box: a probe that halts every
-  // wave on a working host is worse than the outage it was written for.
+  // wave on a working host is worse than the outage it was written for. Which is also why `-C`
+  // points at the probe's own scratch directory, never the operator's checkout: with the sandbox
+  // wide open, the one place a one-word prompt can do no harm is an empty directory of its own.
   const smokeDir = `${wtRoot}/__codex/roles/probe-w${waveN}`
   const smoke =
-    `${codexHome}timeout 120 codex exec -C ${repo} -s ${C.codexSandbox ?? 'read-only'} ` +
+    `${codexHome}timeout 120 codex exec -C ${smokeDir} -s ${C.codexSandbox ?? 'read-only'} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
-    `-c projects."${repo}".trust_level="trusted" ` +
+    `-c projects."${smokeDir}".trust_level="trusted" ` +
     `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
     `-o ${smokeDir}/last-message.txt 'Reply with exactly the word pong'`
   const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`,
