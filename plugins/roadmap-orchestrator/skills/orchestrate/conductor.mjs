@@ -212,19 +212,40 @@ const cksumOf = (s) => {
 }
 const READ_CHUNK = 24000
 const PACK_FILES = ['plan.json', 'state.json']
-const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
-  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
-  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
-  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
-  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
-  '`detail` — a truncated copy is worse than no copy. '
-// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
-// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
-// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
-// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
+// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
+// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
+// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
+// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
+// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
+// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
+// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
+// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
+// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
+// with no backslash left in it, and the script puts the backslashes back before verifying. The
+// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
+// document fails loud exactly like a truncation rather than silently rewriting the pack.
+// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
+// replacement, and implausible in JSON prose.
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const PACK_BS = '@@BSLASH@@'
+const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
+  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
+  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
+  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
+  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
+  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
+  `truncated copy is worse than no copy. `
+// Read ONE pack file over the given line ranges (one command each) and verify it. Each content
+// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
+// courier never has to escape anything; the script swaps them back below. The whole file's
+// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
+// dropped line, a decoded escape, a summarised tail and a document that already contained the
+// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
+// it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
 const readPackFile = async (path, ranges, label, extra) => {
   const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -234,15 +255,17 @@ const readPackFile = async (path, ranges, label, extra) => {
   const lines = Number(r.out(2)) || 0
   if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
-  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
+  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
+  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
     if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
   }
-  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for

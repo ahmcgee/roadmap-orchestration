@@ -99,7 +99,12 @@ shipping; never ship on an upper rung alone.
    ride the design-less paid fixtures as valid evidence); and `shared-consts.test.mjs` (a
    text-level drift guard on the constants harness and conductor deliberately duplicate — they are
    standalone workflow scripts and cannot import from each other — including the whole
-   `readPack`/`READ_CHUNK`/`cksumOf` launch-pack read, byte-identical in both).
+   `readPack`/`READ_CHUNK`/`cksumOf`/`PACK_BS` launch-pack read, byte-identical in both).
+   The launch pack's own sims live in `harness.test.mjs` §13: a document full of `\"`, `\\`,
+   `\uXXXX` escapes and raw non-ASCII glyphs reads clean through the backslash-sentinel transport
+   (`packRules` runs the composed `sed` through the REAL tool, the way `sysCksum` runs the real
+   `cksum`), a courier that decodes those escapes — the 2026-09-02/09-04 failure — is caught by the
+   cksum, and an oversized file still fans out over line ranges.
    `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
    `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library.
 
