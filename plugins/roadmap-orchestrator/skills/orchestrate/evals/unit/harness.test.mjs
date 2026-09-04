@@ -587,7 +587,7 @@ test('13c a mis-transcribed pack file is re-read once, by a courier with a diffe
       if (!firstTry) return honest[0].result(prompt, opts)
       firstTry = false
       const r = honest[0].result(prompt, opts)
-      r.results[3].stdout = r.results[3].stdout.split('\n').slice(1).join('\n')
+      r.results[4].stdout = r.results[4].stdout.split('\n').slice(1).join('\n')
       return r
     } },
     ...honest,
@@ -612,7 +612,7 @@ test('13d a pack that never verifies fails the launch loudly — no wave on an u
   const { fn } = makeAgent([
     { match: /^pack-read:state\.json/, result: (prompt, opts) => {
       const r = honest[0].result(prompt, opts)
-      r.results[3].stdout = `${r.results[3].stdout}\n{"junk":true}`
+      r.results[4].stdout = `${r.results[4].stdout}\n{"junk":true}`
       return r
     } },
     ...honest,
@@ -670,9 +670,9 @@ test('13f a pack full of JSON escapes and raw glyphs reads clean — nothing in 
   assert.deepEqual(packLabels(calls), ['pack-read:plan.json', 'pack-read:state.json'],
     'no retry: an escape-heavy document is an ordinary read now, not a coin flip')
   const p = calls.find((c) => c.label === 'pack-read:plan.json')
-  assert.match(p.prompt, /sed -n '1,\$p' \/repo\/\.roadmap\/plan\.json \| sed 's\/\\\\\/@@BSLASH@@\/g'/,
+  assert.match(p.prompt, /sed -n '1,\$p' \/repo\/\.roadmap\/plan\.json \| sed 's\/\\\\\/@bs@\/g'/,
     'the read command itself strips every backslash out of the transport')
-  assert.match(p.prompt, /@@BSLASH@@/, 'and the courier is told what the marker it is copying means')
+  assert.match(p.prompt, /@bs@/, 'and the courier is told what the marker it is copying means')
   assert.equal(out.units.a.status, 'merged', 'and the wave runs on exactly the plan that was on disk')
   assert.equal(out.units.seeded.note, ESCAPEY,
     'every escape and glyph survives the round trip byte for byte — this is the state the arc resumes from')
@@ -689,9 +689,9 @@ test('13g the OLD failure — a courier that decodes the escapes — is caught, 
       const r = honest[0].result(prompt, opts)
       // Undo the sentinel the read command inserted, then drop one escaping level — the courier
       // that "helpfully" renders `\u2014` as an em dash and `\"` as a bare quote.
-      for (let i = 3; i < r.results.length; i++)
+      for (let i = 4; i < r.results.length; i++)
         r.results[i].stdout = r.results[i].stdout
-          .split('@@BSLASH@@').join('\\')
+          .split('@bs@').join('\\')
           .replace(/\\u([0-9a-f]{4})/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
           .replace(/\\(["\\/])/g, '$1')
       return r
@@ -701,7 +701,7 @@ test('13g the OLD failure — a courier that decodes the escapes — is caught, 
   await assert.rejects(
     () => (loadScript(HARNESS)).then((r) => r({
       args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } }, agent: fn })),
-    /pack-unreadable[\s\S]*plan\.json[\s\S]*@@BSLASH@@ transport sentinel/,
+    /pack-unreadable[\s\S]*plan\.json[\s\S]*@bs@ transport sentinel/,
     'the cksum still decides, and the failure names the sentinel as one of the things to check',
   )
   assert.deepEqual(packLabels(calls),
@@ -724,7 +724,7 @@ test('13h a file too big for one response is split into line ranges, sentinel an
     { match: /^pack-read:state\.json$/, result: (prompt, opts) => {
       truncated = true
       const r = honest[0].result(prompt, opts)
-      r.results[3].stdout = r.results[3].stdout.slice(0, 24000)   // all one courier can carry
+      r.results[4].stdout = r.results[4].stdout.slice(0, 24000)   // all one courier can carry
       return r
     } },
     ...honest,
@@ -738,10 +738,60 @@ test('13h a file too big for one response is split into line ranges, sentinel an
     ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:state.json#split'],
     'the oversized file is re-read over ranges, not re-sampled whole')
   const split = calls.find((c) => c.label === 'pack-read:state.json#split')
-  const ranges = (split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@@BSLASH@@\/g'/g) ?? [])
+  const ranges = (split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@bs@\/g'/g) ?? [])
   assert.ok(ranges.length > 1, `the read fans out over several ranges (got ${ranges.length})`)
   assert.equal(out.units['old-59'].note, `${ESCAPEY} ${'padding '.repeat(30)}`,
     'and the reassembled document is byte-identical to the file on disk')
+  assert.equal(out.units.a.status, 'merged')
+})
+
+// The cap the courier reports against applies to the text AFTER the backslash rewrite, and that
+// text is longer than the file by `PACK_BS.length - 1` per backslash. Sizing the retry on `wc -c`
+// alone therefore read an escape-dense file whole, watched it truncate, read it whole AGAIN
+// (`bytes <= READ_CHUNK`, so never the split path) and threw `pack-unreadable` — a launch lost to a
+// state.json that fits its own byte count. The read now counts the backslashes and budgets on the
+// expansion, which is what puts this file on the split path where it belongs.
+test('13i a file that fits `wc -c` but overflows once the sentinel expands it still takes the SPLIT path', async () => {
+  const plan = makePlan([unit('a')])
+  const seeded = {}
+  // Escape-dense prose: every `"` inside a JSON string is a backslash in the file on disk.
+  const quoted = `${'a "quoted" phrase, '.repeat(12)}${'pad '.repeat(20)}`
+  for (let i = 0; i < 55; i++) seeded[`old-${i}`] = { status: 'merged', branch: `unit/old-${i}`, note: quoted }
+  const state = makeState({ units: seeded })
+  const doc = `${JSON.stringify(state, null, 2)}\n`
+  const bytes = Buffer.byteLength(doc)
+  const esc = (doc.match(/\\/g) ?? []).length
+  // The whole point of the sim, stated as preconditions: this file is UNDER the cap by its own
+  // byte count and OVER it by the only measure that decides whether a courier can carry it.
+  assert.ok(bytes < 24000, `precondition: the file itself fits READ_CHUNK (${bytes} bytes)`)
+  assert.ok(bytes + esc * 3 > 24000,
+    `precondition: the text the courier carries does not (${bytes + esc * 3} after ${esc} backslashes expand)`)
+
+  const honest = packRules(plan, state)
+  let wholeReads = 0
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:state\.json/, result: (prompt, opts) => {
+      const r = honest[0].result(prompt, opts)
+      // A whole-file read is one content command; the courier can only carry READ_CHUNK of it.
+      if (r.results.length === 5) { wholeReads++; r.results[4].stdout = r.results[4].stdout.slice(0, 24000) }
+      return r
+    } },
+    ...honest,
+  ])
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.equal(wholeReads, 1, 'the file is read whole exactly ONCE — a second whole read would truncate again')
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:state.json#split'],
+    'the retry is the SPLIT, not another whole-file sample: `wc -c` was never the budget that mattered')
+  const split = calls.find((c) => c.label === 'pack-read:state.json#split')
+  assert.match(split.prompt, new RegExp(`\\(${bytes + esc * 3} once every backslash becomes @bs@\\)`),
+    'and the courier is told the size that actually governs, so the ranges it is given make sense')
+  assert.ok((split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@bs@\/g'/g) ?? []).length > 1,
+    'the read fans out over more than one range')
+  assert.equal(out.units['old-54'].note, quoted, 'and the reassembled document is byte-identical to the file on disk')
   assert.equal(out.units.a.status, 'merged')
 })
 

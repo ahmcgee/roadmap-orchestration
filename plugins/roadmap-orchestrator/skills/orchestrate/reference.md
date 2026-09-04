@@ -152,7 +152,7 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 ## `plan.json`
 
 **Write it however your serializer likes.** Both pack documents are read at launch by a Haiku
-courier, but the read command rewrites every backslash to the sentinel `@@BSLASH@@` first and the
+courier, but the read command rewrites every backslash to the sentinel `@bs@` first and the
 script reverses it before checking the file's `cksum` — so `\"`, `\\`, `\n`, `\t` and `\uXXXX`
 escapes, and raw non-ASCII glyphs, all survive transport intact. (They did not before 2026-09-04:
 the courier had to double-escape each backslash inside its own JSON report and dropped one level,
@@ -256,9 +256,12 @@ constraint left is **size** — see `state.json` below.
                                    //   preview's ports", Haiku swept three guesses and then
                                    //   `ps | grep | kill -9`, killing the workflow itself).
     "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates.
-                                   //   Retried for ~60 s (20 × 3 s) after start. A stack that
-                                   //   builds before it listens and needs longer must carry its
-                                   //   OWN patient loop here — the window is a floor, not a wait.
+                                   //   Retried after start for ~60 s of WALL CLOCK (not a fixed
+                                   //   number of tries), so give the check its own timeout —
+                                   //   `curl -m 5 -sf …` — or a slow one spends the window by
+                                   //   itself. A stack that builds before it listens and needs
+                                   //   longer must carry its OWN patient loop here: the window is
+                                   //   a floor, not a wait.
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
   "conventions": "…",              // optional; path to the standing conventions contract.
@@ -1081,7 +1084,7 @@ Workflow({
   //             big for one response — and then the launch throws `pack-unreadable`). The root
   //             used to paste both documents into `args`, which put the whole pack through the
   //             most expensive tier in the system on every launch and every resume.
-  //             The read command rewrites every backslash in the file to `@@BSLASH@@` before the
+  //             The read command rewrites every backslash in the file to `@bs@` before the
   //             courier copies it, and the script puts them back — so JSON escapes (`\"`, `\\`,
   //             `\n`, `\uXXXX`) travel safely and no serializer setting is your problem. What
   //             still is: SIZE. See the two documents' own sections below.

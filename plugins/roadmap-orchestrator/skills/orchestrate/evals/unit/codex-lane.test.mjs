@@ -577,7 +577,13 @@ test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never t
   for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900',
     `sh -c 'echo $$ > ${WT}/__codex/roles/codex-spec-review-a/codex.pid; `,
     'trap "kill -TERM $CPID; T=1" TERM;',
-    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;'])
+    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;',
+    // …and the bounded pidfile wait the launch command ends on. Without it the role's own
+    // `tail --pid=$(cat …/codex.pid)` — a SEPARATE Bash call — races the detached shell's first
+    // write and reads an absent file, which is exactly the false death the pidfile mechanic exists
+    // to remove (2026-09-04).
+    `exit-code' & i=0; while [ ! -s ${WT}/__codex/roles/codex-spec-review-a/codex.pid ] && ` +
+    '[ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done'])
     assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
   assert.ok(!p.includes('echo $! >'), 'and never the $! pidfile the build lane no longer writes either')
   assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')

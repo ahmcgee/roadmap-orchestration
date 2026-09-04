@@ -972,7 +972,7 @@ sentence — PACK_EXTRA telling the courier that "`\n` and `\"` are literal char
 instructions". That is §19's own lesson arriving at the pack read: a courier that has to be *told*
 how to escape something is being asked for judgment, and a prohibition only works if it is honoured.
 So the escaping was removed from the courier's job entirely. The read command now ends
-`| sed 's/\\/@@BSLASH@@/g'`, the courier copies a document with no backslash left anywhere in it —
+`| sed 's/\\/@bs@/g'`, the courier copies a document with no backslash left anywhere in it —
 nothing to escape, nothing to get wrong — and the script puts them back before verifying. The verdict
 is still the ORIGINAL file's `cksum`, so a document that genuinely contains the sentinel fails loud
 exactly like a truncation rather than being silently rewritten; the sentinel is named once per script

@@ -242,9 +242,14 @@ const PACK_FILES = ['plan.json', 'state.json']
 // verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
 // document fails loud exactly like a truncation rather than silently rewriting the pack.
 // The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
-// replacement, and implausible in JSON prose.
+// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
+// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
+// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
+// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
+// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
+// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
 // Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
-const PACK_BS = '@@BSLASH@@'
+const PACK_BS = '@bs@'
 const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
   `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
   `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
@@ -258,9 +263,13 @@ const PACK_EXTRA = `These commands only READ, and every content command already 
 // `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
 // dropped line, a decoded escape, a summarised tail and a document that already contained the
 // sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
-// it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
+// carries the file's { bytes, lines, esc } so the caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
-  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
+  // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
+  // which is longer than the file by one marker-length-minus-one per backslash, so the size
+  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
     ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
@@ -269,19 +278,20 @@ const readPackFile = async (path, ranges, label, extra) => {
     cmds)
   const bytes = Number(r.out(1)) || 0
   const lines = Number(r.out(2)) || 0
-  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const esc = Number(r.out(3)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
   // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
   // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
+  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
-    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
   return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
-    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines }
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -299,15 +309,19 @@ const readPack = async () => {
   PACK_FILES.forEach((n, i) => record(n, first[i]))
   const again = PACK_FILES.filter((n) => text[n] === undefined)
   const second = await parallel(again.map((n) => () => {
-    const { bytes, lines } = why[n]
-    if (bytes <= READ_CHUNK || lines < 2)
+    const { bytes, lines, esc } = why[n]
+    // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
+    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
+    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * (PACK_BS.length - 1)
+    if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
-    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
     // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
-    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)
@@ -501,6 +515,14 @@ const previewSweepRetry =
   `Never sweep by process NAME (\`pkill\`, \`killall\`) and never \`ps | grep | kill\`: a name sweep once killed ` +
   `every node process on this host, this workflow included. If a port is held by something the listed commands ` +
   `do not identify, leave it alone and report the failing exit code. `
+// The bring-up list spends up to ~60 s waiting for the healthcheck to answer, inside ONE Bash call.
+// The courier's Bash tool defaults to a 120 s timeout, which the setup command and the wait can
+// exhaust between them — and a tool timeout is indistinguishable, from here, from a preview that
+// never came up. Only the codex steerer used to carry this sentence; the preview couriers wait
+// just as long.
+const PREVIEW_PATIENCE = `Set your Bash tool's own timeout to its 600000 ms maximum for every command in this ` +
+  `list: bringing the preview up waits up to ~60 seconds for its healthcheck to answer, and a tool-level ` +
+  `timeout would cut that short and report a failure the preview did not have. `
 // The commands that bring the preview up in whatever tree ${prevWt} currently holds. `first` adds
 // the one-time setup step and forces a stop/start (a `refresh` command presumes a live process).
 const previewBringUp = (first) => {
@@ -513,8 +535,14 @@ const previewBringUp = (first) => {
   // every time — 2026-09-02: three `preview-failed`, every explorer and design job owed). A stack
   // slower than this window still has to carry its own wait inside `plan.preview.healthcheck`;
   // this loop is the floor, not a substitute for one.
+  // The bound is WALL CLOCK, not iterations (2026-09-04). `20 × sleep 3` is 60 s only if the
+  // healthcheck itself is instantaneous: a `curl` with no `-m` against a port nothing is listening
+  // on can hang for its own connect timeout each pass, so 21 checks plus 60 s of sleeps ran past
+  // the courier's 120 s Bash-tool default and the whole bring-up came back as a tool timeout —
+  // a preview reported dead that was merely slow. `date +%s` makes the window mean what it says
+  // whatever the healthcheck costs; PREVIEW_PATIENCE tells the courier to give the call room.
   if (p.healthcheck)
-    cmds.push(`i=0; while [ "$i" -lt 20 ]; do ${p.healthcheck} && break; sleep 3; i=$((i+1)); done; ${p.healthcheck}`)
+    cmds.push(`S=$(date +%s); until ${p.healthcheck}; do [ $(( $(date +%s) - S )) -ge 60 ] && break; sleep 3; done; ${p.healthcheck}`)
   return cmds
 }
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
@@ -1524,7 +1552,10 @@ let consultsUsed = prior.consultsUsed ?? 0
 // unit dispatch this wave (ready() gates on it), in-flight units PARK (status pending +
 // parked:true, re-entering by adoption next wave) — never quarantine, never a verdict. The wave
 // state carries `halt.reason` so the conductor early-returns to the root, where the human acts.
-//   codex    — the per-wave probe found the CLI/auth gone, or a step observed a usage/rate limit.
+//   codex    — the per-wave probe found the CLI/auth gone OR its `codex exec … "reply pong"` smoke
+//              failed while login still said logged in (a dead backend under a live CLI), a step
+//              observed a usage/rate limit, or the mid-wave BREAKER saw the same HTTP status across
+//              two different units or roles back to back (`codexOutage`, below).
 //              Codex is the only implementer, so there is no lane to fall back to.
 //   env      — the host cannot support the work: pid-cgroup headroom gone, or a PID 1 that does
 //              not reap (the preflight below), or two units' verification tooling failing to run
@@ -1748,7 +1779,7 @@ async function previewAdvance(sha, label, first) {
   const attempt = async (sweep) => {
     const cmds = build(sweep)
     const r = await courierRun(prevWt, cmds, { model: 'haiku', phase: 'Preview', label: sweep ? `${label}#sweep` : label },
-      previewSweepRetry + LAUNCH)
+      previewSweepRetry + PREVIEW_PATIENCE + LAUNCH)
     return { ok: r.ok, sha: r.out(cmds.length - 1), detail: r.detail,
       detached: r.exit(sweep ? previewSweepCmds.length : 0) === 0 }
   }
@@ -2383,6 +2414,17 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // the absent-exit-code rule — is shared verbatim, which is the whole point of not forking it.
 const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin,
   sandbox = C.codexSandbox, gitTruth = true, resumeDir, reapDir, outSchema, reportInstr }) => {
+  // THE LAUNCH IS ASYNCHRONOUS, SO THE LAUNCH COMMAND WAITS FOR ITS OWN PIDFILE (2026-09-04).
+  // Every composed launch below ends in `' &`: the detached sh writes codex.pid as its first act,
+  // but "first act" is still a fork and an exec away, and the steerer's NEXT Bash call is a
+  // different shell. `tail --pid=$(cat codex.pid)`, `kill -0 $(cat codex.pid)` and step 3's
+  // "if codex.pid already exists" re-dispatch guard would each read an absent or empty file and
+  // manufacture the exact false death the pidfile mechanic exists to remove. So the wait rides
+  // INSIDE the same composed command, in code: up to 10 s for a non-empty pidfile, then the
+  // command returns whatever is true. `evals/codex-probe.sh` has always waited; the real launch
+  // path did not. No `;` before it — `&` already terminates the launch, and `& ; i=0` is a syntax
+  // error.
+  const pidWait = ` i=0; while [ ! -s ${dir}/codex.pid ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done`
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
@@ -2395,7 +2437,7 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
       `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
       `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; trap "kill -TERM $CPID; T=1" TERM; ` +
-      `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &\n` +
+      `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &${pidWait}\n` +
       `COMMAND F: `
     : `use this launch command:\n`
   // Resume-collision rule (arc-observed: one gate-fix resume died at once with "thread already
@@ -2463,7 +2505,7 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `if [ -n "$L" ]; then printf "%s" "$L" | cut -d\\" -f4 > ${dir}/session-id; fi; ` +
     `sleep 1; i=$((i+1)); done ) & ` +
     `trap "kill -TERM $CPID; T=1" TERM; ` +
-    `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &`
+    `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &${pidWait}`
   // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
   // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
   // steerer that concluded "dead" while the process was alive once launched a second codex into the
@@ -2593,10 +2635,16 @@ const withGateSlot = (fn) => {
 // One unit's 404 could be that unit's bad luck; the same HTTP status on two different units or
 // roles back-to-back cannot be a unit defect, because no defect is shared by work that has
 // nothing in common but the provider.
+// Both halves are preconditions, and the second one is narrow ON PURPOSE. The bare `\b([45]\d\d)\b`
+// fallback this used to carry made any three-digit number in a failed turn's error line a provider
+// status — `turn.failed: took 503ms`, a line number, a byte count — and two of those across two
+// units would halt a healthy wave. A status is only a status where it stands next to the word that
+// makes it one, which is how every codex/OpenAI error line the arcs have shown actually reads:
+// `unexpected status 404 Not Found`, `HTTP 502`, `status code 503`.
 const outageStatus = (err) => {
   const s = String(err ?? '')
   if (!/turn\.failed/i.test(s)) return null
-  return (/unexpected status\s+([45]\d\d)\b/i.exec(s) ?? /\b([45]\d\d)\b/.exec(s))?.[1] ?? null
+  return /\b(?:status|HTTP|code)\b[\s:=]*([45]\d\d)\b/i.exec(s)?.[1] ?? null
 }
 // CONSECUTIVE is load-bearing in both directions: any codex result WITHOUT the signature clears
 // the run (an outage has to be happening now, not to have happened once an hour ago), and
@@ -2608,12 +2656,16 @@ const codexOutage = { status: null, ids: [], tripped: false }
 // the breaker tripped. Every codex-shaped dead end in the unit pipeline reads this and PARKS
 // instead of judging — see `outagePark` below.
 const codexOutaged = () => halt.codex === 'codex-unavailable' || codexOutage.tripped
-// The park a codex outage earns, in the shape every other halted step already returns: back to
+// The park a halted codex step earns, in the shape every other halted step already returns: back to
 // `pending` with `parked:true`, no dossier, no verdict, no retry. The unit re-enters by adoption
 // next wave with whatever commits are on its branch.
+// The note NAMES THE WINNING HALT REASON and says nothing more about it. A codex outage is only one
+// of the ways a unit arrives here — an env or platform halt observed while the unit sits at a codex
+// step lands on the same line — and the old fixed parenthetical ("codex provider outage") pointed
+// the operator at the wrong box for two of the three slots.
 const outagePark = (label) => ({ status: 'pending', parked: true,
-  note: `parked at ${label}: ${haltReason() ?? 'codex-unavailable'} (codex provider outage — nothing ` +
-    `about this unit was judged)` })
+  note: `parked at ${label}: ${haltReason() ?? 'codex-unavailable'} — dispatch is halted, so nothing ` +
+    `about this unit was judged` })
 
 // Degradation + spend bookkeeping shared by every codex process — build, fix and role alike. A
 // dead process is not a dead unit (the branch is judged on its commits); every entry names the
@@ -2663,10 +2715,18 @@ const noteCodexMeta = (id, r, dir, label, phase = 'Implement') => {
       // `??` and not `=`: a usage limit already recorded is the more specific truth and keeps the
       // slot, exactly as `haltPlatform` refuses to overwrite an outage it already declared.
       halt.codex = halt.codex ?? 'codex-unavailable'
-      degrade({ label, model: 'codex', phase, kind: 'codex-unavailable',
+      // …and the ROW says whichever won, rather than always claiming `codex-unavailable`. The
+      // degradation ledger is what the operator reads to decide the human action, and "wait the
+      // outage out" and "wait the limit window out" are different actions.
+      const won = halt.codex
+      degrade({ label, model: 'codex', phase, kind: won,
         what: `${codexOutage.ids.length} consecutive codex runs across different units or roles failed with HTTP ` +
-          `${status} (turn.failed) — a provider outage, not unit defects; dispatch halts, units park, ` +
-          `relaunch after the outage. Failing ids: ${codexOutage.ids.join(', ')}.` })
+          `${status} (turn.failed) — a provider outage, not unit defects; dispatch halts on ${won}, units park, ` +
+          (won === 'codex-usage-limit'
+            ? `relaunch after the limit window — a usage limit was already observed this wave and is the more ` +
+              `specific truth, so it keeps the halt slot. `
+            : `relaunch after the outage. `) +
+          `Failing ids: ${codexOutage.ids.join(', ')}.` })
     }
   }
   if (m.commits > 0 && r.notes?.includes('left uncommitted by codex'))
@@ -3167,7 +3227,12 @@ async function runUnit(unit) {
   // …unless CODEX ITSELF is down, in which case "the planner died twice" is the outage saying so
   // twice and not a fact about this unit at all. 2026-09-03: a 404'd backend quarantined a unit on
   // exactly this line. Park instead — no dossier, no verdict, re-entry by adoption next wave.
-  if (!implPlan && codexOutaged()) return outagePark(`plan:${unit.id}`)
+  // ANY halt, not only the codex one (2026-09-04): `codexRole` returns null the moment `haltReason()`
+  // is set — it never launches the run — so an env or platform halt declared while this unit sat at
+  // its plan role produces exactly the same empty-handed return, and testing `codexOutaged()` alone
+  // quarantined the unit as "the planner died twice" and spent a dossier on a halted wave. A halt is
+  // never a verdict, whichever slot it filled.
+  if (!implPlan && (codexOutaged() || haltReason())) return outagePark(`plan:${unit.id}`)
   if (!implPlan)
     return quarantine(unit, 'no implementation plan was produced (the codex planner died twice) — ' +
       'infrastructure, not the spec; relaunch to retry', { role: `plan:${unit.id}` })
@@ -3222,8 +3287,10 @@ async function runUnit(unit) {
         { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
           phase: 'Implement', label: `replan:${unit.id}` })
       // The architect redirected and the revision never came back. Building the plan the architect
-      // just rejected is the one thing that must not happen here.
-      if (!implPlan && codexOutaged()) return outagePark(`replan:${unit.id}`)
+      // just rejected is the one thing that must not happen here. Same guard as the plan site above,
+      // and for the same reason: any halt makes `codexRole` return null without launching anything,
+      // so a halted revision is a halt, never "the planner died twice".
+      if (!implPlan && (codexOutaged() || haltReason())) return outagePark(`replan:${unit.id}`)
       if (!implPlan)
         return quarantine(unit, 'the architect redirected the plan and the revision never came back (the codex ' +
           'planner died twice) — infrastructure, not the plan; relaunch to retry', check)
