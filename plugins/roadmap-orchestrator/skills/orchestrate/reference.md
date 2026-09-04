@@ -753,7 +753,13 @@ setsid nohup sh -c 'echo $$ > <dir>/codex.pid;
                     trap "kill -TERM $CPID; T=1" TERM;
                     wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;
                     echo $RC > <dir>/exit-code' &
+i=0; while [ ! -s <dir>/codex.pid ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
 ```
+
+The trailing loop is the price of the detached shell writing its own pid: the write is now
+asynchronous to the launching shell, and the steerer's very next call reads the file (`tail --pid`,
+`kill -0`, the re-dispatch guard). The bounded wait (≤ 10 s) keeps the launch command from returning
+before the pidfile is non-empty, so an empty file can never be read as a dead pid.
 
 The **preview** has none of that half — no `timeout`, no trap, no `wait`, no `exit-code` file — and
 must not: a dev server is *meant* to outlive the wave that started it, so there is no deadline to
