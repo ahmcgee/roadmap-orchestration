@@ -118,8 +118,10 @@ failures across different units or roles with the same HTTP status; either way i
 early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
 resumable pauses (re-auth, or wait for the limit window or the outage, then relaunch), never
 failures to route around by re-implementing with Claude. The same shape covers the host and the platform:
-`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
-(required agent results stopped arriving) park the wave the same way — see `state.halt`.
+`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight), `env-verify-blocked`
+(two units' verification tooling could not run in one wave — a host fact, not two unit defects)
+and `platform-outage` (required agent results stopped arriving) park the wave the same way — see
+`state.halt`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -494,16 +496,19 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   terminal API error). Nothing was admitted or dropped. Triage this boundary by hand, as for
   `boundary-degraded`, then relaunch.
 - **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`,
-  `env-no-reaper`, `platform-outage`) — the wave stopped dispatching and handed you a
+  `env-no-reaper`, `env-verify-blocked`, `platform-outage`) — the wave stopped dispatching and
+  handed you a
   **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
   commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
   wait out a usage-limit, platform-outage or Codex-backend-outage window, or fix the box (a full
-  pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1).
+  pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1;
+  `env-verify-blocked` means the verifiers' own tooling could not run at all — read their failure
+  output in the `verify-blocked` degradations, then fix the registry, network or missing global tool).
   `codex-unavailable` covers two of those, so read the degradation's `what` before acting: a failed
   `--version`/`login status` is a re-login, while a failed exec smoke or a tripped backend breaker
-  (≥2 consecutive `turn.failed` runs on different units, same HTTP status) is the provider — no
-  login helps, wait. Do the action, then
-  relaunch; never route around a halt by re-implementing the work another way.
+  (≥2 consecutive `turn.failed` runs on different units or roles, same HTTP status) is the provider —
+  no login helps, wait. Do the action, then relaunch; never route around a halt by re-implementing
+  the work another way.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
 **Nothing to replan?** Just relaunch the conductor. Keep your own turns terse — on a relaunch wake

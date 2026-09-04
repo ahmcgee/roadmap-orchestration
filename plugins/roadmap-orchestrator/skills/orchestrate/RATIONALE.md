@@ -854,6 +854,31 @@ unbounded. The numbers are recorded on every verify, once per flake band, and in
 `verify-blocked` / `codex-timeout` entries, so a wall-clock verdict is auditable after the fact instead
 of being a mystery.
 
+**And a host fact is never a verdict — which the tiers have to be told** (2026-09-04). Recording the
+load stopped the harness gating on it; it did not stop a *tier* inventing a gate of its own. An Opus
+plan-check adjudicated a unit's acceptance criterion as "no vitest, playwright, test-ci or dev-stack
+process anywhere on the host" before verify may run — unsatisfiable by construction on the box this
+skill runs on, since the harness's own preview dev-stack is always live and `gateMaxConcurrent` lanes
+overlap by design. The verifier reported `blocked`, and the unit was quarantined for a defect no unit
+had. So `HOST_BAR` (mirrored into the conductor) states the fact to every tier that writes or
+adjudicates spec text: a quiet host, the absence of sibling processes and a wall-clock ceiling are
+never acceptance clauses, and a clause that demands one is a spec defect to resolve through the
+verdict — the same shape as the cross-model critique's "an unanswered genuine question is a spec
+defect, never something the implementer absorbs". The verifier gets the consequence too: report such a
+clause as a FAILING check, never as `blocked`.
+
+The second half is the outcome of `blocked` itself, and it is the same
+park-don't-quarantine lesson one layer down. `pnpm audit --audit-level high` inside `pnpm verify` hung
+on a black-holed registry POST, and the first unit to reach it was quarantined "as an environment
+failure" — a verdict, a dossier, and a boundary respec for a fact about the box. Tooling that cannot
+run is now graduated by *how far it generalises*: once for a unit it BLOCKS (commits intact, adopted
+and re-verified next wave), twice for the same unit it quarantines (that checkout really is broken),
+and **two distinct units in one wave halts the wave** on `env-verify-blocked`, because a failure two
+units share is the host's and no number of unit verdicts will fix it. The count is `rounds.verifyBlocked`,
+the one round tally carried across a wave boundary — every other one measures a single wave's
+revision loops. `blocked` also joined the adoption set: a unit that keeps its commits has to be
+allowed to keep them, or the next wave's setup quarantines it for 'has-commits' by another route.
+
 **Tier 1 is bounded, not trusted.** Mechanical admission carries no judgment and no cut line, so a
 *batch* of drafts is exactly the denominator growth the cut line exists to stop; above
 `tier1MaxDrafts` the wave buys an Opus triage instead. None of this weakens termination, and the

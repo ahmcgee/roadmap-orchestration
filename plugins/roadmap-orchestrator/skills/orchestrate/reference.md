@@ -377,7 +377,7 @@ Fields the scripts add:
   preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
-  env-no-reaper | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  env-no-reaper | env-verify-blocked | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
   Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
@@ -393,9 +393,9 @@ Fields the scripts add:
   "nothing to consolidate"). `codex-exec`
   (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
   finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
-  the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
+  the branch was judged on its merits (a dead process is not a dead unit); the six halt kinds
   (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`, `env-no-reaper`,
-  `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
+  `env-verify-blocked`, `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
   fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
   treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
   died, so whether the branch holds work is unknown and the unit parked rather than being
@@ -411,8 +411,11 @@ Fields the scripts add:
   reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
   landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
-  and a resume can serve them from cache. A `verify-blocked` entry accompanies an environment
-  quarantine and carries the host's load; a `shared-red` entry names the one spec several units
+  and a resume can serve them from cache. A `verify-blocked` entry means a verifier RAN and found the
+  tooling broken: the first one for a unit records it `blocked` (commits intact, re-verified next
+  wave), a second on a later wave quarantines it, and either way the entry carries the host's load;
+  an `env-verify-blocked` entry means two units hit that in ONE wave, which is a host fact and
+  halts the wave; a `shared-red` entry names the one spec several units
   failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
   one batch, which are dropped rather than renamed into extra units.
 
@@ -421,7 +424,14 @@ Fields the scripts add:
   per run, and the `verify-blocked` and `codex-timeout` entries cite them. The wave's own
   concurrency is what produces the load, so waiting on it would be waiting on our own siblings —
   `gateMaxConcurrent` is the actual brake. The numbers exist so a wall-clock verdict is auditable
-  after the fact instead of a mystery.
+  after the fact instead of a mystery. The same fact is stated to every tier that writes or
+  adjudicates spec text (both plan-checks, both exit gates, the verifier, and the conductor's
+  boundary/spec-revise tiers) as the **host bar**: a quiet host, the absence of sibling processes,
+  or a wall-clock ceiling may never be an acceptance clause or a precondition for verification —
+  the preview dev-stack is always live and lanes overlap by design, so such a clause is
+  unsatisfiable by construction and is a spec defect for the adjudicating tier to resolve through
+  its verdict. Arc-observed 2026-09-04: an Opus plan-check minted one, and the unit was quarantined
+  when the verifier could not satisfy it.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `plan-conflict` entry is written by
   `persist.mjs` (`script: 'persist'`): `plan.json` on disk held unit ids the run has never seen, so
@@ -446,12 +456,15 @@ Fields the scripts add:
   `schema-retry` on one label means a `maxLength` cap is wrong.
 
 **Unit statuses**: `pending → running → merge-ready → merged`, or `quarantined` / `blocked`
-(dependency quarantined) / `deferred` (beyond cut line). Dependents launch only when every
+(dependency quarantined, or this unit's verification never ran / could not run) / `deferred`
+(beyond cut line). A `blocked` unit keeps its commits and is re-opened at the next wave's start
+once its blocker is gone; its branch is then ADOPTED, not rebuilt. Dependents launch only when every
 dependency is `merged`. While `running` a unit also carries a `stage` field
 (`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
 replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`, the per-unit
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
-it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
+it — plus `verifyBlocked`, the one tally that counts across WAVES, since the second blocked verify
+for a unit is what quarantines it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
 A `quarantined` record carries `reason` plus **`dossierPath`** — the absolute path of
 `.roadmap/quarantine/<id>.md`, never the dossier prose. The file is the record and every reader of
@@ -470,6 +483,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
+| `env-verify-blocked` | two units' verifiers reported `blocked` in one wave — their tooling could not run at all (a black-holed registry, a dead network, a missing global tool) | read the verifiers' failure output in the `verify-blocked` entries, fix the host, then relaunch |
 | `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
 
 Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
@@ -811,8 +825,13 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   coverage itself: the commands live in the spec markdown, not in `plan.json`. The full suite runs
   **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
-  enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
-  `provision` block.
+  enters the fix loop, and it is never a verdict about the unit: the **first** one records the unit
+  `blocked` (commits intact, no dossier, re-verified next wave), a **second** on a later wave
+  quarantines it with an *environment* dossier, and **two distinct units blocked in one wave** halt
+  the wave on `env-verify-blocked` — tooling that cannot run for two units is a host fact (a
+  black-holed registry, a dead network, a missing global tool), not two unit defects. Arc-observed
+  2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a black-holed registry
+  POST and the first unit to reach it was quarantined for it. Prevention is the `provision` block.
 - **Git decides `merged`, in code, before anything else.** At dispatch, before every quarantine,
   and for every `running`/`merge-ready` crash-residue record, a closed-list Haiku courier
   (`merged-probe:<id>`) runs the exact commands the script interpolated and reports their **exit
@@ -1232,7 +1251,8 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
                      //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
                      //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
-                     //     | env-no-reaper | platform-outage — state.halt.reason, returned verbatim
+                     //     | env-no-reaper | env-verify-blocked | platform-outage
+                     //     — state.halt.reason, returned verbatim
   wave, wavesRun,
   state,             // the final state (incl. the `conductor` block) -> .roadmap/state.json
   plan,              // the conductor's merged working plan -> .roadmap/plan.json (refused if the

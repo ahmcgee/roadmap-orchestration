@@ -153,6 +153,11 @@ test('2c a dead probe never reads as merged — the unit dispatches normally', a
 // =========================================================================================
 // 3. quarantine() refuses a unit git says is merged — with one deliberate exception.
 // =========================================================================================
+// The quarantine driven here is a REPEAT blocked verify: one blocked verify only BLOCKS the unit
+// (its tooling is a fact about the host, not a verdict about the unit), so the state seeds the
+// prior wave's `rounds.verifyBlocked` — the tally start() carries across the wave boundary — and
+// this wave's blocked verify is the second, which is the one that quarantines.
+const BLOCKED_ONCE = { units: { a: { status: 'blocked', rounds: { verifyBlocked: 1 } } } }
 test('3a quarantine is refused for a merged branch and recorded as merged instead', async () => {
   let n = 0
   const { fn, calls } = makeAgent([
@@ -160,7 +165,7 @@ test('3a quarantine is refused for a merged branch and recorded as merged instea
     { match: /^merged-probe:a$/, result: () => (n++ === 0 ? NOT_MERGED : MERGED) },
     { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
   ])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(BLOCKED_ONCE), { boundary: 'off' })
   assert.equal(state.units.a.status, 'merged', 'landed work is never re-opened for redesign')
   assert.equal(state.units.a.mergedAt, UNIT_TIP)
   assert.ok(!has(calls, 'dossier:a'), 'and no dossier is written for a unit that is not quarantined')
@@ -173,7 +178,7 @@ test('3b an unmerged branch quarantines exactly as before', async () => {
   const { fn, calls } = makeAgent([
     { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
   ])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { boundary: 'off' })
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(BLOCKED_ONCE), { boundary: 'off' })
   assert.equal(state.units.a.status, 'quarantined')
   assert.ok(has(calls, 'dossier:a'))
   assert.equal(degradationsOf(state, 'quarantine-refused').length, 0)

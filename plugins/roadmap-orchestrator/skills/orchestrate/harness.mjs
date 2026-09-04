@@ -579,6 +579,22 @@ const LANE_BAR = 'The verification evidence carries `lanes`: every command the v
   'else. A check the spec names that `lanes` does not contain — or a narrower, faster or cheaper substitute for ' +
   'one — means this unit is UNVERIFIED whatever `pass` says: issue a revise directive naming the exact command ' +
   'to run, and do not approve on the strength of a lane that was never run. '
+// Host facts are never a verdict — carried by every tier that WRITES or ADJUDICATES spec text:
+// both plan-checks, both exit gates, the verifier brief, and the conductor's spec-writing tiers.
+// Arc-observed 2026-09-04: an Opus plan-check adjudicated an acceptance criterion as "no vitest,
+// playwright, test-ci or dev-stack process anywhere on the host" before verify may run. The
+// harness's own preview dev-stack is always live and `gateMaxConcurrent` lanes overlap by design,
+// so that clause is unsatisfiable BY CONSTRUCTION: the verifier reported blocked and the unit was
+// quarantined for a defect no unit had. A tier minted the defect, so the rule lives with the tiers.
+// The companion facts are already in the harness: load is recorded and never gated on (LOAD_FACTS,
+// `host load: recorded, never gated on` below), and the wave's own concurrency is what produces it.
+const HOST_BAR = 'Host facts are never a verdict and never a precondition. The orchestrator\'s own preview ' +
+  'dev-stack is always live, verification lanes for sibling units overlap by design, and the host\'s load ' +
+  '(loadavg1/cpuCount) is on the record precisely so a wall-clock claim can be judged against it. So never ' +
+  'require a quiet host, the absence of other processes (a dev server, a sibling unit\'s test lane, another ' +
+  'test runner), or a wall-clock ceiling as an acceptance clause or as a precondition for verification: a ' +
+  'spec or plan clause that does is unsatisfiable by construction, and it is a SPEC DEFECT for the ' +
+  'adjudicating tier to resolve through its verdict — never something the implementer or the verifier absorbs. '
 // The pinned scope envelope, stated to every code-writing agent (the Codex brief's Constraints
 // block; FIX_SCOPE is the fix-round counterpart). Scope is computed ONCE per unit before the
 // first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry
@@ -1511,7 +1527,9 @@ let consultsUsed = prior.consultsUsed ?? 0
 //   codex    — the per-wave probe found the CLI/auth gone, or a step observed a usage/rate limit.
 //              Codex is the only implementer, so there is no lane to fall back to.
 //   env      — the host cannot support the work: pid-cgroup headroom gone, or a PID 1 that does
-//              not reap (the preflight below). Burning codex+gate rounds on it buys quarantines.
+//              not reap (the preflight below), or two units' verification tooling failing to run
+//              in one wave (`env-verify-blocked`, see envBlocked). Burning codex+gate rounds on
+//              any of them buys quarantines.
 //   platform — a REQUIRED agent result went missing after its salvage retry (runReq), i.e. the
 //              Claude platform itself is down or rate-limited. A model's death is a platform
 //              fact, never a unit verdict.
@@ -1523,6 +1541,14 @@ const halt = { codex: null, env: null, platform: null }
 // pointed at the cause rather than at a symptom.
 const HALT_ORDER = ['platform', 'env', 'codex']
 const haltReason = () => HALT_ORDER.map((k) => halt[k]).find(Boolean) ?? null
+// Units whose verification TOOLING could not run this wave (a verifier that RAN and reported
+// `blocked:true`). Wave-scoped, like every other brake here. ONE such unit is a fact about one
+// checkout — it blocks, keeps its commits, and is re-verified next wave. TWO DISTINCT units in one
+// wave is a fact about the HOST (a black-holed registry, a dead network, a missing global tool),
+// and no number of unit verdicts fixes a host: the wave halts on `env-verify-blocked` and parks.
+// Arc-observed 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a
+// black-holed registry POST, and the first unit to reach it was quarantined for the box.
+const verifyBlockedUnits = new Set()
 let inFlight = 0
 let mergeChain = Promise.resolve()
 let settleWaiters = []
@@ -1555,14 +1581,18 @@ const setStage = (id, stage) => {
 }
 // Per-unit round tally ({fix, opusGate, gate}) — makes runaway revision loops measurable
 // (the paid fixtures assert ceilings on these). Stamped on the running record like `stage`;
-// the terminal stores in start()/runWarmLane carry it onto the final record. No snapshot
+// the terminal store in start() carries it onto the final record. No snapshot
 // here — the next stage/status snapshot carries it, and a slightly-stale tally after a
 // crash is acceptable forensics.
+// `verifyBlocked` is tallied here too but is deliberately NOT one of the three seeded keys: it is
+// rare, it counts across waves (start() carries it), and seeding it would put a `verifyBlocked: 0`
+// on every unit record in every arc. Hence `?? 0` rather than a bare `++`, which is NaN on a key
+// the seed does not name.
 const bumpRound = (id, kind) => {
   const r = units.get(id)
   if (r?.status !== 'running') return
   const rounds = { fix: 0, opusGate: 0, gate: 0, ...(r.rounds ?? {}) }
-  rounds[kind]++
+  rounds[kind] = (rounds[kind] ?? 0) + 1
   units.set(id, { ...r, rounds })
 }
 const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
@@ -2127,7 +2157,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
       `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
       `hunt contradictions within the spec, clauses that contradict ` +
       `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
-      `engineer's to absorb — resolve it now through your verdict. And judge the plan the way only frontier ` +
+      `engineer's to absorb — resolve it now through your verdict. ${HOST_BAR}And judge the plan the way only frontier ` +
       `eyes can — the implementer is an able, literal-minded builder who will execute exactly what is approved, ` +
       `so what you wave through is what the codebase becomes: overengineering and complexity that does not earn ` +
       `its keep, structure that makes the NEXT change harder, missed reuse or a simpler shape for the same ` +
@@ -2152,6 +2182,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
     `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
     `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
     `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
+    `${HOST_BAR}` +
     `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
     `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
     `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
@@ -2856,8 +2887,13 @@ async function runUnit(unit) {
   // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
   // the record with {status:'running'} before us). A unit that was 'running' in the last
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
+  // `blocked` is in the list for the same reason `running` is: a unit blocked because its verify
+  // never ran, or because its verification TOOLING could not run, keeps every commit it made and
+  // re-enters dispatch next wave. Without adoption those commits read as un-adopted work beyond
+  // base and the unit would quarantine on 'has-commits' — the exact verdict blocking exists to
+  // avoid. (A dependency-blocked unit has no commits at all, so it takes the fresh path anyway.)
   const adopt = !!unit.existingBranch ||
-    ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status) ||
+    ['running', 'merge-ready', 'blocked'].includes(prior.units?.[unit.id]?.status) ||
     !!prior.units?.[unit.id]?.parked   // parked mid-pipeline (any halt): its commits are its own progress
 
   // H-7: implementer-reported deviation from a frozen surface. `mismatch` is consumable
@@ -2879,13 +2915,52 @@ async function runUnit(unit) {
   // the same incident (arc-observed: 22 `scope-growth` rows, ~15 real incidents). Superset-aware:
   // only a genuinely new file re-degrades.
   const scopeGrewSeen = new Set()
-  // A `blocked` verify is a verdict about the ENVIRONMENT, and the host's load is the fact that
-  // most often explains one. Record it beside the quarantine so the verdict is auditable.
+  // A `blocked` verify is a verdict about the ENVIRONMENT, never about the unit, and the host's
+  // load is the fact that most often explains one — recorded beside the outcome so it is auditable.
+  // Still deliberately distinct from `verifyUnrun` below: `blocked:true` is a verifier that RAN and
+  // found the tooling broken (a fact about this checkout), while a null verify is a dead codex role
+  // (a fact about CODEX). What they now share is the refusal to convert either into a unit verdict.
+  //
+  // The outcome is graduated, because tooling that cannot run is only this unit's problem if it is
+  // this unit's alone:
+  //   first blocked verify   -> BLOCKED. Commits intact, no dossier, no fix rounds; the wave-start
+  //                             loop re-opens a blocked unit whose blocker is gone, so it is
+  //                             re-dispatched and re-verified next wave and judged then.
+  //   blocked again          -> not transient for this unit: quarantine, with the reason it always
+  //                             had. `rounds.verifyBlocked` is the tally, carried across waves in
+  //                             start() precisely so this is countable.
+  //   two units, one wave    -> a HOST fact, not two unit defects: halt (`env-verify-blocked`), so
+  //                             nothing new dispatches and everything in flight parks.
+  // Arc-observed 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a
+  // black-holed registry POST and the FIRST unit to hit it was quarantined for the host's fault.
   const envBlocked = (label, v) => {
+    verifyBlockedUnits.add(unit.id)
+    // `!halt.env` both keeps an already-set env halt (the preflight's) and makes the row fire once.
+    if (verifyBlockedUnits.size >= 2 && !halt.env) {
+      halt.env = 'env-verify-blocked'
+      degrade({ label, model: 'haiku', phase: 'Verify', kind: 'env-verify-blocked',
+        what: `two units' verification tooling could not run in one wave (${[...verifyBlockedUnits].join(', ')})` +
+          `${loadNote(v)} — that is a host fact (a registry or network black hole, a missing global tool), not two ` +
+          `unit defects, so the wave halts and every unit parks with its commits. Operator: read the verifiers' ` +
+          `failure output, fix the host, relaunch` })
+    }
+    bumpRound(unit.id, 'verifyBlocked')
+    const blockedRounds = rec(unit.id)?.rounds?.verifyBlocked ?? 1
+    const first = String(v?.failures?.[0] ?? '').slice(0, 300)
+    const firstNote = first ? ` First failure: ${first}` : ''
+    // A halt is never a verdict, so a wave halted by the shared case above blocks this unit too,
+    // whatever its own tally says — the operator fixes the host, and the unit is judged next wave.
+    if (blockedRounds >= 2 && !haltReason()) {
+      degrade({ label, model: 'haiku', phase: 'Verify', kind: 'verify-blocked',
+        what: `verification tooling could not run for ${unit.id} on ${blockedRounds} separate waves${loadNote(v)} — ` +
+          `quarantined as an environment failure, not a unit defect; fix provisioning, not the spec.${firstNote}` })
+      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', v)
+    }
     degrade({ label, model: 'haiku', phase: 'Verify', kind: 'verify-blocked',
-      what: `verification tooling could not run for ${unit.id}${loadNote(v)} — quarantined as an environment ` +
-        `failure, not a unit defect; fix provisioning, not the spec` })
-    return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', v)
+      what: `verification tooling could not run for ${unit.id}${loadNote(v)} — the unit is BLOCKED, not ` +
+        `quarantined: nothing about it was judged, its commits are intact, and it is re-verified next wave. ` +
+        `Fix provisioning, not the spec.${firstNote}` })
+    return { status: 'blocked', branch: `unit/${unit.id}`, note: `verification tooling could not run (${label})` }
   }
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
@@ -3252,7 +3327,11 @@ async function runUnit(unit) {
     `verbatim error output, never paraphrased, and \`failingSpecs\` = the repo-relative path of every test ` +
     `FILE that has a failure, one entry per file. ${LOAD_FACTS}If the tooling itself cannot run (missing ` +
     `dependency, broken command, environment failure) — as opposed to an assertion failing — report ` +
-    `blocked:true and stop.`
+    `blocked:true and stop.\n\n` +
+    `# HOST\n${HOST_BAR}If the spec makes one of those a check you are supposed to run, that clause is the ` +
+    `defect: report it as a FAILING check, quoting the clause verbatim in \`failures\`, and carry on with the ` +
+    `rest. Never report blocked:true over it — \`blocked\` is for tooling that could not run, and a spec ` +
+    `nobody can satisfy is a result to report, not an environment failure.`
   // Still inside withGateSlot: a codex verify spends the box's cores exactly as a Haiku one did, and
   // gateMaxConcurrent bounds the HOST, not the driver. It nests OUTSIDE the adapter's own codex
   // semaphore and cannot deadlock — nothing holding a codex slot ever waits on a gate slot. Its
@@ -3618,7 +3697,7 @@ async function runUnit(unit) {
         `exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then ${firstGateRead}` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
@@ -3721,7 +3800,7 @@ async function runUnit(unit) {
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
-      `${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
+      `${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
@@ -3925,7 +4004,13 @@ async function mergeUnit(unit) {
 function start(unit) {
   inFlight++
   dispatched.add(unit.id)
-  units.set(unit.id, { status: 'running' })
+  // `rounds.verifyBlocked` is the ONE tally that counts across waves — the second blocked verify
+  // for a unit is what quarantines it — so it is carried onto the fresh running record. Read from
+  // `prior`, this wave's immutable input, because the wave-start re-open loop rewrites a blocked
+  // record to a bare `{status:'pending'}`. The per-wave tallies (fix/opusGate/gate) deliberately do
+  // NOT carry: they measure one wave's revision loops and the fixtures assert ceilings on them.
+  const blockedRounds = prior.units?.[unit.id]?.rounds?.verifyBlocked
+  units.set(unit.id, { status: 'running', ...(blockedRounds ? { rounds: { verifyBlocked: blockedRounds } } : {}) })
   snapshot()   // a 'running' record is what a crash-residue recovery adopts
   ;(async () => {
     let result = await runUnit(unit)

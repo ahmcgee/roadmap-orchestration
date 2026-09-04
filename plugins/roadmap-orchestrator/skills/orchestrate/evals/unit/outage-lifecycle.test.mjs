@@ -522,7 +522,91 @@ test('a contract mismatch on a unit whose work already landed banks as `rebanked
 })
 
 /* ====================================================================== */
-/* 6. The conductor reads one halt field and one debt flag                 */
+/* 6. A blocked VERIFY: tooling that could not run is a host fact          */
+/* ====================================================================== */
+// 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a black-holed registry
+// POST. The verifier reported `blocked:true` — honestly — and the FIRST unit to reach it was
+// quarantined for it, dossier and all, for a defect that was not its own and that no respec could
+// fix. Same family as every other entry in this file: an environment fact converted into a unit
+// verdict. The graduated answer: block once (commits intact, re-verified next wave), quarantine on
+// a repeat (it is this checkout's problem), and halt the wave the moment TWO units say it in one
+// wave (it is the box's problem, and no number of unit verdicts fixes a box).
+const BLOCKED_VERIFY = () => ({ pass: false, blocked: true, failures: ['ECONNRESET https://registry.npmjs.org/-/npm/v1/security/audits'],
+  lanes: [], contractSurfaceTouched: false, diffFiles: [] })
+
+test('one blocked verify BLOCKS the unit: no quarantine, no dossier, commits intact', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'blocked', 'tooling that could not run is not a verdict about the unit')
+  assert.equal(state.units.a.branch, 'unit/a', 'the branch — and everything committed on it — is named on the record')
+  assert.equal(state.units.a.rounds?.verifyBlocked, 1, 'tallied, so a repeat next wave is countable')
+  assert.ok(!has(calls, 'dossier:a'), 'no redesign dossier over a registry that went dark')
+  assert.ok(!has(calls, 'codex-fix:a'), 'and no fix round — there is nothing to fix in the unit')
+  assert.equal(state.halt, undefined, 'ONE blocked verify halts nothing: it may still be this checkout alone')
+  const d = kinds(state, 'verify-blocked')
+  assert.equal(d.length, 1, 'the environment fact is ledgered, once')
+  assert.match(d[0].what, /BLOCKED, not/, 'and the row says which door the unit went through')
+  assert.match(d[0].what, /ECONNRESET/, 'carrying the verifier\'s own first failure line, so the operator can act')
+})
+
+test('blocked AGAIN on a later wave quarantines: twice is not transient', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a', rounds: { verifyBlocked: 1 } } } }))
+
+  assert.equal(state.units.a.status, 'quarantined', 'the second blocked verify is the unit\'s own problem to route')
+  assert.match(state.units.a.reason, /environment\/tooling blocked verification/)
+  assert.equal(state.units.a.rounds?.verifyBlocked, 2, 'the tally survived the wave boundary — that is what counts it')
+  assert.ok(has(calls, 'dossier:a'), 'and NOW a dossier is written: the boundary has to route it')
+  const [d] = kinds(state, 'verify-blocked')
+  assert.match(d.what, /on 2 separate waves/, 'the ledger says why this one quarantined and the first did not')
+})
+
+test('a blocked unit\'s commits are ADOPTED next wave, never re-read as un-adopted work', async () => {
+  // The whole point of blocking rather than quarantining is that the branch survives. Without
+  // adoption the next wave's setup sees commits beyond base that nothing claims and quarantines on
+  // 'has-commits' — the same verdict by another route.
+  const { fn, calls } = makeAgent([
+    // The branch exists (sha), was never merged, worktree present…
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    // …and holds 3 commits beyond base: last wave's implementation, which nobody judged.
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a', rounds: { verifyBlocked: 1 } } } }))
+
+  assert.equal(state.units.a.status, 'merged', 'the adopted branch runs the pipeline again and lands')
+  assert.ok(!has(calls, 'codex-build:a'), 'and it is NOT rebuilt from scratch — the commits are its own progress')
+  assert.equal(kinds(state, 'verify-blocked').length, 0, 'nothing was blocked this wave')
+})
+
+test('TWO units blocked in one wave halts the wave: a host fact, not two unit defects', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:(a|b)/, result: BLOCKED_VERIFY }])
+  // `c` depends on `m`, which merges normally — so `c` becomes dependency-ready DURING the wave and
+  // is the unit that proves the halt gates NEW dispatch rather than merely stopping the two blocked.
+  const state = await runWave(fn,
+    makePlan([unit('m'), unit('a'), unit('b'), unit('c')], [{ from: 'm', to: 'c', type: 'semantic', mode: 'contract' }]),
+    makeState(), { warmLanes: false })
+
+  assert.equal(state.halt.reason, 'env-verify-blocked', 'the wave halts on the host, not on either unit')
+  assert.equal(state.halt.env, 'env-verify-blocked', 'and it fills the env slot of the halt record')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'blocked', `${id} is blocked, with its commits`)
+    assert.notEqual(state.units[id].status, 'quarantined', `${id} is never quarantined for the box`)
+  }
+  assert.ok(!has(calls, 'dossier:a') && !has(calls, 'dossier:b'), 'no dossiers: nothing about either unit was judged')
+  assert.equal(state.units.c.status, 'pending', 'the unit behind the halt is left pending, not judged')
+  assert.ok(!has(calls, 'setup:c'), 'and never dispatched — ready() gates on the halt record')
+  const [d] = kinds(state, 'env-verify-blocked')
+  assert.ok(d, 'the halt is ledgered for the root')
+  assert.match(d.what, /host fact/, 'the row says what it is')
+  assert.match(d.what, /a, b/, 'and names both units, which is the evidence it judged on')
+  assert.match(d.what, /fix the host, relaunch/, 'and the one human action')
+})
+
+/* ====================================================================== */
+/* 7. The conductor reads one halt field and one debt flag                 */
 /* ====================================================================== */
 async function driveConductorWith(waveState, extraState = {}) {
   const { fn: workflowFn } = makeWorkflow(() => waveState)
