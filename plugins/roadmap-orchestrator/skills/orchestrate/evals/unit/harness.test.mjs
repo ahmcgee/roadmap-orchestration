@@ -67,8 +67,16 @@ function deferred() {
   const promise = new Promise((r) => (resolve = r))
   return { promise, resolve }
 }
-// Flush all pending microtasks by yielding a macrotask turn.
-const flush = () => new Promise((r) => setTimeout(r, 15))
+// Let the wave run until it parks on the deferred call this test is about, then give it one more
+// full turn so a call that must NOT issue has had its chance to. `until` is polled rather than
+// slept through: a fixed sleep is a race on a loaded box (it failed here at 15ms), and waiting
+// LONGER for a call that should not exist only strengthens the negative assertions beneath.
+const tick = (ms) => new Promise((r) => setTimeout(r, ms))
+const flush = async (until) => {
+  const deadline = Date.now() + 5000
+  do { await tick(5) } while (until && !until() && Date.now() < deadline)
+  await tick(15)
+}
 
 const has = (calls, prefix) => calls.some((c) => c.label === prefix || c.label.startsWith(prefix))
 const seqOf = (calls, prefix) => calls.find((c) => c.label === prefix || c.label.startsWith(prefix))?.seq
@@ -119,7 +127,7 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
   const plan = makePlan([unit('a'), unit('b')], [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }])
 
   const p = runWave(fn, plan, makeState())
-  await flush()
+  await flush(() => has(calls, 'merge:a'))
   assert.ok(has(calls, 'setup:a'), 'a should have set up')
   assert.ok(has(calls, 'merge:a'), 'a should be parked in the merge queue')
   assert.ok(!has(calls, 'setup:b'), 'b must NOT set up while A is unmerged')
@@ -247,12 +255,12 @@ test('7 merge queue serial: merge:b waits for merge:a', async () => {
     { match: /^merge:b$/, result: () => mergeB.promise },
   ])
   const p = runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
-  await flush()
+  await flush(() => has(calls, 'merge:a'))
   assert.ok(has(calls, 'merge:a'), 'merge:a issued')
   assert.ok(!has(calls, 'merge:b'), 'merge:b must NOT issue while merge:a is in flight')
 
   mergeA.resolve({ merged: true, suitePass: true, head: BASE_SHA, detail: '' })
-  await flush()
+  await flush(() => has(calls, 'merge:b'))
   assert.ok(has(calls, 'merge:b'), 'merge:b issues once merge:a settled')
   assert.ok(seqOf(calls, 'merge:b') > seqOf(calls, 'merge:a'), 'merge:b ordered after merge:a')
 
