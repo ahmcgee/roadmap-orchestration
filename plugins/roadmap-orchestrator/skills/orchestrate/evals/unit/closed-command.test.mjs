@@ -327,12 +327,25 @@ test('preview: a `start` that cannot be single-quoted is refused at plan load, b
     'the wrapper is `sh -c \'<start>\'`, so a quote in it would hand the remainder to the courier as commands')
 })
 
-test('preview: the healthcheck is retried for ~60s, not 15 — a stack that builds before it listens', async () => {
+test('preview: the healthcheck window is ~60s of WALL CLOCK, and the courier is given the tool time to spend it', async () => {
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
-  const hc = commandsOf(promptOf(calls, 'preview-setup')).find((c) => c.includes(PREVIEW.healthcheck))
-  assert.match(hc, /^i=0; while \[ "\$i" -lt 20 \]; do .* && break; sleep 3; i=\$\(\(i\+1\)\); done; /,
-    '20 x 3s. 2026-09-02: 5 x 3s lost every wave of an arc to a dev stack that builds first')
+  const p = promptOf(calls, 'preview-setup')
+  const hc = commandsOf(p).find((c) => c.includes(PREVIEW.healthcheck))
+  // 2026-09-02: 5 x 3s lost every wave of an arc to a dev stack that builds before it listens.
+  // 2026-09-04: `20 x sleep 3` is 60 seconds only when the healthcheck itself costs nothing — a
+  // curl with no `-m` against a dead port pays its own connect timeout 21 times, and the whole
+  // bring-up then overran the courier's 120s Bash-tool default and read as a preview that never
+  // came up. The bound is the clock now, so the window means 60 seconds whatever the check costs.
+  assert.match(hc, /^S=\$\(date \+%s\); until .* do \[ \$\(\( \$\(date \+%s\) - S \)\) -ge 60 \] && break; sleep 3; done; /,
+    'the loop is bounded by elapsed seconds, not by an iteration count')
+  assert.ok(!/-lt 20/.test(hc), 'the iteration bound is gone — it was never a 60-second promise')
+  assert.equal(hc.split(PREVIEW.healthcheck).length - 1, 2,
+    'the check runs inside the loop and once more after it, so the command\'s exit code is the verdict')
+  // The wait lives in ONE Bash call, so the courier has to be told to give that call room. Without
+  // this the tool's own 120s default cuts the bring-up short and reports a failure nothing had.
+  assert.match(p, /600000 ms maximum/, 'the preview courier is told to raise its Bash tool timeout')
+  assert.match(p, /waits up to ~60 seconds/, 'and why — the window is the reason, not a blanket instruction')
 })
 
 test('preview: the mirror advance is a closed list, not a "never stash/reset/force" prohibition', async () => {

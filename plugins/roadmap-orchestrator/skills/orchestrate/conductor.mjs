@@ -239,9 +239,14 @@ const PACK_FILES = ['plan.json', 'state.json']
 // verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
 // document fails loud exactly like a truncation rather than silently rewriting the pack.
 // The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
-// replacement, and implausible in JSON prose.
+// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
+// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
+// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
+// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
+// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
+// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
 // Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
-const PACK_BS = '@@BSLASH@@'
+const PACK_BS = '@bs@'
 const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
   `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
   `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
@@ -255,9 +260,13 @@ const PACK_EXTRA = `These commands only READ, and every content command already 
 // `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
 // dropped line, a decoded escape, a summarised tail and a document that already contained the
 // sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
-// it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
+// carries the file's { bytes, lines, esc } so the caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
-  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
+  // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
+  // which is longer than the file by one marker-length-minus-one per backslash, so the size
+  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
     ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
@@ -266,19 +275,20 @@ const readPackFile = async (path, ranges, label, extra) => {
     cmds)
   const bytes = Number(r.out(1)) || 0
   const lines = Number(r.out(2)) || 0
-  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const esc = Number(r.out(3)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
   // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
   // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
+  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
-    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
   return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
-    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines }
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -296,15 +306,19 @@ const readPack = async () => {
   PACK_FILES.forEach((n, i) => record(n, first[i]))
   const again = PACK_FILES.filter((n) => text[n] === undefined)
   const second = await parallel(again.map((n) => () => {
-    const { bytes, lines } = why[n]
-    if (bytes <= READ_CHUNK || lines < 2)
+    const { bytes, lines, esc } = why[n]
+    // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
+    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
+    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * (PACK_BS.length - 1)
+    if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
-    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
     // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
-    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)

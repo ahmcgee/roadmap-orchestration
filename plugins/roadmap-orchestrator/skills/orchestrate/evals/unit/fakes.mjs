@@ -176,6 +176,10 @@ export function packRules(plan, state, serialize = (doc) => `${JSON.stringify(do
         if (/^cksum </.test(cmd)) return sysCksum(file)
         if (/^wc -c </.test(cmd)) return String(Buffer.byteLength(file))
         if (/^wc -l </.test(cmd)) return String(lines.length)
+        // The backslash census the script budgets its retry on: the transformed text the courier
+        // carries is longer than the file by one marker-length-minus-one per backslash, so a
+        // fake that answered 0 here would hide the very overflow this command exists to size.
+        if (/^tr -cd /.test(cmd)) return String((file.match(/\\/g) ?? []).length)
         const m = /^sed -n '(\d+),(\d+|\$)p'/.exec(cmd)
         if (!m) return ''
         const a = Number(m[1])

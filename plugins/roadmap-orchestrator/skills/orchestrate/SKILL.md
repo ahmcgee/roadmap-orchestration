@@ -647,11 +647,11 @@ ladder in order:
    copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
    dispatch a wave from a document nobody could vouch for. The throw names the file, its byte count
    and how much arrived. **JSON escapes are not the cause** — the read command rewrites every
-   backslash to `@@BSLASH@@` before the copy and the script reverses it, so `\"`, `\\` and `\uXXXX`
+   backslash to `@bs@` before the copy and the script reverses it, so `\"`, `\\` and `\uXXXX`
    travel intact. The three real causes, in order of likelihood: the file is **too big** (a copy
    that stops far short of the byte count — get `state.json` back under ~35 KB by moving prose into
    files and referencing them by path); `roadmapDir` is wrong or the file does not parse; or the
-   document genuinely contains the literal text `@@BSLASH@@`, which the reversal would corrupt and
+   document genuinely contains the literal text `@bs@`, which the reversal would corrupt and
    the `cksum` therefore rejects — remove it. Fix, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
