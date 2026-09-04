@@ -470,7 +470,20 @@ const previewPorts = [...new Set(
 // list (see `courier`) rather than in prose an agent has to interpret. setsid makes the recorded
 // pid a process-group leader so stop can kill the whole tree, not just the parent — a single-pid
 // kill strands child listeners and leaves ports held.
-const previewStartCmd = (start) => `setsid nohup ${start} > ${prevLog} 2>&1 & echo $! > ${prevPid}`
+// THE DETACHED SHELL WRITES ITS OWN PID, and `${start}` runs INSIDE it. Both halves are 2026-09-02
+// scars (see the codex launch sites for the long version of the first):
+//   - `… & echo $! > pid` recorded a pid that was dead within a second. The courier's Bash shell has
+//     job control on, so a backgrounded job is already a process-group leader and `setsid` must
+//     FORK; `$!` names the short-lived parent, and every kill and liveness check hung off a corpse.
+//     `sh -c 'echo $$ > …'` records the surviving shell instead — which, after setsid, is also the
+//     pgid that `kill -TERM -- -<pid>` targets. Never `echo $!` after the `&`, at any launch site.
+//   - `setsid nohup <start>` made `nohup` the thing exec'ing the plan's string, so a start beginning
+//     with an env assignment died at once ("nohup: failed to run command 'DEV_SLOT=9'") and every
+//     wave that arc ran with no preview at all. Under `sh -c` the string is SHELL input: `VAR=value
+//     cmd`, `&&` chains and pipelines all work. A single quote in it cannot survive this wrapping,
+//     so `plan.preview.start` is validated against one at load and throws there rather than
+//     composing a command that would end the quoted string mid-flight.
+const previewStartCmd = (start) => `setsid nohup sh -c 'echo $$ > ${prevPid}; ${start}' > ${prevLog} 2>&1 &`
 const previewStopCmd =
   `if [ -f ${prevPid} ]; then kill -TERM -- -$(cat ${prevPid}) 2>/dev/null || kill -TERM $(cat ${prevPid}) ` +
   `2>/dev/null || true; rm -f ${prevPid}; fi`
@@ -496,7 +509,12 @@ const previewBringUp = (first) => {
   if (first && p.setup) cmds.push(p.setup)
   if (!first && p.refresh) cmds.push(p.refresh)
   else if (p.start) cmds.push(p.stop || previewStopCmd, previewStartCmd(p.start))
-  if (p.healthcheck) cmds.push(`for i in 1 2 3 4 5; do ${p.healthcheck} && break; sleep 3; done; ${p.healthcheck}`)
+  // ~60 s of patience (was 5×3 s = 15 s, which a dev stack that builds before it listens loses
+  // every time — 2026-09-02: three `preview-failed`, every explorer and design job owed). A stack
+  // slower than this window still has to carry its own wait inside `plan.preview.healthcheck`;
+  // this loop is the floor, not a substitute for one.
+  if (p.healthcheck)
+    cmds.push(`i=0; while [ "$i" -lt 20 ]; do ${p.healthcheck} && break; sleep 3; i=$((i+1)); done; ${p.healthcheck}`)
   return cmds
 }
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
@@ -2337,14 +2355,16 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
-      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} ` +
+      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
+      `timeout -k 30 ${timeoutMin * 60} ` +
       `codex exec resume "$(cat ${resumeDir}/session-id)" ` +
       `-c sandbox_mode="${sandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
       `-c model_reasoning_effort=${effort} -c projects."${w}".trust_level="trusted" ` +
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
       `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
-      `> ${dir}/events.jsonl 2> ${dir}/stderr.log; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid\n` +
+      `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; trap "kill -TERM $CPID; T=1" TERM; ` +
+      `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &\n` +
       `COMMAND F: `
     : `use this launch command:\n`
   // Resume-collision rule (arc-observed: one gate-fix resume died at once with "thread already
@@ -2371,8 +2391,36 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   // group kill reaps the loop too), writing the id the moment thread.started appears — durable even
   // if the steerer dies mid-run. The loop only writes on a match, never touches the file otherwise,
   // so a run with no thread.started leaves no file (`test -s` stays honest).
+  //
+  // THE PIDFILE IS WRITTEN BY THE DETACHED SHELL ITSELF, as its first act — never `echo $! >` after
+  // the `&`, at any of the three launch sites. 2026-09-02, reproduced directly rather than inferred:
+  // the steerer's Bash tool shell runs with job control ON, so a backgrounded `… &` job is ALREADY a
+  // process-group leader, `setsid` must therefore FORK, and `$!` names the short-lived parent —
+  // dead within a second (observed 3564161; the real detached sh was 3564163, ppid 1). Every
+  // liveness fact the harness has hangs off that pid, so all of them lied at once: `tail --pid`
+  // returned instantly and `kill -0` failed ("no exit-code file, pid dead" → 82 `codex-lifecycle`
+  // rows at exitCode -1), the reap's `kill -TERM -- -<pid>` hit nothing and its fallback
+  // manufactured every "exit 137", and each "reattempt" launched a SECOND codex into a worktree the
+  // first was still writing. Cost: 3 waves, ~13 h, 220 codex processes for 4 merges, 14/20 units
+  // quarantined on deaths that never happened — codex's own rollout logs show `task_complete`
+  // minutes after each steerer reported the process dead. `sh -c 'echo $$ > …; …'` records the
+  // shell that survives, and after setsid that `$$` is also the pgid the group kill targets.
+  //
+  // The `trap` + conditional second `wait` is the other half, and it is what makes a GENUINE reap
+  // work. `timeout` puts ITSELF in its own process group, so `kill -TERM -- -$(cat codex.pid)`
+  // reaches the detached sh and stops there — `timeout → codex` beneath it survived a group kill
+  // (verified with a stand-in sleep). Forwarding the signal from the sh is the fix that stays inside
+  // the closed command list (`pkill -s` would not). The second `wait` is gated on the trap's own
+  // flag `T`, never on `RC > 128`. Only a trap-INTERRUPTED wait leaves the child unreaped, and only
+  // there is re-waiting correct; a child killed outright (an OOM `SIGKILL`, or `timeout -k`
+  // escalating) is already reaped by the first wait and returns a true 137. `RC > 128` cannot tell
+  // those two states apart, so it re-waited a reaped pid — whose status is then whatever the shell
+  // happens to remember about a finished job (POSIX licenses 127 for a pid it no longer knows;
+  // dash here returns the remembered 137). The flag decides on what actually happened instead of
+  // guessing from a number two different things produce.
   const execCmd =
-    `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
+    `${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
+    `timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
     `-c projects."${w}".trust_level="trusted" ` +
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
@@ -2383,7 +2431,8 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `L=$(grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl 2>/dev/null); ` +
     `if [ -n "$L" ]; then printf "%s" "$L" | cut -d\\" -f4 > ${dir}/session-id; fi; ` +
     `sleep 1; i=$((i+1)); done ) & ` +
-    `wait $CPID; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid`
+    `trap "kill -TERM $CPID; T=1" TERM; ` +
+    `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &`
   // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
   // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
   // steerer that concluded "dead" while the process was alive once launched a second codex into the
@@ -3892,6 +3941,14 @@ const planCycle = (units, edges) => {
     if (u.closes !== undefined && (!Array.isArray(u.closes) ||
         u.closes.some((n) => !Number.isInteger(n) || n <= 0)))
       throw new Error(`unit ${u.id}: \`closes\` must be an array of positive integer issue numbers — fix the plan`)
+  // The preview's start string is wrapped in `sh -c '…'` by previewStartCmd, so a single quote in
+  // it would close that quote and hand the rest of the string to the courier's shell as commands.
+  // Refuse at load, naming the field: an unquotable start is a plan-pack defect with a one-line fix
+  // (a script entry, or double quotes), not something to paper over with escaping at compose time.
+  if (typeof plan.preview?.start === 'string' && plan.preview.start.includes("'"))
+    throw new Error(`plan.preview.start contains a single quote — it is run as \`sh -c '<start>'\` (which is why ` +
+      `\`VAR=value cmd\` and \`&&\` chains work there) and a single quote cannot survive that wrapping. ` +
+      `Use double quotes, or move the command into a package script: ${plan.preview.start}`)
   for (const u of plan.units)
     if (u.existingBranch && u.existingBranch === `unit/${u.id}`)
       throw new Error(`unit ${u.id}: existingBranch is the unit's own branch unit/${u.id} — setup could delete ` +

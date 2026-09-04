@@ -231,9 +231,16 @@ constraint left is **size** — see `state.json` below.
                                    //   EVERY command below is run from the preview's own worktree
                                    //   at worktreeRoot/__preview — never the user's checkout.
     "setup": "npm run build",      // optional one-time step at preview setup
-    "start": "npm run dev",        // server kind: long-running; the harness daemonizes it
-                                   //   (log + pidfile at worktreeRoot/__preview.{log,pid},
-                                   //   outside every worktree so a mirror advance never touches them)
+    "start": "npm run dev",        // server kind: long-running; the harness daemonizes it as
+                                   //   `setsid nohup sh -c 'echo $$ > <pidfile>; <start>' &`.
+                                   //   It is SHELL input, so `VAR=value cmd`, `&&` chains and
+                                   //   pipelines all work — but a SINGLE QUOTE in it throws at
+                                   //   plan load (it would close the wrapper's quote); use double
+                                   //   quotes or a package script. Do not prefix it with `nohup`
+                                   //   or `setsid` yourself. Log + pidfile at
+                                   //   worktreeRoot/__preview.{log,pid}, outside every worktree
+                                   //   so a mirror advance never touches them; the pid recorded is
+                                   //   that detached shell's own, which is also its process group.
     "stop": "",                    // optional; default kills the whole preview process GROUP.
                                    //   A custom stop MUST group-kill too — a single-pid kill
                                    //   strands child listeners and leaves ports held.
@@ -248,7 +255,10 @@ constraint left is **size** — see `state.json` below.
                                    //   group. NEVER inferred by an agent (asked to free "the
                                    //   preview's ports", Haiku swept three guesses and then
                                    //   `ps | grep | kill -9`, killing the workflow itself).
-    "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates
+    "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates.
+                                   //   Retried for ~60 s (20 × 3 s) after start. A stack that
+                                   //   builds before it listens and needs longer must carry its
+                                   //   OWN patient loop here — the window is a floor, not a wait.
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
   "conventions": "…",              // optional; path to the standing conventions contract.
@@ -618,7 +628,8 @@ and the high-risk plan-check are exactly where they were.
 
 **Codex is THE implementer — there is no Claude implementation lane.** The steering agent writes
 `brief.txt` + a strict-mode `--output-schema`, launches codex in the background (`setsid` +
-pidfile, the preview-process idiom), polls sleep-free, kills at `codexTimeoutMin`, verifies the
+a self-written pidfile, the preview-process idiom — see *The process outlives its steerer, safely*
+below for the exact line and why every character of it is load-bearing), polls sleep-free, kills at `codexTimeoutMin`, verifies the
 work ON DISK (exit-code marker, commit count, porcelain, the brief's own `DONE` marker), reads
 back only an allowlist (final message head, session id, one usage line, an error grep, git truth
 — never a transcript), and emits the same S.impl-shaped report the pipeline always consumed.
@@ -689,13 +700,37 @@ and health additionally records a `health-skipped` degradation — without it an
 to the triager as "nothing to consolidate" rather than "nobody looked".
 
 **The process outlives its steerer, safely.** The deadline rides *inside* the launched command
-line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
-agent can no longer leave a detached codex running unbounded on an OpenAI seat already handed to
-the next unit. The steerer's liveness rule is the other half: **an absent `exit-code` file means
-RUNNING, never dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails,
-and elapsed time is never evidence. And the steer prompt is idempotent by construction: if
-`<dir>/codex.pid` already exists it attaches instead of launching, so any re-dispatch of the same
-prompt (a schema retry, a salvage, a replay) cannot put two codex processes in one worktree.
+line, so a dead steering agent can no longer leave a detached codex running unbounded on an OpenAI
+seat already handed to the next unit. All three launch sites (build, the `COMMAND R` resume, and the
+preview) share one shape:
+
+```
+setsid nohup sh -c 'echo $$ > <dir>/codex.pid;
+                    timeout -k 30 <timeoutMin×60> codex exec … & CPID=$!;
+                    trap "kill -TERM $CPID; T=1" TERM;
+                    wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;
+                    echo $RC > <dir>/exit-code' &
+```
+
+**The detached shell writes its OWN pid, as its first act — never `echo $! >` after the `&`.** The
+steering agent's Bash shell has job control on, so a backgrounded job is *already* a process-group
+leader, `setsid` must FORK, and `$!` names a parent that is dead within a second. Every liveness
+fact then hangs off a corpse: 2026-09-02 that cost 3 waves and 14 of 20 units, quarantined on deaths
+that never happened, while each "reattempt" launched a second codex into a worktree the first was
+still writing. After `setsid`, that `$$` is also the pgid `kill -TERM -- -<pid>` targets. The `trap`
+and the conditional second `wait` are what make a genuine reap reach *codex*: `timeout` puts itself
+in its own process group, so a group kill stops at the detached shell unless the shell forwards the
+signal on. The re-wait is gated on the trap's own flag `T`, **never on `RC > 128`**: only a
+trap-interrupted `wait` leaves the child unreaped, so only there does waiting again collect its real
+status. A child killed outright — an OOM `SIGKILL`, or `timeout -k` escalating — is already reaped
+and returns a true 137, and re-waiting that pid reports whatever the shell remembers of a finished
+job instead. `RC > 128` cannot tell the two apart; the flag records which actually happened.
+
+The steerer's liveness rule is the other half: **an absent `exit-code` file means RUNNING, never
+dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails, and elapsed time
+is never evidence. And the steer prompt is idempotent by construction: if `<dir>/codex.pid` already
+exists it attaches instead of launching, so any re-dispatch of the same prompt (a schema retry, a
+salvage, a replay) cannot put two codex processes in one worktree.
 
 **Warm lanes are gone** (0.11.0). They existed to amortize one fixed cold start — read the brief,
 explore the codebase, rediscover conventions — across a chain of units too small to absorb it

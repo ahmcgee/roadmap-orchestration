@@ -256,6 +256,45 @@ test('preview: the worktree is provisioned like __integration and the operator c
       `${c.label} must not treat the primary checkout as a checkout target`)
 })
 
+// The preview's own launch line, which shares both 2026-09-02 defects with the codex lane:
+//   `setsid nohup <start> … & echo $! > pid`  recorded the pid of the fork setsid makes under job
+//     control (dead within a second), so the pidfile the sweep and every stop target was fiction; and
+//   `nohup <start>` made nohup exec the plan's string, so `nohup DEV_SLOT=9 pnpm dev:stack` failed as
+//     "nohup: failed to run command 'DEV_SLOT=9'" and three waves ran with no preview at all.
+// One `sh -c 'echo $$ > <pid>; <start>'` closes both: a pid that outlives its first second, and a
+// start string that is SHELL input rather than an argv the wrapper has to exec.
+test('preview: the detached shell writes its own pid, and `start` is shell input, not an argv', async () => {
+  for (const [what, start] of [
+    ['a plain command', 'npm run dev'],
+    ['an env assignment', 'DEV_SLOT=9 pnpm dev:stack'],
+    ['an && chain', 'pnpm build && pnpm preview --port 5173'],
+  ]) {
+    const { fn, calls } = makeAgent()
+    await runWave(fn, makePlan({ preview: { ...PREVIEW, start } }), makeState())
+    const launch = commandsOf(promptOf(calls, 'preview-setup')).find((c) => c.includes('setsid'))
+    assert.equal(launch, `setsid nohup sh -c 'echo $$ > /wt/__preview.pid; ${start}' > /wt/__preview.log 2>&1 &`,
+      `${what}: wrapped verbatim in the detached shell, whose OWN pid is the pidfile`)
+    assert.ok(!launch.includes('echo $! >'), `${what}: never the pid of the fork setsid makes`)
+    assert.ok(!/nohup (?!sh -c ')/.test(launch), `${what}: nohup never execs the plan's string itself`)
+  }
+})
+
+test('preview: a `start` that cannot be single-quoted is refused at plan load, by name', async () => {
+  const { fn } = makeAgent()
+  await assert.rejects(
+    runWave(fn, makePlan({ preview: { ...PREVIEW, start: "sh -c 'npm run dev'" } }), makeState()),
+    /plan\.preview\.start contains a single quote/,
+    'the wrapper is `sh -c \'<start>\'`, so a quote in it would hand the remainder to the courier as commands')
+})
+
+test('preview: the healthcheck is retried for ~60s, not 15 — a stack that builds before it listens', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  const hc = commandsOf(promptOf(calls, 'preview-setup')).find((c) => c.includes(PREVIEW.healthcheck))
+  assert.match(hc, /^i=0; while \[ "\$i" -lt 20 \]; do .* && break; sleep 3; i=\$\(\(i\+1\)\); done; /,
+    '20 x 3s. 2026-09-02: 5 x 3s lost every wave of an arc to a dev stack that builds first')
+})
+
 test('preview: the mirror advance is a closed list, not a "never stash/reset/force" prohibition', async () => {
   const { fn, calls } = makeAgent([{ match: /^merge:/, result: { merged: true, suitePass: true, head: INT_SHA, detail: '' } }])
   const state = await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
