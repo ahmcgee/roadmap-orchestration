@@ -317,7 +317,10 @@ open a small **PR the user merges** — planning continues meanwhile; the templa
 the first wave boundary. That PR is the only pre-session-end touch of `main`, and only the user's merge
 moves it (invariant 5 intact).
 
-Persist everything under `.roadmap/` (shapes in `reference.md`), then **stop and talk to the
+Persist everything under `.roadmap/` (shapes in `reference.md`). Write `plan.json` and `state.json`
+however your serializer likes — every JSON escape survives the launch read intact — but keep both
+**small**: prose belongs in a file under `.roadmap/` that the document references by absolute path,
+because one courier has to copy each of them at every launch and resume. Then **stop and talk to the
 user**: present the decomposition, contracts, cut-line interpretation, and your questions —
 batched, once. Discipline the questions: only ask what you couldn't resolve yourself, rank by
 impact × uncertainty, cap around five, and attach your recommended answer to each so the user can
@@ -608,8 +611,14 @@ ladder in order:
 
    A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
    copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
-   dispatch a wave from a document nobody could vouch for. Check the file parses and that
-   `roadmapDir` is right, then relaunch.
+   dispatch a wave from a document nobody could vouch for. The throw names the file, its byte count
+   and how much arrived. **JSON escapes are not the cause** — the read command rewrites every
+   backslash to `@@BSLASH@@` before the copy and the script reverses it, so `\"`, `\\` and `\uXXXX`
+   travel intact. The three real causes, in order of likelihood: the file is **too big** (a copy
+   that stops far short of the byte count — get `state.json` back under ~35 KB by moving prose into
+   files and referencing them by path); `roadmapDir` is wrong or the file does not parse; or the
+   document genuinely contains the literal text `@@BSLASH@@`, which the reversal would corrupt and
+   the `cksum` therefore rejects — remove it. Fix, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately

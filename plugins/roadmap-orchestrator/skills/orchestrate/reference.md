@@ -151,6 +151,14 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 
 ## `plan.json`
 
+**Write it however your serializer likes.** Both pack documents are read at launch by a Haiku
+courier, but the read command rewrites every backslash to the sentinel `@@BSLASH@@` first and the
+script reverses it before checking the file's `cksum` — so `\"`, `\\`, `\n`, `\t` and `\uXXXX`
+escapes, and raw non-ASCII glyphs, all survive transport intact. (They did not before 2026-09-04:
+the courier had to double-escape each backslash inside its own JSON report and dropped one level,
+so four `—` escapes or twelve `\"` sequences were enough to make an arc unlaunchable.) The one
+constraint left is **size** — see `state.json` below.
+
 ```jsonc
 {
   "repoPath": "/abs/path/to/repo",            // required
@@ -272,6 +280,17 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   "consultsUsed": 0, "wave": 0, "units": {},
   "run": { "runId": "<id>", "scriptPath": "<session-persisted script path>" } }
 ```
+
+**Keep it small — it is the only pack document that grows.** One courier copies the whole file at
+launch and tops out near 35 K characters; past that the file is re-read over line ranges, and past
+about 100 KB the launch simply cannot be vouched for and throws `pack-unreadable` (2026-09-03: a
+145 KB state.json, three quarantine dossiers' worth of prose, could not be relaunched at all). So
+**prose lives in files and state carries the path** — that is why a quarantined unit records
+`dossierPath` rather than the dossier text, why degradations and escalations are `.jsonl` sidecars
+`persist.mjs` appends rather than state fields, and why `debt` is this wave's items only. If you
+are hand-editing state and find yourself pasting a paragraph into it, write the paragraph under
+`.roadmap/` and reference it by absolute path: every tier that reads it is a model with a
+filesystem.
 
 Fields the scripts add:
 
@@ -419,6 +438,10 @@ replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
 it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
+A `quarantined` record carries `reason` plus **`dossierPath`** — the absolute path of
+`.roadmap/quarantine/<id>.md`, never the dossier prose. The file is the record and every reader of
+it (the Fable boundary tier, you) has a filesystem; state carrying the text instead is what made a
+145 KB `state.json` unlaunchable in 2026-09-03.
 `units[id].codexSession = {id, cwd, wave}` is forensics only — session ids are nondeterministic
 and never enter a prompt; fix prompts reference the session-id FILE. The wave state also carries
 **`codex`**: `{probed, available}`, and — only when the wave halted — **`halt`**:
@@ -991,6 +1014,10 @@ Workflow({
   //             big for one response — and then the launch throws `pack-unreadable`). The root
   //             used to paste both documents into `args`, which put the whole pack through the
   //             most expensive tier in the system on every launch and every resume.
+  //             The read command rewrites every backslash in the file to `@@BSLASH@@` before the
+  //             courier copies it, and the script puts them back — so JSON escapes (`\"`, `\\`,
+  //             `\n`, `\uXXXX`) travel safely and no serializer setting is your problem. What
+  //             still is: SIZE. See the two documents' own sections below.
   // harnessPath REQUIRED — throws without it.
   // launchId    a per-launch nonce, FRESH on every launch and every resume. It salts the pack
   //             read (disk holds the LAST run's plan, so a replayed pack is a stale plan) and is

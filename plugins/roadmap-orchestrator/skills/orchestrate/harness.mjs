@@ -228,19 +228,40 @@ const cksumOf = (s) => {
 const READ_CHUNK = 24000
 // The pack: the documents the root used to paste into `args`.
 const PACK_FILES = ['plan.json', 'state.json']
-const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
-  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
-  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
-  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
-  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
-  '`detail` — a truncated copy is worse than no copy. '
-// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
-// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
-// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
-// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
+// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
+// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
+// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
+// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
+// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
+// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
+// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
+// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
+// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
+// with no backslash left in it, and the script puts the backslashes back before verifying. The
+// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
+// document fails loud exactly like a truncation rather than silently rewriting the pack.
+// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
+// replacement, and implausible in JSON prose.
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const PACK_BS = '@@BSLASH@@'
+const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
+  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
+  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
+  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
+  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
+  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
+  `truncated copy is worse than no copy. `
+// Read ONE pack file over the given line ranges (one command each) and verify it. Each content
+// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
+// courier never has to escape anything; the script swaps them back below. The whole file's
+// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
+// dropped line, a decoded escape, a summarised tail and a document that already contained the
+// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
+// it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
 const readPackFile = async (path, ranges, label, extra) => {
   const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -250,15 +271,17 @@ const readPackFile = async (path, ranges, label, extra) => {
   const lines = Number(r.out(2)) || 0
   if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
-  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
+  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
+  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
     if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
   }
-  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -1721,10 +1744,13 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
       return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: g.branchSha, note: 'quarantine refused — git says merged' }
     }
   }
-  // The dossier is the redesign feed, so its content must survive any file-level mishap:
-  // the investigator RETURNS findings through the schema (landing in the wave state), and a
-  // separate writer agent renders the file from them — investigative agents flake on
-  // side-effects; a writer with nothing to do but write doesn't (observed across eval runs).
+  // The dossier is the redesign feed, so the investigator RETURNS findings through the schema and
+  // a separate writer agent renders the FILE from them — investigative agents flake on
+  // side-effects; a writer with nothing to do but write doesn't (observed across eval runs). The
+  // prose then stays in the file: the unit record carries `dossierPath`, never the text. It used
+  // to carry both, and a handful of ~5 KB dossiers took one arc's state.json to 145 KB — past the
+  // ~35 K characters a launch courier can copy, so the arc could not be relaunched at all
+  // (2026-09-03). Every reader of a dossier is a model with a filesystem; the file is the record.
   const dossierPath = `${repo}/.roadmap/quarantine/${unit.id}.md`
   const d = await run(
     `Unit ${unit.id} of a roadmap build is being quarantined (${reason}). Its spec is at ${specOf(unit)} and its ` +
@@ -1773,13 +1799,13 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
   if (!dw?.ok) {
     degrade({ label: `dossier-write:${unit.id}`, model: 'codex', phase: 'Quarantine', kind: 'dossier-write-fallback',
       what: `codex did not write ${unit.id}'s quarantine dossier (${dw ? `reported ok:false — ${String(dw.detail ?? '').slice(0, 160)}` : 'no result'}) ` +
-        `— falling back to the Haiku writer once. A dossier must exist; the findings themselves ride home in the wave state regardless.` })
+        `— falling back to the Haiku writer once. A dossier must exist: ${dossierPath} is the only record of the findings, and the unit record carries just that path.` })
     await run(
       dossierTask,
       { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}#fallback`, schema: S.ok },
     ).catch(() => null)
   }
-  return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
+  return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossierPath }
 }
 
 // The report-write clause every BOUNDARY role's brief carries. Through 0.13.0 each of these three

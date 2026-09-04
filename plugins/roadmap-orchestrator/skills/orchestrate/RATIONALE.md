@@ -900,6 +900,34 @@ transport, one retry whose prompt differs so `resumeFromRunId` cannot serve the 
 then a loud `pack-unreadable` throw). Measured before it was built: the fixtures' packs are 1.3–1.8
 KB, so the `READ_CHUNK` fan-out is the escape hatch for a big file, not the common path.
 
+**Then the read failed three times in a fortnight, and the mechanism was escaping — not fidelity.**
+A courier's report is structured JSON, so a backslash in the file has to survive *two* levels: a
+`\"` in the document is `\\\"` inside the report's string value, and an em dash that an
+`ensure_ascii` serializer wrote as a six-character `\u`-escape is `\\u2014` in the report. Haiku
+supplies one level and drops the other, so every JSON escape in the pack arrived
+**decoded** — 2026-09-02, four `\u`-escaped em dashes and the copy came back 21 characters short (4×5 plus
+the newline); 2026-09-04, twelve `\"` sequences, twelve short. The `cksum` caught all of it, which is
+the system working; what did not work was the *answer*, which through both incidents was a better
+sentence — PACK_EXTRA telling the courier that "`\n` and `\"` are literal characters to copy, not
+instructions". That is §19's own lesson arriving at the pack read: a courier that has to be *told*
+how to escape something is being asked for judgment, and a prohibition only works if it is honoured.
+So the escaping was removed from the courier's job entirely. The read command now ends
+`| sed 's/\\/@@BSLASH@@/g'`, the courier copies a document with no backslash left anywhere in it —
+nothing to escape, nothing to get wrong — and the script puts them back before verifying. The verdict
+is still the ORIGINAL file's `cksum`, so a document that genuinely contains the sentinel fails loud
+exactly like a truncation rather than being silently rewritten; the sentinel is named once per script
+(`PACK_BS`), and `shared-consts.test.mjs` holds the two copies together.
+
+The third failure was **size**, and it is the more interesting one: a 145 KB `state.json` that no
+courier could copy (they top out near 35 K characters), so the arc could not be relaunched at all.
+The bytes were three quarantine dossiers — ~5 KB of investigative prose each, written to
+`.roadmap/quarantine/<id>.md` *and* returned into the unit record. That is the §19 "events are not
+state" rule with a different name on it: the file was already the record, every reader of a dossier
+is a model with a filesystem (the Fable boundary tier reads the directory by path), and the copy in
+state existed only because the schema made it free to carry. The record holds `dossierPath` now.
+The general rule the pack read imposes on everything upstream of it: **state.json is an index, not
+an archive** — prose lives in files, state carries paths.
+
 **Journal order is the clock — the replay's one non-obvious dependency.** "The scripts are
 deterministic functions of (args, agent results)" is true only *up to completion order*, and the
 first paid conductor run to finish cleanly (wf_318afa1b-e9d) is what proved it. The harness merges

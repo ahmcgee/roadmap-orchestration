@@ -156,6 +156,14 @@ test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
   assert.ok(!has(calls, 'codex-fix:'), 'no fix rounds on a blocked verify')
   assert.ok(has(calls, 'dossier:a'), 'investigative dossier issued')
   assert.ok(has(calls, 'dossier-write:a'), 'verbatim dossier writer issued')
+  // The FILE is the record; the state carries only its path. The dossier prose used to ride home
+  // in the unit record too, and a handful of ~5 KB ones took an arc's state.json to 145 KB — past
+  // what the launch courier can copy, so the arc could not be relaunched at all (2026-09-03).
+  assert.equal(state.units.a.dossierPath, '/repo/.roadmap/quarantine/a.md',
+    'the quarantined record names the dossier file the redesign tiers already read')
+  assert.ok(!('dossier' in state.units.a), 'and carries none of its prose — state stays launchable')
+  assert.ok(JSON.stringify(state).length < 4000,
+    'a whole wave-1 state with a quarantine is still a small document, not a prose archive')
 })
 
 // =========================================================================================
@@ -606,6 +614,114 @@ test('13e one of plan/state without the other is a caller bug, and says so', asy
     () => runner({ args: { launchId: 'L1' }, agent: makeAgent().fn }),
     /roadmapDir is required/,
   )
+})
+
+// A pack whose documents carry every escape that ever broke a launch, in one document each:
+//   `\"`      — a quoted word inside a prose field (12 of these made wf_de8b04a2-b80 unlaunchable)
+//   `\\`      — a literal backslash (a Windows-ish path in a note)
+//   `\n`/`\t` — the two-character escapes a serializer emits for whitespace inside a string
+//   `\u2014`  — an em dash from an `ensure_ascii` serializer (four of these killed a 2026-09-02 launch)
+//   `—` / `→` — the SAME characters written raw, which cksumOf has to hash as UTF-8 BYTES
+// The `\uXXXX` form is not something JSON.stringify emits, so the serializer below re-escapes the
+// non-ASCII glyphs of ONE document — modelling exactly the writer that produced the failing pack —
+// while the other keeps them raw. Both still parse to the documents the test passed (packRules
+// asserts it), so a successful read must produce a wave that runs on precisely this plan.
+const ESCAPEY = 'a "quoted" word, a C:\\path\\here, a line\nbreak, a\ttab, an em dash — and an arrow →'
+const escapeyPlan = () => makePlan([unit('a', { title: ESCAPEY })], [], { notes: ESCAPEY })
+// The state's escapey prose rides on a unit record the harness carries forward untouched, so the
+// assertion is the one that matters on a relaunch: the arc resumes from EXACTLY the text on disk.
+const escapeyState = () => makeState({ units: { seeded: { status: 'merged', branch: 'unit/seeded', note: ESCAPEY } } })
+// `ensure_ascii`: every non-ASCII character becomes a `\uXXXX` escape, exactly as the Python-side
+// serializer that wrote the 2026-09-02 plan.json did.
+const asciiOnly = (doc) => `${JSON.stringify(doc, null, 2).replace(/[^\x00-\x7f]/g,
+  (c) => `\\u${c.codePointAt(0).toString(16).padStart(4, '0')}`)}\n`
+
+test('13f a pack full of JSON escapes and raw glyphs reads clean — nothing in it needs escaping in transit', async () => {
+  const plan = escapeyPlan()
+  const state = escapeyState()
+  // plan.json comes from an ensure_ascii serializer (`\u2014`); state.json keeps its glyphs raw.
+  const { fn, calls } = makeAgent(packRules(plan, state,
+    (doc, name) => (name === 'plan.json' ? asciiOnly(doc) : `${JSON.stringify(doc, null, 2)}\n`)))
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.deepEqual(packLabels(calls), ['pack-read:plan.json', 'pack-read:state.json'],
+    'no retry: an escape-heavy document is an ordinary read now, not a coin flip')
+  const p = calls.find((c) => c.label === 'pack-read:plan.json')
+  assert.match(p.prompt, /sed -n '1,\$p' \/repo\/\.roadmap\/plan\.json \| sed 's\/\\\\\/@@BSLASH@@\/g'/,
+    'the read command itself strips every backslash out of the transport')
+  assert.match(p.prompt, /@@BSLASH@@/, 'and the courier is told what the marker it is copying means')
+  assert.equal(out.units.a.status, 'merged', 'and the wave runs on exactly the plan that was on disk')
+  assert.equal(out.units.seeded.note, ESCAPEY,
+    'every escape and glyph survives the round trip byte for byte — this is the state the arc resumes from')
+})
+
+test('13g the OLD failure — a courier that decodes the escapes — is caught, not accepted', async () => {
+  // What Haiku actually did, twice: a report is JSON, so `\"` in the file needs `\\\"` in the
+  // report's string value and it supplied `\"`. The result is the document with one level of
+  // escaping stripped: shorter than the file, and parseable often enough to be dangerous.
+  const plan = escapeyPlan()
+  const honest = packRules(plan, escapeyState(), (doc, name) => (name === 'plan.json' ? asciiOnly(doc) : `${JSON.stringify(doc, null, 2)}\n`))
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:plan\.json/, result: (prompt, opts) => {
+      const r = honest[0].result(prompt, opts)
+      // Undo the sentinel the read command inserted, then drop one escaping level — the courier
+      // that "helpfully" renders `\u2014` as an em dash and `\"` as a bare quote.
+      for (let i = 3; i < r.results.length; i++)
+        r.results[i].stdout = r.results[i].stdout
+          .split('@@BSLASH@@').join('\\')
+          .replace(/\\u([0-9a-f]{4})/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+          .replace(/\\(["\\/])/g, '$1')
+      return r
+    } },
+    ...honest,
+  ])
+  await assert.rejects(
+    () => (loadScript(HARNESS)).then((r) => r({
+      args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } }, agent: fn })),
+    /pack-unreadable[\s\S]*plan\.json[\s\S]*@@BSLASH@@ transport sentinel/,
+    'the cksum still decides, and the failure names the sentinel as one of the things to check',
+  )
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:plan.json#retry'],
+    'one honest retry, then a loud refusal — never a wave on a decoded plan')
+})
+
+test('13h a file too big for one response is split into line ranges, sentinel and all', async () => {
+  // A state.json past READ_CHUNK: the first courier can only truncate, so the retry reads it over
+  // several ranges and the whole-file cksum still decides. The escapey prose is on every record, so
+  // the sentinel has to survive being cut across a range boundary as well as inside one.
+  const plan = makePlan([unit('a')])
+  const seeded = {}
+  for (let i = 0; i < 60; i++)
+    seeded[`old-${i}`] = { status: 'merged', branch: `unit/old-${i}`, note: `${ESCAPEY} ${'padding '.repeat(30)}` }
+  const state = makeState({ units: seeded })
+  const honest = packRules(plan, state)
+  let truncated = false
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:state\.json$/, result: (prompt, opts) => {
+      truncated = true
+      const r = honest[0].result(prompt, opts)
+      r.results[3].stdout = r.results[3].stdout.slice(0, 24000)   // all one courier can carry
+      return r
+    } },
+    ...honest,
+  ])
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.ok(truncated, 'the first read really did hit the response ceiling')
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:state.json#split'],
+    'the oversized file is re-read over ranges, not re-sampled whole')
+  const split = calls.find((c) => c.label === 'pack-read:state.json#split')
+  const ranges = (split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@@BSLASH@@\/g'/g) ?? [])
+  assert.ok(ranges.length > 1, `the read fans out over several ranges (got ${ranges.length})`)
+  assert.equal(out.units['old-59'].note, `${ESCAPEY} ${'padding '.repeat(30)}`,
+    'and the reassembled document is byte-identical to the file on disk')
+  assert.equal(out.units.a.status, 'merged')
 })
 
 // =========================================================================================
