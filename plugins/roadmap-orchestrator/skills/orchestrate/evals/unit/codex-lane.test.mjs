@@ -32,7 +32,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, BASE_SHA, implCodexOk, codexMetaOk, codexRoleOk, codexRoleDead, reviewDigestOk,
-  courierSaying, courierOk } from './fakes.mjs'
+  courierSaying, courierOk, courierResult } from './fakes.mjs'
 import { capsOf, statesBudgetFor } from './hygiene-lib.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -116,6 +116,18 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
 
   for (const required of [
     'setsid',                 // process-group leader, so the deadline kill can take the whole tree
+    "sh -c 'echo $$ > ",      // …and the pid recorded is the DETACHED SHELL'S OWN, written as its
+                              //   first act. `… & echo $! > codex.pid` named the fork setsid makes
+                              //   under job control — dead within a second, so every liveness check
+                              //   in this prompt was reading a corpse (2026-09-02, 3 waves lost).
+    'trap "kill -TERM $CPID; T=1" TERM;',   // `timeout` sits in its own process group, so a group
+                                            //   kill reaches this sh and stops unless the sh
+                                            //   forwards it on — and records that it did
+    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;',  // re-wait ONLY on the trap's
+                                       //   own flag: a trap-interrupted wait has not reaped the
+                                       //   child, but a SIGKILLed one HAS, and re-waiting a reaped
+                                       //   pid reports whatever the shell remembers — which an
+                                       //   `RC > 128` test cannot tell apart from the real thing
     '--json',                 // events.jsonl is the only machine-readable channel
     '-o ',                    // the final message lands in a file, never in the steering context
     '--output-schema',        // the report is schema-constrained at the codex end too
@@ -129,6 +141,8 @@ test('b steering prompt: the pinned codex invocation shape, and the flags that m
                               //   back with the config wherever namespaces actually work.
     'tail --pid',             // sleep-free polling (a bare sleep loop burns steering turns)
   ]) assert.ok(p.includes(required), `the steering prompt must pin \`${required}\``)
+  assert.ok(!p.includes('echo $! >'),
+    'and NEVER `echo $! >` after the `&` — the pid that recorded was dead before the first poll')
 
   // Artifacts live OUTSIDE the repo, under the worktree root — structurally invisible to the
   // NOROADMAP write-bar and to the merge fence.
@@ -215,8 +229,36 @@ test('d probe failure: nothing dispatches, units stay pending, the wave halts re
 
   const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
   assert.ok(d, 'the halt is a loud, operator-actionable degradation')
+  // A courier that never reported has told us nothing about the BACKEND — only that the probe
+  // itself did not run — so the remedy stays the credential one. Reading a missing smoke exit
+  // code as an outage would park an operator in front of a provider that is perfectly healthy.
   assert.ok(/codex login/.test(d.what), 'and it names the exact remedy the human has to perform')
   assert.equal(state.boundary, undefined, 'boundary spend against a halted wave buys nothing the relaunch will not')
+})
+
+// The 2026-09-03 backend outage: `codex --version` and `codex login status` both passed and the
+// wave ran anyway, on a backend that 404'd every single run. The probe's third command is a real
+// bounded `codex exec`, and its pass test is its EXIT CODE — so a live CLI with a live credential
+// in front of a dead service halts the wave here, before a single unit is dispatched.
+test('d2 probe smoke: a dead BACKEND halts before dispatch, exactly as a dead CLI does', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-probe:/, result: (p) => {
+    // Commands 1 and 2 pass exactly as they did on the day; only the smoke fails, non-zero.
+    const r = courierResult(p, BASE_SHA)
+    return { ok: true, results: [r.results[0], r.results[1], { exitCode: 1,
+      stdout: 'ERROR: turn.failed: unexpected status 404 Not Found: chatgpt.com/backend-api/codex/responses' }] }
+  } }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'a backend that cannot answer is codex being unavailable')
+  assert.equal(state.codex.available, false)
+  assert.equal(state.units.a.status, 'pending', 'a provider outage is not a unit defect')
+  assert.equal(state.units.b.status, 'pending')
+  assert.ok(!has(calls, 'codex-build:'), 'nothing is dispatched onto a dead backend')
+  assert.ok(!(state.degradations ?? []).some((d) => d.kind === 'codex-exec'),
+    'and there are no codex-exec rows at all — the 23 of them are the incident this prevents')
+  const rows = (state.degradations ?? []).filter((d) => d.kind === 'codex-unavailable')
+  assert.equal(rows.length, 1, 'one row, naming which of the three probe commands failed')
+  assert.match(rows[0].what, /backend\/exec smoke failed/)
 })
 
 // =========================================================================================
@@ -529,9 +571,21 @@ test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never t
   assert.ok(p.includes('-s danger-full-access'),
     'codexSandbox is the environment\'s ruling and overrides the role\'s intent, as in the build lane')
   assert.ok(!p.includes('-s read-only'), 'so the role\'s read-only intent is carried by the brief, not the flag')
-  // The launch mechanics are the build lane's, not a second implementation of them.
-  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900'])
+  // The launch mechanics are the build lane's, not a second implementation of them — including the
+  // self-written pidfile, the TERM forward and the double wait, which the roles get for free only
+  // because the seam is shared.
+  for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900',
+    `sh -c 'echo $$ > ${WT}/__codex/roles/codex-spec-review-a/codex.pid; `,
+    'trap "kill -TERM $CPID; T=1" TERM;',
+    'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;',
+    // …and the bounded pidfile wait the launch command ends on. Without it the role's own
+    // `tail --pid=$(cat …/codex.pid)` — a SEPARATE Bash call — races the detached shell's first
+    // write and reads an absent file, which is exactly the false death the pidfile mechanic exists
+    // to remove (2026-09-04).
+    `exit-code' & i=0; while [ ! -s ${WT}/__codex/roles/codex-spec-review-a/codex.pid ] && ` +
+    '[ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done'])
     assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
+  assert.ok(!p.includes('echo $! >'), 'and never the $! pidfile the build lane no longer writes either')
   assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
   assert.ok(/if .*codex\.pid already exists/.test(p), 'and the attach-don\'t-relaunch preamble')
   assert.ok(p.includes(`${WT}/__codex/roles/codex-spec-review-a`),

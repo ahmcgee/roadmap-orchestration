@@ -383,9 +383,16 @@ feature becomes an outage.
 The `main` ref never moves (the mirror is always detached) and the merge queue stays in `__integration`,
 so at worst the mirror goes stale and one detach-checkout heals it; nothing can derail the queue.
 
-Process lifecycle: the preview is started with `setsid`, making the recorded pid a **process-group leader**.
-Every stop must kill the **group** (`kill -TERM -- -$(cat …)`) — a single-pid kill strands child listeners
-and leaves ports held. This bites at Phase 0, on resume, and at close-out. What a stop may **not** do is go
+Process lifecycle: the preview is started as `setsid nohup sh -c 'echo $$ > <pidfile>; <start>' &`, so the
+recorded pid is that detached shell's own and is a **process-group leader**. Both halves of that line are
+2026-09-02 scars. `… & echo $! > <pidfile>` recorded a pid that was dead within a second — under job control
+a backgrounded job is already a group leader, so `setsid` forks and `$!` names the parent that exits at once
+(the same defect cost the codex lane three waves; see §19). And `setsid nohup <start>` made `nohup` exec the
+plan's string directly, so a start beginning with an env assignment failed outright
+("nohup: failed to run command 'DEV_SLOT=9'") and every wave of that arc ran with no preview at all; under
+`sh -c` the string is shell input, which is why `plan.preview.start` may not contain a single quote (it throws
+at plan load). Every stop must kill the **group** (`kill -TERM -- -$(cat …)`) — a single-pid kill strands
+child listeners and leaves ports held. This bites at Phase 0, on resume, and at close-out. What a stop may **not** do is go
 hunting for the listener: the one-shot sweep's only kill targets are the pidfile's process group and the
 literal ports `plan.preview.ports` declares. Asked instead to free "the preview's ports", Haiku swept three
 guessed ports and then `ps | grep | kill -9`, killing the workflow itself. An undeclared port is a port the
@@ -558,7 +565,35 @@ each deliberate:
   early-returns `codex-unavailable`/`codex-usage-limit` to the root. Auth is a human act; the
   orchestrator never routes around a halt with a substitute implementer. (0.13.0 generalized this
   single `codexHalt` flag into a halt record `{codex, env, platform}` with a fixed precedence — see
-  §19; the codex semantics above are unchanged.)
+  §19; the codex semantics above are unchanged. 2026-09 added the two checks that make
+  "unavailable" mean the SERVICE and not just the CLI — see below.)
+- **A live CLI and a live credential are not availability** (2026-09-03). From ~14:43 UTC the
+  ChatGPT Codex backend returned `turn.failed: unexpected status 404 Not Found …
+  chatgpt.com/backend-api/codex/responses` for every run. `codex --version` printed a version;
+  `codex login status` printed "Logged in"; the wave-start probe therefore passed and the wave ran
+  to the end on a dead provider — 23 `codex-exec` rows, five units BLOCKED at verify, one
+  QUARANTINED as "the planner died twice", the whole boundary owed, and a tier-4 return that spent
+  Fable on a boundary with nothing in it. The probe had been answering a question nobody asked. The
+  fix is two checks, deliberately placed at the two moments an outage can begin:
+  **(1) the probe's third command is a real, bounded, read-only `codex exec … "reply pong"`**, and
+  the pass test is the SCRIPT'S and is the *exit code* — asking a courier whether the reply says
+  "pong" would be handing it a judgment, and the whole signal is that a 404'd backend cannot exit
+  zero. Its sandbox flag is composed the way every other codex invocation composes it
+  (`config.codexSandbox` overriding the stated `read-only` intent) for the measured reason on that
+  knob: `-s read-only` needs a bwrap user namespace this devcontainer cannot build, and a probe
+  that EPERMs on a healthy box halts every wave forever, which is strictly worse than the outage.
+  **(2) a mid-wave breaker**, the exact counterpart of `haltPlatform` (§19): a provider's death is
+  a fact about the PROVIDER, never a verdict on a unit. It differs only in its signal, and can
+  afford to — a codex failure carries the error line the steerer copies back, where an `agent()`
+  null carries no error object at all. So the trigger is text *plus repetition across different
+  work*: ≥2 consecutive codex results, on DIFFERENT units or roles, carrying `turn.failed` and the
+  SAME HTTP status. One unit's 404 is that unit's bad luck; the same status on two unrelated pieces
+  of work has nothing to explain it but the provider. Any clean codex result clears the run (an
+  outage has to be happening *now*), and distinctness is by id, so a build and its retry both
+  404ing is still one unit's story. Once it trips, the codex-shaped dead ends in the unit pipeline
+  — a dead plan role, a dead replan, a build that came back with the outage on it — PARK instead of
+  quarantining, including the unit that hit the FIRST failure and was still in flight when a
+  sibling tripped the breaker. That unit is precisely the one the 2026-09-03 arc quarantined.
 - **The review spiral, named.** Three prompt clauses compounded: (1) "an imperfection in a file
   you are already touching is yours to fix" made the eligible-fix set a function of the diff's
   own growth; (2) "over-reporting costs nothing" licensed unbounded findings; (3) findings became
@@ -819,6 +854,31 @@ unbounded. The numbers are recorded on every verify, once per flake band, and in
 `verify-blocked` / `codex-timeout` entries, so a wall-clock verdict is auditable after the fact instead
 of being a mystery.
 
+**And a host fact is never a verdict — which the tiers have to be told** (2026-09-04). Recording the
+load stopped the harness gating on it; it did not stop a *tier* inventing a gate of its own. An Opus
+plan-check adjudicated a unit's acceptance criterion as "no vitest, playwright, test-ci or dev-stack
+process anywhere on the host" before verify may run — unsatisfiable by construction on the box this
+skill runs on, since the harness's own preview dev-stack is always live and `gateMaxConcurrent` lanes
+overlap by design. The verifier reported `blocked`, and the unit was quarantined for a defect no unit
+had. So `HOST_BAR` (mirrored into the conductor) states the fact to every tier that writes or
+adjudicates spec text: a quiet host, the absence of sibling processes and a wall-clock ceiling are
+never acceptance clauses, and a clause that demands one is a spec defect to resolve through the
+verdict — the same shape as the cross-model critique's "an unanswered genuine question is a spec
+defect, never something the implementer absorbs". The verifier gets the consequence too: report such a
+clause as a FAILING check, never as `blocked`.
+
+The second half is the outcome of `blocked` itself, and it is the same
+park-don't-quarantine lesson one layer down. `pnpm audit --audit-level high` inside `pnpm verify` hung
+on a black-holed registry POST, and the first unit to reach it was quarantined "as an environment
+failure" — a verdict, a dossier, and a boundary respec for a fact about the box. Tooling that cannot
+run is now graduated by *how far it generalises*: once for a unit it BLOCKS (commits intact, adopted
+and re-verified next wave), twice for the same unit it quarantines (that checkout really is broken),
+and **two distinct units in one wave halts the wave** on `env-verify-blocked`, because a failure two
+units share is the host's and no number of unit verdicts will fix it. The count is `rounds.verifyBlocked`,
+the one round tally carried across a wave boundary — every other one measures a single wave's
+revision loops. `blocked` also joined the adoption set: a unit that keeps its commits has to be
+allowed to keep them, or the next wave's setup quarantines it for 'has-commits' by another route.
+
 **Tier 1 is bounded, not trusted.** Mechanical admission carries no judgment and no cut line, so a
 *batch* of drafts is exactly the denominator growth the cut line exists to stop; above
 `tier1MaxDrafts` the wave buys an Opus triage instead. None of this weakens termination, and the
@@ -900,6 +960,34 @@ transport, one retry whose prompt differs so `resumeFromRunId` cannot serve the 
 then a loud `pack-unreadable` throw). Measured before it was built: the fixtures' packs are 1.3–1.8
 KB, so the `READ_CHUNK` fan-out is the escape hatch for a big file, not the common path.
 
+**Then the read failed three times in a fortnight, and the mechanism was escaping — not fidelity.**
+A courier's report is structured JSON, so a backslash in the file has to survive *two* levels: a
+`\"` in the document is `\\\"` inside the report's string value, and an em dash that an
+`ensure_ascii` serializer wrote as a six-character `\u`-escape is `\\u2014` in the report. Haiku
+supplies one level and drops the other, so every JSON escape in the pack arrived
+**decoded** — 2026-09-02, four `\u`-escaped em dashes and the copy came back 21 characters short (4×5 plus
+the newline); 2026-09-04, twelve `\"` sequences, twelve short. The `cksum` caught all of it, which is
+the system working; what did not work was the *answer*, which through both incidents was a better
+sentence — PACK_EXTRA telling the courier that "`\n` and `\"` are literal characters to copy, not
+instructions". That is §19's own lesson arriving at the pack read: a courier that has to be *told*
+how to escape something is being asked for judgment, and a prohibition only works if it is honoured.
+So the escaping was removed from the courier's job entirely. The read command now ends
+`| sed 's/\\/@bs@/g'`, the courier copies a document with no backslash left anywhere in it —
+nothing to escape, nothing to get wrong — and the script puts them back before verifying. The verdict
+is still the ORIGINAL file's `cksum`, so a document that genuinely contains the sentinel fails loud
+exactly like a truncation rather than being silently rewritten; the sentinel is named once per script
+(`PACK_BS`), and `shared-consts.test.mjs` holds the two copies together.
+
+The third failure was **size**, and it is the more interesting one: a 145 KB `state.json` that no
+courier could copy (they top out near 35 K characters), so the arc could not be relaunched at all.
+The bytes were three quarantine dossiers — ~5 KB of investigative prose each, written to
+`.roadmap/quarantine/<id>.md` *and* returned into the unit record. That is the §19 "events are not
+state" rule with a different name on it: the file was already the record, every reader of a dossier
+is a model with a filesystem (the Fable boundary tier reads the directory by path), and the copy in
+state existed only because the schema made it free to carry. The record holds `dossierPath` now.
+The general rule the pack read imposes on everything upstream of it: **state.json is an index, not
+an archive** — prose lives in files, state carries paths.
+
 **Journal order is the clock — the replay's one non-obvious dependency.** "The scripts are
 deterministic functions of (args, agent results)" is true only *up to completion order*, and the
 first paid conductor run to finish cleanly (wf_318afa1b-e9d) is what proved it. The harness merges
@@ -918,6 +1006,18 @@ prompt — is stepped over once the run is quiescent, because a clock that can s
 clock. And a lookup for a record the cursor has already passed is reported as a divergence
 (`<label> (out of journal order)`) rather than silently served out of sequence: a silent reorder is
 the bug, so the replay must never be able to commit one.
+
+**And a divergence is not a run failure, so it may not overwrite the run's state.** Reporting the
+divergence was only half the fix: the partial was still written to `state.json`, and on 2026-09-02 a
+wave-1 halt landed over a returned wave-3 state — a relaunch from that file would have re-forked
+every unit from the plan-pack tip. The asymmetry is the point. An out-of-order miss says the REPLAY
+stopped, never the run; the run's own return value is strictly further along, and the root has it in
+the task output. So the two partials that would regress the file — an out-of-order miss, and any
+partial behind a `state.json` already on disk (a later wave, or the same wave written whole) — are
+refused, parked in `state.partial.json` for the investigation, and answered by `--returned`: the
+run's actual return value fed through the same writers, replay skipped. That keeps the repair inside
+the persister rather than in a hand-edited `state.json`, which is what loses the ledger appends, the
+debt sections and the log entries that ride the same envelope.
 
 **A role with a filesystem writes its own report, but not in its own voice.** The transcription
 courier was the price of a script with no filesystem, and a Codex role has one, so the finding and

@@ -950,8 +950,8 @@ Everything under `.roadmap/` (committed; the plan *is* a reviewable artifact):
   "consultsUsed": 2, "wave": 1,
   "units": { "auth-core": { "status": "merged", "branch": "unit/auth-core",
                             "rounds": 1, "escalations": 0, "mergedAt": "<sha>" },
-             "auth-token-rotation": { "status": "quarantined",
-                                      "dossier": "quarantine/auth-token-rotation.md" } } }
+             "auth-token-rotation": { "status": "quarantined", "reason": "spec unsatisfiable under the frozen token contract",
+                                      "dossierPath": "/repo/.roadmap/quarantine/auth-token-rotation.md" } } }
 // status ∈ pending | running | merge-ready | merged | quarantined | blocked | deferred
 ```
 

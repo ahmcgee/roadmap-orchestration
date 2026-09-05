@@ -12,18 +12,41 @@
 //
 //   node persist.mjs --run <workflowTranscriptDir> --script <harness.mjs|conductor.mjs>
 //                    --args <envelope JSON string | path to a JSON file>
+//   node persist.mjs --returned <path to a JSON file holding the run's RETURN VALUE>
+//                    --args <envelope JSON string | path to a JSON file>
 //
 // `--run` is the directory holding `journal.jsonl` and the `agent-<id>.jsonl` transcripts; a nested
 // `workflow()` child SHARES its parent's journal, so one directory covers a conductor run and every
-// wave inside it. `--args` is the same envelope the root passed to Workflow.
+// wave inside it. `--args` is the same envelope the root passed to Workflow, and is always required
+// (it carries `roadmapDir`).
 //
 // THIS FILE NEVER CALLS A MODEL. Its `agent` is a lookup in the journal; a lookup that misses (the
 // run crashed, or the script changed since the journal was written) stops the replay and writes the
 // PARTIAL state from the last snapshot the script logged, marked `partial: {stoppedAt}`, so the root
 // can relaunch with `resumeFromRunId` and run this again.
 //
-// Exit codes: 0 = complete, 2 = partial (cache miss, or a script throw the live run also hit), 1 = error.
-import { readFile, writeFile, readdir, mkdir, appendFile } from 'node:fs/promises'
+// A PARTIAL MUST NEVER REGRESS `state.json`. Two partials are worse than no write at all, and both
+// are REFUSED — parked in `state.partial.json` beside it, with `state.json` untouched:
+//   * `why=divergence`  — the miss is `(out of journal order)`, i.e. the replay asked for a record
+//     the cursor had already passed. That is the REPLAY diverging, not the run failing: the live run
+//     did not stop there, and its own state is further along than anything replayable here.
+//     (wf 2026-09-02 wrote a wave-1 halt over a returned wave-3 state, and a relaunch from that file
+//     would have re-forked every unit from the plan-pack tip.)
+//   * `why=newer-on-disk` — `state.json` already on disk is a better record: a later wave, or the
+//     same wave written whole (no `partial` marker).
+// The cure for both is `--returned`: hand this the value the run actually returned (a conductor
+// `{status:'conductor-return', …}` envelope or a directly-launched harness's wave state — the same
+// two shapes a completed replay produces) and it skips the replay entirely, feeding that value
+// through the normal writers. `--run`/`--script` are not needed then.
+//
+// A run that lands a WHOLE `state.json` — a complete replay, or `--returned` — also removes any
+// `state.partial.json` an earlier refusal parked: that prefix is stale the moment a real state is
+// written, and a stale one beside a current state.json invites relaunching from the wrong file. The
+// OK line says `removed=state.partial.json` when there was one, and nothing when there was not.
+//
+// Exit codes: 0 = complete, 2 = partial (written, or REFUSED and parked in state.partial.json),
+// 1 = error (nothing written).
+import { readFile, writeFile, readdir, mkdir, appendFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { loadScript } from './script-loader.mjs'
@@ -37,8 +60,12 @@ const flag = (name) => {
 const runDir = flag('run')
 const scriptPath = flag('script')
 const argsRaw = flag('args')
-if (!runDir || !scriptPath || argsRaw === undefined) {
-  console.error('usage: node persist.mjs --run <workflowTranscriptDir> --script <script.mjs> --args <json|file>')
+const returnedPath = flag('returned')
+// `--returned` replaces the replay, so it replaces `--run`/`--script` too; `--args` is required
+// either way, because `roadmapDir` is where every writer below points.
+if (argsRaw === undefined || (!returnedPath && (!runDir || !scriptPath))) {
+  console.error('usage: node persist.mjs --run <workflowTranscriptDir> --script <script.mjs> --args <json|file>\n' +
+                '       node persist.mjs --returned <returnValue.json> --args <json|file>')
   process.exit(1)
 }
 
@@ -261,6 +288,19 @@ function upsertSection(doc, header, body, endRe) {
 
 const readOr = async (file, fallback) => (existsSync(file) ? readFile(file, 'utf8') : fallback)
 
+// Is the `state.json` already on disk a BETTER record than this partial snapshot? A later wave is,
+// and so is the same wave written WHOLE (no `partial` marker) — either way writing the partial over
+// it would regress the arc. A file that is absent, or that does not parse, is no record at all and
+// never blocks the write: there is nothing there to lose.
+const diskOutranksSnapshot = async (file, snapshot) => {
+  if (!existsSync(file)) return false
+  let onDisk
+  try { onDisk = JSON.parse(await readFile(file, 'utf8')) } catch { return false }
+  if (!Number.isFinite(onDisk?.wave) || !Number.isFinite(snapshot?.wave)) return false
+  if (onDisk.wave > snapshot.wave) return true
+  return onDisk.wave === snapshot.wave && !onDisk.partial
+}
+
 // The per-kind count summary of this run's degradations. A pure function of `degradations`, and it
 // CANNOT grow with the row count (one line per distinct kind; the rows themselves are in the
 // append-only .jsonl) — the property that stopped it eating the hand-written skill-feedback.md it
@@ -292,11 +332,21 @@ function skillDegradationsDoc(degradations) {
 const entryArgs = await parseArgs()
 const roadmapDir = entryArgs.roadmapDir
 if (!roadmapDir) die('args carries no roadmapDir — nothing to write to')
-const journal = await buildJournal(runDir)
-console.log(`journal: ${journal.total} result(s), ${journal.byPrompt.size} distinct prompt(s)` +
-  `${journal.unmapped ? `, ${journal.unmapped} unmapped` : ''}`)
-
-const { value, miss, thrown, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, journal)
+// The run's returned value, either handed to us directly (`--returned`) or reconstructed by
+// replaying the journal. Directly is the honest answer whenever the replay cannot reach the end:
+// the root has the real return value in the task output, and no prefix of a replay beats it.
+let value, miss, thrown, lastSnapshot
+if (returnedPath) {
+  if (!existsSync(returnedPath)) die(`--returned ${returnedPath} does not exist`)
+  try { value = JSON.parse(await readFile(returnedPath, 'utf8')) }
+  catch (e) { die(`--returned ${returnedPath} is not readable JSON: ${e.message}`) }
+  console.log(`returned: ${returnedPath} — replay skipped`)
+} else {
+  const journal = await buildJournal(runDir)
+  console.log(`journal: ${journal.total} result(s), ${journal.byPrompt.size} distinct prompt(s)` +
+    `${journal.unmapped ? `, ${journal.unmapped} unmapped` : ''}`)
+  ;({ value, miss, thrown, lastSnapshot } = await replay(path.resolve(scriptPath), entryArgs, journal))
+}
 await mkdir(roadmapDir, { recursive: true })
 const wrote = []
 const write = async (name, text) => { await writeFile(path.join(roadmapDir, name), text); wrote.push(name) }
@@ -310,7 +360,26 @@ if (miss || thrown) {
   if (!lastSnapshot) die(`replay stopped at "${stoppedAt}" before the first snapshot — nothing to write; ` +
     `${error ? `the error was: ${error}. ` : ''}` +
     'the existing state.json is left untouched. Relaunch with resumeFromRunId and run this again.')
-  await write('state.json', json({ ...lastSnapshot, partial: { stoppedAt, ...(error ? { error } : {}) } }))
+  const partial = json({ ...lastSnapshot, partial: { stoppedAt, ...(error ? { error } : {}) } })
+
+  // A partial may never REGRESS state.json — see the header. `(out of journal order)` says the
+  // replay diverged from the run (the run itself did not stop there), and a newer state.json says
+  // disk already holds a better record; in both cases the partial is parked beside state.json
+  // instead of over it.
+  const why = /\(out of journal order\)$/.test(stoppedAt) ? 'divergence'
+    : (await diskOutranksSnapshot(path.join(roadmapDir, 'state.json'), lastSnapshot)) ? 'newer-on-disk'
+    : null
+  if (why) {
+    await write('state.partial.json', partial)
+    console.log(`PARTIAL-REFUSED stoppedAt=${stoppedAt} why=${why} wrote=${wrote.join(',')}` +
+      `${error ? ` error=${error}` : ''}`)
+    console.log('state.json was NOT written. Persist the run\'s returned value instead — ' +
+      'node persist.mjs --returned <that value as JSON> --args <the same envelope> — ' +
+      'then investigate the divergence.')
+    process.exit(2)
+  }
+
+  await write('state.json', partial)
   console.log(`PARTIAL stoppedAt=${stoppedAt} wrote=${wrote.join(',')}${error ? ` error=${error}` : ''}`)
   process.exit(2)
 }
@@ -330,6 +399,16 @@ const debtSections = ret.debtSections ?? []
 const journalEntries = ret.journalEntries ?? []
 
 await write('state.json', json(state))
+
+// A refused partial parks its snapshot in `state.partial.json` and leaves `state.json` alone; the
+// cure the refusal prints is this run (`--returned`, or a replay that now reaches the end). Once a
+// WHOLE state has landed, that parked prefix is stale — diagnostic-only evidence of a divergence
+// already resolved — and leaving it beside a current state.json is how a later reader (or a root
+// working the recovery ladder) mistakes it for a live one. Removed idempotently: the ordinary run
+// has none, and `force` makes a concurrent removal a no-op rather than a crash after the write.
+const partialFile = path.join(roadmapDir, 'state.partial.json')
+const removedPartial = existsSync(partialFile)
+if (removedPartial) await rm(partialFile, { force: true })
 
 // plan.json — never blind. A plan on disk carrying unit ids this run has never seen is a root edit
 // or a hand-merged respec, and overwriting it would destroy work with no trace. A loud refusal is
@@ -392,4 +471,5 @@ if (degradations.length) await write('skill-degradations.md', skillDegradationsD
 await appendRows('degradations.jsonl', degradations)
 await appendRows('escalations.jsonl', escalations)
 
-console.log(`OK ${isConductor ? `reason=${ret.reason} ` : ''}wave=${state?.wave ?? '?'} wrote=${wrote.join(',')}`)
+console.log(`OK ${isConductor ? `reason=${ret.reason} ` : ''}wave=${state?.wave ?? '?'} wrote=${wrote.join(',')}` +
+  `${removedPartial ? ' removed=state.partial.json' : ''}`)

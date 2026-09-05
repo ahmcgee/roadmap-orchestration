@@ -99,6 +99,19 @@ const TERSE = 'Keep every free-text field terse — an oversized report fails sc
   'lost. Free-text fields are for what the structured fields cannot carry, not a transcript of your reasoning. ' +
   'Respect every character budget named below exactly, and emit no field the schema does not define — an ' +
   'unexpected key is rejected as hard as an over-long one. '
+// Host facts are never a verdict (same const as harness.mjs — shared-consts.test.mjs enforces it).
+// The harness carries it to every tier that ADJUDICATES spec text (both plan-checks, both exit
+// gates, the verifier); the conductor carries it to the tiers that WRITE spec text — a boundary
+// that authors acceptance criteria, and the reviser that rewrites them. Arc-observed 2026-09-04:
+// an acceptance clause requiring "no vitest, playwright, test-ci or dev-stack process anywhere on
+// the host" is unsatisfiable on the box this skill runs on, and cost a unit a quarantine.
+const HOST_BAR = 'Host facts are never a verdict and never a precondition. The orchestrator\'s own preview ' +
+  'dev-stack is always live, verification lanes for sibling units overlap by design, and the host\'s load ' +
+  '(loadavg1/cpuCount) is on the record precisely so a wall-clock claim can be judged against it. So never ' +
+  'require a quiet host, the absence of other processes (a dev server, a sibling unit\'s test lane, another ' +
+  'test runner), or a wall-clock ceiling as an acceptance clause or as a precondition for verification: a ' +
+  'spec or plan clause that does is unsatisfiable by construction, and it is a SPEC DEFECT for the ' +
+  'adjudicating tier to resolve through its verdict — never something the implementer or the verifier absorbs. '
 // The ONE canonical way to have a cheap agent run shell on this script's behalf: a CLOSED LIST of
 // exact commands whose verbatim output the SCRIPT judges, never a goal with destructive reach.
 // Mirrored from harness.mjs — see the long rationale there; keep the two in sync
@@ -212,19 +225,49 @@ const cksumOf = (s) => {
 }
 const READ_CHUNK = 24000
 const PACK_FILES = ['plan.json', 'state.json']
-const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
-  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
-  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
-  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
-  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
-  '`detail` — a truncated copy is worse than no copy. '
-// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
-// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
-// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
-// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
+// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
+// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
+// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
+// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
+// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
+// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
+// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
+// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
+// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
+// with no backslash left in it, and the script puts the backslashes back before verifying. The
+// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
+// document fails loud exactly like a truncation rather than silently rewriting the pack.
+// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
+// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
+// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
+// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
+// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
+// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
+// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const PACK_BS = '@bs@'
+const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
+  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
+  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
+  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
+  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
+  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
+  `truncated copy is worse than no copy. `
+// Read ONE pack file over the given line ranges (one command each) and verify it. Each content
+// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
+// courier never has to escape anything; the script swaps them back below. The whole file's
+// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
+// dropped line, a decoded escape, a summarised tail and a document that already contained the
+// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
+// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
+// carries the file's { bytes, lines, esc } so the caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
-  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+  // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
+  // which is longer than the file by one marker-length-minus-one per backslash, so the size
+  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -232,17 +275,20 @@ const readPackFile = async (path, ranges, label, extra) => {
     cmds)
   const bytes = Number(r.out(1)) || 0
   const lines = Number(r.out(2)) || 0
-  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const esc = Number(r.out(3)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
-  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
+  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
+  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
-    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
-  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -260,15 +306,19 @@ const readPack = async () => {
   PACK_FILES.forEach((n, i) => record(n, first[i]))
   const again = PACK_FILES.filter((n) => text[n] === undefined)
   const second = await parallel(again.map((n) => () => {
-    const { bytes, lines } = why[n]
-    if (bytes <= READ_CHUNK || lines < 2)
+    const { bytes, lines, esc } = why[n]
+    // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
+    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
+    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * (PACK_BS.length - 1)
+    if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
-    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
     // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
-    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)
@@ -284,6 +334,17 @@ const readPack = async () => {
   return { plan: parsed['plan.json'], state: parsed['state.json'] }
 }
 const { plan: inPlan, state: inState } = await readPack()
+
+// Plan-pack intake check, mirrored VERBATIM from harness.mjs's plan validation (keep the two
+// messages in sync). The harness throws on an unquotable `plan.preview.start` too, but it only sees
+// the plan when wave 1 dispatches — by which point Phase 0's planning, spec-writing and pack read
+// are all spent, and the arc dies on a one-line plan defect. Checking it here costs the pack read
+// alone. It is a THROW rather than a `ret()`: nothing has been staged yet at intake, so there is no
+// wave state to hand back, and the fix is an edit to plan.json before the next launch.
+if (typeof inPlan.preview?.start === 'string' && inPlan.preview.start.includes("'"))
+  throw new Error(`plan.preview.start contains a single quote — it is run as \`sh -c '<start>'\` (which is why ` +
+    `\`VAR=value cmd\` and \`&&\` chains work there) and a single quote cannot survive that wrapping. ` +
+    `Use double quotes, or move the command into a package script: ${inPlan.preview.start}`)
 
 // Conductor config: defaults, then plan.config.conductor, then the caller's config.conductor.
 const CC = {
@@ -690,7 +751,7 @@ function withhold() {
 }
 
 // Arc-completeness was STATUS-BLIND: the decision read only what the boundary agents emitted, and
-// arcSummary buckets merged/quarantined/deferred, so a pending/running/blocked in-scope unit was
+// arcSummary is a tally of finished work, so a pending/running in-scope unit was
 // invisible to the triager that declared the arc done. 2026-07-18: four in-scope, satisfiable units
 // were still outstanding when tier-2 called arc-complete, and the root caught it by hand.
 //
@@ -789,10 +850,16 @@ function noteJournal(N, journal) {
   if (at >= 0) journalEntries[at] = { wave: N, journal }
   else journalEntries.push({ wave: N, journal })
 }
+// The root-facing tally of where the arc's units ENDED UP. `blocked` is a bucket of its own because
+// it is an ordinary, non-terminal outcome now: a FIRST blocked verify leaves the unit `blocked` with
+// its commits intact for the next wave-start loop to re-open, and only a second one quarantines it.
+// Without the bucket a run that stops on `maxWavesPerRun` (or closes with a blocked unit wedged
+// behind a dependency) named that unit in no summary at all — it was neither merged, nor
+// quarantined, nor deferred, and the root had to go read state.units to find it.
 const arcSummary = (census) => {
   const u = state.units ?? {}
   const ids = (s) => Object.entries(u).filter(([, r]) => r?.status === s).map(([id]) => id)
-  return { merged: ids('merged'), quarantined: ids('quarantined').map((id) => ({ id })), deferred: ids('deferred'), pendingFeedback: census.pendingUserFeedback ?? [], wavesRun }
+  return { merged: ids('merged'), quarantined: ids('quarantined').map((id) => ({ id })), blocked: ids('blocked'), deferred: ids('deferred'), pendingFeedback: census.pendingUserFeedback ?? [], wavesRun }
 }
 
 // Freeze the current `state` (or a supplied variant) with the conductor block and build the return
@@ -878,7 +945,7 @@ const opusTriagePrompt = (N, P) =>
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
-  `\`promote\`. SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
+  `\`promote\`. ${HOST_BAR}SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
   `left to run (a next wave is happening anyway), fold this wave's debt — even minor items — into one or more ` +
   `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. ` +
   `${issueMode ? 'When a unit you `promote` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
@@ -927,7 +994,7 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
   `quarantined id. Emit new work as full skeletons in \`newUnits\` (each with a NEW kebab id), spec adjustments in ` +
-  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ` +
+  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ${HOST_BAR}` +
   `${issueMode ? 'When a `newUnit` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
   `Whenever a \`newUnit\` REPLACES a ` +
   `quarantined unit, set its \`supersedes\` field to that unit's id so the failed unit is retired and its edges ` +
@@ -1019,7 +1086,7 @@ const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
   `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
-  `architect ruling, for instance) is not yours to edit. Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
+  `architect ruling, for instance) is not yours to edit. ${HOST_BAR}Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
   `and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 characters). Nothing is compared ` +
   `against it — the revised content is yours to compose, so there is no expected value — it is recorded so a ` +
   `later reader can tell WHICH version of this spec they are looking at. Report ok:false with the exact error ` +
@@ -1176,9 +1243,12 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // durable, human-facing record.
   pendingDebt = [...pendingDebt, ...(state.debt ?? [])]
 
-  // Wave-level halt (`state.halt.reason`, one of: codex-unavailable / codex-usage-limit — Codex is
-  // the only implementer and there is no lane to fall back to; env-pids-exhausted / env-no-reaper —
-  // the box cannot support the work; platform-outage — required agent results stopped arriving).
+  // Wave-level halt (`state.halt.reason`, one of: codex-unavailable — the wave-start probe failed
+  // (CLI, credential, or its exec smoke) or the mid-wave backend breaker tripped — / codex-usage-limit;
+  // Codex is the only implementer and there is no lane to fall back to; env-pids-exhausted /
+  // env-no-reaper / env-verify-blocked — the box cannot support the work (the last one: two units'
+  // verification tooling failed to run in one wave, which is a host fact, not two unit defects);
+  // platform-outage — required agent results stopped arriving).
   // The harness already halted dispatch and parked in-flight units; no census/triage spend against
   // a wave the root must hand to the human anyway (re-auth, recreate the container, or wait out the
   // outage window, then relaunch — state and parked units resume cleanly). The harness picks the

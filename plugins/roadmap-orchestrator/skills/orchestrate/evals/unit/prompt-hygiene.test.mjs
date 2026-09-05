@@ -41,6 +41,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, structuredOutputError, BASE_SHA, implCodexOk, codexMetaOk, courierOk } from './fakes.mjs'
 // The introspection + assertion toolkit lives in hygiene-lib.mjs so other suites
@@ -279,4 +280,72 @@ test('conductor: every required free-text field is named in its prompt', async (
 
 test('conductor: required free-text fields are ordered last in their schema', async () => {
   assertFreeTextOrderedLast(await driveConductor(), 'conductor')
+})
+
+// =========================================================================================
+// HOST_BAR — host facts are never a verdict, stated to every tier that WRITES or ADJUDICATES
+// spec text. Arc-observed 2026-09-04: an Opus plan-check adjudicated an acceptance criterion as
+// "no vitest, playwright, test-ci or dev-stack process anywhere on the host" before verify may
+// run. The preview dev-stack is always live and `gateMaxConcurrent` lanes overlap by design, so
+// the clause was unsatisfiable by construction: the verifier reported blocked and the unit was
+// quarantined for a defect no unit had. A prompt clause cannot stop a tier inventing one — but a
+// tier that is never told the fact cannot avoid it either, so the bar has to REACH every one of
+// them. This drives both scripts and checks the real prompts, so a refactor that drops the
+// interpolation at one site fails here rather than in a paid fixture.
+// =========================================================================================
+
+// The literal value, read out of harness.mjs — every site is asserted against the SAME bytes the
+// script ships, so a reworded bar is still checked everywhere instead of silently un-checked.
+const HOST_BAR = (() => {
+  const src = readFileSync(fileURLToPath(new URL('../../harness.mjs', import.meta.url)), 'utf8')
+  const m = /^const HOST_BAR = ((?:.*\+\n)*.*)$/m.exec(src)
+  assert.ok(m, 'could not find a top-level `const HOST_BAR = ` in harness.mjs — the anchor this test keys on is gone')
+  return Function(`"use strict"; return (${m[1]});`)()
+})()
+
+test('HOST_BAR reaches both plan-checks, both exit gates and the verifier brief', async () => {
+  const calls = await driveHarness()
+  // 'happy' is low-risk (Opus-first plan-check + Opus first-pass gate); 'risky' is high-risk, which
+  // routes straight to the Fable plan-check and forces the frontier gate.
+  for (const [label, who] of [
+    [/^opus-plan-check:/, 'the Opus plan-check that minted the clause'],
+    [/^plan-check:/, 'the Fable plan-check'],
+    [/^opus-gate:/, 'the first-pass exit gate'],
+    [/^gate:/, 'the frontier exit gate'],
+    [/^verify:/, 'the verifier'],
+  ]) {
+    const c = calls.find((x) => label.test(x.label))
+    assert.ok(c, `no ${label} call in the drive — this assertion would be vacuous`)
+    assert.ok(c.prompt.includes(HOST_BAR), `${who} (${c.label}) is not told that host facts are never a verdict`)
+  }
+  // The verifier needs the consequence spelled out too: such a clause is a FAILING check to report,
+  // never `blocked` — reporting blocked is what converted the spec defect into a unit quarantine.
+  const v = calls.find((x) => /^verify:/.test(x.label))
+  assert.match(v.prompt, /report it as a FAILING check/, 'the verifier is told what to do with such a clause')
+  assert.match(v.prompt, /Never report blocked:true over it/, 'and told not to route it through `blocked`')
+})
+
+test('HOST_BAR reaches the conductor tiers that WRITE spec text', async () => {
+  const calls = await driveConductor()
+  for (const [label, who] of [
+    [/^triage:w/, 'the Opus boundary triager (it authors `promote` skeletons, acceptance included)'],
+    [/^boundary:w/, 'the Fable boundary agent (it authors `newUnits` and `reviseSpecs`)'],
+  ]) {
+    const c = calls.find((x) => label.test(x.label))
+    assert.ok(c, `no ${label} call in the drive — this assertion would be vacuous`)
+    assert.ok(c.prompt.includes(HOST_BAR), `${who} (${c.label}) may mint an unsatisfiable host clause unwarned`)
+  }
+})
+
+test('no prompt in either script makes a quiet host a precondition', async () => {
+  for (const [name, calls] of [['harness', await driveHarness()], ['conductor', await driveConductor()]]) {
+    for (const c of calls) {
+      // The bar itself NAMES these phrases in order to forbid them, so it is stripped before the scan.
+      const p = c.prompt.split(HOST_BAR).join(' ')
+      assert.doesNotMatch(p, /no (?:other )?(?:vitest|playwright|dev[- ]stack|test) process/i,
+        `${name}: ${c.label} makes the absence of sibling processes a requirement`)
+      assert.doesNotMatch(p, /quiet host|idle host|host is idle/i,
+        `${name}: ${c.label} asks for a quiet host — the preview dev-stack is always live`)
+    }
+  }
 })

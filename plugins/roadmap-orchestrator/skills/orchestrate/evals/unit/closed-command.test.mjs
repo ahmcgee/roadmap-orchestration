@@ -184,10 +184,15 @@ test('no courier prompt contains a destructive command outside its own list', as
 // =========================================================================================
 // 2. Codex probe: the pass condition is decided in the script, never by the agent.
 // =========================================================================================
-const probe = (statusOut, versionExit = 0) => (prompt) => {
+// THREE commands since 2026-09-03: --version, login status, and a bounded `codex exec` SMOKE.
+// A courier stops at the first non-zero exit, so a short list is exactly what the script sees.
+const probe = (statusOut, { versionExit = 0, smokeExit = 0, smokeOut = 'pong' } = {}) => (prompt) => {
   const r = courierResult(prompt, BASE_SHA)
   if (versionExit !== 0) return { ok: true, results: [{ ...r.results[0], exitCode: versionExit, stdout: 'codex: not found' }] }
-  return { ok: true, results: [r.results[0], { ...r.results[1], stdout: statusOut }] }
+  const login = { ...r.results[1], stdout: statusOut }
+  if (login.exitCode !== 0 || !/logged in/i.test(statusOut) || /not\s+logged\s+in/i.test(statusOut))
+    return { ok: true, results: [r.results[0], login] }
+  return { ok: true, results: [r.results[0], login, { ...r.results[2], exitCode: smokeExit, stdout: smokeOut }] }
 }
 
 test('codex probe: any credential provider passes — the script matches /logged in/i itself', async () => {
@@ -200,14 +205,38 @@ test('codex probe: any credential provider passes — the script matches /logged
 })
 
 test('codex probe: no logged-in line halts the wave, and so does a missing CLI', async () => {
-  for (const [name, rule] of [['not logged in', probe('Not logged in. Run codex login.')], ['no CLI', probe('', 127)]]) {
+  for (const [name, rule] of [['not logged in', probe('Not logged in. Run codex login.')],
+    ['no CLI', probe('', { versionExit: 127 })]]) {
     const { fn } = makeAgent([{ match: /^codex-probe:/, result: rule }])
     const state = await runWave(fn, makePlan(), makeState())
     assert.equal(state.halt.reason, 'codex-unavailable', `${name} halts dispatch`)
     assert.equal(state.halt.codex, 'codex-unavailable', `${name} fills the codex slot of the halt record`)
     assert.equal(state.units.a.status, 'pending', `${name} leaves the unit resumable, never quarantined`)
     assert.ok(state.degradations.some((d) => d.kind === 'codex-unavailable'), `${name} is ledgered`)
+    const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
+    assert.match(d.what, /codex login/, `${name} is a credential problem, so the remedy is a re-login`)
   }
+})
+
+// THE 2026-09-03 ENTRY. `codex --version` printed a version, `codex login status` said "Logged in",
+// and every codex run in the wave died on `turn.failed: unexpected status 404 Not Found …
+// chatgpt.com/backend-api/codex/responses`. The only thing that proves Codex can work is Codex
+// doing one trivial piece of work — and the pass test is the SCRIPT'S: a non-zero exit, never a
+// reading of the text (the courier is never asked whether the answer says "pong").
+test('codex probe: a green CLI and a live login do NOT pass a dead backend — the exec smoke does', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-probe:/,
+    result: probe('Logged in using ChatGPT (plan: pro)', { smokeExit: 1,
+      smokeOut: 'ERROR: turn.failed: unexpected status 404 Not Found: chatgpt.com/backend-api/codex/responses' }) }])
+  const state = await runWave(fn, makePlan(), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'a dead backend is codex being unavailable')
+  assert.equal(state.units.a.status, 'pending', 'the unit stays plannable — an outage is not a unit defect')
+  assert.ok(!calls.some((c) => c.label.startsWith('codex-build:')), 'nothing dispatches onto a dead backend')
+  const d = state.degradations.find((x) => x.kind === 'codex-unavailable')
+  assert.match(d.what, /backend\/exec smoke failed/, 'the row says WHICH of the three commands failed')
+  assert.match(d.what, /404 Not Found/, 'and quotes the tail of what the smoke actually printed')
+  assert.ok(!/codex login/.test(d.what),
+    'and never sends the operator to re-login: the credential is fine, the service is not')
 })
 
 test('codex probe: the prompt forbids judging the credential provider at all', async () => {
@@ -216,7 +245,18 @@ test('codex probe: the prompt forbids judging the credential provider at all', a
   const p = promptOf(calls, 'codex-probe:w1')
   assert.match(p, /not yours to assess/, 'the invented-requirement class is named and closed')
   assert.match(p, /ChatGPT plan, API key, device auth/, 'every provider is spelled out as acceptable')
-  assert.equal(commandsOf(p).length, 2, 'exactly two commands: --version and login status')
+  assert.match(p, /not yours to assess either/, 'nor is whether the smoke actually answered "pong"')
+  const cmds = commandsOf(p)
+  assert.equal(cmds.length, 3, 'exactly three commands: --version, login status, and the exec smoke')
+  assert.match(cmds[0], /codex --version$/)
+  assert.match(cmds[1], /codex login status$/)
+  // The smoke is CLOSED and BOUNDED: a deadline, the harness's own sandbox composition, a
+  // one-word prompt, and no way for it to become anything else.
+  assert.match(cmds[2], /timeout 120 codex exec -C \/wt\/__codex\/roles\/probe-w1 /, 'bounded, and pointed at its own scratch dir by -C — never the checkout')
+  assert.match(cmds[2], /--skip-git-repo-check/)
+  assert.match(cmds[2], /'Reply with exactly the word pong'$/, 'and it asks for exactly one word')
+  assert.ok(!/-a\b|--dangerously-bypass|--full-auto/.test(cmds[2]),
+    'the probe never widens what a real codex run is allowed to do')
 })
 
 // =========================================================================================
@@ -254,6 +294,58 @@ test('preview: the worktree is provisioned like __integration and the operator c
   for (const c of calls.filter((x) => /^(preview|mirror)/.test(x.label)))
     assert.ok(!/cd \/repo\b|In \/repo: [^]*checkout/.test(c.prompt) || c.label === 'preview-worktree',
       `${c.label} must not treat the primary checkout as a checkout target`)
+})
+
+// The preview's own launch line, which shares both 2026-09-02 defects with the codex lane:
+//   `setsid nohup <start> … & echo $! > pid`  recorded the pid of the fork setsid makes under job
+//     control (dead within a second), so the pidfile the sweep and every stop target was fiction; and
+//   `nohup <start>` made nohup exec the plan's string, so `nohup DEV_SLOT=9 pnpm dev:stack` failed as
+//     "nohup: failed to run command 'DEV_SLOT=9'" and three waves ran with no preview at all.
+// One `sh -c 'echo $$ > <pid>; <start>'` closes both: a pid that outlives its first second, and a
+// start string that is SHELL input rather than an argv the wrapper has to exec.
+test('preview: the detached shell writes its own pid, and `start` is shell input, not an argv', async () => {
+  for (const [what, start] of [
+    ['a plain command', 'npm run dev'],
+    ['an env assignment', 'DEV_SLOT=9 pnpm dev:stack'],
+    ['an && chain', 'pnpm build && pnpm preview --port 5173'],
+  ]) {
+    const { fn, calls } = makeAgent()
+    await runWave(fn, makePlan({ preview: { ...PREVIEW, start } }), makeState())
+    const launch = commandsOf(promptOf(calls, 'preview-setup')).find((c) => c.includes('setsid'))
+    assert.equal(launch, `setsid nohup sh -c 'echo $$ > /wt/__preview.pid; ${start}' > /wt/__preview.log 2>&1 &`,
+      `${what}: wrapped verbatim in the detached shell, whose OWN pid is the pidfile`)
+    assert.ok(!launch.includes('echo $! >'), `${what}: never the pid of the fork setsid makes`)
+    assert.ok(!/nohup (?!sh -c ')/.test(launch), `${what}: nohup never execs the plan's string itself`)
+  }
+})
+
+test('preview: a `start` that cannot be single-quoted is refused at plan load, by name', async () => {
+  const { fn } = makeAgent()
+  await assert.rejects(
+    runWave(fn, makePlan({ preview: { ...PREVIEW, start: "sh -c 'npm run dev'" } }), makeState()),
+    /plan\.preview\.start contains a single quote/,
+    'the wrapper is `sh -c \'<start>\'`, so a quote in it would hand the remainder to the courier as commands')
+})
+
+test('preview: the healthcheck window is ~60s of WALL CLOCK, and the courier is given the tool time to spend it', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan({ preview: PREVIEW }), makeState())
+  const p = promptOf(calls, 'preview-setup')
+  const hc = commandsOf(p).find((c) => c.includes(PREVIEW.healthcheck))
+  // 2026-09-02: 5 x 3s lost every wave of an arc to a dev stack that builds before it listens.
+  // 2026-09-04: `20 x sleep 3` is 60 seconds only when the healthcheck itself costs nothing — a
+  // curl with no `-m` against a dead port pays its own connect timeout 21 times, and the whole
+  // bring-up then overran the courier's 120s Bash-tool default and read as a preview that never
+  // came up. The bound is the clock now, so the window means 60 seconds whatever the check costs.
+  assert.match(hc, /^S=\$\(date \+%s\); until .* do \[ \$\(\( \$\(date \+%s\) - S \)\) -ge 60 \] && break; sleep 3; done; /,
+    'the loop is bounded by elapsed seconds, not by an iteration count')
+  assert.ok(!/-lt 20/.test(hc), 'the iteration bound is gone — it was never a 60-second promise')
+  assert.equal(hc.split(PREVIEW.healthcheck).length - 1, 2,
+    'the check runs inside the loop and once more after it, so the command\'s exit code is the verdict')
+  // The wait lives in ONE Bash call, so the courier has to be told to give that call room. Without
+  // this the tool's own 120s default cuts the bring-up short and reports a failure nothing had.
+  assert.match(p, /600000 ms maximum/, 'the preview courier is told to raise its Bash tool timeout')
+  assert.match(p, /waits up to ~60 seconds/, 'and why — the window is the reason, not a blanket instruction')
 })
 
 test('preview: the mirror advance is a closed list, not a "never stash/reset/force" prohibition', async () => {

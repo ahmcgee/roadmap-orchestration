@@ -99,12 +99,18 @@ shipping; never ship on an upper rung alone.
    ride the design-less paid fixtures as valid evidence); and `shared-consts.test.mjs` (a
    text-level drift guard on the constants harness and conductor deliberately duplicate — they are
    standalone workflow scripts and cannot import from each other — including the whole
-   `readPack`/`READ_CHUNK`/`cksumOf` launch-pack read, byte-identical in both).
+   `readPack`/`READ_CHUNK`/`cksumOf`/`PACK_BS` launch-pack read, byte-identical in both).
+   The launch pack's own sims live in `harness.test.mjs` §13: a document full of `\"`, `\\`,
+   `\uXXXX` escapes and raw non-ASCII glyphs reads clean through the backslash-sentinel transport
+   (`packRules` runs the composed `sed` through the REAL tool, the way `sysCksum` runs the real
+   `cksum`), a courier that decodes those escapes — the 2026-09-02/09-04 failure — is caught by the
+   cksum, and an oversized file still fans out over line ranges.
    `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
    `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library.
 
-   **Inventory, post-0.14.0.** The suite is **306 sims** — every `*.test.mjs` under `unit/`, which is
-   exactly what `run.sh` globs. `unit/load.mjs` no longer exists: it moved up to
+   **Inventory, as of 0.15.0.** The suite is every `*.test.mjs` under `unit/`, which is exactly what
+   `run.sh` globs — it prints the live count on its own tail line, so no number is repeated here to
+   go stale (it crossed 380 partway through 0.15.0). `unit/load.mjs` no longer exists: it moved up to
    `../script-loader.mjs`, so `persist.mjs` and the sims compile a script through one module rather
    than two copies. The **writer sims are gone**, and deliberately so — checkpoint coalescing,
    checkpoint fan-out, part-retry, single-write and failed-write in the harness, the
@@ -236,7 +242,13 @@ and spend is within a generous envelope.
    grades `state.json`:
    `node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/harness.mjs
    --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>"}'`
-   → `OK …`. A `PARTIAL` line means the run died; the marker names where.
+   → `OK …`. A `PARTIAL` line means the run died; the marker names where. A **`PARTIAL-REFUSED
+   … why=divergence`** line means something else entirely: the replay diverged from the run (an
+   `(out of journal order)` miss), **not** a run failure — nothing was written over `state.json`,
+   and the fix is to feed the run's returned value straight in, `node <skill dir>/persist.mjs
+   --returned <that value, as a .json file> --args '<the same envelope>'`, before grading. Then
+   investigate the divergence: on this ladder it almost always means the script changed since the
+   journal was written, and the fixture must be re-run.
 4. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
 **Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
@@ -313,8 +325,11 @@ node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill di
 `workflow()` child shares its parent's journal, so the conductor's transcript dir already holds
 every wave's harness calls — do not persist per wave. A `PARTIAL stoppedAt=…` line means the replay
 hit a cache miss (the run died, or the script changed since the journal was written): it writes the
-last `snapshot()`'s state marked `partial: {stoppedAt}`, and exits 2 rather than 0. Run the
-persister after **every** return and after a crash. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
+last `snapshot()`'s state marked `partial: {stoppedAt}`, and exits 2 rather than 0. A
+`PARTIAL-REFUSED …` line means that partial would have regressed `state.json` (a replay divergence,
+or a newer state already on disk); it parks the partial in `state.partial.json`, and you re-run with
+`--returned <the run's return value, as a .json file>` — same `--args`, no `--run`/`--script` — to
+land the real thing. Run the persister after **every** return and after a crash. Then `bash check-conductor.sh /tmp/roadmap-eval-c`.
 
 **Cost:** the larger of the two by some margin — it runs the whole harness once per wave, so it
 multiplies. ~155+ agents and ~3M subagent tokens observed on a 3-wave run (2026-07-19) — again a
@@ -491,9 +506,16 @@ what it pinned, which the codex executor lane's design depends on:
   outside cwd is blocked.
 - **Untrusted paths** run cleanly with `-c 'projects."<path>".trust_level="trusted"'` —
   no interactive trust prompt, no sandbox downgrade observed.
-- **Poll idiom**: `timeout 90 tail --pid=$(cat pidfile) -f /dev/null` in a loop over the
-  `exit-code` marker file works; the `echo $? > exit-code` inside the backgrounded
-  `sh -c` is the disk-verified done signal.
+- **Poll idiom**: `timeout 90 tail --pid=$(cat <dir>/codex.pid) -f /dev/null`, in a loop over the
+  `<dir>/exit-code` marker file, works — that is what the probe pinned, and it still holds. The
+  *shape around it* has moved on twice since, so read the emitted prompt, not this bullet, for the
+  literal line: codex is **backgrounded inside** the detached `sh -c` (`… & CPID=$!`), the pidfile
+  is written by that shell itself as its first act (`echo $$ > <dir>/codex.pid`, never `echo $! >`
+  after the `&`), and the disk-verified done signal is `echo $RC > <dir>/exit-code` at the end of
+  that same shell — where `RC` comes from `wait $CPID` plus a re-wait gated on the TERM trap's own
+  flag (`trap "kill -TERM $CPID; T=1" TERM; wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID;
+  RC=$?; fi`). The probe's original `echo $? > exit-code` after a *foreground* `codex` predates all
+  of that. The steerer's rule on top: an absent `exit-code` means RUNNING, never dead.
 
 ### P2 — Haiku steering a real codex build (pinned 2026-08-11)
 

@@ -228,19 +228,49 @@ const cksumOf = (s) => {
 const READ_CHUNK = 24000
 // The pack: the documents the root used to paste into `args`.
 const PACK_FILES = ['plan.json', 'state.json']
-const PACK_EXTRA = 'These commands only READ. Copy each command\'s output through verbatim — byte for byte, including leading ' +
-  'indentation, blank lines, and every escape sequence inside JSON string values (\\n and \\" are literal ' +
-  'characters to copy, not instructions). Never pretty-print, re-indent, re-escape, summarise, elide or ' +
-  'abbreviate: the scheduler verifies your transcription against the file\'s own `cksum`, and a document that ' +
-  'does not match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in ' +
-  '`detail` — a truncated copy is worse than no copy. '
-// Read ONE pack file over the given line ranges (one command each) and verify it. The whole file's
-// `cksum` is the ONLY verdict: the ranges are transport, so a dropped line, a re-escaped string and
-// a summarised tail all fail the same check, and the courier's only honest move on a mismatch is to
-// report it. Resolves { text } on a match, or { fail, bytes, lines } describing what did not line up.
+// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
+// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
+// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
+// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
+// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
+// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
+// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
+// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
+// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
+// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
+// with no backslash left in it, and the script puts the backslashes back before verifying. The
+// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
+// document fails loud exactly like a truncation rather than silently rewriting the pack.
+// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
+// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
+// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
+// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
+// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
+// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
+// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
+// Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const PACK_BS = '@bs@'
+const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
+  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
+  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
+  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
+  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
+  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
+  `truncated copy is worse than no copy. `
+// Read ONE pack file over the given line ranges (one command each) and verify it. Each content
+// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
+// courier never has to escape anything; the script swaps them back below. The whole file's
+// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
+// dropped line, a decoded escape, a summarised tail and a document that already contained the
+// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
+// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
+// carries the file's { bytes, lines, esc } so the caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
-  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path}`)]
+  // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
+  // which is longer than the file by one marker-length-minus-one per backslash, so the size
+  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -248,17 +278,20 @@ const readPackFile = async (path, ranges, label, extra) => {
     cmds)
   const bytes = Number(r.out(1)) || 0
   const lines = Number(r.out(2)) || 0
-  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines }
+  const esc = Number(r.out(3)) || 0
+  if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
-  // Each range's capture ends in the newline of its last line; the join puts exactly one back.
-  const body = ranges.map((_, i) => r.raw(3 + i).replace(/\n$/, '')).join('\n')
+  // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
+  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
+  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
     const ck = cksumOf(text)
-    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines }
+    if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
-  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied`, bytes, lines }
+  return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
+    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -276,15 +309,19 @@ const readPack = async () => {
   PACK_FILES.forEach((n, i) => record(n, first[i]))
   const again = PACK_FILES.filter((n) => text[n] === undefined)
   const second = await parallel(again.map((n) => () => {
-    const { bytes, lines } = why[n]
-    if (bytes <= READ_CHUNK || lines < 2)
+    const { bytes, lines, esc } = why[n]
+    // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
+    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
+    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * (PACK_BS.length - 1)
+    if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
-    // Too big for one response: split the LINES into ceil(bytes / READ_CHUNK) ranges. The
+    // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
     // whole-file cksum still decides, so an uneven split is a transport detail, never a risk.
-    const per = Math.ceil(lines / Math.ceil(bytes / READ_CHUNK))
+    const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)
@@ -447,7 +484,20 @@ const previewPorts = [...new Set(
 // list (see `courier`) rather than in prose an agent has to interpret. setsid makes the recorded
 // pid a process-group leader so stop can kill the whole tree, not just the parent — a single-pid
 // kill strands child listeners and leaves ports held.
-const previewStartCmd = (start) => `setsid nohup ${start} > ${prevLog} 2>&1 & echo $! > ${prevPid}`
+// THE DETACHED SHELL WRITES ITS OWN PID, and `${start}` runs INSIDE it. Both halves are 2026-09-02
+// scars (see the codex launch sites for the long version of the first):
+//   - `… & echo $! > pid` recorded a pid that was dead within a second. The courier's Bash shell has
+//     job control on, so a backgrounded job is already a process-group leader and `setsid` must
+//     FORK; `$!` names the short-lived parent, and every kill and liveness check hung off a corpse.
+//     `sh -c 'echo $$ > …'` records the surviving shell instead — which, after setsid, is also the
+//     pgid that `kill -TERM -- -<pid>` targets. Never `echo $!` after the `&`, at any launch site.
+//   - `setsid nohup <start>` made `nohup` the thing exec'ing the plan's string, so a start beginning
+//     with an env assignment died at once ("nohup: failed to run command 'DEV_SLOT=9'") and every
+//     wave that arc ran with no preview at all. Under `sh -c` the string is SHELL input: `VAR=value
+//     cmd`, `&&` chains and pipelines all work. A single quote in it cannot survive this wrapping,
+//     so `plan.preview.start` is validated against one at load and throws there rather than
+//     composing a command that would end the quoted string mid-flight.
+const previewStartCmd = (start) => `setsid nohup sh -c 'echo $$ > ${prevPid}; ${start}' > ${prevLog} 2>&1 &`
 const previewStopCmd =
   `if [ -f ${prevPid} ]; then kill -TERM -- -$(cat ${prevPid}) 2>/dev/null || kill -TERM $(cat ${prevPid}) ` +
   `2>/dev/null || true; rm -f ${prevPid}; fi`
@@ -465,6 +515,14 @@ const previewSweepRetry =
   `Never sweep by process NAME (\`pkill\`, \`killall\`) and never \`ps | grep | kill\`: a name sweep once killed ` +
   `every node process on this host, this workflow included. If a port is held by something the listed commands ` +
   `do not identify, leave it alone and report the failing exit code. `
+// The bring-up list spends up to ~60 s waiting for the healthcheck to answer, inside ONE Bash call.
+// The courier's Bash tool defaults to a 120 s timeout, which the setup command and the wait can
+// exhaust between them — and a tool timeout is indistinguishable, from here, from a preview that
+// never came up. Only the codex steerer used to carry this sentence; the preview couriers wait
+// just as long.
+const PREVIEW_PATIENCE = `Set your Bash tool's own timeout to its 600000 ms maximum for every command in this ` +
+  `list: bringing the preview up waits up to ~60 seconds for its healthcheck to answer, and a tool-level ` +
+  `timeout would cut that short and report a failure the preview did not have. `
 // The commands that bring the preview up in whatever tree ${prevWt} currently holds. `first` adds
 // the one-time setup step and forces a stop/start (a `refresh` command presumes a live process).
 const previewBringUp = (first) => {
@@ -473,7 +531,18 @@ const previewBringUp = (first) => {
   if (first && p.setup) cmds.push(p.setup)
   if (!first && p.refresh) cmds.push(p.refresh)
   else if (p.start) cmds.push(p.stop || previewStopCmd, previewStartCmd(p.start))
-  if (p.healthcheck) cmds.push(`for i in 1 2 3 4 5; do ${p.healthcheck} && break; sleep 3; done; ${p.healthcheck}`)
+  // ~60 s of patience (was 5×3 s = 15 s, which a dev stack that builds before it listens loses
+  // every time — 2026-09-02: three `preview-failed`, every explorer and design job owed). A stack
+  // slower than this window still has to carry its own wait inside `plan.preview.healthcheck`;
+  // this loop is the floor, not a substitute for one.
+  // The bound is WALL CLOCK, not iterations (2026-09-04). `20 × sleep 3` is 60 s only if the
+  // healthcheck itself is instantaneous: a `curl` with no `-m` against a port nothing is listening
+  // on can hang for its own connect timeout each pass, so 21 checks plus 60 s of sleeps ran past
+  // the courier's 120 s Bash-tool default and the whole bring-up came back as a tool timeout —
+  // a preview reported dead that was merely slow. `date +%s` makes the window mean what it says
+  // whatever the healthcheck costs; PREVIEW_PATIENCE tells the courier to give the call room.
+  if (p.healthcheck)
+    cmds.push(`S=$(date +%s); until ${p.healthcheck}; do [ $(( $(date +%s) - S )) -ge 60 ] && break; sleep 3; done; ${p.healthcheck}`)
   return cmds
 }
 const specOf = (u) => `${repo}/.roadmap/specs/${u.id}.md`
@@ -538,6 +607,22 @@ const LANE_BAR = 'The verification evidence carries `lanes`: every command the v
   'else. A check the spec names that `lanes` does not contain — or a narrower, faster or cheaper substitute for ' +
   'one — means this unit is UNVERIFIED whatever `pass` says: issue a revise directive naming the exact command ' +
   'to run, and do not approve on the strength of a lane that was never run. '
+// Host facts are never a verdict — carried by every tier that WRITES or ADJUDICATES spec text:
+// both plan-checks, both exit gates, the verifier brief, and the conductor's spec-writing tiers.
+// Arc-observed 2026-09-04: an Opus plan-check adjudicated an acceptance criterion as "no vitest,
+// playwright, test-ci or dev-stack process anywhere on the host" before verify may run. The
+// harness's own preview dev-stack is always live and `gateMaxConcurrent` lanes overlap by design,
+// so that clause is unsatisfiable BY CONSTRUCTION: the verifier reported blocked and the unit was
+// quarantined for a defect no unit had. A tier minted the defect, so the rule lives with the tiers.
+// The companion facts are already in the harness: load is recorded and never gated on (LOAD_FACTS,
+// `host load: recorded, never gated on` below), and the wave's own concurrency is what produces it.
+const HOST_BAR = 'Host facts are never a verdict and never a precondition. The orchestrator\'s own preview ' +
+  'dev-stack is always live, verification lanes for sibling units overlap by design, and the host\'s load ' +
+  '(loadavg1/cpuCount) is on the record precisely so a wall-clock claim can be judged against it. So never ' +
+  'require a quiet host, the absence of other processes (a dev server, a sibling unit\'s test lane, another ' +
+  'test runner), or a wall-clock ceiling as an acceptance clause or as a precondition for verification: a ' +
+  'spec or plan clause that does is unsatisfiable by construction, and it is a SPEC DEFECT for the ' +
+  'adjudicating tier to resolve through its verdict — never something the implementer or the verifier absorbs. '
 // The pinned scope envelope, stated to every code-writing agent (the Codex brief's Constraints
 // block; FIX_SCOPE is the fix-round counterpart). Scope is computed ONCE per unit before the
 // first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry
@@ -1467,10 +1552,15 @@ let consultsUsed = prior.consultsUsed ?? 0
 // unit dispatch this wave (ready() gates on it), in-flight units PARK (status pending +
 // parked:true, re-entering by adoption next wave) — never quarantine, never a verdict. The wave
 // state carries `halt.reason` so the conductor early-returns to the root, where the human acts.
-//   codex    — the per-wave probe found the CLI/auth gone, or a step observed a usage/rate limit.
+//   codex    — the per-wave probe found the CLI/auth gone OR its `codex exec … "reply pong"` smoke
+//              failed while login still said logged in (a dead backend under a live CLI), a step
+//              observed a usage/rate limit, or the mid-wave BREAKER saw the same HTTP status across
+//              two different units or roles back to back (`codexOutage`, below).
 //              Codex is the only implementer, so there is no lane to fall back to.
 //   env      — the host cannot support the work: pid-cgroup headroom gone, or a PID 1 that does
-//              not reap (the preflight below). Burning codex+gate rounds on it buys quarantines.
+//              not reap (the preflight below), or two units' verification tooling failing to run
+//              in one wave (`env-verify-blocked`, see envBlocked). Burning codex+gate rounds on
+//              any of them buys quarantines.
 //   platform — a REQUIRED agent result went missing after its salvage retry (runReq), i.e. the
 //              Claude platform itself is down or rate-limited. A model's death is a platform
 //              fact, never a unit verdict.
@@ -1482,6 +1572,14 @@ const halt = { codex: null, env: null, platform: null }
 // pointed at the cause rather than at a symptom.
 const HALT_ORDER = ['platform', 'env', 'codex']
 const haltReason = () => HALT_ORDER.map((k) => halt[k]).find(Boolean) ?? null
+// Units whose verification TOOLING could not run this wave (a verifier that RAN and reported
+// `blocked:true`). Wave-scoped, like every other brake here. ONE such unit is a fact about one
+// checkout — it blocks, keeps its commits, and is re-verified next wave. TWO DISTINCT units in one
+// wave is a fact about the HOST (a black-holed registry, a dead network, a missing global tool),
+// and no number of unit verdicts fixes a host: the wave halts on `env-verify-blocked` and parks.
+// Arc-observed 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a
+// black-holed registry POST, and the first unit to reach it was quarantined for the box.
+const verifyBlockedUnits = new Set()
 let inFlight = 0
 let mergeChain = Promise.resolve()
 let settleWaiters = []
@@ -1514,14 +1612,18 @@ const setStage = (id, stage) => {
 }
 // Per-unit round tally ({fix, opusGate, gate}) — makes runaway revision loops measurable
 // (the paid fixtures assert ceilings on these). Stamped on the running record like `stage`;
-// the terminal stores in start()/runWarmLane carry it onto the final record. No snapshot
+// the terminal store in start() carries it onto the final record. No snapshot
 // here — the next stage/status snapshot carries it, and a slightly-stale tally after a
 // crash is acceptable forensics.
+// `verifyBlocked` is tallied here too but is deliberately NOT one of the three seeded keys: it is
+// rare, it counts across waves (start() carries it), and seeding it would put a `verifyBlocked: 0`
+// on every unit record in every arc. Hence `?? 0` rather than a bare `++`, which is NaN on a key
+// the seed does not name.
 const bumpRound = (id, kind) => {
   const r = units.get(id)
   if (r?.status !== 'running') return
   const rounds = { fix: 0, opusGate: 0, gate: 0, ...(r.rounds ?? {}) }
-  rounds[kind]++
+  rounds[kind] = (rounds[kind] ?? 0) + 1
   units.set(id, { ...r, rounds })
 }
 const depsOf = (id) => plan.edges.filter((e) => e.to === id).map((e) => e.from)
@@ -1677,7 +1779,7 @@ async function previewAdvance(sha, label, first) {
   const attempt = async (sweep) => {
     const cmds = build(sweep)
     const r = await courierRun(prevWt, cmds, { model: 'haiku', phase: 'Preview', label: sweep ? `${label}#sweep` : label },
-      previewSweepRetry + LAUNCH)
+      previewSweepRetry + PREVIEW_PATIENCE + LAUNCH)
     return { ok: r.ok, sha: r.out(cmds.length - 1), detail: r.detail,
       detached: r.exit(sweep ? previewSweepCmds.length : 0) === 0 }
   }
@@ -1721,10 +1823,13 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
       return { status: 'merged', branch: `unit/${unit.id}`, mergedAt: g.branchSha, note: 'quarantine refused — git says merged' }
     }
   }
-  // The dossier is the redesign feed, so its content must survive any file-level mishap:
-  // the investigator RETURNS findings through the schema (landing in the wave state), and a
-  // separate writer agent renders the file from them — investigative agents flake on
-  // side-effects; a writer with nothing to do but write doesn't (observed across eval runs).
+  // The dossier is the redesign feed, so the investigator RETURNS findings through the schema and
+  // a separate writer agent renders the FILE from them — investigative agents flake on
+  // side-effects; a writer with nothing to do but write doesn't (observed across eval runs). The
+  // prose then stays in the file: the unit record carries `dossierPath`, never the text. It used
+  // to carry both, and a handful of ~5 KB dossiers took one arc's state.json to 145 KB — past the
+  // ~35 K characters a launch courier can copy, so the arc could not be relaunched at all
+  // (2026-09-03). Every reader of a dossier is a model with a filesystem; the file is the record.
   const dossierPath = `${repo}/.roadmap/quarantine/${unit.id}.md`
   const d = await run(
     `Unit ${unit.id} of a roadmap build is being quarantined (${reason}). Its spec is at ${specOf(unit)} and its ` +
@@ -1773,13 +1878,13 @@ async function quarantine(unit, reason, extra, { mergeReverted = false } = {}) {
   if (!dw?.ok) {
     degrade({ label: `dossier-write:${unit.id}`, model: 'codex', phase: 'Quarantine', kind: 'dossier-write-fallback',
       what: `codex did not write ${unit.id}'s quarantine dossier (${dw ? `reported ok:false — ${String(dw.detail ?? '').slice(0, 160)}` : 'no result'}) ` +
-        `— falling back to the Haiku writer once. A dossier must exist; the findings themselves ride home in the wave state regardless.` })
+        `— falling back to the Haiku writer once. A dossier must exist: ${dossierPath} is the only record of the findings, and the unit record carries just that path.` })
     await run(
       dossierTask,
       { model: 'haiku', effort: 'low', phase: 'Quarantine', label: `dossier-write:${unit.id}#fallback`, schema: S.ok },
     ).catch(() => null)
   }
-  return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossier }
+  return { status: 'quarantined', branch: `unit/${unit.id}`, reason, dossierPath }
 }
 
 // The report-write clause every BOUNDARY role's brief carries. Through 0.13.0 each of these three
@@ -2083,7 +2188,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
       `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
       `hunt contradictions within the spec, clauses that contradict ` +
       `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
-      `engineer's to absorb — resolve it now through your verdict. And judge the plan the way only frontier ` +
+      `engineer's to absorb — resolve it now through your verdict. ${HOST_BAR}And judge the plan the way only frontier ` +
       `eyes can — the implementer is an able, literal-minded builder who will execute exactly what is approved, ` +
       `so what you wave through is what the codebase becomes: overengineering and complexity that does not earn ` +
       `its keep, structure that makes the NEXT change harder, missed reuse or a simpler shape for the same ` +
@@ -2108,6 +2213,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
     `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
     `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
     `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
+    `${HOST_BAR}` +
     `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
     `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
     `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
@@ -2308,17 +2414,30 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // the absent-exit-code rule — is shared verbatim, which is the whole point of not forking it.
 const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin,
   sandbox = C.codexSandbox, gitTruth = true, resumeDir, reapDir, outSchema, reportInstr }) => {
+  // THE LAUNCH IS ASYNCHRONOUS, SO THE LAUNCH COMMAND WAITS FOR ITS OWN PIDFILE (2026-09-04).
+  // Every composed launch below ends in `' &`: the detached sh writes codex.pid as its first act,
+  // but "first act" is still a fork and an exec away, and the steerer's NEXT Bash call is a
+  // different shell. `tail --pid=$(cat codex.pid)`, `kill -0 $(cat codex.pid)` and step 3's
+  // "if codex.pid already exists" re-dispatch guard would each read an absent or empty file and
+  // manufacture the exact false death the pidfile mechanic exists to remove. So the wait rides
+  // INSIDE the same composed command, in code: up to 10 s for a non-empty pidfile, then the
+  // command returns whatever is true. `evals/codex-probe.sh` has always waited; the real launch
+  // path did not. No `;` before it — `&` already terminates the launch, and `& ; i=0` is a syntax
+  // error.
+  const pidWait = ` i=0; while [ ! -s ${dir}/codex.pid ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done`
   const launch = resumeDir
     ? `if [ -f ${resumeDir}/session-id ] && [ "$(cat ${resumeDir}/cwd)" = "${w}" ]; then use COMMAND R below; ` +
       `otherwise use COMMAND F below.\n` +
-      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} ` +
+      `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
+      `timeout -k 30 ${timeoutMin * 60} ` +
       `codex exec resume "$(cat ${resumeDir}/session-id)" ` +
       `-c sandbox_mode="${sandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
       `-c model_reasoning_effort=${effort} -c projects."${w}".trust_level="trusted" ` +
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
       `--output-schema ${dir}/schema.json -o ${dir}/last-message.txt --json - < ${dir}/brief.txt ` +
-      `> ${dir}/events.jsonl 2> ${dir}/stderr.log; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid\n` +
+      `> ${dir}/events.jsonl 2> ${dir}/stderr.log & CPID=$!; trap "kill -TERM $CPID; T=1" TERM; ` +
+      `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &${pidWait}\n` +
       `COMMAND F: `
     : `use this launch command:\n`
   // Resume-collision rule (arc-observed: one gate-fix resume died at once with "thread already
@@ -2345,8 +2464,36 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   // group kill reaps the loop too), writing the id the moment thread.started appears — durable even
   // if the steerer dies mid-run. The loop only writes on a match, never touches the file otherwise,
   // so a run with no thread.started leaves no file (`test -s` stays honest).
+  //
+  // THE PIDFILE IS WRITTEN BY THE DETACHED SHELL ITSELF, as its first act — never `echo $! >` after
+  // the `&`, at any of the three launch sites. 2026-09-02, reproduced directly rather than inferred:
+  // the steerer's Bash tool shell runs with job control ON, so a backgrounded `… &` job is ALREADY a
+  // process-group leader, `setsid` must therefore FORK, and `$!` names the short-lived parent —
+  // dead within a second (observed 3564161; the real detached sh was 3564163, ppid 1). Every
+  // liveness fact the harness has hangs off that pid, so all of them lied at once: `tail --pid`
+  // returned instantly and `kill -0` failed ("no exit-code file, pid dead" → 82 `codex-lifecycle`
+  // rows at exitCode -1), the reap's `kill -TERM -- -<pid>` hit nothing and its fallback
+  // manufactured every "exit 137", and each "reattempt" launched a SECOND codex into a worktree the
+  // first was still writing. Cost: 3 waves, ~13 h, 220 codex processes for 4 merges, 14/20 units
+  // quarantined on deaths that never happened — codex's own rollout logs show `task_complete`
+  // minutes after each steerer reported the process dead. `sh -c 'echo $$ > …; …'` records the
+  // shell that survives, and after setsid that `$$` is also the pgid the group kill targets.
+  //
+  // The `trap` + conditional second `wait` is the other half, and it is what makes a GENUINE reap
+  // work. `timeout` puts ITSELF in its own process group, so `kill -TERM -- -$(cat codex.pid)`
+  // reaches the detached sh and stops there — `timeout → codex` beneath it survived a group kill
+  // (verified with a stand-in sleep). Forwarding the signal from the sh is the fix that stays inside
+  // the closed command list (`pkill -s` would not). The second `wait` is gated on the trap's own
+  // flag `T`, never on `RC > 128`. Only a trap-INTERRUPTED wait leaves the child unreaped, and only
+  // there is re-waiting correct; a child killed outright (an OOM `SIGKILL`, or `timeout -k`
+  // escalating) is already reaped by the first wait and returns a true 137. `RC > 128` cannot tell
+  // those two states apart, so it re-waited a reaped pid — whose status is then whatever the shell
+  // happens to remember about a finished job (POSIX licenses 127 for a pid it no longer knows;
+  // dash here returns the remembered 137). The flag decides on what actually happened instead of
+  // guessing from a number two different things produce.
   const execCmd =
-    `${codexHome}setsid nohup sh -c 'timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
+    `${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
+    `timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
     `-c projects."${w}".trust_level="trusted" ` +
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
@@ -2357,7 +2504,8 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
     `L=$(grep -m1 -o "\\"thread_id\\":\\"[^\\"]*\\"" ${dir}/events.jsonl 2>/dev/null); ` +
     `if [ -n "$L" ]; then printf "%s" "$L" | cut -d\\" -f4 > ${dir}/session-id; fi; ` +
     `sleep 1; i=$((i+1)); done ) & ` +
-    `wait $CPID; echo $? > ${dir}/exit-code' & echo $! > ${dir}/codex.pid`
+    `trap "kill -TERM $CPID; T=1" TERM; ` +
+    `wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi; echo $RC > ${dir}/exit-code' &${pidWait}`
   // Reap preamble — only on a retry into a worktree a previous attempt owned. The retry branch is
   // reachable from a GENUINE death and from a false one alike, so the kill is unconditional: a
   // steerer that concluded "dead" while the process was alive once launched a second codex into the
@@ -2467,6 +2615,58 @@ const withGateSlot = (fn) => {
   p.then(release, release)   // releases a tick AFTER p settles; never delays p itself
   return p
 }
+// ---- the CODEX BACKEND breaker: the codex counterpart of haltPlatform() ----------------------
+// A provider's death is a fact about the PROVIDER, never a verdict on a unit. `haltPlatform`
+// (above) says exactly that for the Claude platform; this says it for Codex, and the design is
+// deliberately the same shape: one wave-level halt, dispatch stops, in-flight units PARK with
+// their commits intact, and the operator waits the outage out instead of reading N quarantines.
+//
+// 2026-09-03, from ~14:43 UTC: every codex run died with `turn.failed: unexpected status 404 Not
+// Found … chatgpt.com/backend-api/codex/responses` while `codex login status` still said "Logged
+// in". The wave ran to the end on a dead backend — 23 `codex-exec` rows, five units BLOCKED at
+// verify, one QUARANTINED as "the planner died twice", the whole boundary owed, and a tier-4
+// return with nothing to judge. The wave-start smoke (below) catches an outage that is already
+// underway; this catches one that STARTS mid-wave.
+//
+// It differs from `haltPlatform` in its SIGNAL only, and it can afford to: a codex failure
+// carries the one error line the steerer copies back, where an `agent()` null carries no error
+// object at all (which is why runReq's trigger is structural instead). So the trigger here is
+// text — but text plus REPETITION ACROSS DIFFERENT WORK, which is the part that makes it safe.
+// One unit's 404 could be that unit's bad luck; the same HTTP status on two different units or
+// roles back-to-back cannot be a unit defect, because no defect is shared by work that has
+// nothing in common but the provider.
+// Both halves are preconditions, and the second one is narrow ON PURPOSE. The bare `\b([45]\d\d)\b`
+// fallback this used to carry made any three-digit number in a failed turn's error line a provider
+// status — `turn.failed: took 503ms`, a line number, a byte count — and two of those across two
+// units would halt a healthy wave. A status is only a status where it stands next to the word that
+// makes it one, which is how every codex/OpenAI error line the arcs have shown actually reads:
+// `unexpected status 404 Not Found`, `HTTP 502`, `status code 503`.
+const outageStatus = (err) => {
+  const s = String(err ?? '')
+  if (!/turn\.failed/i.test(s)) return null
+  return /\b(?:status|HTTP|code)\b[\s:=]*([45]\d\d)\b/i.exec(s)?.[1] ?? null
+}
+// CONSECUTIVE is load-bearing in both directions: any codex result WITHOUT the signature clears
+// the run (an outage has to be happening now, not to have happened once an hour ago), and
+// distinctness is by `id` — a unit id, or a role's label — so a unit whose build and its retry
+// both 404 is still ONE unit's story and never trips this alone.
+const CODEX_OUTAGE_RUN = 2
+const codexOutage = { status: null, ids: [], tripped: false }
+// True once the wave has established that CODEX ITSELF is down: the wave-start smoke failed, or
+// the breaker tripped. Every codex-shaped dead end in the unit pipeline reads this and PARKS
+// instead of judging — see `outagePark` below.
+const codexOutaged = () => halt.codex === 'codex-unavailable' || codexOutage.tripped
+// The park a halted codex step earns, in the shape every other halted step already returns: back to
+// `pending` with `parked:true`, no dossier, no verdict, no retry. The unit re-enters by adoption
+// next wave with whatever commits are on its branch.
+// The note NAMES THE WINNING HALT REASON and says nothing more about it. A codex outage is only one
+// of the ways a unit arrives here — an env or platform halt observed while the unit sits at a codex
+// step lands on the same line — and the old fixed parenthetical ("codex provider outage") pointed
+// the operator at the wrong box for two of the three slots.
+const outagePark = (label) => ({ status: 'pending', parked: true,
+  note: `parked at ${label}: ${haltReason() ?? 'codex-unavailable'} — dispatch is halted, so nothing ` +
+    `about this unit was judged` })
+
 // Degradation + spend bookkeeping shared by every codex process — build, fix and role alike. A
 // dead process is not a dead unit (the branch is judged on its commits); every entry names the
 // artifact dir to read. `id` names whatever the run was about (a unit id, or a role's label); a
@@ -2501,6 +2701,33 @@ const noteCodexMeta = (id, r, dir, label, phase = 'Implement') => {
         ? `no exit-code file for ${id} (${dir}${m.error ? `; ${m.error}` : ''}) — the run was never observed ` +
           `to finish, so its exit status is unknown; the steering agent reported it dead after \`kill -0\` failed`
         : `codex exited ${m.exitCode} on ${id} (${dir}${m.error ? `; ${m.error}` : ''})`) + survived })
+  }
+  // The breaker, fed by every codex result there is — build, fix, verify, plan, boundary role.
+  // Roles are best-effort and their failures are never unit verdicts, but they COUNT: a dead
+  // backend kills an explorer exactly as readily as a build, and the census is about the provider.
+  const status = outageStatus(m.error)
+  if (!status) { codexOutage.status = null; codexOutage.ids = [] }
+  else {
+    if (codexOutage.status !== status) { codexOutage.status = status; codexOutage.ids = [] }
+    if (!codexOutage.ids.includes(id)) codexOutage.ids.push(id)
+    if (codexOutage.ids.length >= CODEX_OUTAGE_RUN && !codexOutage.tripped) {
+      codexOutage.tripped = true
+      // `??` and not `=`: a usage limit already recorded is the more specific truth and keeps the
+      // slot, exactly as `haltPlatform` refuses to overwrite an outage it already declared.
+      halt.codex = halt.codex ?? 'codex-unavailable'
+      // …and the ROW says whichever won, rather than always claiming `codex-unavailable`. The
+      // degradation ledger is what the operator reads to decide the human action, and "wait the
+      // outage out" and "wait the limit window out" are different actions.
+      const won = halt.codex
+      degrade({ label, model: 'codex', phase, kind: won,
+        what: `${codexOutage.ids.length} consecutive codex runs across different units or roles failed with HTTP ` +
+          `${status} (turn.failed) — a provider outage, not unit defects; dispatch halts on ${won}, units park, ` +
+          (won === 'codex-usage-limit'
+            ? `relaunch after the limit window — a usage limit was already observed this wave and is the more ` +
+              `specific truth, so it keeps the halt slot. `
+            : `relaunch after the outage. `) +
+          `Failing ids: ${codexOutage.ids.join(', ')}.` })
+    }
   }
   if (m.commits > 0 && r.notes?.includes('left uncommitted by codex'))
     degrade({ label, model: 'codex', phase, kind: 'codex-uncommitted',
@@ -2720,8 +2947,13 @@ async function runUnit(unit) {
   // Adoption intent — read from the ORIGINAL prior.units, not the live map (start() overwrote
   // the record with {status:'running'} before us). A unit that was 'running' in the last
   // checkpoint crashed mid-flight, so committed work on its branch is its own prior progress.
+  // `blocked` is in the list for the same reason `running` is: a unit blocked because its verify
+  // never ran, or because its verification TOOLING could not run, keeps every commit it made and
+  // re-enters dispatch next wave. Without adoption those commits read as un-adopted work beyond
+  // base and the unit would quarantine on 'has-commits' — the exact verdict blocking exists to
+  // avoid. (A dependency-blocked unit has no commits at all, so it takes the fresh path anyway.)
   const adopt = !!unit.existingBranch ||
-    ['running', 'merge-ready'].includes(prior.units?.[unit.id]?.status) ||
+    ['running', 'merge-ready', 'blocked'].includes(prior.units?.[unit.id]?.status) ||
     !!prior.units?.[unit.id]?.parked   // parked mid-pipeline (any halt): its commits are its own progress
 
   // H-7: implementer-reported deviation from a frozen surface. `mismatch` is consumable
@@ -2743,13 +2975,52 @@ async function runUnit(unit) {
   // the same incident (arc-observed: 22 `scope-growth` rows, ~15 real incidents). Superset-aware:
   // only a genuinely new file re-degrades.
   const scopeGrewSeen = new Set()
-  // A `blocked` verify is a verdict about the ENVIRONMENT, and the host's load is the fact that
-  // most often explains one. Record it beside the quarantine so the verdict is auditable.
+  // A `blocked` verify is a verdict about the ENVIRONMENT, never about the unit, and the host's
+  // load is the fact that most often explains one — recorded beside the outcome so it is auditable.
+  // Still deliberately distinct from `verifyUnrun` below: `blocked:true` is a verifier that RAN and
+  // found the tooling broken (a fact about this checkout), while a null verify is a dead codex role
+  // (a fact about CODEX). What they now share is the refusal to convert either into a unit verdict.
+  //
+  // The outcome is graduated, because tooling that cannot run is only this unit's problem if it is
+  // this unit's alone:
+  //   first blocked verify   -> BLOCKED. Commits intact, no dossier, no fix rounds; the wave-start
+  //                             loop re-opens a blocked unit whose blocker is gone, so it is
+  //                             re-dispatched and re-verified next wave and judged then.
+  //   blocked again          -> not transient for this unit: quarantine, with the reason it always
+  //                             had. `rounds.verifyBlocked` is the tally, carried across waves in
+  //                             start() precisely so this is countable.
+  //   two units, one wave    -> a HOST fact, not two unit defects: halt (`env-verify-blocked`), so
+  //                             nothing new dispatches and everything in flight parks.
+  // Arc-observed 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a
+  // black-holed registry POST and the FIRST unit to hit it was quarantined for the host's fault.
   const envBlocked = (label, v) => {
+    verifyBlockedUnits.add(unit.id)
+    // `!halt.env` both keeps an already-set env halt (the preflight's) and makes the row fire once.
+    if (verifyBlockedUnits.size >= 2 && !halt.env) {
+      halt.env = 'env-verify-blocked'
+      degrade({ label, model: 'haiku', phase: 'Verify', kind: 'env-verify-blocked',
+        what: `two units' verification tooling could not run in one wave (${[...verifyBlockedUnits].join(', ')})` +
+          `${loadNote(v)} — that is a host fact (a registry or network black hole, a missing global tool), not two ` +
+          `unit defects, so the wave halts and every unit parks with its commits. Operator: read the verifiers' ` +
+          `failure output, fix the host, relaunch` })
+    }
+    bumpRound(unit.id, 'verifyBlocked')
+    const blockedRounds = rec(unit.id)?.rounds?.verifyBlocked ?? 1
+    const first = String(v?.failures?.[0] ?? '').slice(0, 300)
+    const firstNote = first ? ` First failure: ${first}` : ''
+    // A halt is never a verdict, so a wave halted by the shared case above blocks this unit too,
+    // whatever its own tally says — the operator fixes the host, and the unit is judged next wave.
+    if (blockedRounds >= 2 && !haltReason()) {
+      degrade({ label, model: 'haiku', phase: 'Verify', kind: 'verify-blocked',
+        what: `verification tooling could not run for ${unit.id} on ${blockedRounds} separate waves${loadNote(v)} — ` +
+          `quarantined as an environment failure, not a unit defect; fix provisioning, not the spec.${firstNote}` })
+      return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', v)
+    }
     degrade({ label, model: 'haiku', phase: 'Verify', kind: 'verify-blocked',
-      what: `verification tooling could not run for ${unit.id}${loadNote(v)} — quarantined as an environment ` +
-        `failure, not a unit defect; fix provisioning, not the spec` })
-    return quarantine(unit, 'environment/tooling blocked verification — fix provisioning, not the spec', v)
+      what: `verification tooling could not run for ${unit.id}${loadNote(v)} — the unit is BLOCKED, not ` +
+        `quarantined: nothing about it was judged, its commits are intact, and it is re-verified next wave. ` +
+        `Fix provisioning, not the spec.${firstNote}` })
+    return { status: 'blocked', branch: `unit/${unit.id}`, note: `verification tooling could not run (${label})` }
   }
   // A lost report is a hole in the evidence, not just a hiccup: the unit's `debt` entries and any
   // `contractMismatch` trigger went down with it, so the cheap Opus gate would be adjudicating a
@@ -2953,6 +3224,15 @@ async function runUnit(unit) {
   // unit does not get built, and the dossier says infrastructure rather than blaming the spec.
   // Never a platform halt: a dead codex role is CODEX's failure (the adapter has already ledgered
   // it) and the rest of the wave's Claude pipeline is unaffected.
+  // …unless CODEX ITSELF is down, in which case "the planner died twice" is the outage saying so
+  // twice and not a fact about this unit at all. 2026-09-03: a 404'd backend quarantined a unit on
+  // exactly this line. Park instead — no dossier, no verdict, re-entry by adoption next wave.
+  // ANY halt, not only the codex one (2026-09-04): `codexRole` returns null the moment `haltReason()`
+  // is set — it never launches the run — so an env or platform halt declared while this unit sat at
+  // its plan role produces exactly the same empty-handed return, and testing `codexOutaged()` alone
+  // quarantined the unit as "the planner died twice" and spent a dossier on a halted wave. A halt is
+  // never a verdict, whichever slot it filled.
+  if (!implPlan && (codexOutaged() || haltReason())) return outagePark(`plan:${unit.id}`)
   if (!implPlan)
     return quarantine(unit, 'no implementation plan was produced (the codex planner died twice) — ' +
       'infrastructure, not the spec; relaunch to retry', { role: `plan:${unit.id}` })
@@ -3007,7 +3287,10 @@ async function runUnit(unit) {
         { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
           phase: 'Implement', label: `replan:${unit.id}` })
       // The architect redirected and the revision never came back. Building the plan the architect
-      // just rejected is the one thing that must not happen here.
+      // just rejected is the one thing that must not happen here. Same guard as the plan site above,
+      // and for the same reason: any halt makes `codexRole` return null without launching anything,
+      // so a halted revision is a halt, never "the planner died twice".
+      if (!implPlan && (codexOutaged() || haltReason())) return outagePark(`replan:${unit.id}`)
       if (!implPlan)
         return quarantine(unit, 'the architect redirected the plan and the revision never came back (the codex ' +
           'planner died twice) — infrastructure, not the plan; relaunch to retry', check)
@@ -3023,6 +3306,14 @@ async function runUnit(unit) {
   // Dispatch halted (a codex probe failure, a usage limit, a sick host, a dead platform): PARK,
   // don't judge. The unit re-enters by adoption next wave with whatever commits exist.
   if (impl.parked) return { status: 'pending', parked: true, note: `parked before implement: ${haltReason()}` }
+  // The build RAN and the backend was dead under it — either this unit's own run carries the
+  // outage signature, or a sibling's did and tripped the breaker while this one was in flight
+  // (in which case `worthRetry`'s `!haltReason()` has already skipped its retry, so what came
+  // back is a single dead run). Park on the same terms as the entry-time halt above: the commit
+  // probe below decides between "judge the branch" and "nothing was built", and neither of those
+  // is an answerable question while the provider is down.
+  if (codexOutaged() && (impl.reportLost || outageStatus(impl.codex?.error)))
+    return outagePark(`implement:${unit.id}`)
   // The report died. Ask the branch whether the WORK died with it: commits present means the
   // implementer finished and only its report was lost, so the diff must be judged on its merits by
   // the normal verify -> review -> gate path. No commits means nothing was built, and quarantine is
@@ -3103,7 +3394,11 @@ async function runUnit(unit) {
     `verbatim error output, never paraphrased, and \`failingSpecs\` = the repo-relative path of every test ` +
     `FILE that has a failure, one entry per file. ${LOAD_FACTS}If the tooling itself cannot run (missing ` +
     `dependency, broken command, environment failure) — as opposed to an assertion failing — report ` +
-    `blocked:true and stop.`
+    `blocked:true and stop.\n\n` +
+    `# HOST\n${HOST_BAR}If the spec makes one of those a check you are supposed to run, that clause is the ` +
+    `defect: report it as a FAILING check, quoting the clause verbatim in \`failures\`, and carry on with the ` +
+    `rest. Never report blocked:true over it — \`blocked\` is for tooling that could not run, and a spec ` +
+    `nobody can satisfy is a result to report, not an environment failure.`
   // Still inside withGateSlot: a codex verify spends the box's cores exactly as a Haiku one did, and
   // gateMaxConcurrent bounds the HOST, not the driver. It nests OUTSIDE the adapter's own codex
   // semaphore and cannot deadlock — nothing holding a codex slot ever waits on a gate slot. Its
@@ -3469,7 +3764,7 @@ async function runUnit(unit) {
         `exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then ${firstGateRead}` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
@@ -3572,7 +3867,7 @@ async function runUnit(unit) {
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
-      `${JSON.stringify(verify)}. ${LANE_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
+      `${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
@@ -3776,7 +4071,13 @@ async function mergeUnit(unit) {
 function start(unit) {
   inFlight++
   dispatched.add(unit.id)
-  units.set(unit.id, { status: 'running' })
+  // `rounds.verifyBlocked` is the ONE tally that counts across waves — the second blocked verify
+  // for a unit is what quarantines it — so it is carried onto the fresh running record. Read from
+  // `prior`, this wave's immutable input, because the wave-start re-open loop rewrites a blocked
+  // record to a bare `{status:'pending'}`. The per-wave tallies (fix/opusGate/gate) deliberately do
+  // NOT carry: they measure one wave's revision loops and the fixtures assert ceilings on them.
+  const blockedRounds = prior.units?.[unit.id]?.rounds?.verifyBlocked
+  units.set(unit.id, { status: 'running', ...(blockedRounds ? { rounds: { verifyBlocked: blockedRounds } } : {}) })
   snapshot()   // a 'running' record is what a crash-residue recovery adopts
   ;(async () => {
     let result = await runUnit(unit)
@@ -3866,6 +4167,14 @@ const planCycle = (units, edges) => {
     if (u.closes !== undefined && (!Array.isArray(u.closes) ||
         u.closes.some((n) => !Number.isInteger(n) || n <= 0)))
       throw new Error(`unit ${u.id}: \`closes\` must be an array of positive integer issue numbers — fix the plan`)
+  // The preview's start string is wrapped in `sh -c '…'` by previewStartCmd, so a single quote in
+  // it would close that quote and hand the rest of the string to the courier's shell as commands.
+  // Refuse at load, naming the field: an unquotable start is a plan-pack defect with a one-line fix
+  // (a script entry, or double quotes), not something to paper over with escaping at compose time.
+  if (typeof plan.preview?.start === 'string' && plan.preview.start.includes("'"))
+    throw new Error(`plan.preview.start contains a single quote — it is run as \`sh -c '<start>'\` (which is why ` +
+      `\`VAR=value cmd\` and \`&&\` chains work there) and a single quote cannot survive that wrapping. ` +
+      `Use double quotes, or move the command into a package script: ${plan.preview.start}`)
   for (const u of plan.units)
     if (u.existingBranch && u.existingBranch === `unit/${u.id}`)
       throw new Error(`unit ${u.id}: existingBranch is the unit's own branch unit/${u.id} — setup could delete ` +
@@ -3994,29 +4303,70 @@ if (C.envPreflight !== 'off') {
 // human act — the harness never attempts it.
 {
   const waveN = (prior.wave ?? 0) + 1
-  // Two commands, and the PASS CONDITION IS DECIDED HERE, not by the agent. Asked to judge
+  // THREE commands, and the PASS CONDITION IS DECIDED HERE, not by the agent. Asked to judge
   // "is it logged in", Haiku saw `Logged in using ChatGPT`, invented a requirement that the
   // credential be Anthropic's, returned ok:false, and halted a wave whose auth had just driven
   // 111 codex runs (2026-08-26). The courier reports exit codes and verbatim output; the pass test
   // below is the script's. Any credential provider passes — that judgement is not delegated.
-  const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`]
+  //
+  // The third command is the SMOKE, and it exists because the first two answer a question that
+  // was not the one being asked. 2026-09-03: the ChatGPT Codex backend 404'd
+  // (`turn.failed: unexpected status 404 Not Found … chatgpt.com/backend-api/codex/responses`)
+  // while `codex --version` printed a version and `codex login status` still said "Logged in" —
+  // the credential was valid, the SERVICE was gone. The probe passed, the wave ran, and it cost
+  // 23 `codex-exec` rows, five BLOCKED units, one quarantine and a whole owed boundary. A binary
+  // that exists and a token that parses are not availability; the only thing that proves Codex
+  // can do work is Codex doing a trivial piece of work, so the probe asks it for one word.
+  // Bounded (`timeout 120`, `low` effort, a one-word answer) and read-only by intent — the
+  // sandbox flag is composed the way the harness composes it EVERYWHERE (`config.codexSandbox`
+  // overriding the role's stated intent), because `-s read-only` needs the bwrap user namespace
+  // this devcontainer cannot build and would EPERM on a healthy box: a probe that halts every
+  // wave on a working host is worse than the outage it was written for. Which is also why `-C`
+  // points at the probe's own scratch directory, never the operator's checkout: with the sandbox
+  // wide open, the one place a one-word prompt can do no harm is an empty directory of its own.
+  const smokeDir = `${wtRoot}/__codex/roles/probe-w${waveN}`
+  const smoke =
+    `${codexHome}timeout 120 codex exec -C ${smokeDir} -s ${C.codexSandbox ?? 'read-only'} ` +
+    `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
+    `-c projects."${smokeDir}".trust_level="trusted" ` +
+    `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
+    `-o ${smokeDir}/last-message.txt 'Reply with exactly the word pong'`
+  const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`,
+    `mkdir -p ${smokeDir} && ${smoke}`]
   const cp = await courierRun(repo, cmds,
     { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}` },
     `This is a read-only availability probe. Report what the commands print and judge none of it — which ` +
     `credential provider is in use (ChatGPT plan, API key, device auth) is not yours to assess and not a ` +
-    `failure of any kind. Change nothing. ` + LAUNCH)
+    `failure of any kind. The third command asks Codex itself for one word; whether it answers with that ` +
+    `word is not yours to assess either — report its exit code and its output, nothing more. ` +
+    `Change nothing. ` + LAUNCH)
   // Mechanical, and deliberately spelled out: `codex login status` prints "Not logged in" when it
   // is not, and a bare /logged in/i test matches that substring.
   const status = cp.out(1)
   const loggedIn = /logged in/i.test(status) && !/not\s+logged\s+in/i.test(status)
-  if (!(cp.exit(0) === 0 && loggedIn)) {
+  // The smoke's pass test is THE SCRIPT'S, and it is the exit code — never a reading of the text.
+  // "Did it say pong?" is a judgment, and a judgment is what a courier must never be handed; a
+  // backend that 404s cannot produce a zero exit, which is the whole signal.
+  const smokeOk = cp.exit(2) === 0
+  // The BACKEND is what failed only when the CLI and the credential both passed first — a courier
+  // that stopped at command 1 reported nothing about the smoke, and reading its missing exit code
+  // as an outage would send the operator to wait out a provider that is perfectly healthy.
+  const backendDown = cp.exit(0) === 0 && loggedIn && !smokeOk
+  if (!(cp.exit(0) === 0 && loggedIn && smokeOk)) {
     halt.codex = 'codex-unavailable'
+    // Three distinct whys, in the order they are established, because they call for DIFFERENT
+    // operator actions: install, re-login, or wait. Collapsing the third into the second is what
+    // would send a human to `codex login` during a provider outage that no login can fix.
     const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
-      : `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
+      : !loggedIn ? `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
+      : `backend/exec smoke failed — \`codex exec … "reply pong"\` exited ` +
+        `${cp.exit(2) ?? 'nothing (no report)'}: …${cp.out(2).slice(-300) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
       what: `codex CLI unavailable (${why}) — wave halted before dispatch; the wave state returns ` +
-        `intact and is resumable. Operator: codex login (or codex login --device-auth headless), ` +
-        `then relaunch the arc.` })
+        `intact and is resumable. Operator: ` + (backendDown
+          ? `the CLI and the credential are both fine and re-logging in will not help — this is the ` +
+            `Codex BACKEND. Wait out the outage, then relaunch the arc.`
+          : `codex login (or codex login --device-auth headless), then relaunch the arc.`) })
   }
 }
 

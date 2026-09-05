@@ -101,17 +101,27 @@ brake is a tier-2 guarantee and is unaffected.
 
 **Codex preflight (REQUIRED — refuse to dispatch without it).** The implementer for every unit
 is the `codex` CLI, launched by cheap steering agents inside unit worktrees; there is no Claude
-implementation lane. Probe once: `command -v codex && codex --version && codex login status`
-(prefix `CODEX_HOME=<home>` if the environment uses a non-default home — check `$CODEX_HOME`).
-Logged in → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
+implementation lane. Probe once: `command -v codex && codex --version && codex login status`,
+then — because a valid credential proves nothing about the SERVICE (2026-09-03: the ChatGPT Codex
+backend 404'd every run while `login status` still said "Logged in") — one real bounded run:
+`timeout 120 codex exec --skip-git-repo-check 'Reply with exactly the word pong'`. The pass test
+is its **exit code**, not its wording. (Prefix `CODEX_HOME=<home>` on all of them if the
+environment uses a non-default home — check `$CODEX_HOME`.)
+All three green → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
-`codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Auth is
-a human act — never attempt the login yourself. Mid-arc, the harness re-probes each wave and
+`codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Smoke
+non-zero with the first two green → **stop before dispatch** too, but say the opposite thing: the
+CLI and the credential are fine, the Codex backend is down, and no login will help — wait it out.
+Auth is a human act — never attempt the login yourself. Mid-arc, the harness re-probes (all three
+commands) each wave, and a backend that dies mid-wave trips a breaker on ≥2 consecutive codex
+failures across different units or roles with the same HTTP status; either way it
 early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
-resumable pauses (re-auth or wait for the limit window, then relaunch), never failures to
-route around by re-implementing with Claude. The same shape covers the host and the platform:
-`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight) and `platform-outage`
-(required agent results stopped arriving) park the wave the same way — see `state.halt`.
+resumable pauses (re-auth, or wait for the limit window or the outage, then relaunch), never
+failures to route around by re-implementing with Claude. The same shape covers the host and the platform:
+`env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight), `env-verify-blocked`
+(two units' verification tooling could not run in one wave — a host fact, not two unit defects)
+and `platform-outage` (required agent results stopped arriving) park the wave the same way — see
+`state.halt`.
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -229,7 +239,11 @@ Read their outputs, then decide:
   working and switching branches while the arc runs. Each wave's explorer then hunts what tests and
   diffs can't show. **Declare `preview.ports`** (the ports the preview actually listens on) whenever
   you know them: they are the only listeners the harness's one-shot port sweep may kill, and an
-  undeclared port is a port the sweep will leave alone rather than guess at. While provisioning: have Haiku
+  undeclared port is a port the sweep will leave alone rather than guess at. `preview.start` is run as
+  `sh -c '<start>'` inside a detached shell, so `VAR=value cmd` and `&&` chains are fine and a **single
+  quote is not** (it throws at plan load — use double quotes or a package script); never prefix it with
+  `nohup`/`setsid` yourself. `preview.healthcheck` is retried for ~60 s; a stack that builds before it
+  listens and needs longer must carry its own patient loop inside that command. While provisioning: have Haiku
   create `.roadmap/feedback/{explorer,user,triaged}/` and write `feedback/user/TEMPLATE.md` — a
   light pro forma (*What I did — steps/command/URL · What I observed · What I expected · How much
   it matters — blocker/major/minor/idea · Where — area/page/unit*) — committed with the plan pack.
@@ -317,7 +331,10 @@ open a small **PR the user merges** — planning continues meanwhile; the templa
 the first wave boundary. That PR is the only pre-session-end touch of `main`, and only the user's merge
 moves it (invariant 5 intact).
 
-Persist everything under `.roadmap/` (shapes in `reference.md`), then **stop and talk to the
+Persist everything under `.roadmap/` (shapes in `reference.md`). Write `plan.json` and `state.json`
+however your serializer likes — every JSON escape survives the launch read intact — but keep both
+**small**: prose belongs in a file under `.roadmap/` that the document references by absolute path,
+because one courier has to copy each of them at every launch and resume. Then **stop and talk to the
 user**: present the decomposition, contracts, cut-line interpretation, and your questions —
 batched, once. Discipline the questions: only ask what you couldn't resolve yourself, rank by
 impact × uncertainty, cap around five, and attach your recommended answer to each so the user can
@@ -386,13 +403,32 @@ the same run is a no-op, so persisting twice is safe.
 
 Read its last line:
 
-- **`OK …`** (exit 0) — everything landed; the files named on that line are current.
+- **`OK …`** (exit 0) — everything landed; the files named on that line are current. A trailing
+  `removed=state.partial.json` means an earlier refusal's parked prefix was stale once this whole
+  state landed, and was deleted.
 - **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
   call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
   recovery ladder below, then persist again.
+- **`PARTIAL-REFUSED stoppedAt=<label> why=<divergence|newer-on-disk>`** (exit 2) — the partial
+  would have REGRESSED `state.json`, so it was parked in `state.partial.json` and `state.json` was
+  left untouched. `why=divergence` means the miss was `(out of journal order)`: **the replay
+  diverged, the run did not fail** — the run's own returned state is further along than anything
+  replayable. `why=newer-on-disk` means `state.json` already holds a later wave, or the same wave
+  written whole. Either way, persist the value the run **returned** (it is in the task output) —
+
+  ```
+  node <this skill's directory>/persist.mjs --returned <that value, as a .json file> \
+       --args '<the exact envelope you launched with>'
+  ```
+
+  which skips the replay and writes every document from that value (`--run`/`--script` are not
+  needed; `--args` still is). *Then* investigate the divergence — a script edited since the journal
+  was written is the usual cause. Never relaunch from `state.partial.json`, and never hand-edit
+  `state.json` in its place: the ledger appends, debt sections and log entries only land if the
+  persister writes them.
 - **`PLAN-CONFLICT unknownUnits=…`** — `.roadmap/plan.json` holds unit ids this run never saw (a
   root edit between launches, a hand-merged respec). The file was left exactly as it was; merge the
-  two plans by hand before relaunching.
+  two plans by hand before relaunching. (This fires on the `--returned` path too.)
 - **exit 1** — nothing was written and the reason is on stderr. The most common is a partial with no
   snapshot at all (the run died before its first status change): relaunch and persist again.
 
@@ -438,6 +474,9 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
 - **`arc-complete`** — the boundary yielded no further work; the arc is at its cut line. Go to
   **Session end**. The final wave's boundary evidence rode back untriaged, deliberately. Any `stuck`
   ids are in-scope units wedged behind an unresolved quarantine — adjudicate them before closing.
+  `arcSummary` is the tally to report from: `{merged, quarantined, blocked, deferred,
+  pendingFeedback, wavesRun}` — read `blocked` as well as `quarantined`, since a unit whose tooling
+  never came back is neither built nor failed and appears in no other bucket.
 - **`arc-stalled`** — a tier called the arc done while in-scope, dispatchable units remained
   (`outstanding`). The tier was wrong, not the plan: confirm the units are still wanted and
   relaunch. Arc-observed — this fired twice before the census existed, caught only by hand.
@@ -462,12 +501,27 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   terminal API error). Nothing was admitted or dropped. Triage this boundary by hand, as for
   `boundary-degraded`, then relaunch.
 - **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`,
-  `env-no-reaper`, `platform-outage`) — the wave stopped dispatching and handed you a
+  `env-no-reaper`, `env-verify-blocked`, `platform-outage`) — the wave stopped dispatching and
+  handed you a
   **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
   commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
-  wait out a usage-limit or platform-outage window, or fix the box (a full pid cgroup and a
-  ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1). Do the action, then
-  relaunch; never route around a halt by re-implementing the work another way.
+  wait out a usage-limit, platform-outage or Codex-backend-outage window, or fix the box (a full
+  pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1;
+  `env-verify-blocked` means the verifiers' own tooling could not run at all — read their failure
+  output in the `verify-blocked` degradations, then fix the registry, network or missing global tool).
+  `codex-unavailable` covers two of those, so read the degradation's `what` before acting: a failed
+  `--version`/`login status` is a re-login, while a failed exec smoke or a tripped backend breaker
+  (≥2 consecutive `turn.failed` runs on different units or roles, same HTTP status) is the provider —
+  no login helps, wait. Do the action, then relaunch; never route around a halt by re-implementing
+  the work another way. `env-verify-blocked` is the **top rung of a three-rung ladder**, and the
+  lower two need no wake at all: the FIRST verify a unit's tooling blocks (or a verify role that
+  never ran, `verify-unrun`) leaves that unit **`blocked`** — commits intact, no dossier, nothing
+  judged about the work — and the next wave's start loop re-opens and re-verifies it; a SECOND
+  block on a later wave quarantines it with an *environment* dossier; two DISTINCT units blocked in
+  one wave is the host fact that halts here. So `blocked` in a returned state is an ordinary,
+  self-healing outcome rather than something to adjudicate — the conductor's `arcSummary` gives it a
+  bucket of its own beside `merged`/`quarantined`/`deferred`, and a unit still sitting there when
+  the arc closes is one whose environment never got fixed.
 - **`root-triage`** — you set `boundaryTriage: 'root'`, so every boundary returns to you.
 
 **Nothing to replan?** Just relaunch the conductor. Keep your own turns terse — on a relaunch wake
@@ -555,7 +609,10 @@ is wrong across sessions; the journal does not survive the host process).
 **Run `persist.mjs` first, always** (the command above, with the same `--run` directory and the same
 envelope). A crashed run leaves no state on disk by itself; the persister is what turns whatever the
 journal holds into a `state.json`, marked `partial: {stoppedAt: <label>}` when the replay could not
-reach the end. That file is what rung 3 relaunches from. Then work the ladder in order:
+reach the end. That file is what rung 3 relaunches from. If it answers `PARTIAL-REFUSED` instead,
+the replay diverged or disk is already ahead — re-run it with `--returned <the run's return value>`
+(above) before you touch the ladder, so rung 3 relaunches from the run's real state. Then work the
+ladder in order:
 
 1. **Same session, run still alive** — nothing to do; it will notify you when the run finishes.
 2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in `state.json`'s
@@ -588,8 +645,14 @@ reach the end. That file is what rung 3 relaunches from. Then work the ladder in
 
    A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
    copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
-   dispatch a wave from a document nobody could vouch for. Check the file parses and that
-   `roadmapDir` is right, then relaunch.
+   dispatch a wave from a document nobody could vouch for. The throw names the file, its byte count
+   and how much arrived. **JSON escapes are not the cause** — the read command rewrites every
+   backslash to `@bs@` before the copy and the script reverses it, so `\"`, `\\` and `\uXXXX`
+   travel intact. The three real causes, in order of likelihood: the file is **too big** (a copy
+   that stops far short of the byte count — get `state.json` back under ~35 KB by moving prose into
+   files and referencing them by path); `roadmapDir` is wrong or the file does not parse; or the
+   document genuinely contains the literal text `@bs@`, which the reversal would corrupt and
+   the `cksum` therefore rejects — remove it. Fix, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately
@@ -611,7 +674,8 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    boundary jobs never ran: discharge each (run the job yourself against the final tip) or waive
    it explicitly in the architect log — an owed job silently dropped at close-out is exactly the
    skipped-reconcile failure the marker exists to prevent.
-2. **Report** plainly: merged / quarantined (with dossier pointers) / deferred beyond the cut
+2. **Report** plainly: merged / quarantined (with dossier pointers) / blocked (the `arcSummary`
+   bucket: verified-tooling failures whose environment was never fixed) / deferred beyond the cut
    line; feedback actioned / dismissed / pending (pending goes into next-session notes); the debt
    ledger's state; **where the run's attention actually went** — Claude spend broken out by tier
    (`spend.fable`/`opus`/`sonnet`/`haiku`) beside `spend.codex` and `spend.codexRuns`, so the

@@ -3,7 +3,8 @@
 // contract:
 //   makeAgent(rules, baseSha?) -> { fn, calls }
 //   makeWorkflow(handler)      -> { fn, calls }
-//   packRules(plan, state)     -> rules satisfying the launch pack read
+//   packRules(plan, state, serialize?) -> rules satisfying the launch pack read
+//   packTransform(cmd, text)   -> the read command's own backslash->sentinel sed, run for real
 //   BASE_SHA, INT_SHA
 //   assertAllModelsPinned(calls), assertSchemasPresent(calls), conformsToSchema(result, schema)
 //   structuredOutputError()
@@ -53,18 +54,23 @@ const courierStdout = (cmd, head, branch) =>
             // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
             : /rev-list --count/.test(cmd) ? '1'
               : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
-                : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
-                  : /pids\.current/.test(cmd) ? '412\n36792'
-                    : /grep -c '\^Z'/.test(cmd) ? '0'
-                      : /^ps -p 1\b/.test(cmd) ? 'sh'
-                        : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
-                          : /^nproc$/.test(cmd) ? '16'
-                            // move-feedback: each archive command is self-contained and always
-                            // exits 0, printing MOVED / ABSENT / FAILED. The default is a file
-                            // that was there and moved; a test wanting the other outcomes says so
-                            // with courierSaying, and courierResult keeps the fake archive in step.
-                            : /^test -e '[^']+' \|\| \{ echo ABSENT/.test(cmd) ? 'MOVED'
-                              : ''
+                // The wave-start BACKEND SMOKE (`codex exec … "reply pong"`). A healthy provider
+                // answers; the test that matters is the exit code, which courierResult defaults
+                // to 0 — a test wanting the 2026-09-03 outage overrides this one command.
+                : /codex exec\b/.test(cmd) ? 'pong'
+                  : /codex --version/.test(cmd) ? 'codex-cli 0.52.0'
+                    : /pids\.current/.test(cmd) ? '412\n36792'
+                      : /grep -c '\^Z'/.test(cmd) ? '0'
+                        : /^ps -p 1\b/.test(cmd) ? 'sh'
+                          : /proc\/loadavg/.test(cmd) ? '1.20 1.05 0.98 3/512 12345'
+                            : /^nproc$/.test(cmd) ? '16'
+                              // move-feedback: each archive command is self-contained and always
+                              // exits 0, printing MOVED / ABSENT / FAILED. The default is a file
+                              // that was there and moved; a test wanting the other outcomes says
+                              // so with courierSaying, and courierResult keeps the fake archive
+                              // in step.
+                              : /^test -e '[^']+' \|\| \{ echo ABSENT/.test(cmd) ? 'MOVED'
+                                : ''
 // Every numbered command the script composes, with its `cd '<where>' && ( … )` guard STRIPPED back
 // off — the guard is the script's, the inner command is what a test (and the fake's own stdout
 // table) is about. A line that does not carry the guard is a defect the tests want to see, so the
@@ -128,18 +134,37 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   }) }
 }
 
+// The BACKSLASH-FREE TRANSPORT the pack read composes: each content command is
+// `sed -n '<a>,<b>p' <file> | sed '<script>'`, where the second script swaps every backslash for a
+// sentinel that needs no escaping in the courier's JSON report. The fake runs that second script
+// through the REAL `sed`, lifted verbatim out of the command the script composed — so every sim
+// proves the composed one-liner does what the harness assumes, exactly the way sysCksum
+// cross-validates the in-script cksumOf. A content command with no such pipe is replayed untouched
+// (the fake never assumes the transform is there; a script that dropped it fails its own cksum).
+export const packTransform = (cmd, text) => {
+  const m = /\| sed '([^']*)'\s*$/.exec(cmd)
+  if (!m) return text
+  return execSync(`sed '${m[1]}'`, { input: text, encoding: 'utf8' })
+}
+
 // The LAUNCH PACK read — the scripts' first act on a root launch. Given the plan and state a test
 // wants the script to see, this returns the rule that satisfies every `pack-read:<file>` courier.
-// The `cksum` line comes from the REAL coreutils tool over exactly the bytes the fake echoes back,
-// so the verification the script performs at launch runs for real in every sim: a script that
-// stopped checking, or checked the wrong candidate, fails here rather than silently accepting a
-// mis-transcribed plan. The on-disk file is modelled as `JSON.stringify(...) + "\n"` — the trailing
-// newline every writer leaves, and the one the script's two-candidate check exists for.
-export function packRules(plan, state) {
+// The `cksum` line comes from the REAL coreutils tool over exactly the bytes ON DISK — never over
+// the transformed text the courier carries — so the verification the script performs at launch runs
+// for real in every sim: a script that stopped checking, checked the wrong candidate, or forgot to
+// reverse the sentinel fails here rather than silently accepting a mis-transcribed plan. The
+// on-disk file is modelled as `JSON.stringify(...) + "\n"` — the trailing newline every writer
+// leaves, and the one the script's two-candidate check exists for. `serialize` lets a test model a
+// writer whose output is not what JSON.stringify would have produced (an `ensure_ascii` serializer
+// emitting `\uXXXX` escapes, say) without changing the document the script must end up parsing.
+export function packRules(plan, state, serialize = (doc) => `${JSON.stringify(doc, null, 2)}\n`) {
   const docs = {
-    'plan.json': `${JSON.stringify(plan, null, 2)}\n`,
-    'state.json': `${JSON.stringify(state, null, 2)}\n`,
+    'plan.json': serialize(plan, 'plan.json'),
+    'state.json': serialize(state, 'state.json'),
   }
+  for (const [name, text] of Object.entries(docs))
+    assert.deepEqual(JSON.parse(text), JSON.parse(JSON.stringify(name === 'plan.json' ? plan : state)),
+      `fakes.packRules: the canned ${name} must still parse back to the document the test passed`)
   return [{
     match: /^pack-read:/,
     result: (prompt, opts) => {
@@ -151,11 +176,15 @@ export function packRules(plan, state) {
         if (/^cksum </.test(cmd)) return sysCksum(file)
         if (/^wc -c </.test(cmd)) return String(Buffer.byteLength(file))
         if (/^wc -l </.test(cmd)) return String(lines.length)
+        // The backslash census the script budgets its retry on: the transformed text the courier
+        // carries is longer than the file by one marker-length-minus-one per backslash, so a
+        // fake that answered 0 here would hide the very overflow this command exists to size.
+        if (/^tr -cd /.test(cmd)) return String((file.match(/\\/g) ?? []).length)
         const m = /^sed -n '(\d+),(\d+|\$)p'/.exec(cmd)
         if (!m) return ''
         const a = Number(m[1])
         const b = m[2] === '$' ? lines.length : Number(m[2])
-        return `${lines.slice(a - 1, b).join('\n')}\n`
+        return packTransform(cmd, `${lines.slice(a - 1, b).join('\n')}\n`)
       })
     },
   }]

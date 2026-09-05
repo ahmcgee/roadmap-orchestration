@@ -10,7 +10,7 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_EXTRA + cdGuard +
+//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_BS + PACK_EXTRA + cdGuard +
 //                      courierPrompt/courierSchema/courierShape +
 //                      readPackFile + readPack — byte-identical value and byte-identical source.
 //                      This is the LAUNCH PACK read: both scripts open by having a Haiku courier
@@ -28,6 +28,10 @@
 //                      (`plan-cycle`); the harness throws on one that reached it anyway. If the two
 //                      disagree about what a cycle is, the conductor dispatches a plan the harness
 //                      then kills the whole run on (wf_c6971376-1a5).
+//   (f) HOST_BAR     — byte-identical value, plus the sites that must interpolate it. The harness
+//                      states it to the tiers that ADJUDICATE spec text, the conductor to the tiers
+//                      that WRITE it; a copy that drifts, or one nobody interpolates, re-opens the
+//                      2026-09-04 quarantine (an unsatisfiable "quiet host" acceptance clause).
 //
 // Extraction anchors on distinctive syntax rather than line numbers so the tests survive edits
 // around the constants and fail with a readable, file-naming diff when a copy actually drifts.
@@ -252,14 +256,36 @@ test('the courier prompt/schema/shape are byte-identical in both scripts', () =>
 })
 
 test('the launch pack read is byte-identical in both scripts', () => {
-  const [he, ce] = FILES.map((f) => constValue(f, 'PACK_EXTRA'))
+  // The transport sentinel. Both scripts must name the SAME marker: the read command in one and the
+  // reversal in the other would otherwise disagree about what a backslash looks like in transit.
+  const [hb, cb] = FILES.map((f) => constValue(f, 'PACK_BS'))
+  assertInSync('The PACK_BS transport sentinel', hb, cb)
+  assert.equal(typeof hb, 'string', 'PACK_BS is a literal string')
+  assert.doesNotMatch(hb, /[\\"'`$&/^[\]*.+?(){}|\s]/,
+    'the sentinel carries no character that sh, sed, a regex replacement or JSON would treat specially')
+  assert.doesNotMatch(hb, /[^\x20-\x7e]/, 'and stays pure ASCII — the whole point is that nothing escapes it')
+
+  // PACK_EXTRA interpolates PACK_BS, so it is evaluated with that one binding in scope.
+  const packExtra = (f) => Function('PACK_BS', `"use strict"; return (${constExpr(f, 'PACK_EXTRA')});`)(constValue(f, 'PACK_BS'))
+  const [he, ce] = FILES.map(packExtra)
   assert.match(he, /verbatim/, 'the courier is told to copy the document through verbatim')
   assert.match(he, /truncated copy is worse than no copy/, 'and to refuse rather than truncate')
+  assert.ok(he.includes(hb), 'and the clause names the sentinel it will be carrying')
+  // CHANGED CONTRACT (2026-09-04): the old clause told the courier that "\n and \" are literal
+  // characters to copy, not instructions". That is what failed, twice — a report is JSON, so a
+  // backslash needs two levels of escaping and Haiku supplies one. The instruction is gone because
+  // there is no backslash left in the text the courier carries.
+  assert.doesNotMatch(he, /literal[\s\S]{0,40}characters to copy/,
+    'the "escape sequences are literal characters" instruction is gone — it is what did not work')
   assertInSync('The PACK_EXTRA clause', he, ce)
 
   const [hf, cf] = FILES.map((f) => fnSource(f, 'readPackFile', 'async (path, ranges, label, extra)'))
   assert.ok(hf.includes('cksum < ${path}'), 'the file is verified against its own cksum, not a byte count')
   assert.ok(hf.includes('sed -n'), 'content is read over explicit line ranges')
+  assert.ok(hf.includes("| sed 's/\\\\\\\\/${PACK_BS}/g'"),
+    'and each range is piped through the backslash->sentinel rewrite')
+  assert.ok(hf.includes('.split(PACK_BS).join(\'\\\\\')'),
+    'and the script reverses the sentinel itself, before the cksum decides')
   assertInSync('The readPackFile reader (comments included)', hf, cf)
 
   const [hr, cr] = FILES.map((f) => fnSource(f, 'readPack', 'async ()'))
@@ -331,8 +357,38 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
+    for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_BS', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
       'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
-      'markerFind', 'MARKER_RULE', 'planCycle'])
+      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
+})
+
+test('HOST_BAR (host facts are never a verdict) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'HOST_BAR'))
+  assertInSync('The HOST_BAR const', h, c)
+  // A bar that stops naming what it forbids stops working. Arc-observed 2026-09-04: an Opus
+  // plan-check adjudicated an acceptance criterion as "no vitest, playwright, test-ci or dev-stack
+  // process anywhere on the host"; the harness's own preview dev-stack is always live and
+  // `gateMaxConcurrent` lanes overlap by design, so the verifier reported blocked and the unit was
+  // quarantined for a defect no unit had.
+  assert.match(h, /never a verdict and never a precondition/, 'HOST_BAR still states the rule')
+  assert.match(h, /wall-clock ceiling/, 'and still names the wall-clock form of it')
+  assert.match(h, /unsatisfiable by construction/, 'and still says such a clause is the SPEC\'s defect')
+  // The two scripts carry it to different tiers: the harness adjudicates spec text (plan-checks,
+  // exit gates, the verifier), the conductor WRITES it (the boundary tiers author acceptance
+  // criteria; spec-revise rewrites them). A copy nobody interpolates is a copy that does nothing.
+  for (const [file, sites] of [
+    ['harness.mjs', 3],   // both plan-checks + the verifier brief (both gates share one LANE_BAR line pair)
+    ['conductor.mjs', 3], // opusTriagePrompt, fableBoundaryPrompt, specRevisePrompt
+  ]) {
+    const used = (SRC[file].match(/\$\{HOST_BAR\}/g) ?? []).length
+    assert.ok(used >= sites, `${file} interpolates HOST_BAR at only ${used} site(s) — expected at least ${sites}`)
+  }
+  for (const anchor of ['const opusTriagePrompt', 'const fableBoundaryPrompt', 'const specRevisePrompt']) {
+    const at = SRC['conductor.mjs'].indexOf(anchor)
+    assert.notEqual(at, -1, `${anchor} is gone from conductor.mjs`)
+    const body = SRC['conductor.mjs'].slice(at, SRC['conductor.mjs'].indexOf('\nconst ', at + 1))
+    assert.ok(body.includes('${HOST_BAR}'),
+      `${anchor} writes spec text (goals, acceptance criteria) without being told that host facts are never a verdict`)
+  }
 })

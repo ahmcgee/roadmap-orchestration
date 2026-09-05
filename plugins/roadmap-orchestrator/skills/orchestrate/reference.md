@@ -60,6 +60,9 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
                        #   which your steering reaches them.
   state.json           # written by persist.mjs after every run; you write the initial one.
                        #   PRESENT AT TOP LEVEL = an arc is in flight (resume, don't plan over)
+  state.partial.json   # DIAGNOSTIC ONLY: a partial persist.mjs REFUSED to write over state.json.
+                       #   Nothing reads it; never relaunch from it (see "Who writes .roadmap/").
+                       #   Removed by the next persist that lands a WHOLE state.json
   quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
     explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
@@ -96,6 +99,36 @@ no duplicate ledger rows. A replay that runs out of journal — a crash — writ
 script logged, marked `partial: {stoppedAt: <label>}`, and exits 2; relaunch with `resumeFromRunId`
 and run it again. Exit 0 = complete, 2 = partial, 1 = error (nothing written).
 
+**A partial never regresses `state.json`.** Two partials are refused outright — parked in
+`state.partial.json` beside it, with `state.json` untouched, on a
+`PARTIAL-REFUSED stoppedAt=… why=… wrote=state.partial.json` line (still exit 2):
+
+- `why=divergence` — the miss is marked `(out of journal order)`. **That is the REPLAY diverging,
+  not the run failing:** the live run did not stop there, so its own returned state is further along
+  than any prefix reachable here. (2026-09-02: a wave-1 halt was written over a returned wave-3
+  state, and relaunching from that file would have re-forked every unit from the plan-pack tip.)
+- `why=newer-on-disk` — `state.json` already holds a better record: a later wave, or the same wave
+  written whole (no `partial` marker). A `partial` marker at the same wave is *this* partial, so
+  re-persisting a crashed run stays idempotent.
+
+**The cure for either is `--returned`, not a hand edit.** The run's return value is in the task
+output; hand it over as a JSON file and the replay is skipped entirely, the value going through the
+same writers (state, the plan-conflict check, `debt.json`, the `debt.md` and `architect-log.md`
+sections, `skill-degradations.md`, both ledgers) — so nothing the run decided is lost:
+
+```
+node <skill dir>/persist.mjs --returned <that value, as a .json file> \
+     --args '<the launch envelope>'          # --run / --script not needed; --args still is
+```
+
+The value may be a conductor `{status: "conductor-return", state, plan, …}` envelope or a
+directly-launched harness's wave state — the same two shapes a completed replay produces. Persist
+first, *then* investigate the divergence (a script edited since the journal was written is the usual
+cause). Landing a whole `state.json` — by this route or by a replay that now reaches the end — also
+**removes the parked `state.partial.json`**, and the `OK` line says `removed=state.partial.json`
+when it did: the prefix is stale the moment a real state exists, and a stale one sitting beside a
+current state.json is how the wrong file gets relaunched from.
+
 **Journal order is the clock.** A script is a deterministic function of (args, agent results) only
 *up to completion order*: the harness merges units through one serial chain in the order their
 pipelines reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds
@@ -105,8 +138,9 @@ that prompt's record, every earlier record having been consumed by its own looku
 lookups wait. A record nothing asks for (a superseded launch's prompt in a resumed run, an agent
 whose transcript carries no prompt) is stepped over once the run is quiescent, so the clock cannot
 deadlock; a lookup for a record the cursor already passed is a real divergence and stops the replay
-with `partial: {stoppedAt: "<label> (out of journal order)"}`. A nested `workflow()` child shares
-the journal and so shares the one cursor.
+with `partial: {stoppedAt: "<label> (out of journal order)"}` — which is refused rather than written
+over `state.json`, because a diverged prefix is behind the state the run itself returned (see the
+refusal rules above). A nested `workflow()` child shares the journal and so shares the one cursor.
 
 What the scripts still delegate to a model is what a model must actually *do*: author a spec, write a
 quarantine dossier or a feedback report, move consumed feedback, and project state into GitHub
@@ -120,6 +154,14 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 `archive/` + the living docs as prior knowledge.
 
 ## `plan.json`
+
+**Write it however your serializer likes.** Both pack documents are read at launch by a Haiku
+courier, but the read command rewrites every backslash to the sentinel `@bs@` first and the
+script reverses it before checking the file's `cksum` — so `\"`, `\\`, `\n`, `\t` and `\uXXXX`
+escapes, and raw non-ASCII glyphs, all survive transport intact. (They did not before 2026-09-04:
+the courier had to double-escape each backslash inside its own JSON report and dropped one level,
+so four `—` escapes or twelve `\"` sequences were enough to make an arc unlaunchable.) The one
+constraint left is **size** — see `state.json` below.
 
 ```jsonc
 {
@@ -193,9 +235,16 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   EVERY command below is run from the preview's own worktree
                                    //   at worktreeRoot/__preview — never the user's checkout.
     "setup": "npm run build",      // optional one-time step at preview setup
-    "start": "npm run dev",        // server kind: long-running; the harness daemonizes it
-                                   //   (log + pidfile at worktreeRoot/__preview.{log,pid},
-                                   //   outside every worktree so a mirror advance never touches them)
+    "start": "npm run dev",        // server kind: long-running; the harness daemonizes it as
+                                   //   `setsid nohup sh -c 'echo $$ > <pidfile>; <start>' &`.
+                                   //   It is SHELL input, so `VAR=value cmd`, `&&` chains and
+                                   //   pipelines all work — but a SINGLE QUOTE in it throws at
+                                   //   plan load (it would close the wrapper's quote); use double
+                                   //   quotes or a package script. Do not prefix it with `nohup`
+                                   //   or `setsid` yourself. Log + pidfile at
+                                   //   worktreeRoot/__preview.{log,pid}, outside every worktree
+                                   //   so a mirror advance never touches them; the pid recorded is
+                                   //   that detached shell's own, which is also its process group.
     "stop": "",                    // optional; default kills the whole preview process GROUP.
                                    //   A custom stop MUST group-kill too — a single-pid kill
                                    //   strands child listeners and leaves ports held.
@@ -210,7 +259,13 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
                                    //   group. NEVER inferred by an agent (asked to free "the
                                    //   preview's ports", Haiku swept three guesses and then
                                    //   `ps | grep | kill -9`, killing the workflow itself).
-    "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates
+    "healthcheck": ""              // optional; failure marks the preview failed, NEVER gates.
+                                   //   Retried after start for ~60 s of WALL CLOCK (not a fixed
+                                   //   number of tries), so give the check its own timeout —
+                                   //   `curl -m 5 -sf …` — or a slow one spends the window by
+                                   //   itself. A stack that builds before it listens and needs
+                                   //   longer must carry its OWN patient loop here: the window is
+                                   //   a floor, not a wait.
   },
   "briefPath": "…",                // optional; defaults to <repoPath>/.roadmap/brief.md
   "conventions": "…",              // optional; path to the standing conventions contract.
@@ -242,6 +297,17 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
   "consultsUsed": 0, "wave": 0, "units": {},
   "run": { "runId": "<id>", "scriptPath": "<session-persisted script path>" } }
 ```
+
+**Keep it small — it is the only pack document that grows.** One courier copies the whole file at
+launch and tops out near 35 K characters; past that the file is re-read over line ranges, and past
+about 100 KB the launch simply cannot be vouched for and throws `pack-unreadable` (2026-09-03: a
+145 KB state.json, three quarantine dossiers' worth of prose, could not be relaunched at all). So
+**prose lives in files and state carries the path** — that is why a quarantined unit records
+`dossierPath` rather than the dossier text, why degradations and escalations are `.jsonl` sidecars
+`persist.mjs` appends rather than state fields, and why `debt` is this wave's items only. If you
+are hand-editing state and find yourself pasting a paragraph into it, write the paragraph under
+`.roadmap/` and reference it by absolute path: every tier that reads it is a model with a
+filesystem.
 
 Fields the scripts add:
 
@@ -304,7 +370,10 @@ Fields the scripts add:
   The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
 - **`partial`** — written only by `persist.mjs`, and only when a replay could not reach the run's
   return value: `{stoppedAt: <agent label>}`. The state beside it is the last snapshot the script
-  logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again.
+  logged, so it is real but not final. Relaunch (`resumeFromRunId`) and persist again. A partial
+  that would regress `state.json` is refused and parked in `state.partial.json` instead — that file
+  carries the same marker, and is diagnostic only: nothing reads it, nothing should relaunch
+  from it, and the next persist that lands a whole `state.json` deletes it.
 - **`degradations` / `escalations`** — **NOT state.json fields.** They are events, not state: each
   run collects its own rows in memory, hands them back on the return envelope, and `persist.mjs`
   appends them to `.roadmap/{degradations,escalations}.jsonl`. They used to ride inside `state.json`,
@@ -315,7 +384,7 @@ Fields the scripts add:
   preview-failed | lane-substituted | correctness-debt-banked | scope-growth | tip-regressed |
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
-  env-no-reaper | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  env-no-reaper | env-verify-blocked | feedback-unmoved | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
   Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
@@ -331,21 +400,29 @@ Fields the scripts add:
   "nothing to consolidate"). `codex-exec`
   (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
   finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
-  the branch was judged on its merits (a dead process is not a dead unit); the five halt kinds
+  the branch was judged on its merits (a dead process is not a dead unit); the six halt kinds
   (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`, `env-no-reaper`,
-  `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
+  `env-verify-blocked`, `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
   fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
   treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
   died, so whether the branch holds work is unknown and the unit parked rather than being
-  quarantined for building nothing; `scope-growth` means a diff reached beyond its pinned envelope and the
+  quarantined for building nothing; `codex-unavailable` is also emitted MID-WAVE by the codex
+  backend breaker — the codex counterpart of `platform-outage`: ≥2 consecutive codex runs across
+  DIFFERENT units or roles failing with `turn.failed` and the same HTTP status is a provider
+  outage, not N unit defects, so dispatch halts and the affected units PARK (`pending` +
+  `parked`) instead of being quarantined or blocked;
+  `scope-growth` means a diff reached beyond its pinned envelope and the
   gate adjudicated it — re-emitted only when the diff reaches a file it has not already reported,
   so one incident is one row. A **`tip-regressed`** entry accompanies a thrown wave: the recorded
   integration tip (`state.json`'s `integrationTip`) is not an ancestor of the branch, so nothing was dispatched (see the one-way tip
   reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
   landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
-  and a resume can serve them from cache. A `verify-blocked` entry accompanies an environment
-  quarantine and carries the host's load; a `shared-red` entry names the one spec several units
+  and a resume can serve them from cache. A `verify-blocked` entry means a verifier RAN and found the
+  tooling broken: the first one for a unit records it `blocked` (commits intact, re-verified next
+  wave), a second on a later wave quarantines it, and either way the entry carries the host's load;
+  an `env-verify-blocked` entry means two units hit that in ONE wave, which is a host fact and
+  halts the wave; a `shared-red` entry names the one spec several units
   failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
   one batch, which are dropped rather than renamed into extra units.
 
@@ -354,7 +431,14 @@ Fields the scripts add:
   per run, and the `verify-blocked` and `codex-timeout` entries cite them. The wave's own
   concurrency is what produces the load, so waiting on it would be waiting on our own siblings —
   `gateMaxConcurrent` is the actual brake. The numbers exist so a wall-clock verdict is auditable
-  after the fact instead of a mystery.
+  after the fact instead of a mystery. The same fact is stated to every tier that writes or
+  adjudicates spec text (both plan-checks, both exit gates, the verifier, and the conductor's
+  boundary/spec-revise tiers) as the **host bar**: a quiet host, the absence of sibling processes,
+  or a wall-clock ceiling may never be an acceptance clause or a precondition for verification —
+  the preview dev-stack is always live and lanes overlap by design, so such a clause is
+  unsatisfiable by construction and is a spec defect for the adjudicating tier to resolve through
+  its verdict. Arc-observed 2026-09-04: an Opus plan-check minted one, and the unit was quarantined
+  when the verifier could not satisfy it.
   A `gh-sync` entry means a best-effort issue-projection write failed (issue mode only) — the arc was
   unaffected; the wave-tail sweep reconciles what it can. A `plan-conflict` entry is written by
   `persist.mjs` (`script: 'persist'`): `plan.json` on disk held unit ids the run has never seen, so
@@ -379,13 +463,20 @@ Fields the scripts add:
   `schema-retry` on one label means a `maxLength` cap is wrong.
 
 **Unit statuses**: `pending → running → merge-ready → merged`, or `quarantined` / `blocked`
-(dependency quarantined) / `deferred` (beyond cut line). Dependents launch only when every
+(dependency quarantined, or this unit's verification never ran / could not run) / `deferred`
+(beyond cut line). A `blocked` unit keeps its commits and is re-opened at the next wave's start
+once its blocker is gone; its branch is then ADOPTED, not rebuilt. Dependents launch only when every
 dependency is `merged`. While `running` a unit also carries a `stage` field
 (`setup | plan | implement | polish | gate | merge-queue`) for crash forensics; a terminal status
 replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`, the per-unit
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
-it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
+it — plus `verifyBlocked`, the one tally that counts across WAVES, since the second blocked verify
+for a unit is what quarantines it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
+A `quarantined` record carries `reason` plus **`dossierPath`** — the absolute path of
+`.roadmap/quarantine/<id>.md`, never the dossier prose. The file is the record and every reader of
+it (the Fable boundary tier, you) has a filesystem; state carrying the text instead is what made a
+145 KB `state.json` unlaunchable in 2026-09-03.
 `units[id].codexSession = {id, cwd, wave}` is forensics only — session ids are nondeterministic
 and never enter a prompt; fix prompts reference the session-id FILE. The wave state also carries
 **`codex`**: `{probed, available}`, and — only when the wave halted — **`halt`**:
@@ -395,10 +486,11 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 
 | `reason` | who set it | how the root clears it |
 |---|---|---|
-| `codex-unavailable` | the per-wave `codex-probe` found no CLI or no "logged in" line | `codex login` (or `--device-auth` headless), then relaunch |
+| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "reply pong"` **smoke** exited non-zero (the CLI and the credential can both be fine while the Codex BACKEND is down) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
+| `env-verify-blocked` | two units' verifiers reported `blocked` in one wave — their tooling could not run at all (a black-holed registry, a dead network, a missing global tool) | read the verifiers' failure output in the `verify-blocked` entries, fix the host, then relaunch |
 | `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
 
 Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
@@ -562,7 +654,8 @@ and the high-risk plan-check are exactly where they were.
 
 **Codex is THE implementer — there is no Claude implementation lane.** The steering agent writes
 `brief.txt` + a strict-mode `--output-schema`, launches codex in the background (`setsid` +
-pidfile, the preview-process idiom), polls sleep-free, kills at `codexTimeoutMin`, verifies the
+a self-written pidfile, the preview-process idiom — see *The process outlives its steerer, safely*
+below for the exact line and why every character of it is load-bearing), polls sleep-free, kills at `codexTimeoutMin`, verifies the
 work ON DISK (exit-code marker, commit count, porcelain, the brief's own `DONE` marker), reads
 back only an allowlist (final message head, session id, one usage line, an error grep, git truth
 — never a transcript), and emits the same S.impl-shaped report the pipeline always consumed.
@@ -579,10 +672,18 @@ a dead unit); with no commits ⇒ ONE retry — for the build step AND for every
 first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file) and tells codex in
 its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
 `blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
-`codex-probe` ⇒ **hard stop** — new dispatch halts, in-flight units **park**
+`codex-probe` (three commands: `--version`, `login status`, and a bounded read-only
+`codex exec … "reply pong"` **smoke** whose pass test is its exit code) ⇒ **hard stop** — new
+dispatch halts, in-flight units **park**
 (`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
 `halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
-wait out the window. Never a quarantine, never a substitute implementer.
+wait out the window. Never a quarantine, never a substitute implementer. An outage that STARTS
+mid-wave is caught by the **codex backend breaker** (the codex counterpart of `platform-outage`):
+≥2 consecutive codex results on DIFFERENT units or roles carrying `turn.failed` and the SAME HTTP
+status set `halt.codex = 'codex-unavailable'`, and every codex-shaped dead end in the unit pipeline
+— a dead plan role, a dead replan, a build that came back with the outage on it — then PARKS
+instead of quarantining. Any codex result without the signature clears the run, and two failures
+from the same unit are one unit's story: distinctness is by id.
 
 **The codex ROLE adapter — `run(brief, {model:'codex', …})`.** The build/fix lane is not the only
 way to reach Codex. Any call site can dispatch a judgment or drafting ROLE to Codex and get back an
@@ -632,14 +733,66 @@ and design go **owed** exactly as a skipped job does,
 and health additionally records a `health-skipped` degradation — without it an empty draft set reads
 to the triager as "nothing to consolidate" rather than "nobody looked".
 
-**The process outlives its steerer, safely.** The deadline rides *inside* the launched command
-line (`setsid nohup sh -c 'timeout -k 30 <codexTimeoutMin×60> codex exec …'`), so a dead steering
-agent can no longer leave a detached codex running unbounded on an OpenAI seat already handed to
-the next unit. The steerer's liveness rule is the other half: **an absent `exit-code` file means
-RUNNING, never dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails,
-and elapsed time is never evidence. And the steer prompt is idempotent by construction: if
-`<dir>/codex.pid` already exists it attaches instead of launching, so any re-dispatch of the same
-prompt (a schema retry, a salvage, a replay) cannot put two codex processes in one worktree.
+**The process outlives its steerer, safely.** All three launch sites — the codex build, the
+`COMMAND R` resume, and the preview server — share exactly one thing, the **detachment idiom**:
+
+```
+setsid nohup sh -c 'echo $$ > <pidfile>; …' &
+```
+
+That is the whole of what they have in common, and it is deliberate: what follows the `;` differs
+because the two kinds of process want opposite lifetimes.
+
+The two **codex** sites add a deadline and a reaped exit status, so a dead steering agent can no
+longer leave a detached codex running unbounded on an OpenAI seat already handed to the next unit:
+
+```
+setsid nohup sh -c 'echo $$ > <dir>/codex.pid;
+                    timeout -k 30 <timeoutMin×60> codex exec … & CPID=$!;
+                    ( … session-id capture …  ) &        # BUILD SITE ONLY
+                    trap "kill -TERM $CPID; T=1" TERM;
+                    wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;
+                    echo $RC > <dir>/exit-code' &
+i=0; while [ ! -s <dir>/codex.pid ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
+```
+
+The trailing loop is the price of the detached shell writing its own pid: the write is now
+asynchronous to the launching shell, and the steerer's very next call reads the file (`tail --pid`,
+`kill -0`, the re-dispatch guard). The bounded wait (≤ 10 s) keeps the launch command from returning
+before the pidfile is non-empty, so an empty file can never be read as a dead pid.
+
+The **preview** has none of that half — no `timeout`, no trap, no `wait`, no `exit-code` file — and
+must not: a dev server is *meant* to outlive the wave that started it, so there is no deadline to
+enforce and no exit status to collect. Its whole line is
+`setsid nohup sh -c 'echo $$ > <preview pidfile>; <plan.preview.start>' > <log> 2>&1 &`, and its
+liveness is the pidfile and the healthcheck alone.
+
+The **build site alone** carries the extra background subshell: it polls `events.jsonl` for the
+first `"thread_id"` and writes it to `<dir>/session-id` (once, up to 120 tries a second apart). It
+is a *subshell* precisely so the capture runs while the main line is already blocked in `wait`, and
+it lives at the build site because that is the only launch that starts a new codex session — the
+resume site consumes that file (`codex exec resume "$(cat <dir>/session-id)"`) rather than writing
+it, and a steering agent never captures it by hand.
+
+**The detached shell writes its OWN pid, as its first act — never `echo $! >` after the `&`.** The
+steering agent's Bash shell has job control on, so a backgrounded job is *already* a process-group
+leader, `setsid` must FORK, and `$!` names a parent that is dead within a second. Every liveness
+fact then hangs off a corpse: 2026-09-02 that cost 3 waves and 14 of 20 units, quarantined on deaths
+that never happened, while each "reattempt" launched a second codex into a worktree the first was
+still writing. After `setsid`, that `$$` is also the pgid `kill -TERM -- -<pid>` targets. The `trap`
+and the conditional second `wait` are what make a genuine reap reach *codex*: `timeout` puts itself
+in its own process group, so a group kill stops at the detached shell unless the shell forwards the
+signal on. The re-wait is gated on the trap's own flag `T`, **never on `RC > 128`**: only a
+trap-interrupted `wait` leaves the child unreaped, so only there does waiting again collect its real
+status. A child killed outright — an OOM `SIGKILL`, or `timeout -k` escalating — is already reaped
+and returns a true 137, and re-waiting that pid reports whatever the shell remembers of a finished
+job instead. `RC > 128` cannot tell the two apart; the flag records which actually happened.
+
+The steerer's liveness rule is the other half: **an absent `exit-code` file means RUNNING, never
+dead** — `exitCode:-1` may only be reported after `kill -0 $(cat codex.pid)` fails, and elapsed time
+is never evidence. And the steer prompt is idempotent by construction: if `<dir>/codex.pid` already
+exists it attaches instead of launching, so any re-dispatch of the same prompt (a schema retry, a
+salvage, a replay) cannot put two codex processes in one worktree.
 
 **Warm lanes are gone** (0.11.0). They existed to amortize one fixed cold start — read the brief,
 explore the codebase, rediscover conventions — across a chain of units too small to absorb it
@@ -707,8 +860,13 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   coverage itself: the commands live in the spec markdown, not in `plan.json`. The full suite runs
   **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
   tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
-  enters the fix loop; it quarantines immediately with an *environment* dossier. Prevention is the
-  `provision` block.
+  enters the fix loop, and it is never a verdict about the unit: the **first** one records the unit
+  `blocked` (commits intact, no dossier, re-verified next wave), a **second** on a later wave
+  quarantines it with an *environment* dossier, and **two distinct units blocked in one wave** halt
+  the wave on `env-verify-blocked` — tooling that cannot run for two units is a host fact (a
+  black-holed registry, a dead network, a missing global tool), not two unit defects. Arc-observed
+  2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a black-holed registry
+  POST and the first unit to reach it was quarantined for it. Prevention is the `provision` block.
 - **Git decides `merged`, in code, before anything else.** At dispatch, before every quarantine,
   and for every `running`/`merge-ready` crash-residue record, a closed-list Haiku courier
   (`merged-probe:<id>`) runs the exact commands the script interpolated and reports their **exit
@@ -887,7 +1045,7 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 | provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
 | preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
 | preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |
-| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test |
+| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test, the smoke's exit code |
 | commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
 | `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
 | git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |
@@ -958,6 +1116,10 @@ Workflow({
   //             big for one response — and then the launch throws `pack-unreadable`). The root
   //             used to paste both documents into `args`, which put the whole pack through the
   //             most expensive tier in the system on every launch and every resume.
+  //             The read command rewrites every backslash in the file to `@bs@` before the
+  //             courier copies it, and the script puts them back — so JSON escapes (`\"`, `\\`,
+  //             `\n`, `\uXXXX`) travel safely and no serializer setting is your problem. What
+  //             still is: SIZE. See the two documents' own sections below.
   // harnessPath REQUIRED — throws without it.
   // launchId    a per-launch nonce, FRESH on every launch and every resume. It salts the pack
   //             read (disk holds the LAST run's plan, so a replayed pack is a stale plan) and is
@@ -1124,7 +1286,8 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
                      //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
                      //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
-                     //     | env-no-reaper | platform-outage — state.halt.reason, returned verbatim
+                     //     | env-no-reaper | env-verify-blocked | platform-outage
+                     //     — state.halt.reason, returned verbatim
   wave, wavesRun,
   state,             // the final state (incl. the `conductor` block) -> .roadmap/state.json
   plan,              // the conductor's merged working plan -> .roadmap/plan.json (refused if the
@@ -1146,6 +1309,9 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // contract-amendment → { debt, contracts }
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
+  //   arcSummary = { merged: [id], quarantined: [{id}], blocked: [id], deferred: [id],
+  //                  pendingFeedback: [...], wavesRun }   // `blocked` is its own bucket: a unit
+  //                  whose verify tooling could not run is neither built nor failed nor cut
   // max-waves         → state.boundary restored, marked {triaged:true, wave}
   // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }

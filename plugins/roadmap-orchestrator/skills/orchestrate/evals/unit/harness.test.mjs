@@ -67,8 +67,16 @@ function deferred() {
   const promise = new Promise((r) => (resolve = r))
   return { promise, resolve }
 }
-// Flush all pending microtasks by yielding a macrotask turn.
-const flush = () => new Promise((r) => setTimeout(r, 15))
+// Let the wave run until it parks on the deferred call this test is about, then give it one more
+// full turn so a call that must NOT issue has had its chance to. `until` is polled rather than
+// slept through: a fixed sleep is a race on a loaded box (it failed here at 15ms), and waiting
+// LONGER for a call that should not exist only strengthens the negative assertions beneath.
+const tick = (ms) => new Promise((r) => setTimeout(r, ms))
+const flush = async (until) => {
+  const deadline = Date.now() + 5000
+  do { await tick(5) } while (until && !until() && Date.now() < deadline)
+  await tick(15)
+}
 
 const has = (calls, prefix) => calls.some((c) => c.label === prefix || c.label.startsWith(prefix))
 const seqOf = (calls, prefix) => calls.find((c) => c.label === prefix || c.label.startsWith(prefix))?.seq
@@ -119,7 +127,7 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
   const plan = makePlan([unit('a'), unit('b')], [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }])
 
   const p = runWave(fn, plan, makeState())
-  await flush()
+  await flush(() => has(calls, 'merge:a'))
   assert.ok(has(calls, 'setup:a'), 'a should have set up')
   assert.ok(has(calls, 'merge:a'), 'a should be parked in the merge queue')
   assert.ok(!has(calls, 'setup:b'), 'b must NOT set up while A is unmerged')
@@ -135,19 +143,48 @@ test('2 contract-edge: dependent setup waits for the dependency merge to settle'
 })
 
 // =========================================================================================
-// 3. verify.blocked -> env quarantine, zero fix rounds, dossier + dossier-write both issued.
+// 3. verify.blocked -> the unit BLOCKS (zero fix rounds, no dossier); a REPEAT quarantines.
+// CHANGED CONTRACT (2026-09-04): tooling that could not run is a fact about the host, never a
+// verdict about the unit, so the first blocked verify leaves the unit `blocked` with its commits
+// intact and it is re-verified next wave. Only a second blocked verify — the tally start() carries
+// across the wave boundary — buys the environment quarantine and its dossier pair.
 // =========================================================================================
-test('3 blocked verify: env quarantine with dossier pair, no fix', async () => {
-  const { fn, calls } = makeAgent([
-    { match: /^verify:a/, result: () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [] }) },
-  ])
+const blockedVerify = () =>
+  ({ pass: false, blocked: true, failures: ['ENOTFOUND registry.npmjs.org'], lanes: [], contractSurfaceTouched: false, diffFiles: [] })
+
+test('3a blocked verify: the unit blocks with its commits, no fix rounds, no dossier', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: blockedVerify }])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
-  assert.equal(state.units.a.status, 'quarantined')
+  assert.equal(state.units.a.status, 'blocked', 'an environment failure is not a verdict about the unit')
+  assert.equal(state.units.a.branch, 'unit/a', 'and its branch — with its commits — is named on the record')
+  assert.equal(state.units.a.rounds?.verifyBlocked, 1, 'the blocked verify is tallied so a repeat is countable')
+  assert.ok(!has(calls, 'codex-fix:'), 'no fix rounds on a blocked verify')
+  assert.ok(!has(calls, 'dossier:a'), 'and no dossier — nothing about the unit was judged')
+  const d = (state.degradations ?? []).find((x) => x.kind === 'verify-blocked')
+  assert.match(d.what, /BLOCKED, not\s+quarantined/, 'the ledger says what happened')
+  assert.match(d.what, /ENOTFOUND registry\.npmjs\.org/, 'and carries the verifier\'s own first failure line')
+})
+
+test('3b blocked AGAIN next wave: env quarantine with dossier pair, no fix', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: blockedVerify }])
+  // Wave 2 for this unit: it entered blocked, with one blocked verify already on its record.
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', rounds: { verifyBlocked: 1 } } } }))
+  assert.equal(state.units.a.status, 'quarantined', 'twice is not transient — it is this checkout\'s problem')
   assert.match(state.units.a.reason, /blocked/)
   assert.match(state.units.a.reason, /environment/)
+  assert.equal(state.units.a.rounds?.verifyBlocked, 2, 'the tally carried across the wave boundary')
   assert.ok(!has(calls, 'codex-fix:'), 'no fix rounds on a blocked verify')
   assert.ok(has(calls, 'dossier:a'), 'investigative dossier issued')
   assert.ok(has(calls, 'dossier-write:a'), 'verbatim dossier writer issued')
+  // The FILE is the record; the state carries only its path. The dossier prose used to ride home
+  // in the unit record too, and a handful of ~5 KB ones took an arc's state.json to 145 KB — past
+  // what the launch courier can copy, so the arc could not be relaunched at all (2026-09-03).
+  assert.equal(state.units.a.dossierPath, '/repo/.roadmap/quarantine/a.md',
+    'the quarantined record names the dossier file the redesign tiers already read')
+  assert.ok(!('dossier' in state.units.a), 'and carries none of its prose — state stays launchable')
+  assert.ok(JSON.stringify(state).length < 4000,
+    'a whole wave-1 state with a quarantine is still a small document, not a prose archive')
 })
 
 // =========================================================================================
@@ -247,12 +284,12 @@ test('7 merge queue serial: merge:b waits for merge:a', async () => {
     { match: /^merge:b$/, result: () => mergeB.promise },
   ])
   const p = runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
-  await flush()
+  await flush(() => has(calls, 'merge:a'))
   assert.ok(has(calls, 'merge:a'), 'merge:a issued')
   assert.ok(!has(calls, 'merge:b'), 'merge:b must NOT issue while merge:a is in flight')
 
   mergeA.resolve({ merged: true, suitePass: true, head: BASE_SHA, detail: '' })
-  await flush()
+  await flush(() => has(calls, 'merge:b'))
   assert.ok(has(calls, 'merge:b'), 'merge:b issues once merge:a settled')
   assert.ok(seqOf(calls, 'merge:b') > seqOf(calls, 'merge:a'), 'merge:b ordered after merge:a')
 
@@ -550,7 +587,7 @@ test('13c a mis-transcribed pack file is re-read once, by a courier with a diffe
       if (!firstTry) return honest[0].result(prompt, opts)
       firstTry = false
       const r = honest[0].result(prompt, opts)
-      r.results[3].stdout = r.results[3].stdout.split('\n').slice(1).join('\n')
+      r.results[4].stdout = r.results[4].stdout.split('\n').slice(1).join('\n')
       return r
     } },
     ...honest,
@@ -575,7 +612,7 @@ test('13d a pack that never verifies fails the launch loudly — no wave on an u
   const { fn } = makeAgent([
     { match: /^pack-read:state\.json/, result: (prompt, opts) => {
       const r = honest[0].result(prompt, opts)
-      r.results[3].stdout = `${r.results[3].stdout}\n{"junk":true}`
+      r.results[4].stdout = `${r.results[4].stdout}\n{"junk":true}`
       return r
     } },
     ...honest,
@@ -598,6 +635,164 @@ test('13e one of plan/state without the other is a caller bug, and says so', asy
     () => runner({ args: { launchId: 'L1' }, agent: makeAgent().fn }),
     /roadmapDir is required/,
   )
+})
+
+// A pack whose documents carry every escape that ever broke a launch, in one document each:
+//   `\"`      — a quoted word inside a prose field (12 of these made wf_de8b04a2-b80 unlaunchable)
+//   `\\`      — a literal backslash (a Windows-ish path in a note)
+//   `\n`/`\t` — the two-character escapes a serializer emits for whitespace inside a string
+//   `\u2014`  — an em dash from an `ensure_ascii` serializer (four of these killed a 2026-09-02 launch)
+//   `—` / `→` — the SAME characters written raw, which cksumOf has to hash as UTF-8 BYTES
+// The `\uXXXX` form is not something JSON.stringify emits, so the serializer below re-escapes the
+// non-ASCII glyphs of ONE document — modelling exactly the writer that produced the failing pack —
+// while the other keeps them raw. Both still parse to the documents the test passed (packRules
+// asserts it), so a successful read must produce a wave that runs on precisely this plan.
+const ESCAPEY = 'a "quoted" word, a C:\\path\\here, a line\nbreak, a\ttab, an em dash — and an arrow →'
+const escapeyPlan = () => makePlan([unit('a', { title: ESCAPEY })], [], { notes: ESCAPEY })
+// The state's escapey prose rides on a unit record the harness carries forward untouched, so the
+// assertion is the one that matters on a relaunch: the arc resumes from EXACTLY the text on disk.
+const escapeyState = () => makeState({ units: { seeded: { status: 'merged', branch: 'unit/seeded', note: ESCAPEY } } })
+// `ensure_ascii`: every non-ASCII character becomes a `\uXXXX` escape, exactly as the Python-side
+// serializer that wrote the 2026-09-02 plan.json did.
+const asciiOnly = (doc) => `${JSON.stringify(doc, null, 2).replace(/[^\x00-\x7f]/g,
+  (c) => `\\u${c.codePointAt(0).toString(16).padStart(4, '0')}`)}\n`
+
+test('13f a pack full of JSON escapes and raw glyphs reads clean — nothing in it needs escaping in transit', async () => {
+  const plan = escapeyPlan()
+  const state = escapeyState()
+  // plan.json comes from an ensure_ascii serializer (`\u2014`); state.json keeps its glyphs raw.
+  const { fn, calls } = makeAgent(packRules(plan, state,
+    (doc, name) => (name === 'plan.json' ? asciiOnly(doc) : `${JSON.stringify(doc, null, 2)}\n`)))
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.deepEqual(packLabels(calls), ['pack-read:plan.json', 'pack-read:state.json'],
+    'no retry: an escape-heavy document is an ordinary read now, not a coin flip')
+  const p = calls.find((c) => c.label === 'pack-read:plan.json')
+  assert.match(p.prompt, /sed -n '1,\$p' \/repo\/\.roadmap\/plan\.json \| sed 's\/\\\\\/@bs@\/g'/,
+    'the read command itself strips every backslash out of the transport')
+  assert.match(p.prompt, /@bs@/, 'and the courier is told what the marker it is copying means')
+  assert.equal(out.units.a.status, 'merged', 'and the wave runs on exactly the plan that was on disk')
+  assert.equal(out.units.seeded.note, ESCAPEY,
+    'every escape and glyph survives the round trip byte for byte — this is the state the arc resumes from')
+})
+
+test('13g the OLD failure — a courier that decodes the escapes — is caught, not accepted', async () => {
+  // What Haiku actually did, twice: a report is JSON, so `\"` in the file needs `\\\"` in the
+  // report's string value and it supplied `\"`. The result is the document with one level of
+  // escaping stripped: shorter than the file, and parseable often enough to be dangerous.
+  const plan = escapeyPlan()
+  const honest = packRules(plan, escapeyState(), (doc, name) => (name === 'plan.json' ? asciiOnly(doc) : `${JSON.stringify(doc, null, 2)}\n`))
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:plan\.json/, result: (prompt, opts) => {
+      const r = honest[0].result(prompt, opts)
+      // Undo the sentinel the read command inserted, then drop one escaping level — the courier
+      // that "helpfully" renders `\u2014` as an em dash and `\"` as a bare quote.
+      for (let i = 4; i < r.results.length; i++)
+        r.results[i].stdout = r.results[i].stdout
+          .split('@bs@').join('\\')
+          .replace(/\\u([0-9a-f]{4})/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+          .replace(/\\(["\\/])/g, '$1')
+      return r
+    } },
+    ...honest,
+  ])
+  await assert.rejects(
+    () => (loadScript(HARNESS)).then((r) => r({
+      args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } }, agent: fn })),
+    /pack-unreadable[\s\S]*plan\.json[\s\S]*@bs@ transport sentinel/,
+    'the cksum still decides, and the failure names the sentinel as one of the things to check',
+  )
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:plan.json#retry'],
+    'one honest retry, then a loud refusal — never a wave on a decoded plan')
+})
+
+test('13h a file too big for one response is split into line ranges, sentinel and all', async () => {
+  // A state.json past READ_CHUNK: the first courier can only truncate, so the retry reads it over
+  // several ranges and the whole-file cksum still decides. The escapey prose is on every record, so
+  // the sentinel has to survive being cut across a range boundary as well as inside one.
+  const plan = makePlan([unit('a')])
+  const seeded = {}
+  for (let i = 0; i < 60; i++)
+    seeded[`old-${i}`] = { status: 'merged', branch: `unit/old-${i}`, note: `${ESCAPEY} ${'padding '.repeat(30)}` }
+  const state = makeState({ units: seeded })
+  const honest = packRules(plan, state)
+  let truncated = false
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:state\.json$/, result: (prompt, opts) => {
+      truncated = true
+      const r = honest[0].result(prompt, opts)
+      r.results[4].stdout = r.results[4].stdout.slice(0, 24000)   // all one courier can carry
+      return r
+    } },
+    ...honest,
+  ])
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.ok(truncated, 'the first read really did hit the response ceiling')
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:state.json#split'],
+    'the oversized file is re-read over ranges, not re-sampled whole')
+  const split = calls.find((c) => c.label === 'pack-read:state.json#split')
+  const ranges = (split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@bs@\/g'/g) ?? [])
+  assert.ok(ranges.length > 1, `the read fans out over several ranges (got ${ranges.length})`)
+  assert.equal(out.units['old-59'].note, `${ESCAPEY} ${'padding '.repeat(30)}`,
+    'and the reassembled document is byte-identical to the file on disk')
+  assert.equal(out.units.a.status, 'merged')
+})
+
+// The cap the courier reports against applies to the text AFTER the backslash rewrite, and that
+// text is longer than the file by `PACK_BS.length - 1` per backslash. Sizing the retry on `wc -c`
+// alone therefore read an escape-dense file whole, watched it truncate, read it whole AGAIN
+// (`bytes <= READ_CHUNK`, so never the split path) and threw `pack-unreadable` — a launch lost to a
+// state.json that fits its own byte count. The read now counts the backslashes and budgets on the
+// expansion, which is what puts this file on the split path where it belongs.
+test('13i a file that fits `wc -c` but overflows once the sentinel expands it still takes the SPLIT path', async () => {
+  const plan = makePlan([unit('a')])
+  const seeded = {}
+  // Escape-dense prose: every `"` inside a JSON string is a backslash in the file on disk.
+  const quoted = `${'a "quoted" phrase, '.repeat(12)}${'pad '.repeat(20)}`
+  for (let i = 0; i < 55; i++) seeded[`old-${i}`] = { status: 'merged', branch: `unit/old-${i}`, note: quoted }
+  const state = makeState({ units: seeded })
+  const doc = `${JSON.stringify(state, null, 2)}\n`
+  const bytes = Buffer.byteLength(doc)
+  const esc = (doc.match(/\\/g) ?? []).length
+  // The whole point of the sim, stated as preconditions: this file is UNDER the cap by its own
+  // byte count and OVER it by the only measure that decides whether a courier can carry it.
+  assert.ok(bytes < 24000, `precondition: the file itself fits READ_CHUNK (${bytes} bytes)`)
+  assert.ok(bytes + esc * 3 > 24000,
+    `precondition: the text the courier carries does not (${bytes + esc * 3} after ${esc} backslashes expand)`)
+
+  const honest = packRules(plan, state)
+  let wholeReads = 0
+  const { fn, calls } = makeAgent([
+    { match: /^pack-read:state\.json/, result: (prompt, opts) => {
+      const r = honest[0].result(prompt, opts)
+      // A whole-file read is one content command; the courier can only carry READ_CHUNK of it.
+      if (r.results.length === 5) { wholeReads++; r.results[4].stdout = r.results[4].stdout.slice(0, 24000) }
+      return r
+    } },
+    ...honest,
+  ])
+  const out = await (await loadScript(HARNESS))({
+    args: { roadmapDir: '/repo/.roadmap', launchId: 'L1', config: { gateAuditRate: 0 } },
+    agent: fn,
+  })
+  assert.equal(wholeReads, 1, 'the file is read whole exactly ONCE — a second whole read would truncate again')
+  assert.deepEqual(packLabels(calls),
+    ['pack-read:plan.json', 'pack-read:state.json', 'pack-read:state.json#split'],
+    'the retry is the SPLIT, not another whole-file sample: `wc -c` was never the budget that mattered')
+  const split = calls.find((c) => c.label === 'pack-read:state.json#split')
+  assert.match(split.prompt, new RegExp(`\\(${bytes + esc * 3} once every backslash becomes @bs@\\)`),
+    'and the courier is told the size that actually governs, so the ranges it is given make sense')
+  assert.ok((split.prompt.match(/sed -n '\d+,\d+p' \S+ \| sed 's\/\\\\\/@bs@\/g'/g) ?? []).length > 1,
+    'the read fans out over more than one range')
+  assert.equal(out.units['old-54'].note, quoted, 'and the reassembled document is byte-identical to the file on disk')
+  assert.equal(out.units.a.status, 'merged')
 })
 
 // =========================================================================================

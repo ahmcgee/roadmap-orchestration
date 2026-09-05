@@ -23,7 +23,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, courierResult, courierSaying, BASE_SHA, implCodexOk, codexMetaOk,
-  structuredOutputError, courierOk } from './fakes.mjs'
+  structuredOutputError, courierOk, codexRoleDead, codexRoleMetaOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -124,6 +124,280 @@ test('a quota error on the throw path halts immediately, without burning a salva
   assert.equal(state.halt.reason, 'platform-outage')
   assert.ok(!has(calls, 'gate:a#0#salvage'), 'a platform that just said it is down is not asked twice')
   assert.equal(state.units.a.parked, true)
+})
+
+/* ====================================================================== */
+/* 1b. The codex BACKEND breaker — section 1's rule, for the other provider */
+/* ====================================================================== */
+// 2026-09-03, from ~14:43 UTC: every codex run failed with `turn.failed: unexpected status 404 Not
+// Found … chatgpt.com/backend-api/codex/responses`, while `codex login status` still said "Logged
+// in" so the wave-start probe passed. The wave ran to the end on a dead backend: 23 `codex-exec`
+// rows, five units BLOCKED at verify, one QUARANTINED as "the planner died twice", the whole
+// boundary owed, and a tier-4 return that spent Fable on nothing. The breaker is deliberately the
+// same design as `haltPlatform` above — a provider's death is a fact about the PROVIDER — and
+// differs only in its signal: text, but text plus repetition across DIFFERENT work.
+const ERR_404 = 'turn.failed: unexpected status 404 Not Found (chatgpt.com/backend-api/codex/responses)'
+const ERR_503 = 'turn.failed: unexpected status 503 Service Unavailable'
+const outageRun = (error) => () =>
+  ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 1, commits: 0, doneMarker: false, error } })
+
+test('two units 404ing back to back trip the breaker: both PARK, neither is quarantined', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-(build|build-retry|fix):/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'the same status on two different units is the provider')
+  assert.equal(state.halt.reason, 'codex-unavailable')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'pending', `${id} parks — an outage is never a verdict about a unit`)
+    assert.equal(state.units[id].parked, true, `${id} carries the park flag, so it re-enters by adoption`)
+    assert.ok(!has(calls, `dossier:${id}`), `${id} gets no redesign dossier over a provider outage`)
+  }
+  const d = kinds(state, 'codex-unavailable')
+  assert.equal(d.length, 1, 'the breaker speaks once, however many runs go on to fail')
+  assert.match(d[0].what, /consecutive codex runs across different units or roles failed with HTTP 404/)
+  assert.match(d[0].what, /provider outage, not unit defects/)
+  assert.match(d[0].what, /units park/)
+})
+
+// The unit that hit the FIRST 404 is the hard case: nothing was known to be wrong when its own run
+// came back, and by the time a sibling tripped the breaker its retry had already been skipped by
+// `haltReason()`. Its outcome after that must be a park — the 2026-09-03 arc quarantined exactly
+// this unit as "the planner died twice".
+test('the unit that failed FIRST parks too, and nothing is dispatched past the halt', async () => {
+  const seen = []
+  const { fn, calls } = makeAgent([{ match: /^codex-(build|build-retry|fix):/,
+    result: (p, opts) => { seen.push(opts.label); return outageRun(ERR_404)() } }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.units.a.status, 'pending')
+  assert.equal(state.units.a.parked, true)
+  assert.equal(state.units.b.status, 'pending')
+  assert.equal(state.units.b.parked, true)
+  assert.equal(state.halt.codex, 'codex-unavailable')
+  // Distinctness is by unit, so two ids among the launched runs is what tripped it — and after
+  // that no third run may exist: `worthRetry` gates on `!haltReason()`.
+  const ids = [...new Set(seen.map((l) => l.replace(/^codex-[a-z-]+:/, '').replace(/#.*$/, '')))]
+  assert.deepEqual(ids.sort(), ['a', 'b'], 'both units did run before anything halted')
+  assert.ok(!has(calls, 'verify:'), 'nothing downstream is asked to judge work the outage prevented')
+})
+
+test('a plan role that dies under the outage parks the unit — never "the planner died twice"', async () => {
+  const { fn, calls } = makeAgent([{ match: /^plan:/, result: () => codexRoleDead({ error: ERR_404 }) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'roles count toward the census — the provider is the provider')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'pending', `${id} parks`)
+    assert.equal(state.units[id].parked, true)
+    assert.ok(!/planner died twice/.test(state.units[id].reason ?? ''), `${id} is not blamed for the outage`)
+  }
+  assert.ok(!has(calls, 'dossier:'), 'no dossier is written for a provider outage')
+})
+
+test('one unit 404ing while another succeeds is NOT an outage — the unit-level handling stands', async () => {
+  const { fn } = makeAgent([{ match: /^codex-(build|build-retry):a/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt, undefined, 'one unit failing is that unit — a breaker that trips here is useless')
+  assert.equal(state.units.b.status, 'merged', 'and the healthy unit finishes normally')
+  assert.notEqual(state.units.a.parked, true, 'the failing unit is judged as before, never parked on an outage')
+  assert.ok(kinds(state, 'codex-exec').length, 'its own failure is ledgered the way it always was')
+})
+
+// WHAT COUNTS AS A STATUS. The signal is text, so its precision is the only thing standing between
+// "the provider is down" and "two units failed and one of the error lines had a number in it". Both
+// halves are preconditions: `turn.failed` must be there, AND the 4xx/5xx must stand next to the word
+// that makes it a status. The bare `\b([45]\d\d)\b` fallback this used to carry made a millisecond
+// count, a line number and a byte count all read as provider verdicts.
+test('outage signal: a status is a status only next to `status`/`HTTP`/`code`, and only under turn.failed', async () => {
+  const halted = async (error) => {
+    const { fn } = makeAgent([{ match: /^codex-(build|build-retry|fix):/, result: outageRun(error) }])
+    return (await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())).halt
+  }
+  for (const error of [
+    'turn.failed: unexpected status 404 Not Found (chatgpt.com/backend-api/codex/responses)',
+    'turn.failed: HTTP 502 Bad Gateway',
+    'turn.failed: request rejected, status code 503',
+  ]) assert.equal((await halted(error))?.codex, 'codex-unavailable', `a real provider status counts: ${error}`)
+
+  for (const error of [
+    'turn.failed: took 503ms and produced no output',        // a duration, not a status
+    'turn.failed: apply_patch failed at line 404 of app.ts',  // a line number
+    'unexpected status 404 Not Found',                        // a status with no failed turn under it
+  ]) assert.equal(await halted(error), undefined, `and nothing else does: ${error}`)
+})
+
+test('two units failing with DIFFERENT statuses is not one outage', async () => {
+  const { fn } = makeAgent([
+    { match: /^codex-(build|build-retry|fix):a/, result: outageRun(ERR_404) },
+    { match: /^codex-(build|build-retry|fix):b/, result: outageRun(ERR_503) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+
+  assert.equal(state.halt, undefined, 'a 404 and a 503 are two facts, not one provider verdict')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0)
+})
+
+test('one unit failing twice is one unit — distinctness is by id, not by run', async () => {
+  const { fn } = makeAgent([{ match: /^codex-(build|build-retry|fix):a/, result: outageRun(ERR_404) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.halt, undefined, 'a build and its retry both 404ing is still one unit\'s story')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0)
+})
+
+// CONSECUTIVE, in the other direction: any codex result WITHOUT the signature CLEARS the run. An
+// outage has to be happening now, not to have happened once an hour ago — otherwise two unrelated
+// 404s a wave apart, with every unit in between succeeding, halt a healthy wave. One unit's own
+// codex steps are the cleanest way to see it: a single unit produces a strictly ORDERED sequence of
+// results under distinct ids (`codex-spec-review:a`, then the build's `a`, then `verify:a#0`), so
+// the sim states "404, success, 404" and "404, 404" as sequences and nothing else has to be true.
+test('C1 breaker clear: a clean codex result between two 404s means they are not consecutive', async () => {
+  // 404 (the spec critique) → SUCCESS (the build) → 404 (the verifier). Two 404s, one clear
+  // between them, and the wave must run on.
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a/, result: () => codexRoleDead({ error: ERR_404 }) },
+    { match: /^verify:a/, result: () => codexRoleDead({ error: ERR_404 }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.halt, undefined, 'the successful build in between cleared the run — this is not an outage')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0, 'and no breaker row is written')
+  assert.equal(state.units.a.status, 'blocked', 'the dead verifier is handled the way it always was')
+  assert.notEqual(state.units.a.parked, true, 'never parked on an outage nobody observed')
+  assert.ok(!has(calls, 'dossier:a'))
+})
+
+test('C1 control: the SAME two ids with no clean result between them do trip it', async () => {
+  // Identical to the sim above except the build 404s instead of succeeding, so nothing clears.
+  const { fn } = makeAgent([
+    { match: /^codex-spec-review:a/, result: () => codexRoleDead({ error: ERR_404 }) },
+    { match: /^codex-(build|build-retry):a/, result: outageRun(ERR_404) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable', 'two 404s back to back across different ids IS the provider')
+  assert.equal(kinds(state, 'codex-unavailable').length, 1)
+  assert.equal(state.units.a.parked, true, 'and the unit parks with whatever is on its branch')
+})
+
+// C4. The build RAN, reported, and left commits — and the backend was dead under it. `reportLost`
+// is false here, so the ONLY thing that can park this unit is the error line's own outage
+// signature. Without that arm the unit walks into verify → review → gate on work produced against
+// a dead provider, which is the 2026-09-03 shape: judged, not parked.
+test('C4 a 404\'d build that DID report is still parked once the breaker has tripped — its report is not a verdict', async () => {
+  const reported = () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 1, commits: 1, doneMarker: true, error: ERR_404 } })
+  const { fn, calls } = makeAgent([
+    { match: /^codex-spec-review:a/, result: () => codexRoleDead({ error: ERR_404 }) },   // trips id #1
+    { match: /^codex-(build|build-retry):a/, result: reported },                          // trips id #2, WITH a report
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-unavailable')
+  assert.equal(state.units.a.status, 'pending')
+  assert.equal(state.units.a.parked, true, 'the report exists, but nothing about this unit was judged')
+  assert.match(state.units.a.note, /parked at implement:a/, 'and the note says where it stopped')
+  assert.ok(!has(calls, 'verify:a'), 'the diff is never verified against a provider that is down')
+  assert.ok(!has(calls, 'dossier:a'))
+})
+
+// C3. `halt.codex = halt.codex ?? 'codex-unavailable'`: a usage limit already observed is the more
+// specific truth and keeps the slot — "wait the limit window out" and "wait the outage out" are
+// different human actions. The breaker still trips (parking still happens); only the REASON is
+// already spoken for, and since 2026-09-04 the breaker's own degradation row says which one won
+// instead of always claiming `codex-unavailable`.
+// The rendezvous is the sim: b and c must be IN FLIGHT when the limit lands, because a halt makes
+// `codexRole` return null without ever launching — so they could not 404 after it if they waited.
+const tick = () => new Promise((r) => setTimeout(r, 0))
+test('C3 a usage limit keeps the halt slot when the breaker trips under it — and the row says so', async () => {
+  let inFlight = 0
+  let limitReturned = false
+  const { fn, calls } = makeAgent([
+    { match: /^plan:a$/, result: async () => {
+      for (let i = 0; i < 500 && inFlight < 2; i++) await tick()
+      limitReturned = true
+      return { ok: true, result: { approach: 'x', files: [], testPlan: 'x', feasible: true },
+        codex: { ...codexRoleMetaOk(), limitHit: true }, notes: '' }
+    } },
+    { match: /^plan:(b|c)$/, result: async () => {
+      inFlight++
+      for (let i = 0; i < 500 && !limitReturned; i++) await tick()
+      await tick()   // one macrotask boundary drains every microtask that records the limit
+      return codexRoleDead({ error: ERR_404 })
+    } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b'), unit('c')]), makeState())
+
+  assert.equal(state.halt.codex, 'codex-usage-limit', 'the limit was recorded first and `??` keeps it')
+  assert.equal(state.halt.reason, 'codex-usage-limit', 'so that is the reason the conductor hands the human')
+  const rows = kinds(state, 'codex-usage-limit')
+  assert.equal(rows.length, 2, 'the limit itself, and the breaker that tripped under it')
+  const breaker = rows.find((d) => /consecutive codex runs/.test(d.what))
+  assert.ok(breaker, 'the breaker row is there — the trip really happened')
+  assert.match(breaker.what, /dispatch halts on codex-usage-limit/, 'and it names the reason that WON, not its own kind')
+  assert.match(breaker.what, /relaunch after the limit window/, 'so the operator is told the right human action')
+  assert.equal(kinds(state, 'codex-unavailable').length, 0,
+    'no row claims `codex-unavailable` — the halt never said that, and a mislabelled row is a misdirected operator')
+  for (const id of ['a', 'b', 'c']) {
+    assert.equal(state.units[id].status, 'pending', `${id} parks`)
+    assert.equal(state.units[id].parked, true)
+    assert.ok(!has(calls, `dossier:${id}`), `${id} gets no dossier`)
+  }
+})
+
+// A HALT AT A CODEX STEP IS A HALT, WHATEVER SLOT IT FILLED. `codexRole` returns null the moment
+// `haltReason()` is set — it never launches the run — so an env or platform halt declared while a
+// unit sits at its plan role produces exactly the same empty-handed return a dead planner does.
+// Testing `codexOutaged()` alone there quarantined the unit as "the codex planner died twice" and
+// spent a dossier on a halted wave (2026-09-04 review; the arc-observed version of this is the
+// 2026-09-03 quarantine one line further down).
+test('an ENV halt while a unit sits at its plan role parks it — never "the planner died twice"', async () => {
+  // b and c block their verifiers, which is the two-in-one-wave HOST fact: `env-verify-blocked`.
+  // a is still waiting on its plan role when that lands, and its role then comes back empty.
+  let blocked = 0
+  const { fn, calls } = makeAgent([
+    { match: /^verify:(b|c)/, result: () => { blocked++; return BLOCKED_VERIFY() } },
+    // `/^plan:a/`, not `/^plan:a$/`: a null result earns one salvage re-run (`plan:a#salvage`), and
+    // a rule that let the salvage land a real plan would be testing the wrong thing entirely.
+    { match: /^plan:a/, result: async () => {
+      for (let i = 0; i < 500 && blocked < 2; i++) await tick()
+      await tick()   // …and let the halt the second block declares be recorded
+      return null
+    } },
+  ])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b'), unit('c')]), makeState(), { warmLanes: false })
+
+  assert.equal(state.halt.env, 'env-verify-blocked', 'the host fact filled the ENV slot, not the codex one')
+  assert.ok(!state.halt.codex, 'codex was never accused of anything')
+  assert.equal(state.units.a.status, 'pending', 'and the unit at the plan role parks')
+  assert.equal(state.units.a.parked, true)
+  assert.match(state.units.a.note, /parked at plan:a: env-verify-blocked/,
+    'the note names the halt reason that actually won — the operator fixes the host, not the provider')
+  assert.ok(!/planner died twice/.test(state.units.a.reason ?? ''), 'never blamed for a halted wave')
+  assert.ok(!has(calls, 'dossier:a'), 'and no dossier is spent on a halted wave')
+})
+
+test('the REPLAN site parks on a halt too — the architect redirected and the wave went down under it', async () => {
+  // The plan lands, the plan-check redirects, and the revision is dispatched into a wave whose
+  // codex slot is already halted by a usage limit the plan role itself reported. `codexRole`
+  // refuses to launch, so the revision never comes back — and building the plan the architect just
+  // rejected is the one thing that must not happen here.
+  const { fn, calls } = makeAgent([
+    { match: /^plan:a$/, result: () => ({ ok: true, result: { approach: 'x', files: [], testPlan: 'x', feasible: true },
+      codex: { ...codexRoleMetaOk(), limitHit: true }, notes: '' }) },
+    { match: /^opus-plan-check:a$/, result: () => ({ verdict: 'redirect', trigger: 'none', guidance: 'fold it into the existing seam' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  // The redirect branch really ran: the ruling was appended to the spec, which happens only there.
+  // `replan:a` itself never reaches the agent — that IS the failure mode: `codexRole` refuses to
+  // launch past a halt and hands back null, and this site used to read that null as a dead planner.
+  assert.ok(has(calls, 'spec-append:a#plan'), 'the plan-check redirected and its ruling was recorded')
+  assert.ok(!has(calls, 'replan:a'), 'and the revision was never launched — the halt stopped it before dispatch')
+  assert.equal(state.units.a.status, 'pending')
+  assert.equal(state.units.a.parked, true)
+  assert.match(state.units.a.note, /parked at replan:a: codex-usage-limit/, 'and it names the halt, not the planner')
+  assert.ok(!has(calls, 'codex-build:a'), 'the rejected plan is never built')
+  assert.ok(!has(calls, 'dossier:a'))
 })
 
 /* ====================================================================== */
@@ -265,7 +539,7 @@ test('the deadline rides inside the launched command line, so it survives the st
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexTimeoutMin: 30 })
   const p = promptOf(calls, 'codex-build:a')
-  assert.match(p, /setsid nohup sh -c 'timeout -k 30 1800 codex exec /,
+  assert.match(p, /setsid nohup sh -c 'echo \$\$ > \/wt\/__codex\/a\/build\/codex\.pid; timeout -k 30 1800 codex exec /,
     'timeout wraps codex INSIDE the detached sh -c — the steerer\'s death cannot outlive the deadline')
   assert.match(p, /exit-code contains 124/, 'and the launcher\'s own deadline is read back as timedOut')
 })
@@ -274,8 +548,69 @@ test('a resumed session is wrapped too — the wedge is on the resume path as of
   const { fn, calls } = makeAgent([{ match: /^verify:a#0$/, result: VERIFY_FAIL }])
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexFixTimeoutMin: 10 })
   const p = promptOf(calls, 'codex-fix:a#0')
-  assert.match(p, /COMMAND R: cd \/wt\/a && setsid nohup sh -c 'timeout -k 30 600 codex exec resume/)
-  assert.match(p, /COMMAND F: setsid nohup sh -c 'timeout -k 30 600 codex exec -C/)
+  const D = '/wt/__codex/a/fix0'
+  assert.match(p, new RegExp(`COMMAND R: cd /wt/a && setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
+    'timeout -k 30 600 codex exec resume'))
+  assert.match(p, new RegExp(`COMMAND F: setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
+    'timeout -k 30 600 codex exec -C'))
+  // COMMAND R used to run codex in the sh's FOREGROUND (`…; echo $? > exit-code`), which left the
+  // resume path with no CPID to forward a TERM to. Both commands are now the same shape.
+  assert.equal(p.split('& CPID=$!;').length - 1, 2, 'both launch commands background codex and hold its pid')
+})
+
+// The launch line, pinned as one shape across all three sites. 2026-09-02: `… & echo $! > codex.pid`
+// recorded the pid of the fork setsid makes under job control — a process dead within a second — so
+// `tail --pid`, `kill -0` and every group kill in the steer prompt hung off a corpse: 82 phantom
+// `codex-lifecycle` rows, a second codex launched into a live worktree per "reattempt", and "exit
+// 137" manufactured by the reap fallback. 3 waves, 14 of 20 units, none of the deaths real.
+// 2026-09-04 added the LAST clause and the reason the whole body is pinned as one ORDERED sequence
+// rather than as a head, a tail and an unchecked middle: the launch ends in `' &`, so the detached
+// sh's "first act" pidfile write races the steerer's NEXT Bash call. `tail --pid=$(cat codex.pid)`,
+// `kill -0`, and the "already launched?" re-dispatch guard would all read an absent file and
+// manufacture the very false death the pidfile mechanic removes. The bounded wait closes it INSIDE
+// the same command (probe-verified: the pidfile is genuinely absent on the first check).
+test('every codex launch: the detached shell writes its OWN pid, forwards TERM, waits twice — and the command waits for the pidfile', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a#0$/, result: VERIFY_FAIL }])
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  const prompts = calls.filter((c) => /^codex-(build|fix):a/.test(c.label))
+  assert.ok(prompts.length >= 2, `build and fix both steer a codex run (saw ${prompts.length})`)
+  for (const { label, prompt } of prompts) {
+    // Every `setsid nohup sh -c '` opens a launch; its body must start with the pidfile write.
+    const bodies = prompt.split("setsid nohup sh -c '").slice(1)
+    assert.ok(bodies.length >= 1, `${label}: at least one launch command`)
+    for (const body of bodies) {
+      const dir = /^echo \$\$ > (\S+)\/codex\.pid; /.exec(body)?.[1]
+      assert.ok(dir, `${label}: the detached shell records its own pid as its FIRST act, before anything else`)
+      const d = dir.replace(/[.]/g, '\\.')
+      // The resume launch (COMMAND R) has no session-id watcher — it already HAS the session id —
+      // so that one member of the sequence is optional; every other member, and the ORDER, is not.
+      const watcher = body.includes('codex exec resume ')
+        ? ''
+        : `\\( i=0; while \\[ "\\$i" -lt \\d+ \\] && \\[ ! -s ${d}/session-id \\];[^']*?` +
+          `> ${d}/session-id; fi; sleep 1; i=\\$\\(\\(i\\+1\\)\\); done \\) & `
+      assert.match(body, new RegExp(
+        `^echo \\$\\$ > ${d}/codex\\.pid; ` +                                    // 1. pidfile, first act
+        `timeout -k 30 \\d+ codex exec [^']*?` +                                 // 2. the deadline, inside
+        `> ${d}/events\\.jsonl 2> ${d}/stderr\\.log & CPID=\\$!; ` +              // 3. backgrounded, pid held
+        watcher +                                                                // 4. session-id watcher
+        `trap "kill -TERM \\$CPID; T=1" TERM; ` +                                 // 5. TERM forwarded on
+        `wait \\$CPID; RC=\\$\\?; ` +                                             // 6. the real wait
+        `if \\[ -n "\\$T" \\]; then wait \\$CPID; RC=\\$\\?; fi; ` +               // 7. re-wait on the FLAG
+        `echo \\$RC > ${d}/exit-code' & ` +                                       // 8. exit code, then detach
+        `i=0; while \\[ ! -s ${d}/codex\\.pid \\] && \\[ "\\$i" -lt 50 \\]; ` +    // 9. …and wait for the pidfile
+        `do sleep 0\\.2; i=\\$\\(\\(i\\+1\\)\\); done`),
+      `${label}: the whole launch body, in order — pidfile write, deadline, background + CPID, ` +
+      'session-id watcher, TERM trap, wait, flag-gated re-wait, exit code, detach, pidfile wait. ' +
+      'The second wait is gated on the trap\'s FLAG, never on RC > 128: only a trap-interrupted ' +
+      'wait leaves the child unreaped, and re-waiting a SIGKILLed (already reaped) child reports ' +
+      'whatever the shell remembers rather than its true 137.')
+      assert.ok(!body.includes('-gt 128'), `${label}: no exit-code test may stand in for the flag`)
+      assert.ok(!/exit-code' &;/.test(body),
+        `${label}: no \`;\` after the backgrounding \`&\` — \`cmd & ; next\` is a shell syntax error`)
+    }
+    assert.ok(!/echo \$! >/.test(prompt),
+      `${label}: NEVER \`echo $! >\` after the \`&\` — under job control that names a fork that is already dead`)
+  }
 })
 
 test('an absent exit-code file is RUNNING: -1 needs a dead pid, never a long wait', async () => {
@@ -388,7 +723,128 @@ test('a contract mismatch on a unit whose work already landed banks as `rebanked
 })
 
 /* ====================================================================== */
-/* 6. The conductor reads one halt field and one debt flag                 */
+/* 6. A blocked VERIFY: tooling that could not run is a host fact          */
+/* ====================================================================== */
+// 2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a black-holed registry
+// POST. The verifier reported `blocked:true` — honestly — and the FIRST unit to reach it was
+// quarantined for it, dossier and all, for a defect that was not its own and that no respec could
+// fix. Same family as every other entry in this file: an environment fact converted into a unit
+// verdict. The graduated answer: block once (commits intact, re-verified next wave), quarantine on
+// a repeat (it is this checkout's problem), and halt the wave the moment TWO units say it in one
+// wave (it is the box's problem, and no number of unit verdicts fixes a box).
+const BLOCKED_VERIFY = () => ({ pass: false, blocked: true, failures: ['ECONNRESET https://registry.npmjs.org/-/npm/v1/security/audits'],
+  lanes: [], contractSurfaceTouched: false, diffFiles: [] })
+
+test('one blocked verify BLOCKS the unit: no quarantine, no dossier, commits intact', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'blocked', 'tooling that could not run is not a verdict about the unit')
+  assert.equal(state.units.a.branch, 'unit/a', 'the branch — and everything committed on it — is named on the record')
+  assert.equal(state.units.a.rounds?.verifyBlocked, 1, 'tallied, so a repeat next wave is countable')
+  assert.ok(!has(calls, 'dossier:a'), 'no redesign dossier over a registry that went dark')
+  assert.ok(!has(calls, 'codex-fix:a'), 'and no fix round — there is nothing to fix in the unit')
+  assert.equal(state.halt, undefined, 'ONE blocked verify halts nothing: it may still be this checkout alone')
+  const d = kinds(state, 'verify-blocked')
+  assert.equal(d.length, 1, 'the environment fact is ledgered, once')
+  assert.match(d[0].what, /BLOCKED, not/, 'and the row says which door the unit went through')
+  assert.match(d[0].what, /ECONNRESET/, 'carrying the verifier\'s own first failure line, so the operator can act')
+})
+
+test('blocked AGAIN on a later wave quarantines: twice is not transient', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a', rounds: { verifyBlocked: 1 } } } }))
+
+  assert.equal(state.units.a.status, 'quarantined', 'the second blocked verify is the unit\'s own problem to route')
+  assert.match(state.units.a.reason, /environment\/tooling blocked verification/)
+  assert.equal(state.units.a.rounds?.verifyBlocked, 2, 'the tally survived the wave boundary — that is what counts it')
+  assert.ok(has(calls, 'dossier:a'), 'and NOW a dossier is written: the boundary has to route it')
+  const [d] = kinds(state, 'verify-blocked')
+  assert.match(d.what, /on 2 separate waves/, 'the ledger says why this one quarantined and the first did not')
+})
+
+test('a blocked unit\'s commits are ADOPTED next wave, never re-read as un-adopted work', async () => {
+  // The whole point of blocking rather than quarantining is that the branch survives. Without
+  // adoption the next wave's setup sees commits beyond base that nothing claims and quarantines on
+  // 'has-commits' — the same verdict by another route.
+  const { fn, calls } = makeAgent([
+    // The branch exists (sha), was never merged, worktree present…
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    // …and holds 3 commits beyond base: last wave's implementation, which nobody judged.
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a', rounds: { verifyBlocked: 1 } } } }))
+
+  assert.equal(state.units.a.status, 'merged', 'the adopted branch runs the pipeline again and lands')
+  assert.ok(!has(calls, 'codex-build:a'), 'and it is NOT rebuilt from scratch — the commits are its own progress')
+  assert.equal(kinds(state, 'verify-blocked').length, 0, 'nothing was blocked this wave')
+})
+
+test('TWO units blocked in one wave halts the wave: a host fact, not two unit defects', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:(a|b|d)/, result: BLOCKED_VERIFY }])
+  // `c` depends on `m`, which merges normally — so `c` becomes dependency-ready DURING the wave and
+  // is the unit that proves the halt gates NEW dispatch rather than merely stopping the two blocked.
+  // `d` blocks too, AFTER the halt is already declared: the ledger must still carry exactly one row.
+  const state = await runWave(fn,
+    makePlan([unit('m'), unit('a'), unit('b'), unit('d'), unit('c')], [{ from: 'm', to: 'c', type: 'semantic', mode: 'contract' }]),
+    makeState(), { warmLanes: false })
+
+  assert.equal(state.halt.reason, 'env-verify-blocked', 'the wave halts on the host, not on either unit')
+  assert.equal(state.halt.env, 'env-verify-blocked', 'and it fills the env slot of the halt record')
+  for (const id of ['a', 'b']) {
+    assert.equal(state.units[id].status, 'blocked', `${id} is blocked, with its commits`)
+    assert.notEqual(state.units[id].status, 'quarantined', `${id} is never quarantined for the box`)
+  }
+  assert.ok(!has(calls, 'dossier:a') && !has(calls, 'dossier:b'), 'no dossiers: nothing about either unit was judged')
+  assert.equal(state.units.c.status, 'pending', 'the unit behind the halt is left pending, not judged')
+  assert.ok(!has(calls, 'setup:c'), 'and never dispatched — ready() gates on the halt record')
+  assert.equal(state.units.d.status, 'blocked', 'the third unit blocks too, on the same host fact')
+  const rows = kinds(state, 'env-verify-blocked')
+  // ONE row, however many units go on to block. `!halt.env` is what makes it fire once — and the
+  // same test is what stops it overwriting a preflight halt (`env-pids-exhausted`, `env-no-reaper`)
+  // that was already the wave's reason before a single verifier ran.
+  assert.equal(rows.length, 1, 'the host fact is ledgered once, not once per blocked unit')
+  const [d] = rows
+  assert.match(d.what, /host fact/, 'the row says what it is')
+  assert.match(d.what, /\(a, b\)/, 'and names the two units it judged on — the third arrived after the verdict')
+  assert.match(d.what, /fix the host, relaunch/, 'and the one human action')
+})
+
+// C5. A halt is never a verdict, so a halted wave BLOCKS a unit whatever its own tally says. Without
+// the `!haltReason()` half of this test, the second unit to reach a two-round blocked tally inside a
+// wave the host has already halted is quarantined — for the box, on the round the box itself caused.
+test('C5 a unit on its SECOND blocked round inside an already-halted wave blocks — it is not quarantined', async () => {
+  // `a` carries `rounds.verifyBlocked: 1` from last wave and is adopted with its commits, so this
+  // wave is its second. `b` and `c` block first, which is what declares `env-verify-blocked`; only
+  // then does `a`'s own verifier report blocked.
+  let others = 0
+  const { fn, calls } = makeAgent([
+    { match: /^verify:(b|c)/, result: () => { others++; return BLOCKED_VERIFY() } },
+    { match: /^verify:a/, result: async () => {
+      for (let i = 0; i < 500 && others < 2; i++) await tick()
+      await tick()   // …and let the halt the second block declares be recorded
+      return BLOCKED_VERIFY()
+    } },
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b'), unit('c')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a', rounds: { verifyBlocked: 1 } } } }),
+    { warmLanes: false })
+
+  assert.equal(state.halt.env, 'env-verify-blocked', 'the wave is halted on the host before `a` reports')
+  assert.equal(state.units.a.rounds.verifyBlocked, 2, 'and `a` really is on its second blocked round')
+  assert.equal(state.units.a.status, 'blocked', 'which still blocks — the halt outranks the tally')
+  assert.notEqual(state.units.a.status, 'quarantined')
+  assert.ok(!has(calls, 'dossier:a'), 'no dossier: nothing about this unit was judged either')
+  assert.ok(!kinds(state, 'verify-blocked').some((r) => /on 2 separate waves/.test(r.what)),
+    'and the ledger never claims two INDEPENDENT waves proved anything about this unit')
+})
+
+/* ====================================================================== */
+/* 7. The conductor reads one halt field and one debt flag                 */
 /* ====================================================================== */
 async function driveConductorWith(waveState, extraState = {}) {
   const { fn: workflowFn } = makeWorkflow(() => waveState)

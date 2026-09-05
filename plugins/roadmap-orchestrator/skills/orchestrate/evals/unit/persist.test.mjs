@@ -15,7 +15,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -72,10 +72,9 @@ const recording = (fn, record) => async (prompt, opts) => {
   return result
 }
 
-const persist = (runDir, script, args, expect = 0) => {
+const persistArgv = (argv, expect = 0) => {
   try {
-    const out = execFileSync('node', [PERSIST, '--run', runDir, '--script', script, '--args', JSON.stringify(args)],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const out = execFileSync('node', [PERSIST, ...argv], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     assert.equal(expect, 0, `expected exit ${expect}, got 0:\n${out}`)
     return out
   } catch (e) {
@@ -83,6 +82,20 @@ const persist = (runDir, script, args, expect = 0) => {
     return `${e.stdout}${e.stderr}`
   }
 }
+
+const persist = (runDir, script, args, expect = 0) =>
+  persistArgv(['--run', runDir, '--script', script, '--args', JSON.stringify(args)], expect)
+
+// The other entry point: no journal, no replay — the run's RETURNED value, fed straight through the
+// same writers. `--args` still carries roadmapDir; `--run`/`--script` are not passed at all.
+const persistReturned = (dir, returned, args, expect = 0) => {
+  const file = path.join(dir, 'returned.json')
+  writeFileSync(file, `${JSON.stringify(returned, null, 2)}\n`)
+  return persistArgv(['--returned', file, '--args', JSON.stringify(args)], expect)
+}
+
+const dirSnapshot = (dir) => Object.fromEntries(
+  readdirSync(dir).sort().map((f) => [f, readFileSync(path.join(dir, f), 'utf8')]))
 
 const read = (roadmapDir, name) => readFileSync(path.join(roadmapDir, name), 'utf8')
 
@@ -198,22 +211,81 @@ test('stale records from a superseded launch are stepped over, and the replay st
 // The other side of stepping over a record: if the replay LATER asks for one the cursor has already
 // passed, its control flow diverged from the live run's. That is a miss with a marker naming the
 // call, never a silent reorder — a reorder is precisely the bug the clock exists to stop.
-test('a lookup whose record the cursor already passed is a miss marked out of journal order', async () => {
+//
+// A script whose two calls are journalled in the opposite order to the one it makes them in: the
+// second lookup asks for a record the cursor is already past.
+const outOfOrderRun = (waveOfSnapshot = 0) => {
   const { runDir, roadmapDir, record } = newRun()
-  const state = mkState()
   record('P-FIRST', { ok: true })
   record('P-SECOND', { ok: true })
-
-  const reversed = path.join(runDir, 'reversed.mjs')
-  writeFileSync(reversed, "export const meta = { name: 'reversed', phases: [] }\n" +
-    `log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify(state))})\n` +
+  const script = path.join(runDir, 'reversed.mjs')
+  writeFileSync(script, "export const meta = { name: 'reversed', phases: [] }\n" +
+    `log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify(mkState({ wave: waveOfSnapshot })))})\n` +
     "await agent('P-SECOND', { label: 'second' })\n" +
     "await agent('P-FIRST', { label: 'first' })\n")
+  return { runDir, roadmapDir, script }
+}
 
-  const out = persist(runDir, reversed, { roadmapDir }, 2)
-  assert.match(out, /^PARTIAL stoppedAt=first \(out of journal order\)/m,
-    'the marker names the call AND why, so a script change that reorders calls is legible')
-  assert.equal(JSON.parse(read(roadmapDir, 'state.json')).partial.stoppedAt, 'first (out of journal order)')
+// An out-of-order miss is the REPLAY diverging, not the run failing — the live run did not stop
+// there, so its own state is further along than any prefix reachable here. wf 2026-09-02 wrote such
+// a prefix (a wave-1 halt) over a returned wave-3 state, and a relaunch from that file would have
+// re-forked every unit from the plan-pack tip. So the partial is parked BESIDE state.json, never
+// over it, even when there is no state.json at all to protect.
+test('an out-of-order miss is refused: the partial is parked in state.partial.json, not state.json', async () => {
+  const { runDir, roadmapDir, script } = outOfOrderRun()
+
+  const out = persistArgv(['--run', runDir, '--script', script, '--args', JSON.stringify({ roadmapDir })], 2)
+  assert.match(out, /^PARTIAL-REFUSED stoppedAt=first \(out of journal order\) why=divergence wrote=state\.partial\.json/m,
+    'the line names the call, why it was refused, and what it did write instead')
+  assert.match(out, /--returned/, "and points at the cure: persist the run's returned value")
+  assert.equal(existsSync(path.join(roadmapDir, 'state.json')), false,
+    'nothing is written to state.json — a diverged prefix is not a state')
+  assert.equal(JSON.parse(read(roadmapDir, 'state.partial.json')).partial.stoppedAt, 'first (out of journal order)',
+    'the parked file still carries the marker naming the call, for the investigation')
+})
+
+test('an out-of-order miss leaves a NEWER state.json byte-identical', async () => {
+  const { runDir, roadmapDir, script } = outOfOrderRun()
+  const live = `${JSON.stringify(mkState({ wave: 3, integrationTip: 'c1a0801d'.repeat(5) }), null, 2)}\n`
+  writeFileSync(path.join(roadmapDir, 'state.json'), live)
+
+  const out = persistArgv(['--run', runDir, '--script', script, '--args', JSON.stringify({ roadmapDir })], 2)
+  assert.match(out, /^PARTIAL-REFUSED /m)
+  assert.equal(read(roadmapDir, 'state.json'), live, 'the wave-3 state on disk is untouched, byte for byte')
+  assert.equal(JSON.parse(read(roadmapDir, 'state.partial.json')).wave, 0, 'and the wave-0 prefix is parked beside it')
+})
+
+// The second refusal, on its own: an ORDINARY journal-exhausted miss whose snapshot is behind what
+// state.json already holds. A partial marker on disk is the carve-out — that file is this same
+// partial, so re-persisting a crashed run stays idempotent.
+test('a partial never overwrites a state.json at a later wave, or a whole one at the same wave', async () => {
+  const { runDir, roadmapDir, record } = newRun()
+  const plan = mkPlan([unit('a'), unit('b')])
+  const { fn } = makeAgent(packRules(plan, mkState()))
+  const args = { roadmapDir, launchId: 'L1', config: { gateAuditRate: 0 } }
+  await (await loadScript(HARNESS))({ args, agent: recording(fn, record) })
+  const journal = path.join(runDir, 'journal.jsonl')
+  writeFileSync(journal, `${readFileSync(journal, 'utf8').split('\n').filter(Boolean).slice(0, 24).join('\n')}\n`)
+
+  assert.match(persist(runDir, HARNESS, args, 2), /^PARTIAL stoppedAt=/m, 'nothing on disk: the partial lands')
+  const written = read(roadmapDir, 'state.json')
+  assert.match(persist(runDir, HARNESS, args, 2), /^PARTIAL stoppedAt=/m,
+    'and re-persisting the same crashed run is allowed — the file on disk IS this partial')
+  assert.equal(read(roadmapDir, 'state.json'), written, 'idempotently')
+
+  // The root repaired it by hand (or a later run persisted): same wave, no partial marker.
+  const { partial: _p, ...whole } = JSON.parse(written)
+  const repaired = `${JSON.stringify(whole, null, 2)}\n`
+  writeFileSync(path.join(roadmapDir, 'state.json'), repaired)
+  let out = persist(runDir, HARNESS, args, 2)
+  assert.match(out, /^PARTIAL-REFUSED stoppedAt=.* why=newer-on-disk wrote=state\.partial\.json/m)
+  assert.equal(read(roadmapDir, 'state.json'), repaired, 'a whole state at the same wave outranks a partial')
+
+  const ahead = `${JSON.stringify({ ...whole, wave: whole.wave + 1 }, null, 2)}\n`
+  writeFileSync(path.join(roadmapDir, 'state.json'), ahead)
+  out = persist(runDir, HARNESS, args, 2)
+  assert.match(out, /why=newer-on-disk/, 'and so does a later wave')
+  assert.equal(read(roadmapDir, 'state.json'), ahead)
 })
 
 /* =============================== conductor ================================ */
@@ -313,6 +385,49 @@ test('persist.mjs refuses to overwrite a plan.json holding unit ids the run neve
   assert.match(degs, /"kind":"plan-conflict"/, 'ledgered too, so a later reader finds it without the console')
 })
 
+/* ================================ --returned ============================== */
+// The cure for a refused partial: the root has the run's real return value in the task output, so
+// it hands that over instead of a replayed prefix. No journal is read, no script is loaded — the
+// value goes straight through the same writers, so it must land exactly what a full replay lands.
+test('--returned writes the same files a full replay does, byte for byte', async () => {
+  const { runDir, roadmapDir, args, live } = await conductorRun()
+  persist(runDir, CONDUCTOR, args)
+
+  const other = mkdtempSync(path.join(tmpdir(), 'roadmap-persist-returned-'))
+  const otherRoadmap = path.join(other, '.roadmap')
+  const out = persistReturned(other, live, { ...args, roadmapDir: otherRoadmap })
+  assert.match(out, /^returned: .*replay skipped$/m, 'it says plainly that no replay happened')
+  assert.match(out, /^OK reason=max-waves/m, 'and reports the same completion the replay does')
+
+  const replayed = dirSnapshot(roadmapDir)
+  assert.ok(Object.keys(replayed).includes('state.json') && Object.keys(replayed).includes('plan.json'),
+    'sanity: the replay wrote the documents we are comparing against')
+  assert.deepStrictEqual(dirSnapshot(otherRoadmap), replayed,
+    'every document, same names and same bytes — --returned is the same writers, not a second path')
+})
+
+test('--returned needs neither --run nor --script, but still needs roadmapDir', async () => {
+  const { args, live } = await conductorRun()
+  const dir = mkdtempSync(path.join(tmpdir(), 'roadmap-persist-returned-'))
+  const { roadmapDir: _drop, ...noDir } = args
+  const out = persistReturned(dir, live, noDir, 1)
+  assert.match(out, /roadmapDir/, 'the refusal names what is missing')
+  assert.match(persistArgv(['--args', JSON.stringify(args)], 1), /usage:/,
+    'and without --returned, --run and --script are still required')
+})
+
+// The plan read-and-refuse is a writer, not a replay step, so it must fire on this path too — the
+// out-of-order case this flag exists for is exactly when a root edit is most likely to be sitting
+// in plan.json.
+test('--returned still refuses to overwrite a plan.json holding unit ids the run never saw', async () => {
+  const { roadmapDir, args, live } = await conductorRun({ onDisk: mkPlan([unit('a'), unit('root-added-unit')]) })
+  const before = read(roadmapDir, 'plan.json')
+  const out = persistReturned(path.dirname(roadmapDir), live, args)
+  assert.match(out, /PLAN-CONFLICT unknownUnits=root-added-unit/, 'the refusal is as loud as on the replay path')
+  assert.equal(read(roadmapDir, 'plan.json'), before, 'and the file is left exactly as it was')
+  assert.match(read(roadmapDir, 'degradations.jsonl'), /"kind":"plan-conflict"/, 'ledgered too')
+})
+
 // A replay that THROWS is not the same as one that runs out of journal, and it used to be fatal: a
 // crashed run's journal replays straight back into the crash, and an uncaught exception here lost
 // everything the run did decide (wf_c6971376-1a5 — the harness's cyclic-plan throw). The last
@@ -357,4 +472,35 @@ test('a script that throws BEFORE its first snapshot leaves state.json untouched
   const out = persist(runDir, failing, args, 1)
   assert.match(out, /boom before any snapshot/, 'the refusal names the error')
   assert.equal(read(roadmapDir, 'state.json'), '{"keep":"me"}\n', 'a partial with nothing in it overwrites nothing')
+})
+
+/* ==================== the parked partial is cleaned up on success ==================== */
+// A refusal parks its prefix in `state.partial.json` and prints the cure. Once that cure runs and a
+// WHOLE state lands, the parked file is stale — evidence of a divergence already resolved — and
+// leaving it beside a current `state.json` is how a later reader (or a root working the recovery
+// ladder) relaunches from the wrong file. So a successful persist removes it, and says it did.
+test('the --returned cure clears the state.partial.json the refusal parked, and names it', async () => {
+  const { runDir, roadmapDir, script } = outOfOrderRun()
+  const args = { roadmapDir }
+  assert.match(persistArgv(['--run', runDir, '--script', script, '--args', JSON.stringify(args)], 2),
+    /^PARTIAL-REFUSED /m, 'setup: the refusal parks the prefix')
+  assert.ok(existsSync(path.join(roadmapDir, 'state.partial.json')))
+
+  const out = persistReturned(path.dirname(roadmapDir), mkState({ wave: 3 }), args)
+  assert.match(out, /^OK .*removed=state\.partial\.json$/m, 'the OK line says the stale park is gone')
+  assert.equal(existsSync(path.join(roadmapDir, 'state.partial.json')), false, 'and it really is gone')
+  assert.equal(JSON.parse(read(roadmapDir, 'state.json')).wave, 3, 'the whole state is what stands')
+})
+
+test('a completed REPLAY clears it too, and a run with none to clear says nothing about it', async () => {
+  const { runDir, roadmapDir, args } = await conductorRun()
+  writeFileSync(path.join(roadmapDir, 'state.partial.json'), '{"wave":0,"partial":{"stoppedAt":"stale"}}\n')
+
+  const out = persist(runDir, CONDUCTOR, args)
+  assert.match(out, /^OK reason=max-waves .*removed=state\.partial\.json$/m)
+  assert.equal(existsSync(path.join(roadmapDir, 'state.partial.json')), false)
+
+  const again = persist(runDir, CONDUCTOR, args)
+  assert.match(again, /^OK reason=max-waves /m, 'and re-persisting stays idempotent')
+  assert.doesNotMatch(again, /removed=/, 'with no removal to report the second time')
 })
