@@ -71,6 +71,12 @@ shipping; never ship on an upper rung alone.
    `conductor.test.mjs` §24–25 lock the `critical-path-stalled` return (a lineage quarantined twice
    with dependents waiting returns before any tier runs) and a respec's `existingBranch`/`supersedes`
    riding into the plan.
+   `phase0-templates.test.mjs` pins the two Phase-0 codex roles that ship as TEMPLATES (the
+   plan-pack review and the contract-vs-code cross-check, run by the root before any workflow
+   exists): each output schema is OpenAI strict-mode legal at every level, every cap it carries is
+   stated in its brief by field name, every `{{placeholder}}` a brief uses is one SKILL.md tells the
+   root how to fill, and SKILL.md names both files so the root runs the shipped brief rather than
+   improvising one.
    `admissions.test.mjs` locks the **conductor's admission code path**: `admissions:'closed'` stops
    tiers 1 and 2 minting units — drafts and promotions become debt lines banked into *both* channels —
    while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
@@ -549,6 +555,36 @@ tests. Verdict: **`codexSteerModel: 'haiku'` suffices** — the steering job is 
 designed. (The probe ran without platform schema enforcement, so the meta block arrived via
 the agent's tool trace rather than a validated report; the real platform's S.implCodex schema
 forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k output tokens.
+
+### P3 — the Phase-0 plan-pack review role against the conductor fixture (pinned 2026-09-15)
+
+Spends OpenAI quota only, zero Claude tokens. The role is a template the root runs by hand
+(SKILL.md → Phase 0 → "Cross-model review of the plan pack"), so no fixture reaches it; this probe
+is its evidence. A copy of the conductor fixture's repo (`setup-fixture.sh --conductor`, provisioned,
+`plan.json` paths rewritten to the copy) was handed to `codex exec` with the shipped brief and
+schema, `gpt-5.6-sol`, `model_reasoning_effort=high`, under the sandbox flag the harness uses here:
+
+- **It found the planted defect at Phase 0.** `contradictions[0]` names `impossible-cache`'s spec
+  against `calc-api.md` clauses 2–3 (cross-process reuse vs. the persistence ban), with file:line
+  evidence; `unbuildable[0]` carries the exact question it would ask; `recut[0]` says not to
+  schedule it as a build unit until re-specified. In the fixture that defect is discovered only
+  after a codex plan, a `feasible:false`, and a Fable plan-check — at Phase 0 it is an edit.
+- **It found two real defects of the canned pack** the fixture never grades: no `constraints.md`,
+  and an `architect-log.md` with no `## Direction` section (`questions`, 2 entries).
+- **It ran the brief's command** (`bash test.sh`, exit 0, `ok`) and reported no `briefDefects`.
+- **It proposed one recut** (fold `add-multiply` into `add-divide`: same export object, same
+  test file, already serialized by the edge) — the kind of finding the architect adjudicates, and
+  here would dismiss, since the two units exist to probe scheduling.
+- **It wrote nothing** (`git status` clean apart from the probe's own path rewrite), and the report
+  validated against the strict-mode schema on the first turn.
+- **Cost:** ~111 K input tokens (88 K cached), 6.3 K output, about five minutes wall clock.
+
+**And a finding about the preflight.** The first attempt ran under `-s read-only` and returned an
+honest empty report with a `notes` line: every shell call died with `bwrap: No permissions to
+create a new namespace`. Codex exited **0** — the sandbox failure shows only in the final
+message. The same box had passed a "reply pong" smoke under that flag minutes earlier, because a
+one-word reply never runs a command. That is why SKILL.md's Codex preflight now runs `pwd` and
+is judged on exit code **and** output.
 
 ## Interpreting failures
 

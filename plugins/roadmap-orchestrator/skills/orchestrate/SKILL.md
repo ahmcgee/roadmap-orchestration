@@ -189,13 +189,16 @@ Read their outputs, then decide:
   (arc-observed: 7 `scope-growth` degradations in one wave, nearly all noise) and drown the real one
   (a unit reaching into another area's source).
 - **Cross-check contracts against code before freezing.** Where a frozen surface already exists
-  in code (skip only if every frozen surface is greenfield), have a **Haiku** agent (Sonnet where
-  signatures are subtle) list the surfaces each drafted contract freezes — endpoints, CLI verbs,
-  exported signatures, schemas — and diff each against the live implementation, reporting per
-  surface *matches* / *differs* (how, at file:line) / *absent*. Adjudicate every `differs` before
-  freezing: amend the contract to reality, or make the divergence an explicit migration unit with
-  the contract as the target state. Never freeze a contradiction silently — the fidelity audit
-  below reads *source*, not the repo, so it cannot catch this.
+  in code (skip only if every frozen surface is greenfield), run the **codex** contract check —
+  a shell-capable reader from the other model family, in place of the Haiku listing it replaces
+  — which lists every surface each drafted contract freezes (endpoints, CLI verbs, exported
+  signatures, schemas) and diffs each against the live implementation, reporting per surface
+  *matches* / *differs* (how, at file:line) / *absent*. It runs exactly like the plan-pack review
+  below (same review worktree, same invocation shape) with `templates/phase0-contract-check-brief.md`
+  and `templates/phase0-contract-check.schema.json`. Adjudicate every `differs` before freezing:
+  amend the contract to reality, or make the divergence an explicit migration unit with the
+  contract as the target state. Never freeze a contradiction silently — the fidelity audit below
+  reads *source*, not the repo, so it cannot catch this.
 - **Pull design authorities into the repo before anything forks.** Where the roadmap provides
   designs — comps, design-system components, interaction patterns — they *bind* the same way a
   frozen contract binds: a screen that has a comp is never built from primitives, and "matches the
@@ -316,6 +319,48 @@ exist, the comps are source too**: audit the plan against them on the same footi
 roadmap, with auditors that can actually see the renders. A UI spec that has drifted from its comp
 is compression loss of exactly the kind this audit exists to catch, and it is invisible to an
 auditor reading prose alone.
+
+**Cross-model review of the plan pack — the builder's family reads the draft.** Everything above
+is single-family: Sonnet normalizes, Opus briefs and audits, you decompose and freeze — and one
+family's blind spots are correlated across its own auditors. The units will be *built* by the
+Codex family, and its reading of the draft is the one that later surfaces as a redirect, a
+stop-and-escalate, or a quarantine. So once the fidelity audit's findings are folded in and
+**before the user question batch**, hand the whole draft to one codex role for a read-only
+review. It reads the entire draft `.roadmap/` (plan, contracts, specs, brief, constraints, the
+Direction section) plus the repo, runs the brief's commands, and reports: `contradictions`
+between contracts and specs or between a spec and the code, `unbuildable` units with the exact
+question it would have to ask, `recut` proposals with the cost of your cut, `briefDefects` (a
+command that does not do what `brief.md` says), and open `questions`. It reads and reports; it
+decides nothing (invariant 2 — the verdict on every finding is yours).
+
+Run it in a **provisioned review worktree, never your checkout** — the draft pack is not
+committed yet, so copy it in — with the shipped brief and strict-mode schema, filling the two
+placeholders `{{REPO}}` (the review worktree) and `{{ROADMAP}}` (its `.roadmap/`):
+
+```
+R=<worktreeRoot>/__phase0-review; S=<this skill's directory>
+git worktree add --detach "$R" HEAD && cp -r .roadmap "$R"/.roadmap
+# provision it exactly as a unit worktree: copy plan.provision.copy into $R, run plan.provision.setup there
+sed "s#{{REPO}}#$R#g; s#{{ROADMAP}}#$R/.roadmap#g" "$S"/templates/phase0-review-brief.md > /tmp/phase0-review-brief.md
+timeout 1800 codex exec -C "$R" -s <codexSandbox> --skip-git-repo-check -m <review model> \
+  -c model_reasoning_effort=high --output-schema "$S"/templates/phase0-review.schema.json \
+  -o /tmp/phase0-review.json - < /tmp/phase0-review-brief.md
+git worktree remove --force "$R"
+```
+
+`<codexSandbox>` is the value the preflight settled on; the brief carries "change nothing" because
+the sandbox cannot always. `<review model>` is the strongest Codex model provisioned — this is one
+judgment-heavy read per arc, so it takes the model builds would be too expensive on; fall back to
+`plan.config.codexModel`. The pass test is the **exit code** plus a parseable `-o` file; a role
+that dies gets one retry, then the arc proceeds without it and the architect log says so. Then
+adjudicate every finding exactly as you do the audit's: amend the plan or a spec, record a
+`C-<nn>` ruling, or dismiss it with a stated reason in the architect log — and fold anything
+genuinely ambiguous into the user question batch. A `recut` you accept re-runs decomposition for
+the units it names; a `briefDefects` entry is fixed in `brief.md` before anything forks (every
+unit agent trusts that file). Proportionate, like the audit: skip only on an arc of three units
+or fewer whose only contract is the conventions one. **Write down, in the architect log, how many
+of its findings changed the plan** — that count is the measure of whether the role earns its
+cost, and the paid fixtures cannot grade Phase 0 (their packs are canned).
 
 **Record cross-cutting constraints** in `.roadmap/constraints.md` — design decisions and
 constraints from the source that aren't interface contracts (performance budgets, technology

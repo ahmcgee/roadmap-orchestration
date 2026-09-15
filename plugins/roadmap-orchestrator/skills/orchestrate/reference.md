@@ -1471,6 +1471,28 @@ own report file. Runs its own implement→test→fix loop inside the brief's pin
 **Root-only, never delegated down the ladder**: the Phase-0 plan pack, contingent replans, contract
 amendments, needs-user calls, and the session integration review.
 
+### Phase-0 codex roles (run by the root by hand, before any workflow exists)
+
+Two read-only reviews by the *builder's* family of a draft the architect's family wrote, shipped as
+templates because Phase 0 has no script to compose them: a brief with two placeholders and an
+OpenAI strict-mode output schema each (every property required at every level,
+`additionalProperties:false` — the P1 rule; `evals/unit/phase0-templates.test.mjs` pins strictness,
+that every cap is stated in the brief, and that SKILL.md documents the placeholders).
+
+| Role | Templates | Reads | Reports | The root does with it |
+|---|---|---|---|---|
+| **Plan-pack review** (after the fidelity audit, before the user question batch) | `templates/phase0-review-brief.md`, `templates/phase0-review.schema.json` | the whole draft `.roadmap/` + the repo; runs the brief's commands | `contradictions` (≤10), `unbuildable` (≤10, each with the question it would ask), `recut` (≤6, with the cost of the draft's cut), `briefDefects` (≤8, commands it ran), `questions` (≤12), `notes` | adjudicates every finding as it does the audit's — amend / `C-nn` ruling / dismiss with a reason — and journals how many changed the plan |
+| **Contract-vs-code cross-check** (before freezing, where a frozen surface already exists in code) | `templates/phase0-contract-check-brief.md`, `templates/phase0-contract-check.schema.json` | every surface each drafted contract freezes, against the live implementation | `surfaces[]` — a completeness list, one per surface: `matches` / `differs` (how, file:line) / `absent` | adjudicates every `differs` before freezing: amend the contract, or spec an explicit migration unit |
+
+Invocation (both): a **detached review worktree** at `<worktreeRoot>/__phase0-review` forked from
+`HEAD` with the uncommitted draft `.roadmap/` copied in and `plan.provision` applied, then
+`codex exec -C <worktree> -s <codexSandbox> --skip-git-repo-check -m <review model>
+-c model_reasoning_effort=high --output-schema <schema> -o <report.json> - < <filled brief>` — the
+exact lines are in SKILL.md → Phase 0. `<review model>` is the strongest Codex model provisioned
+(one judgment-heavy read per arc; `plan.config.codexModel` is the fallback). Pass test: exit 0 and
+a parseable `-o` file; one retry, then proceed without it and say so in the architect log. Neither
+role decides anything — the table above still holds: Codex advises, Claude rules.
+
 ## Platform rules the scripts respect (keep respecting them if you modify them)
 
 - `model:` explicit on **every** `agent()` call — omitted, agents inherit the main-loop model

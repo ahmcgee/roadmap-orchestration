@@ -1,0 +1,24 @@
+{
+  "$comment": "Output schema for the Phase-0 CONTRACT-VS-CODE CROSS-CHECK as a codex role (SKILL.md → Phase 0 → 'Cross-check contracts against code before freezing'). OpenAI strict mode: every property required, additionalProperties false (evals/README.md P1). `surfaces` is a completeness list — one entry per surface a drafted contract freezes — and is deliberately uncapped in count; each entry's strings are capped and the caps are restated in phase0-contract-check-brief.md. Pinned by evals/unit/phase0-templates.test.mjs.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contract": { "type": "string", "maxLength": 120 },
+          "surface": { "type": "string", "maxLength": 200 },
+          "verdict": { "type": "string", "enum": ["matches", "differs", "absent"] },
+          "detail": { "type": "string", "maxLength": 400 },
+          "where": { "type": "string", "maxLength": 200 }
+        },
+        "required": ["contract", "surface", "verdict", "detail", "where"]
+      }
+    },
+    "notes": { "type": "string", "maxLength": 600 }
+  },
+  "required": ["surfaces", "notes"]
+}
