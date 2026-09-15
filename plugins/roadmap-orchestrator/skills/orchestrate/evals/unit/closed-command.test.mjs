@@ -245,16 +245,20 @@ test('codex probe: the prompt forbids judging the credential provider at all', a
   const p = promptOf(calls, 'codex-probe:w1')
   assert.match(p, /not yours to assess/, 'the invented-requirement class is named and closed')
   assert.match(p, /ChatGPT plan, API key, device auth/, 'every provider is spelled out as acceptable')
-  assert.match(p, /not yours to assess either/, 'nor is whether the smoke actually answered "pong"')
+  assert.match(p, /not yours to assess either/, 'nor is whether the smoke actually answered correctly')
   const cmds = commandsOf(p)
   assert.equal(cmds.length, 3, 'exactly three commands: --version, login status, and the exec smoke')
   assert.match(cmds[0], /codex --version$/)
   assert.match(cmds[1], /codex login status$/)
   // The smoke is CLOSED and BOUNDED: a deadline, the harness's own sandbox composition, a
-  // one-word prompt, and no way for it to become anything else.
+  // one-command prompt, and no way for it to become anything else. And it EXECUTES that command:
+  // codex exits 0 when its sandbox cannot start (2026-09-15, `bwrap: No permissions to create a
+  // new namespace` as the final message), so a one-word reply proves nothing about the sandbox
+  // every real run needs — the shell checks the answer and the exit code carries the verdict.
   assert.match(cmds[2], /timeout 120 codex exec -C \/wt\/__codex\/roles\/probe-w1 /, 'bounded, and pointed at its own scratch dir by -C — never the checkout')
   assert.match(cmds[2], /--skip-git-repo-check/)
-  assert.match(cmds[2], /'Reply with exactly the word pong'$/, 'and it asks for exactly one word')
+  assert.match(cmds[2], /'Run the shell command `pwd` and reply with exactly its output' && grep -qxF '\/wt\/__codex\/roles\/probe-w1' \/wt\/__codex\/roles\/probe-w1\/last-message\.txt$/,
+    'it makes codex run a command, and the shell — not a model — checks the answer')
   assert.ok(!/-a\b|--dangerously-bypass|--full-auto/.test(cmds[2]),
     'the probe never widens what a real codex run is allowed to do')
 })

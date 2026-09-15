@@ -4,7 +4,7 @@
 //   makeAgent(rules, baseSha?) -> { fn, calls }
 //   makeWorkflow(handler)      -> { fn, calls }
 //   packRules(plan, state, serialize?) -> rules satisfying the launch pack read
-//   packTransform(cmd, text)   -> the read command's own base64 encoding, run for real
+//   packTransform(cmd, text)   -> the read command's own escape-marker sed, run for real
 //   BASE_SHA, INT_SHA
 //   assertAllModelsPinned(calls), assertSchemasPresent(calls), conformsToSchema(result, schema)
 //   structuredOutputError()
@@ -54,7 +54,7 @@ const courierStdout = (cmd, head, branch) =>
             // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
             : /rev-list --count/.test(cmd) ? '1'
               : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
-                // The wave-start BACKEND SMOKE (`codex exec … "reply pong"`). A healthy provider
+                // The wave-start BACKEND SMOKE (`codex exec … "run pwd"`, answer checked by grep). A healthy provider
                 // answers; the test that matters is the exit code, which courierResult defaults
                 // to 0 — a test wanting the 2026-09-03 outage overrides this one command.
                 : /codex exec\b/.test(cmd) ? 'pong'

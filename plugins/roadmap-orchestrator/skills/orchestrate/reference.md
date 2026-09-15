@@ -505,7 +505,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 
 | `reason` | who set it | how the root clears it |
 |---|---|---|
-| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "reply pong"` **smoke** exited non-zero (the CLI and the credential can both be fine while the Codex BACKEND is down) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
+| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "run pwd"` **smoke** did not answer with its scratch directory (the CLI and the credential can both be fine while the Codex BACKEND is down — or while its SANDBOX cannot start: codex exits 0 with the `bwrap` error as its final message, so the smoke executes a command and the shell checks the answer; a sandbox failure is named as such, with the fix) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
@@ -692,7 +692,7 @@ first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file)
 its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
 `blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
 `codex-probe` (three commands: `--version`, `login status`, and a bounded read-only
-`codex exec … "reply pong"` **smoke** whose pass test is its exit code) ⇒ **hard stop** — new
+`codex exec … "run pwd"` **smoke**, its answer checked in the shell so the exit code carries the verdict) ⇒ **hard stop** — new
 dispatch halts, in-flight units **park**
 (`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
 `halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or

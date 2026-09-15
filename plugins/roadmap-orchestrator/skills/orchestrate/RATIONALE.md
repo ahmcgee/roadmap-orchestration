@@ -1109,4 +1109,10 @@ sandbox and passed; every real launch carried `-s danger-full-access` (bubblewra
 user namespace in the devcontainer) and Claude Code's auto-mode classifier refused it, so not one
 codex process launched until the session was restarted in bypass-permissions mode. The smoke
 runs with the configured `codexSandbox` now, in a scratch directory, and SKILL.md says what a
-pass-only-with-full-access means for the session before dispatch.
+pass-only-with-full-access means for the session before dispatch. Then the probe of §22's review
+role showed the second half: codex exits 0 when its sandbox cannot start — the `bwrap` error is
+its final *message* — so a "reply pong" smoke had passed on this very box under a flag every
+real run would die under. Both smokes (SKILL.md's and the per-wave probe's) now make codex run
+`pwd`, and the shell checks the answer so the exit code carries the verdict; the per-wave probe
+names a sandbox failure as such, with the fix, instead of sending the operator to wait out a
+provider that is fine.

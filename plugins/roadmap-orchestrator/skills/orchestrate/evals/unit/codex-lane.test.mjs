@@ -259,6 +259,26 @@ test('d2 probe smoke: a dead BACKEND halts before dispatch, exactly as a dead CL
   const rows = (state.degradations ?? []).filter((d) => d.kind === 'codex-unavailable')
   assert.equal(rows.length, 1, 'one row, naming which of the three probe commands failed')
   assert.match(rows[0].what, /backend\/exec smoke failed/)
+  assert.match(rows[0].what, /Codex BACKEND/, 'and the operator is told to wait, not to re-login')
+})
+
+// 2026-09-15: codex exits 0 when its sandbox cannot start — the bwrap error is its final MESSAGE —
+// so the smoke now makes codex run `pwd` and the shell checks the answer. A failure whose verbatim
+// output carries the bwrap line is a HOST fact with its own fix, never a provider outage to wait out.
+test('d3 probe smoke: a sandbox that cannot start halts as codex-unavailable and names the SANDBOX fix', async () => {
+  const { fn } = makeAgent([{ match: /^codex-probe:/, result: (p) => {
+    const r = courierResult(p, BASE_SHA)
+    return { ok: true, results: [r.results[0], r.results[1], { exitCode: 1,
+      stdout: 'bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces.' }] }
+  } }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { codexSandbox: 'workspace-write' })
+  assert.equal(state.halt.codex, 'codex-unavailable')
+  assert.equal(state.units.a.status, 'pending', 'parked, not judged')
+  const row = (state.degradations ?? []).find((d) => d.kind === 'codex-unavailable')
+  assert.match(row.what, /Codex SANDBOX cannot start/, 'the third why: the host, not the provider')
+  assert.match(row.what, /-s workspace-write/, 'naming the flag it failed under')
+  assert.match(row.what, /danger-full-access[\s\S]*bypass-permissions/, 'and the two-part fix')
+  assert.ok(!/Wait out the outage/.test(row.what), 'never sends the operator to wait out a provider that is fine')
 })
 
 // =========================================================================================

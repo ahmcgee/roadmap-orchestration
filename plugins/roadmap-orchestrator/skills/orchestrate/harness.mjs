@@ -4540,16 +4540,21 @@ if (C.envPreflight !== 'off') {
     `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=low ` +
     `-c projects."${smokeDir}".trust_level="trusted" ` +
     `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
-    `-o ${smokeDir}/last-message.txt 'Reply with exactly the word pong'`
+    `-o ${smokeDir}/last-message.txt 'Run the shell command \`pwd\` and reply with exactly its output'`
+  // The smoke EXECUTES a command and the third command's exit code carries whether the answer was
+  // the scratch directory: `grep -qxF` on the final message, in the shell, so the verdict stays an
+  // exit code the script reads. A "reply pong" smoke never ran a command, and codex exits 0 when
+  // its sandbox cannot start (2026-09-15: exit 0, final message `bwrap: No permissions to create a
+  // new namespace`) — so it passed on a box where every real run under that sandbox would die.
   const cmds = [`${codexHome}codex --version`, `${codexHome}codex login status`,
-    `mkdir -p ${smokeDir} && ${smoke}`]
+    `mkdir -p ${smokeDir} && ${smoke} && grep -qxF '${smokeDir}' ${smokeDir}/last-message.txt`]
   const cp = await courierRun(repo, cmds,
     { model: 'haiku', effort: 'low', phase: 'Setup', label: `codex-probe:w${waveN}` },
     `This is a read-only availability probe. Report what the commands print and judge none of it — which ` +
     `credential provider is in use (ChatGPT plan, API key, device auth) is not yours to assess and not a ` +
-    `failure of any kind. The third command asks Codex itself for one word; whether it answers with that ` +
-    `word is not yours to assess either — report its exit code and its output, nothing more. ` +
-    `Change nothing. ` + LAUNCH)
+    `failure of any kind. The third command asks Codex itself to run one command and checks its answer ` +
+    `in the shell; whether it answered correctly is not yours to assess either — report its exit code and ` +
+    `its output, nothing more. Change nothing. ` + LAUNCH)
   // Mechanical, and deliberately spelled out: `codex login status` prints "Not logged in" when it
   // is not, and a bare /logged in/i test matches that substring.
   const status = cp.out(1)
@@ -4562,21 +4567,30 @@ if (C.envPreflight !== 'off') {
   // that stopped at command 1 reported nothing about the smoke, and reading its missing exit code
   // as an outage would send the operator to wait out a provider that is perfectly healthy.
   const backendDown = cp.exit(0) === 0 && loggedIn && !smokeOk
+  // A SANDBOX that cannot start is a host fact, not a provider one, and calls for a third action:
+  // the bwrap line is in the smoke's verbatim output (codex's own final message), read here in
+  // code — the courier judged nothing.
+  const sandboxDead = backendDown && /bwrap|user namespace/i.test(cp.out(2))
   if (!(cp.exit(0) === 0 && loggedIn && smokeOk)) {
     halt.codex = 'codex-unavailable'
-    // Three distinct whys, in the order they are established, because they call for DIFFERENT
-    // operator actions: install, re-login, or wait. Collapsing the third into the second is what
-    // would send a human to `codex login` during a provider outage that no login can fix.
+    // Four distinct whys, in the order they are established, because they call for DIFFERENT
+    // operator actions: install, re-login, fix the sandbox, or wait. Collapsing the last two into
+    // the second is what would send a human to `codex login` during an outage no login can fix.
     const why = cp.exit(0) !== 0 ? `\`codex --version\` exited ${cp.exit(0) ?? 'nothing (no report)'}`
       : !loggedIn ? `\`codex login status\` printed no "logged in" line: ${status.slice(0, 200) || '(no output)'}`
-      : `backend/exec smoke failed — \`codex exec … "reply pong"\` exited ` +
+      : `backend/exec smoke failed — \`codex exec … "run pwd"\` under \`-s ${C.codexSandbox ?? 'read-only'}\` exited ` +
         `${cp.exit(2) ?? 'nothing (no report)'}: …${cp.out(2).slice(-300) || '(no output)'}`
     degrade({ label: `codex-probe:w${waveN}`, model: 'haiku', phase: 'Setup', kind: 'codex-unavailable',
       what: `codex CLI unavailable (${why}) — wave halted before dispatch; the wave state returns ` +
-        `intact and is resumable. Operator: ` + (backendDown
-          ? `the CLI and the credential are both fine and re-logging in will not help — this is the ` +
-            `Codex BACKEND. Wait out the outage, then relaunch the arc.`
-          : `codex login (or codex login --device-auth headless), then relaunch the arc.`) })
+        `intact and is resumable. Operator: ` + (sandboxDead
+          ? `the CLI, the credential and the backend are all fine — the Codex SANDBOX cannot start on this ` +
+            `host under \`-s ${C.codexSandbox ?? 'read-only'}\` (bubblewrap needs an unprivileged user ` +
+            `namespace). Set config.codexSandbox to 'danger-full-access', run the session in ` +
+            `bypass-permissions mode, and relaunch the arc.`
+          : backendDown
+            ? `the CLI and the credential are both fine and re-logging in will not help — this is the ` +
+              `Codex BACKEND. Wait out the outage, then relaunch the arc.`
+            : `codex login (or codex login --device-auth headless), then relaunch the arc.`) })
   }
 }
 
