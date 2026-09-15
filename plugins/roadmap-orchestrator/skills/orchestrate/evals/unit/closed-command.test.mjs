@@ -475,8 +475,13 @@ test('verify: the prompt demands the spec\'s exact commands and a per-lane exit 
   const v = promptOf(calls, 'verify:a#0')
   assert.match(v, /run EXACTLY\s+the acceptance-check commands/, 'no room to choose a lane')
   assert.match(v, /NEVER substitute a narrower, faster or cheaper lane/, 'the observed failure is named')
-  assert.match(v, /`pass` is true ONLY if every ` \+\n?|`pass` is true ONLY if every one of those exit codes is 0/,
+  assert.match(v, /`pass` is true ONLY if every lane's exitCode equals its expectedExit/,
     'pass is defined over the lane ledger, not over the verifier\'s impression')
+  // 2026-09-14: a clause stating a command MUST exit 2 was run as a lane, exited 2, and the unit
+  // was quarantined "verification never passed". The lane carries the expectation now.
+  assert.match(v, /expectedExit — the exit status\s+the spec's clause states/, 'a stated non-zero expectation is recorded per lane')
+  assert.match(v, /never report a failure that happened exactly as specified as a failing check/,
+    'and a required failure that failed as required is green')
   // CHANGED CONTRACT (0.14.0): the verifier is a codex ROLE, so the call the courier makes carries
   // the ADAPTER ENVELOPE and S.verify rides nested under `result` — still platform-validated, one
   // level deeper. The ledger is exactly as required as it was.

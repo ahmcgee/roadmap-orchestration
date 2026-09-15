@@ -112,6 +112,18 @@ const HOST_BAR = 'Host facts are never a verdict and never a precondition. The o
   'test runner), or a wall-clock ceiling as an acceptance clause or as a precondition for verification: a ' +
   'spec or plan clause that does is unsatisfiable by construction, and it is a SPEC DEFECT for the ' +
   'adjudicating tier to resolve through its verdict — never something the implementer or the verifier absorbs. '
+// Acceptance checks are commands with an EXPECTED exit status (same const as harness.mjs —
+// shared-consts.test.mjs enforces it). The harness carries it to the tiers that ADJUDICATE spec
+// text and to the verifier; the conductor carries it to the tiers that WRITE it. Arc-observed
+// 2026-09-14: a clause said a standalone command MUST exit 2, the verifier ran it as a lane and
+// counted the 2 as red, and the unit — three real lanes green — was quarantined twice.
+const EXIT_BAR = 'An acceptance check is a command AND the exit status it expects. Write every runnable Done-when ' +
+  'clause so that success is exit 0: a required failure is asserted inside the command (`! <cmd>`, or `<cmd>; ' +
+  'test $? -eq 2`) or inside a test script, never left as a bare command the verifier is meant to watch fail. ' +
+  'Where a clause must state a non-zero expectation instead, it states it explicitly on the clause ("exits 2") ' +
+  'and the verifier records it as `expectedExit` on that lane and grades the lane against it — 0 when unstated. ' +
+  'A bare required-failure command reported as a red lane is therefore a SPEC DEFECT for the adjudicating tier ' +
+  'to resolve through its verdict, never a unit failure and never something the implementer absorbs. '
 // The ONE canonical way to have a cheap agent run shell on this script's behalf: a CLOSED LIST of
 // exact commands whose verbatim output the SCRIPT judges, never a goal with destructive reach.
 // Mirrored from harness.mjs — see the long rationale there; keep the two in sync
@@ -225,49 +237,57 @@ const cksumOf = (s) => {
 }
 const READ_CHUNK = 24000
 const PACK_FILES = ['plan.json', 'state.json']
-// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
-// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
-// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
-// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
-// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
-// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
-// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
-// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
-// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
-// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
-// with no backslash left in it, and the script puts the backslashes back before verifying. The
-// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
-// document fails loud exactly like a truncation rather than silently rewriting the pack.
-// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
-// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
-// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
-// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
-// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
-// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
-// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
+// ESCAPE-SEQUENCE MARKERS — the read command rewrites every JSON escape SEQUENCE in the file to a
+// short, distinct marker, and the script puts the sequences back before the cksum decides. THE ROOT
+// CAUSE it answers: a courier's report is structured JSON, so a backslash in the file has to survive
+// TWO levels of escaping — a `\"` in the document is `\\\"` inside the report's string value, and a
+// `—` serialized as `—` is `\\u2014`. Haiku drops exactly one of those levels, so every JSON
+// escape in the pack arrived DECODED: 2026-09-02, four `—` escapes, and the copy came back 21
+// characters short; 2026-09-04, twelve `\"` sequences, twelve short. The 0.15.0 answer — one marker
+// per BACKSLASH (`@bs@`), explained to the courier — failed on 2026-09-14 the other way: `@bs@"`
+// came back as `@bs@@bs@"`, the courier "escaping" the quote it saw right after a marker it had
+// been told meant a backslash. 0.16.0 first tried base64, which removed every escape and every
+// quote — and failed live at 1.5 KB, because a model cannot transcribe a long high-entropy string
+// (the copy diverged into repetition at 1563 characters, twice; the probe on 14 KB did not even
+// produce parseable JSON). Plain prose it copies faithfully; what breaks it is a quote right after
+// a marker, and identical markers side by side (probed 2026-09-15: an unexplained `@bs@` copy
+// collapsed the three markers of `\\\"` into one). So the marker now stands for the whole
+// sequence: `\"` is `@q@` (its quote is INSIDE the marker), `\\` is `@bs@`, `\n` is `@n@`, `\uXXXX` is
+// `@uXXXX@` — `\\\"` becomes `@bs@@q@`, two DIFFERENT markers, and the courier is told each one is
+// exactly one escape to copy as often as it appears. Probed on real Haiku couriers against a 14 KB
+// document carrying every escape form (three of three matched byte for byte). The verdict is still
+// the ORIGINAL file's `cksum`, so a document that happens to contain a marker fails loud exactly
+// like a truncation. The rewrite grows the text by at most two characters per backslash, spent
+// against the same READ_CHUNK stdout cap, so the size decisions below budget on that expansion.
 // Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
-const PACK_BS = '@bs@'
-const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
-  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
-  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
-  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
-  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
-  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
-  `truncated copy is worse than no copy. `
+const PACK_SED = String.raw`sed -e 's/\\\\/@bs@/g' -e 's/\\"/@q@/g' -e 's/\\n/@n@/g' -e 's/\\t/@t@/g' -e 's/\\r/@r@/g' -e 's/\\b/@b@/g' -e 's/\\f/@f@/g' -e 's/\\\//@sl@/g' -e 's/\\u\([0-9a-fA-F]\{4\}\)/@u\1@/g'`
+const PACK_UNMARK = (s) => s.replace(/@(bs|q|n|t|r|b|f|sl|u[0-9a-fA-F]{4})@/g,
+  (_, k) => (k === 'bs' ? '\\\\' : k === 'q' ? '\\"' : k === 'sl' ? '\\/' : `\\${k}`))
+// The longest rewrite (`\\` -> `@bs@`) adds two characters per backslash.
+const PACK_GROWTH = 2
+const PACK_EXTRA = `These commands only READ, and the content command already rewrites every JSON escape sequence in the file ` +
+  `to a short marker — \`@q@\`, \`@bs@\`, \`@n@\`, \`@t@\`, \`@u2014@\` and the like — so the text you copy contains ` +
+  `no backslash at all and nothing in it needs escaping of any kind. Each marker stands for exactly one escape ` +
+  `sequence: copy every marker exactly where and as often as it appears, and never merge two adjacent markers, ` +
+  `drop one, add one, or turn one back into the character it stands for. Copy each command's output through ` +
+  `verbatim — byte for byte, including leading indentation and blank lines. Never pretty-print, re-indent, ` +
+  `re-escape, decode, summarise, elide or abbreviate: the scheduler puts the escapes back and verifies the ` +
+  `result against the file's own \`cksum\`, and a document that does not match is thrown away. If a document is ` +
+  `too long to reproduce in full, report ok:false and say so in \`detail\` — a truncated copy is worse than no copy. `
 // Read ONE pack file over the given line ranges (one command each) and verify it. Each content
-// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
-// courier never has to escape anything; the script swaps them back below. The whole file's
-// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
-// dropped line, a decoded escape, a summarised tail and a document that already contained the
-// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
-// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
-// carries the file's { bytes, lines, esc } so the caller can size the retry.
+// command pipes its range through PACK_SED, so the courier never has to escape anything; the
+// script reverses the markers below. The whole file's `cksum` is the ONLY verdict: the marker
+// round trip and the ranges are both transport, so a dropped line, a merged marker, a summarised
+// tail and a document that already contained a marker all fail the same check, and the courier's
+// only honest move on a mismatch is to report it. Resolves { text } on a match, or { fail }
+// describing what did not line up; either way it carries the file's { bytes, lines, esc } so the
+// caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
   // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
-  // which is longer than the file by one marker-length-minus-one per backslash, so the size
-  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  // which is longer than the file by up to PACK_GROWTH per backslash, so the size decisions in
+  // readPack budget on that expansion rather than on `wc -c` alone.
   const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | ${PACK_SED}`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -279,8 +299,8 @@ const readPackFile = async (path, ranges, label, extra) => {
   if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
   // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
-  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
-  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
+  // the markers are reversed here — the document the cksum judges is the one with escapes in it.
+  const body = PACK_UNMARK(ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n'))
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
@@ -288,7 +308,7 @@ const readPackFile = async (path, ranges, label, extra) => {
     if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
   return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
-    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
+    `(the copy was truncated or mangled in transport, or the file itself contains a transport marker such as @q@)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -308,9 +328,9 @@ const readPack = async () => {
   const second = await parallel(again.map((n) => () => {
     const { bytes, lines, esc } = why[n]
     // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
-    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
-    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
-    const budget = bytes + esc * (PACK_BS.length - 1)
+    // marker rewrite, so a file that fits `wc -c` can still overflow by its escapes alone — and
+    // reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * PACK_GROWTH
     if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
     // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
@@ -318,7 +338,7 @@ const readPack = async () => {
     const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (up to ${budget} once its escapes become markers) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)
@@ -620,6 +640,10 @@ const specSkeleton = obj({
   risk: oneOf(['low', 'med', 'high']),
   kind: { type: 'string', maxLength: 30 },
   supersedes: { type: 'string', maxLength: 60 },
+  // A respec that ADOPTS the quarantined unit's branch (`unit/<old id>`) rather than rebuilding
+  // it: the harness pins the diff at entry as that unit's scope, so the adopted files are never
+  // reported as growth (2026-09-14: 51 files of a respec's adopted diff read as scope-growth).
+  existingBranch: { type: 'string', maxLength: 120 },
   goal: { type: 'string', maxLength: 400 },
   constraints: { type: 'string', maxLength: 600 },
   contractRefs: arr('string'),
@@ -824,8 +848,40 @@ function predicates(census, withheldIds) {
   // signal — a tier must consciously ride them forward, act on the broken precondition, or
   // (Fable only) waive them; entries owed two boundaries running force tier 3.
   const owedJobs = state.owed ?? []
+  // THE CRITICAL-PATH BRAKE. A quarantined in-scope unit whose LINEAGE — itself and, through
+  // `supersedes`, the units it replaced — has already quarantined once before, while in-scope
+  // work still waits on it, is not tier 3's to respec a second time: the ladder's own recovery
+  // already ran once and produced the same outcome. 2026-09-14: the foundation quarantined at
+  // wave 1, its respec quarantined identically at wave 3, every product unit sat blocked behind
+  // it, and meanwhile the tiers admitted six fix-unit drafts against a 40-line module — side work
+  // minted while the arc could not move. Such a lineage returns to the root
+  // (`critical-path-stalled`) BEFORE any triage tier runs, so no drafts are admitted against it.
+  const unitById = new Map(plan.units.map((u) => [u.id, u]))
+  const lineageOf = (id) => {
+    const chain = []
+    for (let cur = unitById.get(id), seen = new Set(); cur && !seen.has(cur.id); cur = unitById.get(cur.supersedes)) {
+      seen.add(cur.id)
+      chain.push(cur.id)
+    }
+    return chain
+  }
+  const dependentsOf = (id) => {
+    const out = new Set()
+    const q = [id]
+    while (q.length) {
+      const cur = q.shift()
+      for (const e of plan.edges) if (e.from === cur && !out.has(e.to)) { out.add(e.to); q.push(e.to) }
+    }
+    return [...out].filter((d) => inScopeIds.has(d) && !['merged', 'quarantined'].includes(units[d]?.status))
+  }
+  const stalled = quarantined.map((id) => {
+    const lineage = lineageOf(id)
+    const priorQuarantines = lineage.slice(1).filter((a) => units[a]?.status === 'quarantined')
+    const dependents = dependentsOf(id)
+    return priorQuarantines.length && dependents.length ? { id, lineage, dependents } : null
+  }).filter(Boolean)
   const anyJudgment = findings.length > 0 || flakeFlips.length > 0 || nonContractDebt.length > 0 || userFeedback.length > 0 || owedJobs.length > 0
-  return { crossedContingent, contractDebt, nonContractDebt, quarantined, findings, sharedReds, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
+  return { crossedContingent, contractDebt, nonContractDebt, quarantined, stalled, findings, sharedReds, healthFixUnits, drafts: healthFixUnits, flakeFlips, userFeedback, owedJobs, anyJudgment }
 }
 
 // A health-assessor fix-unit draft {id, goal, files, acceptance} -> a default skeleton
@@ -945,7 +1001,7 @@ const opusTriagePrompt = (N, P) =>
   `${(plan.designAuthorities ?? []).length ? 'A design-fidelity finding (severity bug | adoption-gap | irreconcilable) means a screen that MERGED has drifted from the comp that governs it: the default vehicle is a fix unit, and an "irreconcilable" one is never yours to cut — escalate it, because it means built behaviour and design cannot both stand and only the architect can choose. ' : ''}` +
   `Drafts are the default action — admit them (list ids in \`admit\`) unless they are ` +
   `noise, in which case \`cut\` them with a reason; author any additional new unit you want as a full skeleton in ` +
-  `\`promote\`. ${HOST_BAR}SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
+  `\`promote\`. ${HOST_BAR}${EXIT_BAR}SWEEP THE WAVE'S DEBT, don't just bank it: while the plan's own in-scope units still have work ` +
   `left to run (a next wave is happening anyway), fold this wave's debt — even minor items — into one or more ` +
   `consolidation fix-units in \`promote\`, so debt is cleaned up next wave rather than accumulating. ` +
   `${issueMode ? 'When a unit you `promote` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
@@ -994,12 +1050,16 @@ const fableBoundaryPrompt = (N, P, lead) =>
   `instructing the provisioning fix via the \`journal\` plus a fresh \`newUnit\` carrying the SAME spec under a NEW ` +
   `id); unsatisfiable-as-written -> respec under a NEW id; otherwise split or revise. NEVER reuse a failed or ` +
   `quarantined id. Emit new work as full skeletons in \`newUnits\` (each with a NEW kebab id), spec adjustments in ` +
-  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ${HOST_BAR}` +
+  `\`reviseSpecs\`, and units to drop below the cut line in \`cutUnits\`. ${HOST_BAR}${EXIT_BAR}` +
   `${issueMode ? 'When a `newUnit` resolves specific OPEN roadmap:debt or roadmap:bug issues you read above, set its `closes` field to exactly those issue NUMBERS — the merge path closes them automatically when the unit merges; omit `closes` otherwise and never guess a number. ' : ''}` +
   `Whenever a \`newUnit\` REPLACES a ` +
   `quarantined unit, set its \`supersedes\` field to that unit's id so the failed unit is retired and its edges ` +
   `repoint to the replacement — never leave a replaced quarantine active; a quarantine you abandon without ` +
-  `replacing goes in \`cutUnits\`. Append a concise architect \`journal\` ` +
+  `replacing goes in \`cutUnits\`. When the quarantined unit's branch holds SOUND work the replacement should ` +
+  `keep — a gate that did not converge, a verifier that could not express a required failure, an environment ` +
+  `block — also set the newUnit's \`existingBranch\` to \`unit/<quarantined id>\` (max 120 characters): the ` +
+  `respec then ADOPTS that diff as its pinned scope at entry instead of rebuilding it and having every file ` +
+  `reported as scope growth. Leave \`existingBranch\` unset when the work itself is what failed. Append a concise architect \`journal\` ` +
   `entry (decisions + rationale + watch-list) so the next fresh boundary agent inherits your rationale. You may ` +
   `NEVER amend a contract or design a contingent dependent: set escalate:true with escalateReason ` +
   `'contract-amendment'/'contingent-replan'/'needs-user' to return to the root, or 'cut-line' when the arc is ` +
@@ -1086,7 +1146,7 @@ const specRevisePrompt = (rev) => SPECWRITE +
   `Revise the existing spec at ${repo}/.roadmap/specs/${rev.id}.md in place, applying these changes and nothing ` +
   `else: ${JSON.stringify(rev)}. Update the Goal, Acceptance criteria (keep them individually gradeable), and ` +
   `Constraints sections to match; leave the rest of the spec intact — anything appended below them (an ` +
-  `architect ruling, for instance) is not yours to edit. ${HOST_BAR}Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
+  `architect ruling, for instance) is not yours to edit. ${HOST_BAR}${EXIT_BAR}Then run \`cksum < ${repo}/.roadmap/specs/${rev.id}.md\` ` +
   `and report what it printed, VERBATIM, in \`cksum\` (one line, max 60 characters). Nothing is compared ` +
   `against it — the revised content is yours to compose, so there is no expected value — it is recorded so a ` +
   `later reader can tell WHICH version of this spec they are looking at. Report ok:false with the exact error ` +
@@ -1165,9 +1225,13 @@ function mergePlan(prepared, cutIds) {
     }
     plan.units.push({ id: s.id, title: (s.title ?? s.id).slice(0, 120), risk: s.risk ?? 'low', kind: s.kind ?? 'code', inScope: true,
       // The push is a whitelist — an unlisted skeleton field is dropped here, so `closes` must be
-      // carried explicitly or the merge path never sees it.
+      // carried explicitly or the merge path never sees it. `supersedes` is carried so a lineage
+      // can be walked (the critical-path brake counts quarantines along it), and `existingBranch`
+      // so a respec can adopt the quarantined branch's diff rather than rebuild it.
       ...(Array.isArray(s.closes) && s.closes.length
-        ? { closes: s.closes.filter((n) => Number.isInteger(n) && n > 0) } : {}) })
+        ? { closes: s.closes.filter((n) => Number.isInteger(n) && n > 0) } : {}),
+      ...(s.supersedes ? { supersedes: s.supersedes } : {}),
+      ...(typeof s.existingBranch === 'string' && s.existingBranch.trim() ? { existingBranch: s.existingBranch.trim() } : {}) })
   }
   for (const s of prepared) for (const e of s.edges ?? []) {
     const from = kebab(e.from)
@@ -1293,6 +1357,9 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // 'boundary-degraded' over a pending contract amendment would bury the higher-priority reason.
   if (P.crossedContingent.length) return await ret('contingent-replan', 4, { edges: P.crossedContingent })
   if (P.contractDebt.length) return await ret('contract-amendment', 4, { debt: P.contractDebt, contracts: contractPaths() })
+  // A lineage quarantined twice with dependents waiting is the root's (see predicates): the
+  // tier-3 respec already ran once, and another boundary here only mints side work.
+  if (P.stalled.length) return await ret('critical-path-stalled', 4, { stalled: P.stalled })
 
   // Boundary block absent while the caller left it enabled, and nothing to triage -> degraded wave.
   const callerBoundaryOff = (overrides?.boundary ?? inPlan.config?.boundary) === 'off'
@@ -1747,6 +1814,7 @@ async function stage(N, ranTier, c) {
 function briefFor(reason, P, N, triageResult, boundaryPlan, census) {
   if (reason === 'contingent-replan') return { edges: P.crossedContingent }
   if (reason === 'contract-amendment') return { debt: P.contractDebt, contracts: contractPaths() }
+  if (reason === 'critical-path-stalled') return { stalled: P.stalled }
   if (reason === 'needs-user') return { question: (boundaryPlan?.notes ?? triageResult?.notes ?? ''), context: { wave: N, findings: P.findings, userFeedback: P.userFeedback } }
   return {}
 }

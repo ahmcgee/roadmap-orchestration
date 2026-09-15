@@ -228,49 +228,57 @@ const cksumOf = (s) => {
 const READ_CHUNK = 24000
 // The pack: the documents the root used to paste into `args`.
 const PACK_FILES = ['plan.json', 'state.json']
-// BACKSLASH-FREE TRANSPORT — the sentinel every read command rewrites backslashes to, and the one
-// place either script names it. THE ROOT CAUSE it answers: a courier's report is structured JSON,
-// so a backslash in the file has to survive TWO levels of escaping — a `\"` in the document is
-// `\\\"` inside the report's string value, and a `—` serialized as `\u2014` is `\\u2014`. Haiku
-// drops exactly one of those levels, so every JSON escape in the pack arrived DECODED: 2026-09-02,
-// four `\u2014` escapes, and the copy came back 21 characters short (4x5 + the trailing newline);
-// 2026-09-04, twelve `\"` sequences, twelve short. Both launches threw `pack-unreadable` before a
-// single wave. Telling the courier that "\n and \" are literal characters to copy" is precisely
-// what did not work, twice — so the fix is not a better sentence: the READ command now rewrites
-// every backslash to a marker that needs no escaping in ANY layer, the courier copies a document
-// with no backslash left in it, and the script puts the backslashes back before verifying. The
-// verdict is still the ORIGINAL file's `cksum`, so a sentinel that collides with real prose in the
-// document fails loud exactly like a truncation rather than silently rewriting the pack.
-// The marker must stay pure ASCII with no character that is special to sh, sed, JSON or a regex
-// replacement, and implausible in JSON prose. It is also SHORT, since 2026-09-04: the rewrite
-// GROWS the text the courier carries by one marker-length-minus-one per backslash, and that growth
-// is spent against the same READ_CHUNK stdout cap. A ten-character marker turned a few hundred
-// escapes into ~2.7 KB of invisible budget — enough to push a 23 KB state.json over the cap while
-// every size decision below still read the ORIGINAL file's byte count, re-read it whole, and died
-// `pack-unreadable` twice over. The marker is four characters now and the budget is computed.
+// ESCAPE-SEQUENCE MARKERS — the read command rewrites every JSON escape SEQUENCE in the file to a
+// short, distinct marker, and the script puts the sequences back before the cksum decides. THE ROOT
+// CAUSE it answers: a courier's report is structured JSON, so a backslash in the file has to survive
+// TWO levels of escaping — a `\"` in the document is `\\\"` inside the report's string value, and a
+// `—` serialized as `—` is `\\u2014`. Haiku drops exactly one of those levels, so every JSON
+// escape in the pack arrived DECODED: 2026-09-02, four `—` escapes, and the copy came back 21
+// characters short; 2026-09-04, twelve `\"` sequences, twelve short. The 0.15.0 answer — one marker
+// per BACKSLASH (`@bs@`), explained to the courier — failed on 2026-09-14 the other way: `@bs@"`
+// came back as `@bs@@bs@"`, the courier "escaping" the quote it saw right after a marker it had
+// been told meant a backslash. 0.16.0 first tried base64, which removed every escape and every
+// quote — and failed live at 1.5 KB, because a model cannot transcribe a long high-entropy string
+// (the copy diverged into repetition at 1563 characters, twice; the probe on 14 KB did not even
+// produce parseable JSON). Plain prose it copies faithfully; what breaks it is a quote right after
+// a marker, and identical markers side by side (probed 2026-09-15: an unexplained `@bs@` copy
+// collapsed the three markers of `\\\"` into one). So the marker now stands for the whole
+// sequence: `\"` is `@q@` (its quote is INSIDE the marker), `\\` is `@bs@`, `\n` is `@n@`, `\uXXXX` is
+// `@uXXXX@` — `\\\"` becomes `@bs@@q@`, two DIFFERENT markers, and the courier is told each one is
+// exactly one escape to copy as often as it appears. Probed on real Haiku couriers against a 14 KB
+// document carrying every escape form (three of three matched byte for byte). The verdict is still
+// the ORIGINAL file's `cksum`, so a document that happens to contain a marker fails loud exactly
+// like a truncation. The rewrite grows the text by at most two characters per backslash, spent
+// against the same READ_CHUNK stdout cap, so the size decisions below budget on that expansion.
 // Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
-const PACK_BS = '@bs@'
-const PACK_EXTRA = `These commands only READ, and every content command already rewrites each backslash in the file to the ` +
-  `literal marker ${PACK_BS}, so nothing in the text you copy needs escaping of any kind. Copy each command's output ` +
-  `through verbatim — byte for byte, including leading indentation, blank lines, and every ${PACK_BS} marker exactly ` +
-  `where it appears. Never pretty-print, re-indent, re-escape, decode, summarise, elide or abbreviate: the scheduler ` +
-  `puts the backslashes back and verifies the result against the file's own \`cksum\`, and a document that does not ` +
-  `match is thrown away. If a document is too long to reproduce in full, report ok:false and say so in \`detail\` — a ` +
-  `truncated copy is worse than no copy. `
+const PACK_SED = String.raw`sed -e 's/\\\\/@bs@/g' -e 's/\\"/@q@/g' -e 's/\\n/@n@/g' -e 's/\\t/@t@/g' -e 's/\\r/@r@/g' -e 's/\\b/@b@/g' -e 's/\\f/@f@/g' -e 's/\\\//@sl@/g' -e 's/\\u\([0-9a-fA-F]\{4\}\)/@u\1@/g'`
+const PACK_UNMARK = (s) => s.replace(/@(bs|q|n|t|r|b|f|sl|u[0-9a-fA-F]{4})@/g,
+  (_, k) => (k === 'bs' ? '\\\\' : k === 'q' ? '\\"' : k === 'sl' ? '\\/' : `\\${k}`))
+// The longest rewrite (`\\` -> `@bs@`) adds two characters per backslash.
+const PACK_GROWTH = 2
+const PACK_EXTRA = `These commands only READ, and the content command already rewrites every JSON escape sequence in the file ` +
+  `to a short marker — \`@q@\`, \`@bs@\`, \`@n@\`, \`@t@\`, \`@u2014@\` and the like — so the text you copy contains ` +
+  `no backslash at all and nothing in it needs escaping of any kind. Each marker stands for exactly one escape ` +
+  `sequence: copy every marker exactly where and as often as it appears, and never merge two adjacent markers, ` +
+  `drop one, add one, or turn one back into the character it stands for. Copy each command's output through ` +
+  `verbatim — byte for byte, including leading indentation and blank lines. Never pretty-print, re-indent, ` +
+  `re-escape, decode, summarise, elide or abbreviate: the scheduler puts the escapes back and verifies the ` +
+  `result against the file's own \`cksum\`, and a document that does not match is thrown away. If a document is ` +
+  `too long to reproduce in full, report ok:false and say so in \`detail\` — a truncated copy is worse than no copy. `
 // Read ONE pack file over the given line ranges (one command each) and verify it. Each content
-// command pipes its range through `sed` once more to swap every backslash for PACK_BS, so the
-// courier never has to escape anything; the script swaps them back below. The whole file's
-// `cksum` is the ONLY verdict: the sentinel round trip and the ranges are both transport, so a
-// dropped line, a decoded escape, a summarised tail and a document that already contained the
-// sentinel all fail the same check, and the courier's only honest move on a mismatch is to report
-// it. Resolves { text } on a match, or { fail } describing what did not line up; either way it
-// carries the file's { bytes, lines, esc } so the caller can size the retry.
+// command pipes its range through PACK_SED, so the courier never has to escape anything; the
+// script reverses the markers below. The whole file's `cksum` is the ONLY verdict: the marker
+// round trip and the ranges are both transport, so a dropped line, a merged marker, a summarised
+// tail and a document that already contained a marker all fail the same check, and the courier's
+// only honest move on a mismatch is to report it. Resolves { text } on a match, or { fail }
+// describing what did not line up; either way it carries the file's { bytes, lines, esc } so the
+// caller can size the retry.
 const readPackFile = async (path, ranges, label, extra) => {
   // Command 3 counts the backslashes. The courier's stdout cap applies to the TRANSFORMED text,
-  // which is longer than the file by one marker-length-minus-one per backslash, so the size
-  // decisions in readPack budget on that expansion rather than on `wc -c` alone.
+  // which is longer than the file by up to PACK_GROWTH per backslash, so the size decisions in
+  // readPack budget on that expansion rather than on `wc -c` alone.
   const cmds = [`cksum < ${path}`, `wc -c < ${path}`, `wc -l < ${path}`, `tr -cd '\\\\' < ${path} | wc -c`,
-    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | sed 's/\\\\/${PACK_BS}/g'`)]
+    ...ranges.map(([a, b]) => `sed -n '${a},${b}p' ${path} | ${PACK_SED}`)]
   const r = courierShape(
     await agent(courierPrompt(roadmapDir, cmds, PACK_EXTRA + extra + LAUNCH, READ_CHUNK),
       { model: 'haiku', effort: 'low', phase: 'Launch', label, schema: courierSchema(cmds.length, READ_CHUNK) })
@@ -282,8 +290,8 @@ const readPackFile = async (path, ranges, label, extra) => {
   if (!r.ok) return { fail: r.detail || 'courier died without a report', bytes, lines, esc }
   const want = r.out(0).split(/\s+/).slice(0, 2).join(' ')
   // Each range's capture ends in the newline of its last line; the join puts exactly one back, and
-  // the sentinel is reversed here — the document the cksum judges is the one with backslashes in it.
-  const body = ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n').split(PACK_BS).join('\\')
+  // the markers are reversed here — the document the cksum judges is the one with escapes in it.
+  const body = PACK_UNMARK(ranges.map((_, i) => r.raw(4 + i).replace(/\n$/, '')).join('\n'))
   // Two candidates, one document: a report is trimmed in transport, and a JSON file conventionally
   // ends in exactly one newline. Nothing else is accepted.
   for (const text of [body, `${body}\n`]) {
@@ -291,7 +299,7 @@ const readPackFile = async (path, ranges, label, extra) => {
     if (`${ck.crc} ${ck.bytes}` === want) return { text, bytes, lines, esc }
   }
   return { fail: `transcription does not match \`cksum\` (${want}) of the ${bytes}-byte file — ${body.length} characters copied ` +
-    `(the copy was truncated or mangled in transport, or the file itself contains the ${PACK_BS} transport sentinel)`, bytes, lines, esc }
+    `(the copy was truncated or mangled in transport, or the file itself contains a transport marker such as @q@)`, bytes, lines, esc }
 }
 // Read the whole pack, verified. One courier per file, in parallel — the common case is one call
 // each. A file that fails its cksum is re-read ONCE: over line ranges when it is simply too big for
@@ -311,9 +319,9 @@ const readPack = async () => {
   const second = await parallel(again.map((n) => () => {
     const { bytes, lines, esc } = why[n]
     // Budget on the TRANSFORMED size, never the file's own: the stdout cap applies after the
-    // backslash rewrite, so a file that fits `wc -c` can still overflow by its escapes alone —
-    // and reading it whole a second time truncates a second time and dies `pack-unreadable`.
-    const budget = bytes + esc * (PACK_BS.length - 1)
+    // marker rewrite, so a file that fits `wc -c` can still overflow by its escapes alone — and
+    // reading it whole a second time truncates a second time and dies `pack-unreadable`.
+    const budget = bytes + esc * PACK_GROWTH
     if (budget <= READ_CHUNK || lines < 2)
       return attempt(n, [[1, '$']], 'A previous courier\'s copy of this file did not match its cksum; read it again from scratch. ', '#retry')
     // Too big for one response: split the LINES into ceil(budget / READ_CHUNK) ranges. The
@@ -321,7 +329,7 @@ const readPack = async () => {
     const per = Math.ceil(lines / Math.ceil(budget / READ_CHUNK))
     const ranges = []
     for (let a = 1; a <= lines; a += per) ranges.push([a, Math.min(a + per - 1, lines)])
-    return attempt(n, ranges, `This file is ${bytes} bytes (${budget} once every backslash becomes ${PACK_BS}) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
+    return attempt(n, ranges, `This file is ${bytes} bytes (up to ${budget} once its escapes become markers) — too long for one report — so it is read in ${ranges.length} line ranges. Report each range's output exactly as printed. `, '#split')
   }))
   again.forEach((n, i) => record(n, second[i]))
   const missing = PACK_FILES.filter((n) => text[n] === undefined)
@@ -347,6 +355,11 @@ const { plan, state: prior } = A.plan != null ? { plan: A.plan, state: A.state }
 const C = {
   maxFixRounds: 2,
   maxGateRounds: 2,
+  // A large diff gets more directive rounds before the closing round: two flat rounds could not
+  // converge on an 81-file adopted branch (2026-09-14), each round surfacing findings the last had
+  // not read. `largeDiffFiles` is the diff-file count at which `maxGateRoundsLarge` applies.
+  maxGateRoundsLarge: 3,
+  largeDiffFiles: 40,
   maxConsults: 3,
   maxStops: 5,               // escalation-ladder rounds per unit. Generous units mean several
                              //   stops are normal; this is a runaway brake, not a rationing rule.
@@ -606,7 +619,27 @@ const LANE_BAR = 'The verification evidence carries `lanes`: every command the v
   'code it returned. Check that ledger against the acceptance checks the spec names BEFORE you weigh anything ' +
   'else. A check the spec names that `lanes` does not contain — or a narrower, faster or cheaper substitute for ' +
   'one — means this unit is UNVERIFIED whatever `pass` says: issue a revise directive naming the exact command ' +
-  'to run, and do not approve on the strength of a lane that was never run. '
+  'to run, and do not approve on the strength of a lane that was never run. A lane is green when its exit code ' +
+  'equals the exit its spec clause expects — 0 unless the clause states otherwise, recorded as `expectedExit` on ' +
+  'the lane — so a clause that REQUIRES a command to fail is satisfied by exactly that failure, and a verifier ' +
+  'that counted it as red was wrong, not the unit. '
+// Acceptance checks are commands with an EXPECTED exit status — carried by every tier that WRITES
+// or ADJUDICATES spec text (both plan-checks, both exit gates, the verifier brief, the conductor's
+// spec-writing tiers). Arc-observed 2026-09-14: a spec clause said a standalone `make images
+// KIND_CLUSTERS=<missing>` MUST exit 2; the verifier ran it as a lane, it exited 2 as specified,
+// and the unit was quarantined "verification never passed" with its three real lanes green. The
+// respec reworded the clause and was quarantined identically. No degradation row recorded it, so
+// it read as a unit failure twice. The rule has two halves: authors write success as exit 0
+// (assert a required failure INSIDE the command), and a clause that must state a non-zero
+// expectation states it explicitly, because the verifier grades each lane against the exit its
+// clause names. Mirrored in conductor.mjs — keep the two in sync (shared-consts.test.mjs enforces it).
+const EXIT_BAR = 'An acceptance check is a command AND the exit status it expects. Write every runnable Done-when ' +
+  'clause so that success is exit 0: a required failure is asserted inside the command (`! <cmd>`, or `<cmd>; ' +
+  'test $? -eq 2`) or inside a test script, never left as a bare command the verifier is meant to watch fail. ' +
+  'Where a clause must state a non-zero expectation instead, it states it explicitly on the clause ("exits 2") ' +
+  'and the verifier records it as `expectedExit` on that lane and grades the lane against it — 0 when unstated. ' +
+  'A bare required-failure command reported as a red lane is therefore a SPEC DEFECT for the adjudicating tier ' +
+  'to resolve through its verdict, never a unit failure and never something the implementer absorbs. '
 // Host facts are never a verdict — carried by every tier that WRITES or ADJUDICATES spec text:
 // both plan-checks, both exit gates, the verifier brief, and the conductor's spec-writing tiers.
 // Arc-observed 2026-09-04: an Opus plan-check adjudicated an acceptance criterion as "no vitest,
@@ -871,11 +904,47 @@ const DEBT_BANK_REASONS = ['out-of-scope-file', 'needs-migration-or-ruling', 'pr
 // than keying on the whole item means a re-worded confession still counts as new (it is), while a
 // literal replay does not. Wave-scoped, like `debtLog` itself.
 const debtSeen = new Set()
+// Implementer-reported contract mismatches, per unit, awaiting classification (see noteMismatch in
+// runUnit). `evidence` flips true when the VERIFIER — a different model family — reports the diff
+// touches a frozen surface; `settleMismatches` banks the texts as kind:'contract' when that
+// evidence exists or the report names a contract file, and otherwise as a MAJOR non-contract item:
+// the forced frontier exit gate has already adjudicated the deviation (mismatchClause), so what
+// remains is boundary business, not a root wake for an amendment nobody asked for. Called once the
+// pre-gate review exists, and again for anything still pending when the unit's result lands.
+const mismatchPending = new Map()
+const pendingMismatch = (id) => {
+  if (!mismatchPending.has(id)) mismatchPending.set(id, { texts: [], evidence: false, base: null, rebanked: false })
+  return mismatchPending.get(id)
+}
+const contractNames = [...new Set(plan.edges.filter((e) => e.contract).map((e) => String(e.contract)))]
+  .flatMap((p) => [p, p.split('/').pop()]).filter(Boolean)
+const namesContract = (t) => /\.roadmap\/contracts\//.test(t) || contractNames.some((n) => t.includes(n))
+const settleMismatches = (id) => {
+  const p = mismatchPending.get(id)
+  if (!p) return
+  while (p.texts.length) {
+    const m = p.texts.shift()
+    const corroborated = p.evidence || namesContract(m)
+    addDebt(id, p.base, [{
+      what: `implementer-reported contract mismatch: ${m}`,
+      why: corroborated
+        ? 'frozen surface contradicts reality — needs architect adjudication'
+        : 'uncorroborated as a CONTRACT matter: the verifier found no frozen surface in the diff and the report ' +
+          'names no contract file, so this is spec-vs-implementation disagreement the forced frontier exit gate ' +
+          'adjudicated — banked for the boundary, not routed to the root as an amendment',
+    }], { kind: corroborated ? 'contract' : 'structure', severity: 'major', ...(p.rebanked ? { rebanked: true } : {}) })
+    if (!corroborated) log(`${id}: contract mismatch banked as uncorroborated (non-contract): "${m.slice(0, 80)}"`)
+  }
+}
 const addDebt = (unitId, sha, items, defaults = {}) => {
   for (const d of items ?? []) {
     if (!d) continue
     const o = typeof d === 'string' ? { what: d } : d
-    const kind = [o.kind, defaults.kind].find((k) => DEBT_KINDS.includes(k)) ?? 'structure'
+    // `contract` is the HARNESS's classification (settleMismatches, the .roadmap/ strip), never a
+    // report's: a kind:'contract' item is what returns the arc to the root for an amendment, and no
+    // reporter gets to route the arc by naming a kind.
+    const own = o.kind === 'contract' ? null : o.kind
+    const kind = [own, defaults.kind].find((k) => DEBT_KINDS.includes(k)) ?? 'structure'
     const bankReason = [o.bankReason, defaults.bankReason].find((r) => DEBT_BANK_REASONS.includes(r))
     const what = o.what ?? o.summary ?? ''
     const key = `${unitId}|${kind}|${hashStr(what)}`
@@ -1377,8 +1446,12 @@ const S = {
     // name lives in the spec markdown, not in plan.json (units carry no gate-command field). So the
     // ledger is reported here and the EXIT GATES assert it against the spec they already read
     // (LANE_BAR); the script's own check is only the degenerate one — a pass with no lanes at all.
+    // `expectedExit` is the exit status the spec's clause states for that lane (absent = 0). A
+    // clause that requires a command to FAIL is a lane like any other, and it is green when the
+    // observed code equals the stated one (EXIT_BAR): without the field the verifier could only
+    // express "every lane exited 0", and it quarantined a green unit over a required exit 2.
     lanes: { type: 'array', maxItems: 12, items: obj({
-      command: { type: 'string', maxLength: 300 }, exitCode: { type: 'number' },
+      command: { type: 'string', maxLength: 300 }, exitCode: { type: 'number' }, expectedExit: { type: 'number' },
     }, ['command', 'exitCode']) },
     contractSurfaceTouched: { type: 'boolean' },
     // The diff's name-only file list — the objective input to the code-side scope-growth check
@@ -1403,6 +1476,14 @@ const S = {
     scopeRulings: scopeRulingArr,
     notes: { type: 'string' },
   }, ['verdict', 'directives']),
+  // The frontier gate's CLOSING round: the round cap is reached and the last fix has been verified
+  // but never gated, so this round rules on the diff as it stands — approve or quarantine, and no
+  // directives, because there is no fix round left to carry one out.
+  gateClose: obj({
+    verdict: oneOf(['approve', 'quarantine']),
+    debt: gateDebtArr, scopeRulings: scopeRulingArr,
+    notes: { type: 'string' },
+  }, ['verdict']),
   // 'confirm' exists for the specGap consult (the decision stands as built — no fix round);
   // the stuck-rescue consult never offers it and its prompt is unchanged.
   directive: obj({ action: oneOf(['redirect', 'quarantine', 'confirm']), guidance: { type: 'string' } }, ['action', 'guidance']),
@@ -1427,10 +1508,14 @@ const S = {
   // Boundary results — capped hard: these ride in state.json and the platform's
   // schema-retry resends over-long payloads verbatim (the H-1 failure mode).
   explore: obj({
+    // `blockedBy` attributes a finding to an in-scope unit that has not landed yet (the id, from
+    // the list the brief states). The scheduler HOLDS such a finding out of triage until the unit
+    // lands — checked against the plan in code, so an unknown or merged id holds nothing.
     findings: { type: 'array', maxItems: 10, items: obj({
       severity: oneOf(['blocker', 'major', 'minor', 'idea']),
       summary: { type: 'string', maxLength: 300 }, repro: { type: 'string', maxLength: 400 },
       observed: { type: 'string', maxLength: 300 }, expected: { type: 'string', maxLength: 300 },
+      blockedBy: { type: 'string', maxLength: 60 },
     }, ['severity', 'summary']) },
     shaObserved: { type: 'string' }, notes: { type: 'string', maxLength: 500 },
   }, ['findings', 'shaObserved']),
@@ -1452,7 +1537,10 @@ const S = {
   // server — the unit gates have all drained by then — so the flips are not read as caused by the
   // gates; the numbers are here so a triager can tell a flip under saturation from a real sentinel
   // instead of guessing. Recorded, never gated on. Completeness lists, never capped.
-  flake: obj({ runs: { type: 'number' }, flips: arr('string'), loads: arr('number'),
+  // `exits` is the suite's exit code per run: the fact that tells an assessed-and-stable band from
+  // one whose every run failed identically and therefore measured nothing (the harness reads it
+  // in code and marks the block `unassessed`). A completeness list, never capped.
+  flake: obj({ runs: { type: 'number' }, flips: arr('string'), exits: arr('number'), loads: arr('number'),
     cpuCount: { type: 'number' }, detail: { type: 'string', maxLength: 400 } },
     ['runs', 'flips']),
   // Per-wave design reconcile. The severity split is the atlas2 handoff's own taxonomy, because it
@@ -1957,14 +2045,28 @@ async function runBoundary() {
   //     returns null, and the settleOwed block below turns that into an owed marker, exactly as a
   //     dead Opus explorer did. No `.catch` here: the adapter never throws, and a throw from it would
   //     be a caller bug worth surfacing rather than swallowing.
-  const [expl, hlth, flk, dsgn] = await Promise.all([
+  // Units of this arc that have NOT landed yet, stated to the explorer so a finding whose cause is
+  // one of them is ATTRIBUTED rather than re-raised (2026-09-14: the same "make estate-up: no rule"
+  // blocker was reported at waves 1 and 3 because the estate unit was blocked, and each boundary
+  // had to dismiss it again). The brake is code: a finding whose `blockedBy` names an in-scope,
+  // unmerged unit is held out of triage until that unit lands (the hold below). '' when everything
+  // in scope has merged, so the brief is byte-identical on a drained plan.
+  const notLanded = plan.units.filter((u) => u.inScope && rec(u.id)?.status !== 'merged')
+  const notLandedClause = notLanded.length
+    ? `Units of this arc that have NOT landed yet: ${notLanded.map((u) => `${u.id}${u.title ? ` (${u.title})` : ''}`).join('; ')}. ` +
+      `A finding whose cause is one of those units not having landed — a command, route, target or feature that ` +
+      `unit is to deliver — is not a product defect: report it with \`blockedBy\` set to that unit's id (max 60 ` +
+      `characters; leave it empty otherwise), and the scheduler holds it until the unit lands instead of ` +
+      `triaging it again every wave. `
+    : ''
+  let [expl, hlth, flk, dsgn] = await Promise.all([
     !doExplore ? null : run(
       `You are the wave-${waveN} runtime explorer for a roadmap build. The integrated result is live as a ` +
       `preview — drive it via: ${plan.preview.howToAccess}. It serves integration tip ${explSha}. Your charter ` +
       `is runtime behavior ONLY — the diff, tests, and gates already judged the code: drive flows end to end ` +
       `the way a skeptical user would, poke edge cases, feed hostile/empty/huge inputs, break expected ` +
       `sequences — hunting behavior that is unexpected, counterintuitive, underdocumented, brittle, or ` +
-      `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). ` +
+      `misaligned with the specs' intent (specs: ${repo}/.roadmap/specs/). ${notLandedClause}` +
       // The sandbox cannot carry this (see the boundary-role comment above the array), so the brief does.
       `CHANGE NOTHING: no commits, no edits to any file under ${prevWt} or ${repo}, no restarts of a process ` +
       `you did not start. The ONE file you may create is the report named below. At most 10 findings — ` +
@@ -2017,7 +2119,9 @@ async function runBoundary() {
       `withhold, wait, or re-run on account of them.\n\n` +
       `# REPORT\n\`runs\` = how many of the ${C.flakeReruns} runs completed. \`flips\` = the exact name of ` +
       `every test that changed pass/fail between runs (an empty list is the healthy answer, and the right one ` +
-      `when the suite was stable). \`loads\` = the loadavg1 samples you took, in run order. \`cpuCount\` = ` +
+      `when the suite was stable). \`exits\` = the suite's exit code per run, in run order — a suite that ` +
+      `fails identically on every run is NOT stable, it is unmeasured, and the scheduler reads these codes to ` +
+      `tell the two apart. \`loads\` = the loadavg1 samples you took, in run order. \`cpuCount\` = ` +
       `the number printed by \`nproc\`.\n\n` +
       // Its own file, not a section inside the health report: the health assessor owns that path end
       // to end, and two writers on one path is a lost section waiting to happen.
@@ -2075,7 +2179,41 @@ async function runBoundary() {
   settleOwed('explorer', dueHere('explorer', previewStatus !== 'none'), !!expl,
     doExplore ? 'explorer agent produced no report' : previewWhy)
   settleOwed('health', doHealth, !!hlth, 'health assessor produced no report')
-  settleOwed('flake', dueHere('flake', doHealth && C.flakeReruns > 0), !!flk, 'flake re-runs produced no report')
+  // A band whose every run failed measured nothing about intermittence (2026-09-14: three `make
+  // verify` runs each exited 2 on a target the integration tip did not have, and the block still
+  // said `runs: 3, flips: []` — read as clean). Identical failure is UNASSESSED: the flips are
+  // emptied so no tier reads them as stability, the job goes OWED so it re-runs at the next
+  // boundary, and a degradation says why. A band that reported no `exits` at all is judged as
+  // before — on `runs` alone.
+  let flakeAssessed = !!flk
+  if (flk) {
+    const exits = Array.isArray(flk.exits) ? flk.exits.filter((e) => Number.isFinite(e)) : []
+    const ran = Number(flk.runs) || 0
+    if (ran === 0 || (exits.length > 0 && exits.every((e) => e !== 0))) {
+      flakeAssessed = false
+      flk = { ...flk, flips: [], unassessed: true }
+      degrade({ label: `flake:w${waveN}`, model: 'codex', phase: 'Boundary', kind: 'flake-unassessed',
+        what: `the wave-${waveN} flake band completed ${ran} run(s) and every one exited non-zero ` +
+          `(${exits.join(', ') || 'no exit codes reported'}) — a suite that fails identically on every run ` +
+          `measures nothing about intermittence, so its empty flips mean UNASSESSED, not stable. The job is ` +
+          `owed and re-runs at the next boundary; the band's record names the failing command.` })
+    }
+  }
+  settleOwed('flake', dueHere('flake', doHealth && C.flakeReruns > 0), flakeAssessed,
+    flk ? 'flake re-runs were unassessed — every run failed identically' : 'flake re-runs produced no report')
+  // The hold (see notLandedClause above): a finding attributed to a unit that has not landed is
+  // not this boundary's to triage. Held out of `findings` — the triager never sees it — and kept
+  // beside them as `heldFindings`, so the block and the report file still carry it. The
+  // attribution is checked against the PLAN, in code: an unknown or already-merged id holds nothing.
+  if (expl?.findings?.length) {
+    const notLandedIds = new Set(notLanded.map((u) => u.id))
+    const held = expl.findings.filter((f) => f?.blockedBy && notLandedIds.has(f.blockedBy))
+    if (held.length) {
+      expl = { ...expl, findings: expl.findings.filter((f) => !held.includes(f)), heldFindings: held }
+      log(`wave ${waveN}: held ${held.length} explorer finding(s) attributed to unlanded unit(s) ` +
+        `${[...new Set(held.map((f) => f.blockedBy))].join(', ')} — not triaged until they land`)
+    }
+  }
   settleOwed('design', dueHere('design', designUnits.length > 0), !!dsgn,
     doDesign ? 'design reconcile produced no report' : previewWhy,
     designUnits.map((u) => u.id))
@@ -2188,7 +2326,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
       `You are the only frontier eyes between this spec and code, so interrogate the SPEC as hard as the plan: ` +
       `hunt contradictions within the spec, clauses that contradict ` +
       `a referenced contract or documented codebase reality, and stale premises. ${designClause(unit)}${unit.design?.length ? 'A spec clause that contradicts the comp it cites ranks with a contract contradiction — '+ 'resolve it now. ' : ''}A spec defect is not the ` +
-      `engineer's to absorb — resolve it now through your verdict. ${HOST_BAR}And judge the plan the way only frontier ` +
+      `engineer's to absorb — resolve it now through your verdict. ${HOST_BAR}${EXIT_BAR}And judge the plan the way only frontier ` +
       `eyes can — the implementer is an able, literal-minded builder who will execute exactly what is approved, ` +
       `so what you wave through is what the codebase becomes: overengineering and complexity that does not earn ` +
       `its keep, structure that makes the NEXT change harder, missed reuse or a simpler shape for the same ` +
@@ -2213,7 +2351,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
     `This check is the only pre-code eyes on the spec itself, so interrogate the SPEC as hard as the plan: ` +
     `hunt contradictions within the spec, clauses that contradict a referenced contract or documented codebase ` +
     `reality, and stale premises the implementer would otherwise resolve ad hoc mid-build. ${designClause(unit)}${unit.design?.length ? 'A spec clause contradicting the comp it cites ranks with a contract contradiction: '+ 'redirect, or escalate on the "contract" trigger. ' : ''}` +
-    `${HOST_BAR}` +
+    `${HOST_BAR}${EXIT_BAR}` +
     `Choose a verdict: "approve" = proceed to IMPLEMENT as-is (approve unless something is meaningfully wrong); ` +
     `"redirect" = the engineer revises per your guidance, then implements (say what and why in a few sentences, ` +
     `not instructions; this includes naming the explicit resolution of a spec contradiction when the right ` +
@@ -3049,14 +3187,21 @@ async function runUnit(unit) {
   // conductor's filter requires a non-rebanked item.
   const alreadyLanded = () =>
     ['merge-ready', 'merged'].includes(prior.units?.[unit.id]?.status) || rec(unit.id)?.status === 'merged'
+  // The mismatch is BANKED LATER, once a reader other than the implementer has said what the diff
+  // touches (`settleMismatches`): `kind:'contract'` is what returns the whole arc to the root for
+  // an amendment, and the implementer's channel accepts any "the spec says X" disagreement
+  // (2026-09-14: a missing test assertion was filed through it and woke the root). The kind is
+  // decided in code against the evidence — the verifier's `contractSurfaceTouched`, or a contract
+  // file named in the report — never by the reporter. The consult, the forced frontier gate and
+  // `mismatchEver` fire exactly as before; only the ROUTING waits for corroboration.
   const noteMismatch = (r) => {
     if (!triggerText(r?.contractMismatch)) return
     mismatch = triggerText(r.contractMismatch)
     mismatchEver = mismatch
-    addDebt(unit.id, base, [{
-      what: `implementer-reported contract mismatch: ${mismatch}`,
-      why: 'frozen surface contradicts reality — needs architect adjudication',
-    }], { kind: 'contract', severity: 'major', ...(alreadyLanded() ? { rebanked: true } : {}) })
+    const p = pendingMismatch(unit.id)
+    p.base = base
+    p.rebanked = p.rebanked || alreadyLanded()
+    p.texts.push(mismatch)
   }
   // No debt-fix sweep in the codex lane: the brief's SCOPE already demands in-scope fixing
   // before the run reports done, and out-of-scope confessions BANK by design (DEBT_DISCIPLINE) —
@@ -3386,8 +3531,11 @@ async function runUnit(unit) {
     `whole unit. If the spec names no runnable command at all, run the tests scoped to this unit and say so in ` +
     `\`notes\`. Do NOT run the full project suite — that happens at merge.\n\n` +
     `# REPORT\nReport \`lanes\` = every command you ` +
-    `ran, in run order, each {command (verbatim, max 300 characters), exitCode}; \`pass\` is true ONLY if every ` +
-    `one of those exit codes is 0. Report \`diffFiles\` = the exact output ` +
+    `ran, in run order, each {command (verbatim, max 300 characters), exitCode, expectedExit — the exit status ` +
+    `the spec's clause states for that command, 0 when it states none: "MUST exit 2" is 2, and "exits ` +
+    `non-zero" is the observed code when that code is non-zero}; \`pass\` is true ONLY if every lane's exitCode ` +
+    `equals its expectedExit. A clause that requires a command to FAIL is still a lane: run it, record the ` +
+    `expectation, and never report a failure that happened exactly as specified as a failing check. Report \`diffFiles\` = the exact output ` +
     `lines of \`git diff --name-only ${base}..HEAD\`, and check whether that diff touches any path under ` +
     `.roadmap/ (report that as contractSurfaceTouched — ` +
     `the whole directory is the orchestrator's, not just contracts/). Report failures with the exact ` +
@@ -3398,7 +3546,8 @@ async function runUnit(unit) {
     `# HOST\n${HOST_BAR}If the spec makes one of those a check you are supposed to run, that clause is the ` +
     `defect: report it as a FAILING check, quoting the clause verbatim in \`failures\`, and carry on with the ` +
     `rest. Never report blocked:true over it — \`blocked\` is for tooling that could not run, and a spec ` +
-    `nobody can satisfy is a result to report, not an environment failure.`
+    `nobody can satisfy is a result to report, not an environment failure.\n\n` +
+    `# EXIT STATUS\n${EXIT_BAR}`
   // Still inside withGateSlot: a codex verify spends the box's cores exactly as a Haiku one did, and
   // gateMaxConcurrent bounds the HOST, not the driver. It nests OUTSIDE the adapter's own codex
   // semaphore and cannot deadlock — nothing holding a codex slot ever waits on a gate slot. Its
@@ -3408,6 +3557,9 @@ async function runUnit(unit) {
     const v = await withGateSlot(() => run(verifyBrief, { model: 'codex', cwd: w, sandbox: 'workspace-write',
       schema: S.verify, phase: 'Verify', label, timeoutMin: C.codexFixTimeoutMin }))
     if (v) noteFailingSpecs(unit.id, v)
+    // A different model family read the diff and found a frozen surface in it: the corroboration
+    // an implementer-reported contract mismatch needs before it may route the arc (settleMismatches).
+    if (v?.contractSurfaceTouched) pendingMismatch(unit.id).evidence = true
     return v
   }
   // A verify that never RAN is not a verdict about the unit. It BLOCKS: the branch and its commits
@@ -3673,6 +3825,10 @@ async function runUnit(unit) {
     degrade({ label: `codex-review:${unit.id}`, model: 'codex', phase: 'Review', kind: 'review-skipped',
       what: `no cross-model review digest for ${unit.id} — the exit gate falls back to reading the raw diff ` +
         `itself, at Opus whatever the unit's risk. Less evidence buys MORE Claude here, never less scrutiny` })
+  // Every verify this unit will get before its gates has run: bank the implementer's contract
+  // mismatches now, classified (see noteMismatch). Anything reported by a later fix round settles
+  // when the unit's result lands (start()).
+  settleMismatches(unit.id)
 
   // Exit gate — first-pass tier per `gateModel`, escalating to the Fable architect only when the call is
   // genuinely hard. High-risk units, contract-touching diffs, and a deterministic audit
@@ -3746,6 +3902,26 @@ async function runUnit(unit) {
     : ` No cross-model review digest exists for this unit (the reviewer produced nothing), so the diff itself ` +
       `is the only account of what was built. Read it in full and assume nothing was pre-checked.`
 
+  // The round cap, and what a later round IS. A flat `maxGateRounds` did not scale (2026-09-14: an
+  // 81-file, 22.6k-line adopted branch was quarantined "did not converge" after two rounds that each
+  // returned `revise` on disjoint, previously unexamined findings — every directive implemented,
+  // every lane green at gate-verify#1, and no gate ever read the last fix). Three brakes, in code:
+  // a diff at or past `largeDiffFiles` files gets `maxGateRoundsLarge` rounds; every round after the
+  // first is handed the directives it issued and told it is RE-CHECKING them, with a new observation
+  // a directive only when it is a correctness defect (everything else banks); and the frontier loop
+  // ends in a CLOSING round that rules approve/quarantine on the last fix instead of quarantining
+  // work nobody examined.
+  const gateCap = (verify.diffFiles?.length ?? 0) >= C.largeDiffFiles
+    ? Math.max(C.maxGateRounds, C.maxGateRoundsLarge) : C.maxGateRounds
+  const laterRoundClause = (prev) =>
+    ` You gated this unit before, and this round is a RE-CHECK of your own directives, not a fresh review. ` +
+    `Your previous directives were: ${JSON.stringify(prev?.directives ?? [])}. Confirm whether each was ` +
+    `addressed, and revise only over one that was not or that the fix broke. A NEW observation you did not ` +
+    `raise before is a directive only if it is a correctness defect the merge cannot carry — the spec's ` +
+    `behaviour wrong, a contract violated, an acceptance criterion untested; every other new observation goes ` +
+    `in \`debt\`, never in a directive. A gate that raises a new finding every round never converges, and ` +
+    `non-convergence quarantines work whose lanes are green.`
+
   // When the Opus-first gate hands off to the Fable gate (escalation or non-convergence),
   // carry its last assessment across so the frontier gate confirms/overturns a concrete lead
   // rather than re-deriving the concern from the spec, contracts, and diff from scratch.
@@ -3753,7 +3929,7 @@ async function runUnit(unit) {
   if (!forceFrontier) {
     // Bounded Opus self-gate: a FRESH adversarial Opus (not the implementer) grades the
     // acceptance criteria one by one, then approves, self-revises (free), or escalates.
-    for (let g = 0; g < C.maxGateRounds; g++) {
+    for (let g = 0; g < gateCap; g++) {
       spend.opusGateRounds++
       bumpRound(unit.id, 'opusGate')
       const og = await runOr({ verdict: 'escalate', trigger: 'stuck', directives: [], debt: [],
@@ -3764,7 +3940,7 @@ async function runUnit(unit) {
         `exceeds a capable engineer's ` +
         `authority rather than guessing. In the worktree at ${w}: read the spec at ${spec} and the contracts it ` +
         `references, then ${firstGateRead}` +
-        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
+        `${convClause}${designClause(unit)}Verification evidence: ${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${EXIT_BAR}${reviewClause} Grade each of the spec's acceptance criteria ` +
         `individually before any overall verdict — a gestalt impression hides exactly the misses you are here to ` +
         `catch; subtle spec misses, contract edge cases, and tests that would not fail if the behaviour were ` +
         `actually wrong are exactly what to hunt. ${unit.design?.length ? 'For a comp-governed criterion, grade conformance against the comp SOURCE: a jsdom presence test is not fidelity evidence, and a fidelity criterion that cannot be checked as written is debt, not a pass. ' : ''}${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}Then choose a verdict: "approve" only if you would merge this ` +
@@ -3775,7 +3951,7 @@ async function runUnit(unit) {
         `a substantive drawback, if the increment is architecturally foundational to the wider solution, or if ` +
         `you have found an oversight you are not confident you can resolve. Name the escalation trigger. ` +
         `${DEBT_DISCIPLINE}${TERSE}` +
-        `${g > 0 ? ' You gated this unit before; focus on whether your previous directives were properly addressed.' : ''}`,
+        `${g > 0 ? laterRoundClause(opusHandoff) : ''}`,
         // The label and the per-unit `rounds.opusGate` tally keep their names — the paid fixtures'
         // round-ceiling graders and every resume journal key on them — but the TIER is `gateModel`'s
         // now, and `spend` records what actually ran, per tier, either way.
@@ -3789,7 +3965,7 @@ async function runUnit(unit) {
       if (og.verdict === 'approve' && ogCd.length) {
         og.debt = og.debt.filter((d) => !ogCd.includes(d))
         og.directives = [...(og.directives ?? []), ...asDirectives(ogCd)]
-        if (g < C.maxGateRounds - 1) {
+        if (g < gateCap - 1) {
           og.verdict = 'revise'
           log(`${unit.id}: opus-gate approved with correctness debt in hand — coerced to revise`)
         } else {
@@ -3803,7 +3979,7 @@ async function runUnit(unit) {
       if (og.verdict === 'approve') return { status: 'merge-ready', branch: `unit/${unit.id}`, base }
       if (og.verdict === 'escalate') break
       const ogFix = await fixStep(unit, w, base, envelope,
-        { step: `opus-gate-fix${g}`, label: `codex-opus-gate-fix:${unit.id}#${g}`, fresh: g === C.maxGateRounds - 1 },
+        { step: `opus-gate-fix${g}`, label: `codex-opus-gate-fix:${unit.id}#${g}`, fresh: g === gateCap - 1 },
         `The exit gate reviewed your work and issued these directives:\n${JSON.stringify(og.directives)}`)
       if (ogFix.parked) return { status: 'pending', parked: true, note: `parked at opus-gate-fix: ${haltReason()}` }
       addDebt(unit.id, base, ogFix.debt)   // was silently dropped — a fix round's confessions are debt too
@@ -3860,14 +4036,15 @@ async function runUnit(unit) {
       `— expand to the complete diff the moment anything looks off. You are auditing an Opus-approved unit for ` +
       `systematic rubber-stamping, not re-gating from scratch. `
     : `read \`git -C '${w}' diff ${base}..HEAD\` in full and whatever surrounding code you need. `
-  for (let g = 0; g < C.maxGateRounds; g++) {
+  let lastGate = null   // the previous round's verdict, handed to the re-check and the closing round
+  for (let g = 0; g < gateCap; g++) {
     spend.gateRounds++
     bumpRound(unit.id, 'gate')
     const gate = await runReq(
       riskTilt(unit.risk) +
       `You are the architect gate for unit ${unit.id} of a roadmap build; nothing merges without your approval. ` +
       `In the worktree at ${w}: read the spec at ${spec} and the contracts it references, then ${diffRead}${convClause}${designClause(unit)}Verification evidence: ` +
-      `${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
+      `${JSON.stringify(verify)}. ${LANE_BAR}${HOST_BAR}${EXIT_BAR}${reviewClause} Grade each of the spec's acceptance criteria individually before forming your ` +
       `overall verdict — a gestalt impression hides exactly the misses you are here to catch. Judge the work as ` +
       `if you must personally vouch for it: approve only if you would merge it without further steering. Small ` +
       `oversights — subtle spec misses, contract edge cases, tests that would not fail if the behaviour were ` +
@@ -3876,7 +4053,7 @@ async function runUnit(unit) {
       `${FINDING_BAR('revise directive')}${scopeCreepClause()}${directionClause}If revising, ` +
       `give at most ${C.maxBlockingFindings} specific directives, worst first: what and why, not code. ` +
       `${DEBT_DISCIPLINE}${TERSE}${mismatchClause}${gapClause}${reportLostClause}` +
-      `${g === 0 ? opusContext : ' You gated this unit before; focus on whether your previous directives were properly addressed.'}`,
+      `${g === 0 ? opusContext : laterRoundClause(lastGate)}`,
       { model: 'fable', effort: auditOnly ? C.auditEffort : C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#${g}`, schema: S.gate })
     capDirectives(gate, 'frontier gate')
     recordScopeRulings(unit.id, gate)
@@ -3885,7 +4062,7 @@ async function runUnit(unit) {
     // gate judged mergeable (banking + evidence beats destroying an approved unit).
     const gCd = correctnessDebt(gate.debt)
     if (gate.verdict === 'approve' && gCd.length) {
-      if (g < C.maxGateRounds - 1) {
+      if (g < gateCap - 1) {
         gate.verdict = 'revise'
         gate.debt = gate.debt.filter((d) => !gCd.includes(d))
         gate.directives = [...(gate.directives ?? []), ...asDirectives(gCd)]
@@ -3900,8 +4077,9 @@ async function runUnit(unit) {
     addDebt(unit.id, base, gate.debt)
     if (gate.verdict === 'approve') return { status: 'merge-ready', branch: `unit/${unit.id}`, base }
     if (gate.verdict === 'quarantine') return quarantine(unit, 'rejected at architect gate', gate)
+    lastGate = gate
     const gFix = await fixStep(unit, w, base, envelope,
-      { step: `gate-fix${g}`, label: `codex-gate-fix:${unit.id}#${g}`, fresh: g === C.maxGateRounds - 1 },
+      { step: `gate-fix${g}`, label: `codex-gate-fix:${unit.id}#${g}`, fresh: g === gateCap - 1 },
       `The frontier architect gate reviewed your work and issued these directives:\n${JSON.stringify(gate.directives)}`)
     if (gFix.parked) return { status: 'pending', parked: true, note: `parked at gate-fix: ${haltReason()}` }
     addDebt(unit.id, base, gFix.debt)   // was silently dropped — a fix round's confessions are debt too
@@ -3910,7 +4088,35 @@ async function runUnit(unit) {
     if (!verify) return verifyUnrun(`gate-verify:${unit.id}#${g}`)
     if (verify.blocked) return envBlocked(`gate-verify:${unit.id}#${g}`, verify)
   }
-  return quarantine(unit, 'architect gate did not converge')
+  // CLOSING ROUND (see gateCap): the last fix has been verified but no gate has read it. Rule on
+  // the diff as it stands — approve or quarantine, no directives — so "did not converge" is a
+  // verdict about the work rather than about a fix nobody examined. Approved-with-correctness-debt
+  // banks loudly at severity:major exactly as the cap-bank above does; a remaining correctness
+  // defect the merge cannot carry is the one reason left to quarantine.
+  const close = await runReq(
+    riskTilt(unit.risk) +
+    `You are the architect gate for unit ${unit.id} of a roadmap build — the CLOSING round. The gate issued ` +
+    `directives for ${gateCap} round(s); the last fix round has been applied and verified, and no further ` +
+    `directive round exists. In the worktree at ${w}: read the spec at ${spec} and the contracts it references, ` +
+    `then read \`git -C '${w}' diff ${base}..HEAD\` in full. Verification evidence: ${JSON.stringify(verify)}. ` +
+    `${LANE_BAR}${HOST_BAR}${EXIT_BAR}Your previous round's directives were: ${JSON.stringify(lastGate?.directives ?? [])}. ` +
+    `Rule with \`verdict\` "approve" or "quarantine" ONLY — this round issues no directives. Approve if those ` +
+    `directives are addressed and nothing left in the diff is a correctness defect the merge cannot carry, ` +
+    `banking every other outstanding observation in \`debt\` (each with its bankReason). Quarantine only if an ` +
+    `unaddressed directive or a remaining correctness defect makes the unit unmergeable, and say which in ` +
+    `\`notes\`.${scopeCreepClause()}${directionClause} ${DEBT_DISCIPLINE}${TERSE}`,
+    { model: 'fable', effort: C.gateEffort, phase: 'Architect', label: `gate:${unit.id}#close`, schema: S.gateClose })
+  recordScopeRulings(unit.id, close)
+  const cCd = correctnessDebt(close.debt)
+  if (close.verdict === 'approve' && cCd.length) {
+    for (const d of cCd) d.severity = 'major'
+    degrade({ label: `gate:${unit.id}#close`, model: 'fable', phase: 'Architect', kind: 'correctness-debt-banked',
+      what: `frontier gate approved ${unit.id} at the closing round with ${cCd.length} correctness-kind debt ` +
+        `item(s) still banked — banked at severity:major; the boundary triage must treat these as bugs, not hygiene` })
+  }
+  addDebt(unit.id, base, close.debt)
+  if (close.verdict === 'approve') return { status: 'merge-ready', branch: `unit/${unit.id}`, base }
+  return quarantine(unit, 'architect gate did not converge', close)
 }
 
 /* --------------------- serial merge queue + suite gate ------------------ */
@@ -4088,6 +4294,10 @@ function start(unit) {
         ? { status: 'pending', parked: true, note: `parked on platform outage: ${e.message}` }
         : quarantine(unit, `pipeline error: ${e?.message ?? e}`).catch(() =>
           ({ status: 'quarantined', reason: `pipeline error: ${e?.message ?? e}` })))
+    // A contract mismatch reported after the pre-gate review (a gate-fix round), or on a unit that
+    // parked, blocked or quarantined before reaching it, is banked here with whatever evidence
+    // exists — never dropped (see noteMismatch / settleMismatches).
+    settleMismatches(unit.id)
     // The terminal result replaces the running record wholesale — carry the round tally over.
     const rounds = units.get(unit.id)?.rounds
     if (result.status === 'merge-ready') {

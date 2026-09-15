@@ -10,7 +10,7 @@
 // This suite reads BOTH FILES AS TEXT (never imports or evaluates them — a workflow script's top
 // level has bare `return`/`await` and cannot be imported) and compares:
 //   (a) STRICT       — byte-identical value
-//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_BS + PACK_EXTRA + cdGuard +
+//   (b) READ_CHUNK + CK_TABLE + cksumOf + PACK_SED/PACK_UNMARK/PACK_GROWTH + PACK_EXTRA + cdGuard +
 //                      courierPrompt/courierSchema/courierShape +
 //                      readPackFile + readPack — byte-identical value and byte-identical source.
 //                      This is the LAUNCH PACK read: both scripts open by having a Haiku courier
@@ -39,6 +39,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
@@ -256,25 +257,40 @@ test('the courier prompt/schema/shape are byte-identical in both scripts', () =>
 })
 
 test('the launch pack read is byte-identical in both scripts', () => {
-  // The transport sentinel. Both scripts must name the SAME marker: the read command in one and the
-  // reversal in the other would otherwise disagree about what a backslash looks like in transit.
-  const [hb, cb] = FILES.map((f) => constValue(f, 'PACK_BS'))
-  assertInSync('The PACK_BS transport sentinel', hb, cb)
-  assert.equal(typeof hb, 'string', 'PACK_BS is a literal string')
-  assert.doesNotMatch(hb, /[\\"'`$&/^[\]*.+?(){}|\s]/,
-    'the sentinel carries no character that sh, sed, a regex replacement or JSON would treat specially')
-  assert.doesNotMatch(hb, /[^\x20-\x7e]/, 'and stays pure ASCII — the whole point is that nothing escapes it')
+  // The transport is ESCAPE-SEQUENCE MARKERS (0.16.0): the read command rewrites every JSON escape
+  // sequence to its own marker and the script reverses it. Both scripts must name the SAME rules:
+  // the sed in one and the reversal in the other would otherwise disagree about what the courier
+  // is carrying. Probed live 2026-09-15 (three real Haiku couriers, a 14 KB document carrying
+  // every escape form, three byte-identical copies) after base64 failed at 1.5 KB and the
+  // per-backslash sentinel failed on a quote beside a marker and on identical adjacent markers.
+  const [hs, cs] = FILES.map((f) => constExpr(f, 'PACK_SED'))
+  assertInSync('The PACK_SED rewrite', hs, cs)
+  const [hu, cu] = FILES.map((f) => blockSource(f, 'PACK_UNMARK'))
+  assertInSync('The PACK_UNMARK reversal', hu, cu)
+  const [hg, cg] = FILES.map((f) => constValue(f, 'PACK_GROWTH'))
+  assertInSync('The PACK_GROWTH budget', hg, cg)
+  // Cross-validated through the REAL sed and back through the in-script reversal, on the shapes
+  // that broke launches: `\"` inside a shell command, `\\\"`, doubled backslashes, `\n`/`\t`,
+  // `\uXXXX`, `\/`, and a raw glyph.
+  const { PACK_SED, PACK_UNMARK } = Function(`"use strict"; ${hs.replace(/^/, 'const PACK_SED = ')}; ${hu}; return { PACK_SED, PACK_UNMARK }`)()
+  const nasty = '{ "a": "sh -c \\"echo \\\\\\"hi\\\\\\" && x\\"", "b": "C:\\\\\\\\dir\\\\\\\\", "c": "l\\ni\\tn\\u2014e \\/ \u2192" }\n'
+  const carried = execSync(PACK_SED, { input: nasty, encoding: 'utf8' })
+  assert.ok(!carried.includes('\\'), 'the transformed text carries no backslash at all')
+  assert.ok(carried.includes('sh -c @q@echo @bs@@q@hi@bs@@q@ && x@q@'),
+    'the 2026-09-14 shape: the quote of every `\\"` pair is INSIDE its marker, so no marker "escapes" a quote')
+  assert.ok(carried.includes('@bs@@q@'), '`\\\\\\"` is two DIFFERENT markers, never a run of one')
+  assert.equal(PACK_UNMARK(carried), nasty, 'and the reversal is exact')
+  assert.ok(hg >= 2, 'the budget covers the longest rewrite (`\\\\` -> `@bs@`, two characters per backslash)')
 
-  // PACK_EXTRA interpolates PACK_BS, so it is evaluated with that one binding in scope.
-  const packExtra = (f) => Function('PACK_BS', `"use strict"; return (${constExpr(f, 'PACK_EXTRA')});`)(constValue(f, 'PACK_BS'))
-  const [he, ce] = FILES.map(packExtra)
+  const [he, ce] = FILES.map((f) => constValue(f, 'PACK_EXTRA'))
   assert.match(he, /verbatim/, 'the courier is told to copy the document through verbatim')
   assert.match(he, /truncated copy is worse than no copy/, 'and to refuse rather than truncate')
-  assert.ok(he.includes(hb), 'and the clause names the sentinel it will be carrying')
+  assert.match(he, /Each marker stands for exactly one escape\s+sequence/, 'and what a marker is')
+  assert.match(he, /never merge two adjacent markers,\s+drop one, add one/, 'and the exact ways it must not be helpful about one')
   // CHANGED CONTRACT (2026-09-04): the old clause told the courier that "\n and \" are literal
   // characters to copy, not instructions". That is what failed, twice — a report is JSON, so a
-  // backslash needs two levels of escaping and Haiku supplies one. The instruction is gone because
-  // there is no backslash left in the text the courier carries.
+  // backslash needs two levels of escaping and Haiku supplies one. There is no backslash left in
+  // the text the courier carries.
   assert.doesNotMatch(he, /literal[\s\S]{0,40}characters to copy/,
     'the "escape sequences are literal characters" instruction is gone — it is what did not work')
   assertInSync('The PACK_EXTRA clause', he, ce)
@@ -282,10 +298,8 @@ test('the launch pack read is byte-identical in both scripts', () => {
   const [hf, cf] = FILES.map((f) => fnSource(f, 'readPackFile', 'async (path, ranges, label, extra)'))
   assert.ok(hf.includes('cksum < ${path}'), 'the file is verified against its own cksum, not a byte count')
   assert.ok(hf.includes('sed -n'), 'content is read over explicit line ranges')
-  assert.ok(hf.includes("| sed 's/\\\\\\\\/${PACK_BS}/g'"),
-    'and each range is piped through the backslash->sentinel rewrite')
-  assert.ok(hf.includes('.split(PACK_BS).join(\'\\\\\')'),
-    'and the script reverses the sentinel itself, before the cksum decides')
+  assert.ok(hf.includes('| ${PACK_SED}'), 'and each range is piped through the escape-marker rewrite')
+  assert.ok(hf.includes('PACK_UNMARK('), 'and the script reverses the markers itself, before the cksum decides')
   assertInSync('The readPackFile reader (comments included)', hf, cf)
 
   const [hr, cr] = FILES.map((f) => fnSource(f, 'readPack', 'async ()'))
@@ -357,10 +371,35 @@ test('both scripts still declare every shared constant this suite guards', () =>
   // Guards against the quietest failure of all: a constant deleted from one file (inlined,
   // renamed) so the drift tests above silently stop comparing anything real.
   for (const f of FILES)
-    for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_BS', 'PACK_EXTRA', 'CK_TABLE', 'cksumOf',
+    for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_SED', 'PACK_UNMARK', 'PACK_GROWTH', 'PACK_EXTRA',
+      'CK_TABLE', 'cksumOf',
       'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
-      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR'])
+      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR', 'EXIT_BAR'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
+})
+
+test('EXIT_BAR (acceptance checks carry an expected exit) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'EXIT_BAR'))
+  assertInSync('The EXIT_BAR const', h, c)
+  // Arc-observed 2026-09-14: a Done-when clause said a standalone command MUST exit 2; the verifier
+  // ran it as a lane, counted the 2 as red, and quarantined a unit whose three real lanes were
+  // green — twice, because the respec reworded the clause without changing its shape.
+  assert.match(h, /success is exit 0/, 'EXIT_BAR still states the authoring rule')
+  assert.match(h, /`expectedExit`/, 'and names the lane field the verifier records a stated expectation in')
+  assert.match(h, /SPEC DEFECT/, 'and still says a bare required-failure command is the SPEC\'s defect')
+  // The harness carries it to every tier that ADJUDICATES spec text plus the verifier and the closing
+  // round; the conductor to the tiers that WRITE it — the same sites as HOST_BAR, by construction.
+  for (const [file, sites] of [['harness.mjs', 6], ['conductor.mjs', 3]]) {
+    const used = (SRC[file].match(/\$\{EXIT_BAR\}/g) ?? []).length
+    assert.ok(used >= sites, `${file} interpolates EXIT_BAR at only ${used} site(s) — expected at least ${sites}`)
+  }
+  for (const anchor of ['const opusTriagePrompt', 'const fableBoundaryPrompt', 'const specRevisePrompt']) {
+    const at = SRC['conductor.mjs'].indexOf(anchor)
+    assert.notEqual(at, -1, `${anchor} is gone from conductor.mjs`)
+    const body = SRC['conductor.mjs'].slice(at, SRC['conductor.mjs'].indexOf('\nconst ', at + 1))
+    assert.ok(body.includes('${EXIT_BAR}'),
+      `${anchor} writes acceptance criteria without being told how an expected exit is expressed`)
+  }
 })
 
 test('HOST_BAR (host facts are never a verdict) is byte-identical in both scripts', () => {
