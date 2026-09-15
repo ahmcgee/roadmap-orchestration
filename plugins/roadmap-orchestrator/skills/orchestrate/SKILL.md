@@ -106,13 +106,18 @@ brake is a tier-2 guarantee and is unaffected.
 is the `codex` CLI, launched by cheap steering agents inside unit worktrees; there is no Claude
 implementation lane. Probe once: `command -v codex && codex --version && codex login status`,
 then — because a valid credential proves nothing about the SERVICE (2026-09-03: the ChatGPT Codex
-backend 404'd every run while `login status` still said "Logged in") — one real bounded run,
-**with the sandbox flag the harness will actually use**, in a scratch directory of its own:
+backend 404'd every run while `login status` still said "Logged in") — one real bounded run
+that **executes a shell command, under the sandbox flag the harness will actually use**, in a
+scratch directory of its own:
 `mkdir -p /tmp/codex-smoke && timeout 120 codex exec -C /tmp/codex-smoke -s <codexSandbox>
---skip-git-repo-check 'Reply with exactly the word pong'`, where `<codexSandbox>` is
-`plan.config.codexSandbox` if you set one and otherwise the harness default `danger-full-access`
-(`reference.md` → config knobs). The pass test is its **exit code**, not its wording. Never smoke
-with the CLI's own default sandbox: that answers a question the harness will not ask (2026-09-14:
+--skip-git-repo-check -o /tmp/codex-smoke/last.txt 'Run the shell command `pwd` and reply with
+exactly its output'`, where `<codexSandbox>` is `plan.config.codexSandbox` if you set one and
+otherwise the harness default `danger-full-access` (`reference.md` → config knobs). The pass test
+is the **exit code AND `last.txt` holding exactly `/tmp/codex-smoke`** — never the exit code
+alone, and never a one-word reply: codex exits 0 when its sandbox cannot start (2026-09-15: exit
+0, final message `bwrap: No permissions to create a new namespace`), and a "reply pong" smoke
+never runs a command, so it passes on a box where every real run will die. Never smoke with the
+CLI's own default sandbox either: that answers a question the harness will not ask (2026-09-14:
 the smoke passed under the CLI default, then every real run needed `-s danger-full-access`
 because bubblewrap could not build a sandbox — `bwrap: setting up uid map: Permission denied` — and
 that flag is one Claude Code's auto-mode permission classifier refuses, so the arc could not
