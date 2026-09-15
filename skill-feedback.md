@@ -55,9 +55,24 @@ reasoning), entry by entry against the 2026-09-14 list below:
   (`explorer.heldFindings`), checked against the plan (an unknown or merged id holds nothing), until
   the unit lands.
 
-Ladder: `evals/parse.sh` green, `evals/unit/run.sh` 413/413 (14 new sims). The paid fixtures
-(`evals/check.sh`) were **not** run in this session — no codex/API access here; run them before
-tagging.
+Two more the fixtures surfaced while proving the batch, fixed on the same branch:
+
+- **The smoke must execute a command.** codex exits 0 when its sandbox cannot start — the `bwrap`
+  error is its final *message* — so the "reply pong" smoke (SKILL.md and the per-wave probe) passed
+  on this box under a flag every real run would die under. Both smokes now make codex run `pwd`
+  and the shell checks the answer; the probe names a sandbox failure as a host fact with its fix.
+- **Archive dispositions.** The tier-2 triager also filed dispositions for the explorer/health
+  renderings it read, and the archive composed `feedback/user/.roadmap/feedback/explorer/wave-2.md`
+  from them (six `feedback-unmoved` rows). Only a census-listed file is a user note now.
+
+Ladder, all on the final scripts: `evals/parse.sh` green; `evals/unit/run.sh` **416/416** (17 new
+sims). **Harness fixture** `check.sh`: ALL CHECKS PASSED — 6/6 units in their expected end states,
+0 degradations, `flake.exits` and `explorer.blockedBy` visible live. **Conductor fixture**
+`check-conductor.sh`: ALL CHECKS PASSED twice — first run 3 waves / `max-waves` (the documented
+WARN; each extra wave bought by one verified major correctness defect), which surfaced the two
+defects above; fresh run on the final scripts 2 waves / `arc-complete`, 0 degradations. The base64
+transport this record first shipped with failed its first live run and was replaced before the
+fixtures were run (see the pack entry above).
 
 ---
 
