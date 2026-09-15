@@ -366,6 +366,16 @@ the arc won't converge), then relaunch. `check-conductor.sh` grades the arc's *f
 `boundaries` forensics are arc-cumulative across relaunches, and the final-wave probes key on
 `state.wave`, not a hardcoded number. Adds roughly one wave's cost.
 
+**A resume is not a re-validation.** `resumeFromRunId` replays cached agent results for unchanged
+prompts, so it is the right tool for a run that *died*. It is the wrong tool for re-checking a
+script edit against a fixture the completed run already mutated: the salted pack read replays the
+launch-time `state.json` (wave 0) while the disk holds the finished arc, every setup probe then
+reconciles a stale state against a moved integration branch, and whatever real agents do run are
+answering a question nobody asked (2026-09-15: a resume after a green three-wave run returned
+`arc-complete` at wave 1 with a `quarantine-refused` row, 573 K tokens, and validated nothing).
+Rebuild the fixture directory and run it fresh; never persist a resumed run's state over the
+original's.
+
 **Rerun tolerance.** This is an LLM-based system: a *single* unexpected FAIL warrants one rerun (fresh
 dir) before you conclude regression; a repeat is real. Rerun-tolerant probes are the ones that depend
 on a model *drafting* work — **(b)** and the respec-disposition half of **(c)**. Everything else —
