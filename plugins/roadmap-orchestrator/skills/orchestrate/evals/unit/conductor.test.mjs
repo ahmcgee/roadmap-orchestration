@@ -1026,6 +1026,36 @@ test('a rendering that was never written is an ordinary skip; a consumed user no
   assert.equal(rows[0].label, 'move-feedback:w1')
 })
 
+// 2026-09-15 (conductor fixture): the tier-2 triager also filed dispositions for the explorer and
+// health RENDERINGS it read (`.roadmap/feedback/explorer/wave-2.md`), the archive treated every
+// disposition as a user-note basename, and six `feedback-unmoved` rows landed over the path
+// `feedback/user/.roadmap/feedback/explorer/wave-2.md`. Only a file the census listed is a note.
+test('a disposition naming a file the census never listed composes no path and degrades nothing', async () => {
+  const { agent, result } = await archiveRun({ feedback: [
+    { file: 'note-1.md', action: 'actioned', reason: 'folded in' },
+    { file: '.roadmap/feedback/explorer/wave-1.md', action: 'actioned', reason: 'both findings reproduced' },
+    { file: '.roadmap/feedback/health/wave-1.md', action: 'dismissed', reason: 'no findings' },
+    { file: '../../etc/passwd', action: 'dismissed', reason: 'a path no census listed' },
+  ] })
+  const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
+  assert.equal(moves.length, 5, 'four renderings plus the ONE listed note — the unlisted files compose nothing')
+  assert.ok(moves.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")), 'the listed note is archived')
+  assert.ok(!moves.some((c) => c.includes('feedback/user/.roadmap') || c.includes('passwd')),
+    'no path is ever composed from a disposition the census did not vouch for')
+  assert.deepEqual((result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved'), [],
+    'and nothing degrades — the renderings archived on their own rows')
+})
+
+test('a disposition may name a listed note by basename or path; the census spelling reaches the command', async () => {
+  const { agent } = await archiveRun({ notes: ['note-1.md', 'note-2.md'], feedback: [
+    { file: '/repo/.roadmap/feedback/user/note-1.md', action: 'actioned' },
+    { file: 'note-2.md', action: 'deferred' },
+  ] })
+  const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
+  assert.ok(moves.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")), 'a path form still selects the listed note')
+  assert.ok(!moves.some((c) => c.includes('note-2.md')), 'a deferred note is not consumed')
+})
+
 test('a move that FAILED degrades even though the courier exited clean, and never fails the arc', async () => {
   const { result, workflow } = await archiveRun({ moveRule: courierSaying([[/feedback\/explorer\//, 'FAILED']]) })
   const rows = (result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved')

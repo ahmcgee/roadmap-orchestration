@@ -1489,7 +1489,22 @@ for (let w = 0; w < CC.maxWavesPerRun; w++) {
   // appended to the same closed list, each `|| echo GH-FAIL` — best-effort made mechanical instead
   // of promised in prose. In file mode those commands are simply absent, so the prompt carries no
   // gh text at all (which is what keeps the offline paid fixtures byte-identical).
-  const consumedFiles = feedbackDispositions.filter((f) => f.action === 'actioned' || f.action === 'dismissed').map((f) => f.file)
+  // Only a file the CENSUS listed is a user note: that list came off the disk, and it is the closed
+  // set this archive may compose a `feedback/user/<name>` path from. A triager that also files
+  // dispositions for the explorer/health renderings it read (2026-09-15: six `feedback-unmoved`
+  // rows over `feedback/user/.roadmap/feedback/explorer/wave-2.md`) is disposing of files that
+  // archive on their own row below — logged, never turned into a path. The census's own spelling is
+  // what reaches the command, so a disposition can only ever select a note, never name one.
+  const userNotes = (census.pendingUserFeedback ?? []).map(String)
+  const consumedFiles = feedbackDispositions
+    .filter((f) => f.action === 'actioned' || f.action === 'dismissed')
+    .map((f) => { const n = String(f.file ?? ''); return userNotes.find((u) => u === n || u === n.split('/').pop()) })
+    .filter((n, i, all) => n && all.indexOf(n) === i)
+  const unlisted = feedbackDispositions.filter((f) => (f.action === 'actioned' || f.action === 'dismissed') &&
+    !consumedFiles.includes(String(f.file ?? '')) && !consumedFiles.includes(String(f.file ?? '').split('/').pop()))
+  if (unlisted.length)
+    log(`wave ${N}: ${unlisted.length} feedback disposition(s) name files the census never listed as user notes ` +
+      `(${unlisted.map((f) => String(f.file)).join(', ')}) — renderings archive on their own; nothing composed for these`)
   const fbDir = `${repo}/.roadmap/feedback`
   const triagedDir = `${fbDir}/triaged/${N}`
   // The destination basename is ROLE-QUALIFIED: explorer/, health/ and design/ each render a file
