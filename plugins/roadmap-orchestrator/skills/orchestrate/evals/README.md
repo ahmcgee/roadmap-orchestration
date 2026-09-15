@@ -579,6 +579,13 @@ schema, `gpt-5.6-sol`, `model_reasoning_effort=high`, under the sandbox flag the
   validated against the strict-mode schema on the first turn.
 - **Cost:** ~111 K input tokens (88 K cached), 6.3 K output, about five minutes wall clock.
 
+**The contract-vs-code cross-check role, same copy, same flags.** Seven surfaces across the two
+drafted contracts, a completeness list with correct verdicts against the contract text and the
+code: `differs` on the conventions contract's "require shared helpers" rule at `stats.js:6`
+(the inline `gcd` the fixture plants as wave-2 health-assessor bait — found before anything
+forks), `absent` on the RangeError rule (no operation raises one yet, true), `matches` on the
+rest with file:line. Wrote nothing. ~106 K input (84 K cached), 3.9 K output.
+
 **And a finding about the preflight.** The first attempt ran under `-s read-only` and returned an
 honest empty report with a `notes` line: every shell call died with `bwrap: No permissions to
 create a new namespace`. Codex exited **0** — the sandbox failure shows only in the final
