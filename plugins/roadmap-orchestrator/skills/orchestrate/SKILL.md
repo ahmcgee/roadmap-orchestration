@@ -342,17 +342,24 @@ R=<worktreeRoot>/__phase0-review; S=<this skill's directory>
 git worktree add --detach "$R" HEAD && cp -r .roadmap "$R"/.roadmap
 # provision it exactly as a unit worktree: copy plan.provision.copy into $R, run plan.provision.setup there
 sed "s#{{REPO}}#$R#g; s#{{ROADMAP}}#$R/.roadmap#g" "$S"/templates/phase0-review-brief.md > /tmp/phase0-review-brief.md
-timeout 1800 codex exec -C "$R" -s <codexSandbox> --skip-git-repo-check -m <review model> \
+timeout 1800 codex exec -C "$R" -s <codexSandbox> --skip-git-repo-check -m gpt-6-astra \
   -c model_reasoning_effort=high --output-schema "$S"/templates/phase0-review.schema.json \
   -o /tmp/phase0-review.json - < /tmp/phase0-review-brief.md
 git worktree remove --force "$R"
 ```
 
 `<codexSandbox>` is the value the preflight settled on; the brief carries "change nothing" because
-the sandbox cannot always. `<review model>` is the strongest Codex model provisioned — this is one
-judgment-heavy read per arc, so it takes the model builds would be too expensive on; fall back to
-`plan.config.codexModel`. The pass test is the **exit code** plus a parseable `-o` file; a role
-that dies gets one retry, then the arc proceeds without it and the architect log says so. Then
+the sandbox cannot always. **The reviewer is `gpt-6-astra`** (`plan.config.codexReviewModel`,
+default `'gpt-6-astra'`; the harness never reads it) — the whole point of this read is a second
+family's *strongest* judgment on the draft, one judgment-heavy pass per arc, so it takes the model
+builds would be too expensive on, never the build model. Smoke it at preflight exactly like the
+build model (the `pwd` smoke with `-m gpt-6-astra`): a `400 … not supported when using Codex with
+a <plan> account` means the credential cannot reach it, which is a **user decision** — provision
+the credential that can, or accept `plan.config.codexModel` as the reviewer for this arc, said so
+in the architect log — never a silent downgrade, because the count of findings the review changed
+is only meaningful against the model it was written for. The pass test is the **exit code** plus a
+parseable `-o` file; a role that dies gets one retry, then the arc proceeds without it and the
+architect log says so. Then
 adjudicate every finding exactly as you do the audit's: amend the plan or a spec, record a
 `C-<nn>` ruling, or dismiss it with a stated reason in the architect log — and fold anything
 genuinely ambiguous into the user question batch. A `recut` you accept re-runs decomposition for

@@ -1404,6 +1404,7 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `maxBlockingFindings` | 6 | Cap on gate directives per revise round — a cap on REPORTING, never reading; overflow banks as debt. Enforced code-side, never schema maxItems (retry-death) |
 | `codexModel` | `'gpt-5.6-sol'` | `-m` for every codex run; `null` falls back to the codex CLI's own config default |
+| `codexReviewModel` | `'gpt-6-astra'` | `-m` for the two **Phase-0 codex roles** (the plan-pack review and the contract-vs-code cross-check) — the builder family's strongest judgment on the draft, one read per arc. Read by the **root** at Phase 0, never by the harness. A credential that cannot reach it fails the preflight smoke with a `400 … not supported` and the fallback to `codexModel` is the user's call, journaled |
 | `codexEffort` | `'high'` | `model_reasoning_effort` for builds — under-provisioned effort is the top documented cause of bad Codex output; `xhigh` for hard arcs |
 | `codexFixEffort` | `'medium'` | Effort for resume/fix rounds (narrower work than the build) |
 | `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work. **Every codex launch carries this flag**, the Phase-0 smoke must run with it (SKILL.md → Codex preflight), and where it has to be `danger-full-access` the session must run in bypass-permissions mode — Claude Code's auto-mode permission classifier refuses that flag (2026-09-14: `bwrap: setting up uid map: Permission denied`, and not one codex process could launch) |
@@ -1486,10 +1487,13 @@ that every cap is stated in the brief, and that SKILL.md documents the placehold
 
 Invocation (both): a **detached review worktree** at `<worktreeRoot>/__phase0-review` forked from
 `HEAD` with the uncommitted draft `.roadmap/` copied in and `plan.provision` applied, then
-`codex exec -C <worktree> -s <codexSandbox> --skip-git-repo-check -m <review model>
+`codex exec -C <worktree> -s <codexSandbox> --skip-git-repo-check -m gpt-6-astra
 -c model_reasoning_effort=high --output-schema <schema> -o <report.json> - < <filled brief>` — the
-exact lines are in SKILL.md → Phase 0. `<review model>` is the strongest Codex model provisioned
-(one judgment-heavy read per arc; `plan.config.codexModel` is the fallback). Pass test: exit 0 and
+exact lines are in SKILL.md → Phase 0. The reviewer is **`gpt-6-astra`** (`codexReviewModel`
+below): the strongest model of the builder's family, one judgment-heavy read per arc, never the
+build model — a downgrade to `codexModel` is a user decision the architect log records, since a
+credential that cannot reach astra answers `400 … not supported when using Codex with a … account`
+to the preflight smoke. Pass test: exit 0 and
 a parseable `-o` file; one retry, then proceed without it and say so in the architect log. Neither
 role decides anything — the table above still holds: Codex advises, Claude rules.
 

@@ -556,42 +556,57 @@ designed. (The probe ran without platform schema enforcement, so the meta block 
 the agent's tool trace rather than a validated report; the real platform's S.implCodex schema
 forces it.) Codex usage for the toy unit: ~494k input (91% cached) / ~8.5k output tokens.
 
-### P3 — the Phase-0 plan-pack review role against the conductor fixture (pinned 2026-09-15)
+### P3 — the two Phase-0 codex roles against the conductor fixture (pinned 2026-09-16)
 
-Spends OpenAI quota only, zero Claude tokens. The role is a template the root runs by hand
-(SKILL.md → Phase 0 → "Cross-model review of the plan pack"), so no fixture reaches it; this probe
-is its evidence. A copy of the conductor fixture's repo (`setup-fixture.sh --conductor`, provisioned,
-`plan.json` paths rewritten to the copy) was handed to `codex exec` with the shipped brief and
-schema, `gpt-5.6-sol`, `model_reasoning_effort=high`, under the sandbox flag the harness uses here:
+Spends OpenAI quota only, zero Claude tokens. The roles are templates the root runs by hand
+(SKILL.md → Phase 0), so no fixture reaches them; this probe is their evidence. A copy of the
+conductor fixture's repo (`setup-fixture.sh --conductor`, provisioned, `plan.json` paths rewritten
+to the copy) was handed to `codex exec` with the shipped briefs and schemas, under the sandbox flag
+the harness uses here, first on the build model (`gpt-5.6-sol`) and then on the reviewer the roles
+are written for (`gpt-6-astra`, `codexReviewModel`), both at `model_reasoning_effort=high`.
 
-- **It found the planted defect at Phase 0.** `contradictions[0]` names `impossible-cache`'s spec
-  against `calc-api.md` clauses 2–3 (cross-process reuse vs. the persistence ban), with file:line
-  evidence; `unbuildable[0]` carries the exact question it would ask; `recut[0]` says not to
-  schedule it as a build unit until re-specified. In the fixture that defect is discovered only
-  after a codex plan, a `feasible:false`, and a Fable plan-check — at Phase 0 it is an edit.
-- **It found two real defects of the canned pack** the fixture never grades: no `constraints.md`,
-  and an `architect-log.md` with no `## Direction` section (`questions`, 2 entries).
-- **It ran the brief's command** (`bash test.sh`, exit 0, `ok`) and reported no `briefDefects`.
-- **It proposed one recut** (fold `add-multiply` into `add-divide`: same export object, same
-  test file, already serialized by the edge) — the kind of finding the architect adjudicates, and
-  here would dismiss, since the two units exist to probe scheduling.
-- **It wrote nothing** (`git status` clean apart from the probe's own path rewrite), and the report
-  validated against the strict-mode schema on the first turn.
-- **Cost:** ~111 K input tokens (88 K cached), 6.3 K output, about five minutes wall clock.
+**Plan-pack review on `gpt-6-astra`** (95 K input, 73 K cached, 1.5 K output; 12 commands):
 
-**The contract-vs-code cross-check role, same copy, same flags.** Seven surfaces across the two
-drafted contracts, a completeness list with correct verdicts against the contract text and the
-code: `differs` on the conventions contract's "require shared helpers" rule at `stats.js:6`
-(the inline `gcd` the fixture plants as wave-2 health-assessor bait — found before anything
-forks), `absent` on the RangeError rule (no operation raises one yet, true), `matches` on the
-rest with file:line. Wrote nothing. ~106 K input (84 K cached), 3.9 K output.
+- **Found the planted defect at Phase 0**: `contradictions[0]` is `impossible-cache`'s spec against
+  `calc-api.md` clause 1, with file:line evidence; `unbuildable[0]` adds what no contract defines
+  for any memoize (keys, supported types, function identity, the observable proof of a hit) and
+  the exact question it would ask. In the fixture that defect is discovered only after a codex
+  plan, a `feasible:false`, and a Fable plan-check — at Phase 0 it is an edit.
+- **Found the second planted defect the build model missed**: `contradictions[1]` is `stats.js`'s
+  inline `gcd` against `conventions.md` clause 1 — cross-referenced against the architect log's
+  own line deferring it, "no planned unit owns its repair". The fixture relies on the wave-2 health
+  assessor for this.
+- **A recut only a whole-plan reader can make**: all three units extend `calc.js` and `test.js`,
+  `conventions.md` requires one bottom export literal, and `plan.json` orders only multiply and
+  divide — so the cache unit is free to collide with both on the same small files.
+- **Found the two real defects of the canned pack** (no `constraints.md`, no `## Direction`) as one
+  question, ran `bash test.sh` and `node test.js` (both `ok`), and **declined to run the
+  provisioning command because it writes** — the read-only bar held without being enumerated.
+- Wrote nothing; validated against the strict schema on the first turn.
 
-**And a finding about the preflight.** The first attempt ran under `-s read-only` and returned an
-honest empty report with a `notes` line: every shell call died with `bwrap: No permissions to
-create a new namespace`. Codex exited **0** — the sandbox failure shows only in the final
-message. The same box had passed a "reply pong" smoke under that flag minutes earlier, because a
-one-word reply never runs a command. That is why SKILL.md's Codex preflight now runs `pwd` and
-is judged on exit code **and** output.
+**Contract-vs-code cross-check on `gpt-6-astra`** (68 K input, 1.6 K output): twelve surfaces
+across the two drafted contracts — it splits `calc-api.md` clause 1 into its five freezable
+properties where the build model reported one — a completeness list with correct verdicts:
+`differs` on the conventions contract's reuse rule at `stats.js:6` (the wave-2 health-assessor
+bait, found before anything forks), `absent` on both RangeError rules (true: no operation raises
+one yet), `matches` on the rest with file:line. Wrote nothing.
+
+**The same two roles on the build model, `gpt-5.6-sol`, for contrast** (the first probe, before
+the reviewer was pinned): the review found the `impossible-cache` contradiction and the two
+canned-pack defects but NOT the `stats.js` violation, and proposed a taste recut (fold multiply into
+divide) rather than the file-overlap one; the contract check reported seven surfaces with the same
+verdicts. ~111 K / 6.3 K and ~106 K / 3.9 K tokens. Strictly more findings, at fewer tokens, is what
+the frontier of the builder's family buys — and why `codexReviewModel` is not the build model.
+
+**And a finding about the preflight.** The very first attempt ran under `-s read-only` and returned
+an honest empty report with a `notes` line: every shell call died with `bwrap: No permissions to
+create a new namespace`. Codex exited **0** — the sandbox failure shows only in the final message.
+The same box had passed a "reply pong" smoke under that flag minutes earlier, because a one-word
+reply never runs a command. That is why the Codex preflight (SKILL.md and the per-wave probe) runs
+`pwd` and is judged on exit code **and** output. A second credential fact from the same probe:
+`gpt-6-astra` answers on a ChatGPT-plan login here; a model the credential cannot reach fails with
+`400 … not supported when using Codex with a ChatGPT account` — also exit 0 from `codex exec`,
+also visible only in the output, hence the review-model smoke at preflight.
 
 ## Interpreting failures
 

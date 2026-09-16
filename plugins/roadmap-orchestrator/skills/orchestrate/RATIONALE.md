@@ -1148,6 +1148,16 @@ so the brief and its strict-mode schema ship as files, the root fills two placeh
 and a zero-token sim pins the properties a hand-run role can silently lose: strict-mode legality,
 every cap stated in the brief, every placeholder documented.
 
+**The reviewer is the strongest model of the builder's family, not the build model.** The
+first probe of these roles ran on `gpt-5.6-sol`, the build model, and found the planted defects —
+which proves the *shape* works and nothing about the judgment the role exists to buy. A review by
+the model that will build the units catches what that model would trip over; a review by the
+family's frontier (`gpt-6-astra`, `codexReviewModel`) catches what the architect's family
+cannot see, which is the point. One judgment-heavy read per arc costs nothing against a build
+lane, so the default is astra and a downgrade is a decision the human makes at Phase 0 and the
+log records — a silent fallback would leave the "how many findings changed the plan" count
+measuring the wrong model.
+
 What it is not. Not a second decomposition: a dual plan compared by Fable would expose more, and
 costs a frontier comparison per arc; it stays a documented option for large arcs, not the default.
 Not a gate: a review the root can ignore is the right shape for the one phase where the human is

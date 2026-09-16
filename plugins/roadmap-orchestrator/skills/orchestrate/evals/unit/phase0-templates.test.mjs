@@ -86,6 +86,13 @@ test('SKILL.md names both templates by file, so the root runs the shipped brief 
   }
 })
 
+test('SKILL.md names the reviewer model explicitly — astra, never "the strongest model available"', () => {
+  assert.ok(SKILL.includes('-m gpt-6-astra'), 'the invocation pins gpt-6-astra')
+  assert.ok(SKILL.includes('codexReviewModel'), 'and names the knob that overrides it')
+  assert.doesNotMatch(SKILL, /<review model>/, 'no placeholder the root would fill with the build model')
+  assert.match(SKILL, /never a silent downgrade/, 'a fallback to the build model is a journaled user decision')
+})
+
 test('the contract cross-check `surfaces` list is a completeness list: uncapped in count, capped per entry', () => {
   const schema = JSON.parse(readFileSync(T('phase0-contract-check.schema.json'), 'utf8'))
   assert.equal(schema.properties.surfaces.maxItems, undefined, 'a sampled surface list hides exactly the divergence it exists to find')
