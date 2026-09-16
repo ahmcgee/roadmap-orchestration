@@ -156,12 +156,18 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 ## `plan.json`
 
 **Write it however your serializer likes.** Both pack documents are read at launch by a Haiku
-courier, but the read command rewrites every backslash to the sentinel `@bs@` first and the
-script reverses it before checking the file's `cksum` — so `\"`, `\\`, `\n`, `\t` and `\uXXXX`
-escapes, and raw non-ASCII glyphs, all survive transport intact. (They did not before 2026-09-04:
-the courier had to double-escape each backslash inside its own JSON report and dropped one level,
-so four `—` escapes or twelve `\"` sequences were enough to make an arc unlaunchable.) The one
-constraint left is **size** — see `state.json` below.
+courier, but the read command rewrites every JSON escape **sequence** to its own marker first
+(`\"` → `@q@`, `\\` → `@bs@`, `\n` → `@n@`, `\t` → `@t@`, `\/` → `@sl@`, `\uXXXX` → `@uXXXX@`) and
+the script reverses it before checking the file's `cksum` — so every escape, and every raw
+non-ASCII glyph, survives transport intact: the courier carries prose with no backslash in it,
+the quote of a `\"` pair sits inside its marker, and `\\\"` is two *different* markers. (Plain
+text did not survive before 2026-09-04 — the courier had to double-escape each backslash inside
+its own JSON report and dropped one level; the 0.15.0 per-backslash `@bs@` sentinel did not
+survive 2026-09-14, when a courier doubled it before a quote, and probed unexplained it collapsed
+the three identical markers of `\\\"` into one; base64 did not survive its first live run — a
+model cannot transcribe 2 KB of high-entropy text. The per-sequence markers were probed on real
+Haiku couriers against a 14 KB document carrying every escape form, three of three byte-identical.)
+The one constraint left is **size** — see `state.json` below.
 
 ```jsonc
 {
@@ -199,10 +205,16 @@ constraint left is **size** — see `state.json` below.
                                    //   gate, and interrogated by plan-check like a contract:
                                    //   a spec clause contradicting the cited comp is a redirect.
     "existingBranch": "..."        // optional: adopt a pre-written branch — skips plan/implement,
-                                   //   runs it through the same verify → review → gate pipeline.
+                                   //   runs it through the same verify → review → gate pipeline;
+                                   //   the diff AT ENTRY is the unit's pinned scope, never growth.
                                    //   MUST NOT be the unit's own `unit/<id>` (hard-refused at
                                    //   plan validation — setup could delete its own source);
-                                   //   anchor under a different ref (adopt/<id>) instead.
+                                   //   anchor under a different ref (adopt/<id>) instead. A tier-3
+                                   //   RESPEC may set it to `unit/<quarantined id>` so the
+                                   //   replacement adopts sound work instead of rebuilding it.
+    "supersedes": "..."            // set by the conductor on a respec: the quarantined id this
+                                   //   unit replaced. Walked as a LINEAGE by the critical-path
+                                   //   brake (a lineage quarantined twice returns to the root).
   }],
   "edges": [{
     "from": "auth-core",           // dependency
@@ -299,8 +311,9 @@ constraint left is **size** — see `state.json` below.
 ```
 
 **Keep it small — it is the only pack document that grows.** One courier copies the whole file at
-launch and tops out near 35 K characters; past that the file is re-read over line ranges, and past
-about 100 KB the launch simply cannot be vouched for and throws `pack-unreadable` (2026-09-03: a
+launch and tops out near 24 K characters once its escapes become markers (about 35 KB of ordinary
+state); past that the file is re-read over line ranges, and past about 100 KB the launch simply
+cannot be vouched for and throws `pack-unreadable` (2026-09-03: a
 145 KB state.json, three quarantine dossiers' worth of prose, could not be relaunched at all). So
 **prose lives in files and state carries the path** — that is why a quarantined unit records
 `dossierPath` rather than the dossier text, why degradations and escalations are `.jsonl` sidecars
@@ -319,7 +332,12 @@ Fields the scripts add:
 - **`boundary`** — present when the wave-tail boundary phase ran anything:
   `{ explorer, health, flake, design }`. Any job is `null` when it was off or failed; the whole
   block is **omitted** when no job ran or every job failed — its absence is the signal to run the
-  explorer/health agents yourself.
+  explorer/health agents yourself. Two code-side annotations: `explorer.heldFindings` holds the
+  findings the explorer attributed (`blockedBy`) to an in-scope unit that has not landed — they
+  are out of `findings`, so no tier triages them until the unit lands, and the explorer's brief
+  lists the unlanded units so it can attribute; `flake.unassessed: true` (with `flips` emptied)
+  means every re-run exited non-zero — the band measured nothing about intermittence, the job is
+  owed, and a `flake-unassessed` degradation says so. The band reports `exits` per run for this.
 - **`owed`** — boundary jobs that were DUE but did not run (skipped on a broken precondition, or
   died): `{job: explorer|health|flake|design, wave, why, count, units?}` per entry (`units` names
   the design-cited units an owed reconcile still must cover; `count` = consecutive boundaries
@@ -385,6 +403,7 @@ Fields the scripts add:
   quarantine-refused | no-launch-id | plan-conflict | debt-unbanked | shared-red | verify-blocked |
   duplicate-draft | commit-probe-unknown | platform-outage | env-unprobed | env-pids-exhausted |
   env-no-reaper | env-verify-blocked | feedback-unmoved | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
+  flake-unassessed |
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
   Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
@@ -486,7 +505,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 
 | `reason` | who set it | how the root clears it |
 |---|---|---|
-| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "reply pong"` **smoke** exited non-zero (the CLI and the credential can both be fine while the Codex BACKEND is down) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
+| `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "run pwd"` **smoke** did not answer with its scratch directory (the CLI and the credential can both be fine while the Codex BACKEND is down — or while its SANDBOX cannot start: codex exits 0 with the `bwrap` error as its final message, so the smoke executes a command and the shell checks the answer; a sandbox failure is named as such, with the fix) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
@@ -673,7 +692,7 @@ first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file)
 its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
 `blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
 `codex-probe` (three commands: `--version`, `login status`, and a bounded read-only
-`codex exec … "reply pong"` **smoke** whose pass test is its exit code) ⇒ **hard stop** — new
+`codex exec … "run pwd"` **smoke**, its answer checked in the shell so the exit code carries the verdict) ⇒ **hard stop** — new
 dispatch halts, in-flight units **park**
 (`status:'pending', parked:true`, re-entering by adoption next wave), the wave state carries
 `halt.codex`, and the conductor early-returns the reason to the root for the human to re-auth or
@@ -826,7 +845,10 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
 - **Exit gate** (once the fix loop converges). **First-pass tier by `gateModel`** — Sonnet for
   low-risk, Opus for med/high: a fresh adversarial Claude (not the implementer, not the reviewer)
   grades each acceptance criterion and returns `approve` / `revise` (a mechanical fix it specifies
-  itself → free codex fix → re-verify → re-gate, bounded by `maxGateRounds`) / `escalate`, naming
+  itself → free codex fix → re-verify → re-gate, bounded by `maxGateRounds`, or `maxGateRoundsLarge`
+  past `largeDiffFiles`; every later round re-checks its own directives and banks new
+  non-correctness observations, and the frontier loop ends in a closing approve/quarantine round
+  on the last fix) / `escalate`, naming
   the trigger: `stuck`, `hard-tradeoff`, `foundational`, or `oversight`. **The gate diet:** it
   adjudicates the review digest, the lane ledger, this wave's scope precedent and the contract
   notes; the **raw diff stays in front of med/high-risk units**, and a low-risk gate starts from
@@ -852,7 +874,12 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   that ran and found the tooling broken, while a dead role is a fact about codex.
   Cheapest-first: lint/typecheck the changed files → then
   **exactly the acceptance-check commands the spec names, verbatim, in order**. Every command and
-  its exit code comes back in `verify.lanes`, and `pass` is true only if every exit code is 0.
+  its exit code comes back in `verify.lanes` with the `expectedExit` its spec clause states (0
+  when it states none), and `pass` is true only if every lane's exit code equals its expected one
+  — a clause that requires a command to *fail* is satisfied by exactly that failure (2026-09-14: a
+  bare "MUST exit 2" lane exited 2 and the unit was quarantined "verification never passed";
+  `EXIT_BAR`, carried by every spec-writing and spec-adjudicating tier, says to write such a
+  clause as an exit-0 command in the first place).
   Substituting a narrower or cheaper lane is the failure this closes (a verifier ran `test:unit`
   where the spec said `test:ci` and left a red seal invisible for a whole unit), so **both exit
   gates check the lane ledger against the spec's list before weighing anything else** — a named
@@ -908,8 +935,13 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
 - **`contractMismatch`.** An implementer that consciously deviates from a frozen contract surface
   reports it through this structured field (it cannot write `.roadmap/`, so this is its only honest
   channel). A report fires the mid-loop architect consult, **forces the Fable exit gate** with the
-  report text in its prompt, and banks a `kind: 'contract'` debt entry — which routes the boundary
-  straight back to you, because the amendment is yours alone.
+  report text in its prompt, and banks a debt entry whose *kind is decided in code*: `'contract'`
+  — which routes the boundary straight back to you, because the amendment is yours alone — only
+  when the verifier reported `contractSurfaceTouched` or the report names a contract file;
+  otherwise a **major non-contract** item, because the channel accepts any "the spec says X"
+  disagreement and the gate has already adjudicated it (2026-09-14: a missing test assertion
+  returned the whole arc for an amendment). The pending report settles once the pre-gate review
+  exists, or when the unit's result lands, whichever comes first — never dropped.
 - **`specGap` — the implementer-pulled consult.** A decision the spec does not settle, where
   reasonable engineers would diverge, reported through this structured field. Its presence fires a
   **Fable consult even on an all-green unit** (`confirm` = stands as built; `redirect` = one fix
@@ -1116,10 +1148,10 @@ Workflow({
   //             big for one response — and then the launch throws `pack-unreadable`). The root
   //             used to paste both documents into `args`, which put the whole pack through the
   //             most expensive tier in the system on every launch and every resume.
-  //             The read command rewrites every backslash in the file to `@bs@` before the
-  //             courier copies it, and the script puts them back — so JSON escapes (`\"`, `\\`,
-  //             `\n`, `\uXXXX`) travel safely and no serializer setting is your problem. What
-  //             still is: SIZE. See the two documents' own sections below.
+  //             The read command rewrites every JSON escape sequence to its own marker (`\"` ->
+  //             `@q@`, `\\` -> `@bs@`, `\uXXXX` -> `@uXXXX@`, …) and the script puts them back —
+  //             so escapes travel safely and no serializer setting is your problem. What still
+  //             is: SIZE. See the two documents' own sections below.
   // harnessPath REQUIRED — throws without it.
   // launchId    a per-launch nonce, FRESH on every launch and every resume. It salts the pack
   //             read (disk holds the LAST run's plan, so a replayed pack is a stale plan) and is
@@ -1145,7 +1177,8 @@ free.
 | # | Route | When |
 |---|---|---|
 | — | return `contingent-replan` | a contingent edge crossed (`from` merged, `to` withheld this wave or out of scope) |
-| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates) |
+| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates). The harness banks a `contractMismatch` report as `kind:'contract'` only when it is **corroborated** — the verifier reported the diff touches a frozen surface, or the report names a contract file; otherwise it banks as a *major non-contract* item (the forced frontier gate already adjudicated it), and no reporter may set `kind:'contract'` on a debt item itself |
+| — | return `critical-path-stalled` | an in-scope quarantined unit whose **lineage** (itself plus the units it `supersedes`, transitively) already holds a quarantine, while in-scope, non-terminal units still depend on it — the tier-3 respec ran once and produced the same outcome, so another boundary here would only mint side work; `{stalled: [{id, lineage, dependents}]}` |
 | — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
 | — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — escape hatch) |
 | **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
@@ -1283,6 +1316,7 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
 ```jsonc
 { status: 'conductor-return',
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
+                     //   | critical-path-stalled
                      //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
                      //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
@@ -1307,6 +1341,7 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // contingent-replan → { edges }
   // plan-cycle       → { edges, units }  // the loop, for the root to repoint in plan.json
   // contract-amendment → { debt, contracts }
+  // critical-path-stalled → { stalled: [{ id, lineage, dependents }] }  // boundary + debt intact
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
   //   arcSummary = { merged: [id], quarantined: [{id}], blocked: [id], deferred: [id],
@@ -1363,13 +1398,15 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 | Knob | Default | Meaning |
 |---|---|---|
 | `maxFixRounds` | 2 | Mechanical verify→codex-fix rounds before the unit must face the gate or rescue |
-| `maxGateRounds` | 2 | Architect directive→fix→re-check cycles before quarantine (the last round's fix runs a FRESH codex session — anti-anchoring) |
+| `maxGateRounds` | 2 | Exit-gate directive→fix→re-check cycles (the last round's fix runs a FRESH codex session — anti-anchoring). Every round after the first is a **re-check** of the directives that gate issued: a new observation is a directive only when it is a correctness defect, everything else banks. The frontier loop then ends in a **closing round** (`gate:<id>#close`, approve/quarantine only) that rules on the last fix instead of quarantining work nobody read |
+| `maxGateRoundsLarge` | 3 | The directive-round cap when the unit's diff reaches `largeDiffFiles` files (2026-09-14: two flat rounds could not converge on an 81-file adopted branch) |
+| `largeDiffFiles` | 40 | Diff-file count (the verifier's `diffFiles`) at which `maxGateRoundsLarge` applies |
 | `maxConsults` | 3 | Mid-loop rescue consults per wave (fired by code: verify still failing at the round cap, or contract surface touched) |
 | `maxBlockingFindings` | 6 | Cap on gate directives per revise round — a cap on REPORTING, never reading; overflow banks as debt. Enforced code-side, never schema maxItems (retry-death) |
 | `codexModel` | `'gpt-5.6-sol'` | `-m` for every codex run; `null` falls back to the codex CLI's own config default |
 | `codexEffort` | `'high'` | `model_reasoning_effort` for builds — under-provisioned effort is the top documented cause of bad Codex output; `xhigh` for hard arcs |
 | `codexFixEffort` | `'medium'` | Effort for resume/fix rounds (narrower work than the build) |
-| `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work |
+| `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work. **Every codex launch carries this flag**, the Phase-0 smoke must run with it (SKILL.md → Codex preflight), and where it has to be `danger-full-access` the session must run in bypass-permissions mode — Claude Code's auto-mode permission classifier refuses that flag (2026-09-14: `bwrap: setting up uid map: Permission denied`, and not one codex process could launch) |
 | `codexNetwork` | `false` | Adds `-c sandbox_workspace_write.network_access=true` (needed when builds must install packages) |
 | `codexTimeoutMin` | `240` | Build deadline before the steering agent kills the process group and assesses what's on disk. Sized for long-horizon units; per-milestone commits are what make a kill survivable |
 | `codexFixTimeoutMin` | `45` | Resume-round deadline. Also the deadline for `verify`, the one per-unit role that runs test suites, since a lane legitimately spends most of an hour unlike the 20-minute `codexRoleTimeoutMin` readers (the flake band takes `codexBoundaryTimeoutMin` with the rest of the boundary) |

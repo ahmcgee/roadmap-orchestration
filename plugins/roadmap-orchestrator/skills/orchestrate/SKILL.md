@@ -40,7 +40,10 @@ are in `reference.md` — **read it before Phase 0**. Design rationale, where yo
    stop to surface to the user, never a licence for a Claude agent to implement in its place.
 3. **All loops are bounded.** Fix rounds, gate rounds, consults, and the conductor's wave loop
    are capped in config. When a bound is hit, quarantine and move on — quarantine is a normal
-   outcome that feeds redesign, not a failure to retry around.
+   outcome that feeds redesign, not a failure to retry around. A bound is not a blindfold,
+   though: the frontier gate's cap ends in a *closing* round that rules on the last fix instead
+   of quarantining work nobody read, and a lineage quarantined twice returns to you rather than
+   buying a third respec (`critical-path-stalled`).
 4. **Contracts freeze when execution starts.** Amendments happen only through a gate or consult
    directive, are recorded in state, and are re-examined at your session integration review.
 5. **Integration is serial, and `main` is untouched** until the user confirms at session end.
@@ -103,10 +106,26 @@ brake is a tier-2 guarantee and is unaffected.
 is the `codex` CLI, launched by cheap steering agents inside unit worktrees; there is no Claude
 implementation lane. Probe once: `command -v codex && codex --version && codex login status`,
 then — because a valid credential proves nothing about the SERVICE (2026-09-03: the ChatGPT Codex
-backend 404'd every run while `login status` still said "Logged in") — one real bounded run:
-`timeout 120 codex exec --skip-git-repo-check 'Reply with exactly the word pong'`. The pass test
-is its **exit code**, not its wording. (Prefix `CODEX_HOME=<home>` on all of them if the
-environment uses a non-default home — check `$CODEX_HOME`.)
+backend 404'd every run while `login status` still said "Logged in") — one real bounded run
+that **executes a shell command, under the sandbox flag the harness will actually use**, in a
+scratch directory of its own:
+`mkdir -p /tmp/codex-smoke && timeout 120 codex exec -C /tmp/codex-smoke -s <codexSandbox>
+--skip-git-repo-check -o /tmp/codex-smoke/last.txt 'Run the shell command `pwd` and reply with
+exactly its output'`, where `<codexSandbox>` is `plan.config.codexSandbox` if you set one and
+otherwise the harness default `danger-full-access` (`reference.md` → config knobs). The pass test
+is the **exit code AND `last.txt` holding exactly `/tmp/codex-smoke`** — never the exit code
+alone, and never a one-word reply: codex exits 0 when its sandbox cannot start (2026-09-15: exit
+0, final message `bwrap: No permissions to create a new namespace`), and a "reply pong" smoke
+never runs a command, so it passes on a box where every real run will die. Never smoke with the
+CLI's own default sandbox either: that answers a question the harness will not ask (2026-09-14:
+the smoke passed under the CLI default, then every real run needed `-s danger-full-access`
+because bubblewrap could not build a sandbox — `bwrap: setting up uid map: Permission denied` — and
+that flag is one Claude Code's auto-mode permission classifier refuses, so the arc could not
+launch a single codex process until the session was restarted in bypass-permissions mode).
+So: if the smoke only passes with `danger-full-access`, **tell the user before dispatch that this
+session must run in bypass-permissions mode** — every codex launch, every wave, carries that flag
+— and stop if it is not. (Prefix `CODEX_HOME=<home>` on all of them if the environment uses a
+non-default home — check `$CODEX_HOME`.)
 All three green → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
 `codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Smoke
@@ -210,7 +229,14 @@ Read their outputs, then decide:
     under Z"), because the exit gate grades them one by one and vague criteria grade noisily.
     At least one must be a *runnable command with an expected exit status* — it is also the
     implementer's inner-loop signal; a criterion judgeable only by reading is fine, but never
-    the only one.
+    the only one. **Write every runnable clause so that success is exit 0.** A required failure
+    is asserted *inside* the command (`! make images KIND_CLUSTERS=missing`, or `cmd; test $?
+    -eq 2`) or inside a test script — never left as a bare command the verifier is meant to
+    watch fail. If a clause must state a non-zero expectation instead, state it explicitly on the
+    clause ("exits 2"): the verifier records it as `expectedExit` on that lane and grades the
+    lane against it (2026-09-14: a bare "MUST exit 2" command was run as a lane, exited 2 as
+    specified, and the unit was quarantined "verification never passed" — twice, because the
+    respec reworded the clause without changing its shape).
   - **Scope** — the files the unit is expected to touch, and an explicit **out-of-scope list**
     (the adjacent mess it must leave alone, the migration that is a different unit). The harness
     pins scope before the first fix round and banks out-of-scope imperfections as debt rather
@@ -481,7 +507,21 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   (`outstanding`). The tier was wrong, not the plan: confirm the units are still wanted and
   relaunch. Arc-observed — this fired twice before the census existed, caught only by hand.
 - **`contract-amendment`** — a frozen-surface mismatch the ladder may not resolve. Amend the
-  contract to reality, or spec the divergence as an explicit migration unit, then relaunch.
+  contract to reality, or spec the divergence as an explicit migration unit, then relaunch. Only a
+  *corroborated* mismatch returns here — one where the verifier saw a frozen surface in the diff,
+  or the report names a contract file; an implementer's bare "the spec says X" disagreement banks
+  as a major non-contract item instead and the forced frontier gate has already adjudicated it
+  (2026-09-14: a missing test assertion woke the root as an amendment).
+- **`critical-path-stalled`** — a unit on the critical path has quarantined **twice in one
+  lineage** (the original and the respec tier 3 minted for it) while in-scope units still wait on
+  it. The ladder stopped here on purpose: its own recovery already ran once, and another boundary
+  would only mint side work against unblocked corners while the arc cannot move (2026-09-14: six
+  fix-unit drafts against a 40-line module while every product unit sat behind the foundation).
+  `stalled` names each `{id, lineage, dependents}`. Read *both* dossiers; the second reading
+  the same as the first is the signal that the approach, not the wording, is wrong. Decide:
+  respec under a materially different approach (adopting the sound branch via `existingBranch`
+  where the work itself was fine), split, cut the lineage and what depends on it, or put it to
+  the user. Then relaunch.
 - **`contingent-replan`** — a contingent edge crossed, or withheld dependents are the only work
   left. Read the learnings, revise the downstream specs, relaunch.
 - **`needs-user`** — a call only the user can make; the question is in the escalating agent's
@@ -542,7 +582,12 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   Environment/tooling-blocked → fix provisioning or the brief and re-run as-is.
   Unsatisfiable-spec → respec or amend the contract. Everything else → redesign: split the unit,
   revise its spec, raise its budget, or mark it for the user. A redesigned unit re-enters as a
-  *new* spec; never re-run one under the spec that failed.
+  *new* spec; never re-run one under the spec that failed. When the failed unit's **branch holds
+  sound work** (a gate that did not converge, a verifier that could not express a required
+  failure, an environment block), give the respec `existingBranch: "unit/<failed id>"` so it
+  *adopts* that diff as its pinned scope at entry — a respec that rebuilds from the integration
+  tip and pulls the old work in by hand reports every one of those files as scope growth
+  (2026-09-14: 51 files, all of them the adopted diff).
 - **Triage the boundary block, the `.roadmap/feedback/` user notes (issue mode: the open
   `roadmap:bug` issues), and the wave's `debt` array together** — once, at this boundary. Fold items into revised specs; cut fix units into the next
   wave; treat contract-contradicting feedback as a contract amendment (yours alone); or dismiss
@@ -646,13 +691,18 @@ ladder in order:
    A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
    copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
    dispatch a wave from a document nobody could vouch for. The throw names the file, its byte count
-   and how much arrived. **JSON escapes are not the cause** — the read command rewrites every
-   backslash to `@bs@` before the copy and the script reverses it, so `\"`, `\\` and `\uXXXX`
-   travel intact. The three real causes, in order of likelihood: the file is **too big** (a copy
-   that stops far short of the byte count — get `state.json` back under ~35 KB by moving prose into
-   files and referencing them by path); `roadmapDir` is wrong or the file does not parse; or the
-   document genuinely contains the literal text `@bs@`, which the reversal would corrupt and
-   the `cksum` therefore rejects — remove it. Fix, then relaunch.
+   and how much arrived. **JSON escapes are not the cause** — since 0.16.0 the read command
+   rewrites every JSON escape *sequence* to its own marker (`\"` → `@q@`, `\\` → `@bs@`, `\n` →
+   `@n@`, `\uXXXX` → `@uXXXX@`), so the courier carries prose with no backslash in it and the
+   quote of every `\"` pair inside its marker, and the script puts the escapes back in code
+   before the `cksum` decides. (Plain text failed twice on dropped escape levels; the 0.15.0
+   per-backslash `@bs@` sentinel failed on 2026-09-14 when a courier doubled the marker before a
+   quote; base64 failed live at 1.5 KB — a model cannot transcribe a long high-entropy string.)
+   The three real causes, in order of likelihood: the file is **too big** (a copy that stops far
+   short of the byte count — get `state.json` back under ~35 KB by moving prose into files and
+   referencing them by path); `roadmapDir` is wrong or the file does not parse; or the document
+   genuinely contains a marker such as `@q@` or `@bs@`, which the reversal would corrupt and the
+   `cksum` therefore rejects — remove it. Fix, then relaunch.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately

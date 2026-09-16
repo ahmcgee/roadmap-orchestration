@@ -706,7 +706,9 @@ test('identical debt items bank once; a reworded one still banks', async () => {
 })
 
 test('a contract mismatch on a unit whose work already landed banks as `rebanked`', async () => {
-  const withMismatch = () => ({ ...implCodexOk(), contractMismatch: 'the frozen surface disagrees' })
+  // Names a contract file, so the mismatch is CORROBORATED and banks as kind:'contract' (an
+  // uncorroborated one banks as a major non-contract item — harness.test.mjs 9f).
+  const withMismatch = () => ({ ...implCodexOk(), contractMismatch: 'the frozen surface in .roadmap/contracts/auth.md disagrees' })
   // A resume: the record says merge-ready, so the branch has already been through the gate. The
   // cached implementer report replays verbatim and re-banks its mismatch.
   const { fn } = makeAgent([{ match: /^codex-build:a$/, result: withMismatch }])

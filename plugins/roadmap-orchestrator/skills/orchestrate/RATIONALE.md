@@ -1029,3 +1029,90 @@ the document is composed in code and a Haiku here-doc writes it under a cksum ch
 model between the decision and the file at all. `spec-revise` keeps Sonnet because it is a
 read-modify-write over content the script never composed, and there is no expected cksum to check it
 against.
+
+## 21. The 2026-09-14 batch — brakes for the failures a green unit could still meet
+
+One arc, three waves, nine findings, and a pattern: every one of them was a place where the
+scripts turned a fact about the *process* into a verdict about the *work*, or let a cheap tier's
+reading of a channel steer the arc. The batch answers each in code and states the two rules
+that fell out of it.
+
+**A courier copies prose, not entropy — and the marker must own the whole escape.** The launch
+pack went through four transports in twelve days, and the batch's first answer was wrong. Plain
+text lost an escaping level (a report is JSON, so `\"` needs `\\\"`, and Haiku supplied one). The
+per-backslash `@bs@` sentinel came back doubled before a quote (2026-09-14) and, probed
+unexplained, collapsed the three identical markers of `\\\"` into one. Base64 — "unreadable, so
+nothing to be helpful about" — failed on its first live run: the courier copied 1563 characters
+exactly and then emitted repetition, twice, on a 1.5 KB plan, and on a 14 KB probe did not
+produce parseable JSON at all. A model transcribes low-entropy prose faithfully and cannot
+transcribe a long random string; the property that mattered was never readability. What the two
+sentinel failures shared was *shape*: a marker with a quote right after it, and identical
+markers side by side. So each marker now stands for one whole escape **sequence** — `\"` is
+`@q@` with its quote inside, `\\` is `@bs@`, `\uXXXX` is `@uXXXX@` — and `\\\"` is `@bs@@q@`,
+two different markers. The rewrite is a fixed sed list, the reversal a fixed regex, both scripts
+byte-identical, and the verdict is still the original file's `cksum`. Probed before it shipped:
+three real Haiku couriers, a 14 KB document carrying every escape form, three byte-identical
+copies. The rule for next time: probe a transport on the tier that will carry it before betting a
+launch on it — the four probes cost less than one dead fixture run.
+
+**An expected exit is part of the check.** The verifier's only rule was "every lane exits 0",
+so a Done-when clause that *required* a command to exit 2 could only ever read as red, and the
+respec that reworded it was quarantined identically — with no degradation row, because from the
+script's side nothing had gone wrong. Two halves, both mirrored: the lane ledger carries
+`expectedExit`, the verifier grades each lane against it, and both gates read a matching lane as
+green; and `EXIT_BAR` tells every tier that writes or adjudicates spec text to write success as
+exit 0 (assert the failure inside the command) and, where a non-zero expectation must be stated,
+to state it explicitly. The 2026-09-04 lesson (`HOST_BAR`) repeats: a spec defect a tier minted is
+the tier's to resolve, never the implementer's or the verifier's to absorb.
+
+**A cap is not a blindfold.** `maxGateRounds: 2` meant two gates and two fixes — and the second
+fix was never read by anyone before "did not converge" quarantined it. On an 81-file adopted
+branch each round also surfaced findings the previous round had not reached, so the cap could not
+converge by construction. Three brakes: later rounds are told, with the directives they issued,
+that they are *re-checking* those and that a new observation is a directive only when it is a
+correctness defect (everything else banks — §15's discipline, applied to the gate's own appetite);
+the frontier loop ends in a **closing round** whose schema cannot express `revise`, so the last
+fix is ruled on rather than discarded; and a diff past `largeDiffFiles` buys `maxGateRoundsLarge`
+rounds. A closing approve with correctness debt in hand banks loudly at `major`, exactly as the
+cap-bank already did — banking with evidence still beats destroying approved work.
+
+**A reporter never routes the arc.** `contractMismatch` accepted any "the spec says X"
+disagreement, the harness banked it `kind:'contract'` on the reporter's word, and the conductor —
+whose filter trusts the kind — returned the whole arc to the root for an amendment over a missing
+test assertion. The kind is decided in code now, against evidence from someone other than the
+reporter: the verifier's `contractSurfaceTouched`, or a contract file named in the report.
+Uncorroborated, it still fires the consult and forces the frontier gate (which adjudicates the
+deviation in prose), and it still banks — as a *major non-contract* item, which is the boundary's
+business, not the root's. `addDebt` refuses `kind:'contract'` from any report for the same
+reason. The corollary for the flake band is the same rule from the other side: `runs: 3, flips:
+[]` over three identical exit-2 failures was a *measurement* the script read as a *verdict*. The
+band reports `exits`, and a band whose every run failed is `unassessed` — flips emptied, job
+owed, degradation recorded — because "no flips" from a suite that never ran is not stability.
+
+**The ladder's own recovery gets one try.** The foundation quarantined at wave 1, tier 3 respecced
+it, the respec quarantined identically at wave 3, and while every product unit sat blocked
+behind it the tiers admitted six fix-unit drafts against a 40-line module — side work minted
+because nothing in the routing knew the critical path was stalled. `supersedes` now rides into
+the plan so a *lineage* can be walked, and a quarantined unit whose lineage already holds a
+quarantine, with in-scope work still depending on it, returns `critical-path-stalled` to the root
+before any tier runs. The second dossier reading like the first is the signal that the approach,
+not the wording, is wrong — and that call is the architect's, with the human in the loop. Two
+smaller brakes ride with it: a respec skeleton may carry `existingBranch` so it *adopts* the sound
+branch (the diff at entry is pinned scope, never growth — the 51-file "scope-growth" was the
+adopted diff itself, reported because the respec had to rebuild from the tip and pull the work in
+by hand), and the explorer is told which units have not landed so it can attribute a finding to
+one (`blockedBy`), which the harness then holds out of triage until that unit lands instead of
+letting each boundary dismiss the same blocker again.
+
+**The preflight must ask the harness's question.** The Phase-0 smoke ran under the CLI's default
+sandbox and passed; every real launch carried `-s danger-full-access` (bubblewrap cannot build a
+user namespace in the devcontainer) and Claude Code's auto-mode classifier refused it, so not one
+codex process launched until the session was restarted in bypass-permissions mode. The smoke
+runs with the configured `codexSandbox` now, in a scratch directory, and SKILL.md says what a
+pass-only-with-full-access means for the session before dispatch. Then the probe of §22's review
+role showed the second half: codex exits 0 when its sandbox cannot start — the `bwrap` error is
+its final *message* — so a "reply pong" smoke had passed on this very box under a flag every
+real run would die under. Both smokes (SKILL.md's and the per-wave probe's) now make codex run
+`pwd`, and the shell checks the answer so the exit code carries the verdict; the per-wave probe
+names a sandbox failure as such, with the fix, instead of sending the operator to wait out a
+provider that is fine.

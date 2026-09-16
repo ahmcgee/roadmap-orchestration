@@ -4,7 +4,7 @@
 //   makeAgent(rules, baseSha?) -> { fn, calls }
 //   makeWorkflow(handler)      -> { fn, calls }
 //   packRules(plan, state, serialize?) -> rules satisfying the launch pack read
-//   packTransform(cmd, text)   -> the read command's own backslash->sentinel sed, run for real
+//   packTransform(cmd, text)   -> the read command's own escape-marker sed, run for real
 //   BASE_SHA, INT_SHA
 //   assertAllModelsPinned(calls), assertSchemasPresent(calls), conformsToSchema(result, schema)
 //   structuredOutputError()
@@ -54,7 +54,7 @@ const courierStdout = (cmd, head, branch) =>
             // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
             : /rev-list --count/.test(cmd) ? '1'
               : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
-                // The wave-start BACKEND SMOKE (`codex exec … "reply pong"`). A healthy provider
+                // The wave-start BACKEND SMOKE (`codex exec … "run pwd"`, answer checked by grep). A healthy provider
                 // answers; the test that matters is the exit code, which courierResult defaults
                 // to 0 — a test wanting the 2026-09-03 outage overrides this one command.
                 : /codex exec\b/.test(cmd) ? 'pong'
@@ -134,17 +134,19 @@ export function courierResult(prompt, baseSha, stdoutFor = courierStdout) {
   }) }
 }
 
-// The BACKSLASH-FREE TRANSPORT the pack read composes: each content command is
-// `sed -n '<a>,<b>p' <file> | sed '<script>'`, where the second script swaps every backslash for a
-// sentinel that needs no escaping in the courier's JSON report. The fake runs that second script
-// through the REAL `sed`, lifted verbatim out of the command the script composed — so every sim
-// proves the composed one-liner does what the harness assumes, exactly the way sysCksum
-// cross-validates the in-script cksumOf. A content command with no such pipe is replayed untouched
-// (the fake never assumes the transform is there; a script that dropped it fails its own cksum).
+// The ESCAPE-MARKER TRANSPORT the pack read composes (0.16.0): each content command is
+// `sed -n '<a>,<b>p' <file> | sed -e '<rule>' -e '<rule>' …`, where the rules rewrite every JSON
+// escape SEQUENCE to its own marker (`\"` -> `@q@`, `\\` -> `@bs@`, `\uXXXX` -> `@uXXXX@`, …) so
+// the courier carries prose with no backslash in it and no quote beside a marker. The fake runs
+// the sed tail through the REAL `sed`, lifted verbatim out of the command the script composed —
+// so every sim proves the composed one-liner does what the harness assumes, exactly the way
+// sysCksum cross-validates the in-script cksumOf. A content command with no such pipe is replayed
+// untouched (the fake never assumes the transform is there; a script that dropped it fails its own
+// cksum).
 export const packTransform = (cmd, text) => {
-  const m = /\| sed '([^']*)'\s*$/.exec(cmd)
+  const m = /\| (sed (?:-e '[^']*'\s*)+)$/.exec(cmd) ?? /\| (sed '[^']*')\s*$/.exec(cmd)
   if (!m) return text
-  return execSync(`sed '${m[1]}'`, { input: text, encoding: 'utf8' })
+  return execSync(m[1], { input: text, encoding: 'utf8' })
 }
 
 // The LAUNCH PACK read — the scripts' first act on a root launch. Given the plan and state a test

@@ -1026,6 +1026,36 @@ test('a rendering that was never written is an ordinary skip; a consumed user no
   assert.equal(rows[0].label, 'move-feedback:w1')
 })
 
+// 2026-09-15 (conductor fixture): the tier-2 triager also filed dispositions for the explorer and
+// health RENDERINGS it read (`.roadmap/feedback/explorer/wave-2.md`), the archive treated every
+// disposition as a user-note basename, and six `feedback-unmoved` rows landed over the path
+// `feedback/user/.roadmap/feedback/explorer/wave-2.md`. Only a file the census listed is a note.
+test('a disposition naming a file the census never listed composes no path and degrades nothing', async () => {
+  const { agent, result } = await archiveRun({ feedback: [
+    { file: 'note-1.md', action: 'actioned', reason: 'folded in' },
+    { file: '.roadmap/feedback/explorer/wave-1.md', action: 'actioned', reason: 'both findings reproduced' },
+    { file: '.roadmap/feedback/health/wave-1.md', action: 'dismissed', reason: 'no findings' },
+    { file: '../../etc/passwd', action: 'dismissed', reason: 'a path no census listed' },
+  ] })
+  const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
+  assert.equal(moves.length, 5, 'four renderings plus the ONE listed note — the unlisted files compose nothing')
+  assert.ok(moves.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")), 'the listed note is archived')
+  assert.ok(!moves.some((c) => c.includes('feedback/user/.roadmap') || c.includes('passwd')),
+    'no path is ever composed from a disposition the census did not vouch for')
+  assert.deepEqual((result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved'), [],
+    'and nothing degrades — the renderings archived on their own rows')
+})
+
+test('a disposition may name a listed note by basename or path; the census spelling reaches the command', async () => {
+  const { agent } = await archiveRun({ notes: ['note-1.md', 'note-2.md'], feedback: [
+    { file: '/repo/.roadmap/feedback/user/note-1.md', action: 'actioned' },
+    { file: 'note-2.md', action: 'deferred' },
+  ] })
+  const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
+  assert.ok(moves.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")), 'a path form still selects the listed note')
+  assert.ok(!moves.some((c) => c.includes('note-2.md')), 'a deferred note is not consumed')
+})
+
 test('a move that FAILED degrades even though the courier exited clean, and never fails the arc', async () => {
   const { result, workflow } = await archiveRun({ moveRule: courierSaying([[/feedback\/explorer\//, 'FAILED']]) })
   const rows = (result.degradations ?? []).filter((d) => d.kind === 'feedback-unmoved')
@@ -1665,4 +1695,82 @@ test('the conductor and the harness refuse it in the SAME words', async () => {
     assert.ok(src.includes(sentence), `${f} no longer states the single-quote refusal in the shared words`)
     assert.ok(src.includes(tail), `${f} no longer states the shared fix`)
   }
+})
+
+/* ============================================================================== */
+/* 24. The critical-path brake: a lineage quarantined twice returns to the root   */
+/* ============================================================================== */
+// 2026-09-14: the foundation unit quarantined at wave 1, tier 3 respecced it, the respec
+// quarantined identically at wave 3, every product unit sat blocked behind it — and meanwhile
+// the tiers admitted six fix-unit drafts against a 40-line module. The ladder's own recovery had
+// already run once; a second boundary only minted side work while the arc could not move.
+const stalledFixture = ({ dependents = true } = {}) => ({
+  plan: mkPlan({
+    units: [
+      unitOf('seed-unit'),
+      { ...unitOf('foundation'), inScope: false },
+      unitOf('foundation-r2', { supersedes: 'foundation' }),
+      ...(dependents ? [unitOf('product')] : []),
+    ],
+    edges: dependents ? [{ from: 'foundation-r2', to: 'product', type: 'semantic', mode: 'contract' }] : [],
+  }),
+  state: mkState({
+    boundary: boundaryBlock({ fixUnits: [draft('polish-authz-model')] }),
+    units: { 'seed-unit': { status: 'merged' }, foundation: { status: 'quarantined' }, 'foundation-r2': { status: 'quarantined' } },
+  }),
+})
+
+test('a lineage quarantined twice with dependents waiting returns critical-path-stalled before any tier runs', async () => {
+  const { plan, state } = stalledFixture()
+  const { result, agent, workflow } = await conduct({ plan, state, agentRules: rules({ census: censusQuar(['foundation-r2.md']) }), waveHandler: waves(state) })
+  assert.equal(result.reason, 'critical-path-stalled')
+  assert.deepEqual(result.stalled, [{ id: 'foundation-r2', lineage: ['foundation-r2', 'foundation'], dependents: ['product'] }],
+    'the brief names the lineage and what waits on it')
+  assert.equal(hasLabel(agent.calls, /^boundary:/), false, 'no tier-3 respec — the ladder already tried once')
+  assert.equal(hasLabel(agent.calls, /^triage:/), false, 'no tier-2 either')
+  assert.equal(hasLabel(agent.calls, /^spec-expand:/), false, 'and no side work is minted against the stall')
+  assert.equal(workflow.calls.length, 1, 'nothing further is dispatched')
+  assert.ok(result.state.boundary, 'the boundary evidence rides home intact for the root')
+})
+
+test('control: a FIRST quarantine in a lineage still takes the tier-3 respec path', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('foundation'), unitOf('product')],
+    edges: [{ from: 'foundation', to: 'product', type: 'semantic', mode: 'contract' }] })
+  const state = mkState({ units: { 'seed-unit': { status: 'merged' }, foundation: { status: 'quarantined' } } })
+  const { result, agent } = await conduct({ plan, state, agentRules: rules({ census: censusQuar(['foundation.md']) }), waveHandler: waves(state) })
+  assert.notEqual(result.reason, 'critical-path-stalled')
+  assert.ok(hasLabel(agent.calls, /^boundary:w1/), 'tier 3 gets its one respec')
+})
+
+test('control: a twice-quarantined lineage with NOTHING waiting on it is ordinary tier-3 business', async () => {
+  const { plan, state } = stalledFixture({ dependents: false })
+  const { result, agent } = await conduct({ plan, state, agentRules: rules({ census: censusQuar(['foundation-r2.md']) }), waveHandler: waves(state) })
+  assert.notEqual(result.reason, 'critical-path-stalled', 'not a critical path if no work is blocked behind it')
+  assert.ok(hasLabel(agent.calls, /^boundary:w1/))
+})
+
+/* ============================================================================== */
+/* 25. A respec may ADOPT the quarantined branch                                  */
+/* ============================================================================== */
+// 2026-09-14: a respec of an 81-file adopted branch went through the fresh-build path, the
+// implementer pulled the old branch's work into its diff, and `verify:…#0` reported all 51 files
+// as scope growth. The skeleton can now carry `existingBranch`, which the harness pins as the
+// diff at entry; `supersedes` rides into the plan too, so the lineage above can be walked.
+test('a respec skeleton\'s existingBranch and supersedes are carried into the next wave\'s plan', async () => {
+  const { workflow, agent } = await conduct({
+    plan: mkPlan({ units: [unitOf('seed-unit'), unitOf('impossible-cache', { risk: 'high' })] }),
+    state: mkState({ units: { 'seed-unit': { status: 'merged' }, 'impossible-cache': { status: 'quarantined' } } }),
+    agentRules: rules({
+      census: censusQuar(),
+      boundary: boundaryPlan({ newUnits: [skeleton('cache-v2', { supersedes: 'impossible-cache', existingBranch: 'unit/impossible-cache' })], journal: 'adopt the sound branch' }),
+    }),
+    waveHandler: waves(
+      mkState({ units: { 'seed-unit': { status: 'merged' }, 'impossible-cache': { status: 'quarantined' } } }),
+      mkState({ wave: 2, boundary: boundaryBlock() }),
+    ),
+  })
+  const fresh = workflow.calls[1].args.plan.units.find((u) => u.id === 'cache-v2')
+  assert.equal(fresh.existingBranch, 'unit/impossible-cache', 'the respec adopts the quarantined branch')
+  assert.equal(fresh.supersedes, 'impossible-cache', 'and records what it replaced')
+  assert.match(prompt(firstLabel(agent.calls, /^boundary:/)), /`existingBranch`/, 'the Fable tier is told when to set it')
 })

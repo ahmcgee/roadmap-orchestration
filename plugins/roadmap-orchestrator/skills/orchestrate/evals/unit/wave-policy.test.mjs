@@ -300,3 +300,85 @@ test('a clean wave is unchanged: no shared reds, no rulings, no new degradations
   assert.deepStrictEqual(state.degradations ?? [], [], 'and a clean wave still ledgers nothing')
   assertAllModelsPinned(calls)
 })
+
+/* ====================================================================== */
+/* 6. the flake band: identical failure is UNASSESSED, never "no flips"    */
+/* ====================================================================== */
+// 2026-09-14: all three `make verify` re-runs exited 2 because the integration tip had no
+// `verify` target (the foundation had not merged), and the boundary block still reported
+// `runs: 3, flips: []` — read by every tier as a stable suite. A band whose every run fails
+// identically measured nothing about intermittence.
+test('flake band: every run exiting non-zero is unassessed — flips emptied, job owed, degradation recorded', async () => {
+  const { fn } = makeAgent([{ match: /^flake:/, result: () => ({ runs: 3, flips: [], exits: [2, 2, 2], loads: [1, 1, 1], cpuCount: 4 }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.boundary.flake.unassessed, true, 'the block says UNASSESSED, not clean')
+  assert.deepEqual(state.boundary.flake.flips, [], 'and carries no flips for a tier to read as stability')
+  assert.ok((state.owed ?? []).some((o) => o.job === 'flake' && /unassessed/.test(o.why)), 'the job is owed, so it re-runs next boundary')
+  const d = (state.degradations ?? []).find((x) => x.kind === 'flake-unassessed')
+  assert.ok(d, 'and the ledger says why')
+  assert.match(d.what, /2, 2, 2/, 'naming the exit codes it saw')
+})
+
+test('flake band control: a band whose runs completed green is assessed and discharges nothing owed', async () => {
+  const { fn } = makeAgent([{ match: /^flake:/, result: () => ({ runs: 3, flips: [], exits: [0, 0, 0] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.boundary.flake.unassessed, undefined)
+  assert.ok(!(state.owed ?? []).some((o) => o.job === 'flake'), 'not owed')
+  assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'flake-unassessed'))
+})
+
+test('flake band control: a mixed band (one red run) is real intermittence data, not unassessed', async () => {
+  const { fn } = makeAgent([{ match: /^flake:/, result: () => ({ runs: 3, flips: ['spec/a.test.js'], exits: [0, 1, 0] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.deepEqual(state.boundary.flake.flips, ['spec/a.test.js'], 'a genuine flip survives')
+  assert.equal(state.boundary.flake.unassessed, undefined)
+})
+
+test('flake band: the brief asks for the per-run exit codes it is judged on', async () => {
+  const { fn, calls } = makeAgent()
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.match(promptOf(calls, /^flake:/), /`exits` = the suite's exit code per run/, 'the band is told what to report')
+})
+
+/* ====================================================================== */
+/* 7. the explorer hold: a finding attributed to an unlanded unit          */
+/* ====================================================================== */
+// 2026-09-14: the runtime explorer reported the same `blocker` ("make estate-up: no rule") at
+// waves 1 and 3 because the estate unit was blocked behind a quarantine, and each boundary had
+// to dismiss it again. The explorer now attributes such a finding (`blockedBy`) and the harness
+// holds it, in code, until the unit lands.
+const PREVIEW = { kind: 'server', howToAccess: 'http://localhost:5173', start: 'npm run dev' }
+test('explorer hold: a finding attributed to an in-scope unlanded unit is held out of the boundary findings', async () => {
+  const { fn, calls } = makeAgent([
+    // `a` quarantines at its gate, so `estate` (which depends on it) never lands this wave.
+    { match: /^opus-gate:a/, result: () => ({ verdict: 'escalate', trigger: 'stuck', directives: [], debt: [] }) },
+    { match: /^gate:a/, result: () => ({ verdict: 'quarantine', directives: [], debt: [] }) },
+    { match: /^explorer:/, result: () => ({ shaObserved: BASE_SHA, findings: [
+      { severity: 'blocker', summary: 'make estate-up: no rule', blockedBy: 'estate' },
+      { severity: 'major', summary: 'attributed to nothing in the plan', blockedBy: 'ghost' },
+      { severity: 'minor', summary: 'an ordinary finding' },
+    ] }) },
+  ])
+  const plan = makePlan([unit('a'), unit('estate', { title: 'bring up the estate' })],
+    [{ from: 'a', to: 'estate', type: 'semantic', mode: 'contract' }], { preview: PREVIEW })
+  const state = await runWave(fn, plan, makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  const ex = state.boundary.explorer
+  assert.deepEqual(ex.findings.map((f) => f.summary), ['attributed to nothing in the plan', 'an ordinary finding'],
+    'the held finding is gone from what the triager reads; an attribution to an unknown id holds nothing')
+  assert.deepEqual(ex.heldFindings.map((f) => f.summary), ['make estate-up: no rule'], 'and kept beside them, not dropped')
+  const brief = promptOf(calls, /^explorer:/)
+  assert.match(brief, /Units of this arc that have NOT landed yet: .*estate \(bring up the estate\)/, 'the explorer is told which units have not landed')
+  assert.match(brief, /`blockedBy`/, 'and how to attribute a finding to one')
+})
+
+test('explorer hold control: with everything landed the brief carries no unit list and nothing is held', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^explorer:/, result: () => ({ shaObserved: BASE_SHA, findings: [{ severity: 'minor', summary: 'x', blockedBy: 'a' }] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')], [], { preview: PREVIEW }), makeState())
+  assert.equal(state.units.a.status, 'merged')
+  assert.ok(!promptOf(calls, /^explorer:/).includes('have NOT landed yet'), 'byte-identical brief on a drained plan')
+  assert.equal(state.boundary.explorer.findings.length, 1, 'an attribution to a MERGED unit holds nothing')
+  assert.equal(state.boundary.explorer.heldFindings, undefined)
+})

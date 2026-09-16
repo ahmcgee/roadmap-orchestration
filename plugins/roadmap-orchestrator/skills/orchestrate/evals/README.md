@@ -59,7 +59,18 @@ shipping; never ship on an upper rung alone.
    `gateMaxConcurrent` semaphore on test lanes (and that a bound of 1 still drains rather than
    deadlocking), load recorded on every lane but never gated on, the shared-red breaker collapsing N identical
    out-of-scope failures into ONE finding (never debt, so the termination guarantee holds), and scope
-   rulings carried to sibling gates as precedent. Every brake has a control pinning the counterfactual.
+   rulings carried to sibling gates as precedent — plus, since 0.16.0, the flake band's
+   **unassessed** verdict (every re-run exiting non-zero empties the flips, owes the job and
+   degrades `flake-unassessed`) and the explorer **hold** (a finding attributed by `blockedBy` to
+   an in-scope unlanded unit is kept out of the triaged findings). Every brake has a control
+   pinning the counterfactual. `harness.test.mjs` §9f–9l lock the 0.16.0 gate changes: a
+   `contractMismatch` banks `kind:'contract'` only when corroborated (the verifier's
+   `contractSurfaceTouched`, or a contract file named), no report may name that kind itself, later
+   gate rounds are re-checks of their own directives, the frontier loop ends in a closing
+   approve/quarantine round, and a diff past `largeDiffFiles` buys `maxGateRoundsLarge` rounds.
+   `conductor.test.mjs` §24–25 lock the `critical-path-stalled` return (a lineage quarantined twice
+   with dependents waiting returns before any tier runs) and a respec's `existingBranch`/`supersedes`
+   riding into the plan.
    `admissions.test.mjs` locks the **conductor's admission code path**: `admissions:'closed'` stops
    tiers 1 and 2 minting units — drafts and promotions become debt lines banked into *both* channels —
    while the tiers still run and still judge; `tier1MaxDrafts` hands a batch up to tier 2; a `blocker`
@@ -354,6 +365,16 @@ in `architect-log.md` (the next triager reads it — undismissed explorer findin
 the arc won't converge), then relaunch. `check-conductor.sh` grades the arc's *final* state:
 `boundaries` forensics are arc-cumulative across relaunches, and the final-wave probes key on
 `state.wave`, not a hardcoded number. Adds roughly one wave's cost.
+
+**A resume is not a re-validation.** `resumeFromRunId` replays cached agent results for unchanged
+prompts, so it is the right tool for a run that *died*. It is the wrong tool for re-checking a
+script edit against a fixture the completed run already mutated: the salted pack read replays the
+launch-time `state.json` (wave 0) while the disk holds the finished arc, every setup probe then
+reconciles a stale state against a moved integration branch, and whatever real agents do run are
+answering a question nobody asked (2026-09-15: a resume after a green three-wave run returned
+`arc-complete` at wave 1 with a `quarantine-refused` row, 573 K tokens, and validated nothing).
+Rebuild the fixture directory and run it fresh; never persist a resumed run's state over the
+original's.
 
 **Rerun tolerance.** This is an LLM-based system: a *single* unexpected FAIL warrants one rerun (fresh
 dir) before you conclude regression; a repeat is real. Rerun-tolerant probes are the ones that depend
