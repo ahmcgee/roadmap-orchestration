@@ -1116,3 +1116,52 @@ real run would die under. Both smokes (SKILL.md's and the per-wave probe's) now 
 `pwd`, and the shell checks the answer so the exit code carries the verdict; the per-wave probe
 names a sandbox failure as such, with the fix, instead of sending the operator to wait out a
 provider that is fine.
+
+## 22. The builder's family reads the draft — cross-model review at Phase 0
+
+Every judgment surface *after* Phase 0 has had a second model family in front of it since 0.14.0:
+the spec critique, the pre-gate review digest, the verifier. Phase 0 itself had none. Sonnet
+normalized the roadmap, Opus wrote the brief and audited the pack against the source, Fable
+decomposed, froze and wrote the specs, Haiku diffed the contracts against the code — one family
+end to end, and a family's blind spots are correlated across its own auditors: what Fable finds
+obvious, Opus finds obvious too. The spec critique does read the pack with the other family's
+eyes, but per unit, at dispatch, after everything is frozen — it can say "this spec is ambiguous"
+and never "these two contracts contradict each other" or "you cut this along the wrong seam". A
+finding it raises becomes a redirect; the same finding at Phase 0 is an edit.
+
+The 0.16.1 shape follows §4's limit in reverse. Opus cannot self-detect the oversights it does not
+know it made; neither can Fable. The reviewer that can is the family that will *build* the units,
+because its reading of the draft is the one that later surfaces as a stop-and-escalate or a
+quarantine. So one codex role reads the entire draft pack plus the repo, runs the brief's
+commands, and reports five closed things — contradictions, unbuildable units with the question it
+would have to ask, recuts with the cost of the draft's cut, brief commands that did not work, and
+open questions — and the contract-vs-code cross-check moves onto the same role, because "read the
+code and diff each frozen surface" is a shell-capable reader's job and Haiku was doing it by
+listing.
+
+Three rules keep it inside invariant 2. **It reviews; it never rules.** Every finding is
+adjudicated by the architect exactly as the fidelity audit's are — amend, `C-nn` ruling, or a
+dismissal with a reason in the log. **It runs where a unit would**, in a provisioned review
+worktree forked from `HEAD` with the draft copied in, never in the operator's checkout (§19).
+**It is a template, not a script.** Phase 0 runs in the root session before any workflow exists,
+so the brief and its strict-mode schema ship as files, the root fills two placeholders with `sed`,
+and a zero-token sim pins the properties a hand-run role can silently lose: strict-mode legality,
+every cap stated in the brief, every placeholder documented.
+
+**The reviewer is the strongest model of the builder's family, not the build model.** The
+first probe of these roles ran on `gpt-5.6-sol`, the build model, and found the planted defects —
+which proves the *shape* works and nothing about the judgment the role exists to buy. A review by
+the model that will build the units catches what that model would trip over; a review by the
+family's frontier (`gpt-6-astra`, `codexReviewModel`) catches what the architect's family
+cannot see, which is the point. One judgment-heavy read per arc costs nothing against a build
+lane, so the default is astra and a downgrade is a decision the human makes at Phase 0 and the
+log records — a silent fallback would leave the "how many findings changed the plan" count
+measuring the wrong model.
+
+What it is not. Not a second decomposition: a dual plan compared by Fable would expose more, and
+costs a frontier comparison per arc; it stays a documented option for large arcs, not the default.
+Not a gate: a review the root can ignore is the right shape for the one phase where the human is
+still in the loop. And not yet measured on a real arc — the paid fixtures ship canned plan packs
+and cannot grade Phase 0, which is why SKILL.md makes the root journal how many of the role's
+findings changed the plan. The probe that shipped with it (evals/README.md → P3) ran the role once
+against the conductor fixture's plan pack; what it found there is the only evidence so far.
