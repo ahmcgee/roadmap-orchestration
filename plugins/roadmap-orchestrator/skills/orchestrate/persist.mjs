@@ -46,10 +46,12 @@
 //
 // Exit codes: 0 = complete, 2 = partial (written, or REFUSED and parked in state.partial.json),
 // 1 = error (nothing written).
-import { readFile, writeFile, readdir, mkdir, appendFile, rm } from 'node:fs/promises'
+import { readFile, readdir, mkdir, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { loadScript } from './script-loader.mjs'
+import { context, assertLegacyWriter, exclusive, recover, checkpoint, atomic, preserveExtensions,
+  validate, monotonic, gitMaybe } from '../roadmap-orchestrate/scripts/protocol.mjs'
 
 /* ------------------------------- CLI ----------------------------------- */
 const argv = process.argv.slice(2)
@@ -155,6 +157,9 @@ async function replay(entry, entryArgs, { records, byPrompt }) {
   // Once a miss has happened, nothing after it is trustworthy — return value included.
   let firstMiss = null
   const log = (line) => {
+    // Script catches can keep running after a CacheMiss, producing outcomes the live run
+    // never reached (e.g. quarantine without a written dossier). Freeze the trusted prefix.
+    if (firstMiss) return
     const s = String(line ?? '')
     if (s.startsWith(SNAPSHOT_TAG)) {
       try { lastSnapshot = JSON.parse(s.slice(SNAPSHOT_TAG.length)) } catch { /* a truncated snapshot is not state */ }
@@ -332,6 +337,47 @@ function skillDegradationsDoc(degradations) {
 const entryArgs = await parseArgs()
 const roadmapDir = entryArgs.roadmapDir
 if (!roadmapDir) die('args carries no roadmapDir — nothing to write to')
+await mkdir(roadmapDir, { recursive: true })
+let sharedContext
+try { sharedContext = await context(roadmapDir) }
+catch (e) {
+  // Legacy replay tests and exports can live outside git. A versioned arc cannot.
+  if (existsSync(path.join(roadmapDir, 'protocol.json'))) throw e
+}
+if (sharedContext) await exclusive(sharedContext, async () => {
+  await assertLegacyWriter(sharedContext, entryArgs.ownerToken)
+  await recover(sharedContext)
+})
+const initialDiskState = await readOr(path.join(roadmapDir, 'state.json'), '')
+const pendingWrites = {}
+const commitWrites = async () => {
+  if (!sharedContext) {
+    for (const [name, content] of Object.entries(pendingWrites)) {
+      if (content === null) await rm(path.join(roadmapDir, name), { force: true })
+      else await atomic(path.join(roadmapDir, name), content)
+    }
+    return
+  }
+  await exclusive(sharedContext, async () => {
+    await assertLegacyWriter(sharedContext, entryArgs.ownerToken)
+    await recover(sharedContext)
+    if (await readOr(path.join(roadmapDir, 'state.json'), '') !== initialDiskState) throw new Error('state changed during replay; refusing stale persistence')
+    if (pendingWrites['state.json']) {
+      const previous = JSON.parse(await readOr(path.join(roadmapDir, 'state.json'), '{}'))
+      const next = preserveExtensions(previous, JSON.parse(pendingWrites['state.json']))
+      if (existsSync(path.join(roadmapDir, 'protocol.json'))) {
+        const plan = JSON.parse(pendingWrites['plan.json'] ?? await readFile(path.join(roadmapDir, 'plan.json'), 'utf8'))
+        validate(plan, next)
+        monotonic(previous, next, { perWaveRounds: !plan.config?.codexNative })
+        if (gitMaybe(plan.repoPath, 'merge-base', '--is-ancestor', previous.integrationTip, next.integrationTip) === null) {
+          throw new Error('persist refuses a regressed integration tip')
+        }
+      }
+      pendingWrites['state.json'] = json(next)
+    }
+    await checkpoint(sharedContext, pendingWrites)
+  })
+}
 // The run's returned value, either handed to us directly (`--returned`) or reconstructed by
 // replaying the journal. Directly is the honest answer whenever the replay cannot reach the end:
 // the root has the real return value in the task output, and no prefix of a replay beats it.
@@ -349,7 +395,7 @@ if (returnedPath) {
 }
 await mkdir(roadmapDir, { recursive: true })
 const wrote = []
-const write = async (name, text) => { await writeFile(path.join(roadmapDir, name), text); wrote.push(name) }
+const write = async (name, text) => { pendingWrites[name] = text; wrote.push(name) }
 
 if (miss || thrown) {
   // The replay stopped short of a return value — the journal ran out, or the script threw.
@@ -371,6 +417,7 @@ if (miss || thrown) {
     : null
   if (why) {
     await write('state.partial.json', partial)
+    await commitWrites()
     console.log(`PARTIAL-REFUSED stoppedAt=${stoppedAt} why=${why} wrote=${wrote.join(',')}` +
       `${error ? ` error=${error}` : ''}`)
     console.log('state.json was NOT written. Persist the run\'s returned value instead — ' +
@@ -380,6 +427,7 @@ if (miss || thrown) {
   }
 
   await write('state.json', partial)
+  await commitWrites()
   console.log(`PARTIAL stoppedAt=${stoppedAt} wrote=${wrote.join(',')}${error ? ` error=${error}` : ''}`)
   process.exit(2)
 }
@@ -408,7 +456,7 @@ await write('state.json', json(state))
 // has none, and `force` makes a concurrent removal a no-op rather than a crash after the write.
 const partialFile = path.join(roadmapDir, 'state.partial.json')
 const removedPartial = existsSync(partialFile)
-if (removedPartial) await rm(partialFile, { force: true })
+if (removedPartial) pendingWrites['state.partial.json'] = null
 
 // plan.json — never blind. A plan on disk carrying unit ids this run has never seen is a root edit
 // or a hand-merged respec, and overwriting it would destroy work with no trace. A loud refusal is
@@ -464,12 +512,13 @@ const appendRows = async (name, rows) => {
   const file = path.join(roadmapDir, name)
   const block = `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`
   if ((await readOr(file, '')).endsWith(block)) { wrote.push(`${name}(unchanged)`); return }
-  await appendFile(file, block)
+  pendingWrites[name] = (await readOr(file, '')) + block
   wrote.push(`${name}(+${rows.length})`)
 }
 if (degradations.length) await write('skill-degradations.md', skillDegradationsDoc(degradations))
 await appendRows('degradations.jsonl', degradations)
 await appendRows('escalations.jsonl', escalations)
+await commitWrites()
 
 console.log(`OK ${isConductor ? `reason=${ret.reason} ` : ''}wave=${state?.wave ?? '?'} wrote=${wrote.join(',')}` +
   `${removedPartial ? ' removed=state.partial.json' : ''}`)

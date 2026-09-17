@@ -1630,6 +1630,11 @@ const courierRun = async (where, commands, opts, extra = '') => {
 }
 
 /* --------------------------- live wave state --------------------------- */
+// Native-enabled arcs share retry budgets across driver switches. Pure legacy arcs retain
+// their per-wave tallies and journal labels. codexNative is otherwise inert in this runtime.
+const portableBudgets = !!plan.config?.codexNative
+const carriedRounds = (id) => portableBudgets && prior.units?.[id]?.rounds
+  ? { rounds: { ...prior.units[id].rounds } } : {}
 const units = new Map(Object.entries(prior.units ?? {}))
 for (const u of plan.units) {
   if (!units.has(u.id)) units.set(u.id, { status: u.inScope ? 'pending' : 'deferred' })
@@ -3610,6 +3615,8 @@ async function runUnit(unit) {
     }
     // A unit whose entire red belongs to the breaker has nothing of its own left to fix.
     if (verify.pass || fullySuppressed(verify)) break
+    if (portableBudgets && (rec(unit.id)?.rounds?.fix ?? 0) >= C.maxFixRounds)
+      return quarantine(unit, 'shared fix budget exhausted after verification', verify)
 
     // Mid-loop rescue: fired by code over objective signals only, and capped.
     let directive = null
@@ -3929,7 +3936,7 @@ async function runUnit(unit) {
   if (!forceFrontier) {
     // Bounded Opus self-gate: a FRESH adversarial Opus (not the implementer) grades the
     // acceptance criteria one by one, then approves, self-revises (free), or escalates.
-    for (let g = 0; g < gateCap; g++) {
+    for (let g = portableBudgets ? (rec(unit.id)?.rounds?.opusGate ?? 0) : 0; g < gateCap; g++) {
       spend.opusGateRounds++
       bumpRound(unit.id, 'opusGate')
       const og = await runOr({ verdict: 'escalate', trigger: 'stuck', directives: [], debt: [],
@@ -4037,7 +4044,7 @@ async function runUnit(unit) {
       `systematic rubber-stamping, not re-gating from scratch. `
     : `read \`git -C '${w}' diff ${base}..HEAD\` in full and whatever surrounding code you need. `
   let lastGate = null   // the previous round's verdict, handed to the re-check and the closing round
-  for (let g = 0; g < gateCap; g++) {
+  for (let g = portableBudgets ? (rec(unit.id)?.rounds?.gate ?? 0) : 0; g < gateCap; g++) {
     spend.gateRounds++
     bumpRound(unit.id, 'gate')
     const gate = await runReq(
@@ -4281,9 +4288,10 @@ function start(unit) {
   // for a unit is what quarantines it — so it is carried onto the fresh running record. Read from
   // `prior`, this wave's immutable input, because the wave-start re-open loop rewrites a blocked
   // record to a bare `{status:'pending'}`. The per-wave tallies (fix/opusGate/gate) deliberately do
-  // NOT carry: they measure one wave's revision loops and the fixtures assert ceilings on them.
+  // NOT carry on legacy arcs: they measure one wave's revision loops. Native-enabled arcs
+  // instead keep consumed budgets across handoffs, and the loops above enforce the remainder.
   const blockedRounds = prior.units?.[unit.id]?.rounds?.verifyBlocked
-  units.set(unit.id, { status: 'running', ...(blockedRounds ? { rounds: { verifyBlocked: blockedRounds } } : {}) })
+  units.set(unit.id, { status: 'running', ...(blockedRounds ? { rounds: { verifyBlocked: blockedRounds } } : {}), ...carriedRounds(unit.id) })
   snapshot()   // a 'running' record is what a crash-residue recovery adopts
   ;(async () => {
     let result = await runUnit(unit)
@@ -4664,7 +4672,7 @@ for (let changed = true; changed;) {
     if (st === 'running' || st === 'merge-ready') {
       const g = await mergedInGit(u)
       if (g.merged) {
-        units.set(u.id, { status: 'merged', branch: `unit/${u.id}`, mergedAt: g.branchSha,
+        units.set(u.id, { ...carriedRounds(u.id), status: 'merged', branch: `unit/${u.id}`, mergedAt: g.branchSha,
           note: 'crash residue — git says the branch already merged' })
         log(`${u.id}: recorded ${st} at the last checkpoint but git says merged (${g.branchSha.slice(0, 7)}) — not re-dispatched`)
         changed = true
@@ -4672,7 +4680,7 @@ for (let changed = true; changed;) {
       }
     }
     if (st === 'deferred' || st === 'running' || st === 'merge-ready' || (st === 'blocked' && !blockedBy(u))) {
-      units.set(u.id, { status: 'pending' })
+      units.set(u.id, { ...carriedRounds(u.id), status: 'pending' })
       log(`${u.id}: ${st === 'deferred' ? 'in scope again'
         : st === 'blocked' ? 'unblocked (dependency resolved)'
         : `crash residue (was ${st}) — committed work auto-adopts`} — re-entering dispatch`)
@@ -4687,7 +4695,7 @@ while (true) {
   }
   for (const u of inScope) {
     if (rec(u.id).status === 'pending' && blockedBy(u)) {
-      units.set(u.id, { status: 'blocked' })
+      units.set(u.id, { ...carriedRounds(u.id), status: 'blocked' })
       log(`${u.id}: blocked (dependency quarantined)`)
       snapshot()
     }

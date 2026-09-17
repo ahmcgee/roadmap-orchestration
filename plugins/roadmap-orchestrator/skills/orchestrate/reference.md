@@ -5,6 +5,17 @@ the user unless asked. Rationale for *why* any of it is this way lives in `RATIO
 
 ## `.roadmap/` layout (committed; the plan is a reviewable artifact)
 
+The shared handoff contract is in `../roadmap-orchestrate/references/protocol.md`. Versioned arcs
+also have `protocol.json` and may carry `evidence/<unit>/` written by Codex. Both drivers check
+ownership before dispatch and writing; `persist.mjs` now uses atomic replacements and a recoverable
+multi-file checkpoint journal in the Git common directory. This does not change its model-free
+replay behavior. Include the acquired `ownerToken` in every launch/persist envelope. Unknown
+extension fields are preserved at persistence, while known cleared runtime fields stay cleared.
+Plans with `config.codexNative` also preserve consumed per-unit fix/gate budgets across waves and
+driver changes. The loops spend only their remaining rounds, with verification/closing judgment
+still available at exhaustion. Without that section, Claude-only arcs retain per-wave fix/gate
+accounting; `verifyBlocked`, consults, spend and escalation counts remain cumulative as before.
+
 ```
 .roadmap/
   plan.json            # units, edges, provision, config — written by you at Phase 0
