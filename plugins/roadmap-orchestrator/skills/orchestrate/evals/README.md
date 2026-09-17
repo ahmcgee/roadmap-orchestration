@@ -92,7 +92,12 @@ shipping; never ship on an upper rung alone.
    from their own journal and land every document the scripts stopped writing, a truncated journal
    produces the `partial: {stoppedAt}` marker instead of a wrong state, re-running the persister is
    a no-op (sections replaced, ledgers not doubled), and a `plan.json` holding unit ids the run never
-   saw is refused rather than overwritten.
+   saw is refused rather than overwritten. Snapshots after a caught replay cache miss are ignored:
+   an interrupted replay cannot invent a quarantine whose live dossier was never written.
+   `portable-budgets.test.mjs` covers native-to-Claude continuation: remaining fix/gate budgets,
+   verification and closing judgment at exhaustion, and unchanged per-wave accounting for plans
+   without `config.codexNative`. Real-Git ownership/checkpoint and cross-driver persistence tests
+   live in the sibling `roadmap-orchestrate/tests/` directory.
    `prompt-hygiene.test.mjs` locks **schema/prompt coherence**, in four properties: every prompt
    driving a capped schema carries the length contract (`TERSE`, or `REPORT` for code-writing
    agents); every top-level capped field has its **budget stated** with a real bound expression, not

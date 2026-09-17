@@ -1,7 +1,7 @@
 # roadmap-orchestration
 
-A Claude Code **plugin marketplace** carrying one plugin: **roadmap-orchestrator** — an
-autonomous roadmap-execution skill. Give it a roadmap (prose, checklist, tracker export,
+A **roadmap-orchestrator** with Claude Code and Codex-native drivers. Give it a roadmap
+(prose, checklist, tracker export,
 RFC — any format), a cut line ("build up to milestone X"), and a codebase; it decomposes
 the slice into independently verifiable units, builds each in an isolated git worktree via
 a multi-agent workflow, and delivers one tested, reviewed, merge-ready integration branch.
@@ -21,7 +21,47 @@ Then, in the repo you want to build in:
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
+### Codex / Astra
+
+The separate [`roadmap-orchestrate` skill](plugins/roadmap-orchestrator/skills/roadmap-orchestrate/SKILL.md)
+uses Astra and Codex's native subagents. It needs Node, Git and a POSIX shell, and does not call Claude Code or
+its dynamic workflows. Astra directs the arc **and directly implements the hardest, highest-risk
+units**; independent agents review those changes. Routine implementation can run in parallel in
+explicitly assigned worktrees. Deterministic helpers handle checkpoints, recovery and tested merges.
+
+Clone this repository, then symlink the skill into your user skill directory:
+
+```sh
+mkdir -p ~/.agents/skills
+ln -s /absolute/path/to/roadmap-orchestration/plugins/roadmap-orchestrator/skills/roadmap-orchestrate ~/.agents/skills/roadmap-orchestrate
+```
+
+Alternatively, use Codex's skill installer with that repository subdirectory. The native skill is
+self-contained. Select Astra in Codex, then invoke:
+
+```text
+$roadmap-orchestrate <roadmap files...> up to <milestone>
+```
+
+The repository's `.agents/skills` link also makes it discoverable when working in this checkout.
+Invocation is explicit. No global model or agent configuration is overwritten.
+
+### Switching drivers
+
+Both drivers share `.roadmap/plan.json`, state, specs, contracts, debt, evidence and Git branches.
+Update both installations, stop the current driver **and its workers**, checkpoint its latest work,
+and ask the other driver to resume the same arc. It acquires ownership, reconciles Git, adopts
+unfinished commits and re-runs incomplete checks; live model sessions are not transferred. Dirty
+worktrees are preserved for inspection. See the [handoff protocol](plugins/roadmap-orchestrator/skills/roadmap-orchestrate/references/protocol.md).
+
+Only one driver owns an arc at a time, in the same repository/worktree environment. The Claude
+driver still uses Codex for its worker lanes, so it is not an independent capacity pool when Codex
+limits are exhausted.
+
 ## What it does
+
+The following execution tiers describe the Claude driver. The Codex driver keeps the roadmap
+lifecycle and quality gates, with Astra/native-agent roles described in its skill.
 
 - **Phase 0 (interactive):** decomposes the roadmap into a unit DAG, freezes interface
   contracts, writes specs with gradeable acceptance criteria, audits its own plan against
@@ -102,12 +142,22 @@ plugins/roadmap-orchestrator/            # the plugin
     templates/                           # issue-template reference copies (issue mode bootstrap)
     evals/                               # three-tier eval ladder — run before shipping a script
                                          #   change (see its README)
+  skills/roadmap-orchestrate/             # self-contained Codex-native skill
+    SKILL.md                             # Astra implements hard work and directs native agents
+    scripts/                             # shared protocol + deterministic lifecycle helpers
+    references/                          # shared handoff contract and GitHub projection rules
+    tests/                               # real-Git tests + native forward fixture
+.agents/skills/roadmap-orchestrate        # discovery symlink to that single source copy
 DESIGN.md                                # full architecture rationale + verified platform
                                          #   assumptions + empirical findings
 PROMPT.md                                # the original design brief
 ```
 
 ## Development
+
+Native-driver checks: `node --test plugins/roadmap-orchestrator/skills/roadmap-orchestrate/tests/*.test.mjs`.
+These exercise real Git repositories, interrupted checkpoints and both handoff directions. The native
+behavior fixture and its execution instructions are in that skill's `tests/forward-test.md`.
 
 The skill lives only inside the plugin (no duplicate copy). To develop: add this repo as a
 local marketplace, install, iterate. A change to `harness.mjs` or `conductor.mjs` is not done

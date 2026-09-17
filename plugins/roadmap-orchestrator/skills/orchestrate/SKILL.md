@@ -19,6 +19,35 @@ This file is what to achieve. Data shapes, config knobs, and the harness/conduct
 are in `reference.md` — **read it before Phase 0**. Design rationale, where you want it, is in
 `RATIONALE.md`; you don't need it to operate.
 
+## Shared ownership and Codex handoff
+
+This is the **Claude driver**. The sibling `roadmap-orchestrate` skill is the Codex-native driver;
+it uses Astra and native subagents without this skill's Claude roles or Workflow runtime. Both use
+the same plan/spec/state files. Read `../roadmap-orchestrate/references/protocol.md` when resuming
+an arc or handing one off. Update both drivers before switching a versioned arc.
+
+Before dispatching any Workflow, acquire the arc with the shared helper:
+`node <skill dir>/../roadmap-orchestrate/scripts/roadmap.mjs <request.json>`, where the request is
+`{"command":"acquire","roadmapDir":"<absolute .roadmap>","driver":"claude"}`.
+For a fresh arc do this after writing the initial plan/state, before any worker starts. Keep the
+returned token in **every** launch and persist envelope as `ownerToken`. Call `assert-owner` before
+each dispatch/relaunch. The workflow scripts ignore this extra envelope field; `persist.mjs`
+checks it before replay and again before writing. Never omit it on an arc with `protocol.json`.
+
+A previous owner must be stopped, including all its workers and background Codex processes, before
+explicit takeover (`previousToken` plus `stopped:true`). Recover unfinished disk checkpoints first.
+After a Codex handoff launch a **fresh conductor** with a new `launchId`; do not reuse any old
+`run` field or `resumeFromRunId`. Git adoption and fresh verification recover the unfinished work.
+If native evidence shows an untriaged boundary/owed job or contingent replan, resolve it before
+dispatching another wave. Dirty worktrees are preserved; inspect them and commit useful unfinished
+changes before adoption, never reset them to make a handoff convenient.
+
+Before handing off, persist the latest return/journal with this driver's token, stop all workers,
+then `release` with `stopped:true`. A delayed old persister cannot write after ownership changes.
+Keep ownership until workers stop; do not use timeout or quota exhaustion as evidence of that fact.
+Release before archiving the arc. The Claude driver still needs Codex capacity for its existing
+worker lanes; switching to it does not bypass a Codex usage limit.
+
 ## Invariants — never break these; everything else is judgment
 
 1. **Every delegation names its model explicitly.** The scripts already do. Any agent *you*

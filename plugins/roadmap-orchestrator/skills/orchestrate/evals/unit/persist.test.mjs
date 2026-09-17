@@ -147,6 +147,28 @@ test('a replay that runs out of journal writes the last snapshot, marked partial
 })
 
 /* ==================== journal order is the clock ========================== */
+test('a swallowed cache miss cannot publish a later speculative quarantine snapshot', () => {
+  const { runDir, roadmapDir, record } = newRun()
+  record('completed-call', { ok: true })
+  const trusted = mkState({ wave: 1, units: { a: { status: 'running', stage: 'plan-check' } } })
+  const speculative = mkState({ wave: 1, units: { a: {
+    status: 'quarantined', dossierPath: '/missing/dossier.md',
+  } } })
+  const script = path.join(runDir, 'interrupted.mjs')
+  writeFileSync(script, `export const meta = { name: 'interrupted', phases: [] }
+await agent('completed-call', { label: 'completed' })
+log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify(trusted))})
+await agent('never-ran', { label: 'dossier' }).catch(() => null)
+log('ROADMAP-SNAPSHOT ' + ${JSON.stringify(JSON.stringify(speculative))})
+return ${JSON.stringify(speculative)}
+`)
+  const out = persist(runDir, script, { roadmapDir }, 2)
+  assert.match(out, /^PARTIAL stoppedAt=dossier/m)
+  const written = JSON.parse(read(roadmapDir, 'state.json'))
+  assert.deepStrictEqual(written.units, trusted.units,
+    'a caught cache miss is not a real failed agent; later snapshots must not invent its outcome')
+})
+
 // The claim "a script is a deterministic function of (args, agent results)" is true only UP TO
 // COMPLETION ORDER. The harness merges units through ONE serial chain in the order their pipelines
 // reach merge-ready, and each merge moves `integrationTip`, which every later prompt embeds. A
