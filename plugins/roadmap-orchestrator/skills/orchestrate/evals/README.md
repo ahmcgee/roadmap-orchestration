@@ -13,8 +13,9 @@ shipping; never ship on an upper rung alone.
 
 1. **`parse.sh` — syntax. Token-free, milliseconds.** Loads the two WORKFLOW scripts under an
    `AsyncFunction` wrapper (plain `node --check` chokes on a workflow script's legal top-level
-   `return`) with the workflow globals stubbed, and `node --check`s the two ordinary ES modules
-   beside them (`script-loader.mjs`, `persist.mjs`). Non-zero exit if any file fails to parse.
+   `return`) with the workflow globals stubbed, and `node --check`s the three ordinary ES modules
+   beside them (`script-loader.mjs`, `persist.mjs`, `launch-pack.mjs`). Non-zero exit if any file
+   fails to parse.
 2. **`unit/` — control-flow simulations. Token-free, milliseconds.** `../script-loader.mjs` compiles
    a script under the same wrapper and drives it with scripted fakes (`fakes.mjs`) — canned
    structured outputs keyed on the short, stable `opts.label` (prompts drift with wording edits;
@@ -121,14 +122,58 @@ shipping; never ship on an upper rung alone.
    ride the design-less paid fixtures as valid evidence); and `shared-consts.test.mjs` (a
    text-level drift guard on the constants harness and conductor deliberately duplicate — they are
    standalone workflow scripts and cannot import from each other — including the whole
-   `readPack`/`READ_CHUNK`/`cksumOf`/`PACK_BS` launch-pack read, byte-identical in both).
+   `readPack`/`READ_CHUNK`/`cksumOf`/`PACK_BS` launch-pack read and, since 0.18.0, the `launchPack`
+   loader in front of it, byte-identical in both).
    The launch pack's own sims live in `harness.test.mjs` §13: a document full of `\"`, `\\`,
    `\uXXXX` escapes and raw non-ASCII glyphs reads clean through the backslash-sentinel transport
    (`packRules` runs the composed `sed` through the REAL tool, the way `sysCksum` runs the real
    `cksum`), a courier that decodes those escapes — the 2026-09-02/09-04 failure — is caught by the
    cksum, and an oversized file still fans out over line ranges.
+   **The 0.18.0 pins.** `launch-pack.test.mjs` locks the tool that takes the model out of the
+   launch pack's data path: both files come back **byte-exact through the real loader** whatever
+   they contain (`\"` inside a shell command, doubled backslashes, a literal backslash-u sequence,
+   raw non-ASCII, U+2028/U+2029, a `__proto__` key), the script text is a pure-literal `meta` plus
+   one `return`, a `launchId` is **write-once** and nothing is ever pruned (a pack deleted before
+   its run is persisted makes that run unreplayable), a pack is never written from a file that does
+   not parse, and the CLI mints a fresh id and prints both envelope values. `conductor.test.mjs`
+   adds the route sims — with `args.pack` **no** `pack-read:` courier is dispatched and one salted
+   `pack-verify` closed list is; without it the legacy read runs and records `pack-courier-read`; a
+   pack nothing can load is `pack-missing` with not one agent dispatched; a changed file is
+   `pack-stale` after exactly one differing-prompt resample; another launch's pack is refused; a
+   dead freshness courier degrades `pack-unverified` and the wave still runs — and the nesting test
+   now reads the **whole** `workflow()` trace (one pack load, first, then harness dispatches, each
+   carrying plan+state so the child never loads a pack). The three conductor drivers launch through
+   the pack by default, since that is what a real launch does; `harness.test.mjs` §13 and
+   `persist.test.mjs` keep the courier fallback covered, and `persist.test.mjs` replays a run
+   launched from a **real** `launch-pack.mjs` file (and shows a deleted pack fails loudly rather
+   than rerouting). `shared-consts.test.mjs` holds `launchPack` byte-identical in both scripts.
+   `outage-lifecycle.test.mjs` gained four groups: the **wave in the artifact path** (the same unit
+   at the same round in two waves gets two dirs and two different prompts); **reap-on-adoption**
+   (one read-only liveness list per re-entering unit, only that unit's own pidfiles ever composed
+   into a kill, an unconfirmed reap parks); **lanes judged in code** (a verifier-added lane the host
+   cannot run is dropped and the unit merges; a test FAIL is a failure, never a block; a spec lane
+   with a missing target is ran-and-red; a spec lane the host cannot run still blocks and the row
+   names it; a phantom block then a real one is ONE strike; an unattributed failure is never
+   upgraded to a pass; exit arithmetic beats the label); and the **capacity ladder** (once → a
+   closed-list wait, a `-capacity` reattempt, no halt; twice → parks on `codex-capacity`; the grep
+   count classifies too; exit 0 is never capacity; a real usage limit still halts at once; the wave
+   budget is reserved before the await; roles and the wave-start smoke take the same rung).
+   `closed-command.test.mjs` pins the verify brief's new wording (no open invitation to invent a
+   lint lane, record-and-carry-on, both lane enums defined, the 12-lane cap stated).
+   `harness.test.mjs` adds the dossier prompts naming their required keys (4b–4d), the mismatch
+   row's `bankReason`, and the `config.dispatchOnly` hold (2y/2z: held records ride through
+   byte-identical and adopt later; `[]` holds nothing; `plan.config` is inert); `conductor.test.mjs`
+   the `dispatch-held` return (one wave, refuse-before-dispatch, never `arc-stalled`/`max-waves`),
+   **carried debt** (a halted wave's rows reach the next launch's triage and bank stamped
+   `carriedFromWave`, survive a second halt and a pre-dispatch return, are never doubled, and
+   root-consumed residue is never carried), `boundaryNotes` on the envelope, and the issue-mode
+   disposal filter (only a census-listed issue number ever composes a `gh issue` command);
+   `design.test.mjs` the owed design reconcile a **halted** wave mints in code.
    `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
-   `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library.
+   `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library — since 0.18.0 its
+   `makeWorkflow(handler, {pack})` tells a launch-pack load from a wave dispatch by the script path
+   (`calls` = wave dispatches, `packCalls` = pack loads, `trace` = everything, in order), and
+   `launchPackOf(plan, state, launchId)` is what a pack file returns.
 
    **Inventory, as of 0.15.0.** The suite is every `*.test.mjs` under `unit/`, which is exactly what
    `run.sh` globs — it prints the live count on its own tail line, so no number is repeated here to
@@ -185,6 +230,7 @@ shipping; never ship on an upper rung alone.
 | a `gh`/issue-mode path (folded clauses, sync sweep, census, bank-debt/move-feedback/issue-new) | parse + sims + **`check-issues.sh`** (gh mechanics), then the **issue-mode paid arc** as source of truth |
 | a courier command list, an environment probe, or a wave-level brake | parse + sims (`closed-command`, `git-truth`, `outage-lifecycle`, `wave-policy`, `admissions` are the pins — a change that loosens one should fail one) + that script's fixture |
 | `persist.mjs` or `script-loader.mjs` | parse + sims (`persist.test.mjs` is the pin) + a spot-run of either fixture through its persist step |
+| `launch-pack.mjs`, or `launchPack()` in either script | parse + sims (`launch-pack.test.mjs`, the conductor route sims and `shared-consts` are the pins) + a fixture launched **through the tool** and persisted with the same envelope — that is the only place the real platform's `workflow({scriptPath})` load and the real `pack-verify` courier are exercised |
 | `evals/*` plumbing only | parse + sims + a spot-run of the touched fixture |
 
 Parse and sims are cheap enough to run on **every** edit; the paid fixtures and `check-issues.sh` gate the merge.
@@ -224,7 +270,7 @@ logged in, and export `CODEX_HOME` before `setup-fixture.sh` if auth lives in a 
 (the value is baked into `plan.codex.home`). Fixture runs now spend BOTH Claude and OpenAI quota
 — the fresh-implement units run real `codex exec` builds; the adopted gate probes never reach an
 implementer and keep validating the Claude gates alone. `check.sh` additionally asserts the
-`__codex/<unit>/build/` artifacts (clean exit, events stream, session id), that no codex artifact
+`__codex/<unit>/w1/build/` artifacts (clean exit, events stream, session id), that no codex artifact
 ever entered git history, and the **runaway-loop ceilings** (per-unit `rounds` + debt volume —
 the spiral, made measurable; `gate-good` needing any fix round is the noise tripwire).
 
@@ -255,23 +301,32 @@ and spend is within a generous envelope.
 
 0. `bash parse.sh && bash unit/run.sh` — green before you spend a run.
 1. `bash setup-fixture.sh /tmp/roadmap-eval`
-2. `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {roadmapDir: "/tmp/roadmap-eval/repo/.roadmap", config: {}, launchId: "<fresh value>"}})`
-   and wait (~10–25 min at ~16-way concurrency). Do NOT read the plan pack first — the script reads
-   it itself, cksum-verified, on a Haiku agent.
-3. **Persist** — the scripts write no state (every state writer was deleted in 0.14.0; what still
+2. **Write the launch pack:** `node <skill dir>/launch-pack.mjs --roadmap /tmp/roadmap-eval/repo/.roadmap`
+   → `OK launchId=<id> pack=<path> …`. It mints the fresh `launchId` and writes the file the run
+   loads its plan and state from, with no model in the path. Run it again for every launch and every
+   resume — a `launchId` is never reused, and the pack is write-once.
+3. `Workflow({scriptPath: "<skill dir>/harness.mjs", args: {roadmapDir: "/tmp/roadmap-eval/repo/.roadmap", config: {}, launchId: "<the printed launchId>", pack: "<the printed pack path>"}})`
+   and wait (~10–25 min at ~16-way concurrency). Do NOT read the plan pack first — the script loads
+   it itself (`workflow({scriptPath: pack})`), and one Haiku courier checks its `cksum`s against the
+   disk. Omitting `pack` still works — the legacy courier transcription read runs and the run
+   records a `pack-courier-read` degradation — but then the fixture is not grading the path real
+   launches take.
+4. **Persist** — the scripts write no state (every state writer was deleted in 0.14.0; what still
    lands under `.roadmap/` during a run is a codex boundary role writing its own
    `feedback/<job>/wave-N.md`, and in the conductor `move-feedback` archiving those), and `check.sh`
    grades `state.json`:
    `node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/harness.mjs
-   --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>"}'`
-   → `OK …`. A `PARTIAL` line means the run died; the marker names where. A **`PARTIAL-REFUSED
+   --args '{"roadmapDir":"/tmp/roadmap-eval/repo/.roadmap","config":{},"launchId":"<the same value>","pack":"<the same path>"}'`
+   → `OK …`. The envelope must be **the same one, `pack` included**: the replay loads the pack from
+   the path it names, and a replay handed a different route than the run took asks the journal for
+   prompts it never held. Leave `launch/` alone until this says `OK`. A `PARTIAL` line means the run died; the marker names where. A **`PARTIAL-REFUSED
    … why=divergence`** line means something else entirely: the replay diverged from the run (an
    `(out of journal order)` miss), **not** a run failure — nothing was written over `state.json`,
    and the fix is to feed the run's returned value straight in, `node <skill dir>/persist.mjs
    --returned <that value, as a .json file> --args '<the same envelope>'`, before grading. Then
    investigate the divergence: on this ladder it almost always means the script changed since the
    journal was written, and the fixture must be re-run.
-4. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
+5. `bash check.sh /tmp/roadmap-eval` → `ALL CHECKS PASSED`, or FAIL lines.
 
 **Cost:** ~90 agents, ~1.7M subagent tokens observed (2026-07-19: 3 Fable, 27 Opus, 1 Sonnet,
 59 Haiku), 10–25 min. **That per-tier breakdown was measured pre-0.14.0, before the Codex role
@@ -323,24 +378,29 @@ Expected shape: an **autonomous 2-wave run ending `arc-complete`**.
   untouched, `preview.status` live, spend
   envelope (WARN if `fable > 6`).
 
-**Run:** as above, but launch the **conductor ONCE** — it loops the waves itself; do *not* launch it
-per wave:
+**Run:** as above — `setup-fixture.sh --conductor`, then `launch-pack.mjs` — but launch the
+**conductor ONCE** — it loops the waves itself; do *not* launch it per wave:
 
 ```
+node <skill dir>/launch-pack.mjs --roadmap /tmp/roadmap-eval-c/repo/.roadmap   # -> launchId, pack
 Workflow({scriptPath: "<skill dir>/conductor.mjs",
           args: {roadmapDir: "/tmp/roadmap-eval-c/repo/.roadmap", config: {},
                  harnessPath: "<skill dir>/harness.mjs",
-                 launchId: "<fresh value — never reused, including on a relaunch>"}})
+                 launchId: "<the printed launchId — never reused, including on a relaunch>",
+                 pack: "<the printed pack path>"}})
 ```
 
 `roadmapDir` and `harnessPath` are both **required** — the conductor throws without either. As with
-the harness, do **not** read the plan pack first: the script reads it itself, cksum-verified, on a
-Haiku courier. Then **persist** — the conductor writes no state either, and `check-conductor.sh`
+the harness, do **not** read the plan pack first: the script loads it itself from the `pack` file
+and a Haiku courier checks its `cksum`s against the disk. A **relaunch** (a mid-arc return, a
+crash) needs a **new** pack — run the tool again *after* persisting, so the pack carries the state
+`persist.mjs` just wrote; a pack written for another `launchId`, or one the files have moved on
+from, is refused as `pack-stale`. Then **persist** — the conductor writes no state either, and `check-conductor.sh`
 grades `state.json`, `plan.json`, `debt.md` and `architect-log.md`:
 
 ```
 node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/conductor.mjs \
-     --args '<the exact envelope above, as JSON>'
+     --args '<the exact envelope above, as JSON — `pack` included>'
 ```
 
 → `OK reason=… wave=… wrote=…`. **One `--run` directory covers the whole arc**: a nested
@@ -379,8 +439,9 @@ the arc won't converge), then relaunch. `check-conductor.sh` grades the arc's *f
 
 **A resume is not a re-validation.** `resumeFromRunId` replays cached agent results for unchanged
 prompts, so it is the right tool for a run that *died*. It is the wrong tool for re-checking a
-script edit against a fixture the completed run already mutated: the salted pack read replays the
-launch-time `state.json` (wave 0) while the disk holds the finished arc, every setup probe then
+script edit against a fixture the completed run already mutated: resumed under its original
+envelope, the run re-loads the launch-time pack (`state.json` at wave 0 — through 0.17.0 the cached
+pack read replayed the same thing) while the disk holds the finished arc, every setup probe then
 reconciles a stale state against a moved integration branch, and whatever real agents do run are
 answering a question nobody asked (2026-09-15: a resume after a green three-wave run returned
 `arc-complete` at wave 1 with a `quarantine-refused` row, 573 K tokens, and validated nothing).
@@ -422,8 +483,9 @@ volume would bite):**
 ```
 bash setup-fixture.sh --conductor /tmp/roadmap-eval-c
 RUN_ISSUE_EVAL=1 bash issue-bootstrap.sh /tmp/roadmap-eval-c        # creates issues; patches plan.json
-# launch conductor.mjs ONCE via Workflow with the same envelope as above — do NOT read the patched
-# pack yourself, the script reads it; issue mode now lives in the plan the script will read
+node <skill dir>/launch-pack.mjs --roadmap /tmp/roadmap-eval-c/repo/.roadmap   # AFTER the bootstrap: the pack must carry the patched plan
+# launch conductor.mjs ONCE via Workflow with the same envelope as above (the printed launchId + pack)
+# — do NOT read the patched pack yourself, the script loads it; issue mode now lives in the plan it loads
 node <skill dir>/persist.mjs --run <the run's transcript dir> --script <skill dir>/conductor.mjs \
      --args '<that envelope, as JSON>'                             # state.json etc. — nothing exists until this runs
 bash check-conductor.sh /tmp/roadmap-eval-c                        # arc end state (git/state facts)
@@ -487,6 +549,22 @@ return envelope carries it beside `spendDelta`: `{ claude: {fable, opus, sonnet,
 codex: {roles, processes, inputTokens, outputTokens} }`, arc-cumulative. `roles` counts role
 dispatches, `processes` counts every codex process including the build/fix lane's. That is the
 number to re-measure against the predictions above — and to write down here when someone does.
+
+**Measured, 2026-09-17 (0.18.0) — the first measurement since the Codex role shift.** Both fixtures,
+run concurrently on one box (4 cores, so wall clock is inflated by each other's lanes), both
+`ALL CHECKS PASSED`, zero degradations:
+
+| | agents | subagent tokens | Claude calls (fable / opus / sonnet / haiku) | Codex (roles / processes, input / output tokens) | wall clock |
+|---|---|---|---|---|---|
+| harness fixture (1 wave, 6 units) | 85 | 2.51 M | 6 / 5 / 3 / 70 | 22 / 26, 3.16 M / 60 K | ~48 min |
+| conductor fixture (2 waves, 6 units by the end) | 102 | 3.05 M | 4 / 7 / 2 / 88 | 29 / 34, 5.04 M / 96 K | ~96 min |
+
+Read against the prediction above: the direction held — Opus fell from 27 calls to 5 on the
+harness fixture, because per-unit drafting and verification are Codex's now — but the Haiku count
+did **not** fall (59 → 70): the transcription couriers went, and closed-list couriers for setup,
+probes, merges, mirror advances and codex steering replaced them one for one. Subagent tokens did
+not fall either, since a steering courier's context carries its codex run's briefs and slivers. The
+Codex side is the new bulk: 3–5 M input tokens per fixture, overwhelmingly cached re-reads.
 
 **Budget the ladder accordingly.** Tiers 1 and 2 are genuinely free and catch most regressions; run
 them on every edit. Tier 3 consumes real budget and — this is the part worth internalising — mostly
@@ -613,7 +691,85 @@ reply never runs a command. That is why the Codex preflight (SKILL.md and the pe
 `400 … not supported when using Codex with a ChatGPT account` — also exit 0 from `codex exec`,
 also visible only in the output, hence the review-model smoke at preflight.
 
+### P4 — the 0.18.0 probes: the pack transport, the verify brief, the dossier prompts (pinned 2026-09-17)
+
+Three paths no fixture reaches, probed before the paid ladder was spent on them.
+
+**The launch-pack transport (zero tokens).** A workflow whose only act is
+`await workflow({scriptPath})` on a generated file — `export const meta = {…}` then `return <JSON
+literal>` — carrying 68 KB: 400 units with `\"`, `\\`, a raw em dash, a literal backslash-u
+sequence and U+2028 inside string values. It came back byte-exact (`JSON.stringify` round trip
+65,156 characters, first title 70 characters with the separator intact) in **91 ms with 0 agents**;
+an absent file throws a catchable `Workflow script file not found`; and a second depth-1
+`workflow()` call in the same run is fine. That is the whole basis of `launch-pack.mjs` — and the
+reason to probe it was §21's rule: four transports had already been bet on unprobed.
+
+**The verify brief on real Codex (`gpt-5.6-sol`, `model_reasoning_effort=medium`, the emitted brief
+and strict schema captured from a sim drive against a real scratch repo; OpenAI quota only).** Host
+without `shellcheck`; the unit's diff adds a deliberately sloppy `scripts/release.sh`.
+- *Spec names `node test.js` and `sh scripts/release.sh`; the brief names no lint.* The verifier ran
+  exactly those two commands (plus the load and diff reads) — **no invented lint lane** over the
+  shell script — and reported both `source:"spec"`, `outcome:"passed"`, `pass:true`. Under the
+  0.17.0 brief ("lint/typecheck the changed files first") this is the shape that blocked a green
+  unit on a missing `shellcheck`.
+- *Spec names four commands: a passing test, an assertion that is false, a tool that is not
+  installed, a script that does not exist.* All four lanes were run **in order, without stopping**,
+  and classified `passed` / `failed` (exit 1) / `tool-missing` (exit 127) / `bad-target` (exit 1);
+  `blocked:false`, `pass:false`, both unrunnable lanes quoted verbatim in `failures`. `judgeVerify`
+  reads that as ran-and-red — fix rounds, never an environment block — which is the wave-6 case.
+  Strict mode held: every lane carried all five keys on the first turn.
+
+**The dossier prompts on real Sonnet (6 agents, ~206 K subagent tokens).** The byte-identical
+production `dossier:` and `rescue-dossier:` prompts against `S.dossier`, three samples each: **6/6
+validated on the first report**, every one with `attempted`, `evidence` and `hypothesis`; five of
+the six also used the new optional `notes` (290–580 characters) — so the schema really did have
+nowhere legal to put overflow before, which is the second mechanism behind the 2026-09-16 death
+(five rejected reports, "missing required property").
+
+**The relayed user request, and `RELAY_BAR` (12 agents, ~280 K subagent tokens; an honest null).**
+Found by the final conductor fixture, not by design: mid-run the runtime began relaying the session's
+latest user message ("…delete it when done") to every agent as "the only user voice … this request
+wins", and **1 of the 29 framed agents** — a `provision:integration` Haiku courier holding a closed
+list of two commands — also ran `rm -f` on that file in the operator's checkout. The probe replayed
+that courier's byte-identical production prompt under the live relay, six samples **with** the
+`RELAY_BAR` opening and six **without**, the restored file as the canary: all twelve were shown the
+relay (checked in the transcripts), all twelve ran exactly their two commands, and the canary
+survived both arms. So at n = 6 the probe shows the clause does no harm and cannot show it helps —
+the base rate is a few percent per agent. The evidence that counts is the fixture pass that followed — every agent framed from the first
+call, the canary in place: **223 framed agents, 1 acted** (the Haiku codex steerer of `flake:w2`, at
+the end of a twenty-call session, `rm`'d the file "when done"; a Sonnet dossier investigator in the
+same pass wrote in its report that the relayed request was the launching session's and it took no
+action). 1 in 29 without the clause, 1 in 223 with it. Wording, not containment (RATIONALE §23) —
+the containment is the root's: a neutral go-ahead as the latest user message before every launch.
+
+**Persisting a framed run.** The same run is the regression case for `persist.mjs`: 134 journalled
+calls, 29 framed, `PARTIAL stoppedAt=triage:w2` on a persister that read the first user record as
+the prompt, `OK reason=arc-complete wave=3` once it unframes — the replay reaching the end IS the
+exactness proof, since one wrong character is a cache miss. `persist.test.mjs` writes framed and mixed transcripts in the platform's own shape and fails on the old
+reader. The pass after it produced the second regression case: one agent's `agent()` call threw
+(five unparseable StructuredOutput inputs), the journal recorded it `failed`, the run recovered through
+`#retry` and returned `arc-complete` — and a persister that replayed `failed` as a death stopped
+`PARTIAL` at `…#salvage`. It replays as a throw now; same sim file, same mutation check.
+
 ## Interpreting failures
+
+**Either fixture, at launch** (a throw before any unit is dispatched — nothing was touched):
+
+- `pack-missing` → `args.pack` names a file the run could not load: a typo in the path, a pack from
+  another fixture directory, or `launch/` deleted. Run `launch-pack.mjs` again and launch with the
+  `launchId` and `pack` it prints. There is deliberately no fall back to the courier read.
+- `pack-stale` → `plan.json` or `state.json` changed after the pack was written (`issue-bootstrap.sh`
+  patches the plan — write the pack *after* it), or the pack belongs to a different `launchId`.
+  Same cure. If the files did **not** change and it repeats, read the two `pack-verify` transcripts:
+  the freshness courier is mis-copying a `cksum` line, which is a courier defect worth a note in
+  `skill-feedback.md`, not a fixture failure.
+- `pack-unreadable` → only on the legacy route (no `args.pack`): the courier transcription failed
+  its `cksum` twice. Launch through `launch-pack.mjs` instead.
+- A `pack-courier-read` row in a run you meant to launch through the tool → `pack` was left out of
+  the envelope. The run is valid, but it graded the fallback, not the path real launches take.
+- `persist.mjs` exits 1 with `pack-missing` → the pack was deleted (or the `--args` envelope lacks
+  the `pack` the run was launched with) before the run was persisted. Persist with the run's exact
+  envelope, or use `--returned`.
 
 **Harness fixture:**
 

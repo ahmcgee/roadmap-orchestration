@@ -4,12 +4,12 @@
 # `node --check` rejects their legal top-level `return`: each source is wrapped in an
 # AsyncFunction with the workflow globals stubbed as params — the same trick
 # script-loader.mjs uses to run them. Everything else is an ordinary ES module
-# (script-loader.mjs, persist.mjs) and is checked with `node --check`.
+# (script-loader.mjs, persist.mjs, launch-pack.mjs) and is checked with `node --check`.
 # Prints `parse OK <basename>` per file; non-zero exit if ANY file fails to parse.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 status=0
-for f in "$DIR"/script-loader.mjs "$DIR"/persist.mjs; do
+for f in "$DIR"/script-loader.mjs "$DIR"/persist.mjs "$DIR"/launch-pack.mjs; do
   base=$(basename "$f")
   [ -f "$f" ] || continue
   if node --check "$f" 2>/dev/null; then

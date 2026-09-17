@@ -447,5 +447,6 @@ echo "  units: migrate-core, migrate-rest (contract edge), gate-wide (adopted), 
 echo "  planted: tier-0/1 gap in core's format-option conflict; tier-2 contract-crossing gap in"
 echo "           rest's partial-validation reporting; a wide rubber-stamp diff in gate-wide;"
 echo "           an unsatisfiable unit in impossible-persist"
-echo "  next: launch harness.mjs via Workflow with plan/state from $REPO/.roadmap/,"
-echo "        then: bash check-horizon.sh $TARGET"
+echo "  next: node <skill dir>/launch-pack.mjs --roadmap $REPO/.roadmap   (prints launchId + pack)"
+echo "        then launch harness.mjs via Workflow with args {roadmapDir: $REPO/.roadmap, config: {}, launchId, pack},"
+echo "        then persist.mjs with that SAME envelope, then: bash check-horizon.sh $TARGET"

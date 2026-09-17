@@ -74,6 +74,12 @@ accounting; `verifyBlocked`, consults, spend and escalation counts remain cumula
   state.partial.json   # DIAGNOSTIC ONLY: a partial persist.mjs REFUSED to write over state.json.
                        #   Nothing reads it; never relaunch from it (see "Who writes .roadmap/").
                        #   Removed by the next persist that lands a WHOLE state.json
+  launch/              # TRANSPORT ONLY, never committed (`launch/.gitignore` is `*`). One
+    pack-<launchId>.mjs #  file per launch, written by launch-pack.mjs: a workflow script whose
+                       #   whole body returns plan.json and state.json as TEXT, which the run
+                       #   loads with workflow() — no model copies the pack. WRITE-ONCE and
+                       #   never pruned: persist.mjs replays the run from this same file, so it
+                       #   must outlive that run's persist. Delete the directory at close-out.
   quarantine/<unit>.md # dossiers written by the harness (codex writes the file; Haiku is the fallback)
   feedback/            # accumulated runtime evidence; triaged in batch at boundaries
     explorer/*.md      #   per-wave runtime exploration findings (wave-tail codex role, which
@@ -87,6 +93,10 @@ accounting; `verifyBlocked`, consults, spend and escalation counts remain cumula
                        #   read at the next boundary — never an input to a running wave. ISSUE
                        #   MODE: users file roadmap:bug issues instead; this folder is unused.
     triaged/<wave>/    #   consumed items, moved here at triage; never re-triaged
+      boundary-notes.md #  MACHINE-written by persist.mjs from the envelope's `boundaryNotes`: what
+                       #   that wave's triage tiers ASKED of the root (rulings, contract
+                       #   corrections, the needs-user question) — requests, not decisions; the
+                       #   decisions are in architect-log.md. Rewritten whole, so idempotent
   archive/<arc>/       # closed-out arcs
 ```
 
@@ -95,7 +105,8 @@ that, after the run.
 A workflow script has no filesystem, so every byte it wanted on disk used to go through a model
 transcribing a document; that transport was the second-largest model cost in the system, and it
 occasionally lost the document anyway. The scripts now **return** everything (state, merged plan,
-debt, the debt.md and architect-log sections, both event ledgers) and the root runs
+debt, the debt.md and architect-log sections, the boundary tiers' notes to the root, both event
+ledgers) and the root runs
 
 ```
 node <skill dir>/persist.mjs --run <workflow transcript dir> \
@@ -125,7 +136,8 @@ and run it again. Exit 0 = complete, 2 = partial, 1 = error (nothing written).
 **The cure for either is `--returned`, not a hand edit.** The run's return value is in the task
 output; hand it over as a JSON file and the replay is skipped entirely, the value going through the
 same writers (state, the plan-conflict check, `debt.json`, the `debt.md` and `architect-log.md`
-sections, `skill-degradations.md`, both ledgers) — so nothing the run decided is lost:
+sections, `feedback/triaged/<wave>/boundary-notes.md`, `skill-degradations.md`, both ledgers) — so
+nothing the run decided is lost:
 
 ```
 node <skill dir>/persist.mjs --returned <that value, as a .json file> \
@@ -153,6 +165,49 @@ with `partial: {stoppedAt: "<label> (out of journal order)"}` — which is refus
 over `state.json`, because a diverged prefix is behind the state the run itself returned (see the
 refusal rules above). A nested `workflow()` child shares the journal and so shares the one cursor.
 
+**The launch pack is the same idea, pointed the other way** (0.18.0). The write never needed a
+model; it turned out the *read* did not either. Through 0.17.0 a root launch's first act was a Haiku
+courier transcribing `plan.json` and `state.json` into a structured report, verified by `cksum` —
+and while the verification always held, the transport failed in the field five different ways (a
+dropped escape level, a doubled sentinel, base64 diverging into repetition, a 30 KB copy that
+stopped at 6.4 K characters twice, and on 2026-09-17 a courier that *retyped the composed `sed`*
+with its backslashes un-doubled, turning every plain quote of a backslash-free file into `@q@`).
+`workflow({scriptPath})` loads a script off disk with no model anywhere, so the root runs
+
+```
+node <skill dir>/launch-pack.mjs --roadmap <absolute .roadmap dir> [--launch-id <id>]
+```
+
+before **every launch and every resume**. It never calls a model. It mints the fresh `launchId` the
+envelope needs (or takes yours), checks that both files parse, writes
+`launch/pack-<launchId>.mjs` — a workflow script whose whole body is
+`return { launchId, files: { 'plan.json': <text>, 'state.json': <text> } }` — and prints the two
+values the envelope takes: `launchId` and `pack` (that file's absolute path). The files travel as
+TEXT, so the run verifies bytes, not a re-serialization: one salted courier (`pack-verify`) runs
+`cksum` on the two files on disk — two short lines, nothing to transcribe — and the script compares
+them with `cksumOf` of the text it was handed. Probed live before it shipped: 68 KB carrying `\"`,
+`\\`, a raw em dash, a literal backslash-u sequence and U+2028, byte-exact, 91 ms, zero agents.
+Three properties are load-bearing:
+
+- **The envelope names the transport, never the disk.** `args.pack` present → that file is loaded
+  and nothing else; a file that cannot be loaded is a loud `pack-missing` throw with **no** fall
+  back to the courier. `args.pack` absent → the legacy courier read runs exactly as before and
+  records one `pack-courier-read` degradation. `persist.mjs` replays the run later from the same
+  envelope (its replay `workflow` already loads any `scriptPath`, so it needed no change); a route
+  chosen by which files happened to exist at replay time would ask the journal for prompts it never
+  held.
+- **A pack is write-once per `launchId` and is never pruned.** `persist.mjs` *rewrites* `plan.json`
+  and `state.json`, so a pack regenerated under a used id would hand the replay a different document
+  than the live run saw (the tool opens it `wx` and refuses), and a pack deleted before its run was
+  persisted makes that run unreplayable (`pack-missing`, exit 1, nothing written — `--returned`
+  still works, since it skips the replay). Packs are tens of KB; delete `launch/` at close-out.
+- **Stale is refused, unknown is not.** A cksum mismatch buys one fresh sample
+  (`pack-verify#retry` — one mistyped digit must not kill a launch) and then throws `pack-stale`:
+  the file changed after the tool ran, so run it again. A pack written for a *different* `launchId`
+  is `pack-stale` too, before anything is dispatched. A courier that cannot answer at all degrades
+  `pack-unverified` and the launch proceeds — the pack is a model-free copy made moments earlier,
+  and an unknown is never a breach.
+
 What the scripts still delegate to a model is what a model must actually *do*: author a spec, write a
 quarantine dossier or a feedback report, move consumed feedback, and project state into GitHub
 issues. Those are agent work, not transport.
@@ -166,7 +221,11 @@ top-level `state.json` present → arc in flight, resume or ask; absent → plan
 
 ## `plan.json`
 
-**Write it however your serializer likes.** Both pack documents are read at launch by a Haiku
+**Write it however your serializer likes.** Since 0.18.0 both pack documents reach the run as TEXT
+inside the launch-pack file (`launch-pack.mjs`, see "Who writes `.roadmap/`") and no model copies
+them, so nothing about their escapes, glyphs or size is a transport concern at all. What follows
+describes the **legacy courier read**, which still runs whenever the envelope names no `pack`: both
+documents are read at launch by a Haiku
 courier, but the read command rewrites every JSON escape **sequence** to its own marker first
 (`\"` → `@q@`, `\\` → `@bs@`, `\n` → `@n@`, `\t` → `@t@`, `\/` → `@sl@`, `\uXXXX` → `@uXXXX@`) and
 the script reverses it before checking the file's `cksum` — so every escape, and every raw
@@ -178,7 +237,7 @@ survive 2026-09-14, when a courier doubled it before a quote, and probed unexpla
 the three identical markers of `\\\"` into one; base64 did not survive its first live run — a
 model cannot transcribe 2 KB of high-entropy text. The per-sequence markers were probed on real
 Haiku couriers against a 14 KB document carrying every escape form, three of three byte-identical.)
-The one constraint left is **size** — see `state.json` below.
+The one constraint left on that legacy path is **size** — see `state.json` below.
 
 ```jsonc
 {
@@ -321,11 +380,17 @@ The one constraint left is **size** — see `state.json` below.
   "run": { "runId": "<id>", "scriptPath": "<session-persisted script path>" } }
 ```
 
-**Keep it small — it is the only pack document that grows.** One courier copies the whole file at
+**Keep it small — it is the only pack document that grows.** The hard ceiling belongs to the
+**legacy courier read** (no `args.pack`): one courier copies the whole file at
 launch and tops out near 24 K characters once its escapes become markers (about 35 KB of ordinary
 state); past that the file is re-read over line ranges, and past about 100 KB the launch simply
 cannot be vouched for and throws `pack-unreadable` (2026-09-03: a
-145 KB state.json, three quarantine dossiers' worth of prose, could not be relaunched at all). So
+145 KB state.json, three quarantine dossiers' worth of prose, could not be relaunched at all) — and
+the real ceiling has been well under the nominal one (2026-09-16: a 30 KB state whose copy stopped
+at 6.4 K characters, twice; 2026-09-17: a 24 KB plan). A launch through `launch-pack.mjs` has no
+such ceiling, because no model copies the file. The rule below still stands on its own merits —
+every tier that reads state is a model, the cross-driver handoff carries it whole, and the fallback
+read is still there. So
 **prose lives in files and state carries the path** — that is why a quarantined unit records
 `dossierPath` rather than the dossier text, why degradations and escalations are `.jsonl` sidecars
 `persist.mjs` appends rather than state fields, and why `debt` is this wave's items only. If you
@@ -353,6 +418,14 @@ Fields the scripts add:
   died): `{job: explorer|health|flake|design, wave, why, count, units?}` per entry (`units` names
   the design-cited units an owed reconcile still must cover; `count` = consecutive boundaries
   owed). Discharged automatically when the job next succeeds; carried with `count+1` otherwise.
+  A wave that **halts** skips its whole boundary, so for the units it *merged* it mints owed entries
+  in code (no agent): `health` (unless `healthCheck:'off'`) — the documented way to close an arc is
+  a final launch with `boundary:'off'`, where only owed jobs run, so without the marker no assessor
+  would ever read what that wave landed — and `design`, naming the design-cited units it merged,
+  because that reconcile is scoped to units that merged *in the wave it runs in* and no later
+  boundary can recover it. Both carry `why: "wave N halted (<reason>) before its boundary ran"`; a
+  halt that merged nothing owes nothing. `count` is **not** advanced by a halt:
+  it counts boundaries that ran and failed to discharge the job, and a halt is not one of those.
   The conductor's tiers may not silently drop one — `count >= 2` forces the Fable tier, which
   alone may waive (`waiveOwed`, justification journaled). A marker whose precondition is later
   REMOVED from the plan (the preview block dropped, the citing unit cut) carries at a frozen
@@ -393,7 +466,11 @@ Fields the scripts add:
   and the per-unit `rounds.opusGate` is the same count per unit. The tier that actually ran is in
   the per-tier counters, never inferred from those two names.
 - **`debt`** — the imperfections surfaced *this wave only*. `.roadmap/debt.md` is the cross-wave
-  accumulator.
+  accumulator. One exception, since 0.18.0: rows stamped **`carriedFromWave: <N>`** are debt an
+  earlier launch *received and never banked* — the conductor reads the launch state's `debt` back
+  when that state is a **halt** (`state.halt.reason`) or a `max-waves` / `agent-budget` return
+  (`state.conductor.reason`), and only then; see "Carried debt" under the conductor. Every other
+  return hands `debt` to you as residue *you* consume, and it is never read back.
 - **`escalationStops`** — `{unitId: count}`, arc-cumulative. The only escalation state the run
   itself reads (the three-strikes brake, which must survive a unit re-entering in a later wave).
   The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
@@ -416,9 +493,11 @@ Fields the scripts add:
   env-no-reaper | env-verify-blocked | feedback-unmoved | review-skipped | verify-unrun | dossier-write-fallback | health-skipped |
   flake-unassessed |
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
-  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role`.
-  Codex-kind entries name the `__codex/<unit>/<step>/` (or `__codex/roles/<label>/`) artifact
-  directory to read; `codex-role` is a role that produced no result after its one retry — its
+  codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role |
+  codex-capacity | codex-orphan | lane-skipped | verify-reclassified | dossier-fallback |
+  pack-courier-read | pack-unverified | dispatch-only-unknown`.
+  Codex-kind entries name the `__codex/<unit>/w<wave>/<step>/` (or `__codex/roles/w<wave>/<label>/`)
+  artifact directory to read; `codex-role` is a role that produced no result after its one retry — its
   caller got `null`, and nothing was halted on account of it. Four 0.14.0 kinds are what the
   harness *did about* such a null on the roles that have a coded answer: `review-skipped` (no
   pre-gate digest, so the exit gate reads the raw diff at Opus whatever the risk — less evidence
@@ -430,9 +509,12 @@ Fields the scripts add:
   "nothing to consolidate"). `codex-exec`
   (codex exited non-zero) / `codex-lifecycle` (**no exit-code file** — nobody observed the run
   finish, so its exit status is unknown, not bad) / `codex-timeout`, with surviving commits, mean
-  the branch was judged on its merits (a dead process is not a dead unit); the six halt kinds
-  (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`, `env-no-reaper`,
-  `env-verify-blocked`, `platform-outage`) accompany a wave halt (see `state.halt` below); `env-unprobed` means a host
+  the branch was judged on its merits (a dead process is not a dead unit); the seven halt kinds
+  (`codex-unavailable`, `codex-usage-limit`, `codex-capacity`, `env-pids-exhausted`, `env-no-reaper`,
+  `env-verify-blocked`, `platform-outage`) accompany a wave halt (see `state.halt` below);
+  `codex-capacity` is also written, *without* a halt, the first time a step sees the pinned model
+  "at capacity" — that step waits once and reattempts, and only a second capacity answer (or a
+  spent `codexCapacityRetries` budget) adds the halting row; `env-unprobed` means a host
   fact could not be read at all, so the wave ran unguarded on that axis — an unknown is never
   treated as a breach; `commit-probe-unknown` means an implement report AND its commit probe both
   died, so whether the branch holds work is unknown and the unit parked rather than being
@@ -448,9 +530,23 @@ Fields the scripts add:
   reconcile). **`quarantine-refused`** means a verdict asked to quarantine a unit git says already
   landed — it was recorded `merged` instead, and the verdict was reading stale or cached state.
   **`no-launch-id`** means the root omitted `args.launchId`, so the environment probes ran unsalted
-  and a resume can serve them from cache. A `verify-blocked` entry means a verifier RAN and found the
-  tooling broken: the first one for a unit records it `blocked` (commits intact, re-verified next
-  wave), a second on a later wave quarantines it, and either way the entry carries the host's load;
+  and a resume can serve them from cache. A `verify-blocked` entry means a verifier RAN and a lane
+  the **spec names** could not run for a host reason (or nothing could be run at all): the first one
+  for a unit records it `blocked` (commits intact, re-verified next wave), a second on a later wave
+  quarantines it, and either way the entry carries the host's load and **names the blocking lane**
+  ("Blocking lane: `<command>` (tool-missing|env-error)", or "No lane was recorded" for an empty
+  ledger). A **`lane-skipped`** entry names lanes the verifier added on its own that could not run
+  on this host — dropped from the ledger, never a block and never a failure; a
+  **`verify-reclassified`** entry records every time the lane ledger overrode the verifier's own
+  `pass`/`blocked` (see *Verify* below). A **`codex-orphan`** entry means a re-entering unit's
+  worktree still had a live Codex process from a previous launch — reaped before the tree was
+  touched, or, where that could not be confirmed, the unit parked. A **`dossier-fallback`** entry
+  means a quarantine or rescue investigator produced no report, so the dossier (or the consult)
+  ran on the raw harness evidence. **`pack-courier-read`** means the envelope named no `pack` and
+  the launch pack was transcribed by a courier — run `launch-pack.mjs`; **`pack-unverified`** means
+  the pack's freshness courier could not answer and the launch proceeded.
+  **`dispatch-only-unknown`** names `config.dispatchOnly` ids that are not in-scope units (they
+  select nothing);
   an `env-verify-blocked` entry means two units hit that in ONE wave, which is a host fact and
   halts the wave; a `shared-red` entry names the one spec several units
   failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
@@ -474,7 +570,9 @@ Fields the scripts add:
   `persist.mjs` (`script: 'persist'`): `plan.json` on disk held unit ids the run has never seen, so
   the overwrite was REFUSED and the file left exactly as it was — merge the two plans by hand.
   A `debt-unbanked` entry means the issue-mode banker did not confirm every item; the unconfirmed
-  ones stay in `state.debt` and in `.roadmap/debt.json` and are re-banked at the next boundary.
+  ones stay in `state.debt` and in `.roadmap/debt.json` and are re-banked at the next boundary —
+  including the first boundary of a **relaunch** after `max-waves` / `agent-budget`, which carries
+  them (`carriedFromWave`; through 0.17.0 that promise held only inside one run).
   (File mode has no such entry: its `debt.md` section is data on the return envelope, and a
   deterministic writer cannot half-land one.) A `preview-failed` entry means the mirror never came up — the entry names which of
   the three setup steps failed (worktree / provisioning / bring-up) with the failing command's exit
@@ -501,7 +599,9 @@ dependency is `merged`. While `running` a unit also carries a `stage` field
 replaces the whole record — carrying forward `rounds` (`{fix, opusGate, gate}`, the per-unit
 round tally that makes runaway revision loops measurable; the paid fixtures assert ceilings on
 it — plus `verifyBlocked`, the one tally that counts across WAVES, since the second blocked verify
-for a unit is what quarantines it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
+for a unit is what quarantines it; it is cumulative and never decreases (the shared protocol's
+`monotonic()` refuses a decrease), and since 0.18.0 only a *spec-named* lane the host could not run,
+or a verifier that could run nothing at all, adds to it) and, on any halt or park, `parked: true` (`status:'pending'` + parked = re-enters by ADOPTION
 next wave: its branch commits are its own prior progress, never unexplained has-commits).
 A `quarantined` record carries `reason` plus **`dossierPath`** — the absolute path of
 `.roadmap/quarantine/<id>.md`, never the dossier prose. The file is the record and every reader of
@@ -518,9 +618,10 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 |---|---|---|
 | `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "run pwd"` **smoke** did not answer with its scratch directory (the CLI and the credential can both be fine while the Codex BACKEND is down — or while its SANDBOX cannot start: codex exits 0 with the `bwrap` error as its final message, so the smoke executes a command and the shell checks the answer; a sandbox failure is named as such, with the fix) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
 | `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
+| `codex-capacity` | the pinned model answered "at capacity" **twice** for one step (a 330-second wait and one reattempt between them), or the wave had already spent its `codexCapacityRetries` waits, or the wave-start smoke was still at capacity after its one wait and re-probe. Classified in code from the copied error line and a `grep -c` count — never from the steerer's `limitHit`, which filed the 2026-09-17 incidents under usage limits | a minutes-scale provider transient, **not** a usage limit: smoke the model (SKILL.md → Codex preflight) and relaunch when it answers, or relaunch with another `config.codexModel` |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
-| `env-verify-blocked` | two units' verifiers reported `blocked` in one wave — their tooling could not run at all (a black-holed registry, a dead network, a missing global tool) | read the verifiers' failure output in the `verify-blocked` entries, fix the host, then relaunch |
+| `env-verify-blocked` | two units' verifies came back blocked in one wave — a lane their spec names could not run for a host reason (a black-holed registry, a dead network, a missing global tool), as judged from the lane ledger in code; a lane the verifier added itself never counts | read the verifiers' failure output in the `verify-blocked` entries, fix the host, then relaunch |
 | `platform-outage` | a REQUIRED agent result never arrived, even after its salvage retry | wait out the outage / usage-limit window, then relaunch |
 
 Every halt is a **resumable pause, never a failure**: nothing is quarantined, in-flight units park
@@ -691,8 +792,9 @@ back only an allowlist (final message head, session id, one usage line, an error
 — never a transcript), and emits the same S.impl-shaped report the pipeline always consumed.
 **S.impl is the seam**: verify, gates, consults, merge and every trigger work unchanged, and
 nothing downstream learns who wrote the code. Artifacts live under `<worktreeRoot>/__codex/<unit>/
-<step>/` — outside the repo, so the NOROADMAP write-bar and merge fence are structurally
-unreachable; degradations name the directory to read. The Claude adversarial review stage is still gone:
+w<wave>/<step>/` — outside the repo, so the NOROADMAP write-bar and merge fence are structurally
+unreachable; degradations name the directory to read (the wave segment is explained under *The
+wave is part of the artifact path*, below). The Claude adversarial review stage is still gone:
 the build already ran its own test-fix loop, and the exit gates carry the hunting clauses with
 authority. What 0.14.0 puts back in front of the gate is a **cross-model** read — a codex role, the
 other model family, producing a digest the gate adjudicates — which is a different thing from the
@@ -701,7 +803,8 @@ consumed as evidence rather than re-derived by the gate. Failure policy: exit≠
 a dead unit); with no commits ⇒ ONE retry — for the build step AND for every fix round — which
 first **reaps** the previous pid (TERM, wait, KILL, wait for the exit-code file) and tells codex in
 its brief that the earlier attempt is dead and a live sibling is a harness bug to report as
-`blocked`; then the commit-probe/quarantine path. A usage/rate limit or a failed per-wave
+`blocked`; then the commit-probe/quarantine path. A run that died because the pinned **model was
+"at capacity"** takes a different rung first — see *Model at capacity* below. A usage/rate limit or a failed per-wave
 `codex-probe` (three commands: `--version`, `login status`, and a bounded read-only
 `codex exec … "run pwd"` **smoke**, its answer checked in the shell so the exit code carries the verdict) ⇒ **hard stop** — new
 dispatch halts, in-flight units **park**
@@ -735,7 +838,8 @@ trusting a copy. The adapter appends the brief's `# FINAL MESSAGE` section itsel
 budget line derived from the schema's own caps; never hand-write those. Mechanically it **is** the
 build lane, not a second implementation of it: one Haiku courier under `withCodexSlot`, the
 detached `timeout -k` launch, the pidfile, attach-don't-relaunch, the absent-exit-code-means-RUNNING
-rule, reap-then-retry. Artifacts: `<worktreeRoot>/__codex/roles/<label>/` (retry: `<label>-retry`).
+rule, reap-then-retry. Artifacts: `<worktreeRoot>/__codex/roles/w<wave>/<label>/` (retry:
+`<label>-retry`; the capacity reattempt: `<label>-capacity`).
 
 **Failure contract** — the one thing a caller must handle. A codex role failure is *codex's*, never
 the platform's: the adapter never throws for a failed run, never sets `halt.platform`, and never
@@ -824,6 +928,80 @@ is never evidence. And the steer prompt is idempotent by construction: if `<dir>
 exists it attaches instead of launching, so any re-dispatch of the same prompt (a schema retry, a
 salvage, a replay) cannot put two codex processes in one worktree.
 
+**The wave is part of the artifact path** (0.18.0): `__codex/<unit>/w<N>/<step>/` and
+`__codex/roles/w<N>/<label>/`, `N` being the wave this launch is running (`state.wave + 1`). Round
+counters restart every wave, so an adopted unit's wave-N+1 `verify-<unit>-0` or `opus-gate-fix0`
+used to **be** wave N's directory — and the attach rule above then attached to the *finished* old
+run: brief, schema, `cwd` and `launched-at` rewritten, `exit-code`, `last-message.txt` and
+`events.jsonl` read back from the previous wave, no codex process started at all. 2026-09-16
+(wave 5): a replayed exit-127 verify became a phantom second `verifyBlocked` strike and quarantined
+a unit whose real verify was green. 2026-09-17 (wave 9): a replayed "model at capacity"
+`turn.failed` halted a wave seventeen minutes in while the model answered every smoke. Where the
+integration tip had not moved between the two waves the whole steer *prompt* was byte-identical as
+well, so a continuing run or a resume could be served the old result from cache with no dispatch.
+The wave number is a pure function of the launch state, so the path is byte-stable across a
+`resumeFromRunId` of the same run — attach still does its job for a schema retry, a salvage and a
+resume — and different for every later wave. It is deliberately **not** `args.launchId`: a
+work-product prompt never carries that, or no codex step would ever replay. Unit-first, so
+close-out's "keep a quarantined unit's `__codex/<unit>/`" still names one directory. Two
+consequences to know: a **fix step resumes THIS wave's build session only** — an adopted unit built
+in an earlier wave has no `build/session-id` here, and the launch line's own guard then starts a
+fresh session (COMMAND F) on the self-contained fix brief, which is accepted, not an oversight — and
+the per-wave round tallies are *not* carried to make up for it (they are deliberate, and
+`codexNative` arcs already carry budgets).
+
+**One writer per worktree — reap-on-adoption.** The launcher is detached on purpose, so a Workflow
+that crashed can leave a build or fix process alive in a unit's worktree; with the wave in the path,
+nothing in this wave's directories would ever attach to it. So a unit **re-entering from a previous
+launch** (prior status `running`, `merge-ready` or `blocked`, or `parked`) is checked before
+anything touches its tree: a salted closed-list courier, `codex-orphans:<id>`, lists the pidfiles
+under that unit's **own** `__codex/<id>/w*/*/codex.pid` whose process is still alive (never the shared
+`roles/` namespace, where a label can contain another unit's id; every reported path is matched
+against that shape in code before it is used). **Alive means ours**: the pid answers `kill -0` *and*
+its command line (`ps -p <pid> -o args=`) still names that very artifact directory — the scan covers
+every wave the arc has run, and a launcher that exited days ago may have had its pid reused by a
+process whose whole group the reap would otherwise kill. Both prompts carry the wave as well as the
+launch salt: one conductor run shares a `launchId` across its waves, and a byte-identical liveness
+prompt would be served the previous wave's "all clear" from cache. Anything alive is stopped by a second closed list,
+`codex-reap:<id>` — `kill -TERM -- -<pgid>`, `sleep 5`, `kill -KILL -- -<pgid>`, then the same
+liveness list again — and the outcome is a `codex-orphan` degradation. Confirmed dead → the unit
+re-enters normally. **Not** confirmed dead (still listed, or the reap courier died) → the unit
+**parks** rather than share its worktree with another writer — and so does a liveness list that
+could not be *read*. Everywhere else an unreadable fact degrades and proceeds; here the guess would
+be "no other writer in this worktree", which is the expensive direction, and a park costs one wave.
+
+**Model at capacity** (0.18.0) is a minutes-scale transient with its own name, wait and brake. On
+2026-09-17 two waves halted on `turn.failed` "Selected model is at capacity. Please try a different
+model": the steerer's `limitHit` — a *judgment* over an error sliver — filed it under usage limits,
+the harness halted on first sight as `codex-usage-limit`, and the remedy documented for that is
+"wait out the limit window" (hours), while a smoke on the same model passed twenty minutes later.
+The classification is **code's** now, from two mechanical facts the steerer only copies: the one
+error line, and `capacityLines` — the integer a `grep -ciE 'at capacity|try a different model'`
+printed over Codex's **own** error events (`turn.failed` / `"type":"error"` lines of `events.jsonl`)
+and its stderr, never over command output, so a *test* that prints "at capacity" cannot read as one. A run is *capacity* when it exited non-zero **and** either
+matches (`isCapacity`); exit 0 never is, and `limitHit` never outranks it. Then, for the build
+lane, every fix round and every role alike (`afterCapacity`): the **first** capacity answer records
+a `codex-capacity` row and halts nothing; the step buys one wait — a closed-list courier,
+`capacity-wait:<label>`, of `ceil(codexCapacityWaitSec / 110)` × `sleep 110` (each under the Bash
+tool's 120 s default, so nothing depends on a model raising a timeout; the wave and the step are in
+its prompt, because labels restart every wave and two byte-identical sleeps would collapse in the
+platform cache; unsalted, so a wait that already happened replays instantly on a resume) — and
+**one** reattempt in its own `-capacity` directory (`…#capacity`), reaping the dead attempt first.
+The wait has to have **happened**: a wait courier that died, or a sleep that did not exit 0, buys
+no reattempt — the wave halts instead of hitting a provider that just said it was full a second
+time. A second capacity answer halts the wave on **`codex-capacity`**, and so does a step that finds the
+wave's `codexCapacityRetries` budget already spent (the wave-start smoke draws on the same budget,
+so `0` buys no wait anywhere) (reserved *before* the await, so N steps hitting
+capacity at once cannot each buy a wait). Units **park**; nothing is quarantined or blocked over it.
+A step never runs more than its first attempt, one ordinary reattempt and one capacity reattempt;
+the ordinary no-wait retry never fires on a capacity result (it would only re-fail); nothing is
+retried past a halt, including one that arrives during the wait; and the **build** lane takes the
+rung only over an empty branch — a build that died at capacity after committing work is judged on
+its commits like any other dead build. The wave-start smoke gets the same treatment: output that
+matches buys one wait and one full re-probe (`codex-probe:w<N>#capacity`), and a smoke still at
+capacity halts on `codex-capacity` — not `codex-unavailable`, whose remedies (re-login, wait out an
+outage) are both the wrong action.
+
 **Warm lanes are gone** (0.11.0). They existed to amortize one fixed cold start — read the brief,
 explore the codebase, rediscover conventions — across a chain of units too small to absorb it
 individually. Units are now sized by what can be specified rather than by duration, so a unit
@@ -881,28 +1059,84 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   the number that matters is the load *while* the lanes ran, which only the process that ran them
   can sample. A verify that never *ran* (the role produced nothing after its retry) is **not** a
   verdict: the unit is recorded `blocked` with a `verify-unrun` row and re-enters dispatch next
-  wave — deliberately not the env-blocked quarantine below it, because `blocked:true` is a verifier
-  that ran and found the tooling broken, while a dead role is a fact about codex.
-  Cheapest-first: lint/typecheck the changed files → then
-  **exactly the acceptance-check commands the spec names, verbatim, in order**. Every command and
-  its exit code comes back in `verify.lanes` with the `expectedExit` its spec clause states (0
+  wave — deliberately not the env-blocked quarantine below it, because a blocked verify is a
+  verifier that ran and found a spec-named lane unrunnable, while a dead role is a fact about codex.
+  The verifier runs **exactly the acceptance-check commands the spec names, verbatim, in order** —
+  and a lint or typecheck command **only if the project brief names one** (then first,
+  cheapest-first). It never runs a tool that neither the spec nor the brief names: through 0.17.0
+  the brief said "lint/typecheck the changed files first" with no command and no source, the
+  verifier *chose* one (`shellcheck`, 2026-09-16), the host lacked it, and a unit whose every real
+  lane was green blocked — a model runs the lanes, it never picks them (RATIONALE §19 rule 1). The
+  one stand-in it may compose — "the tests scoped to this unit", when the spec names no runnable
+  command at all — counts as the spec's own lane. Every command and
+  its exit code comes back in `verify.lanes` (at most 12, the spec's first) with the `expectedExit`
+  its spec clause states (0
   when it states none), and `pass` is true only if every lane's exit code equals its expected one
   — a clause that requires a command to *fail* is satisfied by exactly that failure (2026-09-14: a
   bare "MUST exit 2" lane exited 2 and the unit was quarantined "verification never passed";
   `EXIT_BAR`, carried by every spec-writing and spec-adjudicating tier, says to write such a
-  clause as an exit-0 command in the first place).
+  clause as an exit-0 command in the first place — and, since 0.18.0, to write every runnable clause
+  so it runs **as written** from a fresh shell in the provisioned worktree, naming the project's own
+  target where that target is what supplies the environment: 2026-09-16, a bare
+  `go test ./internal/runtime/...` needed `KUBEBUILDER_ASSETS`, which the Makefile's `test` target
+  sets and the lane did not).
+  Each lane also says where it came from and how it ended — optional in the schema so older
+  journals replay, always emitted by codex (strict mode): **`source`** `spec | verifier` (`spec` =
+  the spec or the project brief names the command, the stand-in above included) and **`outcome`**
+  `passed | failed | tool-missing | bad-target | env-error`.
   Substituting a narrower or cheaper lane is the failure this closes (a verifier ran `test:unit`
   where the spec said `test:ci` and left a red seal invisible for a whole unit), so **both exit
   gates check the lane ledger against the spec's list before weighing anything else** — a named
   check missing from `lanes` means UNVERIFIED whatever `pass` says. The script cannot assert
   coverage itself: the commands live in the spec markdown, not in `plan.json`. The full suite runs
-  **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** — the
-  tooling itself couldn't run (missing dep, broken command, env failure). A blocked verify never
+  **only at the merge gate**, never in the fix loop. Errors are reported verbatim. The third outcome is **`blocked`** —
+  and **what a lane that could not run MEANS is decided in code** (`judgeVerify`, the one choke
+  point every verify label passes through before anything reads the result), never taken from the
+  verifier's single run-wide `blocked` boolean. That boolean turned three different facts into one
+  environment verdict in 2026-09-16: an invented lint lane on a host without the tool; a lane the
+  verifier composed against a package path that does not exist, beside a test that genuinely
+  FAILED, reported "tooling could not run"; and — because the tally was cause-blind — that phantom
+  block counted as the first of "2 separate waves". The verifier is now told to **record the lane's
+  outcome and carry on** with every remaining lane, and to report `blocked:true` only when nothing
+  could be run at all. The rules, in order:
+  - **Exit arithmetic beats every label.** A lane is green when `exitCode === expectedExit ?? 0`,
+    whatever `outcome` says. *Unrun* means not green **and** `tool-missing | bad-target | env-error`.
+    An absent `source` reads as `spec`; an absent `outcome` reads as "ran".
+  - A **verifier-added** lane that could not run is **dropped** from the ledger (one `lane-skipped`
+    row per verify, naming the commands). It can never affect `pass` or `blocked`. A failure line leaves with it only when it quotes the
+    whole command, or names the executable **and** reads like a could-not-run message (`not found`,
+    `no such file`, `permission denied`, …) — sharing a word is not attribution (a clause *about*
+    `curl` and a dropped `curl --version` lane) — and every other failure stays. A ledger holding
+    **only** dropped lanes is no evidence at all: neither a pass nor a block but a verify that did
+    not happen, and it takes that door (`verify-unrun` — blocked without a strike, re-verified next
+    wave).
+    The gates are handed the ledger without it (`LANE_BAR`: a `source:"verifier"` lane is never
+    coverage of a check the spec names).
+  - A lane that **ran and is red** — a test FAIL, or a *spec-named* lane whose target does not
+    exist (`bad-target`: a unit or spec defect, never a host fact) — is a **failure**: `pass:false`,
+    `blocked:false`, fix rounds and the gate. With no failure text from the verifier, the script
+    states the lane itself.
+  - Only a **spec-named lane the host could not run** (`tool-missing`, `env-error`) blocks — and a
+    verifier's `blocked:true` over an **empty** ledger, the one place its word is all there is:
+    nothing could be run at all (the 2026-09-04 `pnpm audit` hang).
+  - Otherwise the ledger decides: every kept lane green **and** no failure left standing is a pass,
+    whatever the verifier's `pass`/`blocked` said (`blocked:true` beside green lanes used to count
+    as a strike). A failure the script cannot attribute to a dropped lane keeps `pass` false —
+    `HOST_BAR` has the verifier report an unsatisfiable host clause in `failures` with every lane
+    green, and that must stay a failure.
+  - Whenever the ledger overrides the verifier's `pass` or `blocked`, a `verify-reclassified` row
+    says so.
+
+  A blocked verify never
   enters the fix loop, and it is never a verdict about the unit: the **first** one records the unit
   `blocked` (commits intact, no dossier, re-verified next wave), a **second** on a later wave
   quarantines it with an *environment* dossier, and **two distinct units blocked in one wave** halt
   the wave on `env-verify-blocked` — tooling that cannot run for two units is a host fact (a
-  black-holed registry, a dead network, a missing global tool), not two unit defects. Arc-observed
+  black-holed registry, a dead network, a missing global tool), not two unit defects. Because only
+  a verify `judgeVerify` leaves blocked ever reaches that ladder, a phantom block no longer tallies:
+  "blocked twice" means two real host blocks again, the row names the blocking lane, and
+  `rounds.verifyBlocked` itself stays cumulative (it is never reset — the shared protocol's
+  `monotonic()` refuses a decrease). Arc-observed
   2026-09-04: `pnpm audit --audit-level high` inside `pnpm verify` hung on a black-holed registry
   POST and the first unit to reach it was quarantined for it. Prevention is the `provision` block.
 - **Git decides `merged`, in code, before anything else.** At dispatch, before every quarantine,
@@ -939,7 +1173,14 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   rather than guessing when semantically unsure) → full suite → on failure, one Opus diagnose/fix
   attempt (checking first whether the failure predates the merge) → else revert the merge,
   quarantine the unit, continue the queue. Quarantined units keep their branch and worktree and
-  get a dossier; their dependents are marked `blocked`. **Quarantine reasons route to different
+  get a dossier; their dependents are marked `blocked`. The dossier's investigator (`dossier:<id>`,
+  Sonnet) and the mid-loop `rescue-dossier:<id>` are told their three required keys **by name** —
+  `attempted`, `evidence`, `hypothesis` — plus an optional `notes` release valve the file renders as
+  `## Notes`: the prompts used to describe the content in prose and name no key (the second
+  deliverable, "what failed", had no property at all), and on 2026-09-16 `dossier:` burned its whole
+  structured-output retry cap on "missing required property". A dead investigator is no longer
+  silent either: it records `dossier-fallback`, the quarantine dossier is still written from the raw
+  harness evidence, and a dead *rescue* distiller never costs the unit its architect consult. **Quarantine reasons route to different
   actions — read them, don't pattern-match:** environment/tooling blocked → fix provisioning or the
   brief, re-run as-is; unsatisfiable spec/contract → respec or amend the contract; everything else
   → redesign as a *new* spec.
@@ -952,7 +1193,9 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   otherwise a **major non-contract** item, because the channel accepts any "the spec says X"
   disagreement and the gate has already adjudicated it (2026-09-14: a missing test assertion
   returned the whole arc for an amendment). The pending report settles once the pre-gate review
-  exists, or when the unit's result lands, whichever comes first — never dropped.
+  exists, or when the unit's result lands, whichever comes first — never dropped. Either branch's
+  row carries `bankReason: needs-migration-or-ruling` (0.18.0): it is a ruling somebody still owes,
+  and a row with no reason rendered with no bank tag in `debt.md` and the `roadmap:debt` issue.
 - **`specGap` — the implementer-pulled consult.** A decision the spec does not settle, where
   reasonable engineers would diverge, reported through this structured field. Its presence fires a
   **Fable consult even on an all-green unit** (`confirm` = stands as built; `redirect` = one fix
@@ -983,7 +1226,9 @@ siblings never see each other), and ergonomics. For each finding worth fixing it
 those drafts **default into the next wave** unless cut.
 
 **The debt ledger and the pinned scope envelope.** A unit's scope is computed ONCE before its
-first fix round — fresh build: the approved plan's `files`; adopted branch: the diff at entry
+first fix round — fresh build: the approved plan's `files`, **normalised to repo-relative** first
+(the planner answers with the worktree in front of it and returned absolute paths on every 2026-09-17
+fixture pass, so each diff file read as growth on its own plan); adopted branch: the diff at entry
 — and never recomputed from the live diff (recomputing from the
 diff is the closed loop that produced the review spiral: scope→diff→fixes→scope). Verify reports
 `diffFiles`; growth beyond the envelope records a loud `scope-growth` degradation and hands the
@@ -996,7 +1241,12 @@ the brief demands in-scope fixing before reporting done), both exit gates (incl.
 the `maxBlockingFindings` cap, banked rather than dropped), and the health assessor. Rules
 enforced by schema and code, not just prompt:
 - `bankReason` is a closed set — `out-of-scope-file | needs-migration-or-ruling |
-  pre-existing-untouched` — REQUIRED on gate debt entries.
+  pre-existing-untouched` — REQUIRED on gate debt entries. Two **code-composed** rows state it too,
+  both `needs-migration-or-ruling` because each is an adjudication somebody still owes: the
+  `contractMismatch`-derived row (either kind) and the `.roadmap/`-strip row. Rows where that would
+  be a fabricated justification — gate directives past the reporting cap, a spec that could not be
+  written — deliberately carry none, and an implementer's confession is never stamped with a reason
+  it did not choose.
 - **Items are deduped** on `(unit, kind, hash(what))` — the ledger was a pure append with no
   identity, and a resume (which replays a cached implementer report byte-identically) banked the
   same item twice. A reworded finding is a new item; a literal replay is not.
@@ -1088,7 +1338,10 @@ quarantined. The same transcript shows `/results/0/command: must NOT have more t
 | provisioning | `provision:<id>` | every copy + the plan's setup command, exit codes |
 | preview worktree | `preview-worktree` | can that tree resolve the tip (`cat-file -t` → `commit`) |
 | preview bring-up / mirror | `preview-setup`, `mirror:<sha>` | read-back HEAD vs the target |
-| host + codex health | `env-probe:wN`, `codex-probe:wN` | the numbers, the `/logged in/i` test, the smoke's exit code |
+| host + codex health | `env-probe:wN`, `codex-probe:wN` (`#capacity` on its one re-probe) | the numbers, the `/logged in/i` test, the smoke's exit code, and whether its output says the model is at capacity |
+| launch-pack freshness | `pack-verify` (`#retry` once) | `cksum < plan.json` and `cksum < state.json` vs `cksumOf` of the text the pack file handed over |
+| capacity wait | `capacity-wait:<label>` | that every `sleep 110` in the closed list reported exit 0 — an unconfirmed wait buys no reattempt and halts the wave on `codex-capacity` |
+| orphans on re-entry | `codex-orphans:<id>`, `codex-reap:<id>` | the live pidfile paths printed, each matched against the unit's own `__codex/<id>/w*/*/codex.pid` shape before use; after the reap, that the list is empty |
 | commit probe | `commit-probe:<id>` | `rev-list --count` > 0, or `unknown` |
 | `.roadmap/` strip | `strip-roadmap:<id>` | exit codes of a list carrying `-- .roadmap/` on every command |
 | git facts | `merged-probe:`, `setup-commits:`, `merge-reach:` | `gitProbe` — every command runs, exit codes only |
@@ -1151,20 +1404,31 @@ remains the fallback/recovery path; every conductor knob is inert there.
 ```jsonc
 Workflow({
   scriptPath: "<conductor.mjs>",
-  args: { roadmapDir, launchId, config, harnessPath }
-  // roadmapDir  REQUIRED — absolute path of the arc's .roadmap directory. The script's FIRST act
-  //             is a Haiku courier that cats plan.json and state.json there and reports each
-  //             file's real `cksum`, which the script verifies IN CODE (one courier per file, in
-  //             parallel; a mismatch is re-read once — over line ranges if the file is simply too
-  //             big for one response — and then the launch throws `pack-unreadable`). The root
-  //             used to paste both documents into `args`, which put the whole pack through the
-  //             most expensive tier in the system on every launch and every resume.
-  //             The read command rewrites every JSON escape sequence to its own marker (`\"` ->
-  //             `@q@`, `\\` -> `@bs@`, `\uXXXX` -> `@uXXXX@`, …) and the script puts them back —
-  //             so escapes travel safely and no serializer setting is your problem. What still
-  //             is: SIZE. See the two documents' own sections below.
+  args: { roadmapDir, launchId, pack, config, harnessPath }
+  // roadmapDir  REQUIRED — absolute path of the arc's .roadmap directory.
+  // pack        the absolute path `launch-pack.mjs` printed (`<roadmapDir>/launch/pack-<launchId>.mjs`).
+  //             The script's FIRST act is `workflow({scriptPath: pack})`: the file RETURNS
+  //             plan.json and state.json as text, so no model copies the pack at all. One salted
+  //             Haiku courier (`pack-verify`) then runs `cksum` on the two files on disk and the
+  //             script compares them with `cksumOf` of that text IN CODE: a mismatch buys one fresh
+  //             sample and then throws `pack-stale`; a pack written for another launchId is
+  //             `pack-stale` too; a courier that cannot answer degrades `pack-unverified` and the
+  //             launch proceeds; a file that cannot be loaded throws `pack-missing` — never a
+  //             silent courier read, because persist.mjs replays the run from this same envelope
+  //             and must take the same route. Pass it in the `--args` you give persist.mjs too.
+  //             ABSENT -> the legacy read: a Haiku courier cats both files and reports each file's
+  //             real `cksum`, verified in code (one courier per file, in parallel; a mismatch is
+  //             re-read once — over line ranges if the file is simply too big for one response —
+  //             and then the launch throws `pack-unreadable`), plus one `pack-courier-read`
+  //             degradation. That read rewrites every JSON escape sequence to its own marker
+  //             (`\"` -> `@q@`, `\\` -> `@bs@`, `\uXXXX` -> `@uXXXX@`, …) and the script puts them
+  //             back; its limit is SIZE, and it has failed in the field on a retyped command too —
+  //             which is why it is the fallback and no longer the way in. Either way the root
+  //             never pastes the documents into `args`: that put the whole pack through the most
+  //             expensive tier in the system on every launch and every resume.
   // harnessPath REQUIRED — throws without it.
-  // launchId    a per-launch nonce, FRESH on every launch and every resume. It salts the pack
+  // launchId    a per-launch nonce, FRESH on every launch and every resume — launch-pack.mjs mints
+  //             one and prints it. It salts the pack's freshness check and the legacy pack
   //             read (disk holds the LAST run's plan, so a replayed pack is a stale plan) and is
   //             passed through to each wave, where the harness appends it to its ENVIRONMENT
   //             probes so resumeFromRunId cannot serve a stale disk/git fact from cache. Absent ->
@@ -1175,13 +1439,69 @@ Workflow({
 **The nested launch.** The conductor dispatches each wave with `plan` and `state` already in memory
 — its plan is mutated wave to wave and deliberately does not round-trip through disk — so a nested
 `workflow()` call passes both in `args` and reads no pack. The rule, in one line: **both in memory =>
-nested; neither => root, read the pack.** One without the other throws. `harness.mjs` launched
-directly (the fallback path) is a root launch and takes the same envelope, minus `harnessPath`.
+nested; neither => root, load the pack.** One without the other throws. `harness.mjs` launched
+directly (the fallback path) is a root launch and takes the same envelope — `pack` included —
+minus `harnessPath`. This is also what keeps the platform's one-nesting-level rule intact now that
+the pack arrives by `workflow()`: the conductor's pack load and every wave dispatch are depth-1
+calls it makes itself, and a nested harness never reaches its own `launchPack()`.
 
 `config` is threaded to the harness **untouched** (the conductor never sets `boundary:'off'`
 itself). A bounded loop (≤ `maxWavesPerRun`) dispatches a wave, takes its returned state, and feeds
 it as the next wave's `prior` — so `wave`, the unit map, and arc-cumulative `spend` accumulate for
 free.
+
+**`config.dispatchOnly: [ids]` — run exactly the units you name** (0.18.0; LAUNCH ENVELOPE ONLY).
+A harness wave *drains the DAG*: a dependent starts the moment its dependency merges, so
+`maxWavesPerRun: 1` bounds the conductor's iterations and never the units (2026-09-16: a one-wave
+run built the one relaunch unit the root meant, then dispatched seven dependents, four of them on
+specs the architect log said had to be respecced first — four quarantines and four plan-check
+rounds). The hold is code, in both scripts, and changes no prompt, so it is resume-safe:
+- **Harness:** a unit the list does not name is never started (`ready()`), never re-opened by the
+  wave-start loop and never stamped `blocked` — its record rides through the wave byte-identical,
+  so a held `running` / `blocked` / parked unit still **adopts** its own commits when a later
+  launch releases it. Ids that are not in-scope units select nothing and record one
+  `dispatch-only-unknown` row (never a throw — a throw inside a nested `workflow()` kills the
+  conductor with no envelope).
+- **Conductor:** before dispatch it checks that some listed unit can actually **start** (in scope,
+  non-terminal, every dependency merged or itself a startable listed unit) and otherwise returns
+  `dispatch-held` with nothing spent; the loop runs **one** wave (the listed units are terminal
+  after it, so a second iteration would be an empty wave plus a paid boundary); and a run whose only
+  outstanding work is what you chose to hold returns **`dispatch-held`** `{held, listed}` — from
+  `finish()` instead of `arc-stalled`, and after the loop instead of `max-waves` (a boundary that
+  admitted work still staged it; the new units are simply among `held`).
+- It is read from `args.config` and **never from `plan.config`**: `persist.mjs` writes the plan back
+  to disk, and a hold that lived there would silently outlast the launch that asked for it. An empty
+  list is no hold at all.
+
+**Carried debt** (0.18.0). Three returns leave `state.debt` holding rows the run *received and
+nobody banked*, and nothing used to read them back: a **halt** (the exit gates banked, the halt
+returned before census, triage and the bank, and at the next launch the ledger started empty —
+2026-09-17, wave 8: eleven rows, two of them `needs-migration-or-ruling` majors, triaged by hand
+from the return envelope), and `max-waves` / `agent-budget`, where `state.debt` is exactly what the
+issue-mode banker could not confirm and the run had promised to "re-bank at the next boundary". A `dispatch-held` return is the same case (the run ended on a hold, not a bank). So `ret()` does two
+things on every return: it writes **everything** the run received and never saw banked into
+`state.debt` — not only the last wave's rows (issue mode: wave 1's banker confirms nothing, wave 2
+halts with fresh debt; the envelope had wave 1's rows and the state a relaunch reads did not) — and
+it stamps `state.debtPending: true` when that debt is an *obligation*: a halt, one of those return
+reasons, or carried rows that still have not met a boundary (a pre-dispatch `plan-cycle` between
+the halt and the launch that finally runs a wave must not launder the obligation away). When the
+**launch state** carries `debtPending` (or, for a state written before the marker, a halt or one of
+those reasons), its `debt` is seeded into the run's ledger **before any return guard** —
+into both channels, so a pre-dispatch return (`plan-cycle`, `contingent-replan`, `dispatch-held`)
+cannot emit an empty `debt` over them — each object row stamped `carriedFromWave` once (kept on a
+second carry). They join the first returned wave's debt, where the predicates (contract routing
+included), the triager — which reads `carriedFromWave` in the debt JSON it is handed — and the
+banker all see them; `debt.md` and the debt issue render `[carried from wave N — that wave ended
+before its debt was banked]`. A row the re-entered unit's gate banks again verbatim is dropped
+rather than doubled, and a second halt returns them intact to carry again. **Every other return is
+not carried**: there `state.debt` is residue the *root* consumes (an escalating return has already
+banked it, a terminal one hands it over on purpose), and reading it back would bank it twice. If
+you triage a halted wave's debt by hand, delete `debt` from `state.json` before relaunching.
+Carried rows never *cause* a dispatch — they ride whatever wave the relaunch was going to run. (The
+conductor dispatches the wave a relaunch asks for even when nothing is left to build, because the
+final wave's boundary is never suppressed — RATIONALE §8; if that boundary closes the arc, the
+carried rows come back to the root in `debt`, labelled, with everything else a terminal return
+hands over.)
 
 **The tier ladder** (per boundary, first match wins — the routing order is load-bearing):
 
@@ -1251,7 +1571,8 @@ which the cut line brakes, whereas admitting it as debt would reopen the "debt c
   is the authority the planner, Codex and both exit gates build and grade against. **Arc-completeness is post-hoc**: a tier says so, or the boundary
   produced no new units and no spec revisions. Both paths are then filtered through a satisfiability
   census — if any in-scope unit is still non-terminal *and* dispatchable, the return is `arc-stalled`
-  instead, carrying `outstanding`. Units wedged behind an unresolved quarantine can never move, so
+  instead, carrying `outstanding` (or `dispatch-held`, when everything still dispatchable is work
+  `config.dispatchOnly` is holding — the tier was not wrong and the arc is not stalled). Units wedged behind an unresolved quarantine can never move, so
   they do not block the close; they ride back in `stuck`.
 
 **Contingent withholding.** The harness's scheduler ignores `edge.mode`, so before every dispatch the
@@ -1274,7 +1595,9 @@ merged work cannot come to depend on new work, and a dependency on merged work i
 
 **Budget guard.** For waves after the first, a pre-dispatch guard refuses to start a wave that could
 cross the 1000-call cap: `runLocalCalls + 8 + dispatchable×perUnitCallEstimate + agentBudgetReserve
-> 1000` → return `agent-budget`. Exhausting `maxWavesPerRun` returns `max-waves`. Both mean *relaunch
+> 1000` → return `agent-budget`. Exhausting `maxWavesPerRun` returns `max-waves` (under
+`config.dispatchOnly` the loop is one wave by construction and the post-loop return is
+`dispatch-held` instead). Both mean *relaunch
 fresh* — a new run resets the per-run counter. `max-waves` is the one terminal return the conductor
 cannot see coming: it becomes terminal only after the loop has triaged the wave and cleared its
 boundary as a continuation. So the final boundary is restored onto the returned state, marked
@@ -1285,8 +1608,18 @@ boundary as a continuation. So the final boundary is restored onto the returned 
 boundary decides rides home on the return envelope and `persist.mjs` puts it on disk (see "Who
 writes `.roadmap/`"): the final `state`, the merged `plan`, `debt` (→ `debt.json`), `debtSections`
 (→ the `<!-- wave N -->` sections of `debt.md`, **always stamped**, even "no new entries"),
-`journalEntries` (→ the `## Wave N` sections of `architect-log.md`, **tier-3 only**), and both event
-ledgers. A **continuation** boundary also logs a snapshot of the consumed state (`boundary` removed,
+`journalEntries` (→ the `## Wave N` sections of `architect-log.md`, **tier-3 only**),
+`boundaryNotes` (→ `feedback/triaged/<wave>/boundary-notes.md`), and both event
+ledgers. `boundaryNotes` is what the triage tiers said **to the root** — each tier's free-text
+`notes`: the rulings and contract corrections it wants from the architect, the user-facing question
+on a `needs-user` return. Until 0.18.0 that text reached the root only as `question` on that one
+return; on a continuation, a cut-line, an arc-complete or a `contract-amendment` handoff it existed
+nowhere but the run's `journal.jsonl` (2026-09-16: the root dug a tier-3 escalation's requests out
+of the `boundary:w7` result line with a script). It is captured the moment a tier's result exists,
+so no return path can jump it, grouped per wave with one `## Tier N` block each, and rewritten whole
+(re-persisting is a no-op). It is deliberately **not** appended to `architect-log.md`: every later
+boundary agent reads that log first, and text addressed to the root must not grow it. Like the
+journal, it lands when the run's *return* is persisted — a partial replay writes neither. A **continuation** boundary also logs a snapshot of the consumed state (`boundary` removed,
 banked debt cleared) so a crash in a LATER wave still lands what this one decided.
 
 What still runs as an agent call at a boundary, because the bytes have to reach disk mid-run
@@ -1301,7 +1634,14 @@ user notes → `feedback/triaged/N/`, as a **courier** since 0.14.0 — a closed
 role-qualified (`explorer-wave-N.md`, `health-wave-N.md`, …) because all three renderings are called
 `wave-N.md` and a flat move had the last silently overwrite the first. A source that never existed is
 an ordinary skip; one that existed and did not land is a `feedback-unmoved` degradation, never an arc
-outcome). A failed *expansion* withholds its unit; a failed *revision*
+outcome). In **issue mode** the disposal half rides the same closed list as `gh issue
+comment|close|edit … || echo GH-FAIL` commands, and it takes the same closed set the file branch
+does: only a disposition whose `file` is an **all-digit issue number the census listed** (a leading
+`#` tolerated) composes a command, for every action including `deferred`. The triager also files
+dispositions for the role renderings it read, and unfiltered those became
+`gh issue comment '.roadmap/feedback/health/wave-4.md'` (2026-09-16: four such commands with no bug
+issue open at all, each an `invalid issue format` and together a `gh-sync` row); a rendering
+archives on its own row and is never an issue. A failed *expansion* withholds its unit; a failed *revision*
 degrades (`spec-unrevised`) and the unit dispatches on its previous spec — an amendment is not an
 authority.
 
@@ -1327,10 +1667,10 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
 ```jsonc
 { status: 'conductor-return',
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
-                     //   | critical-path-stalled
+                     //   | critical-path-stalled | dispatch-held
                      //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
-                     //   | <halt>: codex-unavailable | codex-usage-limit | env-pids-exhausted
+                     //   | <halt>: codex-unavailable | codex-usage-limit | codex-capacity | env-pids-exhausted
                      //     | env-no-reaper | env-verify-blocked | platform-outage
                      //     — state.halt.reason, returned verbatim
   wave, wavesRun,
@@ -1345,9 +1685,13 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
                      //   one work moved onto, and `claude.total` never counts a codex run
   degradations,      // this run's rows (empty when clean) -> degradations.jsonl + skill-degradations.md
   escalations,       // this run's ladder rulings -> escalations.jsonl
-  debt,              // the wave ledger as received -> debt.json (empty once a boundary banked it)
+  debt,              // the wave ledger as received -> debt.json (empty once a boundary banked it);
+                     //   includes rows CARRIED from a launch state that never banked them
+                     //   (`carriedFromWave`), seeded before any return guard
   debtSections,      // [{wave, body}] -> the <!-- wave N --> sections of debt.md (file mode only)
   journalEntries,    // [{wave, journal}] -> the ## Wave N sections of architect-log.md (tier 3 only)
+  boundaryNotes,     // [{wave, tier, notes}] -> feedback/triaged/<wave>/boundary-notes.md: what the
+                     //   triage tiers ASKED of the root (tiers 2 and 3; empty notes are skipped)
   /* + reason-specific brief: */
   // contingent-replan → { edges }
   // plan-cycle       → { edges, units }  // the loop, for the root to repoint in plan.json
@@ -1362,7 +1706,12 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   // arc-stalled       → { arcSummary, outstanding, stuck }
   // agent-budget      → { nextWaveUnits, estimate }
   // root-triage       → { pendingFeedback, quarantined }
-  // <halt>            → { parked }  // the unit ids that parked; see state.halt above
+  // <halt>            → { parked, unbankedDebt }  // the unit ids that parked (see state.halt above),
+  //                     and how many debt rows this halt leaves un-banked — they are in `debt` /
+  //                     state.debt / debt.json, and the next launch carries them on its own
+  // dispatch-held     → { held, listed, arcSummary?, stuck?, why? }  // config.dispatchOnly: `held` =
+  //                     in-scope non-terminal units the list did not name; `why` only when nothing
+  //                     listed could start and nothing was dispatched
   // triage-degraded   → { pendingFeedback, quarantined }
 }
 ```
@@ -1400,7 +1749,8 @@ integration-review material.
 
 **Forensic labels** (for journal reading / `resumeFromRunId` replay): `census:w<N>`, `triage:w<N>`,
 `boundary:w<N>`, `spec-expand:<id>` (`#rewrite` on a cksum resample), `spec-revise:<id>`, and
-`move-feedback:w<N>` — plus, in issue mode only, `issue-new:w<N>` and `bank-debt:w<N>`. 0.14.0
+`move-feedback:w<N>` — plus, in issue mode only, `issue-new:w<N>` and `bank-debt:w<N>`, and at
+launch `pack-verify` (`#retry`), or `pack-read:<file>` (`#retry`, `#split`) on the legacy route. 0.14.0
 deleted the state/plan/debt/log writers that used to sit beside them, so in file mode
 `move-feedback` is the conductor's only remaining Persist-phase agent.
 
@@ -1427,6 +1777,9 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 | `codexBoundaryTimeoutMin` | `45` | Deadline for the four wave-tail BOUNDARY roles (explorer, health, flake, design). Longer than `codexRoleTimeoutMin` because they drive a product end to end, read a whole integrated tree, or run the full suite N times over; still far below `codexTimeoutMin` |
 | `codexSteerModel` | `'haiku'` | Steering-agent tier; `'sonnet'` if Haiku proves unable to drive launch/poll/kill/verify (probe P2) |
 | `codexMaxConcurrent` | `4` | Counting semaphore on concurrent codex processes (one OpenAI account behind them all). Timing-only — resume-safe |
+| `codexCapacityRetries` | `2` | How many "model at capacity" **waits the whole wave** may buy before it halts on `codex-capacity`. Each codex step (build, fix round, role) gets at most one wait and one `…#capacity` reattempt; the budget is reserved before the wait, so concurrent steps cannot overspend it. The wave-start smoke's one wait counts against it too |
+| `codexCapacityWaitSec` | `330` | Length of one capacity wait, composed as `ceil(n / 110)` × `sleep 110` in a closed-list courier (`capacity-wait:<label>`) — each sleep under the Bash tool's 120 s default, so nothing depends on a model raising a timeout |
+| `dispatchOnly` | *(none)* | **LAUNCH ENVELOPE ONLY** (`args.config.dispatchOnly: [unit ids]`) — never read from `plan.config`, which `persist.mjs` writes back to disk. Run exactly the listed units this launch and hold every other in-scope unit untouched (never started, re-opened or stamped `blocked`); the conductor runs one wave and returns `dispatch-held`. `[]` or absent = no hold. See "`config.dispatchOnly`" under the conductor |
 | `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
 | `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
@@ -1448,7 +1801,7 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `maxWavesPerRun` | `3` | Wave-loop bound; exhaustion → `max-waves` |
+| `maxWavesPerRun` | `3` | Wave-loop bound; exhaustion → `max-waves`. It bounds the conductor's **iterations, never the units** — one wave drains the DAG. To run a single unit, use `config.dispatchOnly` (harness table above), under which the loop is one wave regardless |
 | `boundaryTriage` | `'opus-first'` | `'opus-first'` full ladder · `'always-fable'` skip the Opus tier · `'root'` every boundary returns |
 | `agentBudgetReserve` | `200` | Headroom below the 1000-call cap |
 | `perUnitCallEstimate` | `15` | Pre-wave budget estimate per dispatchable unit |
@@ -1478,7 +1831,7 @@ own report file. Runs its own implement→test→fix loop inside the brief's pin
 | `fable` | Plan pack, plan-checks for med/high-risk units (taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
 | `opus` | Opus-first plan-check (low-risk singles), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, the escalation ladder's adjudicator (`adjudicate:<id>#<stop>`, effort `high` — not `opusEffort`), merge-conflict resolution and the one integration fix, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
 | `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's spec **revisions** | Spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
-| `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack read, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
+| `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack's freshness check (`pack-verify` — two `cksum` lines; the pack itself arrives by `workflow()` with no model in the path) and the legacy transcribing pack read when the envelope names no `pack`, the capacity wait and the re-entry orphan check/reap, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
 
 **Root-only, never delegated down the ladder**: the Phase-0 plan pack, contingent replans, contract
 amendments, needs-user calls, and the session integration review.
@@ -1519,8 +1872,10 @@ role decides anything — the table above still holds: Codex advises, Claude rul
   one from cache is a lie (arc-observed: a resume replayed a pre-rebuild `cd: No such file` and a
   pre-merge worktree report for a unit that had since landed). Anything that must vary per launch cannot be generated in-script — it
   arrives as `args.launchId`, which the root regenerates on every launch and every resume and which
-  the harness appends to its environment probes: provisioning, integration setup, the unit-setup
-  rebuild path, the merged/reachability/commit git probes, the per-wave codex probe, the host
+  the harness appends to its environment probes: the launch pack's freshness check (and the legacy
+  pack read), provisioning, integration setup, the unit-setup
+  rebuild path, the merged/reachability/commit git probes, the re-entry orphan check and reap, the
+  per-wave codex probe, the host
   preflight, and the preview couriers (worktree create, every mirror advance) — a replayed
   `git worktree add` after a container rebuild would skip the create and leave no preview at all. Work-product calls never carry it; that is what keeps a resume cheap.
 - The built-in `isolation: 'worktree'` is fresh-per-agent-call — units share a hand-rolled worktree at
@@ -1538,8 +1893,34 @@ role decides anything — the table above still holds: Codex advises, Claude rul
 - **Schema-retry resends payloads verbatim.** On a structured-output validation failure the platform
   re-sends the *same* oversized payload until the unit dies. This is why free-text fields are
   length-capped and implementers are told to commit *before* emitting their report.
-- **One `workflow()` nesting level, and the conductor spends it.** `harness.mjs` must stay leaf-only
-  forever — a `workflow()` call inside a child script throws.
+- **One `workflow()` nesting level.** A `workflow()` call inside a child script throws, so
+  `harness.mjs` is **leaf-only whenever it is nested**: the conductor's calls — one launch-pack load,
+  then one harness dispatch per wave — are all depth 1, and a nested harness is handed `plan` and
+  `state` in memory precisely so it never reaches its own `launchPack()`. A **root-launched**
+  harness spends its one level on the pack file and nothing else. Never add another `workflow()`
+  call to the harness.
+- **The launch pack is loaded, not read.** `launch-pack.mjs` (plain Node, no model) writes
+  `launch/pack-<launchId>.mjs` and the script loads it with `workflow({scriptPath: args.pack})`; the
+  envelope names the transport, so `persist.mjs`'s replay takes the same route the run did.
+  `launchPack()` — like `readPack`, the courier fallback behind it — is byte-mirrored in both
+  scripts (`shared-consts.test.mjs`). A pack is write-once per `launchId` and must outlive its
+  run's persist.
+- **The runtime may FRAME an agent's input** (since 2026-09-17): a first message relaying "the user
+  request that triggered this workflow run" (the user's latest message to the root) as "the only user
+  voice … this request wins", then the script's prompt as a second message with every line indented
+  two spaces. Two things follow. `persist.mjs` recovers prompts from transcripts, so it **unframes** —
+  a persister that reads the first user record verbatim turns a clean run into `PARTIAL` at the first
+  framed agent. And the relay is a *goal from outside every closed list*: a courier handed two
+  provisioning commands acted on it (`rm -f` in the operator's checkout). Every prompt either script
+  sends therefore opens with **`RELAY_BAR`** — the request was addressed to the launching session,
+  which carries it out itself; do nothing toward it — through one chokepoint (`ask`, the only caller
+  of `agent()`; `shared-consts.test.mjs` pins both, `closed-command.test.mjs` pins that it leads every
+  prompt of a full drive). It is wording, not containment (measured: 1 acting agent in 29 without it, 1 in 223 with it): the
+  root's pre-launch check in SKILL.md — and the warning `launch-pack.mjs` prints — is the other half.
+  The journal has a third outcome beside `result` and a bare `started` (a death, replayed as `null`):
+  **`failed`**, an `agent()` call that *threw*. `persist.mjs` replays it as a throw, at its own place
+  in the completion order, because the scripts branch on a throw (`run()` re-asks under `#retry`)
+  differently from a null (`#salvage`).
 - Workflows take no mid-run input; ~16 agents run concurrently; the merge queue is serial by design —
   wall clock, not tokens, is the throughput limit.
 

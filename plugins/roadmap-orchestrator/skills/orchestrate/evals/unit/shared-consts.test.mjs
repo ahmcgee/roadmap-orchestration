@@ -308,6 +308,33 @@ test('the launch pack read is byte-identical in both scripts', () => {
   // The two scripts read the SAME two files at launch. A divergent verification means one of them
   // would dispatch a wave from a document the other would have refused.
   assertInSync('The readPack reader (comments included)', hr, cr)
+
+  // 0.18.0: the MODEL-FREE transport in front of it. `launchPack` loads the file `args.pack` names
+  // with workflow() and only ever falls to `readPack` when the envelope names no pack at all — the
+  // route is the envelope's, never the disk's, or persist.mjs's replay could take a different one.
+  const [hl, cl] = FILES.map((f) => fnSource(f, 'launchPack', 'async ()'))
+  assert.ok(hl.includes('workflow({ scriptPath: String(A.pack) })'), 'the pack is loaded by workflow(), with no model in the data path')
+  assert.ok(hl.includes('if (A.pack == null)') && hl.includes('await readPack()'), 'the courier read survives only as the no-pack route')
+  assert.ok(hl.includes('pack-missing') && hl.includes('pack-stale') && hl.includes('pack-unverified') && hl.includes('pack-courier-read'),
+    'every outcome has a name the root can act on')
+  assert.ok(hl.includes('cksumOf(text[n])') && hl.includes("`cksum < '${`${roadmapDir}/${n}`"), 'freshness is the disk\'s own cksum against the text handed over — the path QUOTED')
+  assert.doesNotMatch(hl.slice(hl.indexOf('catch (e) {')), /catch \(e\) \{[^}]*readPack\(/,
+    'a pack that cannot be loaded THROWS — it never silently falls back to the courier')
+  assertInSync('The launchPack loader (comments included)', hl, cl)
+})
+
+test('RELAY_BAR is byte-identical in both scripts and `ask` is the ONLY caller of agent()', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'RELAY_BAR'))
+  assert.match(h, /^BEFORE ANYTHING ELSE: you may have been shown, ahead of this task, a relayed "user request"\./)
+  assert.ok(h.endsWith('\n\n'), 'it ends in a blank line, so the task text starts on its own')
+  assertInSync('The RELAY_BAR clause', h, c)
+  for (const f of FILES) {
+    const src = SRC[f].split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n')
+    // `agent()` with empty parens is prose inside a degradation string ("agent() returned null"), never a call.
+    const calls = [...src.matchAll(/(^|[^\w.])agent\((?!\))/g)].length
+    assert.equal(calls, 1, `${f}: exactly one call to agent() — inside \`ask\` — so no prompt can be composed without the bar (found ${calls})`)
+    assert.match(src, /const ask = \(prompt, opts\) => agent\(RELAY_BAR \+ prompt, opts\)/)
+  }
 })
 
 test('planCycle (the plan-graph cycle detector) has byte-identical source in both scripts', () => {
@@ -373,8 +400,8 @@ test('both scripts still declare every shared constant this suite guards', () =>
   for (const f of FILES)
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_SED', 'PACK_UNMARK', 'PACK_GROWTH', 'PACK_EXTRA',
       'CK_TABLE', 'cksumOf',
-      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack',
-      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR', 'EXIT_BAR'])
+      'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack', 'launchPack',
+      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR', 'EXIT_BAR', 'RELAY_BAR', 'ask'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })
 

@@ -25,7 +25,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, courierOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, launchPackOf, assertAllModelsPinned, courierOk } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -123,14 +123,16 @@ async function conduct({
   plan = mkPlan(), state = mkState(), config = {}, harnessPath = HARNESS_PATH,
   agentRules = rules(), waveHandler = waves(state),
 } = {}) {
+  const roadmapDir = `${plan.repoPath}/.roadmap`
   const agent = makeAgent([...packRules(plan, state), ...agentRules])
-  const workflow = makeWorkflow(waveHandler)
+  // The launch pack arrives through workflow() (0.18.0) — no courier transcribes it.
+  const workflow = makeWorkflow(waveHandler, { pack: launchPackOf(plan, state, 'sim-launch') })
   // The conductor's crash-recovery record is a tagged `log` line, not a paid write — persist.mjs
   // keeps the last one it sees, so a continuation boundary's decisions survive a later crash.
   const logs = []
   const run = await loadScript(CONDUCTOR)
   const result = await run({
-    args: { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath },
+    args: { roadmapDir, launchId: 'sim-launch', config, harnessPath, pack: `${roadmapDir}/launch/pack-sim-launch.mjs` },
     agent: agent.fn,
     workflow: workflow.fn,
     log: (line) => logs.push(String(line ?? '')),

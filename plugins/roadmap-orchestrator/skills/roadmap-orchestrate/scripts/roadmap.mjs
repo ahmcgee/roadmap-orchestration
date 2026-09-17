@@ -307,7 +307,7 @@ export async function run(request) {
         if (reports[role].head !== sha || !reports[role].actor) throw new Error(`stale or unattributed ${role} report`)
       }
       if (!request.implementer || reports.review.actor === request.implementer || reports.gate.actor === request.implementer) throw new Error('implementation needs independent review and gate')
-      if (reports.verify.verdict !== 'pass' || !reports.verify.lanes?.length || reports.verify.lanes.some(l => !l.command || l.exitCode !== 0)) throw new Error('verification did not pass recorded lanes')
+      if (reports.verify.verdict !== 'pass' || !reports.verify.lanes?.length || reports.verify.lanes.some(l => !l.command || !Number.isInteger(l.exitCode) || l.exitCode !== (l.expectedExit ?? 0))) throw new Error('verification did not pass recorded lanes')
       if (reports.review.verdict !== 'approve' || reports.gate.verdict !== 'approve' || !reports.gate.acceptance?.length || reports.gate.acceptance.some(a => a.verdict !== 'pass' || !a.clause)) throw new Error('review/gate did not approve acceptance criteria')
       const changed = git(plan.repoPath, 'diff', '--name-only', '-z', `${git(plan.repoPath, 'merge-base', state.integrationTip, sha)}...${sha}`).split('\0').filter(Boolean)
       if (changed.some(f => f === '.roadmap' || f.startsWith('.roadmap/'))) throw new Error('unit modifies roadmap control files; lead must reconcile separately')

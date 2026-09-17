@@ -87,15 +87,46 @@ const parseArgs = async () => {
 // recovered from the transcript instead and the records are indexed on it. A `started` with no
 // `result` is an agent that DIED, which is not an absence: agent() resolves to `null` there, a code
 // path several scripts handle explicitly, so it is recorded as a null result rather than dropped.
+// A `failed` record is the THIRD outcome — agent() THREW — and it replays as a throw (buildJournal):
+// the scripts take a different branch on a throw (`#retry`) than on a null (`#salvage`).
 //
 // The RESULT RECORDS ARE KEPT IN JOURNAL ORDER — that is, in the order the live run's calls
 // COMPLETED — because that order is the replay's clock; see "journal order is the clock" below.
-const promptOf = (records) => {
-  const first = records.find((r) => r?.type === 'user')
-  const c = first?.message?.content
+//
+// THE PROMPT MAY ARRIVE FRAMED (platform change observed 2026-09-17, mid-session, between two waves of
+// one conductor run). Instead of the prompt verbatim, the transcript then opens with TWO user records:
+//   "[Workflow harness — user request] The harness relays, verbatim and indented below, the user
+//    request that triggered this workflow run. …"            <- the session's user request, NOT the prompt
+//   "[Workflow harness — computed task] The task text below was computed at runtime by a workflow
+//    script. … The harness indents every line of the computed text, … The computed task text follows:"
+//    followed by the script's prompt with EVERY LINE INDENTED BY TWO SPACES.
+// Reading the first record as the prompt indexed all 29 framed agents of that run under the relay
+// text: the replay's lookup for the real `triage:w2` prompt found nothing, and a clean three-wave
+// `arc-complete` run persisted as `PARTIAL stoppedAt=triage:w2`. So a framed transcript is unframed
+// here — the task record's header line dropped, two spaces taken off every line — and an unframed
+// one is read exactly as before. The replay itself is the check that this is exact: a prompt
+// recovered one character wrong is a cache miss, loudly, never a wrong state.
+const FRAME = '[Workflow harness'
+const FRAME_TASK = '[Workflow harness — computed task]'
+const userText = (rec) => {
+  const c = rec?.message?.content
   if (typeof c === 'string') return c
-  if (Array.isArray(c)) return c.filter((p) => p?.type === 'text').map((p) => p.text).join('')
+  if (Array.isArray(c)) {
+    const parts = c.filter((p) => p?.type === 'text')
+    return parts.length ? parts.map((p) => p.text).join('') : undefined
+  }
   return undefined
+}
+const promptOf = (records) => {
+  const users = records.filter((r) => r?.type === 'user').map(userText).filter((t) => t !== undefined)
+  const first = users[0]
+  if (first === undefined || !first.startsWith(FRAME)) return first
+  const task = users.find((t) => t.startsWith(FRAME_TASK))
+  const at = task?.indexOf('\n') ?? -1
+  // Framed, but with no task record to unframe: unrecoverable. The record keeps its slot in the
+  // journal order (buildJournal) and the clock steps over it.
+  if (at < 0) return undefined
+  return task.slice(at + 1).split('\n').map((l) => (l.startsWith('  ') ? l.slice(2) : l)).join('\n')
 }
 
 async function buildJournal(dir) {
@@ -109,6 +140,14 @@ async function buildJournal(dir) {
     try { rec = JSON.parse(line) } catch { continue }
     if (!rec?.agentId) continue
     if (rec.type === 'result') { order.push({ agentId: rec.agentId, result: rec.result ?? null }); seen.add(rec.agentId) }
+    // `failed` is NOT a death: the live `agent()` call THREW (in practice the platform's
+    // "StructuredOutput retry cap exceeded"), and the scripts branch on that — `run()` catches it
+    // and re-asks under `<label>#retry`. Replaying it as a `null` sends the script down the OTHER
+    // branch (`#salvage`), which asks the journal for a call the live run never made: 2026-09-17, a
+    // Haiku steerer emitted five unparseable tool inputs, the run recovered and returned
+    // `arc-complete`, and the replay stopped PARTIAL at `codex-spec-review:add-divide#salvage`. It
+    // keeps its OWN place in the completion order, because that is where the live catch ran.
+    else if (rec.type === 'failed') { order.push({ agentId: rec.agentId, result: null, failed: true }); seen.add(rec.agentId) }
   }
   for (const line of lines) {
     let rec
@@ -123,21 +162,28 @@ async function buildJournal(dir) {
   const records = []        // [{ prompt, result }] in journal order; prompt null = unrecoverable
   const byPrompt = new Map()// prompt -> [index into records], ascending
   let unmapped = 0
-  for (const { agentId, result } of order) {
+  for (const { agentId, result, failed } of order) {
     const f = `agent-${agentId}.jsonl`
     let prompt
+    let thrown
     if (files.has(f)) {
-      const recs = (await readFile(path.join(dir, f), 'utf8')).split('\n').filter(Boolean)
+      const text = await readFile(path.join(dir, f), 'utf8')
+      const recs = text.split('\n').filter(Boolean)
         .map((l) => { try { return JSON.parse(l) } catch { return null } })
       prompt = promptOf(recs)
-    }
+      // The journal does not carry the error, so the message is rebuilt from what the transcript
+      // shows: the scripts retry only an error that names StructuredOutput, and rethrow anything else.
+      if (failed) thrown = /StructuredOutput|does not match required schema/.test(text)
+        ? 'agent({schema}): StructuredOutput retry cap exceeded (replayed from a `failed` journal record)'
+        : 'agent() threw in the live run (replayed from a `failed` journal record)'
+    } else if (failed) thrown = 'agent() threw in the live run (replayed from a `failed` journal record; no transcript)'
     // A record whose prompt cannot be recovered still OCCUPIES ITS SLOT in the order — no lookup can
     // ever ask for it, so the clock simply steps over it, but dropping it would shift every index
     // after it and silently rewrite the completion order.
     if (prompt === undefined) { unmapped++; records.push({ prompt: null, result }); continue }
     if (!byPrompt.has(prompt)) byPrompt.set(prompt, [])
     byPrompt.get(prompt).push(records.length)
-    records.push({ prompt, result })
+    records.push({ prompt, result, ...(thrown ? { thrown } : {}) })
   }
   return { records, byPrompt, total: order.length, unmapped }
 }
@@ -208,10 +254,12 @@ async function replay(entry, entryArgs, { records, byPrompt }) {
 
   // Serve at most one waiter the cursor has reached; `true` if the clock moved.
   const serveOne = () => {
+    // A record the live run THREW on settles the same way here: a rejection the script's own catch sees.
+    const settleWith = (w) => (records[w.index].thrown ? w.reject(new Error(records[w.index].thrown)) : w.resolve(records[w.index].result))
     const e = pending.findIndex((w) => w.echo && w.index < cursor)
-    if (e >= 0) { const [w] = pending.splice(e, 1); w.resolve(records[w.index].result); return true }
+    if (e >= 0) { const [w] = pending.splice(e, 1); settleWith(w); return true }
     const c = pending.findIndex((w) => !w.echo && w.index === cursor)
-    if (c >= 0) { const [w] = pending.splice(c, 1); cursor++; w.resolve(records[w.index].result); return true }
+    if (c >= 0) { const [w] = pending.splice(c, 1); cursor++; settleWith(w); return true }
     return false
   }
 
@@ -445,6 +493,7 @@ const escalations = ret.escalations ?? []
 const debt = ret.debt ?? state?.debt ?? []
 const debtSections = ret.debtSections ?? []
 const journalEntries = ret.journalEntries ?? []
+const boundaryNotes = ret.boundaryNotes ?? []
 
 await write('state.json', json(state))
 
@@ -500,6 +549,21 @@ if (journalEntries.length) {
   let doc = await readOr(path.join(roadmapDir, 'architect-log.md'), '')
   for (const { wave, journal } of journalEntries) doc = upsertSection(doc, `## Wave ${wave}`, journal, /^## /)
   await write('architect-log.md', doc)
+}
+
+// What the triage tiers addressed to the ROOT — rulings and contract corrections requested, the
+// user-facing question. One file per wave beside that wave's triaged evidence, fully rewritten from
+// the envelope (so re-persisting is a no-op). Kept OUT of architect-log.md on purpose: the next
+// boundary agent reads that log first, and text addressed to the root must not grow it.
+for (const wave of [...new Set(boundaryNotes.map((e) => e.wave))]) {
+  const body = boundaryNotes.filter((e) => e.wave === wave).sort((a, b) => a.tier - b.tier)
+    .map((e) => `## Tier ${e.tier}${e.tier === 3 ? ' (Fable boundary agent)' : e.tier === 2 ? ' (Opus triage)' : ''}\n\n${e.notes}`)
+    .join('\n\n')
+  await write(`feedback/triaged/${wave}/boundary-notes.md`,
+    `# Wave ${wave} — notes the boundary tiers addressed to the root\n\n` +
+    'MACHINE-WRITTEN by persist.mjs from the run\'s return envelope (`boundaryNotes`). These are requests and ' +
+    'questions for the architect — rulings, contract corrections, the user-facing question on a needs-user ' +
+    `return — not decisions; the decisions are in architect-log.md.\n\n${body}\n`)
 }
 
 // Event ledgers: append-only, one JSON line per row, arc-cumulative. Appended LAST, and skipped when

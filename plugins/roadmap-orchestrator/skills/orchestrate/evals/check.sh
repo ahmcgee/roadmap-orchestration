@@ -147,9 +147,16 @@ fi
 # The contract edge between them makes a warm lane: when it forms, ONE codex chain session
 # builds both and the artifacts live under the HEAD's chain/ dir; when it demotes, each unit
 # gets its own build/ dir. Either evidence satisfies the check.
+# Artifact dirs carry the WAVE since 0.18.0 (`__codex/<unit>/w<N>/<step>`): this fixture is one wave,
+# so the pin is `w1` exactly — never a `w*` glob, which would let some other wave's old success stand
+# in for this run's. A build may legitimately have landed on its one reattempt (`build-retry`, or
+# `build-capacity` after a "model at capacity" wait): the first of the three that exited 0 is graded.
 for id in add-multiply add-divide; do
-  D="$WT/__codex/$id/build"
-  [ -f "$D/exit-code" ] || D="$WT/__codex/add-multiply/chain"
+  D="$WT/__codex/$id/w1/build"
+  for cand in build build-retry build-capacity; do
+    if [ "$(cat "$WT/__codex/$id/w1/$cand/exit-code" 2>/dev/null)" = "0" ]; then D="$WT/__codex/$id/w1/$cand"; break; fi
+  done
+  [ -f "$D/exit-code" ] || D="$WT/__codex/add-multiply/w1/chain"
   if [ -f "$D/exit-code" ] && [ "$(cat "$D/exit-code")" = "0" ]; then
     pass "$id codex build ran to a clean exit ($D)"
   else

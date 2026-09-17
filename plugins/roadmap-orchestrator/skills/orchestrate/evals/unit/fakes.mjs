@@ -2,8 +2,9 @@
 // written independently against these exact signatures, so treat the exported surface as a
 // contract:
 //   makeAgent(rules, baseSha?) -> { fn, calls }
-//   makeWorkflow(handler)      -> { fn, calls }
-//   packRules(plan, state, serialize?) -> rules satisfying the launch pack read
+//   makeWorkflow(handler, {pack}?) -> { fn, calls, packCalls, trace }
+//   packRules(plan, state, serialize?) -> rules satisfying the launch pack read (either transport)
+//   launchPackOf(plan, state, launchId, serialize?) -> what a launch-pack.mjs file returns
 //   packTransform(cmd, text)   -> the read command's own escape-marker sed, run for real
 //   BASE_SHA, INT_SHA
 //   assertAllModelsPinned(calls), assertSchemasPresent(calls), conformsToSchema(result, schema)
@@ -159,7 +160,7 @@ export const packTransform = (cmd, text) => {
 // leaves, and the one the script's two-candidate check exists for. `serialize` lets a test model a
 // writer whose output is not what JSON.stringify would have produced (an `ensure_ascii` serializer
 // emitting `\uXXXX` escapes, say) without changing the document the script must end up parsing.
-export function packRules(plan, state, serialize = (doc) => `${JSON.stringify(doc, null, 2)}\n`) {
+const packDocs = (plan, state, serialize) => {
   const docs = {
     'plan.json': serialize(plan, 'plan.json'),
     'state.json': serialize(state, 'state.json'),
@@ -167,6 +168,27 @@ export function packRules(plan, state, serialize = (doc) => `${JSON.stringify(do
   for (const [name, text] of Object.entries(docs))
     assert.deepEqual(JSON.parse(text), JSON.parse(JSON.stringify(name === 'plan.json' ? plan : state)),
       `fakes.packRules: the canned ${name} must still parse back to the document the test passed`)
+  return docs
+}
+const defaultSerialize = (doc) => `${JSON.stringify(doc, null, 2)}\n`
+// What a `launch-pack.mjs` file RETURNS when the script loads it with workflow({scriptPath}) — the
+// model-free transport (0.18.0). The same `serialize` models the same on-disk bytes packRules does,
+// so the `pack-verify` courier's cksum (below) and the text in the pack agree exactly as they do on
+// a real launch where nobody touched the files in between.
+export const launchPackOf = (plan, state, launchId, serialize = defaultSerialize) =>
+  ({ launchId, files: packDocs(plan, state, serialize) })
+export function packRules(plan, state, serialize = defaultSerialize) {
+  const docs = packDocs(plan, state, serialize)
+  // ORDER IS PART OF THE SURFACE: tests wrap `rules[0]` (the `pack-read:` courier) to corrupt it.
+  const verifyRule = {
+    // The model-free transport's FRESHNESS check: `cksum < plan.json`, `cksum < state.json`, real
+    // coreutils over the on-disk bytes. A test that wants a stale pack overrides this rule.
+    match: /^pack-verify/,
+    result: (prompt) => courierResult(prompt, BASE_SHA, (cmd) => {
+      const m = /^cksum < '?.*\/([^/']+)'?$/.exec(cmd)
+      return m && docs[m[1]] !== undefined ? sysCksum(docs[m[1]]) : ''
+    }),
+  }
   return [{
     match: /^pack-read:/,
     result: (prompt, opts) => {
@@ -189,7 +211,7 @@ export function packRules(plan, state, serialize = (doc) => `${JSON.stringify(do
         return packTransform(cmd, `${lines.slice(a - 1, b).join('\n')}\n`)
       })
     },
-  }]
+  }, verifyRule]
 }
 
 // A spec WRITE report (conductor `spec-expand:` / `spec-revise:`). The conductor composes the exact
@@ -248,6 +270,10 @@ const DEFAULTS = [
   // one-commit run; tests probing failure axes (exit!=0, no commits, limitHit, timeout) override
   // with their own `codex` block.
   [(l) => l.startsWith('codex-probe:'), (b, p) => courierResult(p, b)],
+  // Reap-on-adoption (0.18.0): the liveness list prints nothing on a box with no orphans.
+  [(l) => l.startsWith('codex-orphans:') || l.startsWith('codex-reap:'), (b, p) => courierResult(p, b)],
+  // The capacity WAIT (0.18.0): a closed list of `sleep 110`s, every one exiting 0.
+  [(l) => l.startsWith('capacity-wait:'), (b, p) => courierResult(p, b)],
   // Host-health preflight (pid-cgroup headroom, PID 1, load) — a courier like the codex probe.
   [(l) => l.startsWith('env-probe:'), (b, p) => courierResult(p, b)],
   // The cross-model spec critique fires on EVERY fresh build whose risk is in planCheckRisk
@@ -399,18 +425,53 @@ export function makeAgent(rules = [], baseSha = BASE_SHA) {
   return { fn, calls }
 }
 
-// makeWorkflow(handler) — `fn` is the `workflow` global. Records {seq, scriptPath, args} and
-// returns handler(args, callIndex). (Unused by harness.test.mjs — the harness never nests —
-// but part of the frozen surface conductor.test.mjs depends on.)
-export function makeWorkflow(handler) {
+// makeWorkflow(handler, {pack}) — `fn` is the `workflow` global. `trace` is EVERY call, in order:
+// {seq, scriptPath, args}. Two kinds of call exist since 0.18.0 and the fake tells them apart by the
+// script they name, never by position:
+//   * a WAVE dispatch (anything that is not a launch pack) -> `calls`, and handler(args, callIndex).
+//     `callIndex` counts wave dispatches only, so `waves(s1, s2)` still means "wave 1, wave 2".
+//   * the LAUNCH PACK load (`…/launch/pack-<id>.mjs`) -> `packCalls`. With `pack` supplied it returns
+//     that value, as the real platform returns the file's `return`; without one it throws the
+//     platform's own "script file not found", which is what an absent file does live.
+// Nothing is hidden: a test about nesting or ordering reads `trace`.
+export const isPackScript = (p) => /\/launch\/pack-[^/]*\.mjs$/.test(String(p ?? ''))
+export function makeWorkflow(handler, { pack } = {}) {
   const calls = []
+  const packCalls = []
+  const trace = []
   let idx = 0
   const fn = (ref, args) => {
+    const scriptPath = ref?.scriptPath ?? ref
+    const rec = { seq: nextSeq(), scriptPath, args }
+    trace.push(rec)
+    if (isPackScript(scriptPath)) {
+      packCalls.push(rec)
+      if (pack === undefined)
+        return Promise.reject(new Error(`workflow({scriptPath: '${scriptPath}'}): Workflow script file not found: ${scriptPath}`))
+      return Promise.resolve(typeof pack === 'function' ? pack(scriptPath) : pack)
+    }
     const callIndex = idx++
-    calls.push({ seq: nextSeq(), scriptPath: ref?.scriptPath ?? ref, args })
+    calls.push(rec)
     return handler(args, callIndex)
   }
-  return { fn, calls }
+  return { fn, calls, packCalls, trace }
+}
+
+// EVERY prompt either script sends opens with RELAY_BAR (0.18.0): the platform may relay the session's
+// user request to each agent as "the only user voice", and on 2026-09-17 a courier handed a closed
+// provisioning list acted on one — `rm -f` in the operator's checkout. `taskOf` hands a test the
+// task text AFTER the bar, asserting the bar was there; `assertRelayBarLeads` is the chokepoint pin.
+export const RELAY_OPENING = 'BEFORE ANYTHING ELSE: you may have been shown, ahead of this task, a relayed "user request".'
+export const taskOf = (prompt) => {
+  const p = String(prompt ?? '')
+  assert.ok(p.startsWith(RELAY_OPENING), `a prompt does not open with RELAY_BAR: ${p.slice(0, 90)}`)
+  const at = p.indexOf('\n\n')
+  assert.ok(at > 0, 'RELAY_BAR ends in a blank line, so the task text starts on its own')
+  return p.slice(at + 2)
+}
+export function assertRelayBarLeads(calls) {
+  assert.ok(calls.length > 0)
+  for (const c of calls) taskOf(c.prompt)
 }
 
 // Every delegation must pin a real model tier — an omitted model silently inherits the

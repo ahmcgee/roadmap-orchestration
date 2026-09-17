@@ -109,6 +109,11 @@ Verifier report:
 {"head":"FULL_UNIT_SHA","actor":"verifier-thread","verdict":"pass","lanes":[{"command":"npm test -- core","exitCode":0}]}
 ```
 
+A lane is green when `exitCode` equals `expectedExit` (absent means 0), so a clause that requires a
+command to fail records `{"command":"…","exitCode":2,"expectedExit":2}`; `approve` rejects any other
+mismatch and any lane without an integer `exitCode`. The Claude driver's lanes may also carry
+`source` (`spec`/`verifier`) and `outcome`; the helper ignores both.
+
 Reviewer report:
 
 ```json
