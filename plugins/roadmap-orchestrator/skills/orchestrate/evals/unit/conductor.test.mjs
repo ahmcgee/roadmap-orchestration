@@ -34,7 +34,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, specWriteOk, courierOk, courierSaying, courierCommands } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, launchPackOf, assertAllModelsPinned, assertRelayBarLeads, specWriteOk, courierOk, courierSaying, courierCommands } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -138,15 +138,22 @@ const waves = (...states) => (args, i) => states[Math.min(i, states.length - 1)]
 /* ----------------------------------- driver ----------------------------------- */
 async function conduct({
   plan = mkPlan(), state = mkState(), config = {}, harnessPath = HARNESS_PATH,
-  stringify = false, agentRules = rules(), waveHandler = waves(state),
+  stringify = false, agentRules = rules(), waveHandler = waves(state), usePack = true, pack, extraArgs = {},
+  launchRules = [],   // rules that must win over packRules (a stale or dead `pack-verify`, say)
 } = {}) {
-  // The plan and state reach the script through the LAUNCH PACK, not through args: the envelope
-  // names the directory and a Haiku courier reads it. packRules is what makes that read succeed.
-  const agent = makeAgent([...packRules(plan, state), ...agentRules])
-  const workflow = makeWorkflow(waveHandler)
+  // The plan and state reach the script through the LAUNCH PACK, not through args. Since 0.18.0 the
+  // envelope names a pack FILE (`args.pack`, written by launch-pack.mjs) that the script loads with
+  // workflow() — no model in the data path — and one courier checks its cksums against the disk;
+  // packRules answers that courier. `usePack:false` drops `args.pack`, which is the legacy route: a
+  // Haiku courier transcribes both files, and packRules answers that too.
+  const roadmapDir = `${plan.repoPath}/.roadmap`
+  const packFile = `${roadmapDir}/launch/pack-sim-launch.mjs`
+  const agent = makeAgent([...launchRules, ...packRules(plan, state), ...agentRules])
+  const workflow = makeWorkflow(waveHandler,
+    usePack ? { pack: pack ?? launchPackOf(plan, state, 'sim-launch') } : {})
   const run = await loadScript(CONDUCTOR)
   const logs = []
-  const argObj = { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath }
+  const argObj = { roadmapDir, launchId: 'sim-launch', config, harnessPath, ...(usePack ? { pack: packFile } : {}), ...extraArgs }
   const bag = {
     args: stringify ? JSON.stringify(argObj) : argObj,
     agent: agent.fn,
@@ -416,6 +423,111 @@ test('wave debt joins the run ledger on receipt and rides every return', async (
     "the wave's debt is on the envelope verbatim — persist.mjs writes it to .roadmap/debt.json")
 })
 
+// 2026-09-17 (wave 8): the wave halted on a codex limit AFTER its exit gates had banked eleven debt
+// rows — two of them `needs-migration-or-ruling` majors. The halt returned before census, triage and
+// stage(); at the relaunch `pendingDebt` started empty and the harness rebuilt `debt` from nothing,
+// so the rows never met a boundary. The root triaged them by hand out of the return envelope.
+const HALT_DEBT = [
+  { unit: 'runtime-operator', kind: 'structure', severity: 'major', what: 'ALLOCATION-KEYING', why: 'w', bankReason: 'needs-migration-or-ruling' },
+  '[not admitted — admissions closed] tidy-logs: a prose line carries too',
+]
+const haltedLaunch = (extra = {}) => mkState({ wave: 8, debt: HALT_DEBT, halt: { reason: 'codex-usage-limit', codex: 'codex-usage-limit' },
+  units: { 'seed-unit': { status: 'pending', parked: true } }, ...extra })
+const CARRIED = [{ ...HALT_DEBT[0], carriedFromWave: 8 }, HALT_DEBT[1]]
+
+test('debt a HALTED wave banked rides into the next launch\'s first boundary: triaged, and banked', async () => {
+  const fresh = { unit: 'seed-unit', kind: 'test', severity: 'minor', what: 'WAVE-NINE-ROW', why: 'w' }
+  const w9 = mkState({ wave: 9, debt: [fresh], boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }), units: { 'seed-unit': { status: 'merged' } } })
+  const { agent, result } = await conduct({ state: haltedLaunch(), waveHandler: waves(w9, mkState({ wave: 10 })),
+    agentRules: rules({ triage: triageAdmit(['a-fix']) }), config: { conductor: { maxWavesPerRun: 1 } } })
+  const triage = prompt(firstLabel(agent.calls, /^triage:w9/))
+  assert.ok(triage.includes('ALLOCATION-KEYING') && triage.includes('"carriedFromWave":8'),
+    'the triager is handed the row AND told which wave it came from — the explicit carry the field report asked for')
+  assert.ok(triage.includes('WAVE-NINE-ROW'), 'beside the wave\'s own debt')
+  const sec = result.debtSections.find((x) => x.wave === 9).body
+  assert.match(sec, /ALLOCATION-KEYING.*\[bank: needs-migration-or-ruling\].*\[carried from wave 8/s, 'and it is BANKED at that boundary, labelled')
+  assert.ok(sec.includes('tidy-logs') && sec.includes('WAVE-NINE-ROW'))
+})
+
+test('carried debt survives a second halt, a pre-dispatch return, and is never doubled', async () => {
+  // A second halt: returned intact, stamp kept, counted on the envelope.
+  const again = mkState({ wave: 9, debt: [], halt: { reason: 'codex-capacity', codex: 'codex-capacity' },
+    units: { 'seed-unit': { status: 'pending', parked: true } } })
+  const halted = await conduct({ state: haltedLaunch(), waveHandler: waves(again) })
+  assert.equal(halted.result.reason, 'codex-capacity')
+  assert.deepStrictEqual(halted.result.debt, CARRIED, 'on `debt` — what persist.mjs writes to debt.json')
+  assert.deepStrictEqual(halted.result.state.debt, CARRIED, 'and in the state the NEXT launch reads, so they carry again')
+  assert.equal(halted.result.unbankedDebt, 2, 'the halt envelope says how much it leaves un-banked')
+  assert.ok(!hasLabel(halted.agent.calls, /^(census|triage|bank-debt):/), 'a halt still buys no census, triage or bank call')
+
+  // A return BEFORE any wave dispatches (a plan cycle) must not emit `debt: []` over them.
+  const cyc = await conduct({ state: haltedLaunch(), plan: mkPlan({ units: [
+    { id: 'seed-unit', title: 's', risk: 'low', kind: 'code', inScope: true },
+    { id: 'other', title: 'o', risk: 'low', kind: 'code', inScope: true }],
+    edges: [{ from: 'seed-unit', to: 'other', type: 'semantic', mode: 'contract' }, { from: 'other', to: 'seed-unit', type: 'semantic', mode: 'contract' }] }) })
+  assert.equal(cyc.result.reason, 'plan-cycle')
+  assert.deepStrictEqual(cyc.result.debt, CARRIED, 'seeded before every return guard')
+  assert.equal(cyc.workflow.calls.length, 0)
+
+  // The re-entered unit's gate banks the same row again, verbatim: one row, not two.
+  const w9 = mkState({ wave: 9, debt: [HALT_DEBT[0]], boundary: boundaryBlock(), units: { 'seed-unit': { status: 'merged' } } })
+  const dup = await conduct({ state: haltedLaunch(), waveHandler: waves(w9) })
+  assert.equal(dup.result.debt.filter((d) => d.what === 'ALLOCATION-KEYING').length, 1)
+})
+
+test('state.debt holds EVERYTHING un-banked at every return, and says whether the next launch must carry it', async () => {
+  const d1 = { unit: 'seed-unit', kind: 'structure', severity: 'minor', what: 'WAVE-ONE-ROW', why: 'w' }
+  const d2 = { unit: 'a-fix', kind: 'test', severity: 'minor', what: 'WAVE-TWO-ROW', why: 'w' }
+  // Issue mode, wave 1: the banker confirms NOTHING. Wave 2 then halts, with fresh debt of its own.
+  const w1 = mkState({ wave: 1, debt: [d1], boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }) })
+  const w2 = mkState({ wave: 2, debt: [d2], halt: { reason: 'codex-usage-limit', codex: 'codex-usage-limit' }, units: { 'seed-unit': { status: 'merged' }, 'a-fix': { status: 'pending', parked: true } } })
+  const { result } = await conduct({ plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r' }), state: mkState({ wave: 0, units: {} }), waveHandler: waves(w1, w2),
+    agentRules: [{ match: /^bank-debt:/, result: { ok: true, banked: [] } }, { match: /^issue-new:/, result: { ok: true, opened: [] } }, ...rules({ triage: triageAdmit(['a-fix']) })] })
+  assert.equal(result.reason, 'codex-usage-limit')
+  assert.deepStrictEqual(result.state.debt.map((d) => d.what), ['WAVE-ONE-ROW', 'WAVE-TWO-ROW'],
+    'the relaunch reads state.debt — wave 1\'s un-banked row used to be on the envelope only, and was lost there')
+  assert.equal(result.state.debtPending, true, 'and the obligation is explicit, not inferred from a reason a later return can replace')
+
+  // A pre-dispatch return BETWEEN the halt and the launch that finally runs a wave keeps the obligation alive.
+  const cyc = await conduct({ state: { ...result.state }, plan: mkPlan({ units: [unitOf('seed-unit'), unitOf('x'), unitOf('y')],
+    edges: [{ from: 'x', to: 'y', type: 'semantic', mode: 'contract' }, { from: 'y', to: 'x', type: 'semantic', mode: 'contract' }] }) })
+  assert.equal(cyc.result.reason, 'plan-cycle')
+  assert.equal(cyc.result.state.debtPending, true)
+  const later = await conduct({ state: { ...cyc.result.state, halt: undefined }, waveHandler: waves(mkState({ wave: 3, debt: [], boundary: boundaryBlock() })) })
+  assert.ok(later.result.debt.some((d) => d.what === 'WAVE-ONE-ROW'), 'plan-cycle is not an "un-banked" reason — the marker is what carried them')
+
+  // A return that hands the residue to the ROOT is not an obligation.
+  const done = await conduct({ state: mkState({ debt: [d1], boundary: boundaryBlock() }) })
+  assert.equal(done.result.reason, 'arc-complete')
+  assert.equal(done.result.state.debtPending, undefined)
+})
+
+test('dispatch-held leaves an obligation too, and a listed unit that reads `deferred` can still start', async () => {
+  const d1 = { unit: 'seed-unit', kind: 'structure', severity: 'minor', what: 'HELD-RUN-ROW', why: 'w' }
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('dep-1')] })
+  const after = mkState({ wave: 1, debt: [d1], boundary: boundaryBlock(), units: { 'seed-unit': { status: 'merged' } } })
+  const held = await conduct({ plan, state: mkState({ wave: 0, units: { 'seed-unit': { status: 'deferred' } } }),
+    config: { dispatchOnly: ['seed-unit'] }, waveHandler: waves(after) })
+  assert.equal(held.workflow.calls.length, 1, 'an in-scope `deferred` stamp is stale — the harness re-opens it, so the hold must not read it as terminal')
+  assert.equal(held.result.reason, 'dispatch-held')
+  assert.equal(held.result.state.debtPending, true, 'the run ended without a bank: the next launch carries the row')
+  const next = await conduct({ plan, state: held.result.state, waveHandler: waves(mkState({ wave: 2, debt: [], boundary: boundaryBlock() })) })
+  assert.ok(next.result.debt.some((d) => d.what === 'HELD-RUN-ROW' && d.carriedFromWave === 1))
+})
+
+test('only a return that left debt UN-BANKED is carried: root-consumed residue never banks twice', async () => {
+  // arc-complete hands `state.debt` to the root intact, on purpose. It is the root's — not a carry.
+  const consumed = mkState({ wave: 8, debt: HALT_DEBT, conductor: { reason: 'arc-complete', wavesRun: 1, boundaries: [] } })
+  const w9 = mkState({ wave: 9, debt: [], boundary: boundaryBlock() })
+  const a = await conduct({ state: consumed, waveHandler: waves(w9) })
+  assert.deepStrictEqual(a.result.debt, [], 'nothing carried')
+  // max-waves leaves exactly what the issue-mode banker could not confirm — promised a re-bank at
+  // "the next boundary", which a relaunch is.
+  const unbanked = mkState({ wave: 8, debt: [HALT_DEBT[0]], conductor: { reason: 'max-waves', wavesRun: 3, boundaries: [] } })
+  const b = await conduct({ state: unbanked, waveHandler: waves(w9) })
+  assert.deepStrictEqual(b.result.debt, [CARRIED[0]], 'the promise survives the relaunch')
+})
+
 test('a clean wave carries no debt', async () => {
   const { result } = await conduct()
   assert.deepStrictEqual(result.debt, [], 'no debt -> an empty ledger, not a missing one')
@@ -521,6 +633,10 @@ test('a tier-3 needs-user return stages specs, plan, debt and journal before ret
   assert.ok(sec.body.includes('DEBT-ONE'), 'alongside the wave\'s own items')
   assert.deepStrictEqual(result.journalEntries, [{ wave: 1, journal: 'JOURNAL-TEXT' }], 'the journal survives')
   assert.ok(result.plan.units.some((u) => u.id === 'cache-v2'), 'and the respec is in the plan the root gets back')
+  // 2026-09-16: the tier's `notes` — what it ASKS of the root — reached the root only as `question`
+  // on this one return reason; on every other path it existed only in journal.jsonl.
+  assert.deepStrictEqual(result.boundaryNotes, [{ wave: 1, tier: 3, notes: 'Ship A or B?' }],
+    'the notes ride the envelope on their own field, leaving the journal entry shape untouched')
 })
 
 test('a tier-2 needs-user escalation stages the drafts it admitted', async () => {
@@ -532,6 +648,8 @@ test('a tier-2 needs-user escalation stages the drafts it admitted', async () =>
     waveHandler: waves(st()),
   })
   assert.equal(result.reason, 'needs-user')
+  assert.deepStrictEqual(result.boundaryNotes, [{ wave: 1, tier: 2, notes: 'A or B?' }],
+    'a tier-2 triager has no journal at all — its notes used to have no carrier but `question`')
   assert.ok(hasLabel(agent.calls, /^spec-expand:consolidate-gcd\b/), 'the admitted draft gets its spec')
   assert.ok(result.plan.units.some((u) => u.id === 'consolidate-gcd'), 'and the plan carrying it reaches the root')
 })
@@ -1073,9 +1191,9 @@ test('file mode: the archive list carries no gh command at all', async () => {
 test('issue mode: roadmap:bug disposal rides the same closed list, best-effort per command', async () => {
   const { agent } = await archiveRun({
     plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r' }),
-    notes: ['41'],
+    notes: ['41', '42'],
     feedback: [{ file: '41', action: 'actioned', reason: 'fixed by consolidate-gcd' },
-      { file: '42', action: 'deferred' }],
+      { file: '#42', action: 'deferred' }],
     extraRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } }],
   })
   const cmds = archiveCmds(agent)
@@ -1089,6 +1207,29 @@ test('issue mode: roadmap:bug disposal rides the same closed list, best-effort p
   for (const c of cmds.filter((x) => x.startsWith('gh '))) assert.match(c, /\|\| echo GH-FAIL$/)
   assert.ok(!cmds.some((c) => c.includes('/feedback/user/')),
     'in issue mode a user bug report is an ISSUE, so there is no user note to move')
+})
+
+// 2026-09-16 (wave 4): with no roadmap:bug issue open, `move-feedback:w4` still ran four `gh issue`
+// commands whose argument was a feedback FILE PATH — the triager's dispositions for the role
+// renderings it had read — each an `invalid issue format` and together a `gh-sync` row. The issue
+// branch now takes the same closed set the file branch does: the census's list, and only digits.
+test('issue mode: only a census-listed issue NUMBER composes a gh command — never a rendering path', async () => {
+  const { agent, result } = await archiveRun({
+    plan: mkPlan({ tracking: 'issues', repoSlug: 'o/r' }),
+    notes: [],
+    feedback: [
+      { file: '.roadmap/feedback/health/wave-1.md', action: 'actioned', reason: 'drafts admitted' },
+      { file: '.roadmap/feedback/explorer/wave-1.md', action: 'dismissed', reason: 'no findings' },
+      { file: '77', action: 'actioned', reason: 'a number the census never listed' },
+      { file: '41; rm -rf /', action: 'deferred' },
+    ],
+    extraRules: [{ match: /^issue-new:/, result: { ok: true, opened: [] } }],
+  })
+  const cmds = archiveCmds(agent)
+  assert.deepEqual(cmds.filter((c) => c.startsWith('gh ')), [],
+    'no disposition names a census-listed bug issue, so no gh command is composed at all')
+  assert.ok(!cmds.some((c) => /^gh /.test(c) && c.includes('.roadmap/')), 'a file path never reaches `gh issue`')
+  assert.ok(!(result.degradations ?? []).some((d) => d.kind === 'gh-sync'), 'and nothing degrades over it')
 })
 
 test('issue mode: a failed gh disposal records gh-sync and nothing else', async () => {
@@ -1311,6 +1452,9 @@ test('every agent call pins its model', async () => {
     ),
   })
   assertAllModelsPinned(agent.calls)
+  // …and every one of them — census, triage, the spec writers, move-feedback, the pack's freshness
+  // courier — opens with RELAY_BAR (see closed-command.test.mjs for the incident).
+  assertRelayBarLeads(agent.calls)
 })
 
 test('the conductor opens exactly one workflow nesting level (always the harness)', async () => {
@@ -1320,8 +1464,75 @@ test('the conductor opens exactly one workflow nesting level (always the harness
   })
   assert.ok(workflow.calls.length >= 1)
   for (const c of workflow.calls) {
-    assert.equal(c.scriptPath, HARNESS_PATH, 'every workflow() call targets the harness, never another workflow script')
+    assert.equal(c.scriptPath, HARNESS_PATH, 'every WAVE dispatch targets the harness, never another workflow script')
   }
+  // 0.18.0: the launch pack is loaded with workflow() too. The whole trace, nothing hidden: exactly
+  // one pack load, FIRST, then harness dispatches — every one a depth-1 call made by the conductor
+  // itself. The nested harness is handed plan+state in memory, which is what keeps IT from ever
+  // reaching its own launchPack() (a workflow() inside a child throws on the real platform).
+  assert.deepEqual(workflow.trace.map((c) => (c.scriptPath === HARNESS_PATH ? 'harness' : c.scriptPath)),
+    ['/repo/.roadmap/launch/pack-sim-launch.mjs', ...workflow.calls.map(() => 'harness')])
+  for (const c of workflow.calls)
+    assert.ok(c.args.plan && c.args.state, 'a nested launch carries plan AND state, so the child never loads a pack')
+})
+
+/* ------------------- the launch pack: the envelope names the transport ------------------- */
+// 2026-09-16/17: three `pack-unreadable` launches in two days — a 30 KB state whose courier copy
+// stopped at 6.4 K characters twice, and a courier that RETYPED the composed `sed` with its
+// backslashes un-doubled. 0.18.0 takes the model out of the data path: launch-pack.mjs writes a
+// workflow script that returns the two files as text, and the script loads it.
+test('launch pack: with args.pack the documents arrive by workflow() and NO courier transcribes anything', async () => {
+  const { agent, workflow, result } = await conduct()
+  assert.ok(!hasLabel(agent.calls, /^pack-read:/), 'the transcribing courier is never dispatched')
+  assert.equal(workflow.packCalls.length, 1, 'one pack load')
+  const v = labeled(agent.calls, /^pack-verify/)
+  assert.equal(v.length, 1, 'and one freshness courier')
+  assert.deepEqual(courierCommands(v[0].prompt), ["cksum < '/repo/.roadmap/plan.json'", "cksum < '/repo/.roadmap/state.json'"],
+    'a closed list of two read-only commands: two short lines to copy, never a document')
+  assert.match(v[0].prompt, /Probe id sim-launch/, 'salted — what the disk holds NOW can never be served from a resume\'s cache')
+  assert.equal(v[0].model, 'haiku')
+  assert.ok(!(result.degradations ?? []).some((d) => /^pack-/.test(d.kind)), 'a verified pack is not worth a row')
+})
+
+test('launch pack: without args.pack the legacy courier read runs, and says it is the legacy read', async () => {
+  const { agent, workflow, result } = await conduct({ usePack: false })
+  assert.equal(workflow.packCalls.length, 0, 'no pack named, no pack loaded — the ENVELOPE picks the route, never the disk')
+  assert.deepEqual(labeled(agent.calls, /^pack-read:/).map((c) => c.label), ['pack-read:plan.json', 'pack-read:state.json'])
+  const row = (result.degradations ?? []).find((d) => d.kind === 'pack-courier-read')
+  assert.ok(row && /launch-pack\.mjs/.test(row.what), 'the row tells the root which command removes the model from the read')
+})
+
+test('launch pack: a pack the envelope names but nothing can load is pack-missing — never a silent courier read', async () => {
+  await assert.rejects(conduct({ pack: () => { throw new Error('Workflow script file not found') } }), /pack-missing: args\.pack names/)
+  const seen = []
+  await assert.rejects(conduct({ pack: () => { throw new Error('nope') }, agentRules: [{ match: /./, result: (p, o) => { seen.push(o.label); return null } }] }))
+  assert.deepEqual(seen, [], 'no agent of any kind was dispatched: a replay of this envelope must take the same route the run did')
+})
+
+test('launch pack: a file changed after the pack was written is pack-stale, after one fresh sample', async () => {
+  // The disk's plan.json is no longer the text inside the pack: its cksum line differs, state.json's does not.
+  const honest = packRules(mkPlan(), mkState()).find((r) => r.match.test('pack-verify'))
+  const seen = []
+  const stale = { match: /^pack-verify/, result: (prompt, opts) => {
+    seen.push({ label: opts.label, prompt })
+    const r = honest.result(prompt, opts)
+    r.results[0].stdout = '1234567890 99'
+    return r
+  } }
+  await assert.rejects(conduct({ launchRules: [stale] }), /pack-stale: plan\.json under \/repo\/\.roadmap no longer matches/)
+  assert.deepEqual(seen.map((c) => c.label), ['pack-verify', 'pack-verify#retry'],
+    'one mistyped digit must not kill a launch, so a mismatch buys exactly one fresh sample under a differing prompt')
+  assert.notEqual(seen[0].prompt, seen[1].prompt)
+})
+
+test('launch pack: a pack written for another launchId is refused before anything is dispatched', async () => {
+  await assert.rejects(conduct({ pack: launchPackOf(mkPlan(), mkState(), 'some-other-launch') }), /pack-stale: .* was written for launchId "some-other-launch"/)
+})
+
+test('launch pack: a freshness courier that cannot answer degrades pack-unverified and the launch proceeds', async () => {
+  const { result, workflow } = await conduct({ launchRules: [{ match: /^pack-verify/, result: () => null }] })
+  assert.ok(workflow.calls.length >= 1, 'the wave still dispatched — an unknown is never a breach')
+  assert.ok((result.degradations ?? []).some((d) => d.kind === 'pack-unverified'))
 })
 
 /* --------------------- arc-completeness is status-aware ---------------------- */
@@ -1330,6 +1541,46 @@ test('the conductor opens exactly one workflow nesting level (always the harness
 // invisible to the tier that declared the arc done. 2026-07-18: tier-2 called arc-complete with
 // four in-scope, satisfiable units outstanding; only the root caught it.
 const unitOf = (id, o = {}) => ({ id, title: id, risk: 'low', kind: 'code', inScope: true, ...o })
+
+// config.dispatchOnly — the conductor's three brakes (the harness enforces the hold itself).
+test('dispatchOnly: ONE wave, config forwarded untouched, and the return is dispatch-held — never arc-stalled', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('dep-1'), unitOf('dep-2')],
+    edges: [{ from: 'seed-unit', to: 'dep-1', type: 'semantic', mode: 'contract' }] })
+  const after = mkState({ wave: 1, boundary: boundaryBlock(), units: { 'seed-unit': { status: 'merged' } } })
+  const config = { dispatchOnly: ['seed-unit'], conductor: { maxWavesPerRun: 3 } }
+  const { result, workflow } = await conduct({ plan, config, state: mkState({ wave: 0, units: {} }), waveHandler: waves(after) })
+  assert.equal(workflow.calls.length, 1, 'the loop runs once: a second iteration would be an empty wave plus a paid boundary')
+  assert.deepEqual(workflow.calls[0].args.config, config, 'and the harness is handed the config verbatim — it enforces the hold')
+  assert.equal(result.reason, 'dispatch-held', 'the tier was not wrong and the arc is not stalled: the root is holding the rest')
+  assert.deepEqual(result.held, ['dep-1', 'dep-2'])
+  assert.deepEqual(result.listed, ['seed-unit'])
+})
+
+test('dispatchOnly: a boundary that ADMITS work still ends the run as dispatch-held, not max-waves', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('dep-1')] })
+  const after = mkState({ wave: 1, boundary: boundaryBlock({ fixUnits: [draft('a-fix')] }), units: { 'seed-unit': { status: 'merged' } } })
+  const { result, workflow } = await conduct({ plan, state: mkState({ wave: 0, units: {} }),
+    config: { dispatchOnly: ['seed-unit'], conductor: { maxWavesPerRun: 3 } }, waveHandler: waves(after) })
+  assert.equal(workflow.calls.length, 1)
+  assert.equal(result.reason, 'dispatch-held')
+  assert.ok(result.plan.units.some((u) => u.id === 'a-fix'), 'the admitted draft is staged like any continuation')
+  assert.ok(result.held.includes('a-fix') && result.held.includes('dep-1'), 'and is simply among what the next launch may release')
+})
+
+test('dispatchOnly: a listed unit that cannot start dispatches NOTHING — no empty wave, no boundary', async () => {
+  const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('dep-1')],
+    edges: [{ from: 'seed-unit', to: 'dep-1', type: 'semantic', mode: 'contract' }] })
+  for (const dispatchOnly of [['dep-1'], ['no-such-unit']]) {
+    const { result, workflow, agent } = await conduct({ plan, state: mkState({ wave: 0, units: {} }), config: { dispatchOnly } })
+    assert.equal(result.reason, 'dispatch-held')
+    assert.equal(workflow.calls.length, 0, `${dispatchOnly}: behind a HELD dependency (or not a unit) — nothing can start`)
+    assert.ok(!hasLabel(agent.calls, /^(census|triage|boundary):/))
+    assert.match(result.why, /nothing was dispatched/)
+  }
+  // An empty list is no hold: the ordinary loop runs.
+  const { result } = await conduct({ plan, state: mkState({ wave: 0, units: {} }), config: { dispatchOnly: [] } })
+  assert.notEqual(result.reason, 'dispatch-held')
+})
 
 test('arc-complete is refused while in-scope dispatchable work remains -> arc-stalled', async () => {
   const plan = mkPlan({ units: [unitOf('seed-unit'), unitOf('leftover')] })

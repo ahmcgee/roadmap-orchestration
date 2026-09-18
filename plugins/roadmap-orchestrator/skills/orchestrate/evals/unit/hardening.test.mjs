@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk, courierResult } from './fakes.mjs'
+import { makeAgent, BASE_SHA, assertAllModelsPinned, assertSchemasPresent, implCodexOk, courierResult, taskOf, assertRelayBarLeads } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -91,7 +91,7 @@ test('1 owed: a preview-down wave owes explorer and design (and degrades preview
   // proof — they lead with the "do not cd or pwd first" preamble instead, since the guard already
   // rides inside every numbered command.
   const ps = calls.find((c) => c.label === 'preview-setup')
-  assert.ok(ps.prompt.startsWith('Do not `cd` anywhere') && ps.prompt.includes('In /wt/__preview:'),
+  assert.ok(taskOf(ps.prompt).startsWith('Do not `cd` anywhere') && ps.prompt.includes('In /wt/__preview:'),
     'the preview bring-up runs in the preview worktree')
   assert.ok(!ps.prompt.includes('In /repo:'), 'the primary checkout is never the preview courier\'s cwd')
   assertAllModelsPinned(calls)

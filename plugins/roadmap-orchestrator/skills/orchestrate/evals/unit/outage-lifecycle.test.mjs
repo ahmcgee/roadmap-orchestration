@@ -23,7 +23,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
 import { makeAgent, makeWorkflow, packRules, courierResult, courierSaying, BASE_SHA, implCodexOk, codexMetaOk,
-  structuredOutputError, courierOk, codexRoleDead, codexRoleMetaOk } from './fakes.mjs'
+  structuredOutputError, courierOk, courierCommands, codexRoleOk, codexRoleDead, codexRoleMetaOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
@@ -539,7 +539,7 @@ test('the deadline rides inside the launched command line, so it survives the st
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexTimeoutMin: 30 })
   const p = promptOf(calls, 'codex-build:a')
-  assert.match(p, /setsid nohup sh -c 'echo \$\$ > \/wt\/__codex\/a\/build\/codex\.pid; timeout -k 30 1800 codex exec /,
+  assert.match(p, /setsid nohup sh -c 'echo \$\$ > \/wt\/__codex\/a\/w1\/build\/codex\.pid; timeout -k 30 1800 codex exec /,
     'timeout wraps codex INSIDE the detached sh -c — the steerer\'s death cannot outlive the deadline')
   assert.match(p, /exit-code contains 124/, 'and the launcher\'s own deadline is read back as timedOut')
 })
@@ -548,7 +548,7 @@ test('a resumed session is wrapped too — the wedge is on the resume path as of
   const { fn, calls } = makeAgent([{ match: /^verify:a#0$/, result: VERIFY_FAIL }])
   await runWave(fn, makePlan([unit('a')]), makeState(), { codexFixTimeoutMin: 10 })
   const p = promptOf(calls, 'codex-fix:a#0')
-  const D = '/wt/__codex/a/fix0'
+  const D = '/wt/__codex/a/w1/fix0'
   assert.match(p, new RegExp(`COMMAND R: cd /wt/a && setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
     'timeout -k 30 600 codex exec resume'))
   assert.match(p, new RegExp(`COMMAND F: setsid nohup sh -c 'echo \\$\\$ > ${D}/codex\\.pid; ` +
@@ -617,8 +617,8 @@ test('an absent exit-code file is RUNNING: -1 needs a dead pid, never a long wai
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'codex-build:a')
-  assert.match(p, /A MISSING \/wt\/__codex\/a\/build\/exit-code MEANS RUNNING, NEVER DEAD/)
-  assert.match(p, /kill -0 \$\(cat \/wt\/__codex\/a\/build\/codex\.pid\)/, 'the liveness test is named as a command')
+  assert.match(p, /A MISSING \/wt\/__codex\/a\/w1\/build\/exit-code MEANS RUNNING, NEVER DEAD/)
+  assert.match(p, /kill -0 \$\(cat \/wt\/__codex\/a\/w1\/build\/codex\.pid\)/, 'the liveness test is named as a command')
   assert.match(p, /only if it FAILS while \S+exit-code is still absent may you stop and report exitCode -1/,
     '-1 is licensed by a dead pid and nothing else')
   assert.match(p, /Elapsed time on its own is never evidence/)
@@ -628,7 +628,7 @@ test('a re-dispatched steer prompt attaches instead of launching a second codex'
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('a')]), makeState())
   const p = promptOf(calls, 'codex-build:a')
-  assert.match(p, /if \/wt\/__codex\/a\/build\/codex\.pid already exists, a run was ALREADY launched/,
+  assert.match(p, /if \/wt\/__codex\/a\/w1\/build\/codex\.pid already exists, a run was ALREADY launched/,
     'the idempotence preamble makes any replay of this prompt safe by construction')
   assert.match(p, /do NOT launch a second one and do NOT delete the file/)
   assert.match(p, /skip straight to step 4 and attach/)
@@ -641,13 +641,13 @@ test('the build retry reaps the previous pid and tells codex the sibling would b
   const p = promptOf(calls, 'codex-build-retry:a')
   assert.ok(p, 'the one-shot retry still fires')
   assert.match(p, /REAP THE PREVIOUS ATTEMPT FIRST/)
-  assert.match(p, /kill -TERM -- -\$\(cat \/wt\/__codex\/a\/build\/codex\.pid\)/, 'the OLD dir is the kill target')
-  assert.match(p, /kill -KILL -- -\$\(cat \/wt\/__codex\/a\/build\/codex\.pid\)/)
-  assert.match(p, /wait until \/wt\/__codex\/a\/build\/exit-code exists/, 'and it waits for the corpse')
+  assert.match(p, /kill -TERM -- -\$\(cat \/wt\/__codex\/a\/w1\/build\/codex\.pid\)/, 'the OLD dir is the kill target')
+  assert.match(p, /kill -KILL -- -\$\(cat \/wt\/__codex\/a\/w1\/build\/codex\.pid\)/)
+  assert.match(p, /wait until \/wt\/__codex\/a\/w1\/build\/exit-code exists/, 'and it waits for the corpse')
   assert.match(p, /# PRIOR ATTEMPT/, 'the brief itself says the previous attempt is dead')
   assert.match(p, /that is a HARNESS bug, not a condition to wait on/,
     'a live sibling is reported as blocked, never narrated for an hour')
-  assert.match(p, /\/wt\/__codex\/a\/build-retry\//, 'the retry writes its own artifact dir')
+  assert.match(p, /\/wt\/__codex\/a\/w1\/build-retry\//, 'the retry writes its own artifact dir')
 })
 
 test('the fix step gets the same one-shot retry — and exactly one', async () => {
@@ -662,7 +662,7 @@ test('the fix step gets the same one-shot retry — and exactly one', async () =
   assert.deepEqual(tries.map((c) => c.label), ['codex-fix:a#0', 'codex-fix:a#0#reattempt'],
     'one reattempt, and a dead reattempt never spawns another')
   assert.match(tries[1].prompt, /REAP THE PREVIOUS ATTEMPT FIRST/, 'it reaps like the build retry does')
-  assert.match(tries[1].prompt, /kill -TERM -- -\$\(cat \/wt\/__codex\/a\/fix0\/codex\.pid\)/, 'its own round is the target')
+  assert.match(tries[1].prompt, /kill -TERM -- -\$\(cat \/wt\/__codex\/a\/w1\/fix0\/codex\.pid\)/, 'its own round is the target')
 })
 
 test('codex-exec splits: -1 is a lifecycle failure, a real non-zero exit is not', async () => {
@@ -784,6 +784,40 @@ test('a blocked unit\'s commits are ADOPTED next wave, never re-read as un-adopt
   assert.equal(kinds(state, 'verify-blocked').length, 0, 'nothing was blocked this wave')
 })
 
+// 2026-09-16 (wave 5) and 2026-09-17 (wave 9): round counters restart every wave, so an adopted
+// unit's `verify:<id>#0` was composed into the SAME artifact directory as the previous wave's — and
+// the steer prompt's attach rule ("if codex.pid already exists … attach") then read the previous
+// wave's exit-code, last-message and events back without starting codex. One replay was an exit-127
+// verify that became a phantom second `verifyBlocked` strike (a quarantine for a block that never
+// happened); the other was a "model at capacity" turn.failed that halted a healthy wave. With an
+// unchanged integration tip the whole PROMPT was byte-identical as well, so the platform's cache
+// could serve the old result with no dispatch at all. The wave number is in the path now.
+test('the same unit at the same round in two waves gets two artifact dirs and two different prompts', async () => {
+  const adopted = [
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+  ]
+  const w1 = makeAgent([...adopted, { match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const s1 = await runWave(w1.fn, makePlan([unit('a')]),
+    makeState({ units: { a: { status: 'running', branch: 'unit/a' } } }))
+  assert.equal(s1.units.a.status, 'blocked')
+  const w2 = makeAgent(adopted)
+  // Wave 2 is dispatched from wave 1's own returned state: same tip, same branch, round 0 again.
+  const { degradations: _d, escalations: _e, ...prior } = s1
+  const s2 = await runWave(w2.fn, makePlan([unit('a')]), prior)
+  assert.equal(s2.units.a.status, 'merged')
+
+  const v1 = w1.calls.find((c) => c.label === 'verify:a#0')
+  const v2 = w2.calls.find((c) => c.label === 'verify:a#0')
+  assert.ok(v1 && v2, 'both waves verify at round 0 — the counters restart, which is what made the dirs collide')
+  assert.ok(v1.prompt.includes('/wt/__codex/roles/w1/verify-a-0/') && !v1.prompt.includes('/w2/'))
+  assert.ok(v2.prompt.includes('/wt/__codex/roles/w2/verify-a-0/') && !v2.prompt.includes('/w1/'),
+    'wave 2 launches into its OWN directory: there is no codex.pid there to attach to')
+  assert.notEqual(v1.prompt, v2.prompt,
+    'and the prompts differ, so neither a resume nor the platform cache can serve wave 1\'s result for wave 2')
+  assert.equal(s2.units.a.rounds?.verifyBlocked, 1, 'the real tally still crosses the wave — only the replay is gone')
+})
+
 test('TWO units blocked in one wave halts the wave: a host fact, not two unit defects', async () => {
   const { fn, calls } = makeAgent([{ match: /^verify:(a|b|d)/, result: BLOCKED_VERIFY }])
   // `c` depends on `m`, which merges normally — so `c` becomes dependency-ready DURING the wave and
@@ -812,6 +846,227 @@ test('TWO units blocked in one wave halts the wave: a host fact, not two unit de
   assert.match(d.what, /host fact/, 'the row says what it is')
   assert.match(d.what, /\(a, b\)/, 'and names the two units it judged on — the third arrived after the verdict')
   assert.match(d.what, /fix the host, relaunch/, 'and the one human action')
+})
+
+// ---- one writer per worktree: a re-entering unit's orphans are reaped before anything touches it ----
+// The codex launcher is detached so a run survives its steerer — so a crashed Workflow can leave a
+// build or fix alive in the worktree. With the wave in the artifact path nothing in THIS wave's dirs
+// would ever attach to it, and a fresh verify or fix would run beside it.
+const REENTRY = [
+  { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+  { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+]
+const reentryState = () => makeState({ wave: 1, units: { a: { status: 'running', branch: 'unit/a' } } })
+const ORPHAN = '/wt/__codex/a/w1/fix0/codex.pid'
+
+test('re-entry: a unit with no live orphan pays one read-only liveness list and nothing else', async () => {
+  const { fn, calls } = makeAgent(REENTRY)
+  const state = await runWave(fn, makePlan([unit('a')]), reentryState())
+  assert.equal(state.units.a.status, 'merged')
+  const probe = calls.find((c) => c.label === 'codex-orphans:a')
+  assert.deepEqual(courierCommands(probe.prompt),
+    [`for p in '/wt/__codex/a'/w*/*/codex.pid; do [ -f "$p" ] || continue; q=$(cat "$p"); d=$(dirname "$p"); ` +
+      `kill -0 "$q" 2>/dev/null && ps -p "$q" -o args= 2>/dev/null | grep -qF -- "$d/" && echo "$p"; done; true`],
+    'this unit\'s OWN build/fix pidfiles, every wave — never the shared roles/ namespace, where a label can contain another unit\'s id')
+  assert.match(probe.prompt, /Probe id/, 'an environment read: salted, never served from a resume\'s cache')
+  assert.match(probe.prompt, /^[\s\S]*Wave 2\. This command only READS/, 'and the WAVE is in it: one conductor run shares a launchId across waves, so without it wave 3 would be served wave 2\'s "all clear"')
+  // pid REUSE: a pidfile is a path, not proof of ownership — alive means the pid answers AND its command line still names this artifact dir.
+  assert.match(courierCommands(probe.prompt)[0], /ps -p "\$q" -o args= 2>\/dev\/null \| grep -qF -- "\$d\/"/)
+  assert.ok(probe.seq < calls.find((c) => c.label === 'setup:a').seq, 'BEFORE the worktree is touched')
+  assert.ok(!has(calls, 'codex-reap:a'))
+  const fresh = makeAgent()
+  await runWave(fresh.fn, makePlan([unit('a')]), makeState())
+  assert.ok(!has(fresh.calls, 'codex-orphans:a'), 'a unit no previous launch touched pays nothing')
+})
+
+test('re-entry: a live orphan is reaped by pidfile, confirmed dead, and the unit carries on', async () => {
+  let listed = 0
+  const { fn, calls } = makeAgent([...REENTRY,
+    { match: /^codex-orphans:a$/, result: courierSaying([[/^for p in /, `${ORPHAN}\n/wt/__codex/other-unit/w1/build/codex.pid\nnoise`]]) },
+    { match: /^codex-reap:a$/, result: (p) => courierSaying([[/^for p in /, listed++ ? ORPHAN : '']])(p) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), reentryState())
+  assert.deepEqual(courierCommands(calls.find((c) => c.label === 'codex-reap:a').prompt).slice(0, 3), [
+    `kill -TERM -- -$(cat '${ORPHAN}') 2>/dev/null; true`, 'sleep 5', `kill -KILL -- -$(cat '${ORPHAN}') 2>/dev/null; true`],
+    'only the path that is THIS unit\'s own pidfile is ever composed into a kill — the rest of the output is ignored')
+  assert.equal(state.units.a.status, 'merged')
+  assert.match(kinds(state, 'codex-orphan')[0].what, /reaped before this launch touched the tree/)
+})
+
+test('re-entry: an orphan that cannot be confirmed dead PARKS the unit rather than share its worktree', async () => {
+  for (const reap of [courierSaying([[/^for p in /, ORPHAN]]), () => null]) {
+    const { fn, calls } = makeAgent([...REENTRY,
+      { match: /^codex-orphans:a$/, result: courierSaying([[/^for p in /, ORPHAN]]) },
+      { match: /^codex-reap:a/, result: reap },
+    ])
+    const state = await runWave(fn, makePlan([unit('a')]), reentryState())
+    assert.equal(state.units.a.status, 'pending')
+    assert.equal(state.units.a.parked, true, 'parked — nothing judged, commits intact')
+    assert.ok(!has(calls, 'setup:a') && !has(calls, 'verify:a'), 'and the worktree was never touched')
+  }
+  // …and a liveness list that could not be READ parks too. Everywhere else an unreadable fact
+  // degrades and proceeds; here the guess would be "no other writer in this worktree".
+  const dead = makeAgent([...REENTRY, { match: /^codex-orphans:a/, result: () => null }])
+  const s = await runWave(dead.fn, makePlan([unit('a')]), reentryState())
+  assert.equal(s.units.a.parked, true)
+  assert.ok(!has(dead.calls, 'setup:a'))
+  assert.match(kinds(s, 'codex-orphan')[0].what, /could not read whether/)
+})
+
+// ---- 2026-09-16: what a lane that could not run MEANS is decided from the ledger, in code ----------
+// Three field reports, one cause — the script routed on the verifier's single run-wide `blocked`:
+//   wave 4: the verifier's own "cheapest-first" lint ran `shellcheck`, which no spec, brief or
+//           `make verify` names; the host lacked it (exit 127) and the unit BLOCKED with every real
+//           lane green.
+//   wave 6: a lane the verifier composed against a package path that does not exist, beside an
+//           envtest that genuinely FAILED, came back "tooling could not run".
+//   wave 7: the dossier counted that phantom block as the first of "2 separate waves", so the
+//           two-strike rule quarantined the unit on ONE real strike.
+const lane = (command, exitCode, source, outcome, expectedExit = 0) => ({ command, exitCode, expectedExit, source, outcome })
+const SPEC_GREEN = [lane('make verify', 0, 'spec', 'passed'), lane('go test ./internal/authz/...', 0, 'spec', 'passed')]
+const verifySaying = (extra) => () => ({ pass: false, blocked: true, failures: [], lanes: [], contractSurfaceTouched: false, diffFiles: [], ...extra })
+
+test('a lane the VERIFIER added that the host cannot run is dropped: the unit merges on its green spec lanes', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: verifySaying({
+    failures: ['sh: 1: shellcheck: not found'],
+    lanes: [lane('shellcheck scripts/*.sh', 127, 'verifier', 'tool-missing'), ...SPEC_GREEN] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.equal(state.units.a.status, 'merged', 'a linter nobody named cannot block a unit whose named lanes are green')
+  assert.equal(state.units.a.rounds?.verifyBlocked, undefined, 'and it is NOT a strike toward the two-block quarantine')
+  assert.ok(!has(calls, 'codex-fix:a'), 'nor a failure: the line about the missing tool left with the lane it was about')
+  assert.equal(kinds(state, 'verify-blocked').length, 0)
+  const [skipped] = kinds(state, 'lane-skipped')
+  assert.match(skipped.what, /`shellcheck scripts\/\*\.sh` \(tool-missing, exit 127\)/, 'the dropped lane is ledgered by name')
+  assert.match(kinds(state, 'verify-reclassified')[0].what, /pass:false blocked:true.*the lane ledger says pass:true blocked:false/s)
+  const gate = calls.find((c) => /^(opus-)?gate:a/.test(c.label))
+  assert.ok(!gate.prompt.includes('shellcheck'), 'and the gate is handed the ledger WITHOUT it — it was never evidence of anything')
+})
+
+test('a test that FAILED is a failure, never a block — even beside a lane the verifier mis-composed', async () => {
+  let n = 0
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => (n++ === 0
+    ? verifySaying({ failures: ['--- FAIL: TestWebhookRejectsInstallAndSessionReassignment (0.41s)'],
+      lanes: [lane('go test ./internal/runtime/...', 1, 'verifier', 'bad-target'), lane('make test', 1, 'spec', 'failed')] })()
+    : verifySaying({ pass: true, blocked: false, lanes: [lane('make test', 0, 'spec', 'passed')] })()) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+
+  assert.ok(has(calls, 'codex-fix:a#0'), 'a red test buys a FIX round — the verifier said "blocked", the ledger said a test ran and failed')
+  assert.match(calls.find((c) => c.label === 'codex-fix:a#0').prompt, /TestWebhookRejectsInstallAndSessionReassignment/)
+  assert.equal(state.units.a.status, 'merged')
+  assert.equal(kinds(state, 'verify-blocked').length, 0, 'no environment row for a code defect')
+  assert.equal(state.units.a.rounds?.verifyBlocked, undefined)
+})
+
+test('a SPEC lane whose target does not exist is ran-and-red: fix rounds, not an environment dossier', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: verifySaying({
+    lanes: [lane('go test ./internal/runtime/...', 1, 'spec', 'bad-target')] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.ok(has(calls, 'codex-fix:a#0'))
+  assert.match(calls.find((c) => c.label === 'codex-fix:a#0').prompt, /go test \.\/internal\/runtime\/\.\.\.` exited 1 \(expected 0\) — a path, package or target/,
+    'with no failure text from the verifier, the script states the lane itself')
+  assert.equal(state.units.a.status, 'quarantined', 'it never passes, so it ends as a unit failure…')
+  assert.match(state.units.a.reason, /verification never passed/, '…under the unit-failure reason, never "environment/tooling"')
+})
+
+test('a SPEC lane the host cannot run still blocks — and the row names the lane', async () => {
+  const { fn } = makeAgent([{ match: /^verify:a/, result: verifySaying({
+    failures: ['unable to start control plane: fork/exec /usr/local/kubebuilder/bin/etcd: no such file'],
+    lanes: [lane('go test ./internal/runtime/...', 1, 'spec', 'env-error'), lane('make lint', 0, 'spec', 'passed')] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'blocked')
+  assert.equal(state.units.a.rounds?.verifyBlocked, 1, 'a genuine host block is a strike')
+  assert.match(kinds(state, 'verify-blocked')[0].what, /Blocking lane: `go test \.\/internal\/runtime\/\.\.\.` \(env-error\)/)
+})
+
+test('a phantom block then a real one is ONE strike: blocked, not quarantined "on 2 separate waves"', async () => {
+  // Wave 1 as the field saw it: the verifier said blocked over its own invented lane.
+  const w1 = makeAgent([{ match: /^verify:a/, result: verifySaying({
+    failures: ['shellcheck: command not found'], lanes: [lane('shellcheck x.sh', 127, 'verifier', 'tool-missing')] }) }])
+  const s1 = await runWave(w1.fn, makePlan([unit('a')]), makeState())
+  assert.equal(s1.units.a.rounds?.verifyBlocked, undefined, 'the phantom never tallied')
+  // Wave 2: a real host block on the unit's re-entry.
+  const w2 = makeAgent([
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+    { match: /^verify:a/, result: BLOCKED_VERIFY }])
+  const s2 = await runWave(w2.fn, makePlan([unit('a')]),
+    makeState({ wave: 1, units: { a: { status: 'blocked', branch: 'unit/a' } } }))
+  assert.equal(s2.units.a.status, 'blocked', 'first REAL strike: blocked with its commits, judged again next wave')
+  assert.equal(s2.units.a.rounds?.verifyBlocked, 1)
+})
+
+test('two units whose only unrun lanes are the verifier\'s own do not halt the wave', async () => {
+  const { fn } = makeAgent([{ match: /^verify:(a|b)/, result: verifySaying({
+    failures: ['shellcheck: command not found'],
+    lanes: [lane('shellcheck x.sh', 127, 'verifier', 'tool-missing'), lane('make verify', 0, 'spec', 'passed')] }) }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')]), makeState())
+  assert.equal(state.halt, undefined, 'a missing linter nobody asked for is not a host fact about the work')
+  assert.equal(state.units.a.status, 'merged')
+  assert.equal(state.units.b.status, 'merged')
+})
+
+test('a failure the ledger cannot attribute to a dropped lane is never upgraded to a pass', async () => {
+  // HOST_BAR has the verifier report an unsatisfiable host clause as a FAILING check with every
+  // runnable lane green. Dropping the verifier's own dead lane must not launder that into a pass.
+  let n = 0
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => (n++ === 0
+    ? verifySaying({ blocked: false, failures: ['spec clause "no other test process may be running" is unsatisfiable on this host'],
+      lanes: [lane('shellcheck x.sh', 127, 'verifier', 'tool-missing'), lane('make verify', 0, 'spec', 'passed')] })()
+    : verifySaying({ pass: true, blocked: false, lanes: [lane('make verify', 0, 'spec', 'passed')] })()) }])
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.ok(has(calls, 'codex-fix:a#0'), 'the unattributed failure stood: pass stayed false and the round went to a fix')
+  assert.match(calls.find((c) => c.label === 'codex-fix:a#0').prompt, /unsatisfiable on this host/)
+  assert.ok(!calls.find((c) => c.label === 'codex-fix:a#0').prompt.includes('shellcheck'))
+})
+
+test('naming the same executable is not attribution: an unrelated failure survives the dropped lane', async () => {
+  // A dropped `curl --version` lane and a HOST_BAR clause ABOUT curl share a word and nothing else.
+  let n = 0
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: () => (n++ === 0
+    ? verifySaying({ blocked: false, failures: ['spec clause "no curl process may be running during verification" is unsatisfiable on this host'],
+      lanes: [lane('curl --version', 127, 'verifier', 'tool-missing'), lane('make verify', 0, 'spec', 'passed')] })()
+    : verifySaying({ pass: true, blocked: false, lanes: [lane('make verify', 0, 'spec', 'passed')] })()) }])
+  await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.match(calls.find((c) => c.label === 'codex-fix:a#0').prompt, /no curl process may be running/,
+    'the line names curl but does not read like a could-not-run message, so it STAYS — and pass stays false')
+})
+
+test('the ledger outranks a contradictory verdict: green lanes are never a block, and never a silent failure', async () => {
+  const green = [lane('make verify', 0, 'spec', 'passed'), lane('make images KIND=missing', 2, 'spec', 'failed', 2)]
+  // blocked:true beside an all-green ledger used to be trusted — a strike toward the two-block quarantine.
+  const b = makeAgent([{ match: /^verify:a/, result: verifySaying({ lanes: green }) }])
+  const s1 = await runWave(b.fn, makePlan([unit('a')]), makeState())
+  assert.equal(s1.units.a.status, 'merged')
+  assert.equal(s1.units.a.rounds?.verifyBlocked, undefined, 'no strike')
+  assert.match(kinds(s1, 'verify-reclassified')[0].what, /pass:false blocked:true.*pass:true blocked:false/s)
+  // pass:false with no failure to show for it, over green lanes: the ledger passes it (and says so).
+  const f = makeAgent([{ match: /^verify:a/, result: verifySaying({ blocked: false, lanes: green }) }])
+  const s2 = await runWave(f.fn, makePlan([unit('a')]), makeState())
+  assert.equal(s2.units.a.status, 'merged')
+  assert.ok(!has(f.calls, 'codex-fix:a'))
+  // …but an EMPTY ledger is the one place the verifier's word is all there is.
+  const e = makeAgent([{ match: /^verify:a/, result: BLOCKED_VERIFY }])
+  assert.equal((await runWave(e.fn, makePlan([unit('a')]), makeState())).units.a.rounds?.verifyBlocked, 1)
+})
+
+test('a ledger holding ONLY dropped lanes is no evidence: never a pass, never a strike — a verify that did not happen', async () => {
+  const { fn, calls } = makeAgent([{ match: /^verify:a/, result: verifySaying({
+    failures: ['shellcheck: command not found'], lanes: [lane('shellcheck x.sh', 127, 'verifier', 'tool-missing')] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'blocked', 'the door a dead verifier takes: commits intact, re-verified next wave')
+  assert.match(state.units.a.note, /verification never ran/)
+  assert.equal(state.units.a.rounds?.verifyBlocked, undefined, 'no strike: nothing the spec names failed to run')
+  assert.ok(!calls.some((c) => /^(opus-)?gate:a/.test(c.label)), 'and certainly no gate on a pass nobody checked')
+  assert.equal(kinds(state, 'verify-unrun').length, 1)
+})
+
+test('exit arithmetic beats the label: a required failure that happened as specified is green', async () => {
+  const { fn } = makeAgent([{ match: /^verify:a/, result: verifySaying({ pass: true, blocked: false,
+    lanes: [lane('make images KIND_CLUSTERS=missing', 2, 'spec', 'failed', 2), lane('make verify', 0, 'spec', 'passed')] }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'merged', 'exitCode === expectedExit is green whatever `outcome` was written beside it')
+  assert.equal(kinds(state, 'verify-reclassified').length, 0)
 })
 
 // C5. A halt is never a verdict, so a halted wave BLOCKS a unit whatever its own tally says. Without
@@ -877,9 +1132,153 @@ const HALTED = (reason, slot) => ({
   codex: { probed: 1, available: slot !== 'codex' },
 })
 
+// ---- 2026-09-17 (waves 8–9): "Selected model is at capacity" is a minutes-scale transient ----------
+// Both halts were `turn.failed` "Selected model is at capacity. Please try a different model." The
+// steerer filed it under `limitHit`, the harness halted on first sight as `codex-usage-limit`, and the
+// documented remedy for that is "wait out the limit window" — hours — while a smoke on the same model
+// passed twenty minutes later. Code classifies it now, from the copied error line and a grep count;
+// the step that saw it waits ONCE and reattempts ONCE; only a second capacity answer (or a spent
+// wave budget) halts, under its own name.
+const CAPACITY = 'turn.failed: Selected model is at capacity. Please try a different model.'
+const capacityMeta = (extra = {}) => ({ ...codexMetaOk(), exitCode: 1, commits: 0, doneMarker: false, error: CAPACITY, ...extra })
+const capacityBuild = (extra) => () => ({ ...implCodexOk(), codex: capacityMeta(extra) })
+
+test('capacity once: the step waits on a closed list, reattempts in its own dir, and the wave never halts', async () => {
+  const { fn, calls } = makeAgent([
+    // limitHit:true is what the Haiku steerer actually reported. The error line outranks it.
+    { match: /^codex-build:a$/, result: capacityBuild({ limitHit: true }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'merged')
+  assert.equal(state.halt, undefined, 'one capacity answer halts nothing')
+  assert.ok(!kinds(state, 'codex-usage-limit').length, 'and is never a usage limit, whatever limitHit said')
+  assert.equal(kinds(state, 'codex-capacity').length, 1)
+
+  const wait = calls.find((c) => c.label === 'capacity-wait:codex-build:a')
+  assert.deepEqual(courierCommands(wait.prompt), ['sleep 110', 'sleep 110', 'sleep 110'],
+    'a closed list of sleeps, each under the Bash tool\'s 120 s default — no timeout for the model to remember to raise')
+  assert.match(wait.prompt, /wave 1, before one reattempt of codex-build:a/,
+    'the wave and the step are IN the prompt: labels restart every wave, and two identical sleeps would collapse in the platform cache')
+  assert.doesNotMatch(wait.prompt, /Probe id/, 'unsalted: a wait that already happened should replay instantly on a resume')
+  const again = calls.find((c) => c.label === 'codex-build:a#capacity')
+  assert.ok(again.seq > wait.seq, 'the reattempt comes AFTER the wait')
+  assert.match(again.prompt, /\/wt\/__codex\/a\/w1\/build-capacity\//, 'in its own artifact dir — nothing there to attach to')
+  assert.match(again.prompt, /kill -TERM -- -\$\(cat \/wt\/__codex\/a\/w1\/build\/codex\.pid\)/, 'reaping the dead attempt first')
+  assert.ok(!has(calls, 'codex-build-retry:a'), 'and the ordinary no-wait retry did not ALSO fire: one step, one second chance')
+})
+
+test('capacity twice: the wave halts on codex-capacity and the unit PARKS — never a usage limit, a block or a quarantine', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-build:a/, result: capacityBuild() }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b')],
+    [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }]), makeState(), { warmLanes: false })
+  assert.equal(state.halt.reason, 'codex-capacity')
+  assert.equal(state.units.a.status, 'pending')
+  assert.equal(state.units.a.parked, true, 'parked with its branch, adopted next wave')
+  assert.match(state.units.a.note, /codex-capacity/)
+  assert.ok(!has(calls, 'dossier:a'), 'nothing about the unit was judged')
+  assert.ok(!has(calls, 'setup:b'), 'and nothing new dispatches behind the halt')
+  assert.equal(calls.filter((c) => c.label.startsWith('capacity-wait:')).length, 1, 'ONE wait per step')
+  const row = kinds(state, 'codex-capacity').find((d) => /dispatch halts on/.test(d.what))
+  assert.match(row.what, /minutes-scale provider transient, not a usage limit/, 'the row names the right human action')
+})
+
+test('capacity is classified from the grep count too — the steerer\'s "most informative" line can be another one', async () => {
+  const { fn, calls } = makeAgent([{ match: /^codex-build:a$/,
+    result: capacityBuild({ error: 'turn.failed: stream disconnected before completion', capacityLines: 2 }) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.ok(has(calls, 'capacity-wait:codex-build:a'))
+  assert.equal(state.units.a.status, 'merged')
+  const steer = calls.find((c) => c.label === 'codex-build:a').prompt
+  assert.match(steer, /grep -ciE 'at capacity\|try a different model'/, 'the count is a command\'s output, not a reading of the log')
+  assert.match(steer, /\{ grep -E 'turn\.failed\|"type":"error"' \S+events\.jsonl; cat \S+stderr\.log; \} 2>\/dev\/null \|/,
+    'counted over Codex\'s own error events and stderr only — a TEST whose output says "at capacity" must not read as one')
+  assert.match(steer, /a model that is "at capacity" is NOT a limit and never sets this/)
+})
+
+test('a run that EXITED 0 is never capacity, and a genuine usage limit still halts at once', async () => {
+  const ok = makeAgent([{ match: /^codex-build:a$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), capacityLines: 3 } }) }])
+  const s1 = await runWave(ok.fn, makePlan([unit('a')]), makeState())
+  assert.ok(!has(ok.calls, 'capacity-wait:'), 'codex retried internally and finished its work — nothing to wait for')
+  assert.equal(s1.units.a.status, 'merged')
+  const lim = makeAgent([{ match: /^codex-build:a$/, result: () => ({ ...implCodexOk(),
+    codex: { ...codexMetaOk(), exitCode: 1, commits: 0, limitHit: true, error: 'turn.failed: You have hit your usage limit' } }) }])
+  const s2 = await runWave(lim.fn, makePlan([unit('a')]), makeState())
+  assert.equal(s2.halt.reason, 'codex-usage-limit')
+  assert.ok(!has(lim.calls, 'capacity-wait:'), 'a usage limit is hours, not minutes — no wait is bought for it')
+})
+
+test('the wave buys at most codexCapacityRetries waits: the brake is reserved before the await', async () => {
+  // Three units hit capacity at the same moment; the budget is 2.
+  const { fn, calls } = makeAgent([{ match: /^codex-build:(a|b|c)$/, result: capacityBuild() }])
+  const state = await runWave(fn, makePlan([unit('a'), unit('b'), unit('c')]), makeState(), { warmLanes: false })
+  assert.equal(calls.filter((c) => c.label.startsWith('capacity-wait:')).length, 2, 'two waits, not three')
+  assert.equal(state.halt.reason, 'codex-capacity')
+  for (const id of ['a', 'b', 'c']) assert.notEqual(state.units[id].status, 'quarantined')
+})
+
+test('a capacity wait nobody can vouch for buys NO reattempt: the wave halts instead of hitting a full provider again', async () => {
+  const cutShort = (p) => { const r = courierOk(p); r.results[1].exitCode = 143; return r }
+  for (const [what, wait] of [['a dead courier', () => null], ['a sleep cut short', cutShort]]) {
+    const { fn, calls } = makeAgent([
+      { match: /^codex-build:a/, result: capacityBuild() },
+      { match: /^capacity-wait:/, result: wait },
+    ])
+    const state = await runWave(fn, makePlan([unit('a')]), makeState())
+    assert.ok(!has(calls, 'codex-build:a#capacity'), `${what}: no reattempt without a confirmed wait`)
+    assert.equal(state.halt.reason, 'codex-capacity')
+    assert.equal(state.units.a.parked, true)
+    assert.match(kinds(state, 'codex-capacity').at(-1).what, /wait before codex-build:a's reattempt could not be confirmed/)
+  }
+})
+
+test('a capacity budget of zero buys no wait anywhere — the wave-start smoke included', async () => {
+  const smoke = (prompt) => { const r = courierOk(prompt); const i = courierCommands(prompt).findIndex((c) => /codex exec\b/.test(c)); r.results[i] = { exitCode: 1, stdout: CAPACITY }; return r }
+  const { fn, calls } = makeAgent([{ match: /^codex-probe:/, result: smoke }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { codexCapacityRetries: 0 })
+  assert.ok(!has(calls, 'capacity-wait:'), 'no wait is bought')
+  assert.ok(!has(calls, 'codex-probe:w1#capacity'), 'and so no re-probe')
+  assert.equal(state.halt.reason, 'codex-capacity')
+})
+
+test('a ROLE at capacity takes the same rung: verify waits, reattempts, and the unit merges', async () => {
+  let n = 0
+  const { fn, calls } = makeAgent([{ match: /^verify:a#0/, result: () => (n++ === 0
+    ? { ok: false, codex: { exitCode: 1, turns: 0, inputTokens: 0, outputTokens: 0, timedOut: false, limitHit: true,
+      sessionCaptured: true, error: CAPACITY }, notes: 'no last-message file' }
+    : codexRoleOk({ pass: true, blocked: false, failures: [], lanes: [{ command: 'npm run test:ci', exitCode: 0 }],
+      contractSurfaceTouched: false, diffFiles: [] })) }])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'merged')
+  assert.deepEqual(calls.filter((c) => /^(capacity-wait:)?verify:a#0/.test(c.label)).map((c) => c.label),
+    ['verify:a#0', 'capacity-wait:verify:a#0', 'verify:a#0#capacity'])
+  assert.match(calls.find((c) => c.label === 'verify:a#0#capacity').prompt, /\/wt\/__codex\/roles\/w1\/verify-a-0-capacity\//)
+  assert.equal(state.halt, undefined)
+})
+
+test('the wave-start smoke at capacity buys one wait and one re-probe; still at capacity halts codex-capacity', async () => {
+  const smokeSays = (out, code) => (prompt) => {
+    const r = courierOk(prompt)
+    const i = courierCommands(prompt).findIndex((c) => /codex exec\b/.test(c))
+    r.results[i] = { exitCode: code, stdout: out }
+    return r
+  }
+  let n = 0
+  const recovered = makeAgent([{ match: /^codex-probe:/, result: (p) => (n++ === 0 ? smokeSays(CAPACITY, 1)(p) : courierOk(p)) }])
+  const s1 = await runWave(recovered.fn, makePlan([unit('a')]), makeState())
+  assert.deepEqual(recovered.calls.filter((c) => /codex-probe/.test(c.label)).map((c) => c.label),
+    ['codex-probe:w1', 'capacity-wait:codex-probe:w1', 'codex-probe:w1#capacity'])
+  assert.equal(s1.halt, undefined, 'the model answered the second time — the wave runs')
+  assert.equal(s1.units.a.status, 'merged')
+
+  const stuck = makeAgent([{ match: /^codex-probe:/, result: smokeSays(CAPACITY, 1) }])
+  const s2 = await runWave(stuck.fn, makePlan([unit('a')]), makeState())
+  assert.equal(s2.halt.reason, 'codex-capacity', 'not codex-unavailable: "wait out the outage" and "re-login" are both the wrong action')
+  assert.ok(!has(stuck.calls, 'setup:a'))
+})
+
 test('every halt reason early-returns at tier 4, before any census or triage spend', async () => {
   for (const [reason, slot] of [['platform-outage', 'platform'], ['env-no-reaper', 'env'],
-    ['env-pids-exhausted', 'env'], ['codex-usage-limit', 'codex']]) {
+    ['env-pids-exhausted', 'env'], ['codex-usage-limit', 'codex'], ['codex-capacity', 'codex']]) {
     const { res, calls } = await driveConductorWith(HALTED(reason, slot))
     assert.equal(res.reason, reason, `${reason} is returned verbatim — the root reads it as the human action`)
     assert.deepEqual(res.parked, ['a'], 'and the parked units are named')

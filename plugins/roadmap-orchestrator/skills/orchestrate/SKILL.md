@@ -36,7 +36,8 @@ checks it before replay and again before writing. Never omit it on an arc with `
 
 A previous owner must be stopped, including all its workers and background Codex processes, before
 explicit takeover (`previousToken` plus `stopped:true`). Recover unfinished disk checkpoints first.
-After a Codex handoff launch a **fresh conductor** with a new `launchId`; do not reuse any old
+After a Codex handoff launch a **fresh conductor** with a new `launchId` and a new launch pack
+(`launch-pack.mjs`, below — it mints both); do not reuse any old
 `run` field or `resumeFromRunId`. Git adoption and fresh verification recover the unfinished work.
 If native evidence shows an untriaged boundary/owed job or contingent replan, resolve it before
 dispatching another wave. Dirty worktrees are preserved; inspect them and commit useful unfinished
@@ -165,7 +166,11 @@ commands) each wave, and a backend that dies mid-wave trips a breaker on ≥2 co
 failures across different units or roles with the same HTTP status; either way it
 early-returns `codex-unavailable` / `codex-usage-limit` with the state intact; both are
 resumable pauses (re-auth, or wait for the limit window or the outage, then relaunch), never
-failures to route around by re-implementing with Claude. The same shape covers the host and the platform:
+failures to route around by re-implementing with Claude. A third codex halt is a different clock:
+**`codex-capacity`** — the provider said the pinned model is *at capacity*. That is minutes, not the
+hours of a usage limit: the step that saw it already waited once and reattempted, so re-run the
+`pwd` smoke with `-m <codexModel>` and relaunch as soon as it answers (or relaunch on another
+`config.codexModel`). The same shape covers the host and the platform:
 `env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight), `env-verify-blocked`
 (two units' verification tooling could not run in one wave — a host fact, not two unit defects)
 and `platform-outage` (required agent results stopped arriving) park the wave the same way — see
@@ -268,7 +273,15 @@ Read their outputs, then decide:
     clause ("exits 2"): the verifier records it as `expectedExit` on that lane and grades the
     lane against it (2026-09-14: a bare "MUST exit 2" command was run as a lane, exited 2 as
     specified, and the unit was quarantined "verification never passed" — twice, because the
-    respec reworded the clause without changing its shape).
+    respec reworded the clause without changing its shape). **And every runnable clause must run as
+    written, from a fresh shell in the provisioned worktree.** The verifier runs the spec's
+    commands verbatim and nothing else — it no longer adds lint or typecheck lanes of its own, and
+    one that it did add and could not run is dropped rather than blocking the unit — so where the
+    project's own target supplies environment a bare command needs, name the target: `make test`,
+    not the `go test ./internal/runtime/...` that the Makefile runs with `KUBEBUILDER_ASSETS` set
+    (2026-09-16: that bare clause blocked a unit as an environment failure; the honest cure was
+    exporting it in `provision.setup`). A lint or typecheck you want run belongs in the brief's
+    command list, by name.
   - **Scope** — the files the unit is expected to touch, and an explicit **out-of-scope list**
     (the adjacent mess it must leave alone, the migration that is a different unit). The harness
     pins scope before the first fix round and banks out-of-scope imperfections as debt rather
@@ -458,23 +471,54 @@ itself a deliverable.
 ## Phase 1…n — Execute waves
 
 Launch the **conductor** in the background and stay quiet — it notifies you when the whole run
-finishes, not each wave. **Do not read `plan.json` or `state.json` first**: the envelope names the
-directory and the script reads the pack itself, cksum-verified, on a floor-tier agent. Pasting those
-documents into `args` put the whole pack through this session — the most expensive tier in the
-system — on every launch and every resume.
+finishes, not each wave. **Do not read `plan.json` or `state.json` first**, and never paste them
+into `args`: that put the whole pack through this session — the most expensive tier in the system —
+on every launch and every resume. **Write the launch pack instead**, before every launch *and every
+resume*:
+
+```
+node <this skill's directory>/launch-pack.mjs --roadmap <repoPath>/.roadmap
+  → OK launchId=20260917T134158Z-2f93e8 pack=<repoPath>/.roadmap/launch/pack-20260917T134158Z-2f93e8.mjs …
+```
+
+It is a plain Node process (no model): it mints a fresh `launchId`, and writes a tiny workflow
+script whose whole body returns `plan.json` and `state.json` as text. The conductor loads that file
+with `workflow()`, so **no agent transcribes the pack** — which is what failed at launch three times
+in two days (2026-09-16/17: a 30 KB state whose courier copy stopped at 6.4 K characters, and a
+courier that retyped the read command with its backslashes un-doubled). Pass both printed values:
 
 ```
 Workflow({ scriptPath: "<this skill's directory>/conductor.mjs",
            args: { roadmapDir: "<repoPath>/.roadmap",
                    config,
                    harnessPath: "<this skill's directory>/harness.mjs",
-                   launchId: "<a value you have never used before — a timestamp is fine>" } })
+                   launchId: "<the launchId launch-pack.mjs printed>",
+                   pack: "<the pack path it printed>" } })
 ```
 
-`roadmapDir` and `harnessPath` are both required — the first is the pack the script reads at launch,
-the second is the child script it dispatches each wave with. **`launchId` must be FRESH on every
-launch and on every resume** —
-never reuse one, never derive it from the arc or the wave. It is how the scripts keep environment
+**What the human last said rides into every agent.** Since 2026-09-17 the Workflow runtime relays
+"the user request that triggered this workflow run" — in practice the user's *latest* message in this
+session — to **every** subagent a launch dispatches, ahead of the script's prompt, as "the only user
+voice … this request wins". On the day it appeared, that message was "…delete it when done", and a
+Haiku courier handed a closed list of two provisioning commands also ran `rm -f` on the file in your
+checkout. Every prompt the scripts send now opens by saying whose request that is (`RELAY_BAR`), which helps and
+is **not** containment: on the next full pass one agent in 223 still acted on it (a codex steerer,
+at the very end of its session — "when done"). So **before any launch or resume, read the user's latest message as
+~100 agents running under your permissions will read it**: if it names an action — delete, reset,
+push, clean up, "when done…" — do that action yourself first, or tell the user that it will be
+relayed and ask for a neutral go-ahead ("launch the next wave") before you dispatch. After a run,
+grep the degradations *and* `git status` of your own checkout for changes no unit made.
+
+`roadmapDir` and `harnessPath` are both required — the first is where the script checks the pack
+against the disk (one courier runs `cksum` on the two files; a mismatch is `pack-stale`: you edited
+`plan.json` or `state.json` after writing the pack, so run the tool again), the second is the child
+script it dispatches each wave with. **The envelope names the transport**: with `pack`, a file that
+cannot be loaded is a loud `pack-missing`, never a silent fall back — `persist.mjs` replays the run
+from this same envelope, so keep every pack until its run is persisted (they are gitignored, a few
+tens of KB, and deleted at close-out). Without `pack` the legacy courier read still runs, records a
+`pack-courier-read` degradation, and inherits every failure above. **`launchId` must be FRESH on every
+launch and on every resume** — the tool mints one each time it runs, and refuses to reuse one;
+never derive it from the arc or the wave. It is how the scripts keep environment
 probes (the launch pack read itself, provisioning, integration setup, the merged/reachability git
 probes, the per-wave codex probe, the host preflight, the preview worktree + mirror couriers) out of
 `resumeFromRunId`'s cache: those probes answer "what does the disk and git look like right now",
@@ -503,8 +547,10 @@ node <this skill's directory>/persist.mjs \
 ```
 
 Run it **after every Workflow return, and after every crash** — before you read `.roadmap/` for
-anything, and before any relaunch. It replays the run against its own journal (no model is called),
+anything, and before any relaunch. It replays the run against its own journal (no model is called;
+the replay loads the same `pack` file the envelope names, so that file must still exist),
 then writes `state.json`, `plan.json`, `debt.json`, the `debt.md` and `architect-log.md` sections,
+`feedback/triaged/<wave>/boundary-notes.md` (what the triage tiers *asked of you* — see below),
 `skill-degradations.md`, and appends `degradations.jsonl` / `escalations.jsonl`. Re-running it over
 the same run is a no-op, so persisting twice is safe.
 
@@ -514,7 +560,9 @@ Read its last line:
   `removed=state.partial.json` means an earlier refusal's parked prefix was stale once this whole
   state landed, and was deleted.
 - **`PARTIAL stoppedAt=<label>`** (exit 2) — the replay ran out of journal, i.e. the run died at that
-  call. `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
+  call (if the run *returned* and this still says PARTIAL, the persister could not recover a prompt
+  from the transcripts — the 2026-09-17 platform framing did exactly that to a pre-0.18.0 persister:
+  update the skill, persist again; `--returned` lands the run's value meanwhile). `state.json` is the last snapshot the run logged, marked `partial: {stoppedAt}`. Work the
   recovery ladder below, then persist again.
 - **`PARTIAL-REFUSED stoppedAt=<label> why=<divergence|newer-on-disk>`** (exit 2) — the partial
   would have REGRESSED `state.json`, so it was parked in `state.partial.json` and `state.json` was
@@ -561,7 +609,7 @@ calls that are yours. The ladder's routing table, config knobs, and the per-unit
 harness runs are in `reference.md`. What you need at the keyboard is what comes back.
 
 **Fallback — per-wave harness dispatch.** You can still launch `harness.mjs` directly per wave
-(`args: { roadmapDir, config, launchId }`, no `harnessPath` — it reads the same pack, and
+(`args: { roadmapDir, config, launchId, pack }`, no `harnessPath` — it loads the same pack file, and
 `persist.mjs --script harness.mjs` writes its return) and triage every boundary yourself; setting
 `boundaryTriage: 'root'` gets the same effect without leaving the conductor. If you take the
 fallback path you inherit the conductor's duties back — in particular withholding contingent
@@ -570,9 +618,11 @@ dependents (`reference.md`), which the harness's scheduler does not do for you.
 ### When the conductor returns
 
 Judgment returns to you with `status: 'conductor-return'`, a `reason`, and the returned state.
-**On every wake, first read two things**: `.roadmap/architect-log.md` (the ladder's journal — what
-the boundary agents decided in your stead, and why) and the returned state's `boundary`/`debt`
-residue. That residue is **intact** on a terminal boundary; on a continuation boundary the
+**On every wake, first read three things**: `.roadmap/architect-log.md` (the ladder's journal — what
+the boundary agents decided in your stead, and why); `.roadmap/feedback/triaged/<wave>/boundary-notes.md`
+when the run wrote one (what a triage tier *asked of you*: rulings, contract corrections, the
+user-facing question — the envelope's `boundaryNotes`, which until 0.18.0 reached you only as
+`question` on a `needs-user` return); and the returned state's `boundary`/`debt` residue. That residue is **intact** on a terminal boundary; on a continuation boundary the
 conductor already banked the wave's debt (`.roadmap/debt.md`, or `roadmap:debt` issues) and cleared
 **only what the banker confirmed** — anything it did not name stays in `state.debt`, re-banks next
 boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt is already on disk at
@@ -616,17 +666,34 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   the per-run agent counter). `max-waves` carries the final wave's `boundary` back marked
   `triaged:true` — read it for context, but its findings are already banked and its feedback
   already moved, so it is not yours to triage again.
+- **`dispatch-held`** — you launched with `config: { dispatchOnly: [ids] }` and the run did exactly
+  that: it started only the listed units (ONE wave, by construction) and is **holding** everything in
+  `held` — never started, never re-opened, never marked blocked, their records untouched, so a held
+  parked or blocked unit still adopts its own commits when released. Use it to run a single unit
+  before a respec lands: `maxWavesPerRun: 1` does **not** do that — a wave drains the DAG, so
+  dependents dispatch the moment their dependency merges (2026-09-16: seven of them, four on specs
+  the log said must be respecced first). A listed unit that cannot start (a held or unmerged
+  dependency, an unknown id) dispatches nothing at all and says `why`. Relaunch without the knob —
+  or with the next list — to release the rest. It is a launch-envelope knob only; `plan.config`
+  ignores it.
 - **`boundary-degraded`** — the boundary phase was enabled but produced nothing (every job
   failed). Spawn the explorer/health agents yourself, triage their output, then relaunch.
 - **`triage-degraded`** — the boundary evidence is good but the triage agent itself died (a
   terminal API error). Nothing was admitted or dropped. Triage this boundary by hand, as for
   `boundary-degraded`, then relaunch.
-- **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `env-pids-exhausted`,
+- **a halt reason** (`codex-unavailable`, `codex-usage-limit`, `codex-capacity`, `env-pids-exhausted`,
   `env-no-reaper`, `env-verify-blocked`, `platform-outage`) — the wave stopped dispatching and
   handed you a
   **resumable pause, not a failure**: nothing was quarantined, the units in `parked` keep their
-  commits and re-enter by adoption. Each has exactly one human action — re-auth (`codex login`),
-  wait out a usage-limit, platform-outage or Codex-backend-outage window, or fix the box (a full
+  commits and re-enter by adoption. A halted wave ran no triage, so **debt its exit gates banked is
+  un-banked**: `unbankedDebt` counts it, it is in `debt` / `.roadmap/debt.json`, and the next launch
+  carries it into its first boundary on its own, stamped `carriedFromWave` — if you triage it by
+  hand instead, delete `debt` from `state.json` before relaunching, or it banks twice. (The same
+  carry covers what a `max-waves`, `agent-budget` or `dispatch-held` return left un-banked; the state
+  says so itself, `debtPending: true`.) What the halt's skipped boundary owed the units it *merged* —
+  the health pass, and a design reconcile — is on `owed`. Each halt has exactly one human action — re-auth (`codex login`),
+  wait out a usage-limit, platform-outage or Codex-backend-outage window, smoke the model and relaunch
+  within minutes (`codex-capacity` — the model was at capacity, which is not a limit), or fix the box (a full
   pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1;
   `env-verify-blocked` means the verifiers' own tooling could not run at all — read their failure
   output in the `verify-blocked` degradations, then fix the registry, network or missing global tool).
@@ -636,7 +703,11 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   no login helps, wait. Do the action, then relaunch; never route around a halt by re-implementing
   the work another way. `env-verify-blocked` is the **top rung of a three-rung ladder**, and the
   lower two need no wake at all: the FIRST verify a unit's tooling blocks (or a verify role that
-  never ran, `verify-unrun`) leaves that unit **`blocked`** — commits intact, no dossier, nothing
+  never ran, `verify-unrun`) leaves that unit **`blocked`** — and since 0.18.0 *what counts* is decided
+  in code from the lane ledger, not by the verifier's word: only a command the **spec names** that the
+  host could not run blocks; a lane the verifier added itself is dropped (`lane-skipped`), and a test
+  that ran and failed is a failure with fix rounds, never a block. The row names the blocking lane.
+  A blocked unit keeps its commits — no dossier, nothing
   judged about the work — and the next wave's start loop re-opens and re-verifies it; a SECOND
   block on a later wave quarantines it with an *environment* dossier; two DISTINCT units blocked in
   one wave is the host fact that halts here. So `blocked` in a returned state is an ordinary,
@@ -741,8 +812,10 @@ the replay diverged or disk is already ahead — re-run it with `--returned <the
 ladder in order:
 
 1. **Same session, run still alive** — nothing to do; it will notify you when the run finishes.
-2. **Same session, run dead** — `resumeFromRunId` with the `scriptPath` recorded in `state.json`'s
-   `run` field. Best-effort: if it doesn't cleanly resume, drop to rung 3.
+2. **Same session, run dead** — run `launch-pack.mjs` again (a resume needs its own fresh `launchId`
+   and `pack`, exactly like a launch), then `resumeFromRunId` with the `scriptPath` recorded in
+   `state.json`'s `run` field and the new values in `args`. Best-effort: if it doesn't cleanly resume,
+   drop to rung 3.
 3. **Adopt rejected, or a new session** — launch a **fresh conductor** against the `state.json`
    `persist.mjs` just wrote. This behaves like a resume, not a restart: a continuation boundary
    snapshots the consumed state, so a partial persist lands the last completed boundary; and
@@ -751,8 +824,14 @@ ladder in order:
    re-dispatched — including one the persisted state still records as `running`/`merge-ready`; a crashed `running`
    unit whose branch did *not* land auto-adopts its committed work and re-enters at verify — its
    `stage` field and `git log unit/<id>` show how far it got). The loss bound is only the in-flight
-   wave's uncached agent calls. Pass a **fresh `launchId`** on the relaunch: it is what stops those
-   git/disk probes being served from the dead run's cache.
+   wave's uncached agent calls. Run `launch-pack.mjs` again and pass the **fresh `launchId`** and `pack`
+   it prints: the id is what stops those git/disk probes being served from the dead run's cache, and
+   the pack is the `state.json` the persister just wrote. A unit that re-enters gets one extra
+   read-only check first — are any of ITS OWN codex build/fix processes from the dead launch still
+   alive (the pid answers *and* its command line still names that artifact dir, so a reused pid is
+   never mistaken for ours)? — and anything that is gets reaped by pidfile before the worktree is
+   touched (a `codex-orphan` degradation says so; an orphan that cannot be confirmed dead, or a check
+   that could not be read at all, parks the unit instead — never two writers in one tree).
 
    A wave that halts immediately with **`integration tip regressed`** is not a crash — it is the
    harness refusing to build on a branch its own record cannot reach (the branch was rewound, or
@@ -769,21 +848,18 @@ ladder in order:
    a repeat at the same wave means the `gh` projection is failing, and the `gh-sync` entries beside
    it are the thing to read.
 
-   A **`pack-unreadable`** throw at launch is not a crash either: the courier could not produce a
-   copy of `plan.json` or `state.json` matching the file's own `cksum`, twice, so the run refused to
-   dispatch a wave from a document nobody could vouch for. The throw names the file, its byte count
-   and how much arrived. **JSON escapes are not the cause** — since 0.16.0 the read command
-   rewrites every JSON escape *sequence* to its own marker (`\"` → `@q@`, `\\` → `@bs@`, `\n` →
-   `@n@`, `\uXXXX` → `@uXXXX@`), so the courier carries prose with no backslash in it and the
-   quote of every `\"` pair inside its marker, and the script puts the escapes back in code
-   before the `cksum` decides. (Plain text failed twice on dropped escape levels; the 0.15.0
-   per-backslash `@bs@` sentinel failed on 2026-09-14 when a courier doubled the marker before a
-   quote; base64 failed live at 1.5 KB — a model cannot transcribe a long high-entropy string.)
-   The three real causes, in order of likelihood: the file is **too big** (a copy that stops far
-   short of the byte count — get `state.json` back under ~35 KB by moving prose into files and
-   referencing them by path); `roadmapDir` is wrong or the file does not parse; or the document
-   genuinely contains a marker such as `@q@` or `@bs@`, which the reversal would corrupt and the
-   `cksum` therefore rejects — remove it. Fix, then relaunch.
+   Three launch-time throws are refusals of the same kind — the run declining to dispatch a wave
+   from a document nobody can vouch for. **`pack-stale`**: `plan.json` or `state.json` on disk no
+   longer matches the copy inside the pack file (you edited one after running `launch-pack.mjs`), or
+   the pack was written for a different `launchId` — run the tool again and launch with what it
+   prints. **`pack-missing`**: `args.pack` names a file that cannot be loaded; there is deliberately
+   no fall back to the courier, because the envelope names the transport and a replay must take the
+   same route the run did — run the tool again. **`pack-unreadable`** can only happen on the *legacy*
+   route (no `args.pack`): a Haiku courier transcribes both files and its copy failed the file's own
+   `cksum` twice. That route has failed on dropped escape levels, a doubled sentinel, base64, size
+   (a 30 KB state whose copy stopped at 6.4 K characters) and a courier that retyped the read command
+   itself — every one a consequence of asking a model to copy a document. Do not debug it: launch
+   with a pack.
 
    A branch with commits beyond its fork base that the passed state does *not* mark `running` is
    **refused, not overwritten** (`has-commits` quarantine, branch intact) — adopt it deliberately
@@ -841,8 +917,11 @@ Before any relaunch, kill the stale `worktreeRoot/__preview.pid` **process group
    not this arc, so archiving it would bury the only account of how the orchestrator failed;
    remove unit worktrees and merged `unit/*` branches (keep quarantined
    branches — their dossiers point at them), and sweep `worktreeRoot/__codex/` with them — the
-   codex briefs/events/session artifacts are per-arc forensics whose value ends at close-out
+   codex briefs/events/session artifacts (`__codex/<unit>/w<wave>/<step>/`, and
+   `__codex/roles/w<wave>/<label>/` for roles) are per-arc forensics whose value ends at close-out
    (keep a quarantined unit's `__codex/<unit>/` alongside its branch if its dossier cites it);
+   delete `.roadmap/launch/` — the launch packs are gitignored copies of plan+state that only a
+   run's own persist ever needs, and every run is persisted by now;
    delete the integration branch once merged. **In issue
    mode also**: post the session report to the arc tracking issue and close it; close the milestone;
    verify merged-unit issues are closed-completed and deferred ones closed-not-planned (the wave-tail

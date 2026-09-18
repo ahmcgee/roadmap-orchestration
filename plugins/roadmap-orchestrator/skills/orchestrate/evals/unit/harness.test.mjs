@@ -121,6 +121,49 @@ test('1c validation: self-referential existingBranch throws', async () => {
 // =========================================================================================
 // 2. Contract-edge scheduling: B(dep A) must not set up until A's merge resolves.
 // =========================================================================================
+// 2026-09-16 (wave 6): `maxWavesPerRun: 1` bounds the conductor's iterations, never the units — a
+// wave drains the DAG, so a one-wave run built the one relaunch unit the root meant and then
+// dispatched seven dependents, four of them on specs the architect log said must be respecced first.
+test('2z config.dispatchOnly: only the listed unit starts; what it holds rides through UNTOUCHED', async () => {
+  const plan = makePlan([unit('a'), unit('b'), unit('c'), unit('d')],
+    [{ from: 'a', to: 'b', type: 'semantic', mode: 'contract' }])
+  const prior = makeState({ wave: 3, units: {
+    c: { status: 'blocked', branch: 'unit/c', rounds: { verifyBlocked: 1 }, note: 'verification tooling could not run' },
+    d: { status: 'pending', parked: true, note: 'parked at verify:d#0: codex-usage-limit' } } })
+  const { fn, calls } = makeAgent()
+  const state = await runWave(fn, plan, prior, { dispatchOnly: ['a'] })
+  assert.equal(state.units.a.status, 'merged')
+  assert.ok(!has(calls, 'setup:b'), 'the dependent is NOT dispatched when its dependency merges')
+  assert.deepEqual(state.units.b, { status: 'pending' }, 'held is pending — never blocked, never deferred')
+  assert.deepEqual(state.units.c, prior.units.c, 'a held `blocked` unit is not re-opened: its record is byte-identical…')
+  assert.deepEqual(state.units.d, prior.units.d, '…and so is a held parked one — `parked` is what adopts its commits later')
+  for (const id of ['b', 'c', 'd']) assert.ok(!calls.some((x) => x.label.endsWith(`:${id}`)), `${id}: not one agent call`)
+
+  // Released on the next launch, the held units adopt their own commits instead of quarantining on them.
+  const next = makeAgent([
+    { match: /^merged-probe:(c|d)$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: ['d'.repeat(40)] }) },
+    { match: /^setup-commits:(c|d)$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+  ])
+  const { degradations: _d, escalations: _e, ...carried } = state
+  const released = await runWave(next.fn, plan, carried)
+  for (const id of ['b', 'c', 'd']) assert.equal(released.units[id].status, 'merged', `${id} runs once nothing holds it`)
+  assert.ok(!has(next.calls, 'codex-build:c') && !has(next.calls, 'codex-build:d'), 'adopted, not rebuilt')
+})
+
+test('2y config.dispatchOnly: an empty list holds nothing, an unknown id selects nothing and is recorded', async () => {
+  const plan = makePlan([unit('a'), unit('b')])
+  const all = await runWave(makeAgent().fn, plan, makeState(), { dispatchOnly: [] })
+  assert.equal(all.units.a.status, 'merged')
+  assert.equal(all.units.b.status, 'merged', '[] is no hold at all')
+  const { fn, calls } = makeAgent()
+  const none = await runWave(fn, plan, makeState(), { dispatchOnly: ['nope'] })
+  assert.ok(!has(calls, 'setup:a') && !has(calls, 'setup:b'))
+  assert.match(none.degradations.find((d) => d.kind === 'dispatch-only-unknown').what, /\(nope\)/)
+  // …and the hold is the LAUNCH ENVELOPE's: a plan-level copy would outlast the launch that asked for it.
+  const viaPlan = await runWave(makeAgent().fn, makePlan([unit('a'), unit('b')], [], { config: { dispatchOnly: ['a'] } }), makeState())
+  assert.equal(viaPlan.units.b.status, 'merged', 'plan.config.dispatchOnly is inert')
+})
+
 test('2 contract-edge: dependent setup waits for the dependency merge to settle', async () => {
   const mergeA = deferred()
   const { fn, calls } = makeAgent([{ match: /^merge:a$/, result: () => mergeA.promise }])
@@ -203,6 +246,89 @@ test('4 has-commits setup: quarantine, no plan/impl', async () => {
   assert.ok(!has(calls, 'setup:a'), 'nothing was touched — no worktree command was even composed')
   assert.ok(!has(calls, 'plan:'), 'no planning')
   assert.ok(!has(calls, 'codex-build:'), 'no implementation')
+})
+
+// =========================================================================================
+// 4b. A dossier prompt NAMES the keys its schema requires (2026-09-16).
+// `dossier:openfga-authz-service` exhausted its structured-output retry cap — five attempts, every
+// one rejected for a missing required property — because the prompt asked for "what was attempted,
+// what failed (with the strongest evidence), and your best hypothesis" and named no key: the second
+// deliverable had no property at all, and the rescue variant never said "hypothesis". The plain
+// English words are not enough (they satisfied the hygiene library's word match all along), so the
+// pin is on the BACKTICKED key. And the death was silent — no degradation row — which is pinned too.
+// =========================================================================================
+const namesDossierKeys = (prompt, what) => {
+  for (const k of ['attempted', 'evidence', 'hypothesis'])
+    assert.ok(prompt.includes(`\`${k}\``), `${what} names the required key \`${k}\` as a key, not as prose`)
+}
+test('4b dossier prompts name every required key, and a dead investigator is recorded', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+    { match: /^dossier:a$/, result: () => null },   // the retry cap exhausted: agent() resolves to null
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  const d = calls.find((c) => c.label === 'dossier:a')
+  namesDossierKeys(d.prompt, 'the quarantine investigator prompt')
+  assert.deepEqual(d.schema.required, ['attempted', 'evidence', 'hypothesis'])
+  assert.ok(d.schema.properties.notes, 'and the schema carries the `notes` release valve every tight schema here has')
+  const row = (state.degradations ?? []).find((x) => x.kind === 'dossier-fallback')
+  assert.ok(row, 'a dead investigator used to land the stand-in dossier with no row anywhere')
+  assert.equal(row.label, 'dossier:a')
+  assert.match(calls.find((c) => c.label === 'dossier-write:a').prompt, /investigation agent failed/,
+    'the stand-in dossier is still written — a quarantine with no dossier sends the next reader hunting')
+})
+test('4c the rescue dossier names the same keys', async () => {
+  const { fn, calls } = makeAgent([
+    { match: /^verify:a/, result: () => ({ ...VERIFY_FAIL(['boom']), contractSurfaceTouched: true }) },
+    { match: /^consult:a/, result: () => ({ action: 'quarantine', guidance: 'redesign' }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'quarantined')
+  namesDossierKeys(calls.find((c) => c.label === 'rescue-dossier:a').prompt, 'the rescue dossier prompt')
+})
+
+test('4d a dead rescue distiller never costs the unit its consult, and is recorded', async () => {
+  for (const dead of [() => null, () => { throw new Error('distiller blew up') }]) {
+    const { fn, calls } = makeAgent([
+      { match: /^verify:a/, result: () => ({ ...VERIFY_FAIL(['boom']), contractSurfaceTouched: true }) },
+      { match: /^rescue-dossier:a/, result: dead },
+      { match: /^consult:a/, result: () => ({ action: 'quarantine', guidance: 'redesign' }) },
+    ])
+    const state = await runWave(fn, makePlan([unit('a')]), makeState())
+    assert.ok(calls.some((c) => c.label === 'consult:a'), 'the architect is still consulted')
+    assert.match(state.units.a.reason, /architect consult/, 'and rules — never a "pipeline error" for a dead convenience step')
+    assert.ok((state.degradations ?? []).some((d) => d.kind === 'dossier-fallback' && d.label === 'rescue-dossier:a'))
+    assert.match(calls.find((c) => c.label === 'consult:a').prompt, /the distiller produced no report/)
+  }
+})
+
+// =========================================================================================
+// 4e. The planner's absolute paths are the diff's relative ones (2026-09-17, every paid pass):
+// `files: ['<worktreeRoot>/a/calc.js']` against `diffFiles: ['calc.js']` read as scope growth on
+// the unit's own files. Normalised in code before anything pins or briefs on them.
+// =========================================================================================
+test('4e a planner that lists ABSOLUTE worktree paths pins the same scope as one that lists relative ones', async () => {
+  const abs = ['/wt/a/calc.js', '/repo/test.js', './lib/x.js', 'lib/x.js', ' /wt/a/calc.js ']
+  const { fn, calls } = makeAgent([
+    { match: /^plan:a$/, result: () => ({ approach: 'x', files: abs, testPlan: 'x', feasible: true }) },
+    { match: /^verify:a/, result: () => ({ ...VERIFY_OK, diffFiles: ['calc.js', 'test.js', 'lib/x.js'] }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('a')]), makeState())
+  assert.equal(state.units.a.status, 'merged')
+  assert.deepEqual((state.degradations ?? []).filter((d) => d.kind === 'scope-growth'), [],
+    'the diff is exactly the pinned scope — no growth row')
+  const brief = calls.find((c) => c.label === 'codex-build:a').prompt
+  assert.match(brief, /In scope: calc\.js, test\.js, lib\/x\.js/, 'the implementer is briefed with the relative, de-duplicated list')
+  assert.ok(!brief.includes('In scope: /wt/'), 'never the absolute form')
+  // …and a file the diff reaches that the plan did NOT name is still growth.
+  const grow = makeAgent([
+    { match: /^plan:a$/, result: () => ({ approach: 'x', files: ['/wt/a/calc.js'], testPlan: 'x', feasible: true }) },
+    { match: /^verify:a/, result: () => ({ ...VERIFY_OK, diffFiles: ['calc.js', 'other.js'] }) },
+  ])
+  const s2 = await runWave(grow.fn, makePlan([unit('a')]), makeState())
+  assert.match((s2.degradations ?? []).find((d) => d.kind === 'scope-growth').what, /1 file\(s\) outside its pinned scope: other\.js/)
 })
 
 // =========================================================================================
@@ -417,6 +543,10 @@ test('9 debt banking: every producer, contract mismatch -> kind contract / major
   // be an invitation to widen the diff.
   assert.ok(!calls.some((c) => c.label.startsWith('debt-fix:')), 'no debt-fix sweep exists any more')
   assert.ok(find((d) => d.kind === 'contract' && d.severity === 'major' && /contract mismatch/i.test(d.what)), 'contract mismatch -> contract/major')
+  // 2026-09-16: the code-composed mismatch row carried no bankReason, so debt.md and the
+  // roadmap:debt issue rendered it with no bank tag. A row the HARNESS banks states why, like a gate's.
+  assert.equal(find((d) => d.kind === 'contract').bankReason, 'needs-migration-or-ruling',
+    'a mismatch row is a ruling somebody still owes, and says so')
   assert.ok(find((d) => d.kind === 'test' && d.what === 'impl-shortcut'), 'the build report\'s confession banks directly')
   assert.ok(find((d) => d.kind === 'structure' && d.what === 'fix-shortcut'), 'fix-round debt banked')
   assert.ok(find((d) => d.kind === 'ergonomics' && d.what === 'gate-defer'), 'opus-gate debt banked')

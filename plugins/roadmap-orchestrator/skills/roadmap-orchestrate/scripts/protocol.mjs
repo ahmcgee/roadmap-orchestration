@@ -153,7 +153,7 @@ export function monotonic(before, after, { perWaveRounds = false } = {}) {
 }
 // Runtime-known fields are deliberately replaceable (e.g. a cleared halt must stay cleared).
 // Unknown extension fields survive the Claude serializer's selective reconstruction.
-const stateFields = new Set('integrationBranch integrationTip consultsUsed spend run conductor preview debt escalationStops owed sharedReds scopeRulings boundary halt codex wave units partial degradations escalations'.split(' '))
+const stateFields = new Set('integrationBranch integrationTip consultsUsed spend run conductor preview debt debtPending escalationStops owed sharedReds scopeRulings boundary halt codex wave units partial degradations escalations'.split(' '))
 const unitFields = new Set('status stage branch base mergedAt reason dossierPath rounds parked codexSession issue note'.split(' '))
 export function preserveExtensions(before, after) {
   const result = { ...Object.fromEntries(Object.entries(before ?? {}).filter(([k]) => !stateFields.has(k))), ...after }

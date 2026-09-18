@@ -27,6 +27,25 @@ test('independent review and real lane evidence are required', async t => {
   await assert.rejects(f.call('approve', await reports(f, 'a', { gate: { head: sha, actor: 'g', verdict: 'reject', acceptance: [] } })), /did not approve/)
 })
 
+// The shared lane ledger carries `expectedExit` (the Claude driver's EXIT_BAR, 2026-09-14): a clause
+// that REQUIRES a command to fail is green when it fails exactly as stated. This driver used to demand
+// exit 0 from every lane, so such a unit could never be approved here. Absent means 0.
+test('a lane is green when its exit code equals the exit its clause expects', async t => {
+  const f = await fixture(t)
+  await f.call('wave'); await f.call('setup', { unit: 'a' }); const sha = await implement(f)
+  const verify = (lanes) => ({ verify: { head: sha, actor: 'v', verdict: 'pass', lanes } })
+  await assert.rejects(f.call('approve', await reports(f, 'a', verify([{ command: 'make images KIND_CLUSTERS=missing', exitCode: 2 }]))),
+    /recorded lanes/, 'a non-zero exit with no stated expectation is still red')
+  await assert.rejects(f.call('approve', await reports(f, 'a', verify([{ command: 'make images', exitCode: 0, expectedExit: 2 }]))),
+    /recorded lanes/, 'and a required failure that did NOT happen is red too')
+  await assert.rejects(f.call('approve', await reports(f, 'a', verify([{ command: 'node test.mjs' }]))),
+    /recorded lanes/, 'a lane with no exit code at all is not evidence')
+  await f.call('approve', await reports(f, 'a', verify([
+    { command: 'node test.mjs', exitCode: 0 },
+    { command: 'make images KIND_CLUSTERS=missing', exitCode: 2, expectedExit: 2 }])))
+  assert.equal((await f.readState()).units.a.status, 'merge-ready')
+})
+
 test('a lying green unit report cannot bypass the actual integration suite', async t => {
   const f = await fixture(t)
   await f.call('wave'); await f.call('setup', { unit: 'a' })

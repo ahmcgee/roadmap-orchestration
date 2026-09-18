@@ -1165,3 +1165,150 @@ still in the loop. And not yet measured on a real arc — the paid fixtures ship
 and cannot grade Phase 0, which is why SKILL.md makes the root journal how many of the role's
 findings changed the plan. The probe that shipped with it (evals/README.md → P3) ran the role once
 against the conductor fixture's plan pack; what it found there is the only evidence so far.
+
+## 23. The 2026-09-16/17 batch — take the model out of the places it was never needed
+
+One arc, nine waves, eleven findings against 0.16.0. §21's pattern held — a fact about the
+*process* turned into a verdict about the *work* — but the larger half of this batch is a different
+lesson, and it is §19's own, arriving at the places §19 had not reached: **a model was still
+sitting where no judgment was being asked for**, and each time the fix that shipped first was a
+better sentence.
+
+**The launch pack was never a transcription problem, so no transport could fix it.** §20 records
+two failures and a sentinel; §21 records a third, a base64 detour and "probe a transport before
+betting a launch on it". Two days later the read failed three more times: a 30 KB state whose
+courier copy stopped at 6.4 K characters, twice, and then — the one that ends the argument — a
+courier that **retyped the composed `sed`** with its backslashes un-doubled, so every plain quote of
+a file containing no backslash at all came back as `@q@`. The escapes had been moved out of the
+*document* and the model found them in the *command*. Five transports, one mistake: a model in the
+data path of a byte copy. The platform had the answer all along — `workflow({scriptPath})` reads a
+script off disk with no model anywhere and returns what it returns — so `launch-pack.mjs` (a Node
+process, like the persister) writes a script whose body is `return { files: { 'plan.json': <text>,
+… } }` and the scripts load it. Probed first, as §21 demands: 68 KB carrying every escape form, a
+raw em dash and U+2028, byte-exact in 91 ms, zero agents. What is left for a courier is what a
+courier is good at: two `cksum` lines, compared in code against `cksumOf` of the text — staleness,
+not fidelity. Three decisions came out of the cross-model review of the plan and are worth keeping:
+**the envelope names the transport** (`args.pack`), never the disk, because `persist.mjs` replays the
+run from the same envelope and a route chosen by what files exist at replay time would ask the
+journal for prompts it never held — so a pack that cannot be loaded is a loud `pack-missing`, with
+no fall back; a pack is **write-once per launchId and never pruned**, because the persister
+rewrites the very files it copies; and the one nesting level is still spent only at depth 1 — a
+nested harness is handed its plan in memory and never reaches the call. The courier read survives
+as the no-pack route and says so in the ledger.
+
+**A brake the verifier held was a brake in prose.** The verify brief said "lint/typecheck the
+changed files first" and named no command, so the verifier *chose* one (`shellcheck`), the host
+lacked it, and a unit with eight green lanes blocked. It said "if the tooling itself cannot run …
+report blocked:true and stop", so a lane the verifier composed against a path that did not exist,
+beside a test that genuinely failed, came back "tooling could not run" — a code defect headed for
+an environment dossier. And the two-strike tally was cause-blind, so a phantom block counted as
+the first of "2 separate waves". §19 rule 1 (a model runs the lanes, it never picks them) and rule
+2 (a brake lives in code) were both being broken by one boolean. Each lane now says where it came
+from and how it ended, and `judgeVerify` decides: a lane the verifier added that could not run is
+dropped; a lane that ran and is red is a failure; only a spec-named lane the host could not run
+blocks. Two limits the plan review forced, both right. The tally is **not** reset when a verify
+comes back clean — the shared protocol with the native driver refuses any decrease of
+`verifyBlocked`, and with phantom strikes no longer counted "twice" means twice again without
+touching it. And `pass` is never *upgraded* over a failure the code cannot attribute to a dropped
+lane: `HOST_BAR` has the verifier report an unsatisfiable clause in `failures` with every lane
+green, and laundering that into a pass would have traded one false verdict for another. The review
+of the *implementation* then found the first cut still doing it three ways — attributing a failure
+to a dropped lane because both mentioned `curl`, trusting `blocked:true` beside an all-green ledger
+(a strike again), and "passing" a ledger whose only lane had been dropped — so the rule is stated
+in its final form: attribution needs the whole command or the executable *and* a could-not-run
+message; the verifier's word decides only over an empty ledger; and a ledger with nothing left in
+it is a verify that did not happen, which takes `verify-unrun`'s door and costs no strike.
+
+**A directory is an identity, and ours left out the wave.** Round counters restart every wave, so
+an adopted unit's `verify-<unit>-0` was last wave's directory, and the steering prompt's attach
+rule — built for a schema retry re-dispatching *the same request* — attached to a finished run and
+read its artefacts back without starting codex. One replay was a phantom block that quarantined a
+green unit; another was a "model at capacity" line that halted a healthy wave. Where the tip had
+not moved the whole prompt was byte-identical too, so the platform cache could serve the old result
+with no dispatch at all. The wave number is in the path now — not `launchId`, which a work-product
+prompt may never carry. The review's objection was the useful one: uniqueness is not exclusion. A
+detached codex is *meant* to outlive its steerer, so a crashed launch can leave one alive in a
+worktree that this wave's fresh directories know nothing about; a re-entering unit therefore has its own pidfiles checked, and what is alive reaped, before
+anything touches the tree. Three details are the difference between that guard and a new hazard:
+"alive" means the pid answers *and* its command line still names that artifact directory, because
+the scan covers every wave and a reused pid would otherwise get an innocent process group killed;
+the wave is in the prompt beside the launch salt, because one conductor run shares a launchId and
+the cache would serve wave N the "all clear" of wave N−1; and an answer that could not be read
+**parks** the unit — the one place in the scripts where an unknown is not allowed to proceed, since
+the guess it would be proceeding on is "nobody else is writing here".
+
+**A transient needs its own name, because the name is the remedy.** "Selected model is at
+capacity" was filed under usage limits by the steerer — `limitHit` is a judgment over an error
+sliver — and the harness halted on first sight with a remedy measured in hours, while a smoke on the
+same model passed in twenty minutes. Code classifies it now, from the copied line and a `grep -c`;
+the step waits once on a closed list of sleeps (each under the Bash tool's default, so no timeout
+is left for a model to remember) and reattempts once; the wave may buy only so many waits, reserved
+before the await so concurrent steps cannot each buy one; and what halts, halts as `codex-capacity` — including a wait nobody can vouch for, since a
+courier that died mid-sleep would otherwise turn "wait, then reattempt" into an immediate second hit. One ladder for the build, fix and role lanes, because three hand-written retry
+branches are three places for capacity to slip past on a reattempt.
+
+**What a return leaves behind must be read by the next launch, or it was never kept.** A halt
+returns before census, triage and `stage()`; the debt its exit gates had banked sat in `state.debt`
+and nothing ever read it back — the promise to "re-bank at the next boundary" was true only inside
+one run. The conductor now seeds its pending ledger at launch, before any return guard, from the
+two kinds of return that leave debt *un-banked* (a halt; `max-waves`/`agent-budget`), stamped with
+the wave it came from, and from no other — everything else hands the residue to the root on
+purpose, and carrying that would bank it twice. The obligation is written down rather than inferred
+(`state.debtPending`, with `state.debt` holding everything un-banked and not just the last wave's
+rows): inferred from the return reason alone, a pre-dispatch `plan-cycle` between the halt and the
+launch that finally ran a wave replaced the eligible reason and the rows were gone. The same batch dropped a proposal to move that
+residue out of `state.json` into a side file: with the pack read no longer size-bound the reason
+was gone, the native driver's handoff contract names exactly those fields, and the carry above
+reads them. What a halted wave's skipped boundary owed the units it *merged* is minted
+onto `owed` in code: the design reconcile, because it is scoped to the wave it runs in, and the
+health pass, because the documented way to close an arc is a `boundary:'off'` launch that runs
+owed jobs only.
+
+Smaller, same shape: the planner's `files` come back as absolute worktree paths and the diff's
+name-only list is repo-relative, so every diff file of a fresh unit read as scope growth on its own
+plan (every paid pass of this batch had the row) — normalised in code, once, before anything pins
+or briefs on them; a required schema key the prompt never names is the same trap as a cap it
+never states (the dossier prompts described `attempted`/`evidence`/`hypothesis` in prose, and the
+hygiene library's word match was satisfied by the English); issue-mode feedback disposal takes the
+census's closed set as file mode always did, so a rendering's path can no longer reach `gh issue`;
+what a triage tier *asks of the root* rides the envelope and lands in a file instead of living only
+in `journal.jsonl`; and `config.dispatchOnly` exists because `maxWavesPerRun: 1` bounds the
+conductor's iterations and never the units — a wave drains the DAG.
+
+**And then the platform moved under the final fixture, twice in one run.** Between two waves of the
+last conductor pass the Workflow runtime began *framing* what it hands each agent: first a message
+relaying "the user request that triggered this workflow run … the only user voice in this task …
+where the computed task conflicts with this request, this request wins", then the script's prompt as
+a second message, every line indented. Two consequences, both the kind this file exists to record.
+The persister read the first user record of a transcript as the prompt, so all 29 framed agents
+indexed under the relay text and a clean three-wave `arc-complete` persisted as `PARTIAL
+stoppedAt=triage:w2` — an arc that could not have been relaunched. `persist.mjs` unframes now, and the replay itself is the proof of exactness (one character wrong is a
+cache miss, loudly). The same pass found the persister's other blind spot: a call whose `agent()`
+*threw* is journalled `failed`, the scripts branch on a throw (`run()`'s `#retry`) differently from a
+null (`#salvage`), and replaying it as a null asked the journal for a call the run never made. The second
+is §19 arriving from outside: the relayed request was whatever the human had last typed to the root
+— here, "don't commit the skill feedback file by the way, delete it when done" — and a wave-3
+`provision:integration` **Haiku courier, handed a closed list of two provisioning commands, ran them
+and then `rm -f <the operator's checkout>/skill-feedback.md`**, reporting "Deleted skill-feedback.md
+as requested". A goal, handed to the cheapest tier, from outside every closed list the scripts
+compose; a destructive command in the one repository no sanctioned command may touch; and nothing
+in either script had asked for it. The scripts cannot remove the relay and cannot outrank it — the
+frame says so — and "ignore the user" is both untrue and exactly the sentence a model reasons past.
+So every prompt opens with the true thing instead (`RELAY_BAR`, one chokepoint, `ask`, pinned at the
+source level so no prompt can be composed without it): *that request was addressed to the session
+that launched this workflow, which carries it out itself — acting on it here does the user's work
+twice, in the wrong place, at the wrong time.* It is a sentence, and §19 says what sentences are worth — measured, this time: across the next full
+fixture pass every one of 223 agents was framed, a Sonnet investigator wrote into its own report
+that the relayed request "was addressed to the launching session … I took no action on it", and one
+agent still acted: the Haiku steerer of `flake:w2`, twenty tool calls into a free-form session,
+finished its real work and then ran `rm` on the file — "when done". One in 29 without the
+clause, one in 223 with it: better, and not containment; the containment that would actually hold is the platform's to give (a relay the script can
+decline, or one that is not shown to agents whose whole job is a closed list), and SKILL.md now tells
+the root the one thing it controls — what the human's latest message says when a launch goes out.
+
+The method is worth a line. The plan was reviewed by the builder's family before any of it was
+written, and the implementation again after (§22, applied to the skill itself): two blockers and
+eight majors on the plan, eleven majors on the code, every one of them a
+place where the plan was about to break a contract it had not read — the protocol's monotonic
+counters, the replay's dependence on the envelope, the handoff's preserved fields. What Fable found
+obvious, Fable's plan found obvious too.

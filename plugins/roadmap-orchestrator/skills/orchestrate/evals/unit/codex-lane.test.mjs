@@ -176,7 +176,7 @@ test('b2 session-id capture: the launch line races codex with a bounded thread_i
   const p = promptOf(calls, 'codex-build:a')
   assert.ok(p, 'the build steering call fired')
 
-  const dir = `${WT}/__codex/a/build`
+  const dir = `${WT}/__codex/a/w1/build`
   assert.ok(p.includes('CPID=$!'), 'codex is backgrounded so the watcher loop can race it')
   assert.ok(p.includes('wait $CPID'), 'the script still waits on codex for the real exit code')
   assert.ok(
@@ -384,7 +384,7 @@ test('g fix rounds: resume by session-id FILE, and the last gate round starts co
   ])
   await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable' })
 
-  const buildDir = `${WT}/__codex/a/build`
+  const buildDir = `${WT}/__codex/a/w1/build`
   for (const label of ['codex-fix:a#0', 'codex-gate-fix:a#0']) {
     const p = promptOf(calls, label)
     assert.ok(p, `${label} fired`)
@@ -515,7 +515,7 @@ test('l spec critique: questions and risks thread into the plan-check as adjudic
   // and the __codex artifact dir must be marked as scratch (arc-observed: Haiku cd'd to wtRoot and
   // refused because it "is not a git repository").
   const cdIdx = review.prompt.indexOf(`Your cd target is ${WT}/a —`)
-  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/roles/codex-spec-review-a'),
+  assert.ok(cdIdx >= 0 && cdIdx < review.prompt.indexOf('__codex/roles/w1/codex-spec-review-a'),
     'the worktree is named as the cd target before the artifact dir')
   assert.ok(/scratch artifact directory, NOT a git checkout/.test(review.prompt), 'the artifact dir is marked scratch')
   // Schema hard-cut: an entry truncated at its cap is a valid entry (arc-observed: Haiku reported
@@ -595,20 +595,20 @@ test('n2 adapter: cwd and sandbox are interpolated exactly as given, and never t
   // self-written pidfile, the TERM forward and the double wait, which the roles get for free only
   // because the seam is shared.
   for (const required of ['setsid', '--json', '-o ', '--output-schema', 'tail --pid', 'timeout -k 30 900',
-    `sh -c 'echo $$ > ${WT}/__codex/roles/codex-spec-review-a/codex.pid; `,
+    `sh -c 'echo $$ > ${WT}/__codex/roles/w1/codex-spec-review-a/codex.pid; `,
     'trap "kill -TERM $CPID; T=1" TERM;',
     'wait $CPID; RC=$?; if [ -n "$T" ]; then wait $CPID; RC=$?; fi;',
     // …and the bounded pidfile wait the launch command ends on. Without it the role's own
     // `tail --pid=$(cat …/codex.pid)` — a SEPARATE Bash call — races the detached shell's first
     // write and reads an absent file, which is exactly the false death the pidfile mechanic exists
     // to remove (2026-09-04).
-    `exit-code' & i=0; while [ ! -s ${WT}/__codex/roles/codex-spec-review-a/codex.pid ] && ` +
+    `exit-code' & i=0; while [ ! -s ${WT}/__codex/roles/w1/codex-spec-review-a/codex.pid ] && ` +
     '[ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done'])
     assert.ok(p.includes(required), `the role launch must reuse the pinned build-lane mechanic \`${required}\``)
   assert.ok(!p.includes('echo $! >'), 'and never the $! pidfile the build lane no longer writes either')
   assert.ok(/A MISSING .*exit-code MEANS RUNNING, NEVER DEAD/.test(p), 'including the absent-exit-code rule')
   assert.ok(/if .*codex\.pid already exists/.test(p), 'and the attach-don\'t-relaunch preamble')
-  assert.ok(p.includes(`${WT}/__codex/roles/codex-spec-review-a`),
+  assert.ok(p.includes(`${WT}/__codex/roles/w1/codex-spec-review-a`),
     'role artifacts live in the roles namespace under the worktree root, outside every tracked tree')
 })
 
@@ -621,9 +621,9 @@ test('n3 adapter: one reap-first retry, then a tagged failure — and the platfo
 
   assert.deepEqual(seen, ['codex-spec-review:a', 'codex-spec-review:a#reattempt'], 'exactly one retry — never a loop')
   const retry = promptOf(calls, 'codex-spec-review:a#reattempt')
-  assert.ok(retry.includes(`${WT}/__codex/roles/codex-spec-review-a-retry`), 'the retry runs in a FRESH artifact dir')
+  assert.ok(retry.includes(`${WT}/__codex/roles/w1/codex-spec-review-a-retry`), 'the retry runs in a FRESH artifact dir')
   assert.ok(/REAP THE PREVIOUS ATTEMPT FIRST/.test(retry) &&
-    retry.includes(`kill -TERM -- -$(cat ${WT}/__codex/roles/codex-spec-review-a/codex.pid)`),
+    retry.includes(`kill -TERM -- -$(cat ${WT}/__codex/roles/w1/codex-spec-review-a/codex.pid)`),
     'and reaps the dead run\'s process group before it launches — two codex on one tree is not a state to reason about')
   assert.ok(/# PRIOR ATTEMPT/.test(retry), 'the brief says so too, so a live sibling is reported as a harness bug')
 
@@ -1014,7 +1014,7 @@ test('p1 boundary roles: each is a codex dispatch, in the tree it judges', async
     assert.equal(c.model, 'haiku', `${label} is steered by the codex courier, not an Opus turn`)
     assert.ok(c.prompt.includes(`codex exec -C ${cwd} -s workspace-write`),
       `${label} runs codex in ${cwd} and declares workspace-write (it writes exactly one file: its report)`)
-    assert.ok(c.prompt.includes(`${WT}/__codex/roles/${label.replace(':', '-')}`),
+    assert.ok(c.prompt.includes(`${WT}/__codex/roles/w1/${label.replace(':', '-')}`),
       `${label} gets its own artifact dir under the roles namespace`)
   }
   // The preview tree is where a shell may reach the running product; the operator's checkout never is.

@@ -486,9 +486,11 @@ echo "Fixture ready at $TARGET"
 echo "  repo:  $REPO  (base $BASE)"
 if [ "$MODE" = conductor ]; then
   echo "  mode:  conductor (3 units, architect-log seed, stats.js health-bait, maxWavesPerRun 3)"
-  echo "  next:  launch conductor.mjs ONCE via Workflow with args {roadmapDir, config: {}, harnessPath, launchId}, then persist.mjs"
-  echo "         (see evals/README.md), then run: check-conductor.sh $TARGET"
+  echo "  next:  node <skill dir>/launch-pack.mjs --roadmap $REPO/.roadmap   (prints launchId + pack; run it before EVERY launch)"
+  echo "         then launch conductor.mjs ONCE via Workflow with args {roadmapDir, config: {}, harnessPath, launchId, pack} — both printed values —"
+  echo "         then persist.mjs with that SAME envelope (see evals/README.md), then run: check-conductor.sh $TARGET"
 else
-  echo "  next:  launch the harness via Workflow with args {roadmapDir: $REPO/.roadmap, config: {}, launchId}, then persist.mjs (see evals/README.md),"
-  echo "         then run: check.sh $TARGET"
+  echo "  next:  node <skill dir>/launch-pack.mjs --roadmap $REPO/.roadmap   (prints launchId + pack; run it before EVERY launch)"
+  echo "         then launch the harness via Workflow with args {roadmapDir: $REPO/.roadmap, config: {}, launchId, pack} — both printed values —"
+  echo "         then persist.mjs with that SAME envelope (see evals/README.md), then run: check.sh $TARGET"
 fi

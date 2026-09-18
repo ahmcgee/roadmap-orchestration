@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, makeWorkflow, packRules, assertAllModelsPinned, courierOk } from './fakes.mjs'
+import { makeAgent, makeWorkflow, packRules, launchPackOf, assertAllModelsPinned, courierOk } from './fakes.mjs'
 
 const CONDUCTOR = fileURLToPath(new URL('../../conductor.mjs', import.meta.url))
 const HARNESS_PATH = '/abs/path/to/harness.mjs'
@@ -80,11 +80,13 @@ function rules({ census, triage: tr, boundary } = {}) {
 const waves = (...states) => (args, i) => states[Math.min(i, states.length - 1)]
 
 async function conduct({ plan = mkPlan(), state = mkState(), config = {}, agentRules = rules(), waveHandler } = {}) {
+  const roadmapDir = `${plan.repoPath}/.roadmap`
   const agent = makeAgent([...packRules(plan, state), ...agentRules])
-  const workflow = makeWorkflow(waveHandler ?? waves(state))
+  // The launch pack arrives through workflow() (0.18.0) — no courier transcribes it.
+  const workflow = makeWorkflow(waveHandler ?? waves(state), { pack: launchPackOf(plan, state, 'sim-launch') })
   const run = await loadScript(CONDUCTOR)
   const result = await run({
-    args: { roadmapDir: `${plan.repoPath}/.roadmap`, launchId: 'sim-launch', config, harnessPath: HARNESS_PATH },
+    args: { roadmapDir, launchId: 'sim-launch', config, harnessPath: HARNESS_PATH, pack: `${roadmapDir}/launch/pack-sim-launch.mjs` },
     agent: agent.fn, workflow: workflow.fn, log: () => {}, phase: () => {},
   })
   return { result, agent, workflow }

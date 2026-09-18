@@ -15,7 +15,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadScript } from '../../script-loader.mjs'
-import { makeAgent, BASE_SHA, codexRoleOk } from './fakes.mjs'
+import { makeAgent, BASE_SHA, codexRoleOk, implCodexOk, codexMetaOk } from './fakes.mjs'
 
 const HARNESS = fileURLToPath(new URL('../../harness.mjs', import.meta.url))
 
@@ -164,4 +164,30 @@ test('design: injected clauses land on sentence boundaries, not mid-sentence', a
   assert.deepEqual(problems, [],
     'a conditional clause was spliced into the middle of a sentence — the surrounding prose is now ' +
     'broken for exactly the units the clause exists to help')
+})
+
+// 2026-09-17: a wave that HALTS skips its whole boundary, and the design reconcile is the one job a
+// later boundary cannot recover — it is scoped to units that merged in the wave it runs in, and next
+// wave these are already `merged` in `prior`. The obligation is minted in code, with no agent.
+test('design: a halted wave leaves an owed reconcile naming the design-cited units it merged', async () => {
+  // `ui` merges; `late` then trips a usage limit, which halts the wave before its boundary.
+  const { fn, calls } = makeAgent([
+    { match: /^codex-build:late$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), limitHit: true } }) },
+  ])
+  const state = await runWave(fn, makePlan([unit('ui', { design: ['checkin#chrome'] }), unit('late')],
+    [{ from: 'ui', to: 'late', type: 'semantic', mode: 'contract' }], { designAuthorities: AUTH }), makeState(), { warmLanes: false })
+  assert.equal(state.units.ui.status, 'merged')
+  assert.equal(state.halt.reason, 'codex-usage-limit')
+  assert.ok(!calls.some((c) => /^(design|explorer|health):w/.test(c.label)), 'the halt still buys no boundary role')
+  const why = 'wave 1 halted (codex-usage-limit) before its boundary ran'
+  assert.deepEqual(state.owed, [{ job: 'health', wave: 1, why, count: 1 }, { job: 'design', wave: 1, why, count: 1, units: ['ui'] }],
+    'but what it skipped for the unit it MERGED is on the ledger: the health pass, and the reconcile with the units only this wave could name')
+  // …and an arc with no design-cited unit is untouched: no owed entry is invented.
+  const plain = makeAgent([{ match: /^codex-build:late$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), limitHit: true } }) }])
+  const s2 = await runWave(plain.fn, makePlan([unit('ui'), unit('late')], [{ from: 'ui', to: 'late', type: 'semantic', mode: 'contract' }]), makeState(), { warmLanes: false })
+  assert.deepEqual(s2.owed, [{ job: 'health', wave: 1, why, count: 1 }], 'code landed, so the health pass is still owed — a final `boundary:off` launch runs owed jobs only')
+  // A halt that merged NOTHING owes nothing.
+  const none = makeAgent([{ match: /^codex-build:ui$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), limitHit: true } }) }])
+  const s3 = await runWave(none.fn, makePlan([unit('ui', { design: ['checkin#chrome'] })], [], { designAuthorities: AUTH }), makeState())
+  assert.equal(s3.owed, undefined)
 })
