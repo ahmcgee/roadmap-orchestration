@@ -382,7 +382,9 @@ test('g fix rounds: resume by session-id FILE, and the last gate round starts co
     { match: /^verify:a/, result: failThenPass() },
     { match: /^gate:a/, result: { verdict: 'revise', directives: [{ what: 'tighten the seam', why: 'it leaks' }], debt: [] } },
   ])
-  await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable' })
+  // The strong-model rung (strong-lane.test.mjs) would put the second fix round cold on Sol —
+  // pinned OFF here so the resume MECHANICS under test stay observable on every round.
+  await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable', codexStrongAfterRounds: 0 })
 
   const buildDir = `${WT}/__codex/a/w1/build`
   for (const label of ['codex-fix:a#0', 'codex-gate-fix:a#0']) {
@@ -801,22 +803,26 @@ test('o4 a dead dossier writer falls back to the Haiku writer once — a dossier
 
 // =========================================================================================
 // Plan-check routing. Better judgment before dispatch means less wasted implementation, fewer
-// findings and fewer fix rounds — so Fable now takes every chain and every med/high-risk unit,
-// and ONLY low-risk singles ride the cheaper Opus-first ladder.
+// findings and fewer fix rounds — so Fable takes every tier in `fablePlanCheckRisk` directly. The
+// LEAN default (0.19.0) is `['high']`: high goes straight to Fable, low AND med ride the cheaper
+// Opus-first ladder and escalate; `['med','high']` restores the 0.14.0–0.18.0 routing.
 // =========================================================================================
-test('m plan-check routing: med and high go straight to Fable; only low rides Opus-first', async () => {
+test('m plan-check routing: high goes straight to Fable; low and med ride Opus-first by default', async () => {
   const { fn, calls } = makeAgent()
   const state = await runWave(fn, makePlan([unit('lo'), unit('mid', { risk: 'med' }), unit('hi', { risk: 'high' })]), makeState())
 
-  assert.ok(has(calls, 'opus-plan-check:lo'), 'a low-risk single still gets the cheap first pass')
-  assert.ok(!has(calls, 'plan-check:lo'), 'and never pays the frontier unless it escalates')
-
-  for (const id of ['mid', 'hi']) {
-    assert.ok(has(calls, `plan-check:${id}`), `${id} takes the Fable plan-check directly`)
-    assert.equal(calls.find((c) => c.label === `plan-check:${id}`).model, 'fable')
-    assert.ok(!has(calls, `opus-plan-check:${id}`), `${id} must NOT pay for an Opus pass it will bypass anyway`)
+  for (const id of ['lo', 'mid']) {
+    assert.ok(has(calls, `opus-plan-check:${id}`), `${id} gets the cheap first pass`)
+    assert.ok(!has(calls, `plan-check:${id}`), `${id} never pays the frontier unless it escalates`)
   }
+  assert.ok(has(calls, 'plan-check:hi'), 'hi takes the Fable plan-check directly')
+  assert.equal(calls.find((c) => c.label === 'plan-check:hi').model, 'fable')
+  assert.ok(!has(calls, 'opus-plan-check:hi'), 'hi must NOT pay for an Opus pass it will bypass anyway')
   for (const id of ['lo', 'mid', 'hi']) assert.equal(state.units[id].status, 'merged')
+
+  const { fn: fn2, calls: calls2 } = makeAgent()
+  await runWave(fn2, makePlan([unit('mid', { risk: 'med' })]), makeState(), { fablePlanCheckRisk: ['med', 'high'] })
+  assert.ok(has(calls2, 'plan-check:mid') && !has(calls2, 'opus-plan-check:mid'), "['med','high'] restores the direct Fable pass for med")
 })
 
 // =========================================================================================

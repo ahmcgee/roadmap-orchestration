@@ -714,7 +714,9 @@ test('9l a large diff buys maxGateRoundsLarge directive rounds before the closin
     { match: /^gate:a#close$/, result: () => ({ verdict: 'approve', debt: [] }) },
     { match: /^gate:a#/, result: reviseEveryRound('again') },
   ])
-  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable' })
+  // codexStrongAfterRounds: 0 — the escalation rung (strong-lane.test.mjs) would run round #1 cold
+  // on the strong model; this test is about the round CAP and the resume-then-fresh shape.
+  const state = await runWave(fn, makePlan([unit('a')]), makeState(), { exitGate: 'always-fable', codexStrongAfterRounds: 0 })
   assert.equal(state.units.a.status, 'merged')
   assert.deepEqual(calls.filter((c) => c.label.startsWith('gate:a')).map((c) => c.label),
     ['gate:a#0', 'gate:a#1', 'gate:a#2', 'gate:a#close'], 'three rounds at 45 files (largeDiffFiles 40), then the close')

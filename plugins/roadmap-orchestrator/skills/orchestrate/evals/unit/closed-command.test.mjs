@@ -743,9 +743,9 @@ test('provision: the plan\'s copy list and setup command, verbatim, and no git a
     assert.ok(p, `${label} ran`)
     const cmds = commandsOf(p)
     assert.deepEqual(cmds, [
-      `mkdir -p "$(dirname '${where}/.env.local')" && cp -a '/repo/.env.local' '${where}/.env.local'`,
+      `mkdir -p "$(dirname '${where}/.env.local')" && cp -a '/repo/.env.local' '${where}/.env.local' && cmp -s '/repo/.env.local' '${where}/.env.local'`,
       'node tools/gen-config.js',
-    ], `${label} runs the plan's own commands and nothing else`)
+    ], `${label} runs the plan's own commands and nothing else — and each copy is closed by a cmp of destination against source`)
     // The exact reach the live run improvised its way into. It is not on the list, so it is
     // outside the remit by construction — and the prompt says so as well.
     assert.ok(!cmds.some((c) => /\bgit\b/.test(c)), `${label} composes no git command at all`)
@@ -777,4 +777,28 @@ test('preview: a worktree that cannot resolve the tip is refused, however health
   assert.match(state.degradations.find((d) => d.kind === 'preview-failed').what,
     /cannot resolve [0-9a-f]{12} — it is not a worktree of \/repo/)
   assert.ok(!has(calls, 'preview-setup'), 'the detach that produced "unable to read tree" is never attempted')
+})
+
+// A provisioning failure is a courier's REPORT first and a tooling fact second: one verbatim
+// reattempt before the unit is quarantined (2026-09-22: a courier rewrote a cp's source path and
+// the unit was quarantined "fix tooling" over a list that was correct as sent).
+test('provision: one courier misfire buys one verbatim reattempt; a second failure quarantines', async () => {
+  const plan = makePlan({ provision: { copy: ['.env.local'], setup: 'node tools/gen-config.js' } })
+  let runs = 0
+  const flakyOnce = (prompt) => (runs++ === 0 ? courierFailingAt(/cp -a/)(prompt) : courierResult(prompt, BASE_SHA))
+  const { fn, calls } = makeAgent([{ match: /^provision:a(#reattempt)?$/, result: flakyOnce }])
+  const state = await runWave(fn, plan, makeState())
+  assert.equal(state.units.a.status, 'merged', 'the reattempt provisioned the worktree and the unit went on to merge')
+  const again = callOf(calls, 'provision:a#reattempt')
+  assert.ok(again, 'exactly one reattempt fired')
+  assert.deepEqual(commandsOf(again.prompt), commandsOf(promptOf(calls, 'provision:a')), 'with the SAME list, verbatim')
+  assert.match(again.prompt, /REATTEMPT: the first run of this exact list reported a failure/, 'and a prompt that differs, so a resume cannot replay the misfire')
+  const rows = (state.degradations ?? []).filter((d) => d.kind === 'provision-reattempt')
+  assert.equal(rows.length, 1, 'the misfire is ledgered, not hidden')
+
+  const { fn: fn2, calls: calls2 } = makeAgent([{ match: /^provision:a/, result: courierFailingAt(/cp -a/) }])
+  const s2 = await runWave(fn2, plan, makeState())
+  assert.equal(s2.units.a.status, 'quarantined', 'two failures are a tooling fact')
+  assert.match(s2.units.a.reason, /environment provisioning failed/)
+  assert.equal(calls2.filter((c) => c.label.startsWith('provision:a')).length, 2, 'never a third attempt')
 })

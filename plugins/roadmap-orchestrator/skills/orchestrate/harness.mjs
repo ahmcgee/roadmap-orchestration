@@ -464,7 +464,10 @@ const C = {
   // not read. `largeDiffFiles` is the diff-file count at which `maxGateRoundsLarge` applies.
   maxGateRoundsLarge: 3,
   largeDiffFiles: 40,
-  maxConsults: 3,
+  maxConsults: 2,            // rescue/gap consults per WAVE (lean default; was 3). Not lower: an
+                             //   unconsulted spec gap FORCES the Fable exit gate, which reads more
+                             //   than the consult it replaced — cutting consults past this moves
+                             //   Fable spend rather than saving it
   maxStops: 5,               // escalation-ladder rounds per unit. Generous units mean several
                              //   stops are normal; this is a runaway brake, not a rationing rule.
   // Reporting cap on a single adversarial pass (gate directives per revise round). A cap on
@@ -477,8 +480,17 @@ const C = {
   // fire only on the hard decisions — so they run there rather than on the floor. `fableEffort`
   // covers the plan-check + consult; the exit gate has its own `gateEffort`, and the audit
   // spot-check `auditEffort` can be dialled below a full gate to keep the 10% sample cheap.
-  fableEffort: 'high',
-  gateEffort: 'high',
+  // THE LEAN PROFILE IS THE DEFAULT (0.19.0): both allowances tightened, and every Fable call the
+  // pipeline makes is gated by a knob here, so the defaults are now the set that trades the least
+  // judgment for the most Fable saved — medium effort on the plan-check, consults and gates, one
+  // rescue consult per wave, a 5% audit sample, and the Fable plan-check on risk:high only. What
+  // does NOT lean: the guaranteed Fable gate on risk:high and contract-touching diffs, the Fable
+  // plan-check on risk:high and feasible:false, and the tier-3 boundary agent — RATIONALE §4's
+  // limit (Opus cannot self-detect the oversights it does not know it made) still binds. Raise
+  // per arc via plan.config when a workload proves effort-sensitive (the 'gate-bad' fixture is the
+  // tripwire for gate teeth).
+  fableEffort: 'medium',
+  gateEffort: 'medium',
   // Opus reasoning effort. ONE knob now: `implementEffort` died with 0.14.0's move of planning
   // onto the implementer's own model family — there is no Opus code-authoring pipeline left to
   // dial, and codex roles take `codexRoleEffort`. `opusEffort` covers every Opus call the harness
@@ -488,6 +500,12 @@ const C = {
   // effort-sensitive.
   opusEffort: 'medium',
   planCheckRisk: ['low', 'med', 'high'],
+  // Which risk tiers take the FABLE plan-check outright (the rest ride Opus-first and escalate).
+  // 0.14.0–0.18.0 sent med+high — the pre-dispatch check is the highest-leverage judgment in the
+  // lane. `['high']` is the single largest structural Fable saving per unit available (one frontier
+  // call per med-risk unit) and is the lean default; the cost is Opus adjudicating the spec
+  // critique on med-risk plans. `feasible:false` and `planCheck:'always-fable'` still force Fable.
+  fablePlanCheckRisk: ['high'],
   previewRefresh: 'merge',   // 'merge' | 'wave' | 'off' — inert without a plan.preview block
   // Frontier economy: Fable is the metered tier, so Opus grades first everywhere and escalates
   // only on a genuinely hard call. The plan-check is Opus-first (see below) unless
@@ -497,8 +515,8 @@ const C = {
   // and audit-only forced gates run at the cheaper auditEffort.
   planCheck: 'opus-first',   // 'opus-first' | 'always-fable'
   exitGate: 'opus-first',    // 'opus-first' | 'always-fable'
-  gateAuditRate: 0.10,
-  auditEffort: 'high',
+  gateAuditRate: 0.05,
+  auditEffort: 'medium',
   // The FIRST-PASS exit gate's Claude tier, by unit risk. 0.14.0 put a cross-model Codex reviewer
   // in front of the gate (`codex-review:<id>`), so the gate's ordinary job is adjudicating a
   // DIGEST — spec-prose findings, convention-reuse findings, contract touches, scope observations —
@@ -521,15 +539,38 @@ const C = {
      agent inside the unit worktree; Claude keeps every judgment surface (plan, plan-check,
      verify, gates, consults, merge). All facts these knobs rely on are pinned by
      evals/codex-probe.sh (P1) — read it before changing invocation shape. ---- */
-  codexModel: 'gpt-5.6-sol',  // -m <model>; null = omit the flag (fall back to Codex's own config)
+  // THE LANE SPLIT (0.19.0, RATIONALE §24). `codexModel` is the EXECUTION model — the build and every
+  // fix round — and it is the cheap tier of the builder family, run at its top effort: an under-
+  // specified packet is what a cheap model fails on, and effort is the lever that does not cost a
+  // stronger seat. `codexStrongModel` is the family's judgment tier, and it holds every codex surface
+  // where the SPECIFICATION is made or the output is judged — the implementation plan and replan, the
+  // spec critique, and the pre-gate review digest (`codexJudgmentModel: 'strong'`) — so the cheap
+  // builder works from a plan written to the standard it needs (files, signatures, order, edge
+  // cases, commands) and its output is read by the stronger model before Claude adjudicates. It is
+  // also the escalation rung: a unit whose fix rounds (verify-fix + first-pass gate + frontier gate,
+  // summed) reach `codexStrongAfterRounds` runs every later fix on the strong model, cold — a fresh
+  // session, since the resumed-session-bias finding applies doubly to a session a weaker model
+  // anchored. The ROOT appoints it directly per unit with `unit.codexModel: 'strong'` (or a literal
+  // model id, which is then absolute — no escalation), and `codexStrongRisk` appoints it by tier:
+  // `risk:high` units already buy the guaranteed Fable plan-check and gate, so the strong builder
+  // there is what keeps those frontier rounds few. `'strong'` anywhere resolves through
+  // `codexStrongModel`; a null strong model turns the whole rung off and everything runs on `codexModel`.
+  codexModel: 'gpt-5.6-luna', // -m <model> for the BUILD/FIX lane; null = omit the flag (Codex's own config)
+  codexStrongModel: 'gpt-5.6-sol',  // the appointed/escalation builder and the judgment-role model
+  codexStrongEffort: 'high',  // effort for every run on the strong model (build, fix, escalated fix)
+  codexStrongRisk: ['high'],  // risk tiers whose build lane takes the strong model unless the unit pins one
+  codexStrongAfterRounds: 2,  // fix rounds (any kind, summed) at which later fixes escalate; 0 disables
+  codexJudgmentModel: 'strong',  // 'strong' | 'default' | <model id> — plan, replan, spec critique, review digest
+  codexPlanEffort: 'high',    // effort for the plan/replan roles — the plan is the packet the cheap builder runs on
   // "Selected model is at capacity" is a minutes-scale transient, not a usage limit (hours): one
   // bounded wait and one reattempt per step, a wave-wide cap on how many such waits may be bought,
   // then the wave halts on its own reason (`codex-capacity`). See `afterCapacity`.
   codexCapacityRetries: 2,    // capacity waits the whole WAVE may buy before it halts
   codexCapacityWaitSec: 330,  // one wait, composed as ceil(n/110) × `sleep 110`
-  codexEffort: 'high',        // -c model_reasoning_effort= — under-provisioned effort is the
-                              //   top documented cause of bad Codex output; xhigh for hard arcs
-  codexFixEffort: 'medium',   // resume/fix rounds are narrower work than the build
+  codexEffort: 'max',         // -c model_reasoning_effort= for the build — under-provisioned effort is
+                              //   the top documented cause of bad Codex output, and on the cheap
+                              //   execution model the ceiling (`max`, above `xhigh`) is the default
+  codexFixEffort: 'high',     // resume/fix rounds are narrower work than the build; one step down
   codexSandbox: 'danger-full-access',  // DELIBERATE, and measured rather than assumed. Codex's OS
                               //   sandbox is built with bubblewrap, which needs an unprivileged
                               //   user namespace. A devcontainer whose runtime seccomp profile
@@ -2021,14 +2062,33 @@ async function provision(where, label) {
   const p = plan.provision
   const cmds = [
     // `mkdir -p` on the DESTINATION's parent only — a copy target's directory, never a checkout.
-    ...(p.copy ?? []).map((f) => `mkdir -p "$(dirname '${where}/${f}')" && cp -a '${repo}/${f}' '${where}/${f}'`),
+    // `cmp -s` closes the copy: the command only exits 0 when the destination now equals the source
+    // it was told to copy, so a courier that runs a DIFFERENT copy (2026-09-22: one rewrote the
+    // source path to the destination's and copied the worktree file onto itself) cannot report a
+    // green copy of the wrong bytes.
+    ...(p.copy ?? []).map((f) =>
+      `mkdir -p "$(dirname '${where}/${f}')" && cp -a '${repo}/${f}' '${where}/${f}' && cmp -s '${repo}/${f}' '${where}/${f}'`),
     ...(p.setup ? [p.setup] : []),
   ]
   if (!cmds.length) return { ok: true }
-  return courierRun(where, cmds, { model: 'haiku', phase: 'Setup', label },
+  const extra =
     `These commands copy the gitignored files this checkout needs and run the project's own setup ` +
     `command. Creating, moving or deleting a git worktree, a branch or a checkout is not among them, ` +
-    `at any path and in any repository. ` + LAUNCH)
+    `at any path and in any repository. ` + LAUNCH
+  const first = await courierRun(where, cmds, { model: 'haiku', phase: 'Setup', label }, extra)
+  if (first.ok) return first
+  // ONE verbatim reattempt before the failure becomes a verdict. A provisioning failure used to
+  // quarantine on the first report, and the first report is a Haiku courier's: 2026-09-22 one ran
+  // `cp` with the source path rewritten to the destination's, the copy failed on the file it had
+  // just not created, and the unit was quarantined "fix tooling" over a list that was correct as
+  // sent (the same list ran clean for the respec a wave later). The list is unchanged; the prompt
+  // says so (and differs, so a resume cannot serve the misfire back), and the ledger keeps the row.
+  degrade({ label, model: 'haiku', phase: 'Setup', kind: 'provision-reattempt',
+    what: `provisioning ${where} failed on its first courier run (${first.detail.slice(0, 200)}) — reattempting the ` +
+      `same list once, verbatim, before treating it as a tooling failure` })
+  return courierRun(where, cmds, { model: 'haiku', phase: 'Setup', label: `${label}#reattempt` },
+    `REATTEMPT: the first run of this exact list reported a failure. The list below is unchanged and is ` +
+    `correct as written — run it again exactly as written, and report what happens this time. ` + extra)
 }
 
 // One green-tip advance of the PREVIEW WORKTREE, as a closed command list: detach at `sha`, bring
@@ -2506,7 +2566,7 @@ async function syncIssues() {
 async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
   // The pre-dispatch gate is THE highest-leverage judgment point in the codex lane (better
   // judgment up front means less wasted implementation, fewer findings, fewer fix rounds), so
-  // Fable takes every med/high-risk unit — only low-risk singles ride Opus-first.
+  // Fable takes every tier in `fablePlanCheckRisk` (high only by default) — the rest ride Opus-first.
   // `critique` threads the cross-model spec review (codex-spec-review) in as adjudication input.
   const critiqueClause = critique?.questions?.length || critique?.risks?.length
     ? ` A second engineer from a different model family reviewed the spec and this plan read-only before you. ` +
@@ -2540,7 +2600,7 @@ async function runPlanCheck(unit, implPlan, spec, { critique = null } = {}) {
       `say what and why in a few sentences — the engineer needs direction, not instructions.${lead}`,
       { model: 'fable', effort: C.fableEffort, phase: 'Architect', label: `plan-check:${unit.id}`, schema: S.planVerdict })
   }
-  if (unit.risk !== 'low' || !implPlan.feasible || C.planCheck === 'always-fable')
+  if ((C.fablePlanCheckRisk ?? ['high']).includes(unit.risk) || !implPlan.feasible || C.planCheck === 'always-fable')
     return fablePlanCheck()
   spend.opusPlanChecks++
   const oc = await runReq(
@@ -2592,8 +2652,8 @@ const specCritique = (unit, w, implPlan) =>
     `untestable as written. Do not propose an alternative design; do not write code; change nothing. ` +
     `Report at most 8 \`questions\` and at most 5 \`risks\`, worst first, each one or two sentences; \`notes\` ` +
     `only if something needs saying.`,
-    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.critique, phase: 'Implement',
-      effort: 'low', timeoutMin: 15, label: `codex-spec-review:${unit.id}` },
+    { model: 'codex', codexModel: judgmentModel(), cwd: w, sandbox: 'read-only', schema: S.critique,
+      phase: 'Implement', effort: 'low', timeoutMin: 15, label: `codex-spec-review:${unit.id}` },
   )
 
 /* --------------------------- per-unit pipeline -------------------------- */
@@ -2750,7 +2810,49 @@ const codexFixBrief = (unit, w, base, envelope, payload) =>
 // (a role has no diff base, so it collects no git truth and commits nothing). Every other seam —
 // the reap, the attach-don't-relaunch rule, the detached `timeout -k` launch, the sleep-free wait,
 // the absent-exit-code rule — is shared verbatim, which is the whole point of not forking it.
-const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin,
+/* --------------------------- the lane split: which codex model runs what ---------------------
+ * `codexModelOf` resolves the two aliases every model-shaped knob and unit field accepts —
+ * 'strong' → config.codexStrongModel, 'default' → config.codexModel — and passes a literal id
+ * through. `judgmentModel()` is the model for the roles that MAKE the specification or JUDGE the
+ * output (plan, replan, spec critique, review digest). `codexLane(unit, step, escalated)` is the
+ * build/fix lane's {model, effort, strong}: a literal `unit.codexModel` is absolute (the root said
+ * exactly this, so no escalation moves it); 'strong', a risk tier in `codexStrongRisk`, or an
+ * escalation put the unit on the strong model at `codexStrongEffort`; otherwise the execution model
+ * at the step's effort. A null strong model resolves to the execution model — the rung is off. */
+const codexModelOf = (spec) =>
+  spec === 'strong' ? (C.codexStrongModel ?? C.codexModel) : spec === 'default' || spec == null ? C.codexModel : spec
+const judgmentModel = () => codexModelOf(C.codexJudgmentModel)
+const codexLane = (unit, step, escalated = false) => {
+  const pin = unit.codexModel ?? null
+  const literal = pin && pin !== 'strong' && pin !== 'default' ? pin : null
+  const wanted = !literal && pin !== 'default' &&
+    (escalated || pin === 'strong' || (C.codexStrongRisk ?? []).includes(unit.risk))
+  const strong = wanted && !!C.codexStrongModel
+  const model = literal ?? (strong ? C.codexStrongModel : C.codexModel)
+  const effort = unit.codexEffort ?? (strong ? C.codexStrongEffort : step === 'fix' ? C.codexFixEffort : C.codexEffort)
+  return { model, effort, strong }
+}
+// Every fix round the unit has taken, of any kind — the escalation rung's clock. `bumpRound` runs
+// before each fix step, so the tally already counts the round about to be dispatched.
+const fixRoundsTaken = (unit) => {
+  const r = rec(unit.id)?.rounds ?? {}
+  return (r.fix ?? 0) + (r.opusGate ?? 0) + (r.gate ?? 0)
+}
+// The plan brief's specification standard, present only when a DIFFERENT model builds from the
+// plan than wrote it: the cheap execution model succeeds on fully specified packets and fails on
+// approaches left to its taste, so the plan has to carry what the stronger model would have
+// resolved on the fly. '' when the same model plans and builds, keeping that prompt unchanged.
+const planForOtherModel = (unit) => {
+  const builder = codexLane(unit, 'build').model
+  return builder && builder !== judgmentModel()
+    ? `The implementer is a DIFFERENT, less capable model (${builder}) that executes fully specified work well ` +
+      `and improvises badly, so write the plan to that standard: for each file, the functions, types or ` +
+      `sections to add or change and their exact signatures; the order of work; the edge cases the tests must ` +
+      `cover and the assertions that prove them; the exact commands that prove each step. An approach left to ` +
+      `the implementer's judgment is under-specified — resolve it here. `
+    : ''
+}
+const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effort, timeoutMin, model = C.codexModel,
   sandbox = C.codexSandbox, gitTruth = true, resumeDir, reapDir, outSchema, reportInstr }) => {
   // THE LAUNCH IS ASYNCHRONOUS, SO THE LAUNCH COMMAND WAITS FOR ITS OWN PIDFILE (2026-09-04).
   // Every composed launch below ends in `' &`: the detached sh writes codex.pid as its first act,
@@ -2769,7 +2871,7 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
       `COMMAND R: cd ${w} && ${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
       `timeout -k 30 ${timeoutMin * 60} ` +
       `codex exec resume "$(cat ${resumeDir}/session-id)" ` +
-      `-c sandbox_mode="${sandbox}" ${C.codexModel ? `-m ${C.codexModel} ` : ''}` +
+      `-c sandbox_mode="${sandbox}" ${model ? `-m ${model} ` : ''}` +
       `-c model_reasoning_effort=${effort} -c projects."${w}".trust_level="trusted" ` +
       `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
       `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
@@ -2832,7 +2934,7 @@ const steerCodex = ({ id, subject = `unit ${id}`, w, dir, base, briefText, effor
   const execCmd =
     `${codexHome}setsid nohup sh -c 'echo $$ > ${dir}/codex.pid; ` +
     `timeout -k 30 ${timeoutMin * 60} codex exec -C ${w} -s ${sandbox} ` +
-    `${C.codexModel ? `-m ${C.codexModel} ` : ''}-c model_reasoning_effort=${effort} ` +
+    `${model ? `-m ${model} ` : ''}-c model_reasoning_effort=${effort} ` +
     `-c projects."${w}".trust_level="trusted" ` +
     `${C.codexNetwork ? '-c sandbox_workspace_write.network_access=true ' : ''}` +
     `${C.codexProfile ? `-p ${C.codexProfile} ` : ''}--skip-git-repo-check ` +
@@ -3028,10 +3130,11 @@ const haltCapacity = (label, phase, why) => {
   if (halt.codex) return
   halt.codex = 'codex-capacity'
   degrade({ label, model: 'codex', phase, kind: 'codex-capacity',
-    what: `the pinned model (${C.codexModel ?? 'the codex CLI default'}) is still at capacity ${why} — dispatch halts on ` +
+    what: `a pinned model (codexModel ${C.codexModel ?? 'the codex CLI default'}, codexStrongModel ` +
+      `${C.codexStrongModel ?? 'unset'}) is still at capacity ${why} — dispatch halts on ` +
       `codex-capacity and every unit PARKS with its commits; nothing is quarantined or blocked over it. Operator: this ` +
       `is a minutes-scale provider transient, not a usage limit — smoke the model (SKILL.md → Codex preflight) and ` +
-      `relaunch when it answers, or relaunch with another config.codexModel` })
+      `relaunch when it answers, or relaunch with another config.codexModel / codexStrongModel` })
 }
 // One wait, as a closed list a courier cannot stretch or shorten: k × `sleep 110`, each under the
 // Bash tool's 120 s default so nothing depends on the model raising a timeout. The WAVE and the
@@ -3252,6 +3355,7 @@ const codexRole = async (prompt, opts) => {
     const r = await runOr(null, steerCodex({
       id: label, subject: `role ${label}`, w: cwd, dir: at, briefText: brief, sandbox: C.codexSandbox ?? sandbox,
       effort: opts.effort ?? C.codexRoleEffort, timeoutMin: opts.timeoutMin ?? C.codexRoleTimeoutMin,
+      model: opts.codexModel ?? C.codexModel,
       gitTruth: false, reapDir, outSchema, reportInstr: roleReportInstr(at, schema),
     }), { model: C.codexSteerModel, effort: 'low', phase, label: l, schema: codexRoleReport(schema) })
     noteCodexMeta(label, r, at, l, phase)
@@ -3295,9 +3399,11 @@ async function buildStep(unit, w, base, implPlan) {
   if (haltReason()) return { parked: true }
   const dir = codexDir(unit.id, 'build')
   const briefText = codexBuildBrief(unit, w, dir, base, implPlan)
+  const lane = codexLane(unit, 'build')
+  if (lane.strong) spend.codexStrong = (spend.codexStrong ?? 0) + 1
   const opts = (label) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Implement', label, schema: S.implCodex })
   let r = await withCodexSlot(() => runOr(REPORT_LOST,
-    steerCodex({ id: unit.id, w, dir, base, briefText, effort: C.codexEffort, timeoutMin: C.codexTimeoutMin }),
+    steerCodex({ id: unit.id, w, dir, base, briefText, model: lane.model, effort: lane.effort, timeoutMin: C.codexTimeoutMin }),
     opts(`codex-build:${unit.id}`)))
   noteCodexMeta(unit.id, r, dir, `codex-build:${unit.id}`)
   // The capacity rung (see afterCapacity): only over an EMPTY branch — a build that died at capacity
@@ -3308,7 +3414,7 @@ async function buildStep(unit, w, base, implPlan) {
       const dirC = codexDir(unit.id, 'build-capacity')
       const rc = await withCodexSlot(() => runOr(REPORT_LOST,
         steerCodex({ id: unit.id, w, dir: dirC, base, briefText: codexBuildBrief(unit, w, dirC, base, implPlan, PRIOR_ATTEMPT),
-          effort: C.codexEffort, timeoutMin: C.codexTimeoutMin, reapDir: dead }),
+          model: lane.model, effort: lane.effort, timeoutMin: C.codexTimeoutMin, reapDir: dead }),
         opts(`codex-build:${unit.id}#capacity`)))
       noteCodexMeta(unit.id, rc, dirC, `codex-build:${unit.id}#capacity`)
       return rc
@@ -3324,7 +3430,7 @@ async function buildStep(unit, w, base, implPlan) {
     const dir2 = codexDir(unit.id, 'build-retry')
     r = await withCodexSlot(() => runOr(REPORT_LOST,
       steerCodex({ id: unit.id, w, dir: dir2, base, briefText: codexBuildBrief(unit, w, dir2, base, implPlan, PRIOR_ATTEMPT),
-        effort: C.codexEffort, timeoutMin: C.codexTimeoutMin, reapDir: dir }),
+        model: lane.model, effort: lane.effort, timeoutMin: C.codexTimeoutMin, reapDir: dir }),
       opts(`codex-build-retry:${unit.id}`)))
     noteCodexMeta(unit.id, r, dir2, `codex-build-retry:${unit.id}`)
     cap = await capacityRung(r, dir2)
@@ -3343,10 +3449,21 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
   // `fresh` skips the resume: a session that has already failed a gate twice is anchored on its
   // own approach (the resumed-session-bias finding) — the last attempt starts cold, carrying the
   // full directive set in the self-contained brief instead of the session's history.
+  // THE ESCALATION RUNG: once the unit's fix rounds of every kind reach `codexStrongAfterRounds`,
+  // this and every later fix run on the strong model — "the result misses explicit acceptance
+  // criteria" is the documented trigger for the stronger seat, and a unit past that many rounds has
+  // missed them that many times. A model change is always COLD: the build session belongs to the
+  // model that anchored it, and a resume across models is a codex behaviour nobody has measured.
+  const escalated = (C.codexStrongAfterRounds ?? 0) > 0 && fixRoundsTaken(unit) >= C.codexStrongAfterRounds
+  const lane = codexLane(unit, 'fix', escalated)
+  const cold = fresh || lane.model !== codexLane(unit, 'build').model
+  if (lane.strong) spend.codexStrong = (spend.codexStrong ?? 0) + 1
+  if (escalated && lane.strong && !codexLane(unit, 'build').strong)
+    log(`${unit.id}: ${label} runs on the strong codex model (${lane.model}) — fix round ${fixRoundsTaken(unit)} reached codexStrongAfterRounds`)
   const opts = (l) => ({ model: C.codexSteerModel, effort: 'low', phase: 'Fix', label: l, schema: S.implCodex })
-  const resumeDir = fresh ? null : codexDir(unit.id, 'build')
+  const resumeDir = cold ? null : codexDir(unit.id, 'build')
   let r = await withCodexSlot(() => runOr(REPORT_LOST,
-    steerCodex({ id: unit.id, w, dir, base, briefText, effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir }),
+    steerCodex({ id: unit.id, w, dir, base, briefText, model: lane.model, effort: lane.effort, timeoutMin: C.codexFixTimeoutMin, resumeDir }),
     opts(label)))
   noteCodexMeta(unit.id, r, dir, label, 'Fix')
   // The capacity rung (see afterCapacity). Eligible at ANY commit count: a fix step's branch always
@@ -3357,7 +3474,7 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
       const dirC = codexDir(unit.id, `${step}-capacity`)
       const rc = await withCodexSlot(() => runOr(REPORT_LOST,
         steerCodex({ id: unit.id, w, dir: dirC, base, briefText: `${PRIOR_ATTEMPT}${briefText}`,
-          effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dead }),
+          model: lane.model, effort: lane.effort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dead }),
         opts(`${label}#capacity`)))
       noteCodexMeta(unit.id, rc, dirC, `${label}#capacity`, 'Fix')
       return rc
@@ -3374,7 +3491,7 @@ async function fixStep(unit, w, base, envelope, { step, label, fresh = false }, 
     const dir2 = codexDir(unit.id, `${step}-retry`)
     r = await withCodexSlot(() => runOr(REPORT_LOST,
       steerCodex({ id: unit.id, w, dir: dir2, base, briefText: `${PRIOR_ATTEMPT}${briefText}`,
-        effort: C.codexFixEffort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dir }),
+        model: lane.model, effort: lane.effort, timeoutMin: C.codexFixTimeoutMin, resumeDir, reapDir: dir }),
       opts(`${label}#reattempt`)))
     noteCodexMeta(unit.id, r, dir2, `${label}#reattempt`, 'Fix')
     cap = await capacityRung(r, dir2)
@@ -3596,7 +3713,13 @@ async function runUnit(unit) {
     // whose whole process GROUP the reap below would then kill. So "alive" means the pid answers
     // AND its command line still names this very artifact dir (the detached `sh -c 'echo $$ >
     // <dir>/codex.pid; …'` carries it), read with `ps`, which is as portable as the rest of this file.
-    const liveList = `for p in ${sq(`${wtRoot}/__codex/${unit.id}`)}/w*/*/codex.pid; do [ -f "$p" ] || continue; ` +
+    // `find`, never a shell glob: the courier's shell is whatever the platform gives it, and under zsh
+    // an unmatched glob is a FATAL "no matches found" rather than a literal that `[ -f ]` skips —
+    // 2026-09-22 (conductor fixture): a unit that had never run codex, re-entering after a
+    // dependency respec, had no pidfile at all, the loop aborted at exit 1, the read came back
+    // `null`, and the unit parked at setup for every remaining wave of the arc. A `find` that
+    // matches nothing prints nothing and the list still ends in `true`.
+    const liveList = `find ${sq(`${wtRoot}/__codex/${unit.id}`)} -name codex.pid -type f 2>/dev/null | while IFS= read -r p; do ` +
       `q=$(cat "$p"); d=$(dirname "$p"); kill -0 "$q" 2>/dev/null && ps -p "$q" -o args= 2>/dev/null | ` +
       `grep -qF -- "$d/" && echo "$p"; done; true`
     const ownPid = new RegExp(`^${`${wtRoot}/__codex/${unit.id}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/w\\d+/[A-Za-z0-9_.-]+/codex\\.pid$`)
@@ -3730,7 +3853,7 @@ async function runUnit(unit) {
     `# CONSTRAINTS\nRead-only. Write no code, create no files, run no build, make no commit — this run produces ` +
     `a plan and nothing else.\n\n` +
     `# METHOD\nThe engineer who builds this works from your plan and CANNOT ask you anything — everything it ` +
-    `needs must be in the plan or in the spec. Before you finish, ask what an implementer would have to ask ` +
+    `needs must be in the plan or in the spec. ${planForOtherModel(unit)}Before you finish, ask what an implementer would have to ask ` +
     `you, and answer it here. A question with a look-up-able answer is yours to resolve now, by reading; a ` +
     `question that is a genuine unsettled DECISION is a spec defect — set \`feasible\`:false and name it in ` +
     `\`approach\`. If the spec cannot be satisfied within its contracts, do not force it: set ` +
@@ -3745,8 +3868,8 @@ async function runUnit(unit) {
     `why), \`signatures\` (at most 15, each one line: an exact signature/type the work builds against, ` +
     `quoted), \`seams\` (at most 10, each a sentence or two: where the change hooks in, with a short quoted ` +
     `anchor). Emit each as a real JSON field — never fold files/testPlan into the approach prose.`,
-    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
-      phase: 'Implement', label: `plan:${unit.id}` })
+    { model: 'codex', codexModel: judgmentModel(), effort: C.codexPlanEffort, cwd: w, sandbox: 'read-only',
+      schema: S.plan, phase: 'Implement', label: `plan:${unit.id}` })
   // No honest coded stand-in for a missing plan: a fabricated plan is a verdict about the unit
   // invented out of an infrastructure failure. Same answer as the dead plan-check below — the
   // unit does not get built, and the dossier says infrastructure rather than blaming the spec.
@@ -3812,8 +3935,8 @@ async function runUnit(unit) {
         `# REPORT\nAll four required fields again — \`feasible\`, \`files\`, \`testPlan\`, \`approach\` — ` +
         `and refresh the \`evidence\` manifest (keyFiles one line each, signatures one line each, seams a ` +
         `sentence or two each) wherever the direction changes it.`,
-        { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.plan,
-          phase: 'Implement', label: `replan:${unit.id}` })
+        { model: 'codex', codexModel: judgmentModel(), effort: C.codexPlanEffort, cwd: w, sandbox: 'read-only',
+          schema: S.plan, phase: 'Implement', label: `replan:${unit.id}` })
       // The architect redirected and the revision never came back. Building the plan the architect
       // just rejected is the one thing that must not happen here. Same guard as the plan site above,
       // and for the same reason: any halt makes `codexRole` return null without launching anything,
@@ -4314,7 +4437,7 @@ async function runUnit(unit) {
     `arc frontier attention it needed elsewhere, and deflating hands a defect a cheaper gate was never given ` +
     `the evidence to catch.`
   const digest = await run(reviewBrief,
-    { model: 'codex', cwd: w, sandbox: 'read-only', schema: S.reviewDigest,
+    { model: 'codex', codexModel: judgmentModel(), cwd: w, sandbox: 'read-only', schema: S.reviewDigest,
       phase: 'Review', label: `codex-review:${unit.id}` })
   // No digest is not a cheaper gate — it is a MORE expensive one. The adapter has already ledgered
   // why codex produced nothing; this row records what the harness did about it, because "the gate
