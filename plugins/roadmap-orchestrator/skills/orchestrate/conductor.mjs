@@ -476,7 +476,8 @@ if (typeof inPlan.preview?.start === 'string' && inPlan.preview.start.includes("
 
 // Conductor config: defaults, then plan.config.conductor, then the caller's config.conductor.
 const CC = {
-  maxWavesPerRun: 3,           // wave-loop bound; exhaustion -> max-waves (a fresh relaunch resets the 1000-agent counter)
+  maxWavesPerRun: 5,           // wave-loop bound; exhaustion -> max-waves (a fresh relaunch resets the 1000-agent counter).
+                               //   5 (lean default, was 3): every max-waves return is a root turn on Fable reading the envelope
   boundaryTriage: 'opus-first', // 'opus-first' full ladder | 'always-fable' skip Opus | 'root' every boundary returns
   agentBudgetReserve: 200,     // headroom below the 1000-call cap; the pre-wave guard returns before crossing
   perUnitCallEstimate: 15,     // pre-wave budget estimate per dispatchable unit; corrected by harness spend deltas
@@ -494,7 +495,7 @@ const CC = {
   // so a large batch is exactly the denominator growth above, arriving without anyone deciding. Past
   // this count the wave buys an Opus triage instead, which does apply the cut line.
   tier1MaxDrafts: 3,
-  fableEffort: 'high',         // effort for the Fable boundary agent (respec/escalation arbiter) — Fable 5's high default for real adjudication
+  fableEffort: 'medium',       // effort for the Fable boundary agent (respec/escalation arbiter) — lean default (0.19.0), mirrors the harness
   opusEffort: 'medium',        // effort for the Opus tier-2 triager — mirrors the harness's opusEffort knob
   ...(inPlan.config?.conductor ?? {}),
   ...(overrides?.conductor ?? {}),

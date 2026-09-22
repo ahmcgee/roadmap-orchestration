@@ -1312,3 +1312,78 @@ eight majors on the plan, eleven majors on the code, every one of them a
 place where the plan was about to break a contract it had not read — the protocol's monotonic
 counters, the replay's dependence on the envelope, the handoff's preserved fields. What Fable found
 obvious, Fable's plan found obvious too.
+
+## 24. The lane split — the cheap builder, the strong specifier, and the rung between them
+
+Both allowances tightened at once in 2026-09: the Claude weekly budget the whole economy already
+optimises for, and the Codex quota §20 had treated as plentiful. The lane's builder was the family's
+strong model (`gpt-5.6-sol`) at `high` for every build and `medium` for every fix. 0.19.0 exchanges
+it for the cheap model (`gpt-5.6-luna`) at the API's top effort (`max` — above `xhigh`; the API's
+own rejection message lists the ladder), and accepts that competence drops with it. The design that
+makes the drop survivable is the split: **the cheap model executes, the strong model specifies and
+judges, and a unit that keeps missing climbs back onto the strong model.**
+
+The published guidance for the cheap tier says the same thing the brief structure of §17 already
+enforced: it succeeds on *fully specified* packets — exact scope, what not to touch, what evidence
+proves completion, which missing decision stops it — and it fails on an approach left to its taste.
+Every unit brief already carries those sections (Goal / Context / Constraints / Method / Done-when /
+Escalation). What the cheap builder needed was the *plan* written to that standard, so the
+specification roles moved to the strong model (`codexJudgmentModel: 'strong'`): the implementation
+plan and replan (at `codexPlanEffort`, `high`), the spec critique that feeds the plan-check, and the
+pre-gate review digest that lets a cheaper Claude gate stand on evidence. When a different model
+will build from the plan than wrote it, the plan brief says so and names the standard — files,
+signatures, order of work, edge cases and their assertions, the commands that prove each step —
+and says nothing when the same model plans and builds. Sol reads luna's output before Claude does;
+delegation moved the work and not the accountability.
+
+**Appointment is the root's, by two routes, and one of them is a default.** `unit.codexModel:
+'strong'` on a unit in `plan.json` puts its build on the strong model outright; `codexStrongRisk`
+(`['high']`) does the same by tier, because a high-risk unit already buys the guaranteed Fable
+plan-check and the guaranteed Fable gate, and the strong builder there is what keeps those frontier
+rounds few — the cheap builder on a high-risk unit would save Codex quota by spending Fable rounds.
+A literal model id is absolute: the root said exactly this, and no rung moves it. `'default'` opts
+a high-risk unit back out. Every alias resolves through one function (`codexModelOf`), and a null
+strong model resolves everything to the execution model, which is how the split is turned off.
+
+**The rung is code, over the round tally, and it is cold.** `codexStrongAfterRounds` (2) is read
+against `rounds.fix + rounds.opusGate + rounds.gate` before each fix step — every kind of round,
+because "the result misses explicit acceptance criteria" is the documented trigger for the stronger
+seat and a verify failure, a first-pass gate directive and a frontier gate directive are three
+ways of missing them. At the rung the fix and every later one run on the strong model at
+`codexStrongEffort`, and always as a fresh session: the build session belongs to the model that
+anchored it (the resumed-session-bias finding of §17 applies doubly to a session a weaker model
+anchored), and a resume across models is a codex behaviour nobody has measured. With the default
+caps that puts sol on the second fix of any kind — before the frontier gate is forced by
+non-convergence, which is the Fable round the escalation is there to avoid. The rung never asks a
+model whether it needs help (DESIGN.md decision 4); it counts.
+
+What was deliberately left on the cheap model: verify (it runs the spec's lanes; the judgment is
+`judgeVerify`'s in code), the quarantine dossier write, and the four boundary drafters — bounded
+packets with explicit outputs, which is the cheap tier's home. The wave-start smoke probes the
+execution model as before; SKILL.md's preflight now smokes every pinned model, since a credential
+can reach one and not the other and the rung will need the strong one mid-wave.
+
+**The Claude side leans by default.** Every Fable call the pipeline makes was already behind a knob;
+0.19.0 sets those knobs to the lean profile and documents the fuller one to restore per arc
+(`reference.md` → "The lean profile is the default"). The one new knob, `fablePlanCheckRisk`
+(`['high']`), is the single largest structural saving per unit: since 0.14.0 every med-risk plan
+had bought a Fable plan-check, and it now rides Opus-first and escalates like a low-risk one. The
+efforts on the plan-check, the consults, the forced gate and the boundary agent drop to `medium`,
+the audit sample halves, consults go from three to two per wave — and not to one, because an
+unconsulted spec gap forces the Fable exit gate, which reads more than the consult it replaced —
+and the wave cap rises so fewer arcs end on a `max-waves` root turn. §4's limit still binds: Opus
+cannot self-detect the oversights it does not know it made, so the guaranteed Fable passes on
+`risk:high`, contract touches and `feasible:false` are exactly what the profile does not touch.
+The root's own model is the user's lever, not the skill's, and the ladder is written on the
+assumption that the root is its top rung: the four root-only returns — contract amendment,
+contingent replan, needs-user, cut line — climb to it from the Fable tier.
+
+**Measured (2026-09-22).** Both fixtures passed on the split with the lean profile, zero degradations
+(`evals/README.md` → the 0.19.0 table). Claude call counts came out flat against 0.18.0, as they must
+— the profile changes effort and one routing, not the number of calls — and Codex input tokens rose
+about 40% on both fixtures, which is luna at `max` reading more per build than sol did at `high`, on
+the cheaper seat. The first conductor run failed on two courier defects the split did not cause and
+no earlier fixture had reached (a zsh-fatal glob in the orphan liveness list; a provisioning courier
+that rewrote a `cp` source path and was believed on the first report): a re-entry path that only opens
+when a unit is respecced mid-arc. §19's rule held in both: the fix was a command a shell cannot
+misread and a retry the script owns, never a sentence asking the courier to be more careful.

@@ -865,9 +865,12 @@ test('re-entry: a unit with no live orphan pays one read-only liveness list and 
   assert.equal(state.units.a.status, 'merged')
   const probe = calls.find((c) => c.label === 'codex-orphans:a')
   assert.deepEqual(courierCommands(probe.prompt),
-    [`for p in '/wt/__codex/a'/w*/*/codex.pid; do [ -f "$p" ] || continue; q=$(cat "$p"); d=$(dirname "$p"); ` +
+    [`find '/wt/__codex/a' -name codex.pid -type f 2>/dev/null | while IFS= read -r p; do q=$(cat "$p"); d=$(dirname "$p"); ` +
       `kill -0 "$q" 2>/dev/null && ps -p "$q" -o args= 2>/dev/null | grep -qF -- "$d/" && echo "$p"; done; true`],
     'this unit\'s OWN build/fix pidfiles, every wave — never the shared roles/ namespace, where a label can contain another unit\'s id')
+  // `find`, never a glob: under zsh an unmatched glob is a fatal "no matches found", and the
+  // conductor fixture parked a pidfile-less unit at setup for two waves on exactly that (2026-09-22).
+  assert.ok(!/for p in .*\*/.test(courierCommands(probe.prompt)[0]), 'no shell glob in the liveness list')
   assert.match(probe.prompt, /Probe id/, 'an environment read: salted, never served from a resume\'s cache')
   assert.match(probe.prompt, /^[\s\S]*Wave 2\. This command only READS/, 'and the WAVE is in it: one conductor run shares a launchId across waves, so without it wave 3 would be served wave 2\'s "all clear"')
   // pid REUSE: a pidfile is a path, not proof of ownership — alive means the pid answers AND its command line still names this artifact dir.
@@ -882,8 +885,8 @@ test('re-entry: a unit with no live orphan pays one read-only liveness list and 
 test('re-entry: a live orphan is reaped by pidfile, confirmed dead, and the unit carries on', async () => {
   let listed = 0
   const { fn, calls } = makeAgent([...REENTRY,
-    { match: /^codex-orphans:a$/, result: courierSaying([[/^for p in /, `${ORPHAN}\n/wt/__codex/other-unit/w1/build/codex.pid\nnoise`]]) },
-    { match: /^codex-reap:a$/, result: (p) => courierSaying([[/^for p in /, listed++ ? ORPHAN : '']])(p) },
+    { match: /^codex-orphans:a$/, result: courierSaying([[/^find .*codex\.pid/, `${ORPHAN}\n/wt/__codex/other-unit/w1/build/codex.pid\nnoise`]]) },
+    { match: /^codex-reap:a$/, result: (p) => courierSaying([[/^find .*codex\.pid/, listed++ ? ORPHAN : '']])(p) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), reentryState())
   assert.deepEqual(courierCommands(calls.find((c) => c.label === 'codex-reap:a').prompt).slice(0, 3), [
@@ -894,9 +897,9 @@ test('re-entry: a live orphan is reaped by pidfile, confirmed dead, and the unit
 })
 
 test('re-entry: an orphan that cannot be confirmed dead PARKS the unit rather than share its worktree', async () => {
-  for (const reap of [courierSaying([[/^for p in /, ORPHAN]]), () => null]) {
+  for (const reap of [courierSaying([[/^find .*codex\.pid/, ORPHAN]]), () => null]) {
     const { fn, calls } = makeAgent([...REENTRY,
-      { match: /^codex-orphans:a$/, result: courierSaying([[/^for p in /, ORPHAN]]) },
+      { match: /^codex-orphans:a$/, result: courierSaying([[/^find .*codex\.pid/, ORPHAN]]) },
       { match: /^codex-reap:a/, result: reap },
     ])
     const state = await runWave(fn, makePlan([unit('a')]), reentryState())

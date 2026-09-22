@@ -277,7 +277,7 @@ the spiral, made measurable; `gate-good` needing any fix round is the noise trip
 | Unit | Probes | Expected end state |
 |---|---|---|
 | `add-multiply` | Happy path: plan → spec-critique → plan-check → codex build → verify → gate → merge | `merged` |
-| `add-divide` | Dependency scheduling (contract edge); contract compliance (RangeError clause); med-risk ⇒ Fable plan-check | `merged`, after multiply |
+| `add-divide` | Dependency scheduling (contract edge); contract compliance (RangeError clause); med-risk ⇒ Opus-first plan-check (0.19.0 lean default; Fable with `fablePlanCheckRisk: ['med','high']`) | `merged`, after multiply |
 | `impossible-cache` | Unsatisfiable fast-exit: the spec sincerely demands cross-process persistence the frozen contract forbids | `quarantined`, never merged |
 | `gate-good` | **Over-blocking probe**: a clean pre-baked branch (`existingBranch`) adopted straight into verify→review→gate | `merged`, low gate friction |
 | `gate-bad` | **Rubber-stamp probe**: a pre-baked branch that passes every runnable acceptance command but violates the spec's prose (Math.round vs round-half-away-from-zero; the negative-half case is deliberately untested) | `quarantined`, **or** `merged` with the violation fixed — never merged as-is |
@@ -558,6 +558,34 @@ run concurrently on one box (4 cores, so wall clock is inflated by each other's 
 |---|---|---|---|---|---|
 | harness fixture (1 wave, 6 units) | 85 | 2.51 M | 6 / 5 / 3 / 70 | 22 / 26, 3.16 M / 60 K | ~48 min |
 | conductor fixture (2 waves, 6 units by the end) | 102 | 3.05 M | 4 / 7 / 2 / 88 | 29 / 34, 5.04 M / 96 K | ~96 min |
+
+**Measured, 2026-09-22 (0.19.0) — the lane split and the lean Claude profile.** `codexModel` luna at
+`max` builds and fixes, `codexStrongModel` sol plans, critiques, reviews and takes appointed /
+high-risk units and escalated fix rounds (RATIONALE §24); Fable effort `medium`, `fablePlanCheckRisk`
+`['high']`, audit sample 5%, two consults. Both `ALL CHECKS PASSED`, zero degradations:
+
+| | agents | subagent tokens | Claude calls (fable / opus / sonnet / haiku) | Codex (roles / processes, input / output tokens) | wall clock |
+|---|---|---|---|---|---|
+| harness fixture (1 wave, 6 units) | 87 | 2.77 M | 5 / 6 / 3 / 72 | 23 / 28, 4.42 M / 84 K | ~65 min (concurrent with the conductor's first run) |
+| conductor fixture (2 waves, 5 units by the end) | 96 | 3.10 M | 5 / 6 / 2 / 82 | 28 / 33, 6.87 M / 130 K | ~116 min (alone) |
+
+What the numbers say, and what they cannot: Claude **call counts** are flat against 0.18.0 — the lean
+profile's saving is effort (`medium` where `high` was) and the med-risk plan-check moving to Opus,
+neither of which a call count shows, and the platform's subagent-token total is not split per tier.
+The conductor's extra Fable call is a run-shape difference (a contract-mismatch consult plus its
+forced gate fired this time), not the profile. Codex input tokens rose ~40% on both fixtures: luna at
+`max` reads more per build than sol at `high` did, on the cheaper model — the trade the split makes on
+purpose. The routing itself is in the journals: every build on luna/`max`, every plan, critique and
+review digest on sol, both high-risk adopted units' fixes on sol, and the two rubber-stamp probes
+caught at the Fable gate and fixed by sol in one directive round each.
+
+**The first conductor run of the day did not pass**, and that is the more useful measurement. It
+ended `max-waves` with two harness defects that no earlier fixture had reached, both fixed and
+sim-covered before the re-run above: the orphan liveness list was a shell glob, and the courier's
+shell is zsh, where an unmatched glob is fatal — a pidfile-less unit re-entering after a respec
+parked at setup for every remaining wave (now a `find` pipeline, `outage-lifecycle.test.mjs`); and a
+provisioning courier rewrote a `cp` source path and the unit was quarantined "fix tooling" on that one
+report (now a `cmp`-closed copy and one verbatim reattempt, `closed-command.test.mjs`).
 
 Read against the prediction above: the direction held — Opus fell from 27 calls to 5 on the
 harness fixture, because per-unit drafting and verification are Codex's now — but the Haiku count

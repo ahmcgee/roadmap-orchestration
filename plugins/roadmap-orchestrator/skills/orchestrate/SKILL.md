@@ -156,6 +156,10 @@ So: if the smoke only passes with `danger-full-access`, **tell the user before d
 session must run in bypass-permissions mode** — every codex launch, every wave, carries that flag
 — and stop if it is not. (Prefix `CODEX_HOME=<home>` on all of them if the environment uses a
 non-default home — check `$CODEX_HOME`.)
+Smoke **every model the arc pins**, not only the default: repeat the same `pwd` run with
+`-m <codexModel>` and with `-m <codexStrongModel>` (and any literal `unit.codexModel`), because a
+credential can reach one and not the other (a `400 … not supported` names the one it cannot), and
+a strong model the lane escalates onto mid-wave is one every unit past two fix rounds will need.
 All three green → record `plan.codex: { home: <the CODEX_HOME path or null> }` and continue. Not
 logged in or binary absent → **stop before dispatch** and tell the user exactly what to run:
 `codex login` (browser) or `codex login --device-auth` (headless), or install the CLI. Smoke
@@ -341,6 +345,18 @@ Read their outputs, then decide:
 - **Assign risk tiers** (`low`/`med`/`high`) and plan a small set of cross-unit acceptance tests
   targeting the *seams* between units. You plan them; schedule an early unit to write them; the
   merge gate runs them.
+- **Appoint the builder.** The execution lane runs on the cheap model of the builder family at its
+  top effort (`config.codexModel`, luna at `max`), which executes a fully specified packet well and
+  improvises badly; the family's strong model (`config.codexStrongModel`, sol) writes each unit's
+  implementation plan, critiques the spec and reads the diff into the review digest, so the
+  specification standard is its job, not yours to inflate. Where the WORK itself needs the stronger
+  builder — foundational architecture, concurrency, migrations, security-critical or cross-cutting
+  changes, anything whose approach cannot be pinned down in advance — set `codexModel: "strong"` on
+  the unit in `plan.json` (`risk:high` units get it by default via `codexStrongRisk`; a literal model
+  id is absolute). Appoint deliberately and sparingly: the strong seat is the quota the split exists
+  to conserve. Past `codexStrongAfterRounds` fix rounds (default 2) a struggling unit escalates to it
+  on its own, cold — you do not need to pre-empt that, but a unit you EXPECT to take several rounds
+  is one to appoint up front rather than pay two cheap rounds to learn it.
 - **Resolve the cut line** into an explicit in-scope set (ancestor-closed under the DAG), and jot
   next-session notes for what falls beyond it while the context is hot. The cut line is what you will
   judge DRAINED against later — once it is, relaunch with `admissions: 'closed'` (see "Closing
