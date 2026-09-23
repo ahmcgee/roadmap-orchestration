@@ -494,6 +494,10 @@ const debt = ret.debt ?? state?.debt ?? []
 const debtSections = ret.debtSections ?? []
 const journalEntries = ret.journalEntries ?? []
 const boundaryNotes = ret.boundaryNotes ?? []
+// The audit renderings (0.20.0): a conductor run collects one per wave; a directly-launched harness
+// carries its wave's block in `state.boundary.audit`.
+const auditReports = isConductor ? (ret.auditReports ?? [])
+  : (state?.boundary?.audit ? [{ wave: state.wave, audit: state.boundary.audit }] : [])
 
 await write('state.json', json(state))
 
@@ -564,6 +568,32 @@ for (const wave of [...new Set(boundaryNotes.map((e) => e.wave))]) {
     'MACHINE-WRITTEN by persist.mjs from the run\'s return envelope (`boundaryNotes`). These are requests and ' +
     'questions for the architect — rulings, contract corrections, the user-facing question on a needs-user ' +
     `return — not decisions; the decisions are in architect-log.md.\n\n${body}\n`)
+}
+
+// The audit's report (0.20.0): the one boundary role with no shell of its own (it runs on Claude, and
+// it writes nothing), so its rendering is a pure function of the block it returned — rewritten whole
+// per wave, hence idempotent. The block itself is what the conductor's triage consumed.
+for (const { wave, audit } of auditReports) {
+  const findings = (audit.findings ?? []).map((f) =>
+    `- **${f.severity}**${f.invariant ? ` ${f.invariant}` : ''} ${f.what} (${f.file}${Number.isFinite(f.line) ? `:${f.line}` : ''})` +
+    `${f.why ? `\n  - why: ${f.why}` : ''}${f.witness ? `\n  - witness: ${f.witness}` : ''}` +
+    `${(f.unitsInvolved ?? []).length ? `\n  - units: ${f.unitsInvolved.join(', ')}` : '\n  - units: none (unowned)'}`)
+  const drift = (audit.drift ?? []).map((d) => `- ${d.ruling} vs ${d.doc}: ${d.what}`)
+  const vacuity = (audit.vacuity ?? []).map((v) => `- ${v.test} (${v.unit}): ${v.what}`)
+  const drafts = (audit.fixUnits ?? []).map((d) =>
+    `- ${d.id} [${d.origin}${d.invariant ? ` ${d.invariant}` : ''}]: ${d.goal}` +
+    `${(d.files ?? []).length ? `\n  - files: ${d.files.join(', ')}` : ''}` +
+    `${(d.acceptance ?? []).length ? `\n  - acceptance: ${d.acceptance.join(' · ')}` : ''}`)
+  await write(`feedback/audit/wave-${wave}.md`,
+    `# Wave ${wave} — audit (invariants · drift · vacuity)\n\n` +
+    'MACHINE-WRITTEN by persist.mjs from the audit block the wave returned (`boundary.audit`). The audit reads the ' +
+    'integrated tree against the invariant ledger, the contracts and the normative model; its P1 findings route ' +
+    'to fix units or an `invariant-unowned` return, never to the debt ledger.\n\n' +
+    `## Findings\n\n${findings.join('\n') || 'No findings.'}\n\n` +
+    `## Drift\n\n${drift.join('\n') || 'None.'}\n\n` +
+    `## Vacuity\n\n${vacuity.join('\n') || 'None.'}\n\n` +
+    `## Fix-unit drafts\n\n${drafts.join('\n') || 'None.'}\n` +
+    `${audit.notes ? `\nNotes: ${audit.notes}\n` : ''}`)
 }
 
 // Event ledgers: append-only, one JSON line per row, arc-cumulative. Appended LAST, and skipped when

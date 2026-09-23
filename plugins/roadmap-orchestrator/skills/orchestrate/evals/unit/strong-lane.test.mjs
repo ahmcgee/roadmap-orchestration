@@ -202,7 +202,9 @@ test('5 fablePlanCheckRisk: med-risk rides Opus-first by default (lean) and Fabl
 
   const { fn: fn2, calls: calls2 } = makeAgent([{ match: /^plan-check:m|^opus-plan-check:m/, result: approve }])
   await runWave(fn2, makePlan([unit('m', { risk: 'med' })]), makeState(), { fablePlanCheckRisk: ['med', 'high'] })
-  assert.ok(calls2.some((c) => c.label === 'plan-check:m' && c.model === 'fable'), "['med','high']: med → Fable plan-check")
+  // 0.20.0: the FRONTIER plan-check's model is `planCheckModel[risk]` — opus for med by default
+  // (calibration.test.mjs pins the map and the `adversarial` pin); the knob decides the ROUND.
+  assert.ok(calls2.some((c) => c.label === 'plan-check:m' && c.model === 'opus'), "['med','high']: med → the frontier plan-check, on planCheckModel.med")
   assert.ok(!calls2.some((c) => c.label === 'opus-plan-check:m'), 'and no Opus pass')
 
   const { fn: fn4, calls: calls4 } = makeAgent([{ match: /^plan-check:h|^gate:h/, result: (l) => l.startsWith('gate') ? { verdict: 'approve', directives: [], debt: [] } : approve }])

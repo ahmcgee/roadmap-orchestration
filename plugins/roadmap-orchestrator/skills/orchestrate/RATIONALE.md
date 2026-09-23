@@ -1387,3 +1387,133 @@ no earlier fixture had reached (a zsh-fatal glob in the orphan liveness list; a 
 that rewrote a `cp` source path and was believed on the first report): a re-entry path that only opens
 when a unit is respecced mid-arc. §19's rule held in both: the fix was a command a shell cannot
 misread and a retry the script owns, never a sentence asking the courier to be more careful.
+
+## 25. The 0.20.0 calibration — Opus 5.5 in the judgment seats, and the tree gets a reader
+
+The arc-1 ledgers (31 waves) and the owner's calibration brief drove this batch. Three things in it
+are decisions rather than fixes, and each is written down here because the next reader will want to
+undo one of them for a plausible reason.
+
+**Which Claude does what — the rule, not the map.** Opus 5.5 beats Fable 5.1 on the focused
+benchmarks (Terminal-Bench 4.0: 66.4 vs 55.8, at about half the tokens per agentic task) and Fable
+keeps the long-horizon edge. Every role the harness dispatches is a *single-shot, schema-constrained
+judgment over one artifact* — a diff, a plan, a boundary's evidence — with no memory across calls; that
+is the focused case, so the frontier gate and the frontier plan-check now take their model from a
+risk map (`frontierGateModel`, `planCheckModel`) exactly as `gateModel` already picked the first pass,
+with `high` on Fable by default. What stays on Fable is what shapes an arc across calls: the root's
+own turns, Phase 0, the tier-3 boundary agent that replans, the consults that rule on a contract, and
+the reroute target below. `high` moves to Opus by config once one wave of 5.5 gate evidence on med
+units says so — no code change, which is why the maps exist. Sonnet leaves the gate map entirely:
+measured on the arc it was both less capable at the seat and, counting the rounds it bought, less
+cost-efficient than Opus — the owner's ruling, and one the knob still lets an arc reverse. `opusModel`
+is `null` (the CLI's own alias) rather than a literal id: whether the Workflow runtime accepts a
+literal at all is unmeasured (the Agent tool's model parameter is an enum of four aliases), and a
+default that might fail every Opus call is not a default. The closing gate round gets its own effort
+(`gateCloseEffort: 'high'`): it is the round that rules on the last fix instead of quarantining
+unread work, the one place the lean profile is wrong to reach.
+
+**Refusals are structural, because the runtime gives us nothing else.** On the API a classifier
+decline is a normal response with `stop_reason: "refusal"`; to a workflow script it is `null` — no
+stop reason, no error object, indistinguishable from a death. So the harness does not try to tell
+them apart. A null from any schema'd Opus/Sonnet call is re-run once on Fable before the caller's own
+salvage sees it (`claude-rerouted`): a refusal is a routing fact, never a verdict, and a real outage
+still halts one Fable call later than it did. The harness never opts into a server-side fallback to a
+*weaker* model — the reroute goes up. Beside the codex smokes, a wave-start probe (`refusalProbe`)
+runs one gate-shaped Opus call over a fixture diff whose spec carries the adversarial lanes the arc's
+zero-trust work actually has (a forged handoff header, direct-to-relay with a valid token, "prove zero
+downstream effect"); a null there is `claude-refusal`, and the root's move is `adversarial: true` on
+the specs it applies to, which pins both surfaces to Fable from the start and skips the first pass.
+Fable has never refused in 31 waves of ledgers; the probe establishes the same for 5.5 rather than
+predicting a failure. The probe uses `ask`, not `run`, on purpose — `run` would reroute the very null
+the probe exists to observe.
+
+**The tree gets a reader.** Arc 1's strongest quality datum was a hand-run review of the *tree* after
+28 gated waves: five P1s, three P2s and an authority bypass by design, every one past its unit gate
+because each unit satisfied its own spec and the defects lived in properties that span units. The
+loop had no role that read the tree against properties — the health assessor reads the tip for
+hygiene, the explorer drives the product, the gates read diffs. Now it has two artifacts and one
+role. `invariants.md` joins the plan pack (`plan.invariants`): one entry per system property with a
+Statement, a Witness (the lane or test that proves it), the contracts it binds and the units it
+touches, frozen like a contract and root-only to add or retire. The `audit:w<N>` role reads the
+integration tip against it on Claude (`auditModel`, Opus — cross-family from the Codex reporters,
+same-family as the gates that act on it) with three lenses that share the tree walk: invariants (is it
+still held, is its witness still green and still meaningful), drift (this wave's rulings against the
+architecture doc and the normative model), vacuity (would the obvious mutant pass a merged unit's new
+test). The audit writes nothing: it has no shell, and §20's rule stands — `persist.mjs` renders
+`feedback/audit/wave-<N>.md` from the block the wave returned. Its routing is code, in the conductor:
+a P1 is never banked (its draft is admitted like a health draft and re-added if a triager cuts it; an
+invariant no unit owns returns `invariant-unowned` to the root, since ownership is a plan-level gap);
+a drift row naming a contract returns `contract-amendment`; vacuity drafts fold into the next wave
+while planned work remains and bank as debt lines once the plan is drained — debt never creates a
+wave. The gates read the ledger too: `invariantsTouched` on every gate verdict, and a touched witness
+that did not run is a `revise` in code, with a loud `invariant-unwitnessed` bank at a cap where the
+frontier can no longer revise.
+
+**The defects, and the one lesson among them.** The spurious `codex-usage-limit` halt of wave 30 was
+a grep over the whole `events.jsonl` — where a `command_execution` item carries whatever the run
+printed, and the builder had `cat`-ed this skill's own halt table — filed by the steerer's judgment.
+A limit is now classified in code from codex's *own* error events and stderr only (`limitLines`, the
+one error line), and exit 0 is never a limit: a run that finished did not hit one. The fix-round
+window is 60 minutes, and the fix brief says in so many words that it runs the unit-scoped checks
+only — the verify role runs every lane in its own window after the fix reports. Verify dispatch is
+load-aware: a second semaphore on verify lanes alone (`verifyMaxConcurrent`), and a pre-lane probe
+that holds a lane while `loadavg1 > cpuCount × verifyLoadFactor`, re-probing after a closed-list
+`sleep 110`, recording `verify-deferred` — a row about the host, never the `verify-blocked` verdict.
+The first cut skipped the probe when no codex process or sibling lane was in flight, and the persist
+replay caught it within the minute: an in-flight counter is not a function of (args, results,
+completion order), so live and replay disagreed on whether the probe's prompt existed and the replay
+went PARTIAL. **A prompt may depend on results and on the order they arrived in; never on what else
+is running.** The probe runs on every lane now. A verify killed at its deadline tears down its own
+estate through the plan's `laneCleanup.teardown` — a closed list with `{unit}` substituted in code,
+run by a courier in the unit's worktree — and the wave start takes a census of stranded resources
+and sweeps them with `laneCleanup.sweep` when the plan supplies one (§19: never "clean up the
+clusters"). An adopted unit's diff base is its merge base against the integration branch, read out
+of the worktree at setup, so a branch forked before the tip moved no longer reads every later merge
+as a reversal (wave 31's review). One item was declined: keying role directories on the launchId.
+A work-product prompt must never carry the launch salt or nothing codex-side would ever replay
+(§23), and the wave number is already safe by construction — every relaunch launches `state.wave + 1`.
+
+**The 5.5 prompting patterns — what landed and what could not.** Landed: "the decision and its
+justification" for the adjudicator (no schema field is named `reasoning` or `thinking`; nothing asks
+for a transcript of thought); a standing paragraph on the multi-step roles — merge resolution, the
+integration fix, the audit, both triage tiers — saying there is nobody to answer a question or read a
+progress report, and an advisory time budget beside the hard deadline; the audit told to read broadly
+before writing a finding, opening the sources the task did not name; and every Codex-written block in
+a judgment prompt wrapped in `<pasted_content>` tags with a note that it is data. The id on those tags
+is a hash of label and wave, not random — the sandbox has no randomness and a random id would break
+replay — and the robustness comes from the sanitiser, which defangs a closing tag inside the content
+so no pasted text can end its own block. Could not land, because the Workflow `agent()` API has none
+of the handles: a `max_tokens` sized for thinking (the runtime sets it; a truncated reply surfaces as
+a schema death, which the retry and salvage already cover), a continuation on a text-only end (no
+mid-run input to an agent; the standing paragraph is the whole remedy), a per-turn elapsed-time line
+(one prompt per agent; the budget is stated once), and `stop_details` (see refusals above). There
+were no "think carefully" lines to remove.
+
+**Measured (2026-09-23, the harness fixture on 0.20.0).** ALL CHECKS PASSED; the persist replay was
+clean (119 results, no divergence). 4 Fable / 12 Opus / 1 Sonnet / 101 Haiku calls, 26 codex runs;
+the audit ran and its vacuity lens found a real gap — no test proves `simplifyRatio` still calls the
+shared `gcd`, so the inline reimplementation the conventions probe plants would pass a mutant — and
+drafted the witness. The one cost was the load guard's first cut: on the 4-CPU devcontainer three
+lanes waited the full eight rounds (≈15 minutes each) and dispatched anyway, since the wave's own
+builds and agents are the load and it never fell below 1.5 × cpu; wall clock 75 minutes against 48 at
+0.18.0. `verifyLoadWaits` is 3 now — the insurance a finishing build can still redeem — and a box the
+wave saturates for longer is a factor or concurrency question, not a longer wait.
+
+**Measured (2026-09-23, the conductor fixture on 0.20.0).** ALL CHECKS PASSED, `arc-complete` in two
+waves, persist replay clean (101 results). 1 Fable / 14 Opus / 1 Sonnet / 84 Haiku; the tier-3
+boundary respecced the quarantine at wave 1 and the tier-2 triage closed the arc at wave 2. The
+audit ran at both boundaries; at wave 2, with the plan drained, its vacuity draft (no test proves
+`memoize` keys on all arguments) banked as a debt line instead of minting a wave — the brake doing
+exactly what §2.3 asked. Three `verify-deferred` rows at the new cap of three waits. And one
+`quarantine-refused`, which is the batch's one incidental find: the merge-reachability courier ran
+two `merge-base --is-ancestor` reads of a landed merge, each exited 0 and printed nothing, and it
+reported `[0, 1, 1]` — a silent success inferred as a failure; git-truth's refusal recorded the unit
+merged, as designed. §19's rule applies: never ask a courier to infer a number a shell can print, so
+`gitProbe` now wraps every command to open its first output line with `rc=<code>` and reads that,
+with the courier's reported codes as the fallback for a dead or older report.
+Verified without a third fixture (the change is one wrapper line and its parser): the wrapped
+commands run for real under zsh in the conductor fixture's integration worktree (`rc=0 roadmap/eval`,
+`rc=0`, `rc=0`; `rc=128` on a bad ref), the sims pin the parser (calibration 26, git-truth 1d), and one
+real Haiku courier handed the captured `merge-reach` prompt copied the three `rc=` lines verbatim.
+The "gate-bad on Opus 5.5" probe — the harness fixture with `frontierGateModel` all opus — stays on
+the owed list; the two adopted gate probes are `risk:high` and ran their frontier gates on Fable here.

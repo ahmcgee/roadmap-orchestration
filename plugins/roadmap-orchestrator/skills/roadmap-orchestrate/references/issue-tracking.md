@@ -8,7 +8,9 @@ usable. Read open bugs/proposals as candidate scope at Phase 0, and bugs at wave
 Maintain one `roadmap:arc` issue and one `roadmap:unit` issue per unit. Use the existing
 `status:pending`, `status:running`, `status:merge-ready`, `status:merged`, `status:blocked`,
 `status:quarantined`, `status:backlog`, `status:proposed`, `status:deferred` labels. Unit issue bodies
-begin with `<!-- roadmap:unit id=<id> -->`. Issue numbers in plan/state are caches only.
+begin with `<!-- roadmap:unit id=<id> -->`. Issue numbers in plan/state are caches only. A unit
+issue for a fix unit drafted by the wave-tail audit (`origin` `audit-p1`/`audit-vacuity`) also carries
+`roadmap:audit`, so it is distinguishable from a health-assessor draft.
 
 Find-or-create by **exact first-line body marker**, not by a search hit or cached number. Fetch
 candidates and compare their first line in code; GitHub search tokenizes punctuation and can return

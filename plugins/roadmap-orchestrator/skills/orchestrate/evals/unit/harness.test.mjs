@@ -273,10 +273,26 @@ test('4b dossier prompts name every required key, and a dead investigator is rec
   namesDossierKeys(d.prompt, 'the quarantine investigator prompt')
   assert.deepEqual(d.schema.required, ['attempted', 'evidence', 'hypothesis'])
   assert.ok(d.schema.properties.notes, 'and the schema carries the `notes` release valve every tight schema here has')
-  const row = (state.degradations ?? []).find((x) => x.kind === 'dossier-fallback')
+  // 0.20.0: a null from a schema'd Sonnet call is REROUTED once to Fable before any fallback — a
+  // refusal reaches the script exactly as a death, and a routing fact is not a verdict.
+  const reroute = calls.find((c) => c.label === 'dossier:a#fable')
+  assert.ok(reroute && reroute.model === 'fable', 'the dead sonnet investigator is re-run once on fable')
+  const rr = (state.degradations ?? []).find((x) => x.kind === 'claude-rerouted')
+  assert.ok(rr && rr.label === 'dossier:a', 'and the reroute is ledgered against the original label')
+  assert.ok(!(state.degradations ?? []).some((x) => x.kind === 'dossier-fallback'),
+    'the reroute answered, so no stand-in dossier was needed')
+
+  // Both dead: the fallback path is intact behind the reroute.
+  const { fn: fn2, calls: c2 } = makeAgent([
+    { match: /^merged-probe:a$/, result: () => ({ ok: true, exitCodes: [0, 1, 0], out: [BASE_SHA] }) },
+    { match: /^setup-commits:a$/, result: () => ({ ok: true, exitCodes: [0], out: ['3'] }) },
+    { match: /^dossier:a(#fable)?$/, result: () => null },
+  ])
+  const s2 = await runWave(fn2, makePlan([unit('a')]), makeState())
+  const row = (s2.degradations ?? []).find((x) => x.kind === 'dossier-fallback')
   assert.ok(row, 'a dead investigator used to land the stand-in dossier with no row anywhere')
   assert.equal(row.label, 'dossier:a')
-  assert.match(calls.find((c) => c.label === 'dossier-write:a').prompt, /investigation agent failed/,
+  assert.match(c2.find((c) => c.label === 'dossier-write:a').prompt, /investigation agent failed/,
     'the stand-in dossier is still written — a quarantine with no dossier sends the next reader hunting')
 })
 test('4c the rescue dossier names the same keys', async () => {
@@ -441,9 +457,11 @@ test('8 audit determinism: rate 1 forces low-effort Fable gate, rate 0 does not'
   }
 
   const one = await runAt(1)
-  assert.ok(has(one, 'gate:a'), 'rate 1 forces the Fable gate')
+  assert.ok(has(one, 'gate:a'), 'rate 1 forces the frontier gate')
   const g = one.find((c) => c.label.startsWith('gate:a'))
-  assert.equal(g.model, 'fable', 'forced audit gate runs on Fable')
+  // 0.20.0: the frontier gate's MODEL is `frontierGateModel[risk]` — opus for a low-risk unit by
+  // default (calibration.test.mjs pins the map); what the audit sample forces is the frontier ROUND.
+  assert.equal(g.model, 'opus', 'forced audit gate runs on frontierGateModel.low (opus since 0.20.0)')
   assert.equal(g.effort, 'low', 'audit-only gate runs at auditEffort (pinned low here)')
   assert.ok(!has(one, 'opus-gate:'), 'forced frontier skips the Opus gate')
 
@@ -752,8 +770,8 @@ test('10 contract mismatch: consult + forced Fable gate carrying the mismatch te
   assert.equal(consult.model, 'fable', 'consult is a Fable call')
 
   const gate = calls.find((c) => c.label.startsWith('gate:a'))
-  assert.ok(gate, 'the Fable gate was forced')
-  assert.equal(gate.model, 'fable')
+  assert.ok(gate, 'the frontier gate was forced')
+  assert.equal(gate.model, 'opus', 'on frontierGateModel.low (opus since 0.20.0; calibration.test.mjs pins the map)')
   assert.ok(gate.prompt.includes(MISMATCH), 'gate prompt carries the mismatch text')
   assert.ok(!has(calls, 'opus-gate:'), 'contract mismatch forces frontier, skipping the Opus gate')
 })
@@ -784,6 +802,7 @@ test('11c boundary: all jobs throw -> block absent', async () => {
     { match: /^explorer:/, result: boom },
     { match: /^health:/, result: boom },
     { match: /^flake:/, result: boom },
+    { match: /^audit:/, result: boom },   // the 0.20.0 audit is a Claude role: a throw is caught by runOr, not by Promise.all
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
   assert.equal(state.boundary, undefined, 'boundary omitted when every job failed')

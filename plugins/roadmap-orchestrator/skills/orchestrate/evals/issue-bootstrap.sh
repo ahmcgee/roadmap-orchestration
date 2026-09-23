@@ -23,10 +23,10 @@ G=(--repo "$REPO")
 RUN="arc-$$-$(cd "$DIR/repo" && git rev-parse --short HEAD 2>/dev/null || echo x)"
 echo "issue-mode bootstrap for $DIR against $REPO (namespace $RUN)"
 
-LABELS=(roadmap:unit roadmap:debt roadmap:bug roadmap:arc \
+LABELS=(roadmap:unit roadmap:debt roadmap:bug roadmap:arc roadmap:audit \
   status:pending status:running status:merge-ready status:merged status:blocked status:quarantined status:deferred \
   risk:low risk:med risk:high severity:minor severity:major \
-  debt:correctness debt:test debt:structure debt:ergonomics)
+  debt:correctness debt:test debt:structure debt:ergonomics debt:invariant)
 for l in "${LABELS[@]}"; do gh label create "${G[@]}" "$l" --color ededed --force >/dev/null 2>&1 || true; done
 echo "labels ensured"
 

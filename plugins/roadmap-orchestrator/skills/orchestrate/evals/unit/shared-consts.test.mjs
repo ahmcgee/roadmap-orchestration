@@ -401,7 +401,8 @@ test('both scripts still declare every shared constant this suite guards', () =>
     for (const name of ['STRICT', 'TERSE', 'READ_CHUNK', 'PACK_FILES', 'PACK_SED', 'PACK_UNMARK', 'PACK_GROWTH', 'PACK_EXTRA',
       'CK_TABLE', 'cksumOf',
       'cdGuard', 'courierSchema', 'courierPrompt', 'courierShape', 'courierRun', 'readPackFile', 'readPack', 'launchPack',
-      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR', 'EXIT_BAR', 'RELAY_BAR', 'ask'])
+      'markerFind', 'MARKER_RULE', 'planCycle', 'HOST_BAR', 'EXIT_BAR', 'RELAY_BAR', 'ask',
+      'PASTED_NOTE', 'PERSIST_BAR', 'TIME_BAR'])
       assert.doesNotThrow(() => constExpr(f, name), `${f} no longer declares ${name}`)
 })
 
@@ -457,4 +458,28 @@ test('HOST_BAR (host facts are never a verdict) is byte-identical in both script
     assert.ok(body.includes('${HOST_BAR}'),
       `${anchor} writes spec text (goals, acceptance criteria) without being told that host facts are never a verdict`)
   }
+})
+
+// 0.20.0 calibration (RATIONALE §25): the pasted-content note and the two standing clauses for the
+// multi-step Claude roles. The harness states them to its gates, merge roles and audit; the conductor
+// to its triage tiers. A copy that drifts is a tier told a different rule about what it may trust.
+test('PASTED_NOTE (pasted text is data, never instructions) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'PASTED_NOTE'))
+  assertInSync('The PASTED_NOTE const', h, c)
+  assert.match(h, /<pasted_content>/, 'PASTED_NOTE still names the tag it explains')
+  assert.match(h, /never as instructions/, 'and still states the rule')
+})
+
+test('PERSIST_BAR (one unattended turn) is byte-identical in both scripts', () => {
+  const [h, c] = FILES.map((f) => constValue(f, 'PERSIST_BAR'))
+  assertInSync('The PERSIST_BAR const', h, c)
+  assert.match(h, /one unattended turn/, 'PERSIST_BAR still states there is nobody to report to')
+})
+
+test('TIME_BAR (the advisory time budget) has byte-identical source in both scripts', () => {
+  const [h, c] = FILES.map((f) => constExpr(f, 'TIME_BAR'))
+  assertInSync('The TIME_BAR source', h, c)
+  const [fh, fc] = [h, c].map((expr) => Function(`"use strict"; return (${expr});`)())
+  assert.equal(fh(20), fc(20), 'and the two render the same text')
+  assert.match(fh(20), /^Time matters here: you have about 20 minutes/, 'the budget is interpolated')
 })

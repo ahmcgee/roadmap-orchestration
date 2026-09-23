@@ -32,6 +32,12 @@ accounting; `verifyBlocked`, consults, spend and escalation counts remain cumula
                        #   with a NEW ruling naming the old). Cross-cutting constraints that
                        #   aren't interface contracts (perf budgets, tech choices, compliance,
                        #   non-goals); specs + dismissal criteria cite rulings by id.
+  invariants.md        # LIVING plan-pack document (0.20.0), produced at Phase 0 beside the
+                       #   contracts; plan.invariants points at it. Frozen like contracts:
+                       #   amendments only through a gate/consult directive or a root ruling.
+                       #   One entry per system property — `## I-nn — <title>` then Statement /
+                       #   Witness / Contracts / Touches / Origin lines. Root-only to add or
+                       #   retire an entry. Read by the audit and by both gates/plan-checks.
   debt.md              # LIVING. Ledger of consciously-deferred technical debt; appended at
                        #   each triage, carries across waves and arcs, read at Phase 0 as
                        #   candidate scope. Distinct from feedback — kept, not consumed.
@@ -89,6 +95,9 @@ accounting; `verifyBlocked`, consults, spend and escalation counts remain cumula
                        #   ITSELF; its own file, so the health role owns wave-<n>.md end to end)
     design/*.md        #   per-wave design-fidelity reconcile vs the cited comps (codex role);
                        #   written only on waves that merged a design-cited unit
+    audit/*.md         #   per-wave tree audit (invariants · drift · vacuity). MACHINE-written by
+                       #   persist.mjs from the wave's `boundary.audit` block — the audit runs on
+                       #   Claude and has no shell. Rewritten whole, so idempotent
     user/*.md          #   FILE MODE: the user drops notes here AT ANY TIME (copying TEMPLATE.md);
                        #   read at the next boundary — never an input to a running wave. ISSUE
                        #   MODE: users file roadmap:bug issues instead; this folder is unused.
@@ -286,6 +295,12 @@ The one constraint left on that legacy path is **size** — see `state.json` bel
                                    //   anchor under a different ref (adopt/<id>) instead. A tier-3
                                    //   RESPEC may set it to `unit/<quarantined id>` so the
                                    //   replacement adopts sound work instead of rebuilding it.
+    "adversarial": true,           // optional (0.20.0) — the root's pin for a spec whose lanes read
+                                   //   as attack work to a safety classifier (forged headers, a valid
+                                   //   token used to bypass, "prove zero downstream effect"): the gate
+                                   //   AND the plan-check go straight to Fable, first pass skipped. Set
+                                   //   it on the specs a `claude-refusal` / recurring `claude-rerouted`
+                                   //   row names
     "supersedes": "..."            // set by the conductor on a respec: the quarantined id this
                                    //   unit replaced. Walked as a LINEAGE by the critical-path
                                    //   brake (a lineage quarantined twice returns to the root).
@@ -371,6 +386,23 @@ The one constraint left on that legacy path is **size** — see `state.json` bel
                                    //   stays real. Absent → clause is '' and the scope text is
                                    //   byte-identical to before. Excludes from the growth check;
                                    //   does not widen the pinned envelope.
+  "invariants": ".roadmap/invariants.md",  // optional (0.20.0); an ABSOLUTE path in practice. The
+                                   //   invariant ledger (see layout). The wave-tail audit and both
+                                   //   gates and plan-checks read it; absent → every invariant clause
+                                   //   is '' and those prompts are byte-identical to before.
+  "normativeModel": "<path>",      // optional; named to the audit as the doc its drift lens reads
+                                   //   this wave's rulings against
+  "laneCleanup": {                 // optional (0.20.0); for arcs whose lanes stand up clusters or
+                                   //   fixtures. Every field optional; each is a CLOSED command list
+                                   //   run by a Haiku courier — never a goal handed to a model.
+    "census": "kind get clusters", // wave start: lists lane resources. At wave start no lane runs,
+                                   //   so every name it prints is stranded (`stranded-estate`)
+    "sweep": "hack/kind-down.sh {name}",  // run once per censused name, `{name}` substituted in
+                                   //   code. Absent → the estate is recorded, not swept
+    "teardown": ["hack/kind-down.sh cp-{unit}", "hack/devsvc.sh down {unit} --purge"]
+                                   //   run in the unit's worktree after a verify lane is killed at
+                                   //   its deadline, `{unit}` substituted in code (`lane-cleanup`)
+  },
   "config": { }                    // optional overrides — knobs below
 }
 ```
@@ -410,7 +442,7 @@ Fields the scripts add:
 - **`preview`** — `{ sha, status: "live" | "failed" | "none" }`, the green-tip mirror's position.
   `failed` never affects any unit outcome.
 - **`boundary`** — present when the wave-tail boundary phase ran anything:
-  `{ explorer, health, flake, design }`. Any job is `null` when it was off or failed; the whole
+  `{ explorer, health, flake, design, audit }`. Any job is `null` when it was off or failed; the whole
   block is **omitted** when no job ran or every job failed — its absence is the signal to run the
   explorer/health agents yourself. Two code-side annotations: `explorer.heldFindings` holds the
   findings the explorer attributed (`blockedBy`) to an in-scope unit that has not landed — they
@@ -418,8 +450,10 @@ Fields the scripts add:
   lists the unlanded units so it can attribute; `flake.unassessed: true` (with `flips` emptied)
   means every re-run exited non-zero — the band measured nothing about intermittence, the job is
   owed, and a `flake-unassessed` degradation says so. The band reports `exits` per run for this.
+  `audit` (0.20.0) is the Claude audit's block — `{ findings, drift, vacuity, fixUnits, notes }` —
+  which `persist.mjs` renders to `feedback/audit/wave-<n>.md`; the role itself writes nothing.
 - **`owed`** — boundary jobs that were DUE but did not run (skipped on a broken precondition, or
-  died): `{job: explorer|health|flake|design, wave, why, count, units?}` per entry (`units` names
+  died): `{job: explorer|health|flake|design|audit, wave, why, count, units?}` per entry (`units` names
   the design-cited units an owed reconcile still must cover; `count` = consecutive boundaries
   owed). Discharged automatically when the job next succeeds; carried with `count+1` otherwise.
   A wave that **halts** skips its whole boundary, so for the units it *merged* it mints owed entries
@@ -427,7 +461,8 @@ Fields the scripts add:
   a final launch with `boundary:'off'`, where only owed jobs run, so without the marker no assessor
   would ever read what that wave landed — and `design`, naming the design-cited units it merged,
   because that reconcile is scoped to units that merged *in the wave it runs in* and no later
-  boundary can recover it. Both carry `why: "wave N halted (<reason>) before its boundary ran"`; a
+  boundary can recover it — and `audit` (unless `auditCadence:'off'`), for the same reason as
+  `health`: merged code nobody has read against the invariants. All three carry `why: "wave N halted (<reason>) before its boundary ran"`; a
   halt that merged nothing owes nothing. `count` is **not** advanced by a halt:
   it counts boundaries that ran and failed to discharge the job, and a halt is not one of those.
   The conductor's tiers may not silently drop one — `count >= 2` forces the Fable tier, which
@@ -463,8 +498,9 @@ Fields the scripts add:
   between two successive persisted states. This is the session report's "where did frontier
   attention go" table — and, since 0.14.0, its "how much of the run left Claude entirely" table:
   read the four Claude tiers *beside* `codex` + `codexRuns`, because that ratio is the whole point
-  of the shift and the only place it is visible. `sonnet` now includes first-pass exit gates on
-  low-risk units (see `gateModel`). Two legacy NAMES survive their literal meaning and are kept
+  of the shift and the only place it is visible. `sonnet` counted first-pass exit gates on
+  low-risk units through 0.19.0; since 0.20.0 no gate runs on it (see `gateModel`), and `fable`
+  includes any `claude-rerouted` re-run. Two legacy NAMES survive their literal meaning and are kept
   because the paid fixtures' round-ceiling graders and every resume journal key on them:
   `opusGateRounds` counts **first-pass** exit-gate rounds whatever tier `gateModel` sent them to,
   and the per-unit `rounds.opusGate` is the same count per unit. The tier that actually ran is in
@@ -474,7 +510,10 @@ Fields the scripts add:
   earlier launch *received and never banked* — the conductor reads the launch state's `debt` back
   when that state is a **halt** (`state.halt.reason`) or a `max-waves` / `agent-budget` return
   (`state.conductor.reason`), and only then; see "Carried debt" under the conductor. Every other
-  return hands `debt` to you as residue *you* consume, and it is never read back.
+  return hands `debt` to you as residue *you* consume, and it is never read back. Item `kind`s are
+  `correctness | test | structure | ergonomics | contract | invariant`; `invariant` (0.20.0) is a
+  touched-but-unwitnessed or broken invariant the frontier gate could no longer revise, banked at
+  `severity:major` — a bug for the audit and the triage, never hygiene.
 - **`escalationStops`** — `{unitId: count}`, arc-cumulative. The only escalation state the run
   itself reads (the three-strikes brake, which must survive a unit re-entering in a later wave).
   The rulings themselves are append-only lines in `.roadmap/escalations.jsonl`.
@@ -499,7 +538,8 @@ Fields the scripts add:
   spec-unwritten | spec-unrevised | codex-exec | codex-lifecycle |
   codex-timeout | codex-uncommitted | codex-unavailable | codex-usage-limit | codex-role |
   codex-capacity | codex-orphan | provision-reattempt | lane-skipped | verify-reclassified | dossier-fallback |
-  pack-courier-read | pack-unverified | dispatch-only-unknown`.
+  pack-courier-read | pack-unverified | dispatch-only-unknown | claude-rerouted | claude-refusal |
+  verify-deferred | lane-cleanup | stranded-estate | base-unresolved | invariant-unwitnessed`.
   Codex-kind entries name the `__codex/<unit>/w<wave>/<step>/` (or `__codex/roles/w<wave>/<label>/`)
   artifact directory to read; `codex-role` is a role that produced no result after its one retry — its
   caller got `null`, and nothing was halted on account of it. Four 0.14.0 kinds are what the
@@ -559,6 +599,24 @@ Fields the scripts add:
   halts the wave; a `shared-red` entry names the one spec several units
   failed on and the units it hit; a `duplicate-draft` entry names drafts a boundary filed twice in
   one batch, which are dropped rather than renamed into extra units.
+
+  The 0.20.0 kinds: **`claude-rerouted`** — an `opus`/`sonnet`-tier schema'd call produced no
+  result (a classifier refusal reaches a script exactly as a death), so the same call was re-run once
+  on Fable; recurring on one unit, set `adversarial: true` on its spec. **`claude-refusal`** — the
+  wave-start refusal probe (one Opus gate call over an adversarial-lane fixture diff) produced no
+  verdict; expect `claude-rerouted` rows this wave, and set `adversarial: true` on the specs whose
+  lanes read as attack work. **`verify-deferred`** — a verify lane waited for the host
+  (loadavg1 > cpuCount × `verifyLoadFactor`), or dispatched anyway after `verifyLoadWaits` waits; a
+  row about the HOST, never `verify-blocked` and never counted toward its two-block quarantine.
+  **`lane-cleanup`** — a verify lane killed at its deadline had the plan's `laneCleanup.teardown`
+  run in its worktree, or the wave-start sweep tore down stranded estate; the row carries each
+  command's exit code. **`stranded-estate`** — the plan's `laneCleanup.census` listed lane
+  resources at wave start, when no lane owns any; swept when `laneCleanup.sweep` is set, recorded
+  only otherwise (a lane that meets one will refuse it). **`base-unresolved`** — `git merge-base`
+  for an adopted/existing-branch unit printed no sha, so its diff base stayed the integration tip
+  and post-fork merges will read as reversals. **`invariant-unwitnessed`** — the frontier gate
+  approved at its cap with invariants touched but not witnessed (or not held); banked as
+  `kind:'invariant'` debt at `severity:major`.
 
   **Host load is recorded, never gated on.** Every test lane reports `loadavg1` and `cpuCount`
   (`cat /proc/loadavg`, `nproc`) into its verify result, the flake band reports one `loads` sample
@@ -625,7 +683,7 @@ it) and it IS the conductor's early-return reason, read verbatim by the root:
 | `reason` | who set it | how the root clears it |
 |---|---|---|
 | `codex-unavailable` | the per-wave `codex-probe` failed — no CLI, no "logged in" line, or its bounded `codex exec … "run pwd"` **smoke** did not answer with its scratch directory (the CLI and the credential can both be fine while the Codex BACKEND is down — or while its SANDBOX cannot start: codex exits 0 with the `bwrap` error as its final message, so the smoke executes a command and the shell checks the answer; a sandbox failure is named as such, with the fix) — **or** the mid-wave breaker tripped: ≥2 consecutive codex runs on DIFFERENT units/roles failed with `turn.failed` and the same HTTP status | read the degradation's `what`: a CLI/credential failure means `codex login` (or `--device-auth` headless) then relaunch; a smoke or breaker failure is the provider, so no login helps — wait out the outage, then relaunch |
-| `codex-usage-limit` | a codex run reported a usage/rate limit | wait out the limit window, then relaunch |
+| `codex-usage-limit` | a codex run reported a usage/rate limit — classified in code (0.20.0) from codex's **own** error events and stderr only (the copied error line or a `limitLines` count), never from command output in `events.jsonl` and never from the steerer's `limitHit`, and never on exit 0 | wait out the limit window, then relaunch |
 | `codex-capacity` | the pinned model answered "at capacity" **twice** for one step (a 330-second wait and one reattempt between them), or the wave had already spent its `codexCapacityRetries` waits, or the wave-start smoke was still at capacity after its one wait and re-probe. Classified in code from the copied error line and a `grep -c` count — never from the steerer's `limitHit`, which filed the 2026-09-17 incidents under usage limits | a minutes-scale provider transient, **not** a usage limit: smoke the model (SKILL.md → Codex preflight) and relaunch when it answers, or relaunch with another `config.codexModel` |
 | `env-pids-exhausted` | the host preflight: under 20% of the pid cgroup free | free the pids (usually: recreate the container), then relaunch |
 | `env-no-reaper` | the host preflight counted ≥ 1000 zombie processes — orphans are not being reaped | recreate the container with a reaping PID 1 (compose `init: true`); if the box is genuinely healthy, set `config.envPreflight: 'off'` |
@@ -678,7 +736,7 @@ collide):
 |---|---|
 | kind | `roadmap:unit` · `roadmap:debt` · `roadmap:bug` · `roadmap:arc` (the tracking issue) |
 | status | `status:pending` · `running` · `merge-ready` · `blocked` · `quarantined` · `backlog` · `proposed` · `deferred` |
-| facets | `wave:N` · `risk:low\|med\|high` · `severity:minor\|major` (bug: `blocker\|major\|minor`) · `debt:correctness\|test\|structure\|ergonomics` |
+| facets | `wave:N` · `risk:low\|med\|high` · `severity:minor\|major` (bug: `blocker\|major\|minor`) · `debt:correctness\|test\|structure\|ergonomics` · `roadmap:audit` (0.20.0 — on a unit issue whose fix-unit draft came from the wave-tail audit, `origin: audit-*`, so it is distinguishable from a health draft) |
 
 **Kinds and their states:**
 
@@ -1039,8 +1097,8 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   review stage (RATIONALE §17): that one graded the same diff the gate re-read with authority and
   only widened it. This one is what makes the gate's diet affordable, and its two scalars are read
   by the *script*, not by a prompt.
-- **Exit gate** (once the fix loop converges). **First-pass tier by `gateModel`** — Sonnet for
-  low-risk, Opus for med/high: a fresh adversarial Claude (not the implementer, not the reviewer)
+- **Exit gate** (once the fix loop converges). **First-pass tier by `gateModel`** — Opus for
+  every risk since 0.20.0 (Sonnet took low-risk through 0.19.0): a fresh adversarial Claude (not the implementer, not the reviewer)
   grades each acceptance criterion and returns `approve` / `revise` (a mechanical fix it specifies
   itself → free codex fix → re-verify → re-gate, bounded by `maxGateRounds`, or `maxGateRoundsLarge`
   past `largeDiffFiles`; every later round re-checks its own directives and banks new
@@ -1058,7 +1116,14 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   The **Fable** gate (`approve | revise | quarantine`) is reached unconditionally when
   `exitGate: 'always-fable'`, `risk: high`, the diff touches a frozen contract surface, or the
   unit falls in the deterministic `gateAuditRate` sample — **unchanged by 0.14.0**. First-pass
-  non-convergence also falls through to Fable.
+  non-convergence also falls through to it. Since 0.20.0 that frontier seat's *model* is
+  `frontierGateModel[risk]` — Opus for low/med, Fable for high, Fable for any `adversarial` unit —
+  and the closing round runs at `gateCloseEffort`. With `plan.invariants` set, both gates list the
+  invariants whose `Touches:` names the unit or whose witness files the diff reaches, and return
+  `invariantsTouched: [{id, witnessRan, held}]`; a `false` on an approve becomes a directive in code
+  while rounds remain (the same coercion as correctness debt); at the first pass's cap it escalates
+  to the frontier gate, and at the frontier's cap it banks as `kind:'invariant'` debt at
+  `severity:major` with an `invariant-unwitnessed` row.
 - **Verify — a codex role, and three outcomes, not two.** One brief serves the polish loop and
   every gate re-verify (they only ever differed in tense), and the verifier reads the
   acceptance-check commands out of the **spec itself** rather than being handed a transcription of
@@ -1222,7 +1287,16 @@ unit runs the same setup → plan → plan-check → codex build → verify → 
   each role writes its own `feedback/{explorer,health,design}/wave-<n>.md` rather than paying a Haiku
   transcriber for it (`design/` only on waves that merged a design-cited unit). The flake band's
   record is its own file, `feedback/health/wave-<n>-flake.md`, so two writers never share the health
-  report's path.
+  report's path. The fifth job (0.20.0) is the **audit** (`audit:w<n>`) — on Claude, not
+  Codex: `auditModel` (Opus) at `auditEffort`, due per `auditCadence`. It reads the integrated TREE
+  at the tip against `plan.invariants`, the contracts, the rulings and `plan.normativeModel`, through
+  three lenses in one walk — **invariants** (still held at the tip; witness still green and still
+  meaningful), **drift** (this wave's rulings and amendments against the architecture doc and
+  normative model), **vacuity** (would the obvious mutant pass each merged unit's new acceptance
+  tests?) — and returns a fix-unit draft with `origin` `audit-p1` / `audit-vacuity` for every P1 and
+  every vacuity row. Read-only. A null leaves it `owed`; it has no shell, so `persist.mjs` renders
+  `feedback/audit/wave-<n>.md` from the returned `boundary.audit` block. The conductor never banks a
+  P1 (see its triage).
 
 **The health assessor is empowered, not advisory.** It judges what no per-unit gate can see: test
 health (coverage gaps, brittleness — assertions on implementation detail, over-mocking,
@@ -1243,7 +1317,7 @@ diff is the closed loop that produced the review spiral: scope→diff→fixes→
 gates a scope-creep clause to adjudicate (necessary → approve it; creep → a revert directive) —
 never a licence to keep fixing. **Banking is the DEFAULT outside the envelope; correctness
 inside it blocks at any severity.** Producers of structured `debt` items
-`{what, why, severity: minor|major, kind: correctness|test|structure|ergonomics, bankReason}`:
+`{what, why, severity: minor|major, kind: correctness|test|structure|ergonomics|invariant, bankReason}`:
 the codex build/fix reports (out-of-scope confessions bank directly — there is no sweep round;
 the brief demands in-scope fixing before reporting done), both exit gates (incl. directives past
 the `maxBlockingFindings` cap, banked rather than dropped), and the health assessor. Rules
@@ -1516,8 +1590,9 @@ hands over.)
 | # | Route | When |
 |---|---|---|
 | — | return `contingent-replan` | a contingent edge crossed (`from` merged, `to` withheld this wave or out of scope) |
-| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates). The harness banks a `contractMismatch` report as `kind:'contract'` only when it is **corroborated** — the verifier reported the diff touches a frozen surface, or the report names a contract file; otherwise it banks as a *major non-contract* item (the forced frontier gate already adjudicated it), and no reporter may set `kind:'contract'` on a debt item itself |
+| — | return `contract-amendment` | any **non-`rebanked`** `kind:'contract'` debt this wave (a `rebanked` item is a ghost of a finding the branch already resolved — it banks with the rest, it just never escalates). The harness banks a `contractMismatch` report as `kind:'contract'` only when it is **corroborated** — the verifier reported the diff touches a frozen surface, or the report names a contract file; otherwise it banks as a *major non-contract* item (the forced frontier gate already adjudicated it), and no reporter may set `kind:'contract'` on a debt item itself. Also any audit **drift** row that names a contract (0.20.0) — carried as `drift` |
 | — | return `critical-path-stalled` | an in-scope quarantined unit whose **lineage** (itself plus the units it `supersedes`, transitively) already holds a quarantine, while in-scope, non-terminal units still depend on it — the tier-3 respec ran once and produced the same outcome, so another boundary here would only mint side work; `{stalled: [{id, lineage, dependents}]}` |
+| — | return `invariant-unowned` | an audit **P1** finding with empty `unitsInvolved` (0.20.0) — an invariant breach no unit owns is a plan-level gap, returned before any tier can bank it; `{findings, drafts}` (the audit's P1 drafts, for the root to admit by hand). Every other P1 draft is admitted — re-added in code if a triager cuts it; vacuity drafts fold into the next wave while planned work remains and bank as debt lines once the plan is drained |
 | — | return `boundary-degraded` | boundary block absent while the caller left it enabled, and no quarantine to route |
 | — | return `root-triage` | `boundaryTriage:'root'` (every boundary returns — escape hatch) |
 | **3** | Fable boundary agent | any unresolved **in-scope** quarantine, or `always-fable` + judgment present |
@@ -1675,7 +1750,7 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
 ```jsonc
 { status: 'conductor-return',
   reason,            // arc-complete | arc-stalled | contingent-replan | contract-amendment | needs-user
-                     //   | critical-path-stalled | dispatch-held
+                     //   | critical-path-stalled | invariant-unowned | dispatch-held
                      //   | plan-cycle | max-waves | agent-budget | boundary-degraded | triage-degraded
                      //   | root-triage
                      //   | <halt>: codex-unavailable | codex-usage-limit | codex-capacity | env-pids-exhausted
@@ -1700,10 +1775,12 @@ Without the cache a mid-arc unit is orphaned from the dashboard (the sweep skips
   journalEntries,    // [{wave, journal}] -> the ## Wave N sections of architect-log.md (tier 3 only)
   boundaryNotes,     // [{wave, tier, notes}] -> feedback/triaged/<wave>/boundary-notes.md: what the
                      //   triage tiers ASKED of the root (tiers 2 and 3; empty notes are skipped)
+  auditReports,      // [{wave, audit}] -> feedback/audit/wave-<N>.md (0.20.0; the audit has no shell)
   /* + reason-specific brief: */
   // contingent-replan → { edges }
   // plan-cycle       → { edges, units }  // the loop, for the root to repoint in plan.json
-  // contract-amendment → { debt, contracts }
+  // contract-amendment → { debt, contracts, drift? }  // drift: audit rows naming a contract
+  // invariant-unowned → { findings, drafts }
   // critical-path-stalled → { stalled: [{ id, lineage, dependents }] }  // boundary + debt intact
   // needs-user        → { question, context }
   // arc-complete      → { arcSummary, stuck? }
@@ -1785,7 +1862,7 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 | `codexSandbox` | `'danger-full-access'` | Codex OS sandbox. `workspace-write` is only real where the container permits unprivileged user namespaces — bubblewrap cannot build a sandbox without one, and it then degrades silently to no enforcement (probe-observed: a write outside the worktree succeeded). Full access is a deliberate, measured acceptance of sibling-worktree risk in that case; set back to `'workspace-write'` wherever namespaces work. **Every codex launch carries this flag**, the Phase-0 smoke must run with it (SKILL.md → Codex preflight), and where it has to be `danger-full-access` the session must run in bypass-permissions mode — Claude Code's auto-mode permission classifier refuses that flag (2026-09-14: `bwrap: setting up uid map: Permission denied`, and not one codex process could launch) |
 | `codexNetwork` | `false` | Adds `-c sandbox_workspace_write.network_access=true` (needed when builds must install packages) |
 | `codexTimeoutMin` | `240` | Build deadline before the steering agent kills the process group and assesses what's on disk. Sized for long-horizon units; per-milestone commits are what make a kill survivable |
-| `codexFixTimeoutMin` | `45` | Resume-round deadline. Also the deadline for `verify`, the one per-unit role that runs test suites, since a lane legitimately spends most of an hour unlike the 20-minute `codexRoleTimeoutMin` readers (the flake band takes `codexBoundaryTimeoutMin` with the rest of the boundary) |
+| `codexFixTimeoutMin` | `60` | Resume-round deadline (0.20.0: was 45 — wave 29 killed both gate-fix rounds of one unit at 45 minutes on a serial e2e series; the fix brief also no longer asks a fix round to run every Done-when lane, which is the verify role's window). Also the deadline for `verify`, the one per-unit role that runs test suites, since a lane legitimately spends most of an hour unlike the 20-minute `codexRoleTimeoutMin` readers (the flake band takes `codexBoundaryTimeoutMin` with the rest of the boundary) |
 | `codexRoleEffort` | `'medium'` | `model_reasoning_effort` for a codex ROLE run (`run(…, {model:'codex'})`) — since 0.14.0 that is the spec critique, plan/replan, verify, the pre-gate review, the quarantine dossier write and the flake band. One knob for all of them; a caller may override per role, and there is deliberately no separate planning-effort dial until a workload proves one is needed |
 | `codexRoleTimeoutMin` | `20` | Role deadline. Far below `codexTimeoutMin` on purpose: a role that has not finished in 20 minutes is stuck, not thinking, and its caller has a fallback either way |
 | `codexBoundaryTimeoutMin` | `45` | Deadline for the four wave-tail BOUNDARY roles (explorer, health, flake, design). Longer than `codexRoleTimeoutMin` because they drive a product end to end, read a whole integrated tree, or run the full suite N times over; still far below `codexTimeoutMin` |
@@ -1796,21 +1873,31 @@ deleted the state/plan/debt/log writers that used to sit beside them, so in file
 | `dispatchOnly` | *(none)* | **LAUNCH ENVELOPE ONLY** (`args.config.dispatchOnly: [unit ids]`) — never read from `plan.config`, which `persist.mjs` writes back to disk. Run exactly the listed units this launch and hold every other in-scope unit untouched (never started, re-opened or stamped `blocked`); the conductor runs one wave and returns `dispatch-held`. `[]` or absent = no hold. See "`config.dispatchOnly`" under the conductor |
 | `envPreflight` | `'on'` | Host-health preflight before dispatch, beside the codex probe: pid-cgroup headroom (`/sys/fs/cgroup/pids.{current,max}`, halts under 20% free) and whether orphans are being reaped (`ps -eo stat= \| grep -c '^Z' \|\| true`, halts at ≥ 1000 zombies). PID 1's comm is reported in the halt detail but **never judged** — the devcontainer `sh` supervisor reaps fine and an init-name allowlist halts a healthy box. An unreadable fact degrades `env-unprobed` and halts nothing. `'off'` is the documented escape, and the only way past the check |
 | `gateMaxConcurrent` | `4` | Counting semaphore on concurrent **test lanes**: the polish-loop verify, every gate re-verify, and the integrated suite at merge. Unit dispatch stays unbounded — their test lanes do not, or the wave saturates the box and then judges wall-clock budgets against the load it created. Timing-only — resume-safe |
+| `verifyMaxConcurrent` | `2` | A second semaphore on **verify lanes alone** (0.20.0), nested inside the `gateMaxConcurrent` slot — the merge suite shares that one with the verifies. Wave 30: two kind-estate verifies beside three builds saturated a 4-CPU box. Timing-only — resume-safe |
+| `verifyLoadFactor` | `1.5` | The load guard: a verify lane does not start while `loadavg1 > cpuCount × verifyLoadFactor`. A low-effort Haiku courier probes the load before **every** verify lane while the guard is on (skipping it by in-flight counters broke persist replay); a high reading records `verify-deferred` — never `verify-blocked` — and re-probes after a closed-list `sleep 110`. `0` disables |
+| `verifyLoadWaits` | `3` | Re-probes (110 s each) the load guard buys per lane before it dispatches anyway, with a second `verify-deferred` row saying so. Measured at 8 on the 4-CPU devcontainer: three lanes waited the full ≈15 min for no relief — the wave itself is the load — so 3 is the insurance a finishing build can still redeem |
 | `codexProfile` | `null` | `-p <profile>` (`$CODEX_HOME/<name>.config.toml`) when set |
 | `fableEffort` | `'medium'` | Effort for the frontier Fable judgment calls that adjudicate hard decisions — the plan-check and the mid-loop architect consult. Lean default (0.19.0; was `'high'`, Fable 5's adjudication default): these calls read a plan or a dossier, not a diff, and `medium` holds. Raise per arc when a workload proves effort-sensitive |
 | `gateEffort` | `'medium'` | Effort on forced/escalated Fable exit-gate calls (the frontier gate). Lean default (was `'high'`); the `gate-bad` paid fixture is the tripwire if the downgrade ever costs gate teeth |
-| `opusEffort` | `'medium'` | Effort for every Opus call the harness makes — the Opus-first plan-check, the first-pass exit gate wherever `gateModel` puts it on Opus, and merge-conflict/integration fixes (the boundary assessors moved to Codex in 0.14.0, so this no longer reaches them). Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth. (`implementEffort` was **removed** in 0.14.0: it only ever drove plan/replan, and the implementer plans its own work on codex now — a codex role's effort is `codexRoleEffort`. Setting it is inert.) |
+| `opusEffort` | `'medium'` | Effort for every Opus call the harness makes — the Opus-first plan-check, the first-pass exit gate wherever `gateModel` puts it on Opus, and merge-conflict/integration fixes (a frontier gate or plan-check that `frontierGateModel`/`planCheckModel` routes to Opus keeps `gateEffort`/`fableEffort` — the knob follows the seat, not the model) (the boundary assessors moved to Codex in 0.14.0, so this no longer reaches them). Opus 5 review accuracy holds at lower effort; the paid-fixture `gate-bad` signal is the tripwire if a downgrade ever costs gate teeth. (`implementEffort` was **removed** in 0.14.0: it only ever drove plan/replan, and the implementer plans its own work on codex now — a codex role's effort is `codexRoleEffort`. Setting it is inert.) |
 | `planCheckRisk` | `['low','med','high']` | Which risk tiers get *any* pre-implementation plan-check. Which tier *pays* is set by `planCheck` |
-| `fablePlanCheckRisk` | `['high']` | Which risk tiers take the **Fable** plan-check outright; the rest ride Opus-first and escalate. Lean default (0.19.0): the single largest structural Fable saving per unit on offer (one frontier call per med-risk unit), at the cost of Opus adjudicating the spec critique on med-risk plans. `['med','high']` restores the 0.14.0–0.18.0 routing; `feasible:false` and `planCheck:'always-fable'` force Fable regardless |
+| `fablePlanCheckRisk` | `['high']` | Which risk tiers take the **frontier** plan-check outright; the rest ride Opus-first and escalate. Since 0.20.0 it decides the **round** only — whether the first pass is skipped; `planCheckModel` decides which model sits the frontier round. Lean default (0.19.0): the single largest structural Fable saving per unit on offer (one frontier call per med-risk unit), at the cost of Opus adjudicating the spec critique on med-risk plans. `['med','high']` restores the 0.14.0–0.18.0 routing; `feasible:false` and `planCheck:'always-fable'` force Fable regardless |
 | `planCheck` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable on every checked unit). `risk:high` and `feasible:false` always take Fable regardless |
 | `exitGate` | `'opus-first'` | `'opus-first'` \| `'always-fable'` (guaranteed Fable gate on every unit) |
-| `gateModel` | `{low:'sonnet', med:'opus', high:'opus'}` | Claude tier for the **first-pass exit gate**, by unit risk. Affordable because the codex pre-gate review hands the gate a digest; the raw diff stays in front of med/high units regardless. An override **replaces** the whole map (the config spread is shallow), so name every tier you care about; an unknown tier falls back to `'opus'`. Two conditions override it back to Opus-on-the-raw-diff in **code**, never by prompt: no digest at all, or a digest the reviewer graded `blocking`/high-risk. The frontier (Fable) gate's own routing is untouched by this knob |
+| `gateModel` | `{low:'opus', med:'opus', high:'opus'}` | Claude tier for the **first-pass exit gate**, by unit risk. No Sonnet tier since 0.20.0 — the owner's ruling: at the same seat, counting the rounds it bought, Sonnet was both less capable and less cost-efficient than Opus 5.5; the knob keeps its shape. Affordable because the codex pre-gate review hands the gate a digest; the raw diff stays in front of med/high units regardless. An override **replaces** the whole map (the config spread is shallow), so name every tier you care about; an unknown tier falls back to `'opus'`. Two conditions override it back to Opus-on-the-raw-diff in **code**, never by prompt: no digest at all, or a digest the reviewer graded `blocking`/high-risk. The frontier gate's own routing is `frontierGateModel`'s |
+| `frontierGateModel` | `{low:'opus', med:'opus', high:'fable'}` | Model for the **frontier** exit gate (`gate:<id>#n` and `gate:<id>#close`), by unit risk (0.20.0). Every harness role is a single-shot schema-constrained judgment — Opus 5.5's ground — so low/med ride Opus; `high` stays on Fable until one wave of 5.5 gate evidence on med units moves it by config. Same shallow-spread caveat as `gateModel`; an unknown tier falls back to `'fable'`. Two pins override it to Fable in code: `unit.adversarial` and `exitGate:'always-fable'` |
+| `planCheckModel` | `{low:'opus', med:'opus', high:'fable'}` | Model for the **frontier** plan-check (`plan-check:<id>`), by unit risk — same shape, fallback and pins (`unit.adversarial`, `planCheck:'always-fable'`) as `frontierGateModel`. `fablePlanCheckRisk` still decides whether a tier skips the first pass |
+| `gateCloseEffort` | `'high'` | Effort for the closing gate round (`gate:<id>#close`, 0.20.0). It rules on the last fix instead of quarantining unread work (invariant 3), so it is the one gate round the lean profile does not touch; unset falls back to `gateEffort` |
+| `opusModel` | `null` | What the `opus` tier resolves to on the wire (0.20.0). `null` = the CLI's own `opus` alias (Opus 5.5 on a current CLI); a literal id (`'claude-opus-5-5'`) pins it in one place if the alias lags. Read by **both** scripts from `plan.config` / the launch `config` — the conductor's tier-2 triager resolves through it too. Ledgers, spend and labels keep the tier name. Unmeasured: whether the Workflow runtime accepts a literal id at all (the Agent tool's model parameter is an alias enum) — a rejected id fails loudly at the first Opus call |
+| `refusalProbe` | `'wave'` | `'wave'` \| `'off'`. One gate-shaped Opus call at wave start over a fixture diff whose spec carries an adversarial lane (forged handoff header, direct-to-relay with a valid token, "prove zero downstream effect"); runs only where some map routes a judgment to `opus`. No verdict → `claude-refusal`. Its structural twin is always on: any `opus`/`sonnet` schema'd call that returns null is re-run once on Fable (`claude-rerouted`) before the caller's salvage |
 | `gateAuditRate` | `0.05` | Fraction of first-pass-approved units that still take a Fable audit gate (anti-rubber-stamp). Deterministic per unit id (resume-safe); lean default (was `0.10`); `0` disables — not advised, the sample is the only systematic check on a cheap gate |
-| `auditEffort` | `'medium'` | Effort for audit-*only* Fable gates (the sample). Lean default (was `'high'`): these already read diff-stat-first, so the sample stays cheaper than a forced full gate |
+| `auditEffort` | `'medium'` | Effort for audit-*only* Fable gates (the sample), and since 0.20.0 for the wave-tail **audit** role too. Lean default (was `'high'`): these already read diff-stat-first, so the sample stays cheaper than a forced full gate |
 | `previewRefresh` | `'merge'` | Green-tip mirror cadence: `'merge'` \| `'wave'` \| `'off'`. Inert without a `plan.preview` block |
 | `boundary` | `'on'` | The wave-tail boundary phase. `'off'` only for a relaunch you know is final |
 | `healthCheck` | `'each-wave'` | The health-assessor half of the boundary phase: `'each-wave'` \| `'off'` |
 | `flakeReruns` | `3` | Full-suite re-runs hunting intermittents; `0` disables |
+| `auditCadence` | `'wave'` | The wave-tail **audit** (0.20.0): `'wave'` every boundary \| `'merge'` only on boundaries where a unit merged \| `'off'`. A halted wave that merged anything owes it |
+| `auditModel` | `'opus'` | Claude tier for the audit — cross-family from the Codex reporters, same-family as the gates that act on it. Runs at `auditEffort` with a `codexBoundaryTimeoutMin` advisory time budget |
 
 ### Conductor knobs (under `plan.config.conductor` / `config.conductor` — `config` wins; inert on a direct harness launch)
 
@@ -1844,7 +1931,9 @@ set that trades the least judgment for the most Fable saved: `fablePlanCheckRisk
 and `conductor.fableEffort: 'medium'` with `maxWavesPerRun: 5`. What never leans: the guaranteed
 Fable gate on `risk:high` and contract-touching diffs, the Fable plan-check on `risk:high` and
 `feasible:false`, the tier-3 boundary agent, and the root's own Phase-0 and integration review —
-the calls RATIONALE §4 says never to trade. To buy the 0.18.0 judgment back for one arc, the
+the calls RATIONALE §4 says never to trade — nor the closing gate round, which runs at
+`gateCloseEffort: 'high'` (0.20.0) because it rules on the last fix instead of quarantining unread
+work. To buy the 0.18.0 judgment back for one arc, the
 fuller profile is one `plan.config` block (each line independent):
 
 ```jsonc
@@ -1861,6 +1950,22 @@ fuller profile is one `plan.config` block (each line independent):
 
 The fixture spend table in `evals/README.md` is the baseline to measure either profile against.
 
+**A host profile, not a default.** The lean profile is about Claude spend; concurrency and
+deadlines are about the box. The 0.20.0 calibration's profile for an 8 vCPU / 32 GB host, as a
+per-host `plan.config` example (the two frontier maps and the audit cadence are the defaults,
+spelled out because an override replaces a whole map):
+
+```jsonc
+"config": {
+  "codexMaxConcurrent": 3, "verifyMaxConcurrent": 2, "gateMaxConcurrent": 2,
+  "codexFixTimeoutMin": 60, "codexTimeoutMin": 240, "verifyLoadFactor": 1.5,
+  "gateModel":         { "low": "opus", "med": "opus", "high": "opus" },
+  "frontierGateModel": { "low": "opus", "med": "opus", "high": "fable" },
+  "planCheckModel":    { "low": "opus", "med": "opus", "high": "fable" },
+  "auditCadence": "wave", "previewRefresh": "off"
+}
+```
+
 ## Model tiers — the economic contract
 
 | Tier | Does | Never does |
@@ -1868,13 +1973,26 @@ The fixture spend table in `evals/README.md` is the baseline to measure either p
 | codex (CLI) | ALL implementation: unit builds, fix rounds and adjudicated resumes (via `exec resume`) on the cheap **execution** model (`codexModel`, at `max`), with the family's **strong** model (`codexStrongModel`) writing the plan, the critique and the review digest, building the units the root appoints (`unit.codexModel: 'strong'`, `codexStrongRisk`) and taking over a unit's fixes past `codexStrongAfterRounds` — plus every ROLE dispatched through the adapter — the cross-model spec critique, the unit's own implementation **plan**/replan, **verify** and every gate re-verify, the **pre-gate review digest**, the quarantine **dossier write**, and the four wave-tail **boundary
 roles** (runtime explorer, health assessor, flake band, design reconciler), each of which writes its
 own report file. Runs its own implement→test→fix loop inside the brief's pinned scope | **Decide.** It advises — a review digest, a critique, a plan — but nothing it says is a verdict: it never gates, never approves a merge, never rules on an escalation, never plans the roadmap, and never adjudicates its own findings |
-| `fable` | Plan pack, plan-checks for high-risk units (`fablePlanCheckRisk`; taste/overengineering charter) + escalations, escalated + audit-sample exit gates, rescue + spec-gap consults (Codex's escalation channel), wave replans, feedback/debt triage, the conductor's tier-3 boundary agent, integration review | Code, fixes, bulk text |
-| `opus` | Opus-first plan-check (low- and med-risk units), the first-pass exit gate for med/high-risk units and for **every** unit whose review digest is missing or flagged, the escalation ladder's adjudicator (`adjudicate:<id>#<stop>`, effort `high` — not `opusEffort`), merge-conflict resolution and the one integration fix, the conductor's tier-2 boundary triager | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
-| `sonnet` | The first-pass exit gate for low-risk units with a clean review digest (`gateModel`), roadmap normalization, quarantine-dossier investigation, feedback-batch compression, the conductor's spec **revisions** | Spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
+| `fable` | Plan pack (Phase 0), the frontier gate and frontier plan-check for **high**-risk units by default (`frontierGateModel`/`planCheckModel`) and for every `adversarial` unit or `always-fable` arc, rescue + spec-gap consults (`consult:`/`gap-consult:`, Codex's escalation channel), contract amendments, wave replans, the conductor's tier-3 boundary agent, integration review — and the **reroute** target: an `opus`/`sonnet` schema'd call that returns null is re-run once here (`claude-rerouted`) | Code, fixes, bulk text |
+| `opus` | Every first-pass exit gate (`gateModel`, all tiers) and the Opus-first plan-check; the **frontier** gate and frontier plan-check for low/med-risk units by default (`frontierGateModel`/`planCheckModel`) and the audit-sample gate on them; the escalation ladder's adjudicator (`adjudicate:<id>#<stop>`, effort `high` — not `opusEffort`), merge-conflict resolution and the one integration fix, the conductor's tier-2 boundary triager, the wave-start refusal probe, and the wave-tail **audit** (`auditModel`) — the one Claude role that reads the tree rather than a diff. Resolves through `opusModel` | Implementation and planning (Codex's); the wave-tail explorer/health/flake/design roles (Codex's since 0.14.0) |
+| `sonnet` | No gate since 0.20.0. Roadmap normalization, quarantine-dossier investigation (`dossier:`/`rescue-dossier:`), feedback-batch compression, the conductor's spec **revisions** | Any verdict; spec **expansion** (composed in code, written by a cksum-verified Haiku courier since 0.14.0) |
 | `haiku` | Codex steering (launch/poll/kill/disk-verify/report) for the build lane **and every role**, git mechanics, the launch pack's freshness check (`pack-verify` — two `cksum` lines; the pack itself arrives by `workflow()` with no model in the path) and the legacy transcribing pack read when the envelope names no `pack`, the capacity wait and the re-entry orphan check/reap, mirror advance / preview refresh, the conductor's census, the verbatim spec writes the script composed, feedback archiving and gh projections, and the quarantine-dossier write when codex could not do it | Judgment |
 
 **Root-only, never delegated down the ladder**: the Phase-0 plan pack, contingent replans, contract
-amendments, needs-user calls, and the session integration review.
+amendments, needs-user calls, adding or retiring an invariant, and the session integration review.
+
+### Where Opus 5.5 suffices, and where Fable stays
+
+Every harness role is a **single-shot, schema-constrained judgment** — a verdict over one diff, plan
+or boundary block, with no memory across calls. That is where Opus 5.5's focused-benchmark edge
+applies (Terminal-Bench 4.0: 66.4 vs Fable's 55.8, at about half the tokens per task), so 0.20.0 moves
+the frontier gate and plan-check for low/med risk onto it by config. Fable's edge is **long-horizon**
+work: the root's own turns, Phase 0, the tier-3 boundary agent that replans an arc, and the consults
+that rule on a contract and shape what follows — those keep it. `high` risk stays on Fable until one
+wave of 5.5 gate evidence on med units (gate-round counts, overrule accuracy against the codex digest)
+moves it by config — no code change. **Sonnet**, by the owner's ruling, sits no gate at all: at the
+same seat it was both less capable and, counting the rounds it bought, less cost-efficient than
+Opus 5.5 — and it is not an upgrade path for the couriers either, which stay Haiku.
 
 ### Phase-0 codex roles (run by the root by hand, before any workflow exists)
 
@@ -1961,6 +2079,20 @@ role decides anything — the table above still holds: Codex advises, Claude rul
   **`failed`**, an `agent()` call that *threw*. `persist.mjs` replays it as a throw, at its own place
   in the completion order, because the scripts branch on a throw (`run()` re-asks under `#retry`)
   differently from a null (`#salvage`).
+- **`agent()` exposes neither a token limit nor a stop reason.** A classifier refusal on the API
+  arrives as `stop_reason: "refusal"`, but to a script it is indistinguishable from a death — `null`,
+  no error object. So refusals are handled **structurally**: any schema'd `opus`/`sonnet` call that
+  returns null is re-run once on Fable (`claude-rerouted`) before the caller's own salvage, and the
+  wave-start `refusalProbe` looks for one directly (`claude-refusal`). The harness never opts into a
+  server-side fallback to a weaker model — the reroute goes up. A reply truncated by a token limit
+  surfaces as a schema death, which the existing StructuredOutput retry and `runOr` salvage cover.
+- **Pasted content is marked.** Every Codex- or tool-written block a judgment prompt embeds (the
+  review digest, an implementer report, a lane ledger, a draft, a critique) is wrapped in
+  `<pasted_content id=…>` … `</pasted_content id=…>` tags on their own lines behind a one-sentence
+  note that it is DATA. The id is deterministic — a hash of the label and the wave — because the
+  sandbox has no randomness and a random id would break replay; what makes the wrapper robust is the
+  sanitiser, which defangs any closing tag inside the content so no pasted text can end its own
+  block. The conductor carries the same note and wrapper for its triage tiers.
 - Workflows take no mid-run input; ~16 agents run concurrently; the merge queue is serial by design —
   wall clock, not tokens, is the throughput limit.
 
