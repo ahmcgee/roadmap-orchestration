@@ -52,6 +52,10 @@ const courierStdout = (cmd, head, branch) =>
         : /cat-file -t /.test(cmd) ? 'commit'
           // `git merge-base --is-ancestor A B; echo $?` — the checkpointed tip IS on the branch.
           : /merge-base --is-ancestor/.test(cmd) ? '0'
+            // `git merge-base <intBranch> HEAD` (0.20.0, the adopted unit's diff base) — the fake tree
+            // forked from the tip it is on, so the merge base IS the head. A test wanting a moved tip
+            // overrides this one command with courierSaying.
+            : /\bmerge-base\b/.test(cmd) ? head
             // `git rev-list --count <base>..HEAD` — the commit probe's "is there work here".
             : /rev-list --count/.test(cmd) ? '1'
               : /codex login status/.test(cmd) ? 'Logged in using ChatGPT (plan: pro)'
@@ -276,6 +280,13 @@ const DEFAULTS = [
   [(l) => l.startsWith('capacity-wait:'), (b, p) => courierResult(p, b)],
   // Host-health preflight (pid-cgroup headroom, PID 1, load) — a courier like the codex probe.
   [(l) => l.startsWith('env-probe:'), (b, p) => courierResult(p, b)],
+  // 0.20.0 couriers: the pre-lane load probe and its waits (an idle box by default), the killed-lane
+  // teardown, and the wave-start estate census/sweep (nothing stranded by default).
+  [(l) => l.startsWith('load-probe:') || l.startsWith('load-wait:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('lane-cleanup:'), (b, p) => courierResult(p, b)],
+  [(l) => l.startsWith('estate-census:') || l.startsWith('estate-sweep:'), (b, p) => courierResult(p, b)],
+  // The wave-start REFUSAL PROBE (0.20.0): one opus gate call over a fixture diff; a verdict = no refusal.
+  [(l) => l.startsWith('refusal-probe:'), () => ({ verdict: 'approve', trigger: 'none', directives: [], debt: [] })],
   // The cross-model spec critique fires on EVERY fresh build whose risk is in planCheckRisk
   // (the shipped default is all three tiers), so it needs a default or every wave records four
   // spurious degradations. Clean-and-silent: ok with nothing to say, so the plan-check prompt
@@ -329,7 +340,10 @@ const DEFAULTS = [
   [(l) => l.startsWith('health:'), () => codexRoleOk({ findings: [], fixUnits: [] })],
   [(l) => l.startsWith('flake:'), () => ({ runs: 3, flips: [] })],
   [(l) => l.startsWith('design:'), (b) => codexRoleOk({ findings: [], fixUnits: [], visionUsed: true, shaObserved: b })],
+  // The wave-tail AUDIT (0.20.0) is a CLAUDE role — no courier envelope — and clean by default.
+  [(l) => l.startsWith('audit:'), () => auditOk()],
 ]
+export const auditOk = (extra = {}) => ({ findings: [], drift: [], vacuity: [], fixUnits: [], notes: '', ...extra })
 
 export const verifyOk = () => ({ pass: true, blocked: false, failures: [],
   lanes: [{ command: 'npm run test:ci', exitCode: 0 }], contractSurfaceTouched: false, diffFiles: [] })

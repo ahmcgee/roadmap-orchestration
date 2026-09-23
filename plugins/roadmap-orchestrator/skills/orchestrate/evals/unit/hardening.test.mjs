@@ -390,7 +390,7 @@ test('10 spec gap: with the consult budget spent, the gap forces the Fable exit 
   assert.ok(!has(calls, 'gap-consult:a#1'), 'no budget -> no consult')
   const gate = calls.find((c) => c.label === 'gate:a#0')
   assert.ok(gate, 'an unadjudicated gap forces the frontier gate')
-  assert.equal(gate.model, 'fable')
+  assert.equal(gate.model, 'opus', 'on frontierGateModel.low (opus since 0.20.0; calibration.test.mjs pins the map)')
   assert.ok(!has(calls, 'opus-gate:a#0'), 'the cheap gate must not adjudicate a decision nobody ruled on')
   assert.equal(state.units.a.status, 'merged')
 })

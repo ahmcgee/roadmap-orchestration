@@ -62,7 +62,7 @@ worker lanes; switching to it does not bypass a Codex usage limit.
    design reconciler, each writing its own report); every one of those is steered by a Haiku agent.
    Claude keeps every surface that can REJECT work: the plan-check, both exit gates, the escalation
    ladder, the consults, the merge and its suite gate, and the boundary TRIAGE that rules on what
-   those roles found. Opus judges; Sonnet gates low-risk units, extracts and compresses; Haiku runs
+   those roles found. Opus judges and gates (Fable where the risk map says so); Sonnet extracts and compresses; Haiku runs
    closed command lists and writes down what the script already composed — including WHERE each
    command runs: since 0.14.0 every composed command carries its own `cd '<dir>' && ( … )` guard,
    so a courier that skips the instruction fails that command's exit code rather than answering
@@ -178,7 +178,11 @@ hours of a usage limit: the step that saw it already waited once and reattempted
 `env-pids-exhausted` / `env-no-reaper` (the pre-dispatch host preflight), `env-verify-blocked`
 (two units' verification tooling could not run in one wave — a host fact, not two unit defects)
 and `platform-outage` (required agent results stopped arriving) park the wave the same way — see
-`state.halt`.
+`state.halt`. Beside the codex smokes each wave, the harness runs one **refusal probe**
+(`refusalProbe`): a single Opus gate call over a fixture diff whose spec carries an adversarial lane.
+A `claude-refusal` row means Opus produced no verdict there — set `adversarial: true` on the specs
+whose lanes read as attack work, so their judgments pin to Fable instead of being rerouted call by
+call (`claude-rerouted`).
 
 Delegate the bulk reading, keep the thinking: a Sonnet agent normalizes the roadmap into
 candidate items, stated dependencies, and ambiguities; Opus agents (models pinned) produce a
@@ -237,6 +241,23 @@ Read their outputs, then decide:
   amend the contract to reality, or make the divergence an explicit migration unit with the
   contract as the target state. Never freeze a contradiction silently — the fidelity audit below
   reads *source*, not the repo, so it cannot catch this.
+- **Write the invariant ledger** (`.roadmap/invariants.md`, pointed to by `plan.invariants` as an
+  absolute path) — one entry per **system property** that spans units, because per-unit gates each
+  approve one diff against its own spec and a defect living *between* units passes all of them.
+  Format: `## I-nn — <title>`, then `Statement:` (the property, checkable), `Witness:` (the lane or
+  test that proves it), `Contracts:` (the sections it rests on), `Touches:` (the unit ids it
+  concerns), `Origin:` (where it came from). Seed it from the source material's system properties
+  and any prior quality review of the tree. It is frozen like the contracts — amended only through a
+  gate/consult directive or your ruling — and adding or retiring an entry is root-only. Both gates
+  and plan-checks read it (a diff that touches a witness file without running the witness is a
+  `revise`, in code), and the wave-tail **audit** reads the tree against it. Without it, every
+  invariant clause is `''` and the audit reports drift and vacuity only.
+- **Pin adversarial specs.** A spec whose lanes read as attack work to a safety classifier (forged
+  headers, a valid token used to bypass, "prove zero downstream effect") gets `unit.adversarial:
+  true`: its gate and plan-check go straight to Fable, first pass skipped. And where lanes stand up
+  clusters or fixtures that a killed lane would strand, set `plan.laneCleanup` — `census`, `sweep`
+  (`{name}`) and `teardown` (`{unit}`), each a command the harness hands a courier verbatim
+  (`reference.md` → `plan.json`).
 - **Pull design authorities into the repo before anything forks.** Where the roadmap provides
   designs — comps, design-system components, interaction patterns — they *bind* the same way a
   frozen contract binds: a screen that has a comp is never built from primitives, and "matches the
@@ -454,7 +475,7 @@ than guessing.
 
 **In issue mode, stand up the tracker (Haiku; exact labels/markers in `reference.md`).** Create the
 `roadmap:*`/`status:*`/`risk:*`/`severity:*`/`debt:*` labels (`gh label create`; ignore "already
-exists"), the arc **milestone**, and one arc **tracking issue** (`roadmap:arc` — body: plan summary +
+exists" — `roadmap:*` includes `roadmap:audit`, which marks audit-derived fix units), the arc **milestone**, and one arc **tracking issue** (`roadmap:arc` — body: plan summary +
 DAG + a `<!-- roadmap:status -->…<!-- /roadmap:status -->` region the wave-tail sweep fills with a
 unit task list (`- [x]`/`- [ ]`, checked when closed → native progress rollup) + a session-report
 placeholder; record its number in `plan.trackingIssue`). Open one `roadmap:unit` issue per in-scope
@@ -658,7 +679,13 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   *corroborated* mismatch returns here — one where the verifier saw a frozen surface in the diff,
   or the report names a contract file; an implementer's bare "the spec says X" disagreement banks
   as a major non-contract item instead and the forced frontier gate has already adjudicated it
-  (2026-09-14: a missing test assertion woke the root as an amendment).
+  (2026-09-14: a missing test assertion woke the root as an amendment). Since 0.20.0 it may also
+  carry `drift` — wave-tail audit rows whose ruling contradicts a doc and which name a contract;
+  resolve those the same way (amend, or rule the contradiction away in `constraints.md`).
+- **`invariant-unowned`** — the wave-tail audit found a **P1** breach of an invariant no unit owns
+  (its `unitsInvolved` is empty). `findings` names each; `drafts` carries the audit's P1 fix-unit
+  drafts. A broken system property is never banked: assign an owner — admit a draft or write a unit
+  (and add it to the invariant's `Touches:`) — then relaunch.
 - **`critical-path-stalled`** — a unit on the critical path has quarantined **twice in one
   lineage** (the original and the respec tier 3 minted for it) while in-scope units still wait on
   it. The ladder stopped here on purpose: its own recovery already ran once, and another boundary
@@ -707,7 +734,7 @@ boundary, and carries a `debt-unbanked` degradation. Either way the wave's debt 
   hand instead, delete `debt` from `state.json` before relaunching, or it banks twice. (The same
   carry covers what a `max-waves`, `agent-budget` or `dispatch-held` return left un-banked; the state
   says so itself, `debtPending: true`.) What the halt's skipped boundary owed the units it *merged* —
-  the health pass, and a design reconcile — is on `owed`. Each halt has exactly one human action — re-auth (`codex login`),
+  the health pass, a design reconcile, and the audit — is on `owed`. Each halt has exactly one human action — re-auth (`codex login`),
   wait out a usage-limit, platform-outage or Codex-backend-outage window, smoke the model and relaunch
   within minutes (`codex-capacity` — the model was at capacity, which is not a limit), or fix the box (a full
   pid cgroup and a ≥ 1000-zombie backlog both mean: recreate the container with a reaping PID 1;
@@ -740,11 +767,14 @@ plenty.
 
 That is `root-triage`, `boundary-degraded`, and the final wave's evidence at Session end. The
 harness has already *run* the boundary jobs (a codex runtime explorer against the live preview, a
-codex health assessor against the integration tip, codex full-suite flake re-runs); their results are
-in the returned state's `boundary` block, and each role wrote its own
+codex health assessor against the integration tip, codex full-suite flake re-runs, and the Claude
+**audit** of the tree against `plan.invariants`); their results are in the returned state's
+`boundary` block (`{ explorer, health, flake, design, audit }`), and each codex role wrote its own
 `feedback/{explorer,health,design}/wave-<n>.md` (`design/` appears only on waves that merged a
-design-cited unit; the flake band's record is `feedback/health/wave-<n>-flake.md`). If that
-block is **absent**, every job failed or the phase was off — only then spawn the agents yourself.
+design-cited unit; the flake band's record is `feedback/health/wave-<n>-flake.md`). The audit has
+no shell: `feedback/audit/wave-<n>.md` is written by `persist.mjs` from `boundary.audit`, not by the
+role. If that block is **absent**, every job failed or the phase was off — only then spawn the
+agents yourself.
 
 - **Quarantines**: read the dossiers in `.roadmap/quarantine/` — the *reason* routes the action.
   Environment/tooling-blocked → fix provisioning or the brief and re-run as-is.
@@ -763,7 +793,9 @@ block is **absent**, every job failed or the phase was off — only then spawn t
   action, not a suggestion**: admit them unless you see a reason to cut. Your judgment enters as a
   *veto over noise*, not as authoring each from scratch — that is what keeps cross-unit drift from
   dying unactioned in a folder. They run the identical isolation → gate → merge pipeline as any
-  unit, so admitting one costs no safety.
+  unit, so admitting one costs no safety. **A P1 audit finding is never banked**: admit its draft
+  (`origin: "audit-p1"`) or write the unit that restores the invariant; vacuity drafts fold into the
+  next wave like health drafts.
 - **Debt you choose not to fix this wave doesn't vanish.** With the arc still running planned work,
   the default is to **fold even minor debt into the next wave** as consolidation fix-work rather than
   bank it (the debt rule — the conductor's tier-2 does this for you); only genuinely below-the-cut-line

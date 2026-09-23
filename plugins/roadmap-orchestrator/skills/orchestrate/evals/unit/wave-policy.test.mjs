@@ -59,7 +59,9 @@ async function peakVerifyConcurrency(gateMaxConcurrent) {
   }
   const { fn } = makeAgent([{ match: /^verify:/, result: lane }])
   const units = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => unit(id))
-  await runWave(fn, makePlan(units), makeState(), { gateMaxConcurrent })
+  // `verifyMaxConcurrent` (0.20.0) is a second, tighter bound on verify lanes alone; it is set wide
+  // here so this fixture measures the GATE semaphore (calibration.test.mjs measures the other one).
+  await runWave(fn, makePlan(units), makeState(), { gateMaxConcurrent, verifyMaxConcurrent: 16 })
   return peak
 }
 

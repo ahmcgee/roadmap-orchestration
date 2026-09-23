@@ -169,6 +169,18 @@ shipping; never ship on an upper rung alone.
    root-consumed residue is never carried), `boundaryNotes` on the envelope, and the issue-mode
    disposal filter (only a census-listed issue number ever composes a `gh issue` command);
    `design.test.mjs` the owed design reconcile a **halted** wave mints in code.
+   **The 0.20.0 pins** live in `calibration.test.mjs`: the Claude model maps by risk
+   (`gateModel`, `frontierGateModel`, `planCheckModel`) and the `adversarial` pin that sends gate and
+   plan-check to Fable with the first pass skipped, `gateCloseEffort` on the closing round, the
+   refusal reroute (`claude-rerouted`) and the wave-start probe (`claude-refusal`), the usage-limit
+   classifier (codex's own error events and stderr only, never on exit 0 — command output that says
+   "usage limit" halts nothing), the merge-base diff base for adopted branches (`base-unresolved`
+   when it cannot be read), the verify semaphore and the load guard (`verify-deferred`, never
+   `verify-blocked`), killed-lane cleanup and the wave-start estate census/sweep (`lane-cleanup`,
+   `stranded-estate`), the audit role and its triage routing (P1 → admitted draft, unowned →
+   `invariant-unowned`, contract drift → `contract-amendment`, vacuity → folded or banked, never a new
+   wave), the invariant-ledger clause and its `invariant-unwitnessed` coercion, pasted-content
+   marking, and `persist.mjs` rendering `feedback/audit/wave-<N>.md`.
    `hygiene-lib.mjs` is the shared assertion toolkit `prompt-hygiene.test.mjs` and
    `codex-lane.test.mjs` both call; `fakes.mjs` is the scripted-agent library — since 0.18.0 its
    `makeWorkflow(handler, {pack})` tells a launch-pack load from a wave dispatch by the script path
@@ -498,6 +510,17 @@ run in issue mode also confirms the `gh` clauses never altered a unit outcome. S
 limits here is acceptable and, run under representative strain, is exactly what proves the methodology
 operates within them. **Always run teardown**, even on failure.
 
+### Owed by 0.20.0 — not yet run
+
+The 0.20.0 calibration moves the frontier gate onto Opus for low/med risk and adds a Claude role, so
+three paid checks are owed before its numbers go in the tables here:
+
+| Fixture | Must show |
+|---|---|
+| `gate-bad` (harness fixture, unchanged) | still `quarantined` or `merged` with the violation fixed, now with the frontier gate on `frontierGateModel.med` (Opus) — the tripwire for 5.5 gate teeth and for pasted-content marking making the gate over-cautious |
+| `audit-p1` (new) | a tree with a planted unbounded-read defect and every unit test green; the wave-tail audit must report it as a P1 finding with file:line and a witness, and the triage must admit its draft rather than bank it |
+| reroute probe (new) | the `refusalProbe` against an adversarial-lane fixture: a substantive schema-constrained Opus verdict and no `claude-refusal` — or, if Opus refuses, `claude-rerouted` rows and a Fable verdict, with the root's `adversarial: true` taking the unit off Opus from the start |
+
 ## What a run actually costs
 
 The old figures here priced only Fable calls and called Opus/Haiku "free tier". That was wrong and
@@ -597,6 +620,27 @@ Codex side is the new bulk: 3–5 M input tokens per fixture, overwhelmingly cac
 **Budget the ladder accordingly.** Tiers 1 and 2 are genuinely free and catch most regressions; run
 them on every edit. Tier 3 consumes real budget and — this is the part worth internalising — mostly
 proves *non-regression on paths you did not change*. It is pre-merge insurance, not a per-edit gate.
+
+**Measured, 2026-09-23 (0.20.0) — Opus 5.5 in the low/med frontier seats, the wave-tail audit, the
+load-aware verify.** `gateModel` all opus, `frontierGateModel`/`planCheckModel` `{low:'opus', med:'opus',
+high:'fable'}`, `gateCloseEffort` high, the refusal probe on, `auditCadence` `'wave'` on Opus,
+`verifyMaxConcurrent` 2 with the load guard at 1.5 × cpu (RATIONALE §25). Run on the 4-CPU
+devcontainer whose VM-wide load sat at 6–14 throughout:
+
+| | agents | subagent tokens | Claude calls (fable / opus / sonnet / haiku) | Codex (roles / processes, input / output tokens) | wall clock |
+|---|---|---|---|---|---|
+| harness fixture (1 wave, 6 units) | 119 | 3.45 M | 4 / 12 / 1 / 101 | 22 / 26, 4.14 M / 60 K | ~75 min (alone) |
+| conductor fixture (2 waves, 5 units by the end) | 101 | 3.06 M | 1 / 14 / 1 / 84 | 25 / 29, 5.24 M / 83 K | ~72 min (alone) |
+
+Both `ALL CHECKS PASSED`; both persist replays were clean. Harness: six degradations, all `verify-deferred`: three lanes
+waited the full eight load re-probes (≈15 min each) and dispatched anyway, because the wave — and the
+VM — kept the load above the line; that is what cut `verifyLoadWaits` to 3 (the row above measured
+8). The Opus count rises against 0.19.0 by exactly the new seats: the refusal probe, the audit, and
+the low/med frontier gates that were Fable's; the Haiku count by one load probe per verify lane and
+its waits. The audit's vacuity lens found the conventions probe's real gap (no test proves
+`simplifyRatio` still calls the shared `gcd`) and drafted the witness. The two adopted gate probes are
+`risk:high`, so their frontier gates ran on Fable here — the "gate-bad on Opus 5.5" probe is the
+harness fixture re-run with `frontierGateModel` all opus (see the owed table).
 
 ## Targeted probes — covering NEW code without a full fixture
 

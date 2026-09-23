@@ -316,7 +316,7 @@ test('C3 a usage limit keeps the halt slot when the breaker trips under it — a
       for (let i = 0; i < 500 && inFlight < 2; i++) await tick()
       limitReturned = true
       return { ok: true, result: { approach: 'x', files: [], testPlan: 'x', feasible: true },
-        codex: { ...codexRoleMetaOk(), limitHit: true }, notes: '' }
+        codex: { ...codexRoleMetaOk(), exitCode: 1, limitHit: true, error: 'turn.failed: You have hit your usage limit' }, notes: '' }
     } },
     { match: /^plan:(b|c)$/, result: async () => {
       inFlight++
@@ -383,7 +383,7 @@ test('the REPLAN site parks on a halt too — the architect redirected and the w
   // rejected is the one thing that must not happen here.
   const { fn, calls } = makeAgent([
     { match: /^plan:a$/, result: () => ({ ok: true, result: { approach: 'x', files: [], testPlan: 'x', feasible: true },
-      codex: { ...codexRoleMetaOk(), limitHit: true }, notes: '' }) },
+      codex: { ...codexRoleMetaOk(), exitCode: 1, limitHit: true, error: 'turn.failed: You have hit your usage limit' }, notes: '' }) },
     { match: /^opus-plan-check:a$/, result: () => ({ verdict: 'redirect', trigger: 'none', guidance: 'fold it into the existing seam' }) },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
@@ -1195,7 +1195,11 @@ test('capacity is classified from the grep count too — the steerer\'s "most in
   assert.match(steer, /grep -ciE 'at capacity\|try a different model'/, 'the count is a command\'s output, not a reading of the log')
   assert.match(steer, /\{ grep -E 'turn\.failed\|"type":"error"' \S+events\.jsonl; cat \S+stderr\.log; \} 2>\/dev\/null \|/,
     'counted over Codex\'s own error events and stderr only — a TEST whose output says "at capacity" must not read as one')
-  assert.match(steer, /a model that is "at capacity" is NOT a limit and never sets this/)
+  assert.match(steer, /a model that is "at capacity" is NOT a limit/)
+  // 0.20.0: the limit sliver is counted over codex's OWN error events and stderr too — never a grep
+  // over the whole events file, where a command's printed output can say "usage limit".
+  assert.match(steer, /grep -ciE 'usage limit\|rate limit\|quota\|\\b429\\b'/, 'limitLines is a command\'s count, not a reading')
+  assert.ok(!/grep -h -iE 'turn\.failed/.test(steer), 'the whole-file error grep is gone')
 })
 
 test('a run that EXITED 0 is never capacity, and a genuine usage limit still halts at once', async () => {

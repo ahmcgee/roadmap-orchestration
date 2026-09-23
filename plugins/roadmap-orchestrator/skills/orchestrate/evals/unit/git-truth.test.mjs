@@ -98,7 +98,9 @@ test('1d the reachability probe runs exactly the three commands, and reads HEAD 
   const reach = calls.find((c) => c.label === 'merge-reach:a')
   // CHANGED CONTRACT (0.14.0): gitProbe composes the working directory into every numbered command
   // (`cd '<dir>' && ( … )`), so the directory is never the model's to choose — see the courier note.
-  assert.match(reach.prompt, /1\) cd '\/wt\/__integration' && \( git symbolic-ref --quiet --short HEAD \)/,
+  // 0.20.0: every probe command is wrapped so its first output line opens with `rc=<code>` — the
+  // courier copies a number instead of inferring one (calibration.test.mjs 26).
+  assert.match(reach.prompt, /1\) cd '\/wt\/__integration' && \( O=\$\(git symbolic-ref --quiet --short HEAD\); R=\$\?; echo "rc=\$R /,
     'HEAD is read as a fact for the failure detail, not compared to the branch — inside the cd guard')
   assert.ok(!/test "\$\(git symbolic-ref/.test(reach.prompt), 'and never as a pass/fail test')
   assert.match(reach.prompt, /git merge-base --is-ancestor unit\/a roadmap\/session-test/)

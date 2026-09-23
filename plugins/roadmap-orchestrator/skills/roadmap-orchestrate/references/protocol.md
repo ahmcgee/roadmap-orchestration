@@ -22,6 +22,11 @@ Keep these in the central repository's `.roadmap/`, not a worker's copy:
 | `quarantine/<id>.md`, `evidence/<id>/` | Failure dossiers and commit-addressed verification/review |
 | `degradations.jsonl`, `escalations.jsonl`, `skill-feedback.md`, `skill-degradations.md` | Living orchestrator diagnostics |
 
+**0.20.0, harness-only for now:** the Claude harness adds `.roadmap/invariants.md` (pointed to by
+`plan.invariants`), a `boundary.audit` block in state and `feedback/audit/wave-<N>.md`. The Codex-native
+driver has no `invariants.md` reader yet and needs one before the next handoff; until then it must
+preserve those fields and files untouched, like any other unknown extension.
+
 Detailed legacy optional fields keep their original meaning. The Claude distribution's
 `orchestrate/reference.md` remains its execution reference; Codex never loads its Claude runtime rules.
 

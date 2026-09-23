@@ -329,7 +329,7 @@ test('e3 a run that exits non-zero but COMMITTED is judged on its merits, never 
 // =========================================================================================
 test('f limitHit: halts new dispatch mid-wave; the in-flight unit finishes, the next never starts', async () => {
   const { fn, calls } = makeAgent([
-    { match: /^codex-build:a$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), limitHit: true } }) },
+    { match: /^codex-build:a$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 1, limitHit: true, error: 'turn.failed: You have hit your usage limit' } }) },
   ])
   // A contract edge keeps b behind a's merge, so the halt is observed BEFORE b is ever ready;
   // warmLanes:false keeps the two units on the cold path (a chain would be one codex session).
@@ -358,7 +358,7 @@ test('f2 a unit that still needs a codex step after the halt PARKS (pending + pa
   const { fn, calls } = makeAgent([
     // a's build reports a limit AND its verify fails, so the polish loop reaches for a fix step
     // that can no longer be dispatched.
-    { match: /^codex-build:a$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), limitHit: true } }) },
+    { match: /^codex-build:a$/, result: () => ({ ...implCodexOk(), codex: { ...codexMetaOk(), exitCode: 1, limitHit: true, error: 'turn.failed: You have hit your usage limit' } }) },
     { match: /^verify:a/, result: () => VERIFY_FAIL() },
   ])
   const state = await runWave(fn, makePlan([unit('a')]), makeState())
@@ -719,7 +719,9 @@ test('o2 gate diet: gateModel by risk, and only a low-risk unit trades the raw d
   const { fn, calls } = makeAgent()
   await runWave(fn, makePlan([unit('lo'), unit('mid', { risk: 'med' })]), makeState())
 
-  assert.equal(gate(calls, 'lo').model, 'sonnet', 'a low-risk unit takes the cheap first-pass gate')
+  // 0.20.0: no Sonnet tier in the map (the owner's ruling — less capable AND less cost-efficient than
+  // Opus 5.5 at the same seat); a low-risk unit still takes the DIET, on opus.
+  assert.equal(gate(calls, 'lo').model, 'opus', 'a low-risk unit takes the first-pass gate on opus')
   assert.equal(gate(calls, 'mid').model, 'opus', 'med keeps Opus')
   assert.match(gate(calls, 'lo').prompt, /git -C '\/wt\/lo' diff --stat/,
     'and reads a diet, expanding on suspicion — with the worktree in the command, not in an earlier cd')
@@ -734,8 +736,8 @@ test('o2 gate diet: gateModel by risk, and only a low-risk unit trades the raw d
   }
   // The knob is a plan/config map, and an override replaces it wholesale.
   const { fn: fn2, calls: c2 } = makeAgent()
-  await runWave(fn2, makePlan([unit('lo')]), makeState(), { gateModel: { low: 'opus' } })
-  assert.equal(gate(c2, 'lo').model, 'opus', 'gateModel is a knob, not a hardcode')
+  await runWave(fn2, makePlan([unit('lo')]), makeState(), { gateModel: { low: 'sonnet' } })
+  assert.equal(gate(c2, 'lo').model, 'sonnet', 'gateModel is a knob, not a hardcode')
 })
 
 test('o3 a dead reviewer buys MORE Claude: Opus gate, raw diff, and a review-skipped row', async () => {

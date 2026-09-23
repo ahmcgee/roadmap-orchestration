@@ -1119,7 +1119,7 @@ test('the feedback archive is a courier: a closed list, every command carrying i
 test('every archive move is self-contained: it always exits 0 and reports MOVED/ABSENT/FAILED', async () => {
   const { agent } = await archiveRun()
   const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
-  assert.equal(moves.length, 5, 'four internal renderings plus the one consumed user note')
+  assert.equal(moves.length, 6, 'five internal renderings (the 0.20.0 audit included) plus the one consumed user note')
   for (const c of moves) {
     assert.match(c, /echo ABSENT; exit 0/, 'a missing source is a RESULT, never a non-zero exit that halts the list')
     assert.match(c, /echo FAILED; exit 0/, 'and neither is a failed move')
@@ -1131,6 +1131,7 @@ test('every archive move is self-contained: it always exits 0 and reports MOVED/
   assert.deepStrictEqual([...new Set(dests)].length, dests.length, 'no two sources land on the same path')
   assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/explorer-wave-1.md'))
   assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/health-wave-1.md'))
+  assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/audit-wave-1.md'), 'the audit rendering archives with the rest (0.20.0)')
   assert.ok(dests.includes('/repo/.roadmap/feedback/triaged/1/user-note-1.md'))
 })
 
@@ -1156,7 +1157,7 @@ test('a disposition naming a file the census never listed composes no path and d
     { file: '../../etc/passwd', action: 'dismissed', reason: 'a path no census listed' },
   ] })
   const moves = archiveCmds(agent).filter((c) => c.startsWith('test -e '))
-  assert.equal(moves.length, 5, 'four renderings plus the ONE listed note — the unlisted files compose nothing')
+  assert.equal(moves.length, 6, 'five renderings plus the ONE listed note — the unlisted files compose nothing')
   assert.ok(moves.some((c) => c.includes("'/repo/.roadmap/feedback/user/note-1.md'")), 'the listed note is archived')
   assert.ok(!moves.some((c) => c.includes('feedback/user/.roadmap') || c.includes('passwd')),
     'no path is ever composed from a disposition the census did not vouch for')

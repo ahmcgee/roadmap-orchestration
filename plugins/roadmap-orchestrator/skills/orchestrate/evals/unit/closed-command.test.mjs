@@ -701,8 +701,10 @@ test('unit setup: crash re-entry VERIFIES an existing worktree instead of re-add
   const cmds2 = commandsOf(promptOf(c2, 'setup:a'))
   assert.ok(cmds2[0].includes(`git worktree add '/wt/a' unit/a`), 'adoption attaches to the branch as it stands')
   assert.ok(!/-b |branch -D/.test(cmds2[0]), 'an adopted branch is never recreated or deleted')
-  assert.equal(cmds2.length, 3,
-    'no existingBranch, so there is no captured tip to test ancestry against — the list is unchanged')
+  assert.equal(cmds2.length, 4,
+    'no existingBranch, so there is no captured tip to test ancestry against — but an ADOPTED branch forked from an older tip, so its diff base is read back (0.20.0)')
+  assert.match(cmds2[3], /^git -C '\/wt\/a' merge-base roadmap\/\S+ HEAD$/,
+    'the merge base against the integration branch, read INSIDE the unit worktree')
 })
 
 test('unit setup: an ADOPTED existingBranch unit tests ancestry, not equality, against the captured tip', async () => {
@@ -713,15 +715,17 @@ test('unit setup: an ADOPTED existingBranch unit tests ancestry, not equality, a
   const { fn, calls } = makeAgent(gitFacts('a', { branch: true, ahead: 2 }))
   await runWave(fn, { ...makePlan(), units: [unit('a', { existingBranch: 'adopt/a' })] }, makeState())
   const cmds = commandsOf(promptOf(calls, 'setup:a'))
-  assert.equal(cmds.length, 4, 'the three worktree commands plus the one ancestry read')
+  assert.equal(cmds.length, 5, 'the three worktree commands, the one ancestry read, and the merge-base read (0.20.0)')
   assert.equal(cmds[3], `git -C '/wt/a' merge-base --is-ancestor ${BASE_SHA} HEAD; echo $?`,
     `the captured tip is interpolated by the script, tested INSIDE the unit worktree — got: ${cmds[3]}`)
+  assert.match(cmds[4], /^git -C '\/wt\/a' merge-base roadmap\/\S+ HEAD$/, 'the diff base follows the ancestry read')
 
-  // A fresh fork from the same existingBranch composes no ancestry command at all.
+  // A fresh fork from the same existingBranch composes no ancestry command at all — but it still
+  // reads its merge base: existingBranch forked from whatever tip it did, not from today's.
   const { fn: fn2, calls: c2 } = makeAgent()
   await runWave(fn2, { ...makePlan(), units: [unit('a', { existingBranch: 'adopt/a' })] }, makeState())
   const forkCmds = commandsOf(promptOf(c2, 'setup:a'))
-  assert.equal(forkCmds.length, 3, 'at the fork, equality is the invariant and the read-back already proves it')
+  assert.equal(forkCmds.length, 4, 'at the fork, equality is the invariant and the read-back already proves it; the merge base is still read')
   assert.ok(forkCmds[0].endsWith(`git worktree add -b unit/a '/wt/a' adopt/a`), 'forked from existingBranch')
 })
 
