@@ -182,11 +182,15 @@ export function scenario(steps: readonly Step[]): Scenario {
   return writeScenario(tmpDir('scenario'), steps);
 }
 
+// Default deadlines outlast every test's own timeout, so a slow host fails a test by its timeout, never by
+// a deadline the test did not ask for (the retry of a lost op inherits the first ordinal's deadline).
+const NO_DEADLINE_MS = 60_000;
+
 /** A gate judgment through the fake `claude` of `s`. */
-export function backend(r: Run, s: Scenario, deadlineMs = 20_000, graceMs = 300): SpecDescriptor {
+export function backend(r: Run, s: Scenario, deadlineMs = NO_DEADLINE_MS, graceMs = 300): SpecDescriptor {
   return { runDir: r.runDir, arc: r.arc, purpose: 'backend', deadlineAt: deadlineIn(deadlineMs), graceMs, cwd: r.work, binDir: s.binDir };
 }
 
-export function command(r: Run, purpose: Exclude<Purpose, 'backend'>, argv: readonly string[], deadlineMs = 20_000): SpecDescriptor {
-  return { runDir: r.runDir, arc: r.arc, purpose, deadlineAt: deadlineIn(deadlineMs), graceMs: 300, cwd: r.work, argv };
+export function command(r: Run, purpose: Exclude<Purpose, 'backend'>, argv: readonly string[], deadlineMs = NO_DEADLINE_MS, graceMs = 300): SpecDescriptor {
+  return { runDir: r.runDir, arc: r.arc, purpose, deadlineAt: deadlineIn(deadlineMs), graceMs, cwd: r.work, argv };
 }

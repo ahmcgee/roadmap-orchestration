@@ -15,7 +15,8 @@ import { type RunnerHandle, awaitRunner, cancel, launchSha256, prepareLaunch, st
 import { barrierDir, reached } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import {
-  type Invocation, type LaunchOptions, assertGone, identityFromFile, launchBase, newInvocation, waitFor, waitForChild, workload,
+  TEST_DEADLINE_GRACE_MS, TEST_DEADLINE_MS, type Invocation, type LaunchOptions, assertGone, identityFromFile, launchBase, newInvocation, waitFor,
+  waitForChild, workload,
 } from './helpers/invocation.ts';
 import { fixture, runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -111,19 +112,25 @@ test('runner.umask-022', T, async () => {
 test('runner.deadline-without-executor', T, async () => {
   const inv = newInvocation();
   const dir = barrierDir();
-  const base = launchBase(inv, { argv: workload('workload-tree.ts', dir, '3', '1'), deadlineMs: 2_000, graceMs: 300 });
+  // Setup starts five node processes one after another (launcher, runner, three tree levels), all before
+  // the deadline: twice the usual test deadline.
+  const deadlineMs = 2 * TEST_DEADLINE_MS;
+  const base = launchBase(inv, { argv: workload('workload-tree.ts', dir, '3', '1'), deadlineMs, graceMs: TEST_DEADLINE_GRACE_MS });
+  const deadlineAt = new Date(base.deadlineAt).getTime();
   const launcher: ChildProcess = spawn(process.execPath, [fixture('runner-launcher.ts'), inv.invDir, JSON.stringify(base), 'hang'], {
     env: process.env,
     stdio: 'ignore',
   });
   try {
-    for (const level of [1, 2, 3]) await reached(dir, `level-${level}`, 10_000);
+    for (const level of [1, 2, 3]) await reached(dir, `level-${level}`, deadlineMs);
     const tree = [1, 2, 3].map((level) => identityFromFile(join(dir, `level-${level}.reached`)));
     const files = runnerFiles(inv.invDir, inv.inv);
-    const runner = await waitFor('runner.json', 10_000, () => files.read('runner.json'));
+    const runner = await waitFor('runner.json', deadlineMs, () => files.read('runner.json'));
     // The executor dies; the runner alone enforces the deadline.
     launcher.kill('SIGKILL');
-    const exit = await waitFor('exit.json', 10_000, () => files.read('exit.json'));
+    assert.ok(Date.now() < deadlineAt, 'the executor was killed only after the deadline');
+    // The runner notices within one poll, kills with its grace, then writes exit.json.
+    const exit = await waitFor('exit.json', deadlineAt - Date.now() + 10_000, () => files.read('exit.json'));
     assert.equal(exit.cause, 'deadline');
     assert.ok(exit.quiescedAt >= base.deadlineAt);
     assertGone(tree);
@@ -161,7 +168,7 @@ test('runner.waits-for-grandchild', T, async () => {
 test('runner.grandchild-killed-at-deadline', T, async () => {
   const inv = newInvocation();
   // The child exits, but its grandchild would outlive the deadline: the runner kills it and says so.
-  const handle = start(inv, { argv: workload('workload-fork.ts', 'same', 'keep', 'exit', 'workload-hang.ts'), deadlineMs: 1_500, graceMs: 200 });
+  const handle = start(inv, { argv: workload('workload-fork.ts', 'same', 'keep', 'exit', 'workload-hang.ts'), deadlineMs: TEST_DEADLINE_MS, graceMs: TEST_DEADLINE_GRACE_MS });
   const exit = await exited(handle);
   assert.deepEqual(exit.child, { type: 'exited', code: 0 });
   assert.equal(exit.cause, 'deadline');
@@ -179,10 +186,11 @@ test('runner.spawn-failed', T, async () => {
 
 test('runner.backstop-kills-hung-runner', T, async () => {
   const inv = newInvocation();
-  const handle = start(inv, { argv: workload('workload-hang.ts'), deadlineMs: 1_000, graceMs: 300 });
-  const { child } = await waitForChild(handle, 10_000);
-  // A hung runner: stopped, it can neither enforce the deadline nor write exit.json.
+  const handle = start(inv, { argv: workload('workload-hang.ts'), deadlineMs: TEST_DEADLINE_MS, graceMs: 300 });
+  const { child } = await waitForChild(handle, TEST_DEADLINE_MS);
+  // A hung runner: stopped before its deadline, it can neither enforce the deadline nor write exit.json.
   signal(handle.runner, 'SIGSTOP');
+  assert.ok(Date.now() < new Date(handle.launch.deadlineAt).getTime(), 'the runner was stopped only after its deadline');
   const end = await awaitRunner(handle);
   assert.deepEqual(end, { kind: 'backstop-killed', runner: handle.runner });
   assert.ok(Date.now() >= new Date(handle.launch.deadlineAt).getTime() + 600);

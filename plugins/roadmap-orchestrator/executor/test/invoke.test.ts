@@ -13,7 +13,7 @@ import { absPath } from '../src/core/values.ts';
 import { invocationDir, invoke, killWorkload } from '../src/pipeline/invoke.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { waitFor, workload } from './helpers/invocation.ts';
+import { TEST_DEADLINE_GRACE_MS, TEST_DEADLINE_MS, waitFor, workload } from './helpers/invocation.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import {
@@ -75,8 +75,8 @@ test('invoke.deadline', T, async () => {
   const s = scenario([{ as: 'claude', expect: {}, acts: [{ type: 'hang', ms: 60_000 }, { type: 'emit', value: OK }] }]);
   const journal = open(r.runDir, r.arc);
   const containment = context(journal, r.runDir).containment;
-  const b = await invoke(journal, containment, specFor(backend(r, s, 1_500)));
-  const l = await invoke(journal, containment, specFor(command(r, 'lane', workload('workload-hang.ts'), 1_500)));
+  const b = await invoke(journal, containment, specFor(backend(r, s, TEST_DEADLINE_MS, TEST_DEADLINE_GRACE_MS)));
+  const l = await invoke(journal, containment, specFor(command(r, 'lane', workload('workload-hang.ts'), TEST_DEADLINE_MS, TEST_DEADLINE_GRACE_MS)));
   journal.close();
   for (const outcome of [b, l]) {
     const exit = runnerFiles(invocationDir(absPath(r.runDir), outcome.inv), outcome.inv).read('exit.json');
@@ -129,13 +129,16 @@ test('invoke.meter-per-inv', T, async () => {
   // Lost: the runner hangs (stopped), the executor's backstop kills it, and the workload it leaves behind
   // is killed by a proc.kill{recovery} before the invocation is classified.
   const lostInv = invocationId(opId(journal.view.arc, journal.view.highWater() + 1), 1);
-  const running = invoke(journal, ctx.containment, specFor(backend(r, s, 1_500)));
+  const lostSpec = backend(r, s, TEST_DEADLINE_MS);
+  const running = invoke(journal, ctx.containment, specFor(lostSpec));
   const files = runnerFiles(invocationDir(ctx.runDir, lostInv), lostInv);
-  const runner = await waitFor('the workload', 10_000, () => {
+  const runner = await waitFor('the workload', TEST_DEADLINE_MS, () => {
     const f = files.read('runner.json');
     return f?.child == null ? null : f;
   });
   signal(runner.runner, 'SIGSTOP');
+  // Stopped before its deadline, the runner cannot enforce it: only the backstop can end the invocation.
+  assert.ok(Date.now() < new Date(lostSpec.deadlineAt).getTime(), 'the runner was stopped only after its deadline');
   const lost = await running;
   journal.close();
   assert.deepEqual(lost, { kind: 'lost', op: parseInvocationId(lostInv).op, inv: lostInv, treeEffects: true });

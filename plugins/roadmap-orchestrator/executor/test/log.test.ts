@@ -279,20 +279,28 @@ describe('journal open', () => {
     assert.throws(() => open(dir), (err: unknown) => err instanceof LogCorruptError && err.file === join(dir, 'events.torn.12.0000abcd') && err.offset === 12);
   });
 
-  it('opens a 100k-line log in well under a few seconds', (t) => {
+  it('opens a 100k-line log in linear time: under 10 s of CPU', (t) => {
     const dir = tmpDir('log');
     const records: LogRecord[] = [];
     for (let seq = 1; records.length < 100_000; seq += 3) {
       records.push(spawnIntent(seq), meter(inv1(seq), 'build', seq, 1, null), spawnResult(spawnIntent(seq).op));
     }
     writeFileSync(eventsPath(dir), logBytes(chain(records.slice(0, 100_000))));
-    const started = performance.now();
+    // The main thread's CPU time (user + system) of the synchronous open, not wall time: the full suite
+    // runs test files concurrently, and wall time would measure the host's load rather than the open's cost.
+    // CPU time still stretches on a contended host (about 1.8 s idle, up to 5.4 s seen with the host at
+    // twice its CPU count in load), so the bound guards the growth class: a fold that went quadratic, or
+    // several times slower per line, fails it on any host.
+    const started = process.threadCpuUsage();
+    const wallStarted = performance.now();
     const j = open(dir);
-    const elapsed = performance.now() - started;
+    const { user, system } = process.threadCpuUsage(started);
+    const wall = performance.now() - wallStarted;
     assert.equal(j.view.highWater(), 100_000);
     j.close();
-    t.diagnostic(`open of ${bytesLength(dir)} bytes took ${Math.round(elapsed)} ms`);
-    assert.ok(elapsed < 5000, `open took ${Math.round(elapsed)} ms`);
+    const cpuMs = (user + system) / 1000;
+    t.diagnostic(`open of ${bytesLength(dir)} bytes took ${Math.round(cpuMs)} ms CPU (${Math.round(wall)} ms wall)`);
+    assert.ok(cpuMs < 10_000, `open used ${Math.round(cpuMs)} ms of CPU time (bound 10000 ms: about 1800 ms idle, 5400 ms on a host loaded to twice its CPU count; more means the open no longer scales linearly)`);
   });
 });
 

@@ -14,6 +14,18 @@ import type { RunnerHandle } from '../../src/runner/launch.ts';
 import { fixture } from './proc.ts';
 import { tmpDir } from './repo.ts';
 
+/**
+ * Deadline for tests whose deadline must fire only after their setup (workload started, runner stopped,
+ * executor killed). The runner checks the deadline every 500 ms and every setup step starts a node
+ * process, which takes seconds when the whole suite loads the host; 5 s leaves that margin.
+ */
+export const TEST_DEADLINE_MS = 5_000;
+/**
+ * Grace for tests that let a deadline fire and await the runner: the executor's backstop comes 2 x grace
+ * after the deadline, and the runner needs up to one 500 ms poll plus the kill to write exit.json first.
+ */
+export const TEST_DEADLINE_GRACE_MS = 1_000;
+
 export type Invocation = Readonly<{ arc: ArcId; op: OpId; inv: InvocationId; root: AbsPath; invDir: AbsPath }>;
 
 export function newInvocation(): Invocation {
@@ -44,7 +56,8 @@ export function launchBase(inv: Invocation, options: LaunchOptions): Omit<Launch
     cwd: inv.root,
     env: { PATH: path },
     stdinPath: options.stdinPath ?? null,
-    deadlineAt: isoTimeOf(new Date(Date.now() + (options.deadlineMs ?? 30_000))),
+    // The default outlasts every test's timeout: a deadline fires only in a test that asks for one.
+    deadlineAt: isoTimeOf(new Date(Date.now() + (options.deadlineMs ?? 60_000))),
     graceMs: options.graceMs ?? 500,
     containment: 'session',
     terminal: { type: 'command', purpose: 'lane', expectedExit: 0 },
