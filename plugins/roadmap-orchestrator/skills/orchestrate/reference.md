@@ -1,5 +1,7 @@
 # Roadmap Orchestrator — Reference
 
+> **0.x, historical.** This reference documents the shapes and rules of the Dynamic-Workflow-hosted 0.x scripts (`harness.mjs`, `conductor.mjs`, `persist.mjs`), which no longer exist on the `v1` branch; they ship in 0.20.0, tag `v0.20.0`. It does not bind the 1.0 rebuild; see `DESIGN-1.0.md` at the repo root.
+
 Shapes and rules the scripts depend on. Read once before Phase 0; don't restate any of this to
 the user unless asked. Rationale for *why* any of it is this way lives in `RATIONALE.md`.
 

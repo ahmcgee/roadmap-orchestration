@@ -1,51 +1,41 @@
 # roadmap-orchestration
 
-This repo is the **source** of the `roadmap-orchestrator` skill, not a consumer of it.
+This repo is the **source** of the `roadmap-orchestrator` plugin, not a consumer of it. Prohibitions written
+inside the skill address agents running an arc with it; they do not bind you here.
 
-Prohibitions written *inside* the skill (`plugins/roadmap-orchestrator/skills/orchestrate/`) —
-"don't rewrite the scripts", "`unit/` is owned separately, not a place to edit" — address agents
-who **installed** the skill from the marketplace and are running an arc with it. They do **not**
-bind you here. In this repo, `SKILL.md`, `reference.md`, `harness.mjs`, `conductor.mjs`,
-`persist.mjs`, `script-loader.mjs` and `evals/**` are all yours to change deliberately.
+## 1.0 rebuild (branch `v1`)
 
-`persist.mjs` is the exception to the bullet below: it is an ordinary Node process, not a workflow
-script, and it **never calls a model** — its `agent` is a lookup in the run's journal. Keep it a
-pure replay; don't add couriers to it.
+- The executor lives at `plugins/roadmap-orchestrator/executor/`: TypeScript run directly by Node 24 type
+  stripping. `tsc --noEmit` only, no build step, no runtime dependencies. Explicit `.ts` import specifiers,
+  erasable syntax only (no enums, namespaces or parameter properties).
+- The binding design brief is `DESIGN-1.0.md`. The M1 plan's frozen schemas and contracts live in
+  `executor/SCHEMAS.md`.
+- `DESIGN.md`, `RATIONALE.md`, `reference.md` and `PROMPT.md` are 0.x history and do not bind. 0.20.0 remains
+  on `main` and tag `v0.20.0`.
 
-What still binds you: a script change is not done until the three-tier eval ladder passes —
-`evals/parse.sh` → `evals/unit/run.sh` → the paid fixtures (`evals/README.md`).
+## Eval ladder
 
-- **The script has no shell — `run()` is `agent()`, so every side effect is a model acting for it.**
-  Read `RATIONALE.md` §19 ("Couriers, not janitors") before touching a prompt or a brake: the cheapest
-  tier gets a closed command list the script composed, never a goal, and every wave-level brake lives
-  in code. Don't "improve" a courier prompt back into a goal ("clean up the leftover listeners", "find
-  the issue for this unit", "make the checkout work"), and don't relocate a code brake into prose — a
-  prohibition only works if it is honoured, and the 2026-08 ledger is what happens when it isn't.
+A change is not done until the ladder passes, in order (from `executor/`):
 
-## GitHub issue tracking — non-obvious traps
+1. `npm run typecheck`
+2. `npm test` (`node --test test/*.test.ts`)
+3. `node evals/probe.ts`: real CLIs, pennies
+4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
 
-Issue mode (`plan.tracking:"issues"`) mirrors the work into GitHub issues. What will bite you:
+Tests are a hard line: never skip, weaken or drop one. The integrated tier uses real processes and real git.
+If a test cannot pass, stop and say so. `contain.cgroup-real` is reported NOT RUN on this host (cgroup v2 is
+read-only here) and is never counted as a pass.
 
-- **The scheduler never reads `gh`.** Workflow scripts have no network; issues are a Haiku-written
-  *projection* of `state.json`, which stays the source of truth. Don't "improve" the scheduler to
-  consult issue state — it can't, and it would break `resumeFromRunId`.
-- **Every `gh` clause is `''` in file mode**, on purpose: the paid fixtures run offline in file mode,
-  so they only stay green because issue-mode prompts are byte-identical to legacy there. The
-  prompt-hygiene sims + the fixtures are what enforce this — never emit a `gh` clause unconditionally.
-- **Sync is idempotent by the `<!-- roadmap:unit id=<id> -->` body marker, not by issue number.**
-  Numbers are non-deterministic; `unit.issue` is a cache only. Don't make anything the scheduler needs
-  depend on a number.
-- **`gh` writes are best-effort and must no-op cleanly with no remote** (that's why offline fixtures
-  pass). A failure records a `gh-sync` degradation and continues; issue state gates nothing.
-- **Issue templates only activate on the default branch** — hence the one-time Phase-0 bootstrap PR.
-  Committing them to the integration branch does nothing.
-- **The debt sweep must never let debt *create* a wave** (conductor tier-2): that guarantee is what
-  keeps arcs terminating. Debt rides waves that already exist; leftovers become `roadmap:debt` issues.
-- **`roadmap:bug` is dual-consumed** — the same `--label roadmap:bug --state open` list is the wave
-  census *and* the Phase-0 candidate-scope read. A bug adopted at **Phase 0** *creating* a wave is
-  fine and does not contradict the bullet above: Phase 0 is scope-setting; the "never creates a wave"
-  brake is a mid-arc (tier-2) guarantee only. Bugs and proposals share one decomposition mechanic
-  (1:1 promote-in-place; 1:N children + close parent with links) — don't leave a dangling
-  `status:proposed`/`roadmap:bug` parent beside its children.
-- **`skill-feedback.md` is never a product-repo issue** — it's about the orchestrator and must leave
-  the product repo.
+The one test seam in production code is `crashPoint(label)` in `src/core/crash.ts`. Backends are faked by
+fake-backend scripts behind PATH shims. Add no other test hooks to production code.
+
+## Standing rules
+
+- Illegal states unrepresentable: branded ids, discriminated unions, closed enums.
+- Fail loud on anything that should not happen; no speculative guards.
+- One canonical way to do a thing.
+- Hard cutover: a 0.x `.roadmap/` layout is refused at startup, never converted.
+- Actors are roles, never models, in every state file and record. Model ids appear only in routing
+  configuration, which is revisioned; records carry `{role, routingRev}`.
+- Sonnet 5 is never a supported model.
+- No spend cap. A usage-limit error parks that backend arc-wide and waits for a manual `resume --backend`.

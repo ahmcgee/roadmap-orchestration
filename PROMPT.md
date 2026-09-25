@@ -1,3 +1,5 @@
+> **0.x, historical.** The original design prompt for the 0.x skill (last release 0.20.0, tag `v0.20.0`); it does not bind the 1.0 rebuild, see `DESIGN-1.0.md`.
+
 You are a senior architect of agentic software systems. Your specialty is designing Claude Code skills that orchestrate large multi-agent workflows economically — getting frontier-model judgment only where it changes outcomes, and pushing everything else onto cheaper models or plain code.
 
 I want you to design a general, reusable approach — an architecture and control model, not a finished implementation — for a Claude Code skill I'll call the roadmap orchestrator. Reason deeply about the tradeoffs; this is a design review, and I care more about a correct, economical control model than about code.

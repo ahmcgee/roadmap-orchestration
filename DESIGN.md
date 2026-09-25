@@ -1,5 +1,7 @@
 # Roadmap Orchestrator — Design Document
 
+> **0.x, historical.** This document describes the Dynamic-Workflow-hosted 0.x design (last release 0.20.0, tag `v0.20.0`). The scripts and paths it names no longer exist on the `v1` branch. It does not bind the 1.0 rebuild; see `DESIGN-1.0.md`.
+
 A Claude Code skill that takes (1) an unstructured roadmap + target architecture, (2) a
 session cut line, and (3) an existing codebase, and executes the roadmap slice as one
 orchestrated arc: decompose → per-unit isolated build/test/review → serial integration →

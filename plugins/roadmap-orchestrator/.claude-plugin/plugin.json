@@ -1,12 +1,19 @@
 {
   "name": "roadmap-orchestrator",
-  "description": "Execute a slice of a product roadmap autonomously: decompose into independently verifiable units, build each in an isolated git worktree via the Codex CLI under Claude architect gates and steering, integrate serially, and deliver one merge-ready branch. Requires an authenticated `codex` CLI.",
-  "version": "0.20.0",
+  "description": "A plain Node executor that runs a documented target state to convergence, unattended and long-horizon: `codex exec` and `claude -p` as peer backends, a unit DAG with resource locks, candidate-first merges (the tested head is the published head), and write-ahead recovery. The `claude-only` profile needs no `codex` CLI.",
+  "version": "1.0.0-dev",
   "author": {
     "name": "Aaron McGee",
     "url": "https://github.com/ahmcgee"
   },
   "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme",
   "repository": "https://github.com/ahmcgee/roadmap-orchestration",
-  "keywords": ["roadmap", "orchestration", "multi-agent", "worktree", "autonomous", "skill"]
+  "keywords": [
+    "roadmap",
+    "orchestration",
+    "multi-agent",
+    "worktree",
+    "autonomous",
+    "skill"
+  ]
 }

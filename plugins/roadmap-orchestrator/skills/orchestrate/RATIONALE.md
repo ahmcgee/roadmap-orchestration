@@ -1,5 +1,7 @@
 # Roadmap Orchestrator — Rationale
 
+> **0.x, historical.** This rationale explains the Dynamic-Workflow-hosted 0.x skill (last release 0.20.0, tag `v0.20.0`). It does not bind the 1.0 rebuild; see `DESIGN-1.0.md` at the repo root. RATIONALE 1.0 will be rewritten from the distillation, keeping this incident record.
+
 Why the skill is shaped the way it is. **Nothing loads this file at runtime.** It exists so
 `SKILL.md` and `reference.md` can be lean: those two are read into the architect's context on
 every arc, and every token of justification in them is a token of attention taken from the
