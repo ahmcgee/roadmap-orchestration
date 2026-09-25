@@ -1,5 +1,6 @@
 // The host directory: one per machine, shared by every arc, holding the host lock, the owner record, the
-// recovery lock, the handshake and supervisor files, and the residue index (SCHEMAS.md "Host files").
+// recovery lock, the last issued generation, the handshake and supervisor files, and the residue index
+// (SCHEMAS.md "Host files").
 // Every host function takes the directory as a parameter; production passes HOST_DIR, tests a temp dir.
 import { join } from 'node:path';
 import { durableMkdir } from '../core/fsx.ts';
@@ -16,6 +17,7 @@ export function openHostDir(dir: AbsPath): AbsPath {
 
 export const HOST_LOCK = 'host.lock';
 export const HOST_OWNER = 'host.owner.json';
+export const HOST_GENERATION = 'host.generation';
 export const RECOVERY_LOCK = 'host.recovery.lock';
 export const RESIDUES = 'residues.jsonl';
 

@@ -295,6 +295,7 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 | File | Type / reader | Content |
 |---|---|---|
 | `host.lock` | `HostLockClaim` | `{v, nonce, generation, bootId, supervisor{pid,start}, arc, runDir, repo}`; claimed by `link(tmp, host.lock)` |
+| `host.generation` | `lastGeneration` (`src/host/lock.ts`) | the last generation issued, as `<positive integer>\n`; `durableWrite` before any claim carrying it is published. Monotonic per host dir: a fresh claim issues last + 1, a takeover max(dead claim, last) + 1, so a generation (and its write-once `handshake.<generation>`) never repeats |
 | `host.owner.json` | `HostOwner` | `{v, nonce, generation, executor{pid,start}\|null}`; atomic publish |
 | `host.recovery.lock` | `RecoveryLockClaim` | `{v, nonce, bootId, holder{pid,start}, at}`; claimed by `link()` |
 | `handshake.<generation>` | `HandshakeFile` | `{v, nonce, generation}` |

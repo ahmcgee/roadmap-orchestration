@@ -14,9 +14,11 @@ import { type AbsPath, absPath, isoTimeOf, nonce } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { exitCodeFor } from '../src/preflight/startup.ts';
 import { HOST_LOCK, RECOVERY_LOCK, handshakePath, hostPath, openHostDir } from '../src/host/hostdir.ts';
-import { currentBootId, isAlive, procStart, selfIdentity } from '../src/host/liveness.ts';
+import { isAlive, selfIdentity } from '../src/host/liveness.ts';
+import { identityOf, readBootId, statOf } from '../src/contain/proc.ts';
 import {
-  type ClaimOutcome, type ClaimRequest, type PreviousArcVerdict, HostLockMismatchError, claimHost, readClaim, releaseHost,
+  type ClaimOutcome, type ClaimRequest, type PreviousArcVerdict, HostLockMismatchError, claimHost, lastGeneration, readClaim,
+  releaseHost,
 } from '../src/host/lock.ts';
 import { HandshakeTimeoutError, awaitHandshake, createHandshake, publishOwner, verifyOwner } from '../src/host/owner.ts';
 import { ARC, claimRecord, otherBoot } from './fixtures/host-records.ts';
@@ -44,8 +46,7 @@ function sleeper(): Sleeper {
   const child: ChildProcess = spawn('sleep', ['300'], { stdio: 'ignore' });
   const pid = child.pid;
   assert.ok(pid !== undefined, 'sleep spawned');
-  const start = procStart(pid);
-  assert.ok(start !== null, 'the sleeper is in /proc');
+  const { start } = identityOf(pid);
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   return {
     identity: { pid, start },
@@ -74,7 +75,7 @@ function holdHost(dir: AbsPath, claim: HostLockClaim, executor: ProcIdentity | n
 }
 
 async function deadClaim(dir: AbsPath, opts: Readonly<{ arc?: ArcId; generation?: number }> = {}): Promise<HostLockClaim> {
-  const claim = claimRecord({ supervisor: await deadIdentity(), bootId: currentBootId(), ...opts });
+  const claim = claimRecord({ supervisor: await deadIdentity(), bootId: readBootId(), ...opts });
   holdHost(dir, claim, null);
   return claim;
 }
@@ -90,12 +91,12 @@ function claimed(outcome: ClaimOutcome): Extract<ClaimOutcome, { kind: 'claimed'
 describe('liveness', () => {
   it('a live child is alive; once killed it is dead; a reused pid with another start time is dead', async () => {
     const s = sleeper();
-    const boot = currentBootId();
+    const boot = readBootId();
     assert.equal(isAlive(s.identity, boot), true);
     assert.equal(isAlive({ pid: s.identity.pid, start: s.identity.start + 1 }, boot), false);
     assert.equal(isAlive(s.identity, otherBoot()), false);
     await s.kill();
-    assert.equal(procStart(s.identity.pid), null);
+    assert.equal(statOf(s.identity.pid), null);
     assert.equal(isAlive(s.identity, boot), false);
   });
 });
@@ -110,7 +111,7 @@ describe('claim and release', () => {
     assert.deepEqual(leftovers(dir), []);
   });
 
-  it('release is nonce-checked and removes the claim and its handshake; the next claim starts again', async () => {
+  it('release is nonce-checked and removes the claim; its write-once handshake stays', async () => {
     const dir = hostDir();
     const { claim } = claimed(await claimHost(dir, request(), neverCalled));
     const forged = { ...claim, nonce: nonce('0'.repeat(32)) };
@@ -119,11 +120,8 @@ describe('claim and release', () => {
     createHandshake(dir, claim);
     releaseHost(dir, claim);
     assert.equal(readClaim(dir), null);
-    assert.equal(existsSync(handshakePath(dir, claim.generation)), false);
+    assert.equal(existsSync(handshakePath(dir, claim.generation)), true);
     assert.throws(() => releaseHost(dir, claim), HostLockMismatchError);
-    const again = claimed(await claimHost(dir, request(), neverCalled));
-    assert.equal(again.claim.generation, 1);
-    createHandshake(dir, again.claim);
   });
 
   it('a takeover increments the generation of the claim it replaces', async () => {
@@ -138,12 +136,37 @@ describe('claim and release', () => {
   });
 });
 
+describe('host.generation-monotonic', () => {
+  it('a claim after a clean release continues the generation and gets a fresh handshake name', async () => {
+    const dir = hostDir();
+    const first = claimed(await claimHost(dir, request(), neverCalled)).claim;
+    assert.equal(lastGeneration(dir), first.generation);
+    createHandshake(dir, first);
+    releaseHost(dir, first);
+    const second = claimed(await claimHost(dir, request(), neverCalled)).claim;
+    assert.ok(second.generation > first.generation, `${second.generation} > ${first.generation}`);
+    assert.equal(lastGeneration(dir), second.generation);
+    createHandshake(dir, second);
+  });
+
+  it('a takeover of a dead claim issues a generation strictly greater than the dead claim and every earlier one', async () => {
+    const dir = hostDir();
+    const first = claimed(await claimHost(dir, request(), neverCalled)).claim;
+    releaseHost(dir, first);
+    const dead = await deadClaim(dir, { generation: first.generation + 1 });
+    const got = claimed(await claimHost(dir, request(), neverCalled));
+    assert.deepEqual(got.previous, dead);
+    assert.ok(got.claim.generation > dead.generation, `${got.claim.generation} > ${dead.generation}`);
+    assert.equal(lastGeneration(dir), got.claim.generation);
+  });
+});
+
 describe('host.live-owner-refused', () => {
   it('a live supervisor refuses with host-busy{owner}, exit 75, lock untouched', async () => {
     const dir = hostDir();
     const s = sleeper();
     try {
-      const claim = claimRecord({ supervisor: s.identity, bootId: currentBootId(), generation: 3 });
+      const claim = claimRecord({ supervisor: s.identity, bootId: readBootId(), generation: 3 });
       holdHost(dir, claim, null);
       const before = lockBytes(dir);
       const outcome = await claimHost(dir, request(), neverCalled);
@@ -160,7 +183,7 @@ describe('host.live-owner-refused', () => {
     const dir = hostDir();
     const executor = sleeper();
     try {
-      const claim = claimRecord({ supervisor: await deadIdentity(), bootId: currentBootId() });
+      const claim = claimRecord({ supervisor: await deadIdentity(), bootId: readBootId() });
       holdHost(dir, claim, executor.identity);
       const before = lockBytes(dir);
       const outcome = await claimHost(dir, request(), neverCalled);
@@ -179,7 +202,7 @@ describe('host.dead-by-starttime', () => {
     const s = sleeper();
     try {
       const reused = { pid: s.identity.pid, start: s.identity.start + 1 };
-      const previous = claimRecord({ supervisor: reused, bootId: currentBootId() });
+      const previous = claimRecord({ supervisor: reused, bootId: readBootId() });
       holdHost(dir, previous, reused);
       const got = claimed(await claimHost(dir, request(), neverCalled));
       assert.deepEqual(got.previous, previous);
@@ -191,7 +214,7 @@ describe('host.dead-by-starttime', () => {
   it('the same claim is refused while the pid and start match, and taken over once the process is killed', async () => {
     const dir = hostDir();
     const s = sleeper();
-    const previous = claimRecord({ supervisor: s.identity, bootId: currentBootId() });
+    const previous = claimRecord({ supervisor: s.identity, bootId: readBootId() });
     holdHost(dir, previous, null);
     assert.equal((await claimHost(dir, request(), neverCalled)).kind, 'refused');
     await s.kill();
@@ -206,13 +229,13 @@ describe('host.dead-by-bootid', () => {
     holdHost(dir, previous, selfIdentity());
     const got = claimed(await claimHost(dir, request(), neverCalled));
     assert.deepEqual(got.previous, previous);
-    assert.equal(got.claim.bootId, currentBootId());
+    assert.equal(got.claim.bootId, readBootId());
   });
 });
 
 describe('host.recovery-holder-dead', () => {
   function writeRecovery(dir: AbsPath, holder: ProcIdentity): RecoveryLockClaim {
-    const claim: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: nonce('1'.repeat(32)), bootId: currentBootId(), holder, at: isoTimeOf(new Date()) };
+    const claim: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: nonce('1'.repeat(32)), bootId: readBootId(), holder, at: isoTimeOf(new Date()) };
     atomicJson(hostPath(dir, RECOVERY_LOCK), claim);
     return claim;
   }
@@ -247,7 +270,7 @@ describe('host.recovery-holder-dead', () => {
 describe('host.owner-mismatch-refused', () => {
   it('missing owner metadata refuses with owner-mismatch; the lock is untouched and the recovery lock released', async () => {
     const dir = hostDir();
-    writeClaim(dir, claimRecord({ supervisor: await deadIdentity(), bootId: currentBootId() }));
+    writeClaim(dir, claimRecord({ supervisor: await deadIdentity(), bootId: readBootId() }));
     const before = lockBytes(dir);
     const outcome = await claimHost(dir, request(), neverCalled);
     assert.equal(outcome.kind, 'refused');
@@ -262,7 +285,7 @@ describe('host.owner-mismatch-refused', () => {
   it('an owner record of another claim (nonce or generation) refuses with owner-mismatch', async () => {
     for (const change of ['nonce', 'generation'] as const) {
       const dir = hostDir();
-      const claim = claimRecord({ supervisor: await deadIdentity(), bootId: currentBootId(), generation: 4 });
+      const claim = claimRecord({ supervisor: await deadIdentity(), bootId: readBootId(), generation: 4 });
       writeClaim(dir, claim);
       publishOwner(dir, change === 'nonce' ? { nonce: nonce('2'.repeat(32)), generation: 4 } : { nonce: claim.nonce, generation: 3 }, null);
       const before = lockBytes(dir);
