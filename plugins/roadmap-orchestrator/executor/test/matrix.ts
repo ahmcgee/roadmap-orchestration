@@ -37,7 +37,12 @@ const pending = (step: string): Readonly<Record<Boundary, Cell>> => ({
  */
 const EXCLUDED_B1 = 'the intent is one journal append; journal.append B1 covers a torn or short intent for every op kind';
 
+/** A done git or evidence op leaves no open intent: nothing for its reconciler to do. */
+const EXCLUDED_B5_OP = 'the done is durable and no intent is open, so recovery has nothing to reconcile for this op; what the next stage does after it is the whole-pipeline row (14c)';
+
 export const JOURNAL_APPEND = 'journal.append';
+export const WORKTREE_EVIDENCE = 'evidence.snapshot, worktree.create/remove';
+export const SALVAGE = 'salvage.commit';
 export const JOURNAL_TAIL = 'journal.tail-repair';
 
 export const MATRIX: readonly Row[] = [
@@ -84,8 +89,49 @@ export const MATRIX: readonly Row[] = [
   },
   { row: 'proc.spawn backend/lane/teardown/probe', test: 'pending', cells: pending('3c') },
   { row: 'runner death (executor alive)', test: 'pending', cells: pending('3c') },
-  { row: 'evidence.snapshot, worktree.create/remove', test: 'pending', cells: pending('8a') },
-  { row: 'salvage.commit', test: 'pending', cells: pending('8a') },
+  {
+    // Scenarios (test/fixtures/git-child.ts): create a unit worktree on a new branch; snapshot three
+    // evidence files; remove the worktree after its snapshot. Hand-made partial worktree states (inside
+    // `git worktree add`, which a crashPoint cannot reach) are the named test worktree.partial-add.
+    row: WORKTREE_EVIDENCE,
+    test: 'test/worktree.test.ts, test/evidence.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start'],
+        recovery: 'nothing acted: postcondition unmet, state provably untouched → redo; done recoveredBy redone',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy'],
+        recovery: 'git worktree add/remove returned: postcondition holds → done recoveredBy reconciled; a partial copy has no manifest → redo fills the gaps, done recoveredBy redone',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['evidence.act-end'],
+        recovery: 'manifest complete and every hash matches → done recoveredBy reconciled (worktree create/remove: their act ends when git returns, the B3 state)',
+      },
+      B5: { status: 'excluded', why: EXCLUDED_B5_OP },
+    },
+  },
+  {
+    // Scenario: a unit worktree with approved unstaged, pre-staged and deleted paths, plus rejected
+    // `.roadmap/`, out-of-scope, excluded and pre-staged out-of-scope content, and an ignored file.
+    row: SALVAGE,
+    test: 'test/salvage.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'crash', labels: ['salvage.act-start'], recovery: 'branch = old → redo; the same salvage SHA; done recoveredBy redone' },
+      B3: {
+        status: 'crash',
+        labels: ['salvage.after-copy-out', 'salvage.after-commit-tree', 'salvage.after-cas', 'salvage.after-read-tree'],
+        recovery: 'before the CAS: branch = old → redo, the same SHA, done recoveredBy redone; after it: branch = new → finish the index reconcile, done recoveredBy reconciled',
+      },
+      B4: { status: 'crash', labels: ['salvage.act-end'], recovery: 'branch = new, postcondition holds → done recoveredBy reconciled' },
+      B5: { status: 'excluded', why: EXCLUDED_B5_OP },
+    },
+  },
   { row: 'mergein.prepare', test: 'pending', cells: pending('8b') },
   { row: 'candidate.merge, integration.ff, snapshot.publish', test: 'pending', cells: pending('8b') },
   { row: 'resource.transition + residue', test: 'pending', cells: pending('10') },
