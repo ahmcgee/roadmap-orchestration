@@ -1,0 +1,19 @@
+[
+  "codex",
+  "exec",
+  "resume",
+  "01a0daac-53f4-7f51-87b9-3a5724d59f6e",
+  "-c",
+  "sandbox_mode=danger-full-access",
+  "--skip-git-repo-check",
+  "-m",
+  "gpt-5.6-sol",
+  "-c",
+  "model_reasoning_effort=low",
+  "--json",
+  "-o",
+  "/tmp/claude-1000/-workspaces-roadmap-orchestration/c6e7cf15-fa46-4568-9e18-edc2ae6c5499/scratchpad/capture/out/codex-resume/last.json",
+  "--output-schema",
+  "/tmp/claude-1000/-workspaces-roadmap-orchestration/c6e7cf15-fa46-4568-9e18-edc2ae6c5499/scratchpad/capture/schema.json",
+  "-"
+]

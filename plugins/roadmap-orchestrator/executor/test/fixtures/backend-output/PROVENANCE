@@ -1,0 +1,13 @@
+Captured 2026-09-25 from the real CLIs, run once each through src/backends/argv.ts from a scratch dir
+outside the repo, prompt on stdin ("Reply with the JSON object {"ok": true}"), strict schema schema.json.
+Nothing redacted: no capture contains a secret.
+
+codex-fresh, codex-resume        codex-cli 0.157.0, gpt-5.6-sol, effort low; resume of the fresh thread
+codex-turn-failed                same, with schema-bad.json (strict mode requires every key): error + turn.failed, exit 1
+claude-judgment                  Claude Code 2.1.282, claude-opus-5-5, judgment argv
+claude-implementer(-resume)      same, implementer argv, fresh then --resume of the same session
+claude-api-error                 hand-run argv in its argv.json (unknown model): is_error result, HTTP 404, exit 1
+
+Per dir: argv.json, stdin, stdout, stderr, exit-code, and last.json (the -o file) for Codex.
+Hand-written, never captured: the usage-limit and capacity texts in test/helpers/scenario.ts
+(CODEX_USAGE_LIMIT, CLAUDE_USAGE_LIMIT, CAPACITY_TEXT).

@@ -1,0 +1,14 @@
+[
+  "claude",
+  "-p",
+  "--output-format",
+  "json",
+  "--json-schema",
+  "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"]}",
+  "--model",
+  "claude-opus-5-5",
+  "--permission-mode",
+  "bypassPermissions",
+  "--session-id",
+  "d571723e-7eac-4b0c-94a3-e1f07df8c074"
+]
