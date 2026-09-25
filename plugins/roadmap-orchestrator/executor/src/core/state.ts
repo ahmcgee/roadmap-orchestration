@@ -18,7 +18,7 @@ import type { JournalView } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import type { DispatchRecord, Stage } from './records.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
-import { RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
+import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
 export class FoldInvariantError extends Error {
   readonly seq: number;
@@ -51,8 +51,11 @@ export type UnitCounters = Readonly<{
   retries: Readonly<Record<RetryStage, number>>;
 }>;
 
-/** The latest decision's effect: `park-pending` and `stop-pending` mean a needs-user is due (or raised). */
-export type UnitStatus = 'active' | 'park-pending' | 'stop-pending' | 'retired';
+/**
+ * The latest decision's effect: `park-pending` and `stop-pending` mean a needs-user is due (or raised);
+ * `held` means the stage was interrupted and waits for a resume.
+ */
+export type UnitStatus = 'active' | 'held' | 'park-pending' | 'stop-pending' | 'retired';
 
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
@@ -77,6 +80,10 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null):
   };
 }
 
+const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {
+  hold: 'held', park: 'park-pending', stop: 'stop-pending', retire: 'retired',
+};
+
 /**
  * The effect of one stage-outcome fact on its unit: the one derivation the fold and the transition
  * function (`src/pipeline/transitions.ts`) share, so the counters a decision predicts are the counters the
@@ -98,13 +105,13 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       // The fact validator admits `retry` only at a retry stage.
       retries: f.class === 'retry' ? { ...c.retries, [f.stage]: c.retries[f.stage as RetryStage] + 1 } : c.retries,
     },
-    status: f.class === 'park' ? 'park-pending' : f.class === 'stop' ? 'stop-pending' : f.class === 'retire' ? 'retired' : 'active',
+    status: STATUS_OF[f.class] ?? 'active',
     // The fact validator admits `route-up` only at a judgment stage.
     routedUp: f.class === 'route-up' && !u.routedUp.includes(f.stage as JudgmentStage)
       ? [...u.routedUp, f.stage as JudgmentStage].sort()
       : u.routedUp,
-    // A trigger holds until a judgment stage decides; a retry re-dispatches the same judgment, so it keeps it.
-    promotion: f.class === 'trigger' ? true : judgment && f.class !== 'retry' ? false : u.promotion,
+    // A trigger holds until a judgment stage decides; a retry or a hold re-dispatches the same judgment, so it keeps it.
+    promotion: f.class === 'trigger' ? true : judgment && f.class !== 'retry' && f.class !== 'hold' ? false : u.promotion,
   };
 }
 
@@ -137,6 +144,8 @@ export type DerivedState = Readonly<{
   needsUser: readonly NeedsUserId[];
   /** Every `tail-discarded` fact, in log order. */
   tailDiscarded: readonly TailDiscarded[];
+  /** Backends parked arc-wide by a `backend-park` fact (usage limit or capacity), ascending. */
+  parkedBackends: readonly Backend[];
 }>;
 
 type Closure = Readonly<{ type: 'done'; record: DoneRecord }> | Readonly<{ type: 'abort'; record: AbortRecord }>;
@@ -164,6 +173,7 @@ export class Fold implements JournalView {
   readonly #metered = new Set<InvocationId>();
   readonly #needsUser = new Set<NeedsUserId>();
   readonly #tail: TailDiscarded[] = [];
+  readonly #parkedBackends = new Set<Backend>();
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -328,6 +338,9 @@ export class Fold implements JournalView {
         this.#start(u, key);
         return;
       }
+      case 'backend-park':
+        this.#parkedBackends.add(f.backend);
+        return;
       case 'containment-mode':
         return;
     }
@@ -388,6 +401,18 @@ export class Fold implements JournalView {
     return this.#metered.has(inv);
   }
 
+  unit(unit: UnitId): UnitState {
+    return this.#units.get(unit)?.state ?? newUnitState(unit, 'plan-check', this.#dispatch.get(unit)?.riskFloor ?? null);
+  }
+
+  dispatchOf(unit: UnitId): DispatchRecord | null {
+    return this.#dispatch.get(unit) ?? null;
+  }
+
+  parkedBackends(): readonly Backend[] {
+    return [...this.#parkedBackends].sort(compare);
+  }
+
   derived(): DerivedState {
     return {
       v: SCHEMA_VERSION,
@@ -399,6 +424,7 @@ export class Fold implements JournalView {
       meter: [...this.#meter].sort(([a], [b]) => compare(a, b)).map(([, m]) => ({ ...m })),
       needsUser: [...this.#needsUser].sort(compare),
       tailDiscarded: [...this.#tail],
+      parkedBackends: this.parkedBackends(),
     };
   }
 }

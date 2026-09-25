@@ -42,6 +42,8 @@ function show(n: Next): string {
       return `${n.kind}:${n.needsUser.reason}`;
     case 'retire':
       return 'retire';
+    case 'hold':
+      return 'hold';
     case 'stage':
       if (n.stage === 'build') return `build/${n.round}@${n.seat}`;
       return n.seat === null ? n.stage : `${n.stage}@${n.seat}`;
@@ -76,6 +78,9 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'escalate', {}, 'plan-check@high', 'route-up', {}],
   ['plan-check', 'escalate', { risk: 'high' }, 'park:escalation', 'park', {}],
   ['plan-check', 'risk-lowered', {}, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'scope-widened', {}, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'scope-widened', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
+  ['plan-check', 'interrupted', {}, 'hold', 'hold', {}],
   ['plan-check', 'refusal', {}, 'plan-check@high', 'route-up', {}],
   ['plan-check', 'refusal', { routedUp: ['plan-check'] }, 'park:refusal', 'park', {}],
   ['plan-check', 'malformed', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
@@ -88,6 +93,9 @@ const ROWS: readonly Row[] = [
   ['build', 'malformed', { counters: { 'retries.build': 1 } }, 'park:malformed', 'park', {}],
   ['build', 'process-fault', {}, 'park:process-fault', 'park', {}],
   ['build', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['build', 'cleanup-failed', {}, 'park:residue', 'park', {}],
+  ['build', 'interrupted', {}, 'hold', 'hold', {}],
+  ['build', 'interrupted', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'hold', 'hold', {}],
   // quiesce → evidence → salvage → teardown
   ['quiesce', 'empty', {}, 'evidence', 'advance', {}],
   ['evidence', 'captured', {}, 'salvage', 'advance', {}],
@@ -105,8 +113,8 @@ const ROWS: readonly Row[] = [
   ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
   ['lanes', 'blocked', {}, 'lanes', 'retry', { 'retries.lanes': 1 }],
   ['lanes', 'blocked', { counters: { 'retries.lanes': 1 } }, 'park:lane-blocked', 'park', {}],
-  ['lanes', 'interrupted', {}, 'lanes', 'retry', { 'retries.lanes': 1 }],
-  ['lanes', 'interrupted', { counters: { 'retries.lanes': 1 } }, 'park:process-fault', 'park', {}],
+  ['lanes', 'interrupted', {}, 'hold', 'hold', {}],
+  ['lanes', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['lanes', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
@@ -122,6 +130,7 @@ const ROWS: readonly Row[] = [
   ['gate', 'malformed', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
   ['gate', 'malformed', { counters: { 'retries.gate': 1 } }, 'park:malformed', 'park', {}],
   ['gate', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
   ['candidate', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],
@@ -130,6 +139,7 @@ const ROWS: readonly Row[] = [
   ['candidate', 'red', { counters: { candidateReds: 1 } }, 'park:candidate-red', 'park', {}],
   ['candidate', 'base-red', {}, 'park:base-red', 'park', {}],
   ['candidate', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['candidate', 'interrupted', {}, 'hold', 'hold', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
   ['ff', 'cas-stale', {}, 'candidate', 'advance', {}],
@@ -228,6 +238,24 @@ describe('transitions', () => {
       assert.equal(state.counters.retries[stage], 1, stage);
       assert.equal(state.counters.chargeableFailures, 0, stage);
     }
+  });
+});
+
+describe('transitions (holds)', () => {
+  it('transitions.interrupted-holds: an interruption moves no counter, holds the unit and keeps a pending promotion', () => {
+    for (const stage of ['plan-check', 'build', 'lanes', 'gate', 'candidate'] as const) {
+      const { nexts, facts, state } = drive([outcome(stage, 'interrupted')]);
+      assert.deepEqual(nexts.map(show), ['hold'], stage);
+      assert.deepEqual(facts.map((f) => [f.class, f.chargeable]), [['hold', false]], stage);
+      assert.equal(state.status, 'held', stage);
+      assert.deepEqual({ ...state.counters, attempts: 0 }, { ...newUnitState(U1, stage, 'med').counters, attempts: 0 }, stage);
+    }
+    const held = drive([outcome('salvage', 'committed-contract-touched'), outcome('gate', 'interrupted')]);
+    assert.equal(held.state.promotion, true, 'the held gate is re-dispatched on the promoted seat');
+    const resumed = drive([outcome('salvage', 'committed-contract-touched'), outcome('gate', 'interrupted'), outcome('gate', 'approve')]);
+    assert.deepEqual(resumed.nexts.map(show), ['teardown', 'hold', 'candidate']);
+    assert.equal(resumed.state.status, 'active');
+    assert.equal(resumed.state.promotion, false);
   });
 });
 

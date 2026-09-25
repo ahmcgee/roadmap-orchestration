@@ -26,8 +26,10 @@
 // Evidence dirs, verified the same way: `claude -p --add-dir <directories...>` adds directories the tools
 // may access beyond the cwd. A judgment session runs in the tree it judges and must read evidence dirs
 // outside it, so every evidence dir is passed as its own `--add-dir <dir>` pair (the flag is variadic, so
-// it goes last, where no later token can be swallowed into its list). Codex judgment is unsupported in M1,
-// so nothing is needed on the Codex side.
+// it goes last, where no later token can be swallowed into its list). The Claude implementer works in its
+// worktree but writes decisions.json into an evidence dir outside it and, in a fix round, reads the failing
+// lanes' evidence dirs: the same `--add-dir` pairs, last. Codex runs with danger-full-access, so nothing is
+// needed on the Codex side.
 import { randomUUID } from 'node:crypto';
 import { implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
@@ -62,6 +64,8 @@ export type BackendCall =
     schemaText: string;
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
+    /** Directories outside the worktree the implementer reads or writes: one `--add-dir` each. */
+    evidenceDirs: readonly AbsPath[];
   }>
   | Readonly<{
     kind: 'codex-build';
@@ -91,6 +95,7 @@ export function backendArgv(call: BackendCall): Argv {
       return [
         'claude', '-p', '--output-format', 'json', '--json-schema', call.schemaText, '--model', call.triple.model,
         '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }
     case 'codex-build': {

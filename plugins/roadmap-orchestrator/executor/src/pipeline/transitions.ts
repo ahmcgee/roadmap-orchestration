@@ -15,6 +15,8 @@
 //   at the high seat it parks with a needs-user. A routed-up role stays on the high seat for the unit.
 // - A risk trigger (contract path touched at salvage, scope growth at the candidate) puts the next judgment
 //   dispatch, and only that one, on the high seat. The implementer keeps the unit's risk seat throughout.
+// - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
+//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 import {
   type JudgmentStage, type OutcomeClass, type OutcomeStage, type RetryStage, type StageOutcomeFact, type StageOutcomeKind,
@@ -50,6 +52,8 @@ export type Next =
   | Readonly<{ kind: 'stage'; stage: ExecutorStage; seat: null; counters: UnitCounters }>
   | Readonly<{ kind: 'park'; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'stop'; needsUser: NeedsUserContent }>
+  /** Interrupted: the unit waits at its stage for a resume, which starts the stage again uncharged. */
+  | Readonly<{ kind: 'hold' }>
   | Readonly<{ kind: 'retire' }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -67,6 +71,7 @@ type Go = Readonly<{ do: 'go'; to: Target; chargeable: boolean; trigger: boolean
 type Park = Readonly<{ do: 'park'; reason: NeedsUserReason }>;
 type Stop = Readonly<{ do: 'stop'; reason: NeedsUserReason }>;
 type Retire = Readonly<{ do: 'retire' }>;
+type Hold = Readonly<{ do: 'hold' }>;
 /** A refusal or escalation: the role's high seat, then park with `reason`. */
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason`. */
@@ -84,7 +89,7 @@ type Bounded<S extends OutcomeStage> = Readonly<{
 
 /** Route-ups exist only at judgment stages and retries only at retry stages, as the fact validator requires. */
 type Rule<S extends OutcomeStage> =
-  | Go | Park | Stop | Retire | Bounded<S> | (S extends JudgmentStage ? RouteUp : never) | (S extends RetryStage ? Retry : never);
+  | Go | Park | Stop | Retire | Hold | Bounded<S> | (S extends JudgmentStage ? RouteUp : never) | (S extends RetryStage ? Retry : never);
 
 type Table = { readonly [S in OutcomeStage]: { readonly [K in StageOutcomeKind<S>]: Rule<S> } };
 
@@ -95,6 +100,7 @@ const charge = (to: Target): Go => ({ do: 'go', to, chargeable: true, trigger: f
 const park = (reason: NeedsUserReason): Park => ({ do: 'park', reason });
 const retry = (reason: NeedsUserReason): Retry => ({ do: 'retry', reason });
 const routeUp = (reason: RouteUp['reason']): RouteUp => ({ do: 'route-up', reason });
+const hold: Hold = { do: 'hold' };
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
@@ -103,11 +109,13 @@ export const TABLE: Table = {
     redirect: { do: 'bounded', round: 'redirect', max: MAX_REDIRECTS, to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
     infeasible: routeUp('escalation'),
     escalate: routeUp('escalation'),
-    // R2: a redirect cannot lower the risk floor (scope is not patchable in M1); refused → escalate.
+    // R2: a redirect cannot lower the risk floor or widen the unit's envelope; refused → escalate.
     'risk-lowered': routeUp('escalation'),
+    'scope-widened': routeUp('escalation'),
     refusal: routeUp('refusal'),
     malformed: retry('malformed'),
     'process-fault': park('process-fault'),
+    interrupted: hold,
   },
   build: {
     success: go(at('quiesce')),
@@ -116,6 +124,9 @@ export const TABLE: Table = {
     'process-fault': park('process-fault'),
     // The reservation cycle's occupancy probe found unlabelled or undeclared occupancy (decided before any charge).
     occupied: park('occupancy-unlabelled'),
+    // The build's resources could not be cleaned after a failed build: a residue, never released.
+    'cleanup-failed': park('residue'),
+    interrupted: hold,
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -131,9 +142,12 @@ export const TABLE: Table = {
     green: go(at('gate')),
     red: charge(build('fix')),
     'not-certified': charge(build('fix')),
+    // A lane the runner ended (deadline) or lost: not a product verdict.
     blocked: retry('lane-blocked'),
-    interrupted: retry('process-fault'),
+    interrupted: hold,
     occupied: park('occupancy-unlabelled'),
+    // A lane's resources could not be cleaned: a residue, never released.
+    'cleanup-failed': park('residue'),
   },
   gate: {
     approve: go(at('candidate')),
@@ -143,6 +157,7 @@ export const TABLE: Table = {
     refusal: routeUp('refusal'),
     malformed: retry('malformed'),
     'process-fault': park('process-fault'),
+    interrupted: hold,
   },
   candidate: {
     green: go(at('ff')),
@@ -155,6 +170,7 @@ export const TABLE: Table = {
     // Red with T alone red too: the base is broken, not the unit; uncharged.
     'base-red': park('base-red'),
     occupied: park('occupancy-unlabelled'),
+    interrupted: hold,
   },
   ff: {
     published: go(at('snapshot')),
@@ -173,7 +189,7 @@ export const TABLE: Table = {
 type Step =
   | Readonly<{ to: 'stage'; target: Target }>
   | Readonly<{ to: 'park' | 'stop'; needsUser: NeedsUserContent }>
-  | Readonly<{ to: 'retire' }>;
+  | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
 const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candidate-red': 'candidateReds' } as const satisfies {
@@ -245,6 +261,8 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
       return halt('stop', rule.reason, o, why);
     case 'retire':
       return { class: 'retire', chargeable: false, step: { to: 'retire' } };
+    case 'hold':
+      return { class: 'hold', chargeable: false, step: { to: 'hold' } };
   }
 }
 
@@ -266,6 +284,8 @@ export function transition(u: UnitState, outcome: StageOutcome): Next {
       return { kind: 'stop', needsUser: d.step.needsUser };
     case 'retire':
       return { kind: 'retire' };
+    case 'hold':
+      return { kind: 'hold' };
     case 'stage': {
       const after = afterStageOutcome(u, { stage: outcome.stage, class: d.class, chargeable: d.chargeable });
       const t = d.step.target;
