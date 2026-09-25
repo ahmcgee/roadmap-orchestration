@@ -30,11 +30,11 @@ function invoke(scenario: Scenario, backend: Backend, cwd: string, prompt = 'Rep
   let terminal: LaunchTerminal;
   if (backend === 'codex') {
     const outputPath = absPath(join(invDir, 'last.json'));
-    call = { kind: 'codex-build', triple: CODEX, session: { backend: 'codex', mode: 'fresh' }, cwd: absPath(cwd), outputPath, schemaPath: base.schemaPath };
+    call = { kind: 'codex-build', triple: CODEX, session: { backend: 'codex', mode: 'fresh' }, system: 'Reply with the JSON the schema asks for.', cwd: absPath(cwd), outputPath, schemaPath: base.schemaPath };
     terminal = { ...base, outputPath, role: 'build', session: { backend: 'codex', mode: 'fresh' } };
   } else {
     const session = freshJudgmentSession();
-    call = { kind: 'claude-judgment', role: 'gate', triple: CLAUDE, session, schemaText: SCHEMA_TEXT };
+    call = { kind: 'claude-judgment', role: 'gate', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] };
     terminal = { ...base, outputPath: absPath(join(invDir, 'stdout')), role: 'gate', session };
   }
   const launch = writeLaunch(invDir, { argv: backendArgv(call), cwd, terminal, stdinPath });
@@ -156,7 +156,7 @@ describe('fakes', () => {
       const invDir = tmpDir('inv');
       const session = freshJudgmentSession();
       const terminal: LaunchTerminal = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), role: 'gate', session };
-      const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: CLAUDE, session, schemaText: SCHEMA_TEXT });
+      const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] });
       const launch = writeLaunch(invDir, { argv, cwd: invDir, terminal, stdinPath: null });
       const { spawn } = await import('node:child_process');
       const child = spawn('claude', argv.slice(1), { cwd: invDir, env: { PATH: `${s.binDir}:/usr/bin:/bin` }, stdio: ['ignore', 'pipe', 'inherit'] });

@@ -88,6 +88,7 @@ describe('codex', () => {
       kind: 'codex-build',
       triple: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' },
       session: { backend: 'codex', mode: 'resume', id: implementerSessionId('01a0daac-53f4-7f51-87b9-3a5724d59f6e') },
+      system: 'S',
       cwd: absPath('/unused/on/resume'),
       outputPath: absPath(captured[captured.indexOf('-o') + 1]),
       schemaPath: absPath(captured[captured.indexOf('--output-schema') + 1]),
