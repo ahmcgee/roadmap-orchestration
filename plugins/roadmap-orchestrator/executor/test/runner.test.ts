@@ -319,7 +319,8 @@ const LAUNCH_CRASHES: Readonly<Record<string, () => Promise<void>>> = {
   },
 };
 
-const procSpawnCells = crashCells(PROC_SPAWN);
+// B3 only: the row's executor-side cells (B2, B4, B5) are recovered in test/recover-spawn.test.ts.
+const procSpawnCells = crashCells(PROC_SPAWN).filter((c) => c.boundary === 'B3');
 const launchCells = procSpawnCells.filter((c) => !(c.label in RUNNER_CRASHES));
 test('matrix: proc.spawn is the runner crash cases plus the launch crash cases', () => {
   assert.deepEqual(procSpawnCells.map((c) => c.label).sort(), [...Object.keys(RUNNER_CRASHES), ...Object.keys(LAUNCH_CRASHES)].sort());

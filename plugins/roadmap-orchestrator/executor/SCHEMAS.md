@@ -326,7 +326,7 @@ closed list in `records.ts`; add members by request.
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op)` | step 2 |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), usageRecorded(inv)` | step 2 |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |

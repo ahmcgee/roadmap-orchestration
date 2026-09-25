@@ -257,6 +257,10 @@ export class Fold implements JournalView {
     return entry.closure?.type === 'done' ? entry.closure.record : null;
   }
 
+  usageRecorded(inv: InvocationId): boolean {
+    return this.#metered.has(inv);
+  }
+
   derived(): DerivedState {
     return {
       v: SCHEMA_VERSION,
