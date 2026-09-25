@@ -6,7 +6,7 @@
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import {
-  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentRecord, prevHash, serializeEvent,
+  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentOf, type IntentRecord, type OpKind, prevHash, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
@@ -255,6 +255,12 @@ export class Fold implements JournalView {
     const entry = this.#ops.get(op);
     if (entry === undefined) throw new Error(`doneOf: no intent for op ${op} in the log of arc ${this.arc}`);
     return entry.closure?.type === 'done' ? entry.closure.record : null;
+  }
+
+  opsOf<K extends OpKind>(kind: K): readonly IntentOf<K>[] {
+    const out: IntentOf<K>[] = [];
+    for (const { latest } of this.#ops.values()) if (latest.kind === kind) out.push(latest as IntentOf<K>);
+    return out;
   }
 
   usageRecorded(inv: InvocationId): boolean {
