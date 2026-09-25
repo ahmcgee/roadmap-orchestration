@@ -51,7 +51,10 @@ export type PromptSupport<P> =
   | { readonly type: 'inherits'; readonly from: ModelId; readonly reviewed: string }
   | { readonly type: 'unsupported'; readonly reason: string };
 
-export type PromptTable<P> = { readonly [R in Role]: { readonly [M in ModelId]: PromptSupport<P> } };
+/** `P` maps each role to its prompt module type, so a module's inputs are typed by its role. */
+export type PromptTable<P extends { readonly [R in Role]: unknown }> = {
+  readonly [R in Role]: { readonly [M in ModelId]: PromptSupport<P[R]> };
+};
 
 export const role: Read<Role> = oneOf(ROLES);
 export const riskTier: Read<RiskTier> = oneOf(RISK_TIERS);
