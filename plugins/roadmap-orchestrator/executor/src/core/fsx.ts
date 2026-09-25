@@ -18,6 +18,7 @@
 import {
   closeSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -106,6 +107,26 @@ export function durableRename(from: string, to: string): void {
   renameSync(from, to);
   fsyncPath(dirname(to));
   if (dirname(from) !== dirname(to)) fsyncPath(dirname(from));
+}
+
+/**
+ * Hard-link `from` to `to`, refusing (AlreadyExistsError) if `to` exists; the new entry's directory is
+ * fsynced. This is the host lock's claim primitive: `link` is atomic and never replaces.
+ */
+export function durableLink(from: string, to: string): void {
+  try {
+    linkSync(from, to);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new AlreadyExistsError(to);
+    throw error;
+  }
+  fsyncPath(dirname(to));
+}
+
+/** `unlink` with the parent directory fsynced, so the removal is not lost. */
+export function durableUnlink(path: string): void {
+  unlinkSync(path);
+  fsyncPath(dirname(path));
 }
 
 /**

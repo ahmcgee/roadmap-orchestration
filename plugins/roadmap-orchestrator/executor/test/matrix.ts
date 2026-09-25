@@ -51,6 +51,8 @@ const RUNNER_LABELS = [
   'runner.after-exit-json',
 ] as const;
 export const SPEC_PATCH = 'spec.patch';
+export const RESIDUE_ORDERING = 'resource.transition fail + residue';
+export const HOST_TAKEOVER = 'host takeover';
 
 export const MATRIX: readonly Row[] = [
   {
@@ -124,7 +126,28 @@ export const MATRIX: readonly Row[] = [
   { row: 'salvage.commit', test: 'pending', cells: pending('8a') },
   { row: 'mergein.prepare', test: 'pending', cells: pending('8b') },
   { row: 'candidate.merge, integration.ff, snapshot.publish', test: 'pending', cells: pending('8b') },
-  { row: 'resource.transition + residue', test: 'pending', cells: pending('10') },
+  {
+    // The scenario (test/fixtures/host-residue.ts `fail`) journals a fail transition of two resources,
+    // appends one residue per resource to the host index, then writes the local done.
+    row: RESIDUE_ORDERING,
+    test: 'test/residue.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['residue.before-host-append'],
+        recovery: 'occurrence 1 has no residue durable, occurrence 2 the first only; recovery appends each missing residue once, keyed per resource, then the done (reconciled); nothing released',
+      },
+      B3: { status: 'excluded', why: 'the only point inside the act, between the per-resource appends, is residue.before-host-append occurrence 2, crashed under B2' },
+      B4: {
+        status: 'crash',
+        labels: ['residue.after-host-append'],
+        recovery: 'every residue is durable exactly once; recovery appends nothing and writes the done (reconciled); nothing released',
+      },
+      B5: { status: 'pending', step: '10' },
+    },
+  },
+  { row: 'resource.transition reserve/run/clean/release', test: 'pending', cells: pending('10') },
   {
     // The scenario (test/fixtures/spec-patch-child.ts) prepares, journals, acts, verifies and closes one
     // spec.patch; recovery runs the reconciler on the open intent and applies its disposition.
@@ -147,7 +170,27 @@ export const MATRIX: readonly Row[] = [
     },
   },
   { row: 'needsuser.raise, command.apply', test: 'pending', cells: pending('13') },
-  { row: 'supervisor/host', test: 'pending', cells: pending('7, 14a') },
+  {
+    // The scenario (test/fixtures/host-claim.ts) takes over a dead claim of the same arc.
+    row: HOST_TAKEOVER,
+    test: 'test/host.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'a takeover journals nothing: the host files are its state, and each is created by one link or rename' },
+      B2: {
+        status: 'crash',
+        labels: ['host.takeover.after-recovery-claim'],
+        recovery: 'the recovery lock is left with a dead holder: the next claim refuses recovery-holder-dead (exit 78, needs-user); host.lock still names the dead claim',
+      },
+      B3: { status: 'excluded', why: 'the takeover act is one rename of a durable temp claim over host.lock, atomic by construction' },
+      B4: {
+        status: 'crash',
+        labels: ['host.takeover.after-rename'],
+        recovery: 'host.lock names the crashed claim and the recovery lock a dead holder: the next claim refuses recovery-holder-dead (exit 78, needs-user); never two owners',
+      },
+      B5: { status: 'excluded', why: 'after the recovery lock is released the host is simply claimed; host.live-owner-refused and the dead-owner tests cover that state' },
+    },
+  },
+  { row: 'supervisor/host', test: 'pending', cells: pending('14a') },
   { row: 'adversarial', test: 'pending', cells: pending('14c') },
 ];
 
