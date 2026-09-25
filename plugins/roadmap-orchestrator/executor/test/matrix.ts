@@ -43,6 +43,8 @@ const EXCLUDED_B5_OP = 'the done is durable and no intent is open, so recovery h
 export const JOURNAL_APPEND = 'journal.append';
 export const WORKTREE_EVIDENCE = 'evidence.snapshot, worktree.create/remove';
 export const SALVAGE = 'salvage.commit';
+export const MERGEIN = 'mergein.prepare';
+export const CANDIDATE_FF_SNAPSHOT = 'candidate.merge, integration.ff, snapshot.publish';
 export const JOURNAL_TAIL = 'journal.tail-repair';
 export const PROC_SPAWN = 'proc.spawn backend/lane/teardown/probe';
 export const RUNNER_DEATH = 'runner death (executor alive)';
@@ -170,8 +172,53 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: EXCLUDED_B5_OP },
     },
   },
-  { row: 'mergein.prepare', test: 'pending', cells: pending('8b') },
-  { row: 'candidate.merge, integration.ff, snapshot.publish', test: 'pending', cells: pending('8b') },
+  {
+    // Scenarios (test/fixtures/git8b-child.ts `mergein`): a clean merge-in (T changed docs, the unit src)
+    // and a conflicting one (both changed src/a.ts). act-start and act-end are crashed in both.
+    row: MERGEIN,
+    test: 'test/mergein.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['mergein.act-start'],
+        recovery: 'HEAD = old, no MERGE_HEAD → redo: a clean merge-in makes the same SHA from its recorded inputs, a conflicting one re-runs the merge; done recoveredBy redone',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['mergein.after-commit-tree', 'mergein.after-cas', 'mergein.after-merge'],
+        recovery: 'before the CAS: HEAD = old → redo, the same SHA, done redone; after it: HEAD = new → finish read-tree, done clean-merged reconciled; conflicted merge written (HEAD = old, MERGE_HEAD = T) → done conflicted reconciled, the pipeline resumes "resolve and commit"',
+      },
+      B4: { status: 'crash', labels: ['mergein.act-end'], recovery: 'postcondition holds → done reconciled (clean-merged or conflicted)' },
+      B5: { status: 'excluded', why: EXCLUDED_B5_OP },
+    },
+  },
+  {
+    // Scenarios (test/fixtures/git8b-child.ts): `candidate` merges the unit onto a clean T; `ff` publishes
+    // that done candidate; `snapshot` publishes a run dir holding evidence, a needs-user and a spec. Each
+    // label names its op by prefix; each op's test file drives its own labels.
+    row: CANDIDATE_FF_SNAPSHOT,
+    test: 'test/candidate.test.ts, test/ff.test.ts, test/snapshot.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['candidate.act-start', 'ff.act-start', 'snapshot.act-start'],
+        recovery: 'ref = old (or absent) → redo with the recorded inputs, the same SHA, done redone; ff: ref = T → redo the CAS only when the fingerprint re-check holds, else done unpublished at T',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['candidate.after-commit-tree', 'snapshot.after-commit-tree'],
+        recovery: 'object written, ref = old → redo makes the same SHA (no duplicate commit), done redone (integration.ff writes no object: its act is the CAS alone)',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['candidate.act-end', 'ff.act-end', 'snapshot.act-end'],
+        recovery: 'ref = new and the postcondition holds → done reconciled; ff: published once, new^1 = T, new^2 = the approved unit commit',
+      },
+      B5: { status: 'excluded', why: EXCLUDED_B5_OP },
+    },
+  },
   {
     // The scenario (test/fixtures/host-residue.ts `fail`) journals a fail transition of two resources,
     // appends one residue per resource to the host index, then writes the local done.
