@@ -104,6 +104,8 @@ const FACTS: readonly Fact[] = [
   { kind: 'meter', inv, role: 'gate', routingRev: rev, unit: { unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null } },
   { kind: 'usage-unavailable', inv, role: 'build', routingRev: rev, unit: null, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, at } },
+  { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
+  { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
 ];
 
 function envelope(seq: number): Envelope {
@@ -207,6 +209,14 @@ describe('events', () => {
     it('resource transition out of lock order', () => {
       const e = event({ ...INTENTS['resource.transition'], expect: { ...INTENTS['resource.transition'].expect, resources: [INTEGRATION_SLOT, resourceName('db')], edge: { type: 'reserve' } } });
       assert.throws(() => parseEventLine(serializeEvent(e).slice(0, -1)), /integration-slot last/);
+    });
+
+    it('stage-outcome: an outcome of another stage, and classes the stage does not have', () => {
+      const line = (f: object): string => serializeEvent(event({ type: 'fact', fact: { kind: 'stage-outcome', unit, attempt: 1, chargeable: false, ...f } } as LogRecord)).slice(0, -1);
+      assert.throws(() => parseEventLine(line({ stage: 'build', outcome: 'approve', class: 'advance' })), /^SchemaError: event\.fact\.outcome:/);
+      assert.throws(() => parseEventLine(line({ stage: 'retire', outcome: 'published', class: 'retire' })), /^SchemaError: event\.fact\.stage:/);
+      assert.throws(() => parseEventLine(line({ stage: 'candidate', outcome: 'red', class: 'retry' })), /event\.fact\.class: expected retry only at/);
+      assert.throws(() => parseEventLine(line({ stage: 'build', outcome: 'refusal', class: 'route-up' })), /event\.fact\.class: expected route-up only at/);
     });
 
     it('spec patch whose newRev is not expectRev + 1', () => {

@@ -5,15 +5,24 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
-import { arcId, opId } from '../src/core/ids.ts';
-import { Fold, FoldInvariantError, fold, writeStateCache } from '../src/core/state.ts';
-import { isoTime } from '../src/core/values.ts';
+import { type UnitId, arcId, opId, specRev, unitId } from '../src/core/ids.ts';
+import type { Stage } from '../src/core/records.ts';
+import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
+import { isoTime, repoPattern } from '../src/core/values.ts';
+import type { RiskTier } from '../src/routing/types.ts';
 import { tmpDir } from './helpers/repo.ts';
 import {
-  ARC, H, REV, chain, commandIntent, inv1, meter, needsUserIntent, snapshotIntent, spawnIntent, spawnLost, spawnResult, stageParent,
+  ARC, AT, H, REV, U1, chain, commandIntent, inv1, meter, needsUserIntent, snapshotIntent, spawnIntent, spawnLost, spawnResult, stageParent,
 } from './fixtures/log-records.ts';
 
 const op = (seq: number) => opId(ARC, seq);
+
+type OutcomeFields = Readonly<{ stage: Stage; attempt: number; outcome: string; class: string; chargeable?: boolean; unit?: UnitId }>;
+/** A stage-outcome fact record; `chain()` hands it to the fold without parsing, so the fields are as given. */
+const stageOutcome = (f: OutcomeFields): LogRecord =>
+  ({ type: 'fact', fact: { kind: 'stage-outcome', unit: f.unit ?? U1, stage: f.stage, attempt: f.attempt, outcome: f.outcome, class: f.class, chargeable: f.chargeable ?? false } }) as LogRecord;
+const dispatch = (riskFloor: RiskTier, scope = 'src/**'): LogRecord =>
+  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), scope: [repoPattern(scope)], riskFloor, routingRev: REV, at: AT } } });
 
 function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
   assert.throws(() => fold(ARC, events), (err: unknown) => {
@@ -45,13 +54,61 @@ describe('fold derives', () => {
     assert.equal(state.snapshotHighWater, 10);
     assert.deepEqual(state.openIntents.map((i) => i.op), [op(4), op(13)]);
     // Stage starts: plan-check#1, build#1, build#2. The retry at seq 7 is not a new start.
-    assert.deepEqual(state.units, [{ unit: 'u1', stage: 'build', attempts: 3 }]);
+    const u1 = newUnitState(U1, 'build', null);
+    assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 } }]);
     assert.deepEqual(state.needsUser, ['nu-9']);
     assert.deepEqual(state.meter, [
       { role: 'build', routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
       { role: 'planCheck', routingRev: REV, known: 1, unavailable: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 0 },
     ]);
     assert.deepEqual(state.tailDiscarded, []);
+  });
+
+  it('state.stage-outcome-derives-counters: counters, seats and status from stage-outcome facts', () => {
+    const state = fold(ARC, chain([
+      dispatch('low'), // 1
+      spawnIntent(2, { stage: 'plan-check', role: 'planCheck' }), // 2 plan-check#1 starts
+      spawnResult(op(2)), // 3
+      stageOutcome({ stage: 'plan-check', attempt: 1, outcome: 'redirect', class: 'redirect' }), // 4
+      stageOutcome({ stage: 'plan-check', attempt: 2, outcome: 'refusal', class: 'route-up' }), // 5 a start with no intent
+      stageOutcome({ stage: 'plan-check', attempt: 3, outcome: 'approve', class: 'advance' }), // 6
+      dispatch('med'), // 7 the plan-check raised the risk: re-pinned
+      stageOutcome({ stage: 'build', attempt: 1, outcome: 'malformed', class: 'retry' }), // 8
+      stageOutcome({ stage: 'build', attempt: 2, outcome: 'success', class: 'advance' }), // 9
+      stageOutcome({ stage: 'salvage', attempt: 1, outcome: 'committed-contract-touched', class: 'trigger' }), // 10
+      stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }), // 11
+    ]));
+    assert.deepEqual(state.units, [{
+      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true,
+      counters: {
+        attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,
+        retries: { 'plan-check': 0, build: 1, lanes: 0, gate: 0 },
+      },
+    }]);
+
+    // Two more chargeable failures: the third bounds the unit, which the log records as a park.
+    const bounded = fold(ARC, chain([
+      stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }),
+      stageOutcome({ stage: 'gate', attempt: 1, outcome: 'revise', class: 'revise', chargeable: true }),
+      stageOutcome({ stage: 'gate', attempt: 2, outcome: 'revise', class: 'park', chargeable: true }),
+    ]));
+    const u = bounded.units[0]!;
+    assert.equal(u.status, 'park-pending');
+    assert.equal(u.counters.chargeableFailures, 3);
+    assert.equal(u.counters.reviseRounds, 1);
+    assert.equal(u.risk, null, 'no dispatch fact in this log');
+
+    // A judgment decision spends a pending promotion; a retry of the same judgment does not.
+    const spent = fold(ARC, chain([
+      stageOutcome({ stage: 'salvage', attempt: 1, outcome: 'committed-contract-touched', class: 'trigger' }),
+      stageOutcome({ stage: 'gate', attempt: 1, outcome: 'malformed', class: 'retry' }),
+    ]));
+    assert.equal(spent.units[0]!.promotion, true);
+    const decided = fold(ARC, chain([
+      stageOutcome({ stage: 'salvage', attempt: 1, outcome: 'committed-contract-touched', class: 'trigger' }),
+      stageOutcome({ stage: 'gate', attempt: 1, outcome: 'approve', class: 'advance' }),
+    ]));
+    assert.equal(decided.units[0]!.promotion, false);
   });
 
   it('keeps open intents in log order, a retry moving to its own position', () => {
@@ -125,6 +182,30 @@ describe('fold invariants', () => {
     refuses(chain([spawnIntent(1), meter(inv1(1), 'build', 1, 1, null), meter(inv1(1), 'build', 1, 1, null)]), 3, /second usage fact for arc-1\/1#1/);
     refuses(chain([spawnIntent(1), meter(inv1(1, 2), 'build', 1, 1, null)]), 2, /which no intent opened/);
     refuses(chain([meter(inv1(7), 'build', 1, 1, null)]), 1, /which no intent opened/);
+  });
+
+  it('state.stage-outcome-duplicate-refused: one stage-outcome per (unit, stage, attempt)', () => {
+    const first = stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'green', class: 'advance' });
+    refuses(chain([first, stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true })]), 2, /second stage-outcome for u1 lanes#1/);
+    // Other attempts, stages and units are distinct keys.
+    fold(ARC, chain([
+      first,
+      stageOutcome({ stage: 'lanes', attempt: 2, outcome: 'green', class: 'advance' }),
+      stageOutcome({ stage: 'gate', attempt: 1, outcome: 'approve', class: 'advance' }),
+      stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'green', class: 'advance', unit: unitId('u2') }),
+    ]));
+  });
+
+  it('the third chargeable failure must park the unit', () => {
+    const charged = (attempt: number, cls: string): LogRecord => stageOutcome({ stage: 'lanes', attempt, outcome: 'red', class: cls, chargeable: true });
+    refuses(chain([charged(1, 'advance'), charged(2, 'advance'), charged(3, 'advance')]), 3, /chargeable failure 3, which parks the unit, but its class is advance/);
+    fold(ARC, chain([charged(1, 'advance'), charged(2, 'advance'), charged(3, 'park')]));
+  });
+
+  it('a dispatch re-pin keeps the scope and never lowers the risk floor', () => {
+    fold(ARC, chain([dispatch('low'), dispatch('high')]));
+    refuses(chain([dispatch('med'), dispatch('low')]), 2, /dispatch of u1 lowers riskFloor med to low/);
+    refuses(chain([dispatch('med'), dispatch('med', 'lib/**')]), 2, /dispatch of u1 changes its pinned scope/);
   });
 
   it('a refused event leaves the fold unchanged', () => {

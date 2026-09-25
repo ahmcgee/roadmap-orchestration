@@ -80,7 +80,6 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   build: {
     summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [],
-    decisionsRecorded: [{ id: 'impl-1', text: 'Chose X over Y.' }],
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -196,6 +195,7 @@ describe('prompts', () => {
       for (const needle of [/fast lane/, /decisions\.json/, /\.roadmap\//, /[Ee]state lanes/, /Committing is optional/, /[Ss]top/]) {
         assert.match(sys, needle, `build/${model}: ${needle}`);
       }
+      assert.doesNotMatch(sys, /decisionsRecorded/, `build/${model}: decisions go only to decisions.json`);
       const text = mod.render(SAMPLES.build[1]);
       assert.match(text, /\/run\/inv\/9-1/, 'fix round names the failing evidence dir');
       assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/, 'lane rendered as its exact command');
@@ -262,6 +262,8 @@ describe('output validators', () => {
     validateBuildOutput(ok.build);
     assert.throws(() => validateBuildOutput({ ...ok.build, extra: 1 }), SchemaError);
     assert.throws(() => validateBuildOutput({ ...ok.build, lanesRun: [{ lane: '1bad', exit: 0 }] }), SchemaError);
+    // decisions.json is the one channel: the report may not carry an echo of it.
+    assert.throws(() => validateBuildOutput({ ...ok.build, decisionsRecorded: [{ id: 'impl-1', text: 'a' }] }), SchemaError);
     validateDecisionsFile({ decisions: [{ id: 'impl-1', text: 'a' }] });
     assert.throws(() => validateDecisionsFile({ decisions: [{ id: 'impl-1', text: 'a' }, { id: 'impl-1', text: 'b' }] }), SchemaError);
   });
