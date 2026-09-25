@@ -38,6 +38,11 @@ export interface JournalView {
   latestIntent(op: OpId): IntentRecord;
   /** The done record that closed an op's latest intent, or null while open or aborted. */
   doneOf(op: OpId): DoneRecord | null;
+  /**
+   * Whether a `meter` or `usage-unavailable` fact exists for `inv`. Recovery asks before recording one,
+   * since the fact precedes the spawn's done and a crash between them leaves it already written.
+   */
+  usageRecorded(inv: InvocationId): boolean;
 }
 
 export interface Journal {

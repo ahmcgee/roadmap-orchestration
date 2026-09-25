@@ -41,6 +41,7 @@ export const JOURNAL_APPEND = 'journal.append';
 export const JOURNAL_TAIL = 'journal.tail-repair';
 export const PROC_SPAWN = 'proc.spawn backend/lane/teardown/probe';
 export const RUNNER_DEATH = 'runner death (executor alive)';
+export const PROC_KILL = 'proc.kill';
 
 /** The runner's crash points, in lifecycle order: shared by the proc.spawn and runner-death rows. */
 const RUNNER_LABELS = [
@@ -95,27 +96,78 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // B3 internal points: the runner's own (it SIGKILLs itself) and the executor's around starting it (the
-    // launcher fixture stands in for the executor). The reconcilers that recover them are step 3c's.
+    // launcher fixture stands in for the executor in test/runner.test.ts). B2, B4 and B5 crash the executor
+    // (test/fixtures/invoke-child.ts) around `invoke` and recover with the proc reconcilers; the scenario is
+    // one backend call through the fake.
     row: PROC_SPAWN,
-    test: 'test/runner.test.ts',
+    test: 'test/runner.test.ts (B3), test/recover-spawn.test.ts (B2, B4, B5)',
     cells: {
-      ...pending('3c'),
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['spawn.after-intent'],
+        recovery: 'no launch.json, no runner: lost{treeEffects: false} reconciled, usage-unavailable{no-result}; the caller retries once as ordinal 2 (new inv, same deadlineAt), which completes',
+      },
       B3: {
         status: 'crash',
         labels: [...RUNNER_LABELS, 'launch.after-launch-json', 'launch.after-spawn'],
         recovery: 'runner alive: adopt; exit.json without result.json: re-run the adapter; runner dead with live members: orphan-kill{recovery} and classify lost',
       },
+      B4: {
+        status: 'crash',
+        labels: ['spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage'],
+        recovery: 'exit.json without result.json: adapter re-run, redone; result.json present: reconciled; no second invocation, exactly one usage fact',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['spawn.after-done'],
+        recovery: 'nothing is open, recovery does nothing: one done, one usage fact, no second invocation',
+      },
     },
   },
   {
+    // B3 is driven twice: by the launcher in test/runner.test.ts (what the runner leaves behind), and through
+    // `invoke` in test/recover-spawn.test.ts (the live executor settles it, then retries once).
     row: RUNNER_DEATH,
-    test: 'test/runner.test.ts',
+    test: 'test/runner.test.ts, test/recover-spawn.test.ts (B3)',
     cells: {
-      ...pending('3c'),
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no runner exists before the act; the executor crash at that point is proc.spawn B2' },
       B3: {
         status: 'crash',
         labels: RUNNER_LABELS,
         recovery: 'orphan path: kill any live members{recovery}, classify lost (or re-run the adapter when exit.json exists); retry is a new inv',
+      },
+      B4: { status: 'excluded', why: 'act complete means the runner wrote exit.json and exited; its death after exit.json is runner.after-exit-json (B3)' },
+      B5: { status: 'excluded', why: 'after done the runner has long exited; nothing of it is left to die' },
+    },
+  },
+  {
+    // The scenario (invoke-child `pause`): a hanging backend call, then proc.kill{pause} of it; the executor
+    // crashes inside the kill. Recovery runs the kill reconciler, then the spawn's.
+    row: PROC_KILL,
+    test: 'test/invoke.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['kill.after-intent'],
+        recovery: 'runner alive, no cancel.json: the kill is re-run (cancel, await, kill) and done redone; the spawn is redone from exit.json as a process-fault',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['kill.after-cancel'],
+        recovery: 'cancel.json written: the kill is done reconciled (runner already gone) or redone (still stopping); the spawn is redone as a process-fault',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['kill.after-quiesced'],
+        recovery: 'members empty: the kill is done reconciled; the spawn is closed as a process-fault, live (before the crash) or redone',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['kill.after-done'],
+        recovery: 'the kill is closed; the spawn is closed as a process-fault, live (before the crash) or redone',
       },
     },
   },
