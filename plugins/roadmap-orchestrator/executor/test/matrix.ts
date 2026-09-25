@@ -39,6 +39,7 @@ const EXCLUDED_B1 = 'the intent is one journal append; journal.append B1 covers 
 
 export const JOURNAL_APPEND = 'journal.append';
 export const JOURNAL_TAIL = 'journal.tail-repair';
+export const SPEC_PATCH = 'spec.patch';
 
 export const MATRIX: readonly Row[] = [
   {
@@ -89,7 +90,27 @@ export const MATRIX: readonly Row[] = [
   { row: 'mergein.prepare', test: 'pending', cells: pending('8b') },
   { row: 'candidate.merge, integration.ff, snapshot.publish', test: 'pending', cells: pending('8b') },
   { row: 'resource.transition + residue', test: 'pending', cells: pending('10') },
-  { row: 'spec.patch', test: 'pending', cells: pending('9') },
+  {
+    // The scenario (test/fixtures/spec-patch-child.ts) prepares, journals, acts, verifies and closes one
+    // spec.patch; recovery runs the reconciler on the open intent and applies its disposition.
+    row: SPEC_PATCH,
+    test: 'test/spec.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['spec.patch.before-write'],
+        recovery: 'the file hashes to old: redo (act, verify, done redone); the file then hashes to new',
+      },
+      B3: { status: 'excluded', why: 'the write is a durable temp-and-rename: inside act the file is old (B2) or new (B4), never between' },
+      B4: {
+        status: 'crash',
+        labels: ['spec.patch.after-write'],
+        recovery: 'the file hashes to new: done patched, reconciled, with no second write',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append); the re-check after a redirect is the pipeline\'s stage (step 11)' },
+    },
+  },
   { row: 'needsuser.raise, command.apply', test: 'pending', cells: pending('13') },
   { row: 'supervisor/host', test: 'pending', cells: pending('7, 14a') },
   { row: 'adversarial', test: 'pending', cells: pending('14c') },
