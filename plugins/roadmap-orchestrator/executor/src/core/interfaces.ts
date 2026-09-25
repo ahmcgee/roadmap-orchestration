@@ -6,10 +6,13 @@ import type {
   AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   RecoveredBy,
 } from './events.ts';
-import type { ArcId, InvocationId, OpId, OpKey } from './ids.ts';
+import type { ArcId, InvocationId, OpId, OpKey, UnitId } from './ids.ts';
 import type {
-  ChildEnd, ContainmentMode, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap, RunnerFileName,
+  ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
+  RunnerFileName,
 } from './records.ts';
+import type { UnitState } from './state.ts';
+import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -46,6 +49,15 @@ export interface JournalView {
    * since the fact precedes the spawn's done and a crash between them leaves it already written.
    */
   usageRecorded(inv: InvocationId): boolean;
+  /**
+   * A unit's state as the fold derives it from its stage-outcome facts, stage-parented intents and dispatch
+   * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
+   */
+  unit(unit: UnitId): UnitState;
+  /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
+  dispatchOf(unit: UnitId): DispatchRecord | null;
+  /** Backends parked arc-wide by a `backend-park` fact, ascending. */
+  parkedBackends(): readonly Backend[];
 }
 
 export interface Journal {

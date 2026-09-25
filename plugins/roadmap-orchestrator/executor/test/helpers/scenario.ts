@@ -51,7 +51,13 @@ export type WorldAct =
   /** A detached (setsid) child that outlives the fake for `lifeMs`; its pid goes to `pidFile`. */
   | Readonly<{ type: 'forkSetsid'; env: 'keepEnv' | 'envClear'; lifeMs: number; pidFile: string }>
   /** Park at a file barrier in the scenario's directory (test/helpers/barrier.ts). */
-  | Readonly<{ type: 'barrier'; name: string; timeoutMs: number }>;
+  | Readonly<{ type: 'barrier'; name: string; timeoutMs: number }>
+  /**
+   * Read a file the prompt points at: `pattern` (a regex source with one capture group) finds a directory
+   * in stdin, and `<dir>/<file>` must contain `contains`; otherwise the call fails (exit 99). How a fake
+   * implementer proves it read the evidence a fix round named, whose path is known only at run time.
+   */
+  | Readonly<{ type: 'readFromPrompt'; pattern: string; file: string; contains: string }>;
 
 /** Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable. */
 export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }>;

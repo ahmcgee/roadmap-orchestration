@@ -220,15 +220,15 @@ export type MeterSubject = Readonly<{ unit: UnitId; attempt: number }> | null;
 
 /** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
 export const STAGE_OUTCOME_KINDS = {
-  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'refusal', 'malformed', 'process-fault'],
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'occupied'],
+  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted'],
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'occupied', 'cleanup-failed', 'interrupted'],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
   teardown: ['released', 'cleanup-failed'],
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied'],
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault'],
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'occupied'],
+  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed'],
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted'],
+  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'occupied', 'interrupted'],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
@@ -239,7 +239,7 @@ export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly Outco
 /** Judgment stages run a fresh judgment session; a refusal or escalation there routes up the role's seats. */
 export const JUDGMENT_STAGES = ['plan-check', 'gate'] as const satisfies readonly OutcomeStage[];
 export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
-/** Stages with an uncharged retry (malformed report, blocked or interrupted lane). */
+/** Stages with an uncharged retry (malformed report, blocked lane). */
 export const RETRY_STAGES = ['plan-check', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
 export type RetryStage = (typeof RETRY_STAGES)[number];
 
@@ -248,10 +248,12 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
  * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
  * `candidate-red`: a bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's high seat. `trigger`: a risk trigger (contract path touched,
- * scope growth) that puts the next judgment dispatch on the high seat. `park`, `stop`, `retire`: the unit
+ * scope growth) that puts the next judgment dispatch on the high seat. `hold`: the stage was interrupted
+ * (a pause or stop cancel, or its backend parked arc-wide on a usage limit); the unit stays at the stage,
+ * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'retry', 'route-up', 'trigger', 'park', 'stop', 'retire'] as const;
+export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
@@ -274,8 +276,18 @@ export type Fact =
   | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
+  /**
+   * A backend reported a usage-limit or capacity error on a failed invocation: it is parked arc-wide until
+   * the architect resumes it (`resume --backend`, which re-runs its smoke first). `inv` is the invocation
+   * whose result carried the error.
+   */
+  | Readonly<{ kind: 'backend-park'; backend: Backend; class: BackendParkClass; inv: InvocationId }>
   | StageOutcomeFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
+
+/** The backend error classes that park a backend arc-wide (lead ruling, 11b). */
+export const BACKEND_PARK_CLASSES = ['usage-limit', 'capacity'] as const;
+export type BackendParkClass = (typeof BACKEND_PARK_CLASSES)[number];
 
 export type LogRecord = IntentRecord | DoneRecord | AbortRecord | FactRecord;
 
@@ -552,6 +564,9 @@ export const fact: Read<Fact> = tagged('kind', {
     unit: f.get('unit', meterSubject), reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
+  'backend-park': object((f): Fact => ({
+    kind: f.get('kind', literal('backend-park')), backend: f.get('backend', backend), class: f.get('class', oneOf(BACKEND_PARK_CLASSES)), inv: f.get('inv', invR),
+  })),
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {
@@ -566,6 +581,9 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
+    // An interruption holds the unit, and nothing else does; a hold never charges.
+    if ((out.outcome === 'interrupted') !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome', out.class);
+    if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return out;
   }),
 });

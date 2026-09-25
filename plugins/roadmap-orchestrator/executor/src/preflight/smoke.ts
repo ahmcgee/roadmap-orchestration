@@ -89,7 +89,7 @@ export type SmokeSubject = Extract<SpawnSubject, { purpose: 'smoke' }>;
 /** A backend call before its invocation dir exists: the builder fills in the paths that live there. */
 export type CallRequest =
   | Readonly<{ kind: 'claude-judgment'; role: JudgmentRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
-  | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession }>
+  | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'codex-build'; triple: CodexTriple; session: CodexSession }>;
 
 export type BackendInvocation = Readonly<{
@@ -272,7 +272,7 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   if (seat === undefined) return null;
   const triple = resolved.table[seat.role][seat.tier];
   if (triple.backend === 'claude') {
-    if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession() } };
+    if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
   }
   if (seat.role !== 'build') throw new Error(`seat ${seatName(seat)} resolves to Codex judgment, which the unsupported-routing row refuses before the smoke`);

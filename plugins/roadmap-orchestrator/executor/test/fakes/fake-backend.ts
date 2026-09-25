@@ -188,6 +188,22 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'barrier':
       waitAtBarrier(scenarioDir, act.name, act.timeoutMs);
       return;
+    case 'readFromPrompt': {
+      const dir = new RegExp(act.pattern).exec(call.stdin)?.[1];
+      const fail = (why: string): never => {
+        process.stderr.write(`fake ${call.as}: readFromPrompt ${act.pattern}: ${why}\n`);
+        process.exit(99);
+      };
+      if (dir === undefined) return fail('no match in stdin');
+      let text: string;
+      try {
+        text = readFileSync(join(dir, act.file), 'utf8');
+      } catch (error) {
+        return fail(`cannot read ${join(dir, act.file)}: ${(error as Error).message}`);
+      }
+      if (!text.includes(act.contains)) fail(`${join(dir, act.file)} lacks ${JSON.stringify(act.contains)}`);
+      return;
+    }
   }
 }
 

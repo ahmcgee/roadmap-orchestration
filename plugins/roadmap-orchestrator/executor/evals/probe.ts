@@ -142,13 +142,13 @@ async function main(): Promise<void> {
   const built = await backend(ctx, 'claude.build.fresh', {
     check: 'claude-build-fresh', routingRev: rev, system: SYSTEM, schema: okSchema, cwd: buildDir,
     rendered: 'Create the file probe.txt in the current directory containing the word probe, then reply with {"ok": true}.',
-    request: { kind: 'claude-build', triple: OPUS, session },
+    request: { kind: 'claude-build', triple: OPUS, session, evidenceDirs: [] },
   }, isOk);
   if (built.result.outcome.kind === 'success' && !existsSync(join(buildDir, 'probe.txt'))) report(false, 'claude.build.write', `no ${buildDir}/probe.txt`);
   await backend(ctx, 'claude.build.resume', {
     check: 'claude-build-resume', routingRev: rev, system: SYSTEM, schema: strict({ file: { type: 'string' } }), cwd: buildDir,
     rendered: 'Which file did you create in your previous turn? Reply with {"file": "<its name>"}.',
-    request: { kind: 'claude-build', triple: OPUS, session: { ...session, mode: 'resume' } },
+    request: { kind: 'claude-build', triple: OPUS, session: { ...session, mode: 'resume' }, evidenceDirs: [] },
   }, (v) => JSON.stringify(v) === '{"file":"probe.txt"}');
 
   // Fable id pin: the id resolves and answers.

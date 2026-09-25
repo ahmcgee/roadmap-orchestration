@@ -145,6 +145,7 @@ in the line belongs to `arc`.
 | `usage-unavailable` | `inv, role, routingRev, unit: {unit, attempt}\|null, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
+| `backend-park` | `backend, class: usage-limit\|capacity, inv`: a failed invocation whose backend reported such an error parks that backend arc-wide until `resume --backend` (lead ruling, 11b) |
 
 **`stage-outcome`** records one stage attempt's outcome as the transition table
 (`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
@@ -152,12 +153,15 @@ in the line belongs to `arc`.
 `class` is what the decision did to the unit: `advance` (on to another stage) \| `redirect` \| `revise` \|
 `candidate-red` (a bounded round within its bound) \| `retry` (the stage's one uncharged retry; only at
 `plan-check, build, lanes, gate`) \| `route-up` (re-dispatched on the role's high seat; only at `plan-check,
-gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the high seat) \| `park` \| `stop` \|
-`retire`.
+gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the high seat) \| `hold` (exactly the
+`interrupted` outcome, never chargeable: a pause or stop cancel, or the stage's backend parked on a usage
+limit; the unit waits at its stage and a resume re-runs it as a new attempt; lead ruling, 11b) \| `park` \|
+`stop` \| `retire`. The attempt number of a stage start is the unit's `attempts` count plus one (numbered
+across the unit's stages).
 
 The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),
 the same function the transition table uses, so a decision's counters are the log's:
-`{unit, stage, risk, status: active|park-pending|stop-pending|retired, counters: {attempts,
+`{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
 chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
 routedUp: JudgmentStage[], promotion}`. `attempts` counts distinct `(stage, attempt)` pairs named by a
 stage-parented intent or a stage-outcome fact. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
@@ -348,7 +352,7 @@ closed list in `records.ts`; add members by request.
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv)` | step 2 (`opsOf`: 10) |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, parkedBackends()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |

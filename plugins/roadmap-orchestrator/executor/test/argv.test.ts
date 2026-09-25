@@ -57,8 +57,13 @@ describe('argv', () => {
     const id = implementerSessionId(value(fresh, '--session-id'));
     const schemaText = value(fresh, '--json-schema');
     const system = ['--append-system-prompt', SYSTEM];
-    assert.deepEqual(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system: SYSTEM, session: { backend: 'claude', mode: 'fresh', id } }), [...fresh, ...system]);
-    assert.deepEqual(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system: SYSTEM, session: { backend: 'claude', mode: 'resume', id } }), [...resumed, ...system]);
+    assert.deepEqual(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system: SYSTEM, session: { backend: 'claude', mode: 'fresh', id }, evidenceDirs: [] }), [...fresh, ...system]);
+    assert.deepEqual(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system: SYSTEM, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] }), [...resumed, ...system]);
+    const dirs = [absPath('/run/work/u1'), absPath('/run/evidence/u1/lane')];
+    assert.deepEqual(
+      backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system: SYSTEM, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs }),
+      [...resumed, ...system, '--add-dir', dirs[0], '--add-dir', dirs[1]],
+    );
     assert.equal(exitCode('claude-implementer-resume'), '0');
   });
 });
