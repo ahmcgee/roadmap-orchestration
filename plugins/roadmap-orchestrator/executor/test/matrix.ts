@@ -39,6 +39,17 @@ const EXCLUDED_B1 = 'the intent is one journal append; journal.append B1 covers 
 
 export const JOURNAL_APPEND = 'journal.append';
 export const JOURNAL_TAIL = 'journal.tail-repair';
+export const PROC_SPAWN = 'proc.spawn backend/lane/teardown/probe';
+export const RUNNER_DEATH = 'runner death (executor alive)';
+
+/** The runner's crash points, in lifecycle order: shared by the proc.spawn and runner-death rows. */
+const RUNNER_LABELS = [
+  'runner.before-runner-json',
+  'runner.after-runner-json',
+  'runner.after-child-spawn',
+  'runner.child-exited-before-exit-json',
+  'runner.after-exit-json',
+] as const;
 
 export const MATRIX: readonly Row[] = [
   {
@@ -82,8 +93,32 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: 'the fact is an ordinary append, covered by journal.append' },
     },
   },
-  { row: 'proc.spawn backend/lane/teardown/probe', test: 'pending', cells: pending('3c') },
-  { row: 'runner death (executor alive)', test: 'pending', cells: pending('3c') },
+  {
+    // B3 internal points: the runner's own (it SIGKILLs itself) and the executor's around starting it (the
+    // launcher fixture stands in for the executor). The reconcilers that recover them are step 3c's.
+    row: PROC_SPAWN,
+    test: 'test/runner.test.ts',
+    cells: {
+      ...pending('3c'),
+      B3: {
+        status: 'crash',
+        labels: [...RUNNER_LABELS, 'launch.after-launch-json', 'launch.after-spawn'],
+        recovery: 'runner alive: adopt; exit.json without result.json: re-run the adapter; runner dead with live members: orphan-kill{recovery} and classify lost',
+      },
+    },
+  },
+  {
+    row: RUNNER_DEATH,
+    test: 'test/runner.test.ts',
+    cells: {
+      ...pending('3c'),
+      B3: {
+        status: 'crash',
+        labels: RUNNER_LABELS,
+        recovery: 'orphan path: kill any live members{recovery}, classify lost (or re-run the adapter when exit.json exists); retry is a new inv',
+      },
+    },
+  },
   { row: 'evidence.snapshot, worktree.create/remove', test: 'pending', cells: pending('8a') },
   { row: 'salvage.commit', test: 'pending', cells: pending('8a') },
   { row: 'mergein.prepare', test: 'pending', cells: pending('8b') },

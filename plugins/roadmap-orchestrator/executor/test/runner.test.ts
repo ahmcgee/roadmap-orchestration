@@ -19,6 +19,7 @@ import {
 } from './helpers/invocation.ts';
 import { fixture, runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
+import { PROC_SPAWN, RUNNER_DEATH, crashCells } from './matrix.ts';
 
 const T = { timeout: 30_000 };
 
@@ -193,10 +194,11 @@ test('runner.backstop-kills-hung-runner', T, async () => {
   assert.equal(sessionContainment.empty(ref), true);
 });
 
-// B3 internal points of proc.spawn. The launcher stands in for the executor; its ROADMAP_TEST_CRASH rides
-// launch.json into the runner, which SIGKILLs itself at the label.
+// B3 internal points of proc.spawn and runner death, read from the crash matrix (test/matrix.ts) so the table
+// and these tests cannot drift. The launcher stands in for the executor; its ROADMAP_TEST_CRASH rides
+// launch.json into the runner, which SIGKILLs itself at a runner.* label.
 
-type CrashCase = Readonly<{ label: string; argv: readonly string[]; check: (inv: Invocation, handle: RunnerHandle) => Promise<void> }>;
+type CrashCase = Readonly<{ argv: readonly string[]; check: (inv: Invocation, handle: RunnerHandle) => Promise<void> }>;
 
 async function crashRun(label: string, argv: readonly string[]): Promise<{ inv: Invocation; handle: RunnerHandle; trigger: string }> {
   const inv = newInvocation();
@@ -215,17 +217,15 @@ async function crashRun(label: string, argv: readonly string[]): Promise<{ inv: 
   return { inv, handle: { files, launch, runner }, trigger };
 }
 
-const RUNNER_CRASHES: readonly CrashCase[] = [
-  {
-    label: 'runner.before-runner-json',
+const RUNNER_CRASHES: Readonly<Record<string, CrashCase>> = {
+  'runner.before-runner-json': {
     argv: workload('workload-hang.ts'),
     check: async (inv, handle) => {
       assert.equal(handle.files.read('runner.json'), null);
       assert.deepEqual(opMembers(inv.op), []);
     },
   },
-  {
-    label: 'runner.after-runner-json',
+  'runner.after-runner-json': {
     argv: workload('workload-hang.ts'),
     check: async (inv, handle) => {
       assert.equal(handle.files.read('runner.json')?.child, null);
@@ -233,8 +233,7 @@ const RUNNER_CRASHES: readonly CrashCase[] = [
       assert.deepEqual(opMembers(inv.op), []);
     },
   },
-  {
-    label: 'runner.after-child-spawn',
+  'runner.after-child-spawn': {
     argv: workload('workload-hang.ts'),
     check: async (inv, handle) => {
       // The child exists but runner.json does not name it yet: ROADMAP_INV still finds it.
@@ -245,8 +244,7 @@ const RUNNER_CRASHES: readonly CrashCase[] = [
       assert.equal(sessionContainment.empty(ref), true);
     },
   },
-  {
-    label: 'runner.child-exited-before-exit-json',
+  'runner.child-exited-before-exit-json': {
     argv: workload('workload-exit.ts', '0'),
     check: async (inv, handle) => {
       const runner = handle.files.read('runner.json');
@@ -255,61 +253,76 @@ const RUNNER_CRASHES: readonly CrashCase[] = [
       assert.deepEqual(opMembers(inv.op), []);
     },
   },
-  {
-    label: 'runner.after-exit-json',
+  'runner.after-exit-json': {
     argv: workload('workload-exit.ts', '0'),
     check: async (_inv, handle) => {
       assert.equal(handle.files.read('exit.json')?.cause, 'exited');
     },
   },
-];
+};
 
-for (const c of RUNNER_CRASHES) {
-  test(`runner.crash.${c.label}`, T, async () => {
-    const { inv, handle, trigger } = await crashRun(c.label, c.argv);
+const runnerCells = crashCells(RUNNER_DEATH);
+test('matrix: runner death covers exactly the runner crash cases', () => {
+  assert.deepEqual(runnerCells.map((c) => c.label).sort(), Object.keys(RUNNER_CRASHES).sort());
+});
+
+for (const { label } of runnerCells) {
+  test(`runner.crash.${label}`, T, async () => {
+    const c = RUNNER_CRASHES[label]!;
+    const { inv, handle, trigger } = await crashRun(label, c.argv);
     const end = await awaitRunner(handle);
-    assert.equal(end.kind, c.label === 'runner.after-exit-json' ? 'exited' : 'died');
+    assert.equal(end.kind, label === 'runner.after-exit-json' ? 'exited' : 'died');
     assertFired(trigger);
     assert.ok(handle.files.read('launch.json') !== null);
-    if (c.label !== 'runner.after-exit-json') assert.equal(handle.files.read('exit.json'), null);
+    if (label !== 'runner.after-exit-json') assert.equal(handle.files.read('exit.json'), null);
     assert.equal(handle.files.read('result.json'), null);
     await c.check(inv, handle);
   });
 }
 
-test('runner.crash.launch.after-launch-json', T, async () => {
-  const inv = newInvocation();
-  const trigger = writeTrigger(tmpDir('trigger'), { label: 'launch.after-launch-json', occurrence: 1 });
-  const base = launchBase(inv, { argv: workload('workload-exit.ts', '0') });
-  const run = await runFixture('runner-launcher.ts', [inv.invDir, JSON.stringify(base), 'exit'], {
-    env: { ...process.env, ROADMAP_TEST_CRASH: trigger },
-    timeoutMs: 10_000,
-  });
-  assert.equal(run.signal, 'SIGKILL', run.stderr);
-  assertFired(trigger);
-  const files = runnerFiles(inv.invDir, inv.inv);
-  assert.ok(files.read('launch.json') !== null);
-  assert.equal(existsSync(join(inv.invDir, 'runner.log')), false, 'no runner was started');
-  assert.equal(files.read('runner.json'), null);
-  assert.deepEqual(opMembers(inv.op), []);
+// The executor-side points of proc.spawn: the launcher SIGKILLs itself around starting the runner.
+const LAUNCH_CRASHES: Readonly<Record<string, () => Promise<void>>> = {
+  'launch.after-launch-json': async () => {
+    const inv = newInvocation();
+    const trigger = writeTrigger(tmpDir('trigger'), { label: 'launch.after-launch-json', occurrence: 1 });
+    const base = launchBase(inv, { argv: workload('workload-exit.ts', '0') });
+    const run = await runFixture('runner-launcher.ts', [inv.invDir, JSON.stringify(base), 'exit'], {
+      env: { ...process.env, ROADMAP_TEST_CRASH: trigger },
+      timeoutMs: 10_000,
+    });
+    assert.equal(run.signal, 'SIGKILL', run.stderr);
+    assertFired(trigger);
+    const files = runnerFiles(inv.invDir, inv.inv);
+    assert.ok(files.read('launch.json') !== null);
+    assert.equal(existsSync(join(inv.invDir, 'runner.log')), false, 'no runner was started');
+    assert.equal(files.read('runner.json'), null);
+    assert.deepEqual(opMembers(inv.op), []);
+  },
+  'launch.after-spawn': async () => {
+    const inv = newInvocation();
+    const trigger = writeTrigger(tmpDir('trigger'), { label: 'launch.after-spawn', occurrence: 1 });
+    const base = launchBase(inv, { argv: workload('workload-exit.ts', '0') });
+    const run = await runFixture('runner-launcher.ts', [inv.invDir, JSON.stringify(base), 'exit'], {
+      env: { ...process.env, ROADMAP_TEST_CRASH: trigger },
+      timeoutMs: 10_000,
+    });
+    assert.equal(run.signal, 'SIGKILL', run.stderr);
+    assertFired(trigger);
+    // The runner outlives the executor that started it and completes the invocation.
+    const files = runnerFiles(inv.invDir, inv.inv);
+    const exit = await waitFor('exit.json', 10_000, () => files.read('exit.json'));
+    assert.equal(exit.cause, 'exited');
+    const runner = files.read('runner.json');
+    assert.ok(runner !== null);
+    await waitFor('the runner to exit', 10_000, () => (isAlive(runner.runner) ? null : true));
+    assert.deepEqual(opMembers(inv.op), []);
+  },
+};
+
+const procSpawnCells = crashCells(PROC_SPAWN);
+const launchCells = procSpawnCells.filter((c) => !(c.label in RUNNER_CRASHES));
+test('matrix: proc.spawn is the runner crash cases plus the launch crash cases', () => {
+  assert.deepEqual(procSpawnCells.map((c) => c.label).sort(), [...Object.keys(RUNNER_CRASHES), ...Object.keys(LAUNCH_CRASHES)].sort());
 });
 
-test('runner.crash.launch.after-spawn', T, async () => {
-  const inv = newInvocation();
-  const trigger = writeTrigger(tmpDir('trigger'), { label: 'launch.after-spawn', occurrence: 1 });
-  const base = launchBase(inv, { argv: workload('workload-exit.ts', '0') });
-  const run = await runFixture('runner-launcher.ts', [inv.invDir, JSON.stringify(base), 'exit'], {
-    env: { ...process.env, ROADMAP_TEST_CRASH: trigger },
-    timeoutMs: 10_000,
-  });
-  assert.equal(run.signal, 'SIGKILL', run.stderr);
-  assertFired(trigger);
-  // The runner outlives the executor that started it and completes the invocation.
-  const files = runnerFiles(inv.invDir, inv.inv);
-  const exit = await waitFor('exit.json', 10_000, () => files.read('exit.json'));
-  assert.equal(exit.cause, 'exited');
-  const runner = files.read('runner.json');
-  assert.ok(runner !== null);
-  await waitFor('the runner to exit', 10_000, () => (isAlive(runner.runner) ? null : true));
-  assert.deepEqual(opMembers(inv.op), []);
-});
+for (const { label } of launchCells) test(`runner.crash.${label}`, T, LAUNCH_CRASHES[label]!);

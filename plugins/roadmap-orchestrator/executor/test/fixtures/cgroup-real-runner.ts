@@ -12,5 +12,7 @@ if (root === undefined || rootCgroup === undefined || invDir === undefined || la
   throw new Error('usage: cgroup-real-runner.ts <root> <rootCgroup> <invDir> <launch.json>');
 }
 const launch = launchFile(JSON.parse(readFileSync(launchPath, 'utf8')), 'launch.json');
-const child = await cgroupContainment(absPath(root), rootCgroup).launch(launch, absPath(invDir));
-process.stdout.write(`${JSON.stringify(child)}\n`);
+const spawned = await cgroupContainment(absPath(root), rootCgroup).launch(launch, absPath(invDir));
+if (spawned.kind !== 'spawned') throw new Error(`workload spawn failed: ${spawned.error}`);
+process.stdout.write(`${JSON.stringify(spawned.child)}\n`);
+process.exit(0); // the spawned child handle would otherwise hold this process until the workload exits

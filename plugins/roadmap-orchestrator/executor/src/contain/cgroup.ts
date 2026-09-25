@@ -3,16 +3,20 @@
 // controller is never a workload member. The workload enters `work/` through a fail-closed shell shim, and a
 // kill is freeze → TERM → thaw → grace → `cgroup.kill` → `populated 0` → rmdir.
 //
+// The workload is spawned by session mode's `spawnWorkload` (the one way to spawn a workload), with its
+// argv wrapped in the shim; process identities come from proc.ts.
+//
 // Interface files are read and written through the `fs` default object (not named imports) and signals go
 // through `process.kill`: the protocol test (test/cgroup.test.ts) stands in for the kernel by spying on those
 // calls under a fake root directory, since a plain directory cannot emulate cgroupfs semantics.
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { join } from 'node:path';
-import type { Containment, WorkloadRef } from '../core/interfaces.ts';
+import type { Containment, SpawnedWorkload, WorkloadRef } from '../core/interfaces.ts';
 import { type InvocationId, invocationDirName, parseInvocationId, parseOpId } from '../core/ids.ts';
 import type { KillReason, LaunchFile, ProcIdentity } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
+import { statOf } from './proc.ts';
+import { spawnWorkload } from './session.ts';
 
 /**
  * cgroup mode is not selectable in M1: detect.ts consults this and never picks cgroup while it is true.
@@ -74,46 +78,21 @@ export function cgroupContainment(root: AbsPath, rootCgroup: string): Containmen
 
 // ---------------------------------------------------------------------------------------------------
 
-async function launchInto(l: Leaf, launch: LaunchFile, invDir: AbsPath): Promise<ProcIdentity & Readonly<{ sid: number }>> {
+function launchInto(l: Leaf, launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWorkload> {
   fs.mkdirSync(join(l.leaf, '..'), { recursive: true });
   fs.mkdirSync(l.leaf); // EEXIST is loud: an invocation's leaf is created exactly once.
   fs.mkdirSync(l.runner);
   fs.mkdirSync(l.work);
   writeInterface(l.runner, 'cgroup.procs', `${process.pid}\n`);
-
-  const stdin = launch.stdinPath === null ? 'ignore' : fs.openSync(launch.stdinPath, 'r');
-  const stdout = fs.openSync(join(invDir, 'stdout'), 'wx');
-  const stderr = fs.openSync(join(invDir, 'stderr'), 'wx');
-  const [cmd, ...args] = shimArgv(l, launch.argv) as [string, ...string[]];
-  const child = spawn(cmd, args, {
-    cwd: launch.cwd,
-    env: { ...launch.env, ROADMAP_OP: launch.op, ROADMAP_INV: launch.inv, ROADMAP_ROLE: 'workload' },
-    stdio: [stdin, stdout, stderr],
-    detached: true, // setsid: the workload leads its own session, so sid = pid
-  });
-  try {
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', resolve);
-      child.once('error', reject);
-    });
-  } finally {
-    if (typeof stdin === 'number') fs.closeSync(stdin);
-    fs.closeSync(stdout);
-    fs.closeSync(stderr);
-  }
-  const pid = child.pid;
-  if (pid === undefined) throw new CgroupError(l.work, 'spawned workload has no pid');
-  const start = startOf(pid);
-  if (start === null) throw new CgroupError(l.work, `workload ${pid} vanished before its start time was read`);
-  return { pid, start, sid: pid };
+  return spawnWorkload(shimArgv(l, launch.argv), launch, invDir);
 }
 
 function members(l: Leaf): readonly ProcIdentity[] {
   if (!fs.existsSync(l.work)) return [];
   const out: ProcIdentity[] = [];
   for (const pid of procs(l.work)) {
-    const start = startOf(pid);
-    if (start !== null) out.push({ pid, start }); // null: exited between the two reads, so not a member
+    const stat = statOf(pid);
+    if (stat !== null) out.push({ pid, start: stat.start }); // null: exited between the two reads, so not a member
   }
   return out;
 }
@@ -198,19 +177,4 @@ function rmdir(dir: string): void {
   } catch (error) {
     throw new CgroupError(dir, 'rmdir refused', { cause: error });
   }
-}
-
-/** Start time (clock ticks since boot, /proc/<pid>/stat field 22), or null once the process is gone. */
-function startOf(pid: number): number | null {
-  let stat: string;
-  try {
-    stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-  // Fields after the parenthesised comm, which may itself contain spaces or parentheses.
-  const start = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
-  if (!Number.isSafeInteger(start)) throw new Error(`/proc/${pid}/stat: unparsable start time in ${JSON.stringify(stat)}`);
-  return start;
 }

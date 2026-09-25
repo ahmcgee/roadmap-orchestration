@@ -92,13 +92,17 @@ export async function killSet(find: () => readonly ProcIdentity[], graceMs: numb
   }
 }
 
-/** Spawn the workload as a session leader with stdio on files in the invocation dir (never pipes). */
-function launchWorkload(launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWorkload> {
+/**
+ * The one way to spawn a workload: `argv` as a session leader, with stdio on files in the invocation dir (never
+ * pipes) and the workload env of `launch`. `argv` is `launch.argv` in session mode; cgroup mode wraps it in its
+ * entry shim.
+ */
+export function spawnWorkload(argv: readonly string[], launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWorkload> {
   const stdin = openSync(launch.stdinPath ?? '/dev/null', 'r');
   const stdout = openSync(join(invDir, STDOUT_FILE), 'wx');
   const stderr = openSync(join(invDir, STDERR_FILE), 'wx');
-  const [cmd, ...args] = launch.argv;
-  if (cmd === undefined) throw new Error('launch.argv is empty'); // unreachable: the validator requires non-empty
+  const [cmd, ...args] = argv;
+  if (cmd === undefined) throw new Error('workload argv is empty'); // unreachable: the validator requires non-empty
   const child = spawn(cmd, args, {
     cwd: launch.cwd,
     env: workloadEnv(launch),
@@ -127,7 +131,7 @@ function launchWorkload(launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWor
 
 export const sessionContainment: Containment = {
   mode: 'session',
-  launch: launchWorkload,
+  launch: (launch: LaunchFile, invDir: AbsPath) => spawnWorkload(launch.argv, launch, invDir),
   members,
   // The reason only matters to cgroup mode's bookkeeping; session mode kills the same way for every reason.
   kill: (workload: WorkloadRef, _reason: KillReason, graceMs: number) => killSet(() => members(workload), graceMs),

@@ -230,6 +230,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery, at` |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
+| `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
 `command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes only

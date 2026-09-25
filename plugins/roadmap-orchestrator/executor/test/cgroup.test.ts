@@ -151,7 +151,10 @@ describe('contain.cgroup-protocol', () => {
     const invDir = tempDir(t, 'cgroup-inv-');
     const marker = join(invDir, 'ran');
     const fake = fakeKernel(t, root);
-    const child = await cgroupContainment(absPath(root), ROOT_CGROUP).launch(launchFor(invDir, ['touch', marker]), absPath(invDir));
+    const spawned = await cgroupContainment(absPath(root), ROOT_CGROUP).launch(launchFor(invDir, ['touch', marker]), absPath(invDir));
+    assert.equal(spawned.kind, 'spawned', JSON.stringify(spawned));
+    if (spawned.kind !== 'spawned') throw new Error('unreachable');
+    const { child } = spawned;
     assert.deepEqual(fake.log, [
       'mkdir roadmap/arc-1', `mkdir ${REL}`, `mkdir ${REL}/runner`, `mkdir ${REL}/work`,
       `write ${REL}/runner/cgroup.procs ${process.pid}`,
@@ -165,6 +168,7 @@ describe('contain.cgroup-protocol', () => {
     }
     assert.equal(fs.existsSync(marker), false);
     assert.equal(fs.readFileSync(join(root, REL, 'work/cgroup.procs'), 'utf8'), `${child.pid}\n`);
+    assert.deepEqual(await spawned.ended, { type: 'exited', code: 1 }); // the shim's failed membership check
   });
 
   it('kill: freeze, TERM each member, thaw, cgroup.kill, populated 0, rmdir work, runner, leaf', async (t) => {

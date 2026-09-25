@@ -235,7 +235,7 @@ export const exitFile: Read<ExitFile> = object((f) => {
 export type TokenUsage = Readonly<{
   inputTokens: number;
   outputTokens: number;
-  /** null: the backend does not report this figure (Codex reports no cache writes). */
+  /** null: the backend did not report this figure (both CLIs report cache writes as of the captured fixtures; older Codex output omitted it). */
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
 }>;
