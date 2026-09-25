@@ -7,7 +7,7 @@ import type {
 } from './events.ts';
 import type { ArcId, InvocationId, OpId, OpKey, ResourceName } from './ids.ts';
 import type {
-  ContainmentMode, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap, RunnerFileName,
+  ChildEnd, ContainmentMode, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap, RunnerFileName,
 } from './records.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -59,10 +59,22 @@ export interface Journal {
 /** A workload is found by its invocation; the child identity is null until the runner has spawned it. */
 export type WorkloadRef = Readonly<{ inv: InvocationId; child: (ProcIdentity & Readonly<{ sid: number }>) | null }>;
 
+/**
+ * The runner's view of its spawned child. `ended` settles when the child itself exits (its descendants may
+ * live on); only the runner, the child's parent, can observe the code or signal.
+ */
+export type SpawnedWorkload =
+  | Readonly<{
+    kind: 'spawned';
+    child: ProcIdentity & Readonly<{ sid: number }>;
+    ended: Promise<Extract<ChildEnd, { type: 'exited' | 'signalled' }>>;
+  }>
+  | Readonly<{ kind: 'spawn-failed'; error: string }>;
+
 export interface Containment {
   readonly mode: ContainmentMode;
-  /** Runner side: spawns launch.argv as the workload (stdio to files, env per launch.json) and returns its identity. */
-  launch(launch: LaunchFile, invDir: AbsPath): Promise<ProcIdentity & Readonly<{ sid: number }>>;
+  /** Runner side: spawns launch.argv as the workload (stdio to files, env per launch.json). */
+  launch(launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWorkload>;
   /** Every member by (pid, start): `ROADMAP_INV=<inv>` in its environ, or the child's session. Never the runner. */
   members(workload: WorkloadRef): readonly ProcIdentity[];
   /** Stop → rescan until stable → TERM → grace → KILL → rescan until empty. Resolves only when empty. */
