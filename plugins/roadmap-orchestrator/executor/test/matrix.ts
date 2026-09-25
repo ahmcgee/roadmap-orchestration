@@ -60,6 +60,7 @@ const RUNNER_LABELS = [
 ] as const;
 export const SPEC_PATCH = 'spec.patch';
 export const RESIDUE_ORDERING = 'resource.transition fail + residue';
+export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const HOST_TAKEOVER = 'host takeover';
 
 export const MATRIX: readonly Row[] = [
@@ -289,10 +290,39 @@ export const MATRIX: readonly Row[] = [
         labels: ['residue.after-host-append'],
         recovery: 'every residue is durable exactly once; recovery appends nothing and writes the done (reconciled); nothing released',
       },
-      B5: { status: 'pending', step: '10' },
+      B5: {
+        status: 'excluded',
+        why: 'crashed as the resource.transition reserve/run/clean/release row\'s B5 cell (resource.after-done) in its failed-cleanup scenario (test/resource-recover.test.ts): the fail done is written, and the failed resource stays cleanup-failed through recovery, never released',
+      },
     },
   },
-  { row: 'resource.transition reserve/run/clean/release', test: 'pending', cells: pending('10') },
+  {
+    // Scenarios (test/fixtures/res-child.ts `cycle`): the build of u1 reserves [db, queue], probes both,
+    // runs, invokes one lane as its workload, then cleans up from the teardown stage. `cycle` releases
+    // both; `fail` (queue's teardown fails) records queue cleanup-failed with its residue, then releases
+    // db. Recovery is the resources phase alone (recoverReservations), which settles the spawns it needs.
+    row: RESERVE_CYCLE,
+    test: 'test/resource-recover.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['resource.after-intent'],
+        recovery: 'the open transition is closed as it stands (done reconciled; an open fail appends its residues first); the dead holder\'s reserved or running set is cleaned, every declared teardown rerun, then released; the failed resource ends cleanup-failed',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['spawn.after-intent', 'launch.after-spawn', 'spawn.after-runner-exit'],
+        recovery: 'inside the cycle a probe, the holder\'s lane or a teardown is open: 3c\'s spawn reconciler settles it (lost, adopted or redone); reserved or running → clean; cleaning → every teardown rerun as a new op → released, or the failed resource cleanup-failed',
+      },
+      B4: { status: 'excluded', why: 'a reserve, run, clean or release has no act beyond its record, so act complete is the B2 state; the fail edge\'s act (the residue append) is the resource.transition fail + residue row' },
+      B5: {
+        status: 'crash',
+        labels: ['resource.after-done'],
+        recovery: 'nothing is open; a held set of the dead holder is cleaned and torn down again, then released; after the fail done the failed resource stays cleanup-failed, never released',
+      },
+    },
+  },
   {
     // The scenario (test/fixtures/spec-patch-child.ts) prepares, journals, acts, verifies and closes one
     // spec.patch; recovery runs the reconciler on the open intent and applies its disposition.

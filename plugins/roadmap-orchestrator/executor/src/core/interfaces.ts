@@ -1,11 +1,12 @@
 // Frozen cross-module interfaces. Implementations land in later steps: Journal (2), Containment (3a/3b),
-// RunnerFiles (3a), Adapter (4), GitOp (8a/8b), Reservations (10), Reconciler per op kind (3c, 7, 8a, 8b,
-// 9, 10, 13). Interfaces only; no behaviour here.
+// RunnerFiles (3a), Adapter (4), GitOp (8a/8b), Reconciler per op kind (3c, 7, 8a, 8b, 9, 10, 13). The
+// reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
+// Interfaces only; no behaviour here.
 import type {
-  AbortCode, DoneRecord, Fact, GitOpKind, Holder, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent,
+  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   RecoveredBy,
 } from './events.ts';
-import type { ArcId, InvocationId, OpId, OpKey, ResourceName } from './ids.ts';
+import type { ArcId, InvocationId, OpId, OpKey } from './ids.ts';
 import type {
   ChildEnd, ContainmentMode, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap, RunnerFileName,
 } from './records.ts';
@@ -38,6 +39,8 @@ export interface JournalView {
   latestIntent(op: OpId): IntentRecord;
   /** The done record that closed an op's latest intent, or null while open or aborted. */
   doneOf(op: OpId): DoneRecord | null;
+  /** The latest intent of every op of `kind`, open or closed, in the order the ops began. */
+  opsOf<K extends OpKind>(kind: K): readonly IntentOf<K>[];
   /**
    * Whether a `meter` or `usage-unavailable` fact exists for `inv`. Recovery asks before recording one,
    * since the fact precedes the spawn's done and a crash between them leaves it already written.
@@ -153,46 +156,4 @@ export interface GitOp<K extends GitOpKind, Request> {
   act(intent: IntentOf<K>): Promise<void>;
   verify(intent: IntentOf<K>): Promise<OpOutcome[K]>;
   readonly reconcile: Reconciler<K>;
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Reservations: reserve → occupancy probe → run → cleanup → release, as typestates. Each transition is a
-// resource.transition op; a failed cleanup appends the host residue first and never releases.
-
-export type OccupancyVerdict =
-  | Readonly<{ kind: 'clear' }>
-  /** Occupied under this unit's own label: tear down, then run. */
-  | Readonly<{ kind: 'own-label' }>
-  /** Unlabelled or foreign: park + needs-user, decided before any charge. */
-  | Readonly<{ kind: 'foreign'; detail: string }>;
-
-export type CleanupResult =
-  | Readonly<{ kind: 'released' }>
-  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceName[]; released: readonly ResourceName[] }>;
-
-export interface Reservations {
-  /** All-or-none in lock order (ascending, integration-slot last). */
-  reserve(holder: Holder, resources: readonly ResourceName[]): Promise<Reserved>;
-}
-
-export interface Reserved {
-  readonly state: 'reserved';
-  readonly resources: readonly ResourceName[];
-  probe(): Promise<OccupancyVerdict>;
-  run(): Promise<Running>;
-  /** Cancellation before run. */
-  clean(): Promise<Cleaning>;
-}
-
-export interface Running {
-  readonly state: 'running';
-  readonly resources: readonly ResourceName[];
-  clean(): Promise<Cleaning>;
-}
-
-export interface Cleaning {
-  readonly state: 'cleaning';
-  readonly resources: readonly ResourceName[];
-  /** Runs each declared teardown, releases what cleaned, records residues for what did not. */
-  teardown(): Promise<CleanupResult>;
 }

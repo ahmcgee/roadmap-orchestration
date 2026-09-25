@@ -67,7 +67,8 @@ per-unit route layers.
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
-is a probe process fault. `parsePlan` checks shape and in-file uniqueness only; references that need the
+is a probe process fault. A probe and a teardown get the unit's owner label `<arc>/<unit>` in `RESOURCE_OWNER`
+(step 10); a residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
 filesystem, git or specs are startup rows.
 
 ## Startup rejection table
@@ -347,12 +348,12 @@ closed list in `records.ts`; add members by request.
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), usageRecorded(inv)` | step 2 |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv)` | step 2 (`opsOf`: 10) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |
 | `GitOp<K, Request>` | `kind, prepare(request) → IntentBody<K>, act(intent), verify(intent) → OpOutcome[K], reconcile` | 8a, 8b |
-| `Reservations` → `Reserved` → `Running` → `Cleaning` | typestates: `reserve(holder, resources)`, `probe() → OccupancyVerdict clear\|own-label\|foreign`, `run()`, `clean()`, `teardown() → released \| cleanup-failed{failed, released}` | 10 |
+| `Reservation<S, H>` (`src/resources/reserve.ts`) | typed handle, `S = reserved\|running\|cleaning`, `H = StageHolder\|SweepHolder`; `reserve(ctx, holder, resources, parent) → Reservation \| Refused{busy}` (no op on refusal), `probe → clear \| parked{needsUser}`, `run`, `cleanup → released \| cleanup-failed{failed, released}` (stage) `\| left-cleaning{failed, released}` (sweep), `cancel(live inv, pause\|stop)`; the table is derived from the journal (`resourceTable`) | 10 |
 | `Reconciler<K>` | `(IntentOf<K>, JournalView) → Disposition` limited to `AllowedDisposition[K]`: `done \| redo \| park \| abort \| adopt \| lost \| recovery-required` | 3c, 7, 8a, 8b, 9, 10, 13 |
 
 `AllowedDisposition`: `proc.spawn` done/adopt/lost; `proc.kill` done/redo; `worktree.*`, `salvage.commit`,
