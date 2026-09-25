@@ -47,7 +47,7 @@ Use the shell with an explicit working directory for every command, rg for searc
 - If you are re-reading or re-editing the same files without progress, stop and report it as a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run with its exit code. blockers: what keeps the unit from being complete; empty when complete. decisionsRecorded: the entries of ${DECISIONS_FILE}.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run with its exit code. blockers: what keeps the unit from being complete; empty when complete. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';

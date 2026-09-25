@@ -143,13 +143,34 @@ in the line belongs to `arc`.
 | `meter` | `inv, role, routingRev, unit: {unit, attempt}\|null, usage: TokenUsage` |
 | `usage-unavailable` | `inv, role, routingRev, unit: {unit, attempt}\|null, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
+| `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
+
+**`stage-outcome`** records one stage attempt's outcome as the transition table
+(`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
+(every stage but `retire`, which is terminal). `chargeable` marks a design-class failure (the plan's C rows).
+`class` is what the decision did to the unit: `advance` (on to another stage) \| `redirect` \| `revise` \|
+`candidate-red` (a bounded round within its bound) \| `retry` (the stage's one uncharged retry; only at
+`plan-check, build, lanes, gate`) \| `route-up` (re-dispatched on the role's high seat; only at `plan-check,
+gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the high seat) \| `park` \| `stop` \|
+`retire`.
+
+The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),
+the same function the transition table uses, so a decision's counters are the log's:
+`{unit, stage, risk, status: active|park-pending|stop-pending|retired, counters: {attempts,
+chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
+routedUp: JudgmentStage[], promotion}`. `attempts` counts distinct `(stage, attempt)` pairs named by a
+stage-parented intent or a stage-outcome fact. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
+a plan-check that raises the risk re-pins the dispatch. `promotion` is set by a `trigger` and cleared by the
+next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class.
 
 **Append** (step 2). One serialised writer; `writeSync` loop until the full length is written; `fsync`; no act
 until fsync returns for the full line.
 
 **Fold invariants** (violation = refuse): contiguous seq; chain intact; ≤ 1 open intent per key; done/abort
 match an open intent; ordinal strictly increasing per key; a retry (same op, next ordinal) inherits
-`deadlineAt`, `key` and `parent`; counters `monotonic()`. `state.json` is a derived cache, never read for a
+`deadlineAt`, `key` and `parent`; counters `monotonic()`; one `stage-outcome` per `(unit, stage, attempt)`;
+the chargeable outcome that reaches `CHARGEABLE_BOUND` (3) has class `park`; a later `dispatch` of a unit keeps
+its `scope` and does not lower its `riskFloor`. `state.json` is a derived cache, never read for a
 decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
 facts keyed by op/inv, so they cannot be lost or double-counted.
 

@@ -41,7 +41,7 @@ Before you finish, run every fast lane listed in the message exactly as written,
 </lanes>
 
 <decisions>
-When you settle a question the spec leaves open and a competent engineer could reasonably have chosen otherwise, record it in ${DECISIONS_FILE} at the root of the evidence directory named in the message: a JSON object {"decisions": [{"id": "...", "text": "..."}]}, one entry per decision, text stating what you chose and the alternative you did not. Ids start with a letter, use letters, digits, _ . or -, and must not reuse an id in the spec or in the file already. Keep the file complete: rewrite it with every decision so far. Echo the same entries in decisionsRecorded. Routine judgment calls do not belong there.
+When you settle a question the spec leaves open and a competent engineer could reasonably have chosen otherwise, record it in ${DECISIONS_FILE} at the root of the evidence directory named in the message: a JSON object {"decisions": [{"id": "...", "text": "..."}]}, one entry per decision, text stating what you chose and the alternative you did not. Ids start with a letter, use letters, digits, _ . or -, and must not reuse an id in the spec or in the file already. Keep the file complete: rewrite it with every decision so far. Routine judgment calls do not belong there.
 </decisions>
 
 <safety>

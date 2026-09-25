@@ -779,9 +779,9 @@ export const receipt: Read<Receipt> = tagged('state', {
 
 export const NEEDS_USER_REASONS = [
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
-  'occupancy-unlabelled', 'base-red', 'foreign-ref-move', 'recovery-required', 'reconcile-park', 'residue',
-  'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch', 'recovery-holder-dead',
-  'previous-arc-unreconciled',
+  'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
+  'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
+  'recovery-holder-dead', 'previous-arc-unreconciled',
 ] as const;
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

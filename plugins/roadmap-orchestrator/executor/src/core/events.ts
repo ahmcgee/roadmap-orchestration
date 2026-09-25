@@ -213,12 +213,68 @@ export type DoneRecord = { [K in OpKind]: DoneOf<K> }[OpKind];
 export type AbortRecord = Readonly<{ type: 'abort'; op: OpId; reason: Readonly<{ code: AbortCode; detail: string }> }>;
 
 export type MeterSubject = Readonly<{ unit: UnitId; attempt: number }> | null;
+
+// ---------------------------------------------------------------------------------------------------
+// Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
+// outcome leads to) is `src/pipeline/transitions.ts`; its `StageOutcome` union is derived from this list.
+
+/** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
+export const STAGE_OUTCOME_KINDS = {
+  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'refusal', 'malformed', 'process-fault'],
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'occupied'],
+  quiesce: ['empty'],
+  evidence: ['captured'],
+  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
+  teardown: ['released', 'cleanup-failed'],
+  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied'],
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault'],
+  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'occupied'],
+  ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
+  snapshot: ['published'],
+} as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
+export type OutcomeStage = keyof typeof STAGE_OUTCOME_KINDS;
+export type StageOutcomeKind<S extends OutcomeStage = OutcomeStage> = (typeof STAGE_OUTCOME_KINDS)[S][number];
+export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly OutcomeStage[];
+
+/** Judgment stages run a fresh judgment session; a refusal or escalation there routes up the role's seats. */
+export const JUDGMENT_STAGES = ['plan-check', 'gate'] as const satisfies readonly OutcomeStage[];
+export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
+/** Stages with an uncharged retry (malformed report, blocked or interrupted lane). */
+export const RETRY_STAGES = ['plan-check', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
+export type RetryStage = (typeof RETRY_STAGES)[number];
+
+/**
+ * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
+ * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
+ * `candidate-red`: a bounded round within its bound. `retry`: the stage's one uncharged retry.
+ * `route-up`: re-dispatched at the role's high seat. `trigger`: a risk trigger (contract path touched,
+ * scope growth) that puts the next judgment dispatch on the high seat. `park`, `stop`, `retire`: the unit
+ * parks (needs-user), the arc stops (needs-user), the unit is done.
+ */
+export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'retry', 'route-up', 'trigger', 'park', 'stop', 'retire'] as const;
+export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
+
+/**
+ * One per (unit, stage, attempt). `chargeable` marks a design-class failure (the table's C rows); the
+ * third one bounds the unit, so its class must be `park`.
+ */
+export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
+  kind: 'stage-outcome';
+  unit: UnitId;
+  stage: S;
+  attempt: number;
+  outcome: StageOutcomeKind<S>;
+  class: OutcomeClass;
+  chargeable: boolean;
+}> }[OutcomeStage];
+
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
-  | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>;
+  | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
+  | StageOutcomeFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 export type LogRecord = IntentRecord | DoneRecord | AbortRecord | FactRecord;
@@ -496,6 +552,22 @@ export const fact: Read<Fact> = tagged('kind', {
     unit: f.get('unit', meterSubject), reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
+  'stage-outcome': object((f): Fact => {
+    const s = f.get('stage', oneOf(OUTCOME_STAGES));
+    const out = {
+      kind: f.get('kind', literal('stage-outcome')),
+      unit: f.get('unit', unitR),
+      stage: s,
+      attempt: f.get('attempt', positive),
+      outcome: f.get('outcome', oneOf(STAGE_OUTCOME_KINDS[s])),
+      class: f.get('class', oneOf(OUTCOME_CLASSES)),
+      chargeable: f.get('chargeable', bool),
+    } as StageOutcomeFact;
+    // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
+    if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
+    if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
+    return out;
+  }),
 });
 
 function intentRecord(f: Fields): IntentRecord {

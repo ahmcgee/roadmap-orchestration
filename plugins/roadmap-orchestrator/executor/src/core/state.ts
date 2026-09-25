@@ -6,7 +6,8 @@
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import {
-  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentRecord, prevHash, serializeEvent,
+  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentRecord, type JudgmentStage, type RetryStage,
+  type StageOutcomeFact, JUDGMENT_STAGES, RETRY_STAGES, prevHash, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
@@ -15,9 +16,9 @@ import {
 } from './ids.ts';
 import type { JournalView } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import type { Stage } from './records.ts';
+import type { DispatchRecord, Stage } from './records.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
-import type { Role } from '../routing/types.ts';
+import { RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
 export class FoldInvariantError extends Error {
   readonly seq: number;
@@ -32,8 +33,80 @@ export class FoldInvariantError extends Error {
 
 export type TailDiscarded = Extract<Fact, { kind: 'tail-discarded' }>;
 
-/** A unit's position: the stage of its latest stage-parented intent, and how many stage starts it has seen. */
-export type UnitState = Readonly<{ unit: UnitId; stage: Stage; attempts: number }>;
+/** The third chargeable (design-class) failure parks the unit. */
+export const CHARGEABLE_BOUND = 3;
+
+/** Cumulative per-unit counters, all `monotonic()`. */
+export type UnitCounters = Readonly<{
+  /** Stage starts: distinct (stage, attempt) pairs named by a stage-parented intent or a stage-outcome fact. */
+  attempts: number;
+  chargeableFailures: number;
+  /** Plan-check redirects applied. */
+  redirects: number;
+  /** Gate revise rounds taken. */
+  reviseRounds: number;
+  /** Red candidates sent back to a fix round. */
+  candidateReds: number;
+  /** Uncharged retries taken, per stage. */
+  retries: Readonly<Record<RetryStage, number>>;
+}>;
+
+/** The latest decision's effect: `park-pending` and `stop-pending` mean a needs-user is due (or raised). */
+export type UnitStatus = 'active' | 'park-pending' | 'stop-pending' | 'retired';
+
+/** A unit's position and everything the transition table reads, derived from the log alone. */
+export type UnitState = Readonly<{
+  unit: UnitId;
+  /** The stage of its latest stage-parented intent or stage-outcome fact. */
+  stage: Stage;
+  /** The riskFloor of the unit's latest dispatch fact (a plan-check raise re-pins it); null before one. */
+  risk: RiskTier | null;
+  status: UnitStatus;
+  counters: UnitCounters;
+  /** Judgment stages routed up to their role's high seat; they stay there for the rest of the unit. */
+  routedUp: readonly JudgmentStage[];
+  /** A risk trigger is pending: the next judgment dispatch sits on the high seat. */
+  promotion: boolean;
+}>;
+
+export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null): UnitState {
+  const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
+  return {
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false,
+    counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
+  };
+}
+
+/**
+ * The effect of one stage-outcome fact on its unit: the one derivation the fold and the transition
+ * function (`src/pipeline/transitions.ts`) share, so the counters a decision predicts are the counters the
+ * log derives. `attempts` is left to the caller: it counts stage starts, which the fold sees.
+ */
+export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage' | 'class' | 'chargeable'>): UnitState {
+  const c = u.counters;
+  const add = (cls: StageOutcomeFact['class']): number => (f.class === cls ? 1 : 0);
+  const judgment = (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage);
+  return {
+    ...u,
+    stage: f.stage,
+    counters: {
+      ...c,
+      chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
+      redirects: c.redirects + add('redirect'),
+      reviseRounds: c.reviseRounds + add('revise'),
+      candidateReds: c.candidateReds + add('candidate-red'),
+      // The fact validator admits `retry` only at a retry stage.
+      retries: f.class === 'retry' ? { ...c.retries, [f.stage]: c.retries[f.stage as RetryStage] + 1 } : c.retries,
+    },
+    status: f.class === 'park' ? 'park-pending' : f.class === 'stop' ? 'stop-pending' : f.class === 'retire' ? 'retired' : 'active',
+    // The fact validator admits `route-up` only at a judgment stage.
+    routedUp: f.class === 'route-up' && !u.routedUp.includes(f.stage as JudgmentStage)
+      ? [...u.routedUp, f.stage as JudgmentStage].sort()
+      : u.routedUp,
+    // A trigger holds until a judgment stage decides; a retry re-dispatches the same judgment, so it keeps it.
+    promotion: f.class === 'trigger' ? true : judgment && f.class !== 'retry' ? false : u.promotion,
+  };
+}
 
 /** Spend per seat: `known` invocations with token usage, `unavailable` ones without. Never a model id. */
 export type MeterTotal = Readonly<{
@@ -68,7 +141,8 @@ export type DerivedState = Readonly<{
 
 type Closure = Readonly<{ type: 'done'; record: DoneRecord }> | Readonly<{ type: 'abort'; record: AbortRecord }>;
 type OpEntry = { latest: IntentRecord; closure: Closure | null };
-type UnitEntry = { stage: Stage; starts: Set<string> };
+/** `starts` and `outcomes` hold `<stage>#<attempt>`; `state.counters.attempts` is `starts.size`. */
+type UnitEntry = { starts: Set<string>; outcomes: Set<string>; state: UnitState };
 type MeterEntry = { -readonly [F in keyof MeterTotal]: MeterTotal[F] };
 
 /**
@@ -85,6 +159,7 @@ export class Fold implements JournalView {
   readonly #open = new Map<OpId, IntentRecord>();
   readonly #openByKey = new Map<OpKey, OpId>();
   readonly #units = new Map<UnitId, UnitEntry>();
+  readonly #dispatch = new Map<UnitId, DispatchRecord>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
   readonly #needsUser = new Set<NeedsUserId>();
@@ -152,11 +227,23 @@ export class Fold implements JournalView {
     this.#openByKey.set(r.key, r.op);
     if (r.parent.type === 'stage') {
       const { unit, stage, attempt } = r.parent;
-      const u = this.#units.get(unit) ?? { stage, starts: new Set<string>() };
-      u.stage = stage;
-      u.starts.add(`${stage}#${attempt}`);
-      this.#units.set(unit, u);
+      const u = this.#unit(unit, stage);
+      u.state = { ...u.state, stage };
+      this.#start(u, `${stage}#${attempt}`);
     }
+  }
+
+  #unit(unit: UnitId, stage: Stage): UnitEntry {
+    const existing = this.#units.get(unit);
+    if (existing !== undefined) return existing;
+    const u = { starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, this.#dispatch.get(unit)?.riskFloor ?? null) };
+    this.#units.set(unit, u);
+    return u;
+  }
+
+  #start(u: UnitEntry, start: string): void {
+    u.starts.add(start);
+    u.state = { ...u.state, counters: { ...u.state.counters, attempts: u.starts.size } };
   }
 
   #openEntry(op: OpId, what: string, fail: (detail: string) => never): OpEntry {
@@ -214,8 +301,34 @@ export class Fold implements JournalView {
         this.#meter.set(key, m);
         return;
       }
+      case 'dispatch': {
+        const { unit, scope, riskFloor } = f.record;
+        const prev = this.#dispatch.get(unit);
+        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2).
+        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) fail(`dispatch of ${unit} changes its pinned scope`);
+        if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
+          fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
+        }
+        this.#dispatch.set(unit, f.record);
+        const u = this.#units.get(unit);
+        if (u !== undefined) u.state = { ...u.state, risk: riskFloor };
+        return;
+      }
+      case 'stage-outcome': {
+        const key = `${f.stage}#${f.attempt}`;
+        const existing = this.#units.get(f.unit);
+        if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
+        const failures = existing?.state.counters.chargeableFailures ?? 0;
+        if (f.chargeable && failures === CHARGEABLE_BOUND - 1 && f.class !== 'park') {
+          fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${CHARGEABLE_BOUND}, which parks the unit, but its class is ${f.class}`);
+        }
+        const u = this.#unit(f.unit, f.stage);
+        u.outcomes.add(key);
+        u.state = afterStageOutcome(u.state, f);
+        this.#start(u, key);
+        return;
+      }
       case 'containment-mode':
-      case 'dispatch':
         return;
     }
   }
@@ -223,7 +336,15 @@ export class Fold implements JournalView {
   /** Every counter the fold derives, flattened, for the `monotonic()` check around each event. */
   #counters(): Record<string, number> {
     const out: Record<string, number> = { lastSeq: this.#lastSeq, snapshotHighWater: this.#snapshotHighWater };
-    for (const [unit, u] of this.#units) out[`unit ${unit} attempts`] = u.starts.size;
+    for (const [unit, { state: { counters: c, routedUp } }] of this.#units) {
+      out[`unit ${unit} attempts`] = c.attempts;
+      out[`unit ${unit} chargeableFailures`] = c.chargeableFailures;
+      out[`unit ${unit} redirects`] = c.redirects;
+      out[`unit ${unit} reviseRounds`] = c.reviseRounds;
+      out[`unit ${unit} candidateReds`] = c.candidateReds;
+      for (const s of RETRY_STAGES) out[`unit ${unit} retries ${s}`] = c.retries[s];
+      out[`unit ${unit} routedUp`] = routedUp.length;
+    }
     for (const [key, m] of this.#meter) {
       out[`meter ${key} known`] = m.known;
       out[`meter ${key} unavailable`] = m.unavailable;
@@ -268,7 +389,7 @@ export class Fold implements JournalView {
       lastSeq: this.#lastSeq,
       snapshotHighWater: this.#snapshotHighWater,
       openIntents: this.openIntents(),
-      units: [...this.#units].sort(([a], [b]) => compare(a, b)).map(([unit, u]) => ({ unit, stage: u.stage, attempts: u.starts.size })),
+      units: [...this.#units].sort(([a], [b]) => compare(a, b)).map(([, u]) => u.state),
       meter: [...this.#meter].sort(([a], [b]) => compare(a, b)).map(([, m]) => ({ ...m })),
       needsUser: [...this.#needsUser].sort(compare),
       tailDiscarded: [...this.#tail],

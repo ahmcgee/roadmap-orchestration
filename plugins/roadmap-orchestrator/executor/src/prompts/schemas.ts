@@ -124,19 +124,15 @@ export type BuildOutput = Readonly<{
   changedPaths: readonly string[];
   /** Every fast lane the implementer ran before finishing, with its exit code. */
   lanesRun: readonly LaneRun[];
-  /** What kept the unit from being complete; empty when it is. */
+  /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
   blockers: readonly string[];
-  /** Echo of the evidence dir's decisions.json, which is canonical (it survives a lost result). */
-  decisionsRecorded: readonly NoteDef[];
 }>;
 
-const S_DECISION = sObj({ id: S_STR, text: S_STR });
 export const BUILD_SCHEMA: Schema = sObj({
   summary: S_STR,
   changedPaths: sArr(S_STR),
   lanesRun: sArr(sObj({ lane: S_STR, exit: S_INT })),
   blockers: sArr(S_STR),
-  decisionsRecorded: sArr(S_DECISION),
 });
 
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
@@ -149,7 +145,6 @@ export const buildOutput: Read<BuildOutput> = object((f) => ({
     exit: g.get('exit', int(0, 255)),
   })))),
   blockers: f.get('blockers', arrayOf(str)),
-  decisionsRecorded: f.get('decisionsRecorded', arrayOf(decision)),
 }));
 
 export function validateBuildOutput(value: unknown): BuildOutput {
@@ -158,7 +153,8 @@ export function validateBuildOutput(value: unknown): BuildOutput {
 
 /**
  * `decisions.json`, written by the implementer at the root of its evidence dir: every decision it took
- * that the spec did not settle. The executor snapshots it with the evidence and appends each entry to
+ * that the spec did not settle. It is the one channel for decisions (the build report carries none), so
+ * they survive a lost result. The executor snapshots it with the evidence and appends each entry to
  * the spec's `decisions` section (so the gate grades against it); ids must be fresh in the spec.
  */
 export const DECISIONS_FILE = 'decisions.json';
