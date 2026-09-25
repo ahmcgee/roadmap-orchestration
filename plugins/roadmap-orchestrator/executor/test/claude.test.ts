@@ -81,7 +81,7 @@ describe('claude', () => {
       const a = freshJudgmentSession();
       const b = freshJudgmentSession();
       assert.notEqual(a.id, b.id);
-      const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: TRIPLE, session: a, schemaText: '{}' });
+      const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: TRIPLE, session: a, schemaText: '{}', system: 'S', evidenceDirs: [] });
       assert.equal(argv[argv.indexOf('--session-id') + 1], a.id);
       assert.equal(argv.includes('--resume'), false);
       assert.equal(argv.includes('--no-session-persistence'), true);
@@ -89,7 +89,7 @@ describe('claude', () => {
     });
     it('a resumed judgment call is unrepresentable', () => {
       const call: BackendCall = {
-        kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, schemaText: '{}',
+        kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, schemaText: '{}', system: 'S', evidenceDirs: [],
         // @ts-expect-error: a judgment session's only mode is 'fresh'
         session: { backend: 'claude', mode: 'resume', id: judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1') },
       };
@@ -98,7 +98,7 @@ describe('claude', () => {
     it('a Codex judgment call is unrepresentable', () => {
       // @ts-expect-error: judgment is Claude only (R21); a Codex triple does not fit a judgment call
       const call: BackendCall = {
-        kind: 'claude-judgment', role: 'gate', session: freshJudgmentSession(), schemaText: '{}',
+        kind: 'claude-judgment', role: 'gate', session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [],
         triple: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' },
       };
       assert.equal(call.kind, 'claude-judgment');
