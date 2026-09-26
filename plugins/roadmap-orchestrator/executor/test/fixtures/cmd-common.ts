@@ -21,7 +21,7 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; jou
       ...ctx,
       hostEnv: { PATH: run.binDir, HOME: home },
       planDir: absPath(run.repo),
-      routing: { profile: 'default', resolved: resolveRouting({ profile: 'default', repoConfig: null, plan: null, unit: null }) },
+      routing: { profile: 'default', resolved: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }) },
     },
   };
 }

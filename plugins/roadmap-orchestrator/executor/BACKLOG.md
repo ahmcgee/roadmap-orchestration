@@ -113,3 +113,11 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
     escalate. Wanted: the gate emits spec directives, the architect or a fresh plan-check with a handoff proposes
     a SpecPatch that bumps the spec rev, and the build resumes its session with the amendment as fix-round input.
     Until then the architect's reopen of a parked unit after a spec edit covers it by hand.
+- Routing (classes, escalation seat):
+  - The DESIGN command table's `steer <unit> --model <m>` (M2+) predates model classes: when steer lands it
+    should enter a class (or a unit-level class rebind), since routing layers never name a model.
+  - A `routing-changed` park re-opens only through the lifecycle reopen (item 10); until then the architect
+    restores the seat's routing and re-enters the unit under a new id. A plan-check risk raise on a reopened
+    unit whose build already ran moves its implementer seat without the routing-change check (`raiseRisk`).
+  - One binding per class, and a Codex binding carries its effort: a second Codex effort would be a new class.
+    None is needed yet.

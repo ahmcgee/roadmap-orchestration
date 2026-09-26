@@ -15,10 +15,13 @@
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
 //   that may have changed the tree is not retried: `lost-tree-effects` salvages and verifies its work.
-// - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's high seat;
-//   at the high seat it parks with a needs-user. A routed-up role stays on the high seat for the unit.
+// - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's
+//   `escalation` seat, a fresh session even when that seat binds the same model (independence is a clean
+//   context); at the escalation seat it parks with a needs-user. A routed-up role stays there for the unit.
 // - A risk trigger (contract path touched at salvage, scope growth at the candidate) puts the next judgment
-//   dispatch, and only that one, on the high seat. The implementer keeps the unit's risk seat throughout.
+//   dispatch, and only that one, on the escalation seat. The implementer keeps the unit's risk seat throughout.
+// - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
+//   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
 //   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
@@ -29,10 +32,7 @@ import {
 } from '../core/events.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import { CHARGEABLE_BOUND, type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
-import type { RiskTier } from '../routing/types.ts';
-
-/** A seat is a role's risk tier in the routing table. */
-export type Seat = RiskTier;
+import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
 
 /** One per (stage, kind) of `STAGE_OUTCOME_KINDS`: a gate outcome for a build stage is unrepresentable. */
 export type StageOutcome = { [S in OutcomeStage]: Readonly<{ stage: S; kind: StageOutcomeKind<S> }> }[OutcomeStage];
@@ -53,8 +53,8 @@ export type NeedsUserContent = Readonly<{ reason: NeedsUserReason; summary: stri
 
 /** `counters` are the unit's counters once this outcome is recorded, which the next stage starts with. */
 export type Next =
-  | Readonly<{ kind: 'stage'; stage: 'build'; round: BuildRound; seat: Seat; counters: UnitCounters }>
-  | Readonly<{ kind: 'stage'; stage: JudgmentStage; seat: Seat; counters: UnitCounters }>
+  | Readonly<{ kind: 'stage'; stage: 'build'; round: BuildRound; seat: RiskTier; counters: UnitCounters }>
+  | Readonly<{ kind: 'stage'; stage: JudgmentStage; seat: JudgmentSeat; counters: UnitCounters }>
   | Readonly<{ kind: 'stage'; stage: ExecutorStage; seat: null; counters: UnitCounters }>
   | Readonly<{ kind: 'park'; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'stop'; needsUser: NeedsUserContent }>
@@ -80,7 +80,7 @@ type Park = Readonly<{ do: 'park'; reason: NeedsUserReason }>;
 type Stop = Readonly<{ do: 'stop'; reason: NeedsUserReason }>;
 type Retire = Readonly<{ do: 'retire' }>;
 type Hold = Readonly<{ do: 'hold' }>;
-/** A refusal or escalation: the role's high seat, then park with `reason`. */
+/** A refusal or escalation: the role's escalation seat, then park with `reason`. */
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason }>;
@@ -124,6 +124,7 @@ export const TABLE: Table = {
     malformed: retry('malformed'),
     'process-fault': park('process-fault'),
     interrupted: hold,
+    'routing-changed': park('routing-changed'),
   },
   build: {
     success: go(at('quiesce')),
@@ -140,6 +141,7 @@ export const TABLE: Table = {
     // The build's resources could not be cleaned after a failed build: a residue, never released.
     'cleanup-failed': park('residue'),
     interrupted: hold,
+    'routing-changed': park('routing-changed'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -171,6 +173,7 @@ export const TABLE: Table = {
     malformed: retry('malformed'),
     'process-fault': park('process-fault'),
     interrupted: hold,
+    'routing-changed': park('routing-changed'),
   },
   candidate: {
     green: go(at('ff')),
@@ -234,14 +237,14 @@ function unreachable(o: never): never {
   throw new Error(`transition: no row for ${JSON.stringify(o)}`);
 }
 
-function risk(u: UnitState): Seat {
+function risk(u: UnitState): RiskTier {
   if (u.risk === null) throw new Error(`transition: unit ${u.unit} has no dispatch record, so no risk seat`);
   return u.risk;
 }
 
 /** The seat a judgment stage is dispatched on in state `u`. */
-export function judgmentSeat(u: UnitState, stage: JudgmentStage): Seat {
-  return u.routedUp.includes(stage) || u.promotion ? 'high' : risk(u);
+export function judgmentSeat(u: UnitState, stage: JudgmentStage): JudgmentSeat {
+  return u.routedUp.includes(stage) || u.promotion ? 'escalation' : risk(u);
 }
 
 function isJudgment(stage: OutcomeStage): stage is JudgmentStage {
@@ -269,7 +272,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
     case 'route-up': {
       // The rule type admits `route-up` only at a judgment stage.
       const stage = o.stage as JudgmentStage;
-      if (judgmentSeat(u, stage) === 'high') return halt('park', rule.reason, o, `${why} at the high seat`);
+      if (judgmentSeat(u, stage) === 'escalation') return halt('park', rule.reason, o, `${why} at the escalation seat`);
       return { class: 'route-up', chargeable: false, step: { to: 'stage', target: at(stage) } };
     }
     case 'park':

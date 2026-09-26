@@ -66,8 +66,8 @@ describe('plan.json (M1)', () => {
     rejects(plan(u('a'), u('b', ['a', 'a'])), 'plan.units[1].after[1]');
   });
 
-  it('routing is optional and, when present, parses as a layer', () => {
-    const routing = { gate: { high: { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } }, build: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } };
+  it('routing is optional and, when present, parses as a layer of classes', () => {
+    const routing = { gate: { high: 'summit', escalation: 'frontier' }, build: { low: 'frontier' } };
     assert.deepEqual(parsePlan({ ...validPlan(), routing }).routing, routing);
     assert.equal('routing' in parsePlan(validPlan()), false);
   });
@@ -100,12 +100,14 @@ describe('plan.json (M1)', () => {
     });
   }
 
-  it('rejects a Claude triple with a Codex effort', () => {
-    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } } } }, 'plan.routing.build.high.effort');
+  it('rejects a triple at a seat: a plan names classes and cannot bind one (hard cutover)', () => {
+    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } } } }, 'plan.routing.build.high');
+    rejects({ ...validPlan(), routing: { classes: { frontier: { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } } } }, 'plan.routing.classes');
   });
 
-  it('rejects an unknown model id', () => {
-    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-sonnet-5', effort: 'default' } } } }, 'plan.routing.build.high.model');
+  it('rejects an unknown class, and an escalation seat for build', () => {
+    rejects({ ...validPlan(), routing: { build: { high: 'opus' } } }, 'plan.routing.build.high');
+    rejects({ ...validPlan(), routing: { build: { escalation: 'summit' } } }, 'plan.routing.build.escalation');
   });
 
   it('names nested unit fields', () => {

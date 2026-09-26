@@ -7,7 +7,7 @@ import {
   type LogRecord, type OutcomeClass, type OutcomeStage, type RetryStage, type StageOutcomeKind, OUTCOME_STAGES,
   RETRY_STAGES, STAGE_OUTCOME_KINDS,
 } from '../src/core/events.ts';
-import { specRev } from '../src/core/ids.ts';
+import { seatRev, specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
 import { repoPattern } from '../src/core/values.ts';
 import { type Next, type StageOutcome, TABLE, decidedBy, outcomeFact, transition } from '../src/pipeline/transitions.ts';
@@ -73,30 +73,34 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'approve', {}, 'build/fresh@med', 'advance', {}],
   ['plan-check', 'redirect', {}, 'plan-check@med', 'redirect', { redirects: 1 }],
   ['plan-check', 'redirect', { counters: { redirects: 1 } }, 'plan-check@med', 'redirect', { redirects: 1 }],
-  ['plan-check', 'redirect', { counters: { redirects: 2 } }, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'redirect', { counters: { redirects: 2 } }, 'plan-check@escalation', 'route-up', {}],
   ['plan-check', 'redirect', { counters: { redirects: 2 }, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
   // The bound counts redirects since the latest reopen (the architect's spec edit), not over the unit.
-  ['plan-check', 'redirect', { counters: { redirects: 3 }, redirectBase: 2, routedUp: ['plan-check'] }, 'plan-check@high', 'redirect', { redirects: 1 }],
+  ['plan-check', 'redirect', { counters: { redirects: 3 }, redirectBase: 2, routedUp: ['plan-check'] }, 'plan-check@escalation', 'redirect', { redirects: 1 }],
   ['plan-check', 'redirect', { counters: { redirects: 4 }, redirectBase: 2, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
-  ['plan-check', 'infeasible', {}, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'infeasible', {}, 'plan-check@escalation', 'route-up', {}],
   ['plan-check', 'infeasible', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
-  ['plan-check', 'escalate', {}, 'plan-check@high', 'route-up', {}],
-  ['plan-check', 'escalate', { risk: 'high' }, 'park:escalation', 'park', {}],
-  ['plan-check', 'risk-lowered', {}, 'plan-check@high', 'route-up', {}],
-  ['plan-check', 'scope-widened', {}, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'escalate', {}, 'plan-check@escalation', 'route-up', {}],
+  // A high-risk unit judges on its high seat and escalates to the escalation seat like any other (item 9).
+  ['plan-check', 'escalate', { risk: 'high' }, 'plan-check@escalation', 'route-up', {}],
+  ['plan-check', 'risk-lowered', {}, 'plan-check@escalation', 'route-up', {}],
+  ['plan-check', 'scope-widened', {}, 'plan-check@escalation', 'route-up', {}],
   ['plan-check', 'scope-widened', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
   ['plan-check', 'interrupted', {}, 'hold', 'hold', {}],
-  ['plan-check', 'refusal', {}, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'refusal', {}, 'plan-check@escalation', 'route-up', {}],
   ['plan-check', 'refusal', { routedUp: ['plan-check'] }, 'park:refusal', 'park', {}],
   ['plan-check', 'malformed', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
   ['plan-check', 'malformed', { counters: { 'retries.plan-check': 1 } }, 'park:malformed', 'park', {}],
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
+  ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
   ['build', 'malformed', {}, 'build/resume@med', 'retry', { 'retries.build': 1 }],
   ['build', 'malformed', { counters: { 'retries.build': 1 } }, 'park:malformed', 'park', {}],
   ['build', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['build', 'routing-changed', { counters: { chargeableFailures: 2 } }, 'park:routing-changed', 'park', {}],
   // transitions.lost-build: a lost implementer call never charges. Without tree effects it was already
   // retried once inside the stage (new invocation, same deadline): park. With them: salvage and verify.
   ['build', 'lost', {}, 'park:build-lost', 'park', {}],
@@ -118,7 +122,7 @@ const ROWS: readonly Row[] = [
   ['teardown', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   // lanes (clean detached worktree at the salvage SHA)
   ['lanes', 'green', {}, 'gate@med', 'advance', {}],
-  ['lanes', 'green', { promotion: true }, 'gate@high', 'advance', {}],
+  ['lanes', 'green', { promotion: true }, 'gate@escalation', 'advance', {}],
   ['lanes', 'red', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
   ['lanes', 'red', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
   ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
@@ -131,16 +135,17 @@ const ROWS: readonly Row[] = [
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
   ['gate', 'revise', { counters: { reviseRounds: 1 } }, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
-  ['gate', 'revise', { counters: { reviseRounds: 2 } }, 'gate@high', 'route-up', {}],
+  ['gate', 'revise', { counters: { reviseRounds: 2 } }, 'gate@escalation', 'route-up', {}],
   ['gate', 'revise', { counters: { reviseRounds: 2 }, routedUp: ['gate'] }, 'park:escalation', 'park', {}],
-  ['gate', 'escalate', {}, 'gate@high', 'route-up', {}],
+  ['gate', 'escalate', {}, 'gate@escalation', 'route-up', {}],
   ['gate', 'escalate', { promotion: true }, 'park:escalation', 'park', {}],
   ['gate', 'empty-diff', {}, 'park:empty-diff', 'park', {}],
-  ['gate', 'refusal', {}, 'gate@high', 'route-up', {}],
+  ['gate', 'refusal', {}, 'gate@escalation', 'route-up', {}],
   ['gate', 'refusal', { routedUp: ['gate'] }, 'park:refusal', 'park', {}],
   ['gate', 'malformed', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
   ['gate', 'malformed', { counters: { 'retries.gate': 1 } }, 'park:malformed', 'park', {}],
   ['gate', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['gate', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
@@ -238,17 +243,17 @@ describe('transitions', () => {
     assert.equal(quiet.state.counters.chargeableFailures, 0);
   });
 
-  it('transitions.route-up-then-needs-user: the high seat of the role, then park', () => {
+  it('transitions.route-up-then-needs-user: the escalation seat of the role, then park', () => {
     const { nexts, state } = drive([outcome('gate', 'refusal'), outcome('gate', 'refusal')]);
-    assert.deepEqual(nexts.map(show), ['gate@high', 'park:refusal']);
+    assert.deepEqual(nexts.map(show), ['gate@escalation', 'park:refusal']);
     assert.deepEqual(state.routedUp, ['gate']);
-    // Per role: a routed-up plan-check leaves the gate on the unit's seat; a routed-up gate stays high.
+    // Per role: a routed-up plan-check leaves the gate on the unit's seat; a routed-up gate stays on escalation.
     const perRole = drive([
       outcome('plan-check', 'escalate'), outcome('plan-check', 'approve'), outcome('lanes', 'green'), outcome('gate', 'escalate'),
       outcome('gate', 'revise'), outcome('lanes', 'green'), outcome('gate', 'escalate'),
     ]);
     assert.deepEqual(perRole.nexts.map(show), [
-      'plan-check@high', 'build/fresh@med', 'gate@med', 'gate@high', 'build/fix@med', 'gate@high', 'park:escalation',
+      'plan-check@escalation', 'build/fresh@med', 'gate@med', 'gate@escalation', 'build/fix@med', 'gate@escalation', 'park:escalation',
     ]);
   });
 
@@ -267,7 +272,7 @@ describe('transitions', () => {
       outcome('lanes', 'green'),
     ]);
     assert.deepEqual(nexts.map(show), [
-      'teardown', 'lanes', 'build/fix@med', 'gate@high', 'gate@high', 'candidate', 'ff', 'gate@med', 'candidate', 'build/fix@med', 'gate@high',
+      'teardown', 'lanes', 'build/fix@med', 'gate@escalation', 'gate@escalation', 'candidate', 'ff', 'gate@med', 'candidate', 'build/fix@med', 'gate@escalation',
     ]);
   });
 
@@ -308,7 +313,7 @@ type Driven = Readonly<{ nexts: readonly Next[]; facts: readonly ReturnType<type
  */
 function drive(outcomes: readonly StageOutcome[]): Driven {
   const records: LogRecord[] = [{
-    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, at: AT } },
+    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT } },
   }];
   const attempts = new Map<OutcomeStage, number>();
   const nexts: Next[] = [];

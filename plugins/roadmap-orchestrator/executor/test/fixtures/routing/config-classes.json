@@ -1,0 +1,7 @@
+{
+  "routing": {
+    "classes": {
+      "efficient": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" }
+    }
+  }
+}

@@ -14,7 +14,7 @@ import { type LaunchFile, RUNNER_FILE_READERS } from '../../src/core/records.ts'
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
-import type { StageContext } from '../../src/pipeline/dispatch.ts';
+import type { Pinned, StageContext } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
@@ -77,6 +77,12 @@ function laneJson(l: LaneJson): Record<string, unknown> {
   };
 }
 
+/** The dispatch of a seat the routing in force allows; a routing-changed park fails the test. */
+export function seated<D>(p: Pinned<D>): D {
+  if (p.kind !== 'pinned') throw new Error(`expected a pinned dispatch, got ${p.kind}: ${p.needsUser.summary}`);
+  return p.dispatch;
+}
+
 export function setupUnit(opts: SetupOptions): StageRun {
   const repo = tmpDir('stage-repo');
   cpSync(REPO_FILES, repo, { recursive: true });
@@ -112,7 +118,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const ctx: StageContext = {
     journal, containment: sessionContainment, runDir: absPath(runDir), plan, repo: absPath(repo),
     hostDir: openHostDir(absPath(join(tmpDir('stage-host'), 'roadmap'))),
-    routing: resolveRouting({ profile: opts.profile ?? 'default', repoConfig: null, plan: null, unit: null }),
+    routing: resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null }),
     hostEnv: { ...process.env, PATH: `${scenario.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(planDir),
   };

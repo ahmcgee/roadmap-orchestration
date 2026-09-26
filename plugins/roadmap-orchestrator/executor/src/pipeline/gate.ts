@@ -1,9 +1,9 @@
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
 // A fresh judgment session (never a resume) on the gate role's seat, which a pending risk promotion or a
-// route-up moves to the high seat (judgmentDispatch). Its inputs, snapshotted at the integration tip T the
-// gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full and an
-// index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
+// route-up moves to the escalation seat (judgmentDispatch). Its inputs, snapshotted at the integration tip
+// T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
+// and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
 // approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
 // after a merge-in the base is T), the lane ledger of the unit's latest spec series and its evidence dirs,
 // the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it, and on
@@ -165,7 +165,9 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
   const base = diffBase(ctx.repo, tip, head);
   const growth = paths.filter((p) => !pinned.scope.some((g) => matchesGlob(p, g)));
 
-  const seat = judgmentDispatch(ctx, unit.id, 'gate');
+  const seated = judgmentDispatch(ctx, unit.id, 'gate');
+  if (seated.kind !== 'pinned') return { ...record(ctx, parent, 'routing-changed', seated.needsUser), session: null, fingerprint: null };
+  const seat = seated.dispatch;
   const prompt = promptFor('gate', seat.triple.model);
   const session = freshJudgmentSession();
   const rendered = prompt.render({

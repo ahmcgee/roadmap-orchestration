@@ -40,7 +40,7 @@ import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
 } from '../src/preflight/smoke.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
-import { resolveRouting } from '../src/routing/layers.ts';
+import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { Backend, Role } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
   const runDir = dir(join(root, 'run'));
   const journal = openJournal(runDir, arcId('probe'));
   const ctx: InvocationContext = { journal, runDir, hostEnv: backendEnv(process.env) };
-  const resolved = resolveRouting({ profile: 'default', repoConfig: null, plan: null, unit: null });
+  const resolved = resolveRouting(arcStack('default', null, null));
   const rev = resolved.rev;
   process.stdout.write(`probe run dir ${root}\n`);
 
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   }
 
   // The calls below exercise triples directly, not seats; each meter fact names the default table's seat of
-  // the same backend and role at the nearest tier (codex build: med; Opus build: high; Fable plan-check: high).
+  // the same backend and role at the nearest seat (codex build: med; Opus build: high; Fable plan-check: escalation).
   // Codex fresh then resume, in one working dir (a resume runs where its thread was created).
   const codexDir = dir(join(root, 'codex'));
   const okSchema = SMOKE_SCHEMA;
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
 
   // Fable id pin: the id resolves and answers.
   await backend(ctx, 'fable.pin', {
-    check: 'fable-pin', routingRev: rev, tier: 'high', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
+    check: 'fable-pin', routingRev: rev, tier: 'escalation', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 

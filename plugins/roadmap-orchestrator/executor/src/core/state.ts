@@ -69,9 +69,9 @@ export type UnitState = Readonly<{
   risk: RiskTier | null;
   status: UnitStatus;
   counters: UnitCounters;
-  /** Judgment stages routed up to their role's high seat; they stay there for the rest of the unit. */
+  /** Judgment stages routed up to their role's escalation seat; they stay there for the rest of the unit. */
   routedUp: readonly JudgmentStage[];
-  /** A risk trigger is pending: the next judgment dispatch sits on the high seat. */
+  /** A risk trigger is pending: the next judgment dispatch sits on the escalation seat. */
   promotion: boolean;
   /**
    * The latest stage-outcome fact that decided the unit's next step: every class but `hold` (a held stage

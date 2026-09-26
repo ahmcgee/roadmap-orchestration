@@ -29,7 +29,9 @@ import {
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
-import { BACKENDS, type Backend, type JudgmentRole, type ProfileName, RISK_TIERS, ROLES, type RiskTier, type Role } from '../routing/types.ts';
+import {
+  BACKENDS, type Backend, type JudgmentRole, type ProfileName, type Role, SEAT_REFS, type Seat as SeatName, type SeatRef, atSeat, seatRef,
+} from '../routing/types.ts';
 import { chargeOf, usageFact } from '../pipeline/invoke.ts';
 import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 import type { StartupRejection } from './startup.ts';
@@ -109,8 +111,8 @@ export type CallRequest =
 export type BackendInvocation = Readonly<{
   check: string;
   routingRev: RoutingRev;
-  /** The seat's risk tier: which seat a probe call stands for (smoke usage is charged to the backend, not the seat). */
-  tier: RiskTier;
+  /** The seat's tier within the request's role: which seat a probe call stands for (smoke usage is charged to the backend, not the seat). */
+  tier: SeatName;
   request: CallRequest;
   system: string;
   rendered: string;
@@ -215,7 +217,7 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
   const subject: SmokeSubject = {
     purpose: 'smoke',
     check: b.check,
-    target: { type: 'backend', backend: b.request.triple.backend, role: roleOf(b.request), tier: b.tier, routingRev: b.routingRev },
+    target: { type: 'backend', backend: b.request.triple.backend, ...seatRef(roleOf(b.request), b.tier), routingRev: b.routingRev },
   };
   const done = await run(ctx, subject, (invDir) => {
     const call = backendCall(b, invDir);
@@ -246,7 +248,7 @@ export async function invokeCommand(ctx: InvocationContext, c: CommandInvocation
 // ---------------------------------------------------------------------------------------------------
 // The smoke proper.
 
-export type Seat = Readonly<{ role: Role; tier: RiskTier }>;
+export type Seat = SeatRef;
 const seatName = (s: Seat): string => `${s.role}.${s.tier}`;
 
 export type BackendSmoke =
@@ -274,7 +276,7 @@ export type SmokeReport = Readonly<{ profile: ProfileName; routingRev: RoutingRe
 export type SmokeRouting = Readonly<{ profile: ProfileName; resolved: ResolvedRouting }>;
 
 function seatsOn(resolved: ResolvedRouting, backend: Backend): readonly Seat[] {
-  return ROLES.flatMap((role) => RISK_TIERS.filter((tier) => resolved.table[role][tier].backend === backend).map((tier) => ({ role, tier })));
+  return SEAT_REFS.filter((s) => atSeat(resolved.table, s).backend === backend);
 }
 
 /**
@@ -286,7 +288,7 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   const seats = seatsOn(resolved, backend);
   const seat = seats[0];
   if (seat === undefined) return null;
-  const triple = resolved.table[seat.role][seat.tier];
+  const triple = atSeat(resolved.table, seat);
   if (triple.backend === 'claude') {
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };

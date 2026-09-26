@@ -32,7 +32,7 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import type { RiskTier, Role } from '../routing/types.ts';
+import { type SeatRef, seatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { awaitRunner, cancel, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 
@@ -179,7 +179,7 @@ type Charge = Readonly<{ routingRev: RoutingRev; subject: MeterSubject }>;
 export function chargeOf(subject: SpawnSubject): Charge | null {
   switch (subject.purpose) {
     case 'backend':
-      return { routingRev: subject.routingRev, subject: { type: 'seat', role: subject.role, tier: subject.tier, unit: subject.unit, attempt: subject.attempt } };
+      return { routingRev: subject.routingRev, subject: { type: 'seat', ...seatRef(subject.role, subject.tier), unit: subject.unit, attempt: subject.attempt } };
     case 'smoke':
       return subject.target.type === 'backend' ? { routingRev: subject.target.routingRev, subject: { type: 'smoke', backend: subject.target.backend } } : null;
     case 'lane':

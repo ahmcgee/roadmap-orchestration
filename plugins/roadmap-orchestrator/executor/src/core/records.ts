@@ -3,10 +3,10 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type Sha, type Sha256Hex,
-  type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf, judgmentSessionId,
-  laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, sha, sha256, specRev,
-  unitId,
+  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha,
+  type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf,
+  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, seatRev, sha,
+  sha256, specRev, unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -476,6 +476,8 @@ export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => ({
 /**
  * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
  * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
+ * `implementerSeatRev` hashes the triple of the implementer's seat (`build.<riskFloor>`) under `routingRev`,
+ * so a routing change can be judged by whether it moves the implementer without naming a model.
  */
 export type DispatchRecord = Readonly<{
   unit: UnitId;
@@ -484,6 +486,7 @@ export type DispatchRecord = Readonly<{
   scope: readonly RepoPattern[];
   riskFloor: RiskTier;
   routingRev: RoutingRev;
+  implementerSeatRev: SeatRev;
   at: IsoTime;
 }>;
 
@@ -494,6 +497,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => ({
   scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
   riskFloor: f.get('riskFloor', riskTier),
   routingRev: f.get('routingRev', rev),
+  implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
   at: f.get('at', time),
 }));
 
@@ -898,7 +902,7 @@ export const NEEDS_USER_REASONS = [
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
-  'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost',
+  'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
 ] as const;
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

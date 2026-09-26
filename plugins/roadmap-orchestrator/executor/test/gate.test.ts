@@ -69,7 +69,7 @@ test('gate.fingerprint-cited-only: the approval binds the spec\'s cited contract
   }
 });
 
-test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate dispatch to the high seat', T, async () => {
+test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate dispatch to the escalation seat', T, async () => {
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }),
@@ -86,7 +86,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-opus-5-5'), 'plan-check sat on the unit\'s med seat');
-    assert.ok(gateCall!.argv.includes('claude-fable-5-1'), 'the gate sat on the high seat');
+    assert.ok(gateCall!.argv.includes('claude-fable-5-1'), 'the gate sat on the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {

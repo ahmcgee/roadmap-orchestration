@@ -12,8 +12,8 @@ import {
   ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateDecisionsFile, validateGateOutput,
   validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
-import { PROFILE_TABLES } from '../src/routing/profiles.ts';
-import { MODEL_IDS, PROFILES, RISK_TIERS, ROLES, type Role } from '../src/routing/types.ts';
+import { arcStack, resolveRouting } from '../src/routing/layers.ts';
+import { MODEL_IDS, PROFILES, ROLES, type Role, SEAT_REFS, atSeat } from '../src/routing/types.ts';
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -109,9 +109,12 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
 /** Every (role, model) either built-in profile can resolve. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
-  for (const p of PROFILES) for (const r of ROLES) for (const t of RISK_TIERS) {
-    const m = PROFILE_TABLES[p][r][t].model;
-    seen.set(`${r}/${m}`, [r, m]);
+  for (const p of PROFILES) {
+    const { table } = resolveRouting(arcStack(p, null, null));
+    for (const s of SEAT_REFS) {
+      const m = atSeat(table, s).model;
+      seen.set(`${s.role}/${m}`, [s.role, m]);
+    }
   }
   return [...seen.values()];
 }
