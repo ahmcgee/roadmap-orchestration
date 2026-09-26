@@ -161,6 +161,14 @@ const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
   return env;
 };
 
+/**
+ * The smallest grace a launch may carry. The executor's backstop kills a hung runner at deadline + 2 * grace
+ * and the runner polls cancel and deadline every 500 ms, so a shorter grace could let the backstop fire
+ * before the runner has written exit.json (lead ruling, step 13).
+ */
+export const MIN_GRACE_MS = 1_000;
+const graceMs = int(MIN_GRACE_MS, Number.MAX_SAFE_INTEGER);
+
 export const launchFile: Read<LaunchFile> = object((f) => ({
   ...binding(f),
   argv: f.get('argv', argv),
@@ -168,7 +176,7 @@ export const launchFile: Read<LaunchFile> = object((f) => ({
   env: f.get('env', declaredEnv),
   stdinPath: f.get('stdinPath', nullable(abs)),
   deadlineAt: f.get('deadlineAt', time),
-  graceMs: f.get('graceMs', positive),
+  graceMs: f.get('graceMs', graceMs),
   containment: f.get('containment', containmentMode),
   test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
   terminal: f.get('terminal', launchTerminal),
@@ -720,32 +728,28 @@ export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
 const cmdId: Read<CommandId> = (v, p) => commandId(v, p);
-const optionId: Read<string> = (value, path) => {
+export const optionId: Read<string> = (value, path) => {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) throw new SchemaError(path, 'an option id (lowercase slug)', value);
   return value;
 };
 
 const unitTarget = object((f) => ({ type: f.get('type', literal('unit')), unit: f.get('unit', unit) }));
 const allTarget = object((f) => ({ type: f.get('type', literal('all')) }));
+export const pauseTarget: Read<PauseTarget> = tagged<'unit' | 'all', PauseTarget>('type', { unit: unitTarget, all: allTarget });
+export const resumeTarget: Read<ResumeTarget> = tagged<'all' | 'unit' | 'backend', ResumeTarget>('type', {
+  all: allTarget,
+  unit: unitTarget,
+  backend: object((g) => ({ type: g.get('type', literal('backend')), backend: g.get('backend', backend) })),
+});
 export const commandBody: Read<CommandBody> = tagged('type', {
-  pause: object((f): CommandBody => ({
-    type: f.get('type', literal('pause')),
-    target: f.get('target', tagged<'unit' | 'all', PauseTarget>('type', { unit: unitTarget, all: allTarget })),
-  })),
+  pause: object((f): CommandBody => ({ type: f.get('type', literal('pause')), target: f.get('target', pauseTarget) })),
   stop: object((f): CommandBody => ({ type: f.get('type', literal('stop')) })),
   ack: object((f): CommandBody => ({
     type: f.get('type', literal('ack')),
     needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)),
     choice: f.get('choice', nullable(optionId)),
   })),
-  resume: object((f): CommandBody => ({
-    type: f.get('type', literal('resume')),
-    target: f.get('target', tagged<'all' | 'unit' | 'backend', ResumeTarget>('type', {
-      all: allTarget,
-      unit: unitTarget,
-      backend: object((g) => ({ type: g.get('type', literal('backend')), backend: g.get('backend', backend) })),
-    })),
-  })),
+  resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
 });
 

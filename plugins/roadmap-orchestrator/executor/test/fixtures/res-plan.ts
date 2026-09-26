@@ -74,7 +74,7 @@ export function laneInvocation(ctx: ResourceContext, holder: StageHolder, set: '
     origin: { type: 'new', key: opKey(`lane:${holder.unit}:${set}`), parent: stageParent(holder), deadlineAt: isoTimeOf(new Date(Date.now() + 20_000)) },
     subject: { purpose: 'lane', unit: holder.unit, lane: laneId(set === 'spec' ? 'unit' : 'suite'), set, at: sha('0'.repeat(40)) },
     launch: () => ({
-      argv: [process.execPath, '-e', script], cwd: ctx.repo, env: { PATH: process.env['PATH'] ?? '' }, stdinPath: null, graceMs: 300,
+      argv: [process.execPath, '-e', script], cwd: ctx.repo, env: { PATH: process.env['PATH'] ?? '' }, stdinPath: null, graceMs: 1000,
       terminal: { type: 'command', purpose: 'lane', expectedExit: 0 },
     }),
   });

@@ -9,7 +9,7 @@
 //   cleaning             → settle any teardown invocation still open, then rerun every teardown as a new
 //                          op (a fresh deadline: a retried ordinal would inherit a deadline that may have
 //                          passed while the executor was down) → release, or fail with residues first.
-//   cleanup-failed       → terminal in this arc: never released.
+//   cleanup-failed       → never released by recovery; only a `sweep` command reclaims it (commands/apply.ts).
 //
 // A sweep's reservation is re-driven by its command's reconciliation (command.apply, step 13), which
 // knows the residues it sweeps; here only its open transition is closed.

@@ -11,12 +11,12 @@ import {
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type ArcId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type RoutingRev, type Sha256Hex,
+  type ArcId, type CommandId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type RoutingRev, type Sha256Hex,
   type UnitId, parseInvocationId, parseOpId,
 } from './ids.ts';
-import type { JournalView } from './interfaces.ts';
+import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import type { DispatchRecord, Stage } from './records.ts';
+import type { ContainmentMode, DispatchRecord, Stage } from './records.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
@@ -140,8 +140,16 @@ export type DerivedState = Readonly<{
   openIntents: readonly IntentRecord[];
   units: readonly UnitState[];
   meter: readonly MeterTotal[];
-  /** Ids raised by a done `needsuser.raise`. Acknowledgement is a file beside it, not an event. */
+  /** Ids raised by a done `needsuser.raise`. */
   needsUser: readonly NeedsUserId[];
+  /** Raised ids whose raise was blocking. */
+  needsUserBlocking: readonly NeedsUserId[];
+  /** Ids acknowledged by a `needs-user-acked` fact (any id form: supervisor and host items too). */
+  needsUserAcked: readonly NeedsUserId[];
+  /** The durable pause and stop markers (commands, step 13). */
+  control: ControlState;
+  /** The latest recorded `containment-mode` fact, or null before one. */
+  containmentMode: ContainmentMode | null;
   /** Every `tail-discarded` fact, in log order. */
   tailDiscarded: readonly TailDiscarded[];
   /** Backends parked arc-wide by a `backend-park` fact (usage limit or capacity), ascending. */
@@ -171,7 +179,12 @@ export class Fold implements JournalView {
   readonly #dispatch = new Map<UnitId, DispatchRecord>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
-  readonly #needsUser = new Set<NeedsUserId>();
+  readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
+  readonly #acks = new Map<NeedsUserId, NeedsUserAckState>();
+  #stop: CommandId | null = null;
+  #pausedAll = false;
+  readonly #pausedUnits = new Set<UnitId>();
+  #containmentMode: ContainmentMode | null = null;
   readonly #tail: TailDiscarded[] = [];
   readonly #parkedBackends = new Set<Backend>();
 
@@ -274,7 +287,7 @@ export class Fold implements JournalView {
     const intent = entry.latest;
     if (r.kind !== intent.kind) fail(`done of kind ${r.kind} for ${r.op}, an intent of kind ${intent.kind}`);
     this.#close(entry, { type: 'done', record: r });
-    if (intent.kind === 'needsuser.raise') this.#needsUser.add(intent.expect.id);
+    if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
     if (intent.kind === 'snapshot.publish') this.#snapshotHighWater = Math.max(this.#snapshotHighWater, intent.expect.highWater);
   }
 
@@ -342,6 +355,51 @@ export class Fold implements JournalView {
         this.#parkedBackends.add(f.backend);
         return;
       case 'containment-mode':
+        this.#containmentMode = f.mode;
+        return;
+      case 'needs-user-acked':
+        if (this.#acks.has(f.id)) fail(`second acknowledgement of needs-user ${f.id}`);
+        this.#acks.set(f.id, { command: f.command, choice: f.choice });
+        return;
+      case 'paused':
+        if (f.target.type === 'all') this.#pausedAll = true;
+        else this.#pausedUnits.add(f.target.unit);
+        return;
+      case 'stop-requested':
+        this.#stop = f.command;
+        return;
+      case 'resumed':
+        this.#resumed(f.target, fail);
+        return;
+    }
+  }
+
+  /**
+   * A resume clears holds without touching counters, so the next stage start is a new, uncharged attempt.
+   * `unit`: that unit's pause and hold (refused while the whole arc is paused). `all`: every pause and every
+   * hold. `backend`: that backend's park, and the holds of units no pause covers (a usage-limit hold).
+   */
+  #resumed(target: Extract<Fact, { kind: 'resumed' }>['target'], fail: (detail: string) => never): void {
+    const release = (u: UnitEntry): void => {
+      if (u.state.status === 'held') u.state = { ...u.state, status: 'active' };
+    };
+    switch (target.type) {
+      case 'unit': {
+        if (this.#pausedAll) fail(`resume of unit ${target.unit} while the whole arc is paused`);
+        this.#pausedUnits.delete(target.unit);
+        const u = this.#units.get(target.unit);
+        if (u !== undefined) release(u);
+        return;
+      }
+      case 'all':
+        this.#pausedAll = false;
+        this.#pausedUnits.clear();
+        for (const u of this.#units.values()) release(u);
+        return;
+      case 'backend':
+        if (!this.#parkedBackends.delete(target.backend)) fail(`resume of backend ${target.backend}, which is not parked`);
+        if (this.#pausedAll) return;
+        for (const [id, u] of this.#units) if (!this.#pausedUnits.has(id)) release(u);
         return;
     }
   }
@@ -413,6 +471,22 @@ export class Fold implements JournalView {
     return [...this.#parkedBackends].sort(compare);
   }
 
+  needsUser(): readonly NeedsUserState[] {
+    return [...this.#needsUser].sort(([a], [b]) => compare(a, b)).map(([id, { blocking }]) => ({ id, blocking, ack: this.#acks.get(id) ?? null }));
+  }
+
+  ackOf(id: NeedsUserId): NeedsUserAckState | null {
+    return this.#acks.get(id) ?? null;
+  }
+
+  control(): ControlState {
+    return { stop: this.#stop, pausedAll: this.#pausedAll, pausedUnits: [...this.#pausedUnits].sort(compare) };
+  }
+
+  containmentMode(): ContainmentMode | null {
+    return this.#containmentMode;
+  }
+
   derived(): DerivedState {
     return {
       v: SCHEMA_VERSION,
@@ -422,7 +496,11 @@ export class Fold implements JournalView {
       openIntents: this.openIntents(),
       units: [...this.#units].sort(([a], [b]) => compare(a, b)).map(([, u]) => u.state),
       meter: [...this.#meter].sort(([a], [b]) => compare(a, b)).map(([, m]) => ({ ...m })),
-      needsUser: [...this.#needsUser].sort(compare),
+      needsUser: [...this.#needsUser.keys()].sort(compare),
+      needsUserBlocking: [...this.#needsUser].filter(([, n]) => n.blocking).map(([id]) => id).sort(compare),
+      needsUserAcked: [...this.#acks.keys()].sort(compare),
+      control: this.control(),
+      containmentMode: this.#containmentMode,
       tailDiscarded: [...this.#tail],
       parkedBackends: this.parkedBackends(),
     };

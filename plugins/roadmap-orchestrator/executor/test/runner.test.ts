@@ -186,7 +186,7 @@ test('runner.spawn-failed', T, async () => {
 
 test('runner.backstop-kills-hung-runner', T, async () => {
   const inv = newInvocation();
-  const handle = start(inv, { argv: workload('workload-hang.ts'), deadlineMs: TEST_DEADLINE_MS, graceMs: 300 });
+  const handle = start(inv, { argv: workload('workload-hang.ts'), deadlineMs: TEST_DEADLINE_MS, graceMs: 1000 });
   const { child } = await waitForChild(handle, TEST_DEADLINE_MS);
   // A hung runner: stopped before its deadline, it can neither enforce the deadline nor write exit.json.
   signal(handle.runner, 'SIGSTOP');

@@ -20,7 +20,8 @@
 // Holders: a unit's stage attempt, or a sweep command. A sweep never runs a workload and never records a
 // failed cleanup: it has no unit to key a residue by (lead ruling), so what it could not clean stays
 // `cleaning` and the residue it was sweeping stays undisposed. Both rules are in the types and re-checked
-// at run time.
+// at run time. The one way out of cleanup-failed is a sweep's `reclaim` (cleanup-failed→cleaning under the
+// sweep), taken for this arc's own resource whose residue the sweep re-runs (commands/apply.ts).
 import { crashPoint } from '../core/crash.ts';
 import type { Holder, IntentOf, Parent, ResourceEdge } from '../core/events.ts';
 import { type InvocationId, type OpKey, type ResourceName, INTEGRATION_SLOT, opKey } from '../core/ids.ts';
@@ -79,6 +80,10 @@ export const sameHolder = (a: Holder, b: Holder): boolean => canonicalJson(a) ==
 /** The state an edge moves a resource to, or why it may not. */
 function after(status: ResourceStatus, holder: Holder, edge: ResourceEdge): ResourceStatus | string {
   if (edge.type === 'reserve') return status.state === 'free' ? { state: 'reserved', holder } : `reserve of a ${status.state} resource`;
+  if (edge.type === 'reclaim') {
+    if (holder.type !== 'sweep') return 'reclaim by a stage holder';
+    return status.state === 'cleanup-failed' ? { state: 'cleaning', holder } : `reclaim of a ${status.state} resource`;
+  }
   if (status.state === 'free') return `${edge.type} of a free resource`;
   if (!sameHolder(status.holder, holder)) return `${edge.type} by ${canonicalJson(holder)} of a resource held by ${canonicalJson(status.holder)}`;
   const from = edge.type === 'run' ? 'reserved' : edge.type === 'clean' ? edge.from : 'cleaning';
@@ -138,8 +143,8 @@ export function lockOrder(resources: readonly ResourceName[]): readonly Resource
 // ---------------------------------------------------------------------------------------------------
 // Transitions
 
-type NonFailEdge = Exclude<ResourceEdge, Readonly<{ type: 'fail' }>>;
-/** The edges a holder may take outside a failed cleanup: a sweep never runs. */
+type NonFailEdge = Exclude<ResourceEdge, Readonly<{ type: 'fail' | 'reclaim' }>>;
+/** The edges a holder may take outside a failed cleanup or a reclaim: a sweep never runs. */
 export type EdgeFor<H extends Holder> = H extends SweepHolder ? Exclude<NonFailEdge, Readonly<{ type: 'run' }>> : NonFailEdge;
 
 function holderKey(holder: Holder): OpKey {
@@ -194,6 +199,7 @@ export function transition<H extends Holder>(
 ): void {
   const e = edge as ResourceEdge;
   if (e.type === 'fail') throw new Error('a fail transition is recorded only by a stage holder\'s cleanup, with its residues');
+  if (e.type === 'reclaim') throw new Error('a reclaim is taken only through reclaimForSweep');
   if (holder.type === 'sweep' && e.type === 'run') throw new Error(`sweep ${holder.command} cannot run a workload`);
   journalTransition(ctx, holder, resources, e, parent, new Map());
 }
@@ -253,6 +259,22 @@ export function reserveForSweep(
   parent: Parent,
 ): Reservation<'reserved', SweepHolder> | Refused {
   return reserveWith(ctx, holder, lockOrder([...recipes.keys()]), recipes, parent);
+}
+
+/**
+ * cleanup-failed→cleaning under a sweep holder: the one way out of cleanup-failed. A sweep takes it for a
+ * resource of this arc whose residue it sweeps; `finishCleanup` then reruns the recorded teardown and
+ * releases the resource, or leaves it cleaning under the sweep.
+ */
+export function reclaimForSweep(
+  ctx: ResourceContext,
+  holder: SweepHolder,
+  recipes: ReadonlyMap<ResourceName, ResidueRecipe>,
+  parent: Parent,
+): Reservation<'cleaning', SweepHolder> {
+  const resources = lockOrder([...recipes.keys()]);
+  journalTransition(ctx, holder, resources, { type: 'reclaim' }, parent, recipes);
+  return { state: 'cleaning', holder, resources, recipes };
 }
 
 /** reserved→running: the holder's workload may start. Only after `probe` returned clear. */

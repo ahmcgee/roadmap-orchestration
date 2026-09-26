@@ -72,7 +72,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
     fingerprint: { unitCommit: B, specRev: specRev(2), contractRevs: [{ path: repoPath('docs/arch.md'), blob: A }], rulingRevs: [{ id: rulingId('C-1'), rev: 1 }] },
   }, null),
   'snapshot.publish': intent('snapshot.publish', { ref: refName('refs/roadmap/arc-1'), old: A, highWater: 41, manifestSha256: H, commit: commit([A] as const) }, { new: B }),
-  'needsuser.raise': intent('needsuser.raise', { id: needsUserId('nu-7'), path: absPath('/run/needs-user/nu-7.json') }, { sha256: H }),
+  'needsuser.raise': intent('needsuser.raise', { id: needsUserId('nu-7'), path: absPath('/run/needs-user/nu-7.json'), blocking: true }, { sha256: H }),
   'command.apply': intent('command.apply', { command: commandId('cmd-0123456789abcdef'), commandSha256: H }, null),
 };
 
@@ -106,6 +106,11 @@ const FACTS: readonly Fact[] = [
   { kind: 'dispatch', record: { unit, specRev: specRev(1), scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, at } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
+  { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
+  { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'unit', unit } },
+  { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
+  { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
+  { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
 ];
 
 function envelope(seq: number): Envelope {
@@ -151,8 +156,14 @@ describe('events', () => {
       { ...INTENTS['mergein.prepare'], expect: { ...INTENTS['mergein.prepare'].expect, merge: { type: 'conflicted', conflicts: [repoPath('src/a.ts')] } }, post: { type: 'conflicted' } },
       { ...INTENTS['snapshot.publish'], expect: { ...INTENTS['snapshot.publish'].expect, old: null, commit: commit([] as const) } },
       { ...INTENTS['resource.transition'], expect: { holder: { type: 'sweep', command: commandId('cmd-0123456789abcdef') }, resources: [resourceName('db')], edge: { type: 'clean', from: 'running' } } },
+      { ...INTENTS['resource.transition'], expect: { holder: { type: 'sweep', command: commandId('cmd-0123456789abcdef') }, resources: [resourceName('db')], edge: { type: 'reclaim' } } },
     ];
     for (const v of variants) roundTrip(event(v));
+  });
+
+  it('a reclaim is a sweep holder\'s edge only', () => {
+    const stageReclaim = { ...INTENTS['resource.transition'], expect: { holder: { type: 'stage', unit, stage: 'build', attempt: 1 }, resources: [resourceName('db')], edge: { type: 'reclaim' } } };
+    assert.throws(() => parseEventLine(serializeEvent(event(stageReclaim as LogRecord)).slice(0, -1)), /only a sweep reclaims/);
   });
 
   it('round-trips abort records and every fact', () => {

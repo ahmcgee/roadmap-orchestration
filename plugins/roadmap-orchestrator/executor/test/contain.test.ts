@@ -38,7 +38,7 @@ test('contain.kill-tree', T, async () => {
   const inv = newInvocation();
   const dir = barrierDir();
   // Every level ignores SIGTERM, so the kill must escalate to SIGKILL after the grace.
-  const handle = startRunner(inv.invDir, prepareLaunch(launchBase(inv, { argv: workload('workload-tree.ts', dir, '3', '1', '--ignore-term'), graceMs: 300 })));
+  const handle = startRunner(inv.invDir, prepareLaunch(launchBase(inv, { argv: workload('workload-tree.ts', dir, '3', '1', '--ignore-term'), graceMs: 1000 })));
   const { child } = await waitForChild(handle, 10_000);
   for (const level of [1, 2, 3]) await reached(dir, `level-${level}`, 10_000);
   const tree = [1, 2, 3].map((level) => identityFromFile(join(dir, `level-${level}.reached`)));
@@ -59,7 +59,7 @@ test('contain.kill-tree', T, async () => {
 test('contain.growing-tree-stable-set', T, async () => {
   const inv = newInvocation();
   const dir = barrierDir();
-  const handle = startRunner(inv.invDir, prepareLaunch(launchBase(inv, { argv: workload('workload-growing.ts', dir), graceMs: 300 })));
+  const handle = startRunner(inv.invDir, prepareLaunch(launchBase(inv, { argv: workload('workload-growing.ts', dir), graceMs: 1000 })));
   const { child } = await waitForChild(handle, 10_000);
   await reached(dir, 'growing', 10_000);
   const ref = { inv: inv.inv, child };

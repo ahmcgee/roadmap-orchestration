@@ -10,8 +10,9 @@ import {
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode, type DispatchRecord,
-  type KillReason, type ResidueRecord, type SpecPatch, type Stage, type TokenUsage, type UsageUnavailableReason, approvalFingerprint,
-  containmentMode, dispatchRecord, killReason, specPatch, stage, tokenUsage, usageUnavailableReason,
+  type KillReason, type PauseTarget, type ResidueRecord, type ResumeTarget, type SpecPatch, type Stage, type TokenUsage,
+  type UsageUnavailableReason, approvalFingerprint, containmentMode, dispatchRecord, killReason, optionId, pauseTarget,
+  resumeTarget, specPatch, stage, tokenUsage, usageUnavailableReason,
 } from './records.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, str, tagged, text,
@@ -60,10 +61,13 @@ export type Holder =
 
 /**
  * The legal reservation edges: free→reserved, reserved→running, reserved|running→cleaning, cleaning→free,
- * cleaning→cleanup-failed. A `fail` lists one residue per failed resource (exactly the transitioned set).
+ * cleaning→cleanup-failed, and `reclaim`: cleanup-failed→cleaning, taken only by a sweep holder sweeping
+ * that resource's residue (the stage holder is gone; the sweep re-runs the recorded teardown). A `fail`
+ * lists one residue per failed resource (exactly the transitioned set).
  */
 export type ResourceEdge =
   | Readonly<{ type: 'reserve' }>
+  | Readonly<{ type: 'reclaim' }>
   | Readonly<{ type: 'run' }>
   | Readonly<{ type: 'clean'; from: 'reserved' | 'running' }>
   | Readonly<{ type: 'release' }>
@@ -130,7 +134,8 @@ export type OpExpect = {
     manifestSha256: Sha256Hex;
     commit: CommitInputs<readonly [] | readonly [Sha]>;
   }>;
-  'needsuser.raise': Readonly<{ id: NeedsUserId; path: AbsPath }>;
+  /** `blocking` is recorded so the fold alone knows which raised items hold the arc (terminal predicate). */
+  'needsuser.raise': Readonly<{ id: NeedsUserId; path: AbsPath; blocking: boolean }>;
   'command.apply': Readonly<{ command: CommandId; commandSha256: Sha256Hex }>;
 };
 
@@ -282,6 +287,16 @@ export type Fact =
    * whose result carried the error.
    */
   | Readonly<{ kind: 'backend-park'; backend: Backend; class: BackendParkClass; inv: InvocationId }>
+  /**
+   * Command effects (step 13), each written once by the `command.apply` op of `command`. `needs-user-acked`:
+   * the item is acknowledged (at most once per id; its `.ack.json` is the file twin). `paused` and
+   * `stop-requested`: the durable control markers the driver consults. `resumed`: a unit's or every hold
+   * and pause cleared, or a backend's park cleared after a passing smoke.
+   */
+  | Readonly<{ kind: 'needs-user-acked'; id: NeedsUserId; command: CommandId; choice: string | null }>
+  | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
+  | Readonly<{ kind: 'stop-requested'; command: CommandId }>
+  | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
   | StageOutcomeFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
@@ -352,6 +367,7 @@ const holder: Read<Holder> = tagged('type', {
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
   reserve: object((f): ResourceEdge => ({ type: f.get('type', literal('reserve')) })),
+  reclaim: object((f): ResourceEdge => ({ type: f.get('type', literal('reclaim')) })),
   run: object((f): ResourceEdge => ({ type: f.get('type', literal('run')) })),
   clean: object((f): ResourceEdge => ({ type: f.get('type', literal('clean')), from: f.get('from', oneOf(['reserved', 'running'] as const)) })),
   release: object((f): ResourceEdge => ({ type: f.get('type', literal('release')) })),
@@ -419,6 +435,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
+      if (e.edge.type === 'reclaim' && e.holder.type !== 'sweep') throw new SchemaError(`${path}.expect.holder.type`, 'sweep (only a sweep reclaims a cleanup-failed resource)', e.holder.type);
       if (e.edge.type !== 'fail') return;
       sameList(e.edge.residues.map((r) => r.resource), e.resources, `${path}.expect.edge.residues`);
     },
@@ -529,7 +546,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'needsuser.raise': {
-    expect: object((f) => ({ id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), path: f.get('path', absR) })),
+    expect: object((f) => ({ id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), path: f.get('path', absR), blocking: f.get('blocking', bool) })),
     post: object((f) => ({ sha256: f.get('sha256', sha256R) })),
     outcome: kindOnly('raised'),
   },
@@ -567,6 +584,13 @@ export const fact: Read<Fact> = tagged('kind', {
   'backend-park': object((f): Fact => ({
     kind: f.get('kind', literal('backend-park')), backend: f.get('backend', backend), class: f.get('class', oneOf(BACKEND_PARK_CLASSES)), inv: f.get('inv', invR),
   })),
+  'needs-user-acked': object((f): Fact => ({
+    kind: f.get('kind', literal('needs-user-acked')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), command: f.get('command', cmdR),
+    choice: f.get('choice', nullable(optionId)),
+  })),
+  paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
+  'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
+  resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

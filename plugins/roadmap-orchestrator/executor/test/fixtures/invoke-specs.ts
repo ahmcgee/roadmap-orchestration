@@ -187,10 +187,10 @@ export function scenario(steps: readonly Step[]): Scenario {
 const NO_DEADLINE_MS = 60_000;
 
 /** A gate judgment through the fake `claude` of `s`. */
-export function backend(r: Run, s: Scenario, deadlineMs = NO_DEADLINE_MS, graceMs = 300): SpecDescriptor {
+export function backend(r: Run, s: Scenario, deadlineMs = NO_DEADLINE_MS, graceMs = 1000): SpecDescriptor {
   return { runDir: r.runDir, arc: r.arc, purpose: 'backend', deadlineAt: deadlineIn(deadlineMs), graceMs, cwd: r.work, binDir: s.binDir };
 }
 
-export function command(r: Run, purpose: Exclude<Purpose, 'backend'>, argv: readonly string[], deadlineMs = NO_DEADLINE_MS, graceMs = 300): SpecDescriptor {
+export function command(r: Run, purpose: Exclude<Purpose, 'backend'>, argv: readonly string[], deadlineMs = NO_DEADLINE_MS, graceMs = 1000): SpecDescriptor {
   return { runDir: r.runDir, arc: r.arc, purpose, deadlineAt: deadlineIn(deadlineMs), graceMs, cwd: r.work, argv };
 }

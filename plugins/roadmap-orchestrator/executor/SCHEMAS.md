@@ -34,7 +34,7 @@ per-unit route layers.
 | Form | `Command` |
 |---|---|
 | `--version` | `{command:'version'}` |
-| `start --repo <path> --plan <plan.json> [--profile default\|claude-only]` | `{command:'start', args:{repo, plan, profile}}`; profile defaults to `default` |
+| `start --repo <path> --plan <plan.json> [--profile default\|claude-only]` | `{command:'start', args:{repo, plan, profile}}`; `profile: null` when absent, so `selectProfile` lets `.roadmap/config.json` choose (explicit flag > config > `default`) |
 | `status`, `watch`, `stop` `[--repo <p> --arc <a>]` | `{command, run: RunLocator}` |
 | `pause (<unit> \| --all)` | `{target: {type:'unit',unit} \| {type:'all'}}` |
 | `ack <needs-user-id> [--choice <option>]` | `{id, choice \| null}` |
@@ -146,6 +146,10 @@ in the line belongs to `arc`.
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
 | `backend-park` | `backend, class: usage-limit\|capacity, inv`: a failed invocation whose backend reported such an error parks that backend arc-wide until `resume --backend` (lead ruling, 11b) |
+| `needs-user-acked` | `id, command, choice\|null`: at most one per id, any id form; the file twin is `<id>.ack.json` (step 13) |
+| `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
+| `stop-requested` | `command`: the durable stop marker (step 13) |
+| `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 
 **`stage-outcome`** records one stage attempt's outcome as the transition table
 (`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
@@ -205,7 +209,7 @@ recovery | external-unknown`.
 | `candidate.merge` | see git table | `{new}` | `merged` |
 | `integration.ff` | see git table | `null` | `published` \| `unpublished{tip}` \| `recovery-required{observed}` |
 | `snapshot.publish` | see git table | `{new}` | `published` |
-| `needsuser.raise` | `id, path` | `{sha256}` | `raised` |
+| `needsuser.raise` | `id, path, blocking` | `{sha256}` | `raised` |
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
 `SpawnSubject`: `backend{role, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
@@ -216,7 +220,9 @@ The invocation is `op#ordinal`; its launch.json is written after the intent is d
 `Holder = stage{unit, stage, attempt} | sweep{command}`. `ResourceEdge`: `reserve` (free→reserved), `run`
 (reserved→running), `clean{from: reserved|running}` (→cleaning), `release` (cleaning→free), `fail{residues:
 [{resource, teardown: InvocationId}]}` (cleaning→cleanup-failed; one residue per transitioned resource,
-appended to the host index before this intent's done). Lock order: ascending names, `integration-slot` last.
+appended to the host index before this intent's done), `reclaim` (cleanup-failed→cleaning, sweep holders only:
+a sweep taking back this arc's own resource to re-run its residue's teardown; step 13). Lock order: ascending
+names, `integration-slot` last.
 
 ## Git intents
 
@@ -240,7 +246,7 @@ directory prefix of, an existing path refuses the candidate; collisions present 
 | Kind | Record | Done when |
 |---|---|---|
 | `spec.patch` | `{path, oldSha256, newSha256, expectRev, newRev}` + the patch | file hash = new |
-| `needsuser.raise` | write-once, `{id, path, sha256}` | file hash matches |
+| `needsuser.raise` | write-once, `{id, path, blocking, sha256}`; the bytes are staged at `needs-user/.staged/<id>.json` inside the intent body (before the intent is durable) and the act renames them into place | file hash matches; absent → redo the rename |
 | `command.apply` | `{command, commandSha256}` | an **operation-bound `applied` receipt** naming the op and its verified postconditions exists (`accepted` is not done) |
 
 ## Runner files (`src/core/records.ts`)
@@ -251,7 +257,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 
 | File | Type / reader | Writer, when | Fields |
 |---|---|---|---|
-| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv, cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, graceMs, containment, test: {crash}\|null, terminal` |
+| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv, cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery, at` |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
@@ -344,15 +350,28 @@ resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}` |
 
 Control commands (`CONTROL_COMMANDS = pause, stop, ack`) apply immediately, waiting only for an
-`integration.ff` critical section; mutations (`resume`, `sweep`) apply at safe points. `NeedsUserReason` is a
-closed list in `records.ts`; add members by request.
+`integration.ff` critical section; mutations (`resume`, `sweep`) apply at safe points (no open stage-parented
+intent). `NeedsUserReason` is a closed list in `records.ts`; add members by request.
+
+Step 13 (`src/commands/{queue,apply}.ts`, `src/needsuser.ts`): the CLI mints `cmd-<12 hex ms clock><4 random
+hex>`, so id order is submission order, and writes the incoming file by temp + `link` (atomic, write-once).
+The executor polls every 1 s; a command without a terminal receipt is pending and gets `accepted` on first
+sight. Each command is one `command.apply` op (key `command:<id>`, parent `command{command}`); every effect
+checks its postcondition first, so recovery applies only the remainder. Effects: `pause` → `paused` fact;
+`stop` → `stop-requested` fact; `ack` → `<id>.ack.json` then `needs-user-acked` (rejected: unknown id,
+acknowledged by another command, a choice the item does not offer); `resume` → `resumed` fact (`backend`: that
+backend's smoke alone first; a failed smoke is `rejected{smoke-failed: …}`; `<unit>` under `pause --all` is
+rejected); `sweep` → per undispositioned residue, reserve (or `reclaim` this arc's own cleanup-failed
+resource) under the sweep holder, the recorded teardown, release, `cleaned` disposition; a failed teardown
+leaves the resource cleaning under the sweep and the residue undisposed, the receipt's `verified` says so, and
+the next sweep re-drives it first.
 
 ## Cross-module interfaces (`src/core/interfaces.ts`)
 
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, parkedBackends()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b) |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |

@@ -6,6 +6,7 @@
 // always shown with their state: ids are never reused, and a reader must see what was withdrawn.
 // `fastLanesOnly` is the implementer's view: estate lanes are left out entirely, without even a mention.
 import type { ItemState, LaneDef, NoteDef, SpecM1 } from '../core/records.ts';
+import { fastLanes } from '../resources/reserve.ts';
 
 export type RenderOptions = Readonly<{ fastLanesOnly?: boolean }>;
 
@@ -39,7 +40,7 @@ function notes(title: string, items: readonly (NoteDef & Readonly<{ state: ItemS
 }
 
 export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
-  const lanes = options.fastLanesOnly === true ? spec.lanes.filter((l) => l.tier === 'fast') : spec.lanes;
+  const lanes = options.fastLanesOnly === true ? fastLanes(spec) : spec.lanes;
   const acceptance = spec.acceptance.map((a) =>
     bullet(`${code(a.id)} [${a.state}]${a.failLoudIfUndelivered ? ' (fail loud if undelivered)' : ''}`, a.clause));
   const sections = [

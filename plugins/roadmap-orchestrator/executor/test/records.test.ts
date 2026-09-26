@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  type ExitFile, RUNNER_FILE_READERS, type RunnerFileName, approvalFingerprint, classifyCommand, classifyTerminal, commandFile,
+  type ExitFile, MIN_GRACE_MS, RUNNER_FILE_READERS, type RunnerFileName, approvalFingerprint, classifyCommand, classifyTerminal, commandFile,
   handshakeFile, hostLockClaim, hostOwner, needsUserAck, needsUserRecord, readinessFile, receipt, recoveryLockClaim,
   specM1, specPatch, supervisorState,
 } from '../src/core/records.ts';
@@ -38,6 +38,15 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
 }
 
 describe('records', () => {
+  it('launch.json refuses a grace under MIN_GRACE_MS (the backstop at deadline + 2 * grace must not beat exit.json)', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    assert.equal(MIN_GRACE_MS, 1_000);
+    assert.equal(read({ ...RUNNER_SAMPLES['launch.json'], graceMs: MIN_GRACE_MS }, 'launch.json').graceMs, MIN_GRACE_MS);
+    for (const graceMs of [MIN_GRACE_MS - 1, 500, 0]) {
+      assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], graceMs }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.graceMs');
+    }
+  });
+
   describe('classifyTerminal precedence', () => {
     const output = { decision: 'approve' };
     for (const cause of ['deadline', 'cancel', 'recovery-kill'] as const) {

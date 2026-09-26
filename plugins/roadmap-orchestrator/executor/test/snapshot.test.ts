@@ -56,7 +56,7 @@ async function run(): Promise<Run> {
     kind: 'needsuser.raise', key: opKey('needsuser'), parent: { type: 'arc' }, deadlineAt: null,
     body: (op) => {
       needsUser = needsUserIdForOp(op);
-      return { expect: { id: needsUserIdForOp(op), path: absPath(join(runDir, 'needs-user', `${needsUser}.json`)) }, post: { sha256: sha256(sha256Hex(content)) } };
+      return { expect: { id: needsUserIdForOp(op), path: absPath(join(runDir, 'needs-user', `${needsUser}.json`)), blocking: true }, post: { sha256: sha256(sha256Hex(content)) } };
     },
   });
   mkdirSync(join(runDir, 'needs-user'));

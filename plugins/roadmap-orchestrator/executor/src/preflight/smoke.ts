@@ -303,12 +303,17 @@ async function smokeBackend(routing: SmokeRouting, ctx: InvocationContext, backe
 }
 
 /** Smoke every backend the resolved routing uses, one after another, in the order of BACKENDS. */
-export async function smoke(routing: SmokeRouting, ctx: InvocationContext): Promise<SmokeReport> {
+export function smoke(routing: SmokeRouting, ctx: InvocationContext): Promise<SmokeReport> {
+  return smokeBackends(routing, ctx, BACKENDS);
+}
+
+/** Smoke the listed backends only, in the order given: `resume --backend` re-runs its backend's smoke alone. */
+export async function smokeBackends(routing: SmokeRouting, ctx: InvocationContext, only: readonly Backend[]): Promise<SmokeReport> {
   // The smoke's calls run in their own empty dir: a smoke touches no tree.
   const cwd = absPath(join(ctx.runDir, 'smoke'));
   durableMkdir(cwd);
   const backends: BackendSmoke[] = [];
-  for (const backend of BACKENDS) backends.push(await smokeBackend(routing, ctx, backend, cwd));
+  for (const backend of only) backends.push(await smokeBackend(routing, ctx, backend, cwd));
   return { profile: routing.profile, routingRev: routing.resolved.rev, backends };
 }
 

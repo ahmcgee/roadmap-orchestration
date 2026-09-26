@@ -13,7 +13,8 @@ export class CliError extends Error {
   }
 }
 
-export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName }>;
+/** `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose. */
+export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null }>;
 
 /**
  * How a run command finds its run: through the host lock claim (the one live arc on this host), or
@@ -98,7 +99,7 @@ export function parseStartArgs(argv: readonly string[]): StartArgs {
   if (repo === undefined) throw new CliError('start: --repo <path> is required');
   if (plan === undefined) throw new CliError('start: --plan <plan.json> is required');
   const profile = value(p, 'profile');
-  return { repo, plan, profile: profile === undefined ? 'default' : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile) };
+  return { repo, plan, profile: profile === undefined ? null : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile) };
 }
 
 export function parseCommand(argv: readonly string[]): Command {

@@ -6,7 +6,7 @@ import type {
   AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   RecoveredBy,
 } from './events.ts';
-import type { ArcId, InvocationId, OpId, OpKey, UnitId } from './ids.ts';
+import type { ArcId, CommandId, InvocationId, NeedsUserId, OpId, OpKey, UnitId } from './ids.ts';
 import type {
   ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
@@ -56,9 +56,22 @@ export interface JournalView {
   unit(unit: UnitId): UnitState;
   /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
-  /** Backends parked arc-wide by a `backend-park` fact, ascending. */
+  /** Backends parked arc-wide by a `backend-park` fact and not since resumed, ascending. */
   parkedBackends(): readonly Backend[];
+  /** Every needs-user item a done `needsuser.raise` recorded, ascending id, with its acknowledgement. */
+  needsUser(): readonly NeedsUserState[];
+  /** The `needs-user-acked` fact of any id (journal-raised or not), or null while unacknowledged. */
+  ackOf(id: NeedsUserId): NeedsUserAckState | null;
+  /** The durable pause and stop markers the commands recorded; the driver consults them. */
+  control(): ControlState;
+  /** The latest `containment-mode` fact, or null before one. */
+  containmentMode(): ContainmentMode | null;
 }
+
+export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
+export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
+/** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
+export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;
 
 export interface Journal {
   readonly view: JournalView;

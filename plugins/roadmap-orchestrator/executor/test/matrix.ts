@@ -62,6 +62,8 @@ export const SPEC_PATCH = 'spec.patch';
 export const RESIDUE_ORDERING = 'resource.transition fail + residue';
 export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const HOST_TAKEOVER = 'host takeover';
+export const NEEDSUSER_RAISE = 'needsuser.raise';
+export const COMMAND_APPLY = 'command.apply';
 
 export const MATRIX: readonly Row[] = [
   {
@@ -344,7 +346,53 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append); the re-check after a redirect is the pipeline\'s stage (step 11)' },
     },
   },
-  { row: 'needsuser.raise, command.apply', test: 'pending', cells: pending('13') },
+  {
+    // The scenario (test/fixtures/needsuser-child.ts) raises one blocking needs-user: the body stages the
+    // bytes, the intent is appended, the act renames the staged file into place, the done closes it.
+    row: NEEDSUSER_RAISE,
+    test: 'test/needsuser.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['needsuser.raise.before-publish'],
+        recovery: 'the final file is absent and the staged one hashes to the intent: redo (the rename), done redone; the item is then open and blocking',
+      },
+      B3: { status: 'excluded', why: 'the act is one rename of a durable staged file: inside act the file is staged (B2) or final (B4), never between' },
+      B4: {
+        status: 'crash',
+        labels: ['needsuser.raise.after-publish'],
+        recovery: 'the final file hashes to the intent: done raised, reconciled, no second write',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append); nothing follows a raise inside the op' },
+    },
+  },
+  {
+    // The scenarios (test/fixtures/cmd-child.ts): an `ack` of a raised needs-user, and a `sweep` of one host
+    // residue (reserve under the sweep holder, teardown, release, cleaned disposition). The command was
+    // polled first, so its `accepted` receipt exists before the op begins.
+    row: COMMAND_APPLY,
+    test: 'test/commands.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler applies the whole effect once and writes the applied receipt naming the op; done reconciled',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['spawn.after-intent'],
+        recovery: 'sweep only: its teardown spawn is open; the reconciler settles it (lost), re-drives the resource left cleaning under the sweep (teardown rerun as a new op), releases it, records the cleaned disposition, writes the receipt',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'effect complete: every postcondition already holds, so nothing is applied twice (one ack file, one ack fact, one disposition, one teardown); the applied receipt is written if missing, or, present and naming the op, decides alone; done reconciled',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
   {
     // The scenario (test/fixtures/host-claim.ts) takes over a dead claim of the same arc.
     row: HOST_TAKEOVER,

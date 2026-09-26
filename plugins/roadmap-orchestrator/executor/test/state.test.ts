@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, opId, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, commandId, needsUserId, opId, specRev, unitId } from '../src/core/ids.ts';
 import type { Stage } from '../src/core/records.ts';
 import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
@@ -118,7 +118,8 @@ describe('fold derives', () => {
 
   it('an empty log', () => {
     assert.deepEqual(fold(ARC, []), {
-      v: 1, arc: ARC, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], tailDiscarded: [], parkedBackends: [],
+      v: 1, arc: ARC, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
+      control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
     });
   });
 
@@ -216,6 +217,42 @@ describe('fold invariants', () => {
     assert.throws(() => f.apply(b!, prevHash(Buffer.from(serializeEvent(b!)))), FoldInvariantError);
     assert.equal(canonicalJson(f.derived()), before);
     assert.equal(f.highWater(), 1);
+  });
+});
+
+describe('fold: command effects (step 13)', () => {
+  const C = commandId('cmd-00000000000000c1');
+  const fact = (f: object): LogRecord => ({ type: 'fact', fact: f }) as LogRecord;
+  const hold = stageOutcome({ stage: 'build', attempt: 1, outcome: 'interrupted', class: 'hold' });
+
+  it('pause and stop markers; resume clears a unit\'s pause and hold, all of them, or a backend\'s park', () => {
+    const f = new Fold(ARC);
+    const events = chain([
+      hold, // 1
+      fact({ kind: 'paused', command: C, target: { type: 'unit', unit: U1 } }), // 2
+      fact({ kind: 'stop-requested', command: C }), // 3
+      fact({ kind: 'backend-park', backend: 'codex', class: 'usage-limit', inv: inv1(1) }), // 4
+    ]);
+    for (const e of events) f.apply(e, prevHash(Buffer.from(serializeEvent(e))));
+    assert.deepEqual(f.control(), { stop: C, pausedAll: false, pausedUnits: [U1] });
+    assert.equal(f.unit(U1).status, 'held');
+    // A backend resume releases holds no pause covers: u1 is paused, so it stays held.
+    const resumed = chain([hold, fact({ kind: 'paused', command: C, target: { type: 'unit', unit: U1 } }), fact({ kind: 'backend-park', backend: 'codex', class: 'usage-limit', inv: inv1(1) }), fact({ kind: 'resumed', command: C, target: { type: 'backend', backend: 'codex' } })]);
+    const s1 = fold(ARC, resumed);
+    assert.deepEqual([s1.parkedBackends, s1.units[0]?.status], [[], 'held']);
+    const s2 = fold(ARC, chain([hold, fact({ kind: 'paused', command: C, target: { type: 'unit', unit: U1 } }), fact({ kind: 'resumed', command: C, target: { type: 'unit', unit: U1 } })]));
+    assert.deepEqual([s2.control.pausedUnits, s2.units[0]?.status, s2.units[0]?.counters.attempts], [[], 'active', 1]);
+    const s3 = fold(ARC, chain([hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'resumed', command: C, target: { type: 'all' } })]));
+    assert.deepEqual([s3.control.pausedAll, s3.units[0]?.status], [false, 'active']);
+  });
+
+  it('refuses a resume of an unparked backend, a unit resume under pause --all, and a second acknowledgement', () => {
+    refuses(chain([fact({ kind: 'resumed', command: C, target: { type: 'backend', backend: 'claude' } })]), 1, /not parked/);
+    refuses(chain([fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'resumed', command: C, target: { type: 'unit', unit: U1 } })]), 2, /whole arc is paused/);
+    const ack = fact({ kind: 'needs-user-acked', id: needsUserId('sup-1-1'), command: C, choice: null });
+    const s = fold(ARC, chain([ack]));
+    assert.deepEqual(s.needsUserAcked, ['sup-1-1'], 'any id form may be acknowledged');
+    refuses(chain([ack, ack]), 2, /second acknowledgement/);
   });
 });
 

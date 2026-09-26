@@ -47,7 +47,7 @@ export const inv1 = (seq: number, ordinal = 1): InvocationId => invocationId(opI
 export function needsUserIntent(seq: number): IntentRecord {
   return {
     type: 'intent', op: opId(ARC, seq), kind: 'needsuser.raise', key: opKey(`needs-user:${seq}`), parent: { type: 'arc' }, ordinal: 1, deadlineAt: null,
-    expect: { id: needsUserId(`nu-${seq}`), path: absPath(`/run/needs-user/nu-${seq}.json`) }, post: { sha256: H },
+    expect: { id: needsUserId(`nu-${seq}`), path: absPath(`/run/needs-user/nu-${seq}.json`), blocking: false }, post: { sha256: H },
   };
 }
 
