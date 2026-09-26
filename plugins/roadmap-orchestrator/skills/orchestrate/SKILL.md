@@ -14,8 +14,8 @@ and the files it points to. The reasons are in `RATIONALE-1.0.md`.
 One unit, serially: plan-check, build, salvage, lanes, gate, candidate merge, fast-forward of the integration
 branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands later: obligations and the holistic layer in
 M3, plan authoring in the M4 skill text. In M1 you write `plan.json` and each unit's `spec.json` by hand, following the
-"Input contract" and "`spec.json` M1 subset" sections of `executor/SCHEMAS.md`. For a worked plan, see the
-M1 fixture, `executor/evals/m1/`.
+"Input contract" and "`spec.json` M1 subset" sections of `executor/SCHEMAS.md`. For a worked plan, run the
+M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
 ## What you never do
 
@@ -58,10 +58,23 @@ The other commands only queue a file and print its id. Queued is not applied: ch
 
 ## Reading `status`
 
-Start with `run.state` and `run.owner`: is the executor alive, and is it waiting on you? Then `needsUser`,
-ranked with recommendations; `units` (stage, attempt, elapsed, deadline, park reason); `commands`; `spend`
-(tokens by role, never by model); `host` (locks, residues, containment mode and its stated guarantee).
-Residues block every future `start` until swept or dispositioned.
+One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held unit or a parked backend),
+`parked` (a blocking needs-user waits on you), `complete`, `refused` or `no-owner`; `owner` is
+`{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
+
+- `needsUser`: the unacknowledged items, `{id, reason, blocking}`, ascending id. The summary, recommendation,
+  options and evidence are in `needs-user/<id>.json`.
+- `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per plan unit; `seat` is the
+  `{role, tier}` the current stage dispatches on, or null.
+- `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
+- `spend`: `byRole` token totals per role and routing revision; `byModel` derives the models from those
+  seats at render time, the only place `status` names a model.
+- `host.containment`: the containment `mode` and its stated `guarantee`.
+- `parkedBackends`: backends parked on a usage limit or capacity error until `resume --backend`.
+- `rejection`: the latest refused start's rows, or null.
+
+An undispositioned residue blocks every future `start` (the `undispositioned-residue` rejection) until
+swept or dispositioned.
 
 ## When `start` refuses
 
