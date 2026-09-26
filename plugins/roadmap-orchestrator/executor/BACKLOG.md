@@ -72,8 +72,9 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
     `user`; this host's settings set `effortLevel: high` and `alwaysThinkingEnabled`), so Claude calls run
     at the CLI's default effort. Claude triples carry `effort: 'default'` and the argv has no effort flag;
     `claude --effort <low|medium|high|xhigh|max>` exists if a seat should pin one.
-  - reads.json is audit only. Binding what a judgment read into the approval fingerprint (and handing a
-    later round its predecessor's reads) is the follow-up.
+  - reads.json is audit only (item 22, second half). The approval fingerprint covers the cited contracts
+    only; a gate that reads an uncited contract from the index does not bind it. Binding what a judgment read
+    (reads.json) into the fingerprint, and handing a later round its predecessor's reads, is the follow-up.
   - A cancelled command (a lane paused or stopped mid-run) still records verdict `process-fault` in
     result.json; lanes read the reason from cancel.json (`cancelledFor`). Backend calls record
     `cancelled{reason}` and `verdictOf` reads that.
@@ -97,3 +98,18 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
   - `run.state` shows `held` while the next unit waits on `after` for another unit's open needs-user, though
     what it waits on is that item; `units[].status` (`held-after:<ids>`) names the units.
   - Shared-resource owner leases are a documented probe convention (SKILL.md), not executor code.
+- Judgment (cites, round handoff, caching):
+  - **Arc-constant documents as a cache boundary** (item 11). The executor sends spec, documents and diff as one
+    stdin text block, and the API caches only at content-block boundaries, so today only the tools and the
+    role's `--system-prompt` prefix are reused across sessions. A probe on 2026-09-26 (Opus 5.5, ~107 KB of
+    contracts) showed documents in `--system-prompt` read back from cache in a fresh session (write 1,429 / read
+    44,441, $0.025 against $0.371). Placement: system prompt = role instructions, architecture doc (or digest),
+    cited contracts in fixed sorted order, rulings, Direction, byte-identical per (role, model); first message =
+    spec, scope, diff, lane ledger, evidence dirs, prior round; implementer-authored content never in the system
+    prompt. Deferred until an A/B of one real plan-check under both layouts on a unit with known findings shows
+    the same verdicts and reasons; the saving is modest (~190k tokens move from cache-write to cache-read per
+    hit, hits mostly in redirect and re-gate bursts), and cites already shrink the documents.
+  - **A `respec` gate outcome** (item 27b). M1 has no gate→planner path: a gate that finds the spec wrong can only
+    escalate. Wanted: the gate emits spec directives, the architect or a fresh plan-check with a handoff proposes
+    a SpecPatch that bumps the spec rev, and the build resumes its session with the amendment as fix-round input.
+    Until then the architect's reopen of a parked unit after a spec edit covers it by hand.

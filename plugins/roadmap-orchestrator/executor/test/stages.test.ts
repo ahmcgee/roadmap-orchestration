@@ -3,19 +3,20 @@
 // deterministic fixtures of this step (redirect then approve; red lane → fix round reading the evidence
 // dir) and the named tests session.judgment-never-resumes, redirect.no-widen, backend.usage-limit,
 // stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids,
-// rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh.
+// rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh; and the arc-1 feedback
+// behaviour: plan-check.checkouts, plan-check.prior-round, plan-check.cites, library.withdrawn-not-embedded.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { invocationId, resourceName } from '../src/core/ids.ts';
 import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
-import { implementerDispatch, judgmentDispatch } from '../src/pipeline/dispatch.ts';
+import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { NO_SESSION_NOTE, RESUME_DIRECTIVE, type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import {
-  type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, planCheck, quiesce, salvage, teardown,
+  type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, library, loadUnitSpec, planCheck, quiesce, salvage, teardown,
 } from '../src/pipeline/stages.ts';
 import type { Next } from '../src/pipeline/transitions.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -277,7 +278,8 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
   const b = await build(run.ctx, run.unit, revise);
   assert.equal(b.outcome.kind, 'success');
   assert.ok(!existsSync(green.verification.path), 'the verification checkout is gone');
-  const removal = events(run.runDir).filter((e) => e.type === 'intent' && e.kind === 'worktree.remove');
+  // The plan-check removed its own checkout of the tip; the verification checkout is removed once, here.
+  const removal = events(run.runDir).filter((e) => e.type === 'intent' && e.kind === 'worktree.remove' && e.expect.path === green.verification!.path);
   assert.equal(removal.length, 1);
   const removed = removal[0]!;
   assert.ok(removed.type === 'intent' && removed.parent.type === 'stage' && removed.parent.stage === 'build' && removed.parent.attempt === b.attempt);
@@ -451,4 +453,107 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
     const base = ['HOME', 'PATH', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined));
     assert.deepEqual(Object.keys(l.env).sort(), (build ? [...base, 'RESOURCE_OWNER'] : base).sort());
   }
+});
+
+/** Replaces the scenario's steps: for steps that name paths known only once the unit is laid out. */
+function setSteps(run: StageRun, steps: readonly Step[]): void {
+  writeFileSync(run.scenario.path, `${JSON.stringify({ steps }, null, 2)}\n`);
+}
+
+const planCheckTree = (run: StageRun, attempt: number, branch = false): string =>
+  join(run.ctx.plan.worktreeRoot, run.ctx.plan.arc, `${U1}.plan-check-${attempt}${branch ? '-branch' : ''}`);
+
+test('plan-check.checkouts: the judge reads a detached checkout of the tip and one of the unit branch, both removed once read; its approving notes reach the build', T, async () => {
+  const run = setupUnit({ steps: [] });
+  // The unit already has a branch, one commit past the tip (an adopted branch).
+  const branch = unitBranch(run.ctx.plan.arc, U1).slice('refs/heads/'.length);
+  git(run.repo, 'checkout', '--quiet', '-b', branch);
+  writeFileSync(join(run.repo, 'src', 'extra.js'), 'export const extra = 1;\n');
+  git(run.repo, 'add', '--all');
+  git(run.repo, 'commit', '--quiet', '-m', 'adopted work');
+  const branchTip = headOf(run.repo);
+  git(run.repo, 'checkout', '--quiet', 'main');
+  const tip = planCheckTree(run, 1);
+  const side = planCheckTree(run, 1, true);
+  setSteps(run, [
+    planCheckStep({ decision: 'approve', notes: 'NOTE-X: src/extra.js exports a constant nothing imports.' }, {
+      cwd: tip,
+      argv: ['--add-dir', side, '--add-dir', run.planDir],
+      stdinContains: [`${tip} (your working directory)`, `unit branch ${branchTip}: ${side}`, 'unit: node resolves to /'],
+    }),
+    codexBuild([], { stdinContains: ['NOTE-X: src/extra.js', 'Unit policy, set by the executor'] }),
+  ]);
+
+  const checked = await planCheck(run.ctx, run.unit);
+  assert.equal(checked.outcome.kind, 'approve');
+  for (const path of [tip, side]) assert.ok(!existsSync(path), `${path} is removed once the call is read`);
+  const created = intents(run.runDir, 'worktree.create').flatMap((i) => (i.kind === 'worktree.create' ? [i.expect] : []));
+  assert.deepEqual(created.map((e) => [e.path, e.checkout.type === 'detached' && e.checkout.at]), [[tip, run.base], [side, branchTip]]);
+  const removed = intents(run.runDir, 'worktree.remove').flatMap((i) => (i.kind === 'worktree.remove' ? [i.expect.path] : []));
+  assert.deepEqual(removed, [tip, side]);
+
+  const built = await build(run.ctx, run.unit, { kind: 'fresh' });
+  assert.equal(built.outcome.kind, 'success');
+  assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'both calls matched: cwd, dirs, checkouts, notes and the unit policy');
+});
+
+test('plan-check.prior-round: after its applied redirect, the next check gets the patch, the premises and the premise files changed since', T, async () => {
+  const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'add returns the sum a + b.' } }];
+  const premises = [
+    { claim: 'add subtracts today', evidence: [{ path: 'src/add.js', line: 2 }] },
+    { claim: 'the test file asserts the sum', evidence: [{ path: 'test/add.test.js', line: 1 }] },
+  ];
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'redirect', patch, premises }),
+      planCheckStep({ decision: 'approve' }, {
+        stdinContains: ['"op":"add"', 'produced revision 2', 'add subtracts today [src/add.js:2]', 'Premise files changed since:\n- src/add.js\nRules'],
+      }),
+    ],
+  });
+  const first = await planCheck(run.ctx, run.unit);
+  assert.equal(first.outcome.kind, 'redirect');
+  // The integration tip moves under one premise's file between the rounds; the other file is unchanged.
+  writeFileSync(join(run.repo, 'src', 'add.js'), `${readFileSync(join(run.repo, 'src', 'add.js'), 'utf8')}// touched\n`);
+  git(run.repo, 'commit', '--quiet', '-am', 'the tip moves');
+  const second = await planCheck(run.ctx, run.unit);
+  assert.equal(second.outcome.kind, 'approve');
+  const calls = readCalls(run.scenario.path);
+  assert.ok(calls.every((c) => c.step !== null), 'the second check saw the handoff');
+  assert.doesNotMatch(calls[0]!.stdin, /Previous round|<prior_round>/, 'the first check has no prior round');
+});
+
+test('plan-check.cites: a redirect may add a ledger ruling to the cites, which the next check embeds in full; an unknown cite is malformed', T, async () => {
+  const run = setupUnit({ steps: [] });
+  writeFileSync(join(run.planDir, 'rulings.md'), [
+    '# Rulings', '', 'C-1 — Arithmetic helpers live in src/ and are tested under test/.', 'C-2 — Second rule here. More text follows.',
+    'C-3 — withdrawn by C-2', '',
+  ].join('\n'));
+  setSteps(run, [
+    planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }),
+    planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: [], rulings: ['C-2'] }] }, {
+      stdinContains: ['C-1: Arithmetic helpers live in src/', '- C-2: Second rule here.\n', '- C-3: withdrawn by C-2'],
+    }),
+    planCheckStep({ decision: 'approve' }, { stdinContains: ['C-2: Second rule here. More text follows.'] }),
+  ]);
+  const unknown = await planCheck(run.ctx, run.unit);
+  assert.equal(unknown.outcome.kind, 'malformed', 'a cite naming no plan contract');
+  const cited = await planCheck(run.ctx, run.unit);
+  assert.equal(cited.outcome.kind, 'redirect');
+  const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; cites: unknown };
+  assert.equal(spec.rev, 2);
+  assert.deepEqual(spec.cites, { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] });
+  assert.equal((await planCheck(run.ctx, run.unit)).outcome.kind, 'approve');
+  assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'the index, then the full text');
+});
+
+test('library.withdrawn-not-embedded: a cited ruling that is withdrawn is never embedded in full; its fold line is indexed', () => {
+  const run = setupUnit({ steps: [] });
+  writeFileSync(join(run.planDir, 'rulings.md'), 'C-1 — withdrawn by C-2\nC-2 — Helpers live in lib/. Tests too.\n');
+  const lib = library(run.ctx, loadUnitSpec(run.ctx, run.unit).spec, run.base);
+  assert.deepEqual(lib.rulings, [], 'the spec cites C-1, which is withdrawn');
+  assert.deepEqual(lib.index.rulings, [{ id: 'C-1', line: 'withdrawn by C-2' }, { id: 'C-2', line: 'Helpers live in lib/.' }]);
+  assert.deepEqual(lib.contracts.map((c) => c.path), ['contracts/api.md']);
+  assert.deepEqual(lib.index.contracts, []);
+  run.journal.close();
 });

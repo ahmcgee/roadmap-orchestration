@@ -20,7 +20,7 @@ import { resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
+import { type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor, events } from './invoke-specs.ts';
 
 export const U1: UnitId = unitId('u1');
@@ -91,6 +91,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     lanes: (opts.lanes ?? [UNIT_LANE]).map(laneJson),
     acceptance: [{ id: 'A1', clause: 'add(1, 2) is 3', failLoudIfUndelivered: true, state: 'active' }],
     scope: ['src/**', 'test/**'], resources: opts.resources ?? [], decisions: [], facts: [],
+    cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
 
@@ -121,14 +122,24 @@ export function setupUnit(opts: SetupOptions): StageRun {
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps
 
-export type PlanCheckAnswer = Readonly<{ decision: 'approve' | 'redirect' | 'infeasible' | 'escalate'; risk?: RiskTier; patch?: readonly JsonValue[] }>;
+export type PlanCheckAnswer = Readonly<{
+  decision: 'approve' | 'redirect' | 'infeasible' | 'escalate';
+  risk?: RiskTier;
+  patch?: readonly JsonValue[];
+  notes?: string;
+  premises?: readonly JsonValue[];
+}>;
 
-/** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). */
-export function planCheckStep(a: PlanCheckAnswer): Step {
+/** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
+export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
+  const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence', ...(expect.argv ?? [])];
   return {
     as: 'claude',
-    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] },
-    acts: [{ type: 'emit', value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: '' } }],
+    expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
+    acts: [{
+      type: 'emit',
+      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])] },
+    }],
   };
 }
 

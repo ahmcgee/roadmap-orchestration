@@ -159,7 +159,7 @@ describe('records', () => {
     const spec = {
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [lane],
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [],
+      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
     };
     assert.deepEqual(specM1(spec, 'spec'), spec);
     assert.throws(() => specM1({ ...spec, facts: [{ id: 'A1', text: 'dup', state: 'active' }] }, 'spec'), /spec\.<item ids>/);

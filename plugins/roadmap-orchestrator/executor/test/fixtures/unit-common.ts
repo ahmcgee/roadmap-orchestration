@@ -83,6 +83,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
       lanes: (u.lanes ?? [MUL_LANE]).map((l) => ({ ...laneJson(l), state: 'active' })),
       acceptance: [{ id: 'A1', clause: 'mul(2, 3) is 6', failLoudIfUndelivered: true, state: 'active' }],
       scope: ['src/**', 'test/**', 'contracts/**'], resources: [], decisions: [], facts: [],
+      cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     }));
   }
   cpSync(RULINGS, join(planDir, 'rulings.md'));
@@ -133,14 +134,21 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 
 const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
 
-export type GateAnswer = Readonly<{ decision: 'approve' | 'revise' | 'escalate'; directives?: readonly string[] }>;
+export type GateAnswer = Readonly<{
+  decision: 'approve' | 'revise' | 'escalate';
+  directives?: readonly string[];
+  findings?: readonly JsonValue[];
+  premises?: readonly JsonValue[];
+}>;
 
 /** A gate the fake Claude answers after `before`: a fresh judgment call. `expect` adds to the judgment argv check. */
 export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
     expect: { ...JUDGMENT, ...expect, argv: [...(JUDGMENT.argv ?? []), ...(expect.argv ?? [])] },
-    acts: [...before, { type: 'emit', value: { decision: a.decision, findings: [], directives: [...(a.directives ?? [])], reasons: ['A1 holds'] } as JsonValue }],
+    acts: [...before, { type: 'emit', value: {
+      decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+    } as JsonValue }],
   };
 }
 

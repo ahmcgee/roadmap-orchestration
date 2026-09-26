@@ -45,14 +45,16 @@ export type StartupRejection =
   | Readonly<{ kind: 'previous-arc-unreconciled'; arc: ArcId; invocations: readonly InvocationId[] }>
   // Row: backend smoke missing or failed for the resolved profile.
   | Readonly<{ kind: 'backend-smoke'; profile: ProfileName; backend: Backend; problem: 'missing' | 'failed'; detail: string }>
-  // Row: plan schema invalid, unknown spec path, baseline not an ancestor, resource request unknown.
+  // Row: plan schema invalid, unknown spec path, baseline not an ancestor, resource request unknown, a spec
+  // citing a contract the plan does not list or a ruling the ledger does not hold.
   | Readonly<{
     kind: 'plan-invalid';
     problem:
       | Readonly<{ type: 'schema'; field: string; detail: string }>
       | Readonly<{ type: 'unknown-spec-path'; unit: UnitId; path: PlanPath }>
       | Readonly<{ type: 'baseline-not-ancestor'; baseline: Sha; tip: Sha }>
-      | Readonly<{ type: 'unknown-resource'; unit: UnitId | null; lane: LaneId | null; resource: ResourceName }>;
+      | Readonly<{ type: 'unknown-resource'; unit: UnitId | null; lane: LaneId | null; resource: ResourceName }>
+      | Readonly<{ type: 'unknown-cite'; unit: UnitId; cite: string }>;
   }>
   // Host rows from the plan's "Host lock and ownership" and "Tail rule" sections, also refused at start.
   | Readonly<{ kind: 'recovery-holder-dead'; pid: number }>
@@ -142,6 +144,7 @@ const planProblem: Read<Row<'plan-invalid'>['problem']> = tagged('type', {
   'unknown-resource': object((f): Row<'plan-invalid'>['problem'] => ({
     type: f.get('type', literal('unknown-resource')), unit: f.get('unit', nullable(unitId)), lane: f.get('lane', nullable(laneId)), resource: f.get('resource', resourceName),
   })),
+  'unknown-cite': object((f): Row<'plan-invalid'>['problem'] => ({ type: f.get('type', literal('unknown-cite')), unit: f.get('unit', unitId), cite: f.get('cite', str) })),
 });
 
 export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionKind, StartupRejection>('kind', {

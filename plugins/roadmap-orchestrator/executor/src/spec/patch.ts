@@ -1,5 +1,5 @@
 // SpecPatch application and the `spec.patch` file op. Plan-check redirects are the only M1 source of
-// patches (§2.7). `applySpecPatch` is pure; the op records `{path, oldSha256, expectRev, patch}` and the
+// patches (§2.7), besides the executor appending the implementer's decisions. `applySpecPatch` is pure; the op records `{path, oldSha256, expectRev, patch}` and the
 // expected `{newSha256, newRev}` before it writes, so recovery decides by re-hashing the file alone.
 import { readFileSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
@@ -54,7 +54,9 @@ function locate(sections: Sections, id: LaneId | ClauseId): Located | null {
   return null;
 }
 
-function applyOp(sections: Sections, op: SpecPatchOp, index: number): void {
+type ItemOp = Exclude<SpecPatchOp, Readonly<{ op: 'cite' }>>;
+
+function applyOp(sections: Sections, op: ItemOp, index: number): void {
   const id = op.op === 'add' || op.op === 'replace' ? op.item.id : op.id;
   const at = locate(sections, id);
   const refuse = (reason: SpecPatchRefusal): never => {
@@ -84,10 +86,15 @@ function applyOp(sections: Sections, op: SpecPatchOp, index: number): void {
   }
 }
 
+/** The union of two id lists, sorted: cites only grow, and a repeated cite is already there. */
+const union = <T extends string>(a: readonly T[], b: readonly T[]): readonly T[] => [...new Set([...a, ...b])].sort();
+
 /**
  * Applies every op in order and returns the spec at `expectRev + 1`, or throws without partial effect.
- * Strike and defer change an item's state and never remove it. Scope and resources have no op: the
- * `SpecPatchOp` type and its validator do not admit them, so a patch naming them never reaches here.
+ * Strike and defer change an item's state and never remove it; `cite` adds to the cites, and nothing
+ * removes one. Scope and resources have no op: the `SpecPatchOp` type and its validator do not admit
+ * them, so a patch naming them never reaches here. Whether a cite names a plan contract and a ledger
+ * ruling is the caller's check (the plan and ledger are not the spec's).
  */
 export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
   if (patch.expectRev !== spec.rev) throw new SpecPatchStaleError(patch.expectRev, spec.rev);
@@ -97,7 +104,11 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     decisions: [...spec.decisions],
     facts: [...spec.facts],
   };
-  patch.ops.forEach((op, i) => applyOp(sections, op, i));
+  let cites = spec.cites;
+  patch.ops.forEach((op, i) => {
+    if (op.op === 'cite') cites = { contracts: union(cites.contracts, op.contracts), rulings: union(cites.rulings, op.rulings) };
+    else applyOp(sections, op, i);
+  });
   // Each add and replace put an item of its own section's type into that section.
   return {
     ...spec,
@@ -106,6 +117,7 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     acceptance: sections.acceptance as SpecM1['acceptance'],
     decisions: sections.decisions as SpecM1['decisions'],
     facts: sections.facts as SpecM1['facts'],
+    cites,
   };
 }
 

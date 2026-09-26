@@ -548,6 +548,21 @@ export type AcceptanceDef = Readonly<{ id: ClauseId; clause: string; failLoudIfU
 export type NoteDef = Readonly<{ id: ClauseId; text: string }>;
 type Stated<T> = T & Readonly<{ state: ItemState }>;
 
+/**
+ * What a unit's judgment and build prompts embed in full: plan contracts and C-nn rulings (arc-1 feedback
+ * item 12). Every other contract and ruling reaches a prompt as a one-line index entry, readable on demand.
+ * Filled at spec authoring; a plan-check redirect may add to it (the `cite` op), nothing removes from it.
+ */
+export type SpecCites = Readonly<{ contracts: readonly RepoPath[]; rulings: readonly RulingId[] }>;
+
+function citesFields(f: Fields): SpecCites {
+  const out = { contracts: f.get('contracts', arrayOf((v, p) => repoPath(v, p))), rulings: f.get('rulings', arrayOf((v, p) => rulingId(v, p))) };
+  assertUnique(out.contracts, (c) => c, `${f.path}.contracts`);
+  assertUnique(out.rulings, (r) => r, `${f.path}.rulings`);
+  return out;
+}
+export const specCites: Read<SpecCites> = object(citesFields);
+
 export const SPEC_SCHEMA = 'roadmap/spec-m1';
 export type SpecM1 = Readonly<{
   schema: typeof SPEC_SCHEMA;
@@ -559,6 +574,7 @@ export type SpecM1 = Readonly<{
   resources: readonly ResourceName[];
   decisions: readonly Stated<NoteDef>[];
   facts: readonly Stated<NoteDef>[];
+  cites: SpecCites;
 }>;
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
@@ -584,6 +600,7 @@ export const specM1: Read<SpecM1> = object((f) => {
     resources: f.get('resources', arrayOf(resource)),
     decisions: f.get('decisions', arrayOf(stated(noteFields))),
     facts: f.get('facts', arrayOf(stated(noteFields))),
+    cites: f.get('cites', specCites),
   };
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
@@ -595,11 +612,15 @@ export const SPEC_SECTIONS = ['lanes', 'acceptance', 'decisions', 'facts'] as co
 export type SpecSection = (typeof SPEC_SECTIONS)[number];
 type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef };
 
-/** Scope and resources are pinned at dispatch and are not patchable in M1. */
+/**
+ * Scope and resources are pinned at dispatch and are not patchable in M1. `cite` adds contracts and rulings
+ * to the spec's cites (at least one); there is no op that removes one.
+ */
 export type SpecPatchOp =
   | { readonly [S in SpecSection]: Readonly<{ op: 'add'; section: S; item: SectionItem[S] }> }[SpecSection]
   | { readonly [S in SpecSection]: Readonly<{ op: 'replace'; section: S; item: SectionItem[S] }> }[SpecSection]
-  | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>;
+  | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
+  | Readonly<{ op: 'cite' } & SpecCites>;
 
 /**
  * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
@@ -637,11 +658,18 @@ function idOp(op: 'strike' | 'defer'): Read<SpecPatchOp> {
   return object((f) => ({ op: f.get('op', literal(op)), id: f.get('id', (v, p): LaneId | ClauseId => clauseId(v, p)) }));
 }
 
+const citeOp: Read<SpecPatchOp> = (value, path) => {
+  const op = object((f) => ({ op: f.get('op', literal('cite')), ...citesFields(f) }))(value, path);
+  if (op.contracts.length + op.rulings.length === 0) throw new SchemaError(path, 'a cite op naming at least one contract or ruling', value);
+  return op;
+};
+
 export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
   add: itemOp('add'),
   replace: itemOp('replace'),
   strike: idOp('strike'),
   defer: idOp('defer'),
+  cite: citeOp,
 });
 
 export const specPatch: Read<SpecPatch> = object((f) => ({

@@ -33,7 +33,7 @@ function rejects(plan: unknown, field: string): void {
 const REQUIRED = ['schema', 'arc', 'integrationBranch', 'baseline', 'worktreeRoot', 'contracts', 'rulings', 'architectureDoc', 'direction', 'suite', 'resources', 'units'] as const;
 
 // One wrong-typed or malformed value per field.
-const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } = {
+const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing' | 'architectureDigest']: unknown } = {
   schema: 'roadmap/plan-m2',
   arc: 'Arc 2',
   integrationBranch: 'bad..branch',
@@ -42,6 +42,7 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } 
   contracts: ['../outside.md'],
   rulings: '/abs/rulings.jsonl',
   architectureDoc: 42,
+  architectureDigest: '/abs/digest.md',
   direction: '',
   suite: { lanes: 'npm test' },
   resources: [{ name: 'integration-slot', probe: tool, teardown: tool }],
@@ -69,6 +70,11 @@ describe('plan.json (M1)', () => {
     const routing = { gate: { high: { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } }, build: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } };
     assert.deepEqual(parsePlan({ ...validPlan(), routing }).routing, routing);
     assert.equal('routing' in parsePlan(validPlan()), false);
+  });
+
+  it('architectureDigest is optional and, when present, a repo path', () => {
+    assert.equal(parsePlan({ ...validPlan(), architectureDigest: 'docs/digest.md' }).architectureDigest, 'docs/digest.md');
+    assert.equal('architectureDigest' in parsePlan(validPlan()), false);
   });
 
   for (const field of REQUIRED) {

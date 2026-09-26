@@ -6,6 +6,7 @@
 //
 // Derived from the M1 transition table (plan "Pipeline for one serial unit"):
 //   planCheck: approve → build · redirect → spec.patch, re-check · infeasible → escalate · escalate → route up
+// Both judgments also return their premises (claim + file:line evidence): the next round's handoff.
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import { type ClauseId, type LaneId, clauseId, laneId } from '../core/ids.ts';
@@ -31,6 +32,24 @@ function sObj(properties: { readonly [key: string]: Schema }): Schema {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Premises: the judgments' round handoff (arc-1 feedback items 25 and 29)
+
+/**
+ * A claim about the repository a judgment's decision relies on, with the file:line evidence it read. The
+ * next round of the same unit re-verifies only the premises whose files changed since (the executor
+ * compares blobs); it trusts the rest unless it has evidence against one.
+ */
+export type Premise = Readonly<{ claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
+/** The premise cap the prompts state: the premises the decision relies on, not everything read. Not enforced. */
+export const MAX_PREMISES = 12;
+
+const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_INT })) }));
+const premise: Read<Premise> = object((f) => ({
+  claim: f.get('claim', str),
+  evidence: f.get('evidence', arrayOf(object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) })))),
+}));
+
+// ---------------------------------------------------------------------------------------------------
 // planCheck
 
 export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'infeasible', 'escalate'] as const;
@@ -40,8 +59,12 @@ type PlanCheckCommon = Readonly<{
   reasons: readonly string[];
   /** The unit's risk after the check: the dispatch floor or higher. The executor refuses a lower tier. */
   risk: RiskTier;
-  /** What the architect reads when the decision escalates; may be empty otherwise. */
+  /**
+   * What the architect reads when the decision escalates or is infeasible; otherwise facts for the build and
+   * the gate (defects in existing code, observations the decision does not rest on), or empty.
+   */
   notes: string;
+  premises: readonly Premise[];
 }>;
 export type PlanCheckOutput =
   | (PlanCheckCommon & Readonly<{ decision: 'approve' | 'infeasible' | 'escalate'; patch: null }>)
@@ -70,6 +93,7 @@ const S_PATCH_OP: Schema = {
     ...itemOps('decisions', S_NOTE_ITEM),
     ...itemOps('facts', S_NOTE_ITEM),
     sObj({ op: sEnum(['strike', 'defer']), id: S_STR }),
+    sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) }),
   ],
 };
 
@@ -79,13 +103,14 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   patch: sNullable(sArr(S_PATCH_OP)),
   risk: sEnum(RISK_TIERS),
   notes: S_STR,
+  premises: S_PREMISES,
 });
 
 /** The wire form of one op: a lane item's env.set arrives as [{name, value}]. */
 const wireOp: Read<SpecPatchOp> = (value, path) => {
   const f = new Fields(value, path);
-  const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer'] as const));
-  if (op === 'strike' || op === 'defer') return specPatchOp(value, path);
+  const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
+  if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
   if (f.get('section', oneOf(['lanes', 'acceptance', 'decisions', 'facts'] as const)) !== 'lanes') return specPatchOp(value, path);
   const item = new Fields(f.get('item', (v) => v), `${path}.item`);
   const env = new Fields(item.get('env', (v) => v), `${path}.item.env`);
@@ -102,6 +127,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
     risk: f.get('risk', oneOf(RISK_TIERS)),
     notes: f.get('notes', text),
+    premises: f.get('premises', arrayOf(premise)),
   };
   if (decision === 'redirect') {
     return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
@@ -188,7 +214,7 @@ export type GateFinding = Readonly<{
   /** A C-nn id or a contract path (with an optional #anchor) the finding rests on. */
   contractRef: string | null;
 }>;
-type GateCommon = Readonly<{ findings: readonly GateFinding[]; reasons: readonly string[] }>;
+type GateCommon = Readonly<{ findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
 export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
@@ -198,6 +224,7 @@ export const GATE_SCHEMA: Schema = sObj({
   findings: sArr(sObj({ severity: sEnum(FINDING_SEVERITIES), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR) })),
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
+  premises: S_PREMISES,
 });
 
 const finding: Read<GateFinding> = object((f) => ({
@@ -213,7 +240,9 @@ const emptyList: Read<readonly []> = (value, path) => {
 
 export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
-  const common = { findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) };
+  const common = {
+    findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
+  };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
     const i = common.findings.findIndex((x) => x.severity === 'blocking');

@@ -49,6 +49,11 @@ export type PlanM1 = Readonly<{
   /** The C-nn ledger, relative to the plan's directory. */
   rulings: PlanPath;
   architectureDoc: RepoPath;
+  /**
+   * The owner-approved digest of the architecture doc (section index and normative sentences with line
+   * anchors). When present, judgments embed it and read the full doc from their checkout on demand.
+   */
+  architectureDigest?: RepoPath;
   direction: string;
   routing?: RoutingLayer;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
@@ -87,6 +92,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
 export function parsePlan(value: unknown): PlanM1 {
   return object((f): PlanM1 => {
     const routing = f.optional('routing', routingLayer);
+    const architectureDigest = f.optional('architectureDigest', (v, p) => repoPath(v, p));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -96,6 +102,7 @@ export function parsePlan(value: unknown): PlanM1 {
       contracts: f.get('contracts', arrayOf((v, p) => repoPath(v, p))),
       rulings: f.get('rulings', (v, p) => planPath(v, p)),
       architectureDoc: f.get('architectureDoc', (v, p) => repoPath(v, p)),
+      ...(architectureDigest === undefined ? {} : { architectureDigest }),
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),

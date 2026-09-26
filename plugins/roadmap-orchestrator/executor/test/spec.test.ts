@@ -14,6 +14,7 @@ import { openJournal } from '../src/core/log.ts';
 import { reconcileSpecPatch } from '../src/recover/spec.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
+import { parseRulings } from '../src/spec/rulings.ts';
 import { bytesSha256, fileSha256, loadSpec, specBytes, writeSpec } from '../src/spec/spec.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -48,6 +49,7 @@ const RAW_SPEC = {
   resources: ['shared-cache', 'estate-db'],
   decisions: [{ id: 'D1', text: 'Use the canvas API.', state: 'active' }],
   facts: [{ id: 'F1', text: 'The canvas is 800 wide.', state: 'active' }],
+  cites: { contracts: ['docs/widget.md'], rulings: ['C-2'] },
 };
 const SPEC: SpecM1 = specM1(RAW_SPEC, 'spec');
 
@@ -98,6 +100,10 @@ describe('spec load and write', () => {
 
   it('refuses an invalid spec file naming the field', () => {
     const dir = tmpDir('spec');
+    // Hard cutover: a spec without cites is refused, never defaulted.
+    const { cites: _cites, ...uncited } = RAW_SPEC;
+    assert.throws(() => loadSpec(authored(tmpDir('spec'), JSON.stringify(uncited))), (e: unknown) => e instanceof SchemaError && e.field === 'spec.cites');
+    assert.throws(() => loadSpec(authored(tmpDir('spec'), JSON.stringify({ ...RAW_SPEC, cites: { contracts: [], rulings: ['C-1', 'C-1'] } }))), SchemaError);
     assert.throws(() => loadSpec(authored(dir, JSON.stringify({ ...RAW_SPEC, acceptance: [] }))), (e: unknown) => e instanceof SchemaError && e.field === 'spec.acceptance');
     assert.throws(() => loadSpec(authored(tmpDir('spec'), '{"schema":')), /not JSON/);
   });
@@ -122,11 +128,12 @@ describe('spec rendering', () => {
     assert.ok(at('`out/a.log`') < at('`out/b.log`'), 'evidence sorted');
     // Items keep their authored order; every section is present.
     assert.ok(at('`A1`') < at('`A2`'));
-    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Scope', '## Lanes', '## Resources', '## Decisions', '## Facts']) {
+    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Scope', '## Lanes', '## Resources', '## Decisions', '## Facts', '## Cites']) {
       assert.ok(first.includes(heading), heading);
     }
     assert.ok(first.includes('- `A1` [active] (fail loud if undelivered): The widget renders.\n  It renders twice.'), 'multi-line clause indented');
     assert.ok(first.includes('`["npm","test"]`'));
+    assert.ok(first.includes('## Cites\n\n- contract `docs/widget.md`\n- ruling C-2'), 'cites: contracts, then rulings');
   });
 
   it('spec.render-fast-lanes-only', () => {
@@ -208,6 +215,12 @@ describe('spec patch', () => {
     refused(next, [{ op: 'strike', id: 'A1' }], 0, 'already-struck', 'A1');
     // A deferred item can still be struck.
     assert.equal(applySpecPatch(next, patch([{ op: 'strike', id: 'D1' }], 2)).decisions[0]!.state, 'struck');
+    // Cites only grow: a cite op adds (sorted, a repeat already there); an empty one is refused; no op removes one.
+    const cited = applySpecPatch(SPEC, patch([{ op: 'cite', contracts: ['docs/b.md', 'docs/widget.md'], rulings: ['C-1'] }]));
+    assert.deepEqual(cited.cites, { contracts: ['docs/b.md', 'docs/widget.md'], rulings: ['C-1', 'C-2'] });
+    assert.deepEqual(specM1(JSON.parse(specBytes(cited).toString('utf8')), 'spec'), cited);
+    assert.throws(() => patch([{ op: 'cite', contracts: [], rulings: [] }]), SchemaError);
+    assert.throws(() => patch([{ op: 'uncite', contracts: ['docs/widget.md'], rulings: [] }]), SchemaError);
     // Scope and resources are not patchable in M1: the frozen validator refuses them by field.
     for (const section of ['scope', 'resources']) {
       assert.throws(() => patch([{ op: 'add', section, item: { id: 'S1', text: 'x' } }]),
@@ -332,5 +345,20 @@ describe('spec.patch op and reconciler', () => {
     await assert.rejects(specPatchFileOp.verify(intent), /expected/);
     writeFileSync(s.path, JSON.stringify(RAW_SPEC));
     await assert.rejects(specPatchFileOp.act(intent), /expected the old/);
+  });
+});
+
+describe('rulings ledger', () => {
+  const ledger = (lines: readonly string[]) => parseRulings(lines.join('\n'), 'rulings.md');
+
+  it('rulings.lean-and-fold: rule text only; a withdrawn ruling folds to one line naming a ledger ruling', () => {
+    assert.deepEqual(ledger(['# Rulings', '', 'C-1 — Helpers live in src/.', 'C-2 — withdrawn by C-3', 'C-3 — Helpers live in lib/.']), [
+      { id: 'C-1', status: 'active', text: 'Helpers live in src/.' },
+      { id: 'C-2', status: 'withdrawn', by: 'C-3' },
+      { id: 'C-3', status: 'active', text: 'Helpers live in lib/.' },
+    ]);
+    assert.throws(() => ledger(['C-1 — withdrawn by C-9']), SchemaError, 'the withdrawing ruling must be in the ledger');
+    assert.throws(() => ledger(['C-1 — One.', 'C-1 — Two.']), SchemaError, 'an id listed twice');
+    assert.throws(() => ledger(['C-1: no em dash']), SchemaError);
   });
 });

@@ -151,7 +151,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
   let parked: Fixture;
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
-    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '' } };
+    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] } };
     // Each unit escalates on its seat and again on the high seat it routes up to: both park.
     writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate, escalate, escalate] }));
     // Independent fixture dirs and host dirs: the four runs go in parallel.
