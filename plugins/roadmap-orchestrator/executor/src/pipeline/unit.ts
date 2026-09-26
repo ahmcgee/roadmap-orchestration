@@ -17,11 +17,10 @@
 import { crashPoint } from '../core/crash.ts';
 import type { Parent, StageOutcomeFact } from '../core/events.ts';
 import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
-import type { NeedsUserReason } from '../core/records.ts';
+import type { NeedsUserReason, NeedsUserContent } from '../core/records.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { worktreeRemoveOp } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import type { NeedsUserContent } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { stageRecipes } from '../resources/teardown.ts';
 import { canonicalJson } from '../core/json.ts';

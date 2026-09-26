@@ -64,7 +64,7 @@ export function specFor(d: SpecDescriptor): LaunchSpec {
     const env = { PATH: `${d.binDir}:${path()}` };
     return {
       runDir, origin,
-      subject: { purpose: 'backend', role: 'gate', routingRev: ROUTING_REV, unit: UNIT, attempt: 1 },
+      subject: { purpose: 'backend', role: 'gate', tier: 'med', routingRev: ROUTING_REV, unit: UNIT, attempt: 1 },
       launch: (invDir: AbsPath): LaunchContent => {
         const session = freshJudgmentSession();
         const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' }, session, schemaText: SCHEMA_TEXT, system: 'You answer with the JSON object the schema describes.', evidenceDirs: [] });

@@ -29,7 +29,7 @@ import { durableMkdir } from '../core/fsx.ts';
 import {
   type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, rulingId,
 } from '../core/ids.ts';
-import type { SpecM1, SpecPatchOp } from '../core/records.ts';
+import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
@@ -47,7 +47,7 @@ import type { DocText, FastLane, RulingText } from '../prompts/inputs.ts';
 import {
   DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
-import { type NeedsUserContent, probe } from '../resources/probe.ts';
+import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../spec/patch.ts';

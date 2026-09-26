@@ -27,11 +27,11 @@ const tokens = (input: number, output: number, cacheRead: number | null = null, 
 describe('meter', () => {
   it('spend.by-role: totals per role and routing revision, and per unit; smokes count only by role; never a model', () => {
     const log = [
-      factEvent({ kind: 'meter', inv: inv(1), role: 'build', routingRev: REV_A, unit: { unit: U1, attempt: 2 }, usage: tokens(100, 10, 50, 5) }),
-      factEvent({ kind: 'meter', inv: inv(2), role: 'build', routingRev: REV_A, unit: { unit: U2, attempt: 2 }, usage: tokens(200, 20) }),
-      factEvent({ kind: 'usage-unavailable', inv: inv(3), role: 'build', routingRev: REV_A, unit: { unit: U1, attempt: 5 }, reason: 'no-result' }),
-      factEvent({ kind: 'meter', inv: inv(4), role: 'gate', routingRev: REV_A, unit: { unit: U1, attempt: 7 }, usage: tokens(7, 3, 1, null) }),
-      factEvent({ kind: 'meter', inv: inv(5), role: 'planCheck', routingRev: REV_A, unit: null, usage: tokens(1, 1) }),
+      factEvent({ kind: 'meter', inv: inv(1), role: 'build', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 2 }, usage: tokens(100, 10, 50, 5) }),
+      factEvent({ kind: 'meter', inv: inv(2), role: 'build', tier: 'high', routingRev: REV_A, unit: { unit: U2, attempt: 2 }, usage: tokens(200, 20) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(3), role: 'build', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 5 }, reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(4), role: 'gate', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 7 }, usage: tokens(7, 3, 1, null) }),
+      factEvent({ kind: 'meter', inv: inv(5), role: 'planCheck', tier: 'low', routingRev: REV_A, unit: null, usage: tokens(1, 1) }),
       factEvent({ kind: 'containment-mode', mode: 'session' }),
     ];
     const m = meterOf(log);
@@ -39,6 +39,12 @@ describe('meter', () => {
       { role: 'build', routingRev: REV_A, calls: 3, input: 300, output: 30, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
       { role: 'gate', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, unavailable: 0 },
       { role: 'planCheck', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+    ]);
+    assert.deepEqual(m.bySeat, [
+      { role: 'build', tier: 'high', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { role: 'build', tier: 'med', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
+      { role: 'gate', tier: 'med', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, unavailable: 0 },
+      { role: 'planCheck', tier: 'low', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
     ]);
     assert.deepEqual(m.byUnit, [
       { unit: U1, role: 'build', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
@@ -48,18 +54,19 @@ describe('meter', () => {
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
   });
 
-  it('byModel derives models at render from each revision\'s table; a role whose tiers name several models is ambiguous', () => {
+  it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {
     const table = (profile: 'default' | 'claude-only') => resolveRouting({ profile, repoConfig: null, plan: null, unit: null });
     const def = table('default');
     const claudeOnly = table('claude-only');
     const tables = new Map<RoutingRev, typeof def.table>([[def.rev, def.table], [claudeOnly.rev, claudeOnly.table]]);
-    const t = (role: 'build' | 'gate', rev: RoutingRev, input: number) => ({ role, routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 });
-    assert.deepEqual(byModel([t('build', claudeOnly.rev, 10), t('build', def.rev, 5), t('gate', def.rev, 3)], tables), [
-      { kind: 'model', model: 'claude-opus-5-5', calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
-      { kind: 'ambiguous', role: 'build', routingRev: def.rev, models: ['claude-opus-5-5', 'gpt-5.6-luna'], calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
-      { kind: 'ambiguous', role: 'gate', routingRev: def.rev, models: ['claude-fable-5-1', 'claude-opus-5-5'], calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+    const t = (role: 'build' | 'gate', tier: 'low' | 'med' | 'high', rev: RoutingRev, input: number) =>
+      ({ role, tier, routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 });
+    assert.deepEqual(byModel([t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 3)], tables), [
+      { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { model: 'claude-opus-5-5', calls: 2, input: 17, output: 2, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
     ]);
-    assert.throws(() => byModel([t('gate', REV_A, 1)], tables), /no routing table for revision aaaaaaaaaaaaaaaa/);
+    assert.throws(() => byModel([t('gate', 'low', REV_A, 1)], tables), /no routing table for revision aaaaaaaaaaaaaaaa/);
   });
 });
 

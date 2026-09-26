@@ -27,7 +27,7 @@
 import { join } from 'node:path';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import { INTEGRATION_SLOT, type Sha, type UnitId } from '../core/ids.ts';
-import type { ApprovalFingerprint } from '../core/records.ts';
+import type { ApprovalFingerprint, NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateMergeOp, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
 import { integrationFfOp, planFf } from '../git/ff.ts';
@@ -36,7 +36,7 @@ import { snapshotPublishOp } from '../git/snapshot.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
-import { type NeedsUserContent, probe } from '../resources/probe.ts';
+import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, reserve, run } from '../resources/reserve.ts';
 import { type StageContext, type StageParent, evidenceRoot, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';

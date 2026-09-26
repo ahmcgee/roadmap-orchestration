@@ -17,6 +17,6 @@ const id = raiseNeedsUser(journal, absPath(runDir), {
   recommendation: 'fix the base, then resume u1',
   options: [{ id: 'resume', label: 'resume u1 after fixing the base' }],
   evidence: [absPath('/evidence/base-red')],
-});
+}, { type: 'arc' });
 process.stdout.write(`${id}\n`);
 await sleep(60_000);

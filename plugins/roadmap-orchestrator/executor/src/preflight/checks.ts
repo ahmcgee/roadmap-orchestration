@@ -18,7 +18,7 @@ import { detectContainmentMode } from '../contain/detect.ts';
 import { durableMkdir, readJson } from '../core/fsx.ts';
 import { INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
 import { LogCorruptError, type OpenJournal, openJournal } from '../core/log.ts';
-import type { HostLockClaim, LaneDef, SpecM1 } from '../core/records.ts';
+import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
@@ -31,7 +31,7 @@ import { type RepoConfig, type ResolvedRouting, parseRepoConfig, resolveRouting,
 import type { ProfileName } from '../routing/types.ts';
 import { SpecFileError, loadSpec } from '../spec/spec.ts';
 import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from './smoke.ts';
-import type { StartupCheck, StartupContext, StartupRejection } from './startup.ts';
+import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -160,30 +160,45 @@ function executable(path: string): boolean {
   }
 }
 
+/** A declared command: a lane, or a resource's probe or teardown. */
+type Declared = Readonly<{ argv: readonly string[]; env: LaneEnv }>;
+
 /**
- * Where a lane's argv[0] resolves, as the runner's spawn would: a bare name on the lane's own PATH (its
- * declared `set.PATH`, or the host's when it passes PATH, else Node's default search path). A relative path
- * with a slash names a file of the unit's tree, which the unit may create: not decidable at startup.
+ * Where a command's argv[0] resolves, as the runner's spawn would: a bare name on the command's own PATH
+ * (its declared `set.PATH`, or the host's when it passes PATH, else Node's default search path). A relative
+ * path with a slash names a file of a tree (a lane's unit may create it): not decidable at startup.
  */
-function argv0Resolves(lane: LaneDef, env: Readonly<Record<string, string | undefined>>): boolean {
-  const argv0 = lane.argv[0];
-  if (argv0 === undefined) throw new Error(`lane ${lane.id} has an empty argv`); // the validator requires non-empty
+function argv0Resolves(command: Declared, env: Readonly<Record<string, string | undefined>>): boolean {
+  const argv0 = command.argv[0];
+  if (argv0 === undefined) throw new Error(`a declared command has an empty argv`); // the validators require non-empty
   if (isAbsolute(argv0)) return executable(argv0);
   if (argv0.includes('/')) return true;
-  const path = lane.env.set['PATH'] ?? (lane.env.pass.includes('PATH') ? env['PATH'] : undefined) ?? DEFAULT_SEARCH_PATH;
+  const path = command.env.set['PATH'] ?? (command.env.pass.includes('PATH') ? env['PATH'] : undefined) ?? DEFAULT_SEARCH_PATH;
   return path.split(delimiter).some((dir) => dir !== '' && executable(join(dir, argv0)));
 }
 
-function laneProblems(unit: UnitId | null, lane: LaneDef, env: Readonly<Record<string, string | undefined>>): Rejection<'spec-lane-unrunnable'>[] {
-  const out: Rejection<'spec-lane-unrunnable'>[] = [];
-  if (!argv0Resolves(lane, env)) out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'argv0-unresolvable', argv0: lane.argv[0] as string } });
-  for (const name of lane.env.pass) {
-    if (env[name] === undefined) out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'env-missing', name } });
-  }
+/** argv[0] and the declared host variables of one command. */
+function commandProblems(command: Declared, env: Readonly<Record<string, string | undefined>>): CommandProblem[] {
+  const out: CommandProblem[] = [];
+  if (!argv0Resolves(command, env)) out.push({ type: 'argv0-unresolvable', argv0: command.argv[0] as string });
+  for (const name of command.env.pass) if (env[name] === undefined) out.push({ type: 'env-missing', name });
   return out;
 }
 
-/** Suite lanes and every unit's active lanes: argv[0], declared host variables, the fast/estate boundary. */
+function laneProblems(unit: UnitId | null, lane: LaneDef, env: Readonly<Record<string, string | undefined>>): Rejection<'spec-lane-unrunnable'>[] {
+  return commandProblems(lane, env).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
+}
+
+/** Every declared resource's probe and teardown (resource variant of the row). */
+function resourceProblems(plan: PlanM1, env: Readonly<Record<string, string | undefined>>): Rejection<'spec-lane-unrunnable'>[] {
+  return plan.resources.flatMap((r) => (['probe', 'teardown'] as const).flatMap((command) =>
+    commandProblems(r[command], env).map((problem): Rejection<'spec-lane-unrunnable'> => ({ kind: 'spec-lane-unrunnable', resource: r.name, command, problem }))));
+}
+
+/**
+ * Suite lanes and every unit's active lanes (argv[0], declared host variables, the fast/estate boundary),
+ * then every resource's probe and teardown command.
+ */
 export function specLaneCheck(env: Readonly<Record<string, string | undefined>>): StartupCheck<'spec-lane-unrunnable'> {
   return {
     kind: 'spec-lane-unrunnable',
@@ -194,6 +209,7 @@ export function specLaneCheck(env: Readonly<Record<string, string | undefined>>)
         for (const lane of spec.lanes) if (lane.state === 'active') out.push(...laneProblems(unit.id, lane, env));
         out.push(...checkLaneTiers(spec, unit));
       }
+      out.push(...resourceProblems(context.plan, env));
       return out;
     },
   };

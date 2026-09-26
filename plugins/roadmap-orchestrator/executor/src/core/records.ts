@@ -18,7 +18,7 @@ import {
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
 import {
-  type Backend, type ImplementerRole, type JudgmentRole, type RiskTier, type Role, backend, riskTier,
+  type Backend, type ImplementerRole, type JudgmentRole, type ProfileName, type RiskTier, type Role, backend, profileName, riskTier,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -676,6 +676,21 @@ export const executorExitReason: Read<ExecutorExitReason> = object((f) => ({
   reason: f.get('reason', oneOf(['stop', 'complete', 'refused'] as const)),
 }));
 
+/**
+ * start.json in the run dir, rewritten by every start that passed its checks (step 13b): what the executor
+ * runs. `status` reads it to re-resolve the routing tables its by-model view names models from, since no
+ * record carries a model. `profile` is the resolved one.
+ */
+export type RunStart = Readonly<{ v: SchemaVersion; generation: number; at: IsoTime; repo: AbsPath; planFile: AbsPath; profile: ProfileName }>;
+export const runStart: Read<RunStart> = object((f) => ({
+  v: f.get('v', version),
+  generation: f.get('generation', positive),
+  at: f.get('at', time),
+  repo: f.get('repo', abs),
+  planFile: f.get('planFile', abs),
+  profile: f.get('profile', profileName),
+}));
+
 /** heartbeat.json in the run dir, every 10 s; stale after 5 min. */
 export type Heartbeat = Readonly<{ v: SchemaVersion; generation: number; at: IsoTime }>;
 export const heartbeat: Read<Heartbeat> = object((f) => ({ v: f.get('v', version), generation: f.get('generation', positive), at: f.get('at', time) }));
@@ -815,6 +830,9 @@ export type NeedsUserRecord = Readonly<{
   options: readonly Readonly<{ id: string; label: string }>[];
   evidence: readonly AbsPath[];
 }>;
+
+/** A needs-user record without what the writer assigns (`v`, `id`, `arc`, `raisedAt`): what stages produce. */
+export type NeedsUserContent = Omit<NeedsUserRecord, 'v' | 'id' | 'arc' | 'raisedAt'>;
 
 export const needsUserRecord: Read<NeedsUserRecord> = object((f) => {
   const out: NeedsUserRecord = {

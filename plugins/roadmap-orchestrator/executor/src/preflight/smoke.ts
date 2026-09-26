@@ -95,6 +95,8 @@ export type CallRequest =
 export type BackendInvocation = Readonly<{
   check: string;
   routingRev: RoutingRev;
+  /** The seat's risk tier, which the meter fact records beside the role. */
+  tier: RiskTier;
   request: CallRequest;
   system: string;
   rendered: string;
@@ -157,7 +159,8 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
     : { type: 'command', verdict: result.verdict } as const;
   ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary }, null);
   if (result.type === 'backend') {
-    const meter = { inv, role: result.role, routingRev: result.routingRev, unit: null } as const;
+    if (subject.target.type !== 'backend') throw new Error(`${inv}: a command smoke produced a backend result`);
+    const meter = { inv, role: result.role, tier: subject.target.tier, routingRev: result.routingRev, unit: null } as const;
     ctx.journal.fact(result.usage.kind === 'known'
       ? { kind: 'meter', ...meter, usage: result.usage.tokens }
       : { kind: 'usage-unavailable', ...meter, reason: result.usage.reason });
@@ -199,7 +202,7 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
   const subject: SmokeSubject = {
     purpose: 'smoke',
     check: b.check,
-    target: { type: 'backend', backend: b.request.triple.backend, role: roleOf(b.request), routingRev: b.routingRev },
+    target: { type: 'backend', backend: b.request.triple.backend, role: roleOf(b.request), tier: b.tier, routingRev: b.routingRev },
   };
   const done = await run(ctx, subject, (invDir) => {
     const call = backendCall(b, invDir);
@@ -288,6 +291,7 @@ async function smokeBackend(routing: SmokeRouting, ctx: InvocationContext, backe
   const done = await invokeBackend(ctx, {
     check: `backend-${backend}`,
     routingRev: routing.resolved.rev,
+    tier: planned.seat.tier,
     request: planned.request,
     system: SMOKE_SYSTEM,
     rendered: SMOKE_PROMPT,

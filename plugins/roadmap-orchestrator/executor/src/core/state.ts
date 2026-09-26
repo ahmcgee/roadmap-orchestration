@@ -382,6 +382,10 @@ export class Fold implements JournalView {
       case 'stop-requested':
         this.#stop = f.command;
         return;
+      case 'executor-started':
+        // A stop ends the run it was given to; the next start begins without it. Pauses and holds persist.
+        this.#stop = null;
+        return;
       case 'resumed':
         this.#resumed(f.target, fail);
         return;

@@ -40,7 +40,7 @@ describe('fold derives', () => {
       meter(inv1(1), 'planCheck', 100, 10, 5), // 2
       spawnResult(op(1)), // 3
       spawnIntent(4), // 4 build attempt 1
-      { type: 'fact', fact: { kind: 'usage-unavailable', inv: inv1(4), role: 'build', routingRev: REV, unit: null, reason: 'no-result' } }, // 5
+      { type: 'fact', fact: { kind: 'usage-unavailable', inv: inv1(4), role: 'build', tier: 'med', routingRev: REV, unit: null, reason: 'no-result' } }, // 5
       spawnLost(op(4)), // 6
       spawnIntent(4, { ordinal: 2 }), // 7 retry, same stage attempt
       meter(inv1(4, 2), 'build', 1000, 200, null), // 8 (the retry stays open)
@@ -245,6 +245,14 @@ describe('fold: command effects (step 13)', () => {
     assert.deepEqual([s2.control.pausedUnits, s2.units[0]?.status, s2.units[0]?.counters.attempts], [[], 'active', 1]);
     const s3 = fold(ARC, chain([hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'resumed', command: C, target: { type: 'all' } })]));
     assert.deepEqual([s3.control.pausedAll, s3.units[0]?.status], [false, 'active']);
+  });
+
+  it('executor-started clears the stop marker and nothing else: pauses and holds persist', () => {
+    const s = fold(ARC, chain([
+      hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'stop-requested', command: C }), fact({ kind: 'executor-started', generation: 2 }),
+    ]));
+    assert.deepEqual(s.control, { stop: null, pausedAll: true, pausedUnits: [] });
+    assert.equal(s.units[0]?.status, 'held');
   });
 
   it('refuses a resume of an unparked backend, a unit resume under pause --all, and a second acknowledgement', () => {

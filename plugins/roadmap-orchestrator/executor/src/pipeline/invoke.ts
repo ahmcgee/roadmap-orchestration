@@ -32,7 +32,7 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import type { Role } from '../routing/types.ts';
+import type { RiskTier, Role } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { awaitRunner, cancel, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 
@@ -173,15 +173,15 @@ function doneOutcome(outcome: InvocationOutcome): OpOutcome['proc.spawn'] {
   return { kind: 'result', resultSha256: outcome.resultSha256, summary };
 }
 
-type Seat = Readonly<{ role: Role; routingRev: RoutingRev; unit: MeterSubject }>;
+type Seat = Readonly<{ role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject }>;
 
 /** The seat a backend spawn's usage is charged to; commands carry no usage. */
 function seatOf(subject: SpawnSubject): Seat | null {
   switch (subject.purpose) {
     case 'backend':
-      return { role: subject.role, routingRev: subject.routingRev, unit: { unit: subject.unit, attempt: subject.attempt } };
+      return { role: subject.role, tier: subject.tier, routingRev: subject.routingRev, unit: { unit: subject.unit, attempt: subject.attempt } };
     case 'smoke':
-      return subject.target.type === 'backend' ? { role: subject.target.role, routingRev: subject.target.routingRev, unit: null } : null;
+      return subject.target.type === 'backend' ? { role: subject.target.role, tier: subject.target.tier, routingRev: subject.target.routingRev, unit: null } : null;
     case 'lane':
     case 'teardown':
     case 'probe':

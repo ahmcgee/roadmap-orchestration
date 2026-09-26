@@ -41,7 +41,7 @@ type Setup = Readonly<{ repo: AbsPath; planDir: string; planFile: AbsPath; hostD
 const lane = (over: Raw = {}): Raw => ({
   id: 'unit', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], ...over,
 });
-const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: [] } };
+const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
 
 /** A valid start: repo with a baseline on main, one unit with its spec, a writable worktree root, both fakes answering. */
 function setup(steps: readonly Step[] = SMOKE_OK): Setup {
@@ -198,7 +198,7 @@ describe('startup.rejections', () => {
       plan: { ...s.plan, resources: [{ name: 'db', probe: tool, teardown: tool }, { name: 'cache', probe: tool, teardown: tool }] },
     });
     const rejections = refusedWith(await runChecks(input(s)), 'spec-lane-unrunnable', 78);
-    assert.deepEqual(rejections.map((r) => (r.kind === 'spec-lane-unrunnable' ? `${r.lane} ${r.problem.type}` : null)), [
+    assert.deepEqual(rejections.map((r) => (r.kind === 'spec-lane-unrunnable' && 'lane' in r ? `${r.lane} ${r.problem.type}` : null)), [
       'ghost argv0-unresolvable', 'needsenv env-missing', 'estate estate-lane-for-implementer',
     ]);
   });

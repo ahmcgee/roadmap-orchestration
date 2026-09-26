@@ -23,7 +23,7 @@ import {
   refName, repoPath, repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import { type Backend, type Role, backend, role } from '../routing/types.ts';
+import { type Backend, type RiskTier, type Role, backend, riskTier, role } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -75,13 +75,13 @@ export type ResourceEdge =
 
 /** What a spawn runs. Model ids never appear: a backend is named by role and routingRev. */
 export type SpawnSubject =
-  | Readonly<{ purpose: 'backend'; role: Role; routingRev: RoutingRev; unit: UnitId; attempt: number }>
+  | Readonly<{ purpose: 'backend'; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: UnitId; attempt: number }>
   | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceName }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
-    target: Readonly<{ type: 'backend'; backend: Backend; role: Role; routingRev: RoutingRev }> | Readonly<{ type: 'command' }>;
+    target: Readonly<{ type: 'backend'; backend: Backend; role: Role; tier: RiskTier; routingRev: RoutingRev }> | Readonly<{ type: 'command' }>;
   }>;
 
 export type WorktreeCheckout =
@@ -278,8 +278,13 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
-  | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
-  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
+  /**
+   * One usage fact per invocation. `tier` is the seat's risk tier (never a model): with `role` and
+   * `routingRev` it names exactly one seat of that revision's table, so a by-model view is exact (lead
+   * ruling, 13b).
+   */
+  | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
+  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
    * A backend reported a usage-limit or capacity error on a failed invocation: it is parked arc-wide until
@@ -297,6 +302,12 @@ export type Fact =
   | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
+  /**
+   * An executor started under host generation `generation` (step 13b), written at every start once the
+   * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
+   * persist until a `resume`.
+   */
+  | Readonly<{ kind: 'executor-started'; generation: number }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
    * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
@@ -384,7 +395,7 @@ const resourceEdge: Read<ResourceEdge> = tagged('type', {
 
 const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   backend: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('backend')), role: f.get('role', role), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('backend')), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   lane: object((f): SpawnSubject => ({
@@ -397,7 +408,10 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     purpose: f.get('purpose', literal('smoke')),
     check: f.get('check', str),
     target: f.get('target', tagged<'backend' | 'command', Extract<SpawnSubject, { purpose: 'smoke' }>['target']>('type', {
-      backend: object((g) => ({ type: g.get('type', literal('backend')), backend: g.get('backend', backend), role: g.get('role', role), routingRev: g.get('routingRev', revR) })),
+      backend: object((g) => ({
+        type: g.get('type', literal('backend')), backend: g.get('backend', backend), role: g.get('role', role), tier: g.get('tier', riskTier),
+        routingRev: g.get('routingRev', revR),
+      })),
       command: object((g) => ({ type: g.get('type', literal('command')) })),
     })),
   })),
@@ -578,11 +592,11 @@ export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
   meter: object((f): Fact => ({
-    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), role: f.get('role', role), routingRev: f.get('routingRev', revR),
+    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', meterSubject), usage: f.get('usage', tokenUsage),
   })),
   'usage-unavailable': object((f): Fact => ({
-    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), role: f.get('role', role), routingRev: f.get('routingRev', revR),
+    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', meterSubject), reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
@@ -596,6 +610,7 @@ export const fact: Read<Fact> = tagged('kind', {
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
+  'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
   })),

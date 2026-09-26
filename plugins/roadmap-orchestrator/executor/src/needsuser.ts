@@ -12,15 +12,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
-import type { IntentOf } from './core/events.ts';
+import type { IntentOf, Parent } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
 import { type NeedsUserId, type Sha256Hex, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
 import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
-import { type NeedsUserAck, type NeedsUserRecord, needsUserAck, needsUserRecord } from './core/records.ts';
+import { type NeedsUserAck, type NeedsUserRecord, needsUserAck, needsUserRecord, type NeedsUserContent } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import type { NeedsUserContent } from './resources/probe.ts';
 
 export const NEEDS_USER_DIR = 'needs-user';
 const STAGED_DIR = '.staged';
@@ -34,14 +33,18 @@ export const needsUserBytes = (record: NeedsUserRecord): string => canonicalJson
 
 const fileSha = (path: AbsPath): Sha256Hex => sha256(sha256Hex(readFileSync(path)));
 
-/** Raises one needs-user item; returns once `needs-user/<id>.json` is durable and the op is done. */
-export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: NeedsUserContent): NeedsUserId {
+/**
+ * Raises one needs-user item; returns once `needs-user/<id>.json` is durable and the op is done. `parent` is
+ * what the item answers for: the stage attempt whose outcome parked or stopped the unit, the op a recovery
+ * parked, or the arc. The executor reads it back to raise each such item once (`raisedFor`).
+ */
+export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: NeedsUserContent, parent: Parent): NeedsUserId {
   durableMkdir(join(runDir, NEEDS_USER_DIR, STAGED_DIR));
   let id: NeedsUserId | null = null;
   const { op } = journal.begin({
     kind: 'needsuser.raise',
     key: opKey('needs-user'),
-    parent: { type: 'arc' },
+    parent,
     deadlineAt: null,
     body: (op) => {
       id = needsUserIdForOp(op);
@@ -87,6 +90,13 @@ export function needsUserReconciler(runDir: AbsPath): Reconciler<'needsuser.rais
     if (!existsSync(stagedPath(runDir, id))) throw new Error(`needs-user ${id}: neither ${path} nor its staged file exists after a durable intent`);
     return { kind: 'redo' };
   };
+}
+
+/** The needs-user a done raise parented by `parent` recorded, or null when none was raised for it. */
+export function raisedFor(view: JournalView, parent: Parent): NeedsUserId | null {
+  const key = canonicalJson(parent);
+  const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null);
+  return raise === undefined ? null : raise.expect.id;
 }
 
 /** Raised, blocking and not acknowledged: what keeps a parked unit's arc from being terminal-complete. */

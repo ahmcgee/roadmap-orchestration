@@ -46,7 +46,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
       { resource: INTEGRATION_SLOT, teardown: inv },
     ] },
   }, null),
-  'proc.spawn': intent('proc.spawn', { subject: { purpose: 'backend', role: 'build', routingRev: rev, unit, attempt: 1 }, launchSha256: H }, null),
+  'proc.spawn': intent('proc.spawn', { subject: { purpose: 'backend', role: 'build', tier: 'med', routingRev: rev, unit, attempt: 1 }, launchSha256: H }, null),
   'proc.kill': intent('proc.kill', { inv, scope: 'op', reason: 'recovery' }, null),
   'evidence.snapshot': intent('evidence.snapshot', { source: wt, globs: [repoPattern('coverage/**')], dest: absPath('/run/inv/7-1/evidence') }, { manifest: absPath('/run/inv/7-1/evidence/manifest.json') }),
   'salvage.commit': intent('salvage.commit', {
@@ -101,8 +101,8 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
 const FACTS: readonly Fact[] = [
   { kind: 'tail-discarded', offset: 1024, length: 17, sha256: H },
   { kind: 'containment-mode', mode: 'session' },
-  { kind: 'meter', inv, role: 'gate', routingRev: rev, unit: { unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null } },
-  { kind: 'usage-unavailable', inv, role: 'build', routingRev: rev, unit: null, reason: 'no-result' },
+  { kind: 'meter', inv, role: 'gate', tier: 'high', routingRev: rev, unit: { unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null } },
+  { kind: 'usage-unavailable', inv, role: 'build', tier: 'low', routingRev: rev, unit: null, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, at } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
@@ -111,6 +111,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
+  { kind: 'executor-started', generation: 3 },
 ];
 
 function envelope(seq: number): Envelope {
@@ -151,7 +152,7 @@ describe('events', () => {
       { ...INTENTS['worktree.create'], parent: { type: 'arc' }, deadlineAt: null, expect: { path: wt, checkout: { type: 'detached', at: B } } },
       { ...INTENTS['proc.spawn'], ordinal: 2, parent: { type: 'command', command: commandId('cmd-0123456789abcdef') }, expect: { subject: { purpose: 'lane', unit, lane: laneId('L1'), set: 'suite', at: A }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], parent: { type: 'op', op: opId(arc, 3) }, expect: { subject: { purpose: 'teardown', unit: null, resource: resourceName('db') }, launchSha256: H } },
-      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'gate', routingRev: rev } }, launchSha256: H } },
+      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'gate', tier: 'low', routingRev: rev } }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'shell', target: { type: 'command' } }, launchSha256: H } },
       { ...INTENTS['mergein.prepare'], expect: { ...INTENTS['mergein.prepare'].expect, merge: { type: 'conflicted', conflicts: [repoPath('src/a.ts')] } }, post: { type: 'conflicted' } },
       { ...INTENTS['snapshot.publish'], expect: { ...INTENTS['snapshot.publish'].expect, old: null, commit: commit([] as const) } },
