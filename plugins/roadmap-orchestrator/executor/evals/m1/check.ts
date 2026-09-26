@@ -4,7 +4,8 @@
 // (`NOT EXERCISED: …`, `CANNOT SHOW: …`). Exits 1 when any criterion fails.
 //
 // Criteria:
-//   run-ended            start exited 0 with an exit reason, not by the driver's hard timeout
+//   run-ended            start exited 0 (ready), and the run's final executor left an exit reason other than
+//                        refused, not by the driver's hard timeout
 //   units-settled        every unit merged, or parked with a coherent needs-user (the file exists, its reason is
 //                        one of the frozen reasons, and status lists it open and blocking)
 //   head-is-candidate    integration head = the last published ff's candidate; head^1 = its T; head^2 = the
@@ -70,9 +71,9 @@ const spawnIntents = (run: Run): readonly IntentOf<'proc.spawn'>[] => run.events
 // Criteria
 
 function runEnded(run: Run): Verdict {
-  const { endedBy, start } = run.report;
-  const pass = endedBy !== 'timeout' && start.code === 0 && start.reason !== null && start.reason.kind !== 'refused';
-  return { pass, detail: `endedBy=${endedBy} exit=${start.code} reason=${JSON.stringify(start.reason)}` };
+  const { endedBy, start, generation, exit } = run.report;
+  const pass = endedBy !== 'timeout' && start.code === 0 && exit !== null && exit.kind !== 'refused';
+  return { pass, detail: `endedBy=${endedBy} start=${start.code} generation=${generation} reason=${JSON.stringify(exit)}` };
 }
 
 function unitsSettled(run: Run): Verdict {

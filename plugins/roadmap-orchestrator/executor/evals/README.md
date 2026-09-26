@@ -38,10 +38,15 @@ node evals/m1/check.ts /var/tmp/m1-claude-only
   contract, the C-nn ledger, invariants and an empty-routing config) and `input/` (plan.json, one spec per unit,
   rulings.md). Unit `slug` adds `slugify`; unit `page-id` builds on it, so it can only merge after `slug` and from
   the advanced integration tip, and its clause B2 is one a careless implementation misses.
-- `driver.ts <dir> --profile default|claude-only` runs `bin/roadmap start` with a 90 minute hard timeout,
-  then `roadmap status`, and writes `<dir>/report.json`. It uses the machine's host lock, so no other arc may
-  run on the host meanwhile. `claude-only` takes `codex` off PATH. If the run parks on a blocking needs-user,
-  the driver sends `stop` (nobody is there to answer) and check grades the needs-user for coherence.
+- `driver.ts <dir> --profile default|claude-only` runs `bin/roadmap start`, which returns once the detached
+  supervisor reports ready (`{kind: ready, generation, supervisor}`) while the run goes on in the background.
+  The driver then polls `roadmap status` (every 10 s, 90 minute hard timeout) until the supervisor process has
+  exited and `run.state` is `complete`, `refused` or `no-owner`, and writes `<dir>/report.json` with how the
+  run ended (`endedBy`), the generation it ended on and the final executor's exit line. It uses the machine's
+  host lock, so no other arc may run on the host meanwhile. `claude-only` takes `codex` off PATH. If the run
+  parks on a blocking needs-user, the driver sends `stop` (nobody is there to answer), waits for the supervisor
+  to exit, and check grades the needs-user for coherence. On the timeout it sends `stop`, waits 5 minutes, then
+  SIGKILLs the supervisor and the executor.
 - `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
   failed criterion: both units merged or parked with a coherent needs-user; the integration head is the tested
   candidate; `git diff main...integration` is product-only; `refs/roadmap/<arc>` verifies against its manifest

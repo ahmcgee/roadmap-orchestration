@@ -81,7 +81,10 @@ function playedThrough(f: Fixture): readonly CallRecord[] {
 function assertPassed(f: Fixture): void {
   assert.equal(f.driver.code, 0, `driver: ${f.driver.stdout} ${f.driver.stderr}`);
   assert.equal(f.report.endedBy, 'exit');
-  assert.deepEqual(f.report.start.reason, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  assert.equal(f.report.start.ready?.generation, 1);
+  assert.equal(f.report.generation, 1);
+  assert.deepEqual(f.report.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  assert.equal(f.report.status.run.state, 'complete');
   assert.deepEqual(failing(f.checked), [], JSON.stringify(f.checked.result.criteria));
   assert.equal(f.checked.result.criteria.length, 8);
 }
@@ -173,7 +176,8 @@ describe('evals-m1: fake-backed fixture runs', () => {
   test('evals-m1.parked-stop: units parked on blocking needs-user items make the driver stop the run; check grades them coherent', () => {
     assert.equal(parked.driver.code, 0, parked.driver.stderr);
     assert.equal(parked.report.endedBy, 'parked-stop');
-    assert.deepEqual(parked.report.start.reason, { kind: 'stop', cause: 'command', needsUser: null });
+    assert.equal(parked.report.generation, parked.report.start.ready?.generation);
+    assert.deepEqual(parked.report.exit, { kind: 'stop', cause: 'command', needsUser: null });
     assert.deepEqual(failing(parked.checked), [], JSON.stringify(parked.checked.result.criteria));
     playedThrough(parked);
     assert.match(criterion(parked.checked, 'units-settled').detail, /^slug parked nu-[0-9]+ escalation; page-id parked nu-[0-9]+ escalation$/);
