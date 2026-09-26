@@ -37,7 +37,7 @@ unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 s
 | `status` | Agent-facing JSON snapshot of the run |
 | `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
 | `pause <unit>` / `pause --all` | Kill, tear down, keep commits and the worktree as left; the unit holds at its stage |
-| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `--backend` clears a usage-limit park after a passing smoke |
+| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have edited its spec (below); `--backend` clears a usage-limit park after a passing smoke |
 | `stop` | Park everything, tear down, release the host lock |
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |
@@ -63,7 +63,9 @@ The other commands only queue a file and print its id. Queued is not applied: ch
 
 ## Reading `status`
 
-One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held unit or a parked backend),
+One JSON object. Start with `run`: `state` is `running` (a stage is in flight, or the next unit may start),
+`held` (nothing can start: the next unit is paused, held by an interrupted stage or a parked backend, or waits on
+`after`),
 `parked` (a blocking needs-user waits on you), `complete`, `refused` or `no-owner`; `owner` is
 `{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
 
@@ -72,7 +74,8 @@ One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held
   `run.state` is `parked` only when an item holds the whole arc; a parked unit with later units running
   shows `running`.
 - `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per plan unit; `seat` is the
-  `{role, tier}` the current stage dispatches on, or null.
+  `{role, tier}` the current stage dispatches on, or null. `status` is `held-after:<ids>` while units the unit
+  runs `after` hold it.
 - `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
 - `spend`: `byRole` token totals per role and routing revision; `byModel` derives the models from those
   seats at render time, the only place `status` names a model.
@@ -82,6 +85,51 @@ One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held
 
 An undispositioned residue blocks every future `start` (the `undispositioned-residue` rejection) until
 swept or dispositioned.
+
+## Ordering units: pause and `after`
+
+M1 runs the plan's units one at a time, in plan order. A paused unit is never dispatched, and the arc waits at
+it: every unit after it waits too until you `resume` it. Pausing a later unit is a gate you can hold; it is not
+a way to skip one.
+
+A parked unit does not hold the units after it: the next one runs while its needs-user is open. When a unit
+must not start until another is done, give it `after: [<unit id>, ...]` in `plan.json` (units earlier in plan
+order only). It is held, and the arc waits at it, until each named unit is merged or parked with its needs-user
+acknowledged. Use `after` rather than pausing everything behind a unit you expect to park.
+
+## Parked units: re-open or re-enter
+
+Read the item's `evidence` first: the deciding call's `result.json` (a judgment's reasons and patch), its
+`stdout`, the spec file, and for a lanes or candidate park the lane evidence. The `recommendation` says which of
+these applies:
+
+- **Parked at plan-check or gate** (an escalation or refusal at the high seat, a redirect or revise round past
+  its bound, a malformed or failed judgment): edit the unit's spec, then `roadmap resume <unit>`. The unit
+  re-enters at plan-check on the new revision as a new attempt and keeps its branch, worktree and implementer
+  session: its next build resumes that session, told the spec was amended. The resume acknowledges the park's
+  needs-user. The plan-check redirect bound (two redirects) counts again from your edit; the other counters
+  carry on.
+- **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): `resume`
+  does not re-open it. Re-enter the work: add a unit with a new id to `plan.json` (its fixed spec, the same
+  scope), create its branch `roadmap/<arc>/<new id>` at the tip of the parked unit's branch, acknowledge the
+  old item, then `stop` and `start` with the revised plan.
+
+Spec edits follow one rule: edit `spec.json` in place only while its unit is parked at plan-check or gate (or
+before its first dispatch). Keep the schema and every item id; strike or defer an item instead of deleting it,
+never reuse an id, and leave `scope` and `resources` alone. Set `rev` to the rev the file had when the unit
+parked, plus one. `resume` is rejected, with the reason, for an unchanged file, a changed file at the same rev,
+or any other rev.
+
+## Shared resources: an owner lease
+
+An occupancy probe that only looks at the resource (are clusters running? is the port bound?) cannot tell a
+free resource from one a person or another tool is using between its runs, and the resource's teardown would
+destroy that user's work. Give every shared resource an owner marker the probe honours: whoever uses the
+resource outside the executor writes a lease file, `/var/tmp/roadmap-resources/<name>.lease` (holder and
+purpose inside), and removes it when done. The plan's probe checks the lease first and exits 11 (occupied, not
+this unit's) while it exists, before any occupancy check. The executor then parks the unit on
+`occupancy-unlabelled` instead of tearing the resource down. The lease is a convention between your probe and
+the resource's other users; the executor never writes or reads it.
 
 ## When `start` refuses
 

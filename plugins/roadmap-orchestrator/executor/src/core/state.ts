@@ -12,7 +12,7 @@ import {
 import { atomicJson, monotonic } from './fsx.ts';
 import {
   type ArcId, type CommandId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type RoutingRev, type Sha256Hex,
-  type UnitId, parseInvocationId, parseOpId,
+  type SpecRev, type UnitId, parseInvocationId, parseOpId,
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
@@ -57,10 +57,13 @@ export type UnitCounters = Readonly<{
  */
 export type UnitStatus = 'active' | 'held' | 'park-pending' | 'stop-pending' | 'retired';
 
+/** A spec revision the log recorded for a unit: its `rev` and the sha256 of the file's bytes. */
+export type SpecState = Readonly<{ rev: SpecRev; sha256: Sha256Hex }>;
+
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
   unit: UnitId;
-  /** The stage of its latest stage-parented intent or stage-outcome fact. */
+  /** The stage of its latest stage-parented intent or stage-outcome fact; plan-check after a reopen. */
   stage: Stage;
   /** The riskFloor of the unit's latest dispatch fact (a plan-check raise re-pins it); null before one. */
   risk: RiskTier | null;
@@ -73,7 +76,7 @@ export type UnitState = Readonly<{
   /**
    * The latest stage-outcome fact that decided the unit's next step: every class but `hold` (a held stage
    * re-runs what this outcome decided). The unit driver derives its next stage and that stage's inputs from
-   * it; null before the first outcome.
+   * it; null before the first outcome and after a reopen (both start at plan-check).
    */
   decided: StageOutcomeFact | null;
   /**
@@ -90,15 +93,35 @@ export type UnitState = Readonly<{
    * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome.
    */
   open: Readonly<{ stage: Stage; attempt: number }> | null;
+  /**
+   * The unit's spec as the log last recorded it: the latest `dispatch` fact's, done `spec.patch`'s or
+   * `reopened` fact's revision and file hash; null before the first dispatch. A reopen requires the file to
+   * be at this rev + 1 (the architect's edit).
+   */
+  spec: SpecState | null;
+  /** The latest `reopened` fact's command and spec rev; null before one. */
+  reopened: Readonly<{ command: CommandId; specRev: SpecRev }> | null;
+  /**
+   * `counters.redirects` at the latest reopen (0 before one): the redirect bound counts only the redirects
+   * since the architect's latest spec revision (`redirectsSinceEdit`).
+   */
+  redirectBase: number;
 }>;
 
-export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null): UnitState {
+export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
+    spec, reopened: null, redirectBase: 0,
   };
 }
+
+/** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
+export const redirectsSinceEdit = (u: UnitState): number => u.counters.redirects - u.redirectBase;
+
+const specOf = (record: DispatchRecord | undefined): SpecState | null =>
+  record === undefined ? null : { rev: record.specRev, sha256: record.specSha256 };
 
 const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {
   hold: 'held', park: 'park-pending', stop: 'stop-pending', retire: 'retired',
@@ -284,7 +307,8 @@ export class Fold implements JournalView {
   #unit(unit: UnitId, stage: Stage): UnitEntry {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
-    const u = { starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, this.#dispatch.get(unit)?.riskFloor ?? null) };
+    const pinned = this.#dispatch.get(unit);
+    const u = { starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, pinned?.riskFloor ?? null, specOf(pinned)) };
     this.#units.set(unit, u);
     return u;
   }
@@ -314,6 +338,10 @@ export class Fold implements JournalView {
     this.#close(entry, { type: 'done', record: r });
     if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
     if (intent.kind === 'snapshot.publish') this.#snapshotHighWater = Math.max(this.#snapshotHighWater, intent.expect.highWater);
+    if (intent.kind === 'spec.patch' && intent.parent.type === 'stage') {
+      const u = this.#unit(intent.parent.unit, intent.parent.stage);
+      u.state = { ...u.state, spec: { rev: intent.post.newRev, sha256: intent.post.newSha256 } };
+    }
   }
 
   #abort(r: AbortRecord, fail: (detail: string) => never): void {
@@ -362,7 +390,7 @@ export class Fold implements JournalView {
         }
         this.#dispatch.set(unit, f.record);
         const u = this.#units.get(unit);
-        if (u !== undefined) u.state = { ...u.state, risk: riskFloor };
+        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, spec: specOf(f.record) };
         return;
       }
       case 'stage-outcome': {
@@ -409,7 +437,28 @@ export class Fold implements JournalView {
       case 'resumed':
         this.#resumed(f.target, fail);
         return;
+      case 'reopened':
+        this.#reopened(f, fail);
+        return;
     }
+  }
+
+  /**
+   * A reopen: only of a unit parked at a judgment stage, onto the spec rev after the one the log recorded.
+   * The unit starts over at plan-check (no decided outcome) with its counters, routed-up seats and branch
+   * kept; the redirect bound counts from here.
+   */
+  #reopened(f: Extract<Fact, { kind: 'reopened' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    const decided = u?.state.decided ?? null;
+    if (u === undefined || u.state.status !== 'park-pending' || decided === null) return fail(`reopen of unit ${f.unit}, which is not parked`);
+    if (!(JUDGMENT_STAGES as readonly Stage[]).includes(decided.stage)) fail(`reopen of unit ${f.unit}, parked at ${decided.stage}, not at a judgment stage`);
+    const spec = u.state.spec;
+    if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
+    u.state = {
+      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, spec: { rev: f.specRev, sha256: f.specSha256 },
+      reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects,
+    };
   }
 
   /**
@@ -500,7 +549,8 @@ export class Fold implements JournalView {
   }
 
   unit(unit: UnitId): UnitState {
-    return this.#units.get(unit)?.state ?? newUnitState(unit, 'plan-check', this.#dispatch.get(unit)?.riskFloor ?? null);
+    const pinned = this.#dispatch.get(unit);
+    return this.#units.get(unit)?.state ?? newUnitState(unit, 'plan-check', pinned?.riskFloor ?? null, specOf(pinned));
   }
 
   dispatchOf(unit: UnitId): DispatchRecord | null {

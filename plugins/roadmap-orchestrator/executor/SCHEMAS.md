@@ -63,7 +63,7 @@ per-unit route layers.
 | `routing?` | `RoutingLayer` | the `plan` routing layer |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand}`; `integration-slot` is built in and may not be declared |
-| `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[]}` |
+| `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
@@ -154,6 +154,7 @@ in the line belongs to `arc`.
 | `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
 | `stop-requested` | `command`: the durable stop marker (step 13) |
 | `executor-started` | `generation`: written at every start once the journal is open; clears the stop marker (a stop ends one run, not the arc). Pause markers and holds persist until `resume` (lead ruling, 13b) |
+| `reopened` | `unit, command, specRev, specSha256`: `resume <unit>` re-opened a unit parked at `plan-check` or `gate` onto its architect-edited spec (the file at `specRev` = the unit's recorded spec rev + 1, hashing to `specSha256`). The unit starts over at plan-check as a new attempt: `decided` and `interrupted` null, `stage` plan-check, `status` active; counters, `routedUp`, `promotion`, `approval`, the branch, worktree and implementer session are kept; `redirectBase` = `counters.redirects` |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 
@@ -174,8 +175,9 @@ The fold derives each unit's `UnitState` from these facts through `afterStageOut
 the same function the transition table uses, so a decision's counters are the log's:
 `{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
 chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
-routedUp: JudgmentStage[], promotion, decided, interrupted, approval, open}`. `decided` is the unit's latest stage-outcome fact
-whose class is not `hold` (null before one): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
+routedUp: JudgmentStage[], promotion, decided, interrupted, approval, open, spec: {rev, sha256}|null, reopened: {command,
+specRev}|null, redirectBase}`. `decided` is the unit's latest stage-outcome fact
+whose class is not `hold` (null before one, and after a `reopened` fact): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
 it (`decidedBy` in `transitions.ts`), and a held stage re-runs what it decided. `interrupted` is the unit's
 latest `hold` fact while no later outcome has decided (else null): a held build re-runs as a `continue` round
 of that attempt's last invocation, resuming its session in the worktree as left (`src/pipeline/rounds.ts`). `approval` is the latest
@@ -184,7 +186,13 @@ stage-parented intent or a stage-outcome fact. `open` is the latest such pair (h
 an attempt a crash cut short (step 14b: the driver consumes its completed backend call rather than dispatching
 again), or a retire, which records none. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
 a plan-check that raises the risk re-pins the dispatch. `promotion` is set by a `trigger` and cleared by the
-next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class.
+next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class. `spec` is the
+unit's spec as the log last recorded it: the latest `dispatch` fact's `{specRev, specSha256}`, done `spec.patch`'s
+`{newRev, newSha256}` or `reopened` fact's; a reopen checks the edited file against it. `reopened` is the latest
+`reopened` fact's `{command, specRev}`. `redirectBase` is `counters.redirects` at the latest reopen (0 before one):
+the plan-check redirect bound (`MAX_REDIRECTS` = 2, `src/pipeline/transitions.ts`) counts only the redirects since
+the architect's latest spec revision, `redirects - redirectBase`; plan-check and executor patches bump the rev too,
+but only a reopen resets the count.
 
 **Append** (step 2). One serialised writer; `writeSync` loop until the full length is written; `fsync`; no act
 until fsync returns for the full line.
@@ -193,7 +201,8 @@ until fsync returns for the full line.
 match an open intent; ordinal strictly increasing per key; a retry (same op, next ordinal) inherits
 `deadlineAt`, `key` and `parent`; counters `monotonic()`; one `stage-outcome` per `(unit, stage, attempt)`;
 the chargeable outcome that reaches `CHARGEABLE_BOUND` (3) has class `park`; a later `dispatch` of a unit keeps
-its `scope` and does not lower its `riskFloor`. `state.json` is a derived cache, never read for a
+its `scope` and does not lower its `riskFloor`; a `reopened` fact names a unit that is `park-pending` with its
+`decided` stage `plan-check` or `gate`, at `specRev` = its recorded `spec.rev` + 1. `state.json` is a derived cache, never read for a
 decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
 facts keyed by op/inv, so they cannot be lost or double-counted.
 
@@ -330,8 +339,10 @@ Recorded with the approval as an `approval` fact. Recomputed at the tip being pu
 `integration.ff`; any mismatch re-gates. M1's C-nn ledger has one line per ruling and no supersede mechanism, so
 every cited ruling is at rev 1 (a ruling id listed twice is refused).
 
-`DispatchRecord = {unit, specRev, scope: RepoPattern[] (sorted), riskFloor, routingRev, at}`, recorded once per
-dispatch as a `dispatch` fact. A redirect cannot widen `scope` or lower `riskFloor`.
+`DispatchRecord = {unit, specRev, specSha256, scope: RepoPattern[] (sorted), riskFloor, routingRev, at}`, recorded once per
+dispatch as a `dispatch` fact; `specRev` and `specSha256` are the spec revision the dispatching plan-check read and
+the sha256 of the file's bytes (a risk re-pin records the revision its plan-check read). A redirect cannot widen
+`scope` or lower `riskFloor`.
 
 ## `spec.json` M1 subset and `SpecPatch`
 
@@ -350,6 +361,15 @@ is a plan-check redirect's judgment invocation, or the executor appending the bu
 `decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12); ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id}`, sections `lanes | acceptance | decisions | facts`. Scope and
 resources are not patchable in M1.
+
+**Architect spec edits** (M1's stand-in for DESIGN's `patch-spec`; arc-1 feedback items 1, 10). The architect
+edits a unit's `spec.json` in place only while the unit is parked at `plan-check` or `gate` (or before its first
+dispatch), keeps the schema and every id (items are struck or deferred, never deleted or reused; scope and
+resources unchanged), and sets `rev` to the unit's recorded rev + 1 (`UnitState.spec.rev`: the rev in the file
+when the unit parked). `resume <unit>` then re-opens the unit. It is rejected, naming the rule, when the file is
+unchanged, changed at the same rev, at any rev other than recorded + 1, or does not load. A park at any other
+stage is not re-openable in M1; its needs-user names the re-entry instead (a new unit id whose branch the
+architect creates at the parked unit's tip).
 
 ## Routing types (`src/routing/types.ts`)
 
@@ -404,7 +424,10 @@ checks its postcondition first, so recovery applies only the remainder. Effects:
 `stop` → `stop-requested` fact; `ack` → `<id>.ack.json` then `needs-user-acked` (rejected: unknown id,
 acknowledged by another command, a choice the item does not offer); `resume` → `resumed` fact (`backend`: that
 backend's smoke alone first; a failed smoke is `rejected{smoke-failed: …}`; `<unit>` under `pause --all` is
-rejected); `sweep` → per undispositioned residue, reserve (or `reclaim` this arc's own cleanup-failed
+rejected); `resume <unit>` of a unit neither paused nor held: parked at `plan-check` or `gate` with its spec
+edited to the next rev → the park's open needs-user acknowledged by this command, then `reopened` (see
+"Architect spec edits"); an unedited spec, any other park, a stopped or a merged unit → `rejected` with the
+reason; `sweep` → per undispositioned residue, reserve (or `reclaim` this arc's own cleanup-failed
 resource) under the sweep holder, the recorded teardown, release, `cleaned` disposition; a failed teardown
 leaves the resource cleaning under the sweep and the residue undisposed, the receipt's `verified` says so, and
 the next sweep re-drives it first.
@@ -428,8 +451,11 @@ control commands, then mutations at the safe point, then due needs-user items; e
 or a stop-pending unit (after cleaning what a stage still holds); exit `complete` when every unit is merged or
 parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user holds the arc (arc-wide:
 a host or arc subject, or reason `usage-limit`, `recovery-required`, `foreign-ref-move`, `residue`; or it names
-the next unit; lead ruling 14a: a unit-scoped park lets later units run), the arc or the next unit is paused,
-or the next unit is held; otherwise `runArc`. Blocking items include the file-only `sup-<gen>-<n>` and
+the next unit; lead ruling 14a: a unit-scoped park lets later units run), the next unit is held, or the next
+unit is blocked (`dispatchBlock`, `src/pipeline/unit.ts`: the arc or the unit paused, or a unit it runs `after`
+neither merged nor parked-and-acknowledged); otherwise `runArc`. The unit driver checks `dispatchBlock` itself
+before a unit's first stage and between stages, so the arc stops at a blocked unit with no `dispatch` fact and no
+invocation (arc-1 feedback item 16), and every unit after it waits too (M1 is serial). Blocking items include the file-only `sup-<gen>-<n>` and
 `host-<kind>-<n>` (host-level; `ack` answers them like any other, the ack fact taking any id form). While the arc runs, control commands apply
 every poll; a pause or stop aborts its signal and cancels the running stage's live backend or lane invocation
 by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), which the stage records as
@@ -491,7 +517,10 @@ survivor left after the pass.
 attempts, chargeableFailures, risk, seat{role, tier}|null}]`; `needsUser[{id, reason, blocking}]` (unacknowledged, the log's
 items and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `run.state` is `parked` only when an open blocking item
 holds the arc by the executor's rule (`holdsArc`: arc-wide, naming the next unit, or no unit left to run), so a unit-scoped
-park while later units run is `running` (step 14b);
+park while later units run is `running` (step 14b); otherwise `running` while a stage is in flight (an open
+stage-parented intent) or the next unit may start, and `held` only when the next unit is held or blocked
+(`dispatchBlock`), so a pause of another unit does not make a running arc `held`; a unit's `status` is
+`held-after:<ids>` while units it runs `after` hold it;
 `commands{pending[{id, type}], receipts[]}` (the last 10 terminal receipts); `spend{byRole, byModel{models,
 unresolvedRevs}, bySmoke}` (every total: `calls, input, output, cacheRead, cacheWrite, turns, costUsd,
 unavailable`; `bySmoke` per backend and revision, in no role or model total); `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with

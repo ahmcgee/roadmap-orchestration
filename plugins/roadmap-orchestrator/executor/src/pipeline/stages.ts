@@ -27,7 +27,7 @@ import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, invocationId, rulingId,
+  type InvocationId, type JudgmentSessionId, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId, rulingId,
 } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
@@ -50,7 +50,7 @@ import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../spec/patch.ts';
-import { loadSpec } from '../spec/spec.ts';
+import { bytesSha256, parseSpec } from '../spec/spec.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
@@ -97,11 +97,13 @@ export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParen
 // ---------------------------------------------------------------------------------------------------
 // Inputs, snapshotted by revision
 
-export function loadUnitSpec(ctx: StageContext, unit: PlanUnit): Readonly<{ path: AbsPath; spec: SpecM1 }> {
+/** The unit's spec.json (relative to the plan dir), with the sha256 of the bytes it was read from. */
+export function loadUnitSpec(ctx: Readonly<{ planDir: AbsPath }>, unit: PlanUnit): Readonly<{ path: AbsPath; spec: SpecM1; sha256: Sha256Hex }> {
   const path = absPath(join(ctx.planDir, unit.spec));
-  const spec = loadSpec(path);
+  const bytes = readFileSync(path);
+  const spec = parseSpec(bytes, path);
   if (spec.unit !== unit.id) throw new Error(`${path} is the spec of ${spec.unit}, not of ${unit.id}`);
-  return { path, spec };
+  return { path, spec, sha256: bytesSha256(bytes) };
 }
 
 export function integrationTip(ctx: StageContext): Sha {
@@ -160,8 +162,8 @@ function widenedResources(unit: PlanUnit, patch: PlanCheckOutput['patch']): read
 }
 
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone> {
-  const { path, spec } = loadUnitSpec(ctx, unit);
-  const pinned = pinDispatch(ctx, unit, spec.rev);
+  const { spec, sha256 } = loadUnitSpec(ctx, unit);
+  const pinned = pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
   const seat = judgmentDispatch(ctx, unit.id, 'plan-check');
   const prompt = promptFor('planCheck', seat.triple.model);
@@ -186,9 +188,11 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
 export async function planCheckRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'plan-check' }>, called: BackendCallOutcome, session: JudgmentSessionId,
 ): Promise<PlanCheckDone> {
-  const { path, spec } = loadUnitSpec(ctx, unit);
+  const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
   const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;
+  // The spec this judgment read: the file, or, once its redirect patched it, what the patch replaced.
   const specRev = applied?.expect.expectRev ?? spec.rev;
+  const seenSha256 = applied?.expect.oldSha256 ?? sha256;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const done = (d: StageDone<'plan-check'>): PlanCheckDone => ({ ...d, session, specRev });
   const v = verdictOf(ctx, parent, called);
@@ -214,7 +218,7 @@ export async function planCheckRead(
       throw error;
     }
   }
-  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx.journal, pinned, out.risk, specRev);
+  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx.journal, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
   if (patch !== null && applied === null && redirects) {

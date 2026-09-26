@@ -3,28 +3,29 @@
 // mid-unit refused.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { specRev } from '../src/core/ids.ts';
+import { sha256, specRev } from '../src/core/ids.ts';
 import { RoutingChangedError, implementerDispatch, judgmentDispatch, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { planCheck } from '../src/pipeline/stages.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { SCENARIO_TIMEOUT_MS, U1, facts, planCheckStep, setupUnit } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
+const SPEC_1 = { rev: specRev(1), sha256: sha256('1'.repeat(64)) };
 
 test('dispatch.pinned-once: the first dispatch pins scope, risk floor and routingRev; a routing change mid-unit is refused', () => {
   const run = setupUnit({ steps: [], risk: 'low' });
-  const first = pinDispatch(run.ctx, run.unit, specRev(1));
+  const first = pinDispatch(run.ctx, run.unit, SPEC_1);
   assert.deepEqual(first.scope, ['src/**', 'test/**']);
   assert.equal(first.riskFloor, 'low');
   assert.equal(first.routingRev, run.ctx.routing.rev);
-  assert.deepEqual(pinDispatch(run.ctx, run.unit, specRev(2)), first, 'a later call returns the pinned record');
+  assert.deepEqual(pinDispatch(run.ctx, run.unit, { rev: specRev(2), sha256: sha256('2'.repeat(64)) }), first, 'a later call returns the pinned record');
   assert.equal(facts(run).filter((f) => f.kind === 'dispatch').length, 1);
   assert.equal(judgmentDispatch(run.ctx, U1, 'plan-check').tier, 'low');
   assert.equal(implementerDispatch(run.ctx, U1).triple.backend, 'codex', 'default profile: Luna builds low');
 
   const changed = { ...run.ctx, routing: resolveRouting({ profile: 'claude-only', repoConfig: null, plan: null, unit: null }) };
   assert.notEqual(changed.routing.rev, run.ctx.routing.rev);
-  assert.throws(() => pinDispatch(changed, run.unit, specRev(1)), RoutingChangedError);
+  assert.throws(() => pinDispatch(changed, run.unit, SPEC_1), RoutingChangedError);
   assert.throws(() => judgmentDispatch(changed, U1, 'gate'), RoutingChangedError);
   assert.throws(() => implementerDispatch(changed, U1), RoutingChangedError);
 });

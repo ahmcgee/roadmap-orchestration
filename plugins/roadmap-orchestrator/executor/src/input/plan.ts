@@ -29,6 +29,12 @@ export type PlanUnit = Readonly<{
   risk: RiskTier;
   scope: readonly RepoPattern[];
   resources: readonly ResourceName[];
+  /**
+   * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
+   * any of them is neither merged nor parked with its needs-user acknowledged. Each names a unit earlier in
+   * plan order, never itself.
+   */
+  after: readonly UnitId[];
 }>;
 
 export type PlanM1 = Readonly<{
@@ -69,9 +75,11 @@ const planUnit: Read<PlanUnit> = object((f) => {
     risk: f.get('risk', riskTier),
     scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
+    after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
   };
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
+  assertUnique(out.after, (u) => u, `${f.path}.after`);
   return out;
 });
 
@@ -99,6 +107,12 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
+    out.units.forEach((u, i) => {
+      const earlier = out.units.slice(0, i).map((e) => e.id);
+      u.after.forEach((id, j) => {
+        if (!earlier.includes(id)) throw new SchemaError(`plan.units[${i}].after[${j}]`, `a unit earlier in plan order than ${u.id}`, id);
+      });
+    });
     return out;
   })(value, 'plan');
 }

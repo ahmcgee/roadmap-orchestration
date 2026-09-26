@@ -2,7 +2,9 @@
 // five rounds: the four a decision asks for (`BuildRound`, transitions.ts) and `continue`:
 //
 //   fresh     a new session in the unit worktree (created on the unit branch at the integration tip the
-//             first time);
+//             first time); after a reopen (the architect edited the spec of a parked unit), the unit's
+//             latest implementer session is resumed instead, told by RESPEC_DIRECTIVE that the spec it
+//             now reads was amended and that the worktree holds its earlier work;
 //   fix       resume the implementer session with the failing lanes' evidence dirs and any directives (the
 //             gate's, or the executor's for a dirty checkout), in the unit worktree at the salvage SHA; the
 //             verification checkout of the failed series is removed first, citing its evidence snapshot;
@@ -60,6 +62,7 @@ export const FRESH_BUILD_MS = 3 * 60 * 60_000;
 export const RESUME_DIRECTIVE = 'Your previous final report did not match the required structured format. Do not change any code: return the structured report for the work in this worktree now.';
 export const NO_SESSION_NOTE = 'No earlier session of yours exists for this unit, so this is a fresh session: the worktree holds the work done so far. Read it before you change anything.';
 export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit), run the fast lanes and return your report.';
+export const RESPEC_DIRECTIVE = 'The architect amended this unit\'s spec after your earlier work on it; the spec in this message is the amended revision and replaces the one you worked from. The worktree holds your earlier work, committed. Bring the work in line with the amended spec, run the fast lanes and return your report.';
 export const CONTINUE_DIRECTIVE = `You were paused partway through this task and are now resumed. The worktree holds your work so far, including uncommitted changes. Continue from where you stopped; do not restart. The evidence directory named in this message is new: rewrite ${DECISIONS_FILE} there, complete, with every decision so far.`;
 
 /** What a decision asks for: one of the table's rounds, with the inputs its kind needs. */
@@ -248,8 +251,13 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
   const branch = unitBranch(ctx.plan.arc, unit);
   const deadlineAt = inMs(windowMs(input.kind === 'continue' ? input.of : input));
   switch (input.kind) {
-    case 'fresh':
-      return { ...(await ensureWorktree(ctx, unit, parent)), session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt };
+    case 'fresh': {
+      const ready = await ensureWorktree(ctx, unit, parent);
+      // Only a reopen leads to a second fresh round, and the unit keeps its implementer session across it.
+      const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
+      if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt };
+      return { ...ready, session: sessionOf(dispatch, earlier), fixRound: { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE] }, evidenceDirs: [], deadlineAt };
+    }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
       const head = revParse(worktree, 'HEAD');

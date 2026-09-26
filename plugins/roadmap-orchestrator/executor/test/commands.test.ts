@@ -242,6 +242,19 @@ describe('command queue', () => {
     assert.deepEqual(journal.view.control(), { stop: null, pausedAll: false, pausedUnits: [] });
     journal.close();
   });
+
+  it('cmd.resume-parked-rejected: resume <unit> of a unit parked outside plan-check and gate is rejected, naming the re-entry; nothing changes', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park', chargeable: false });
+    const resume = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
+    await applyAtSafePoint(ctx, poll(ctx));
+    const rejected = readReceipt(ctx.runDir, resume.id, 'rejected');
+    assert.equal(rejected?.state === 'rejected' && rejected.reason,
+      'unit u1 is parked (lane-blocked) at lanes, which is not re-openable in M1; re-enter it under a new unit id with a branch at the same tip');
+    assert.equal(journal.view.unit(UNIT).status, 'park-pending');
+    journal.close();
+  });
 });
 
 describe('resume --backend', () => {

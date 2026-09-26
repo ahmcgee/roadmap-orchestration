@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type LogRecord, type StageOutcomeFact, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, commandId, needsUserId, opId, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, commandId, needsUserId, opId, sha256, specRev, unitId } from '../src/core/ids.ts';
 import type { Stage } from '../src/core/records.ts';
 import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
@@ -22,7 +22,7 @@ type OutcomeFields = Readonly<{ stage: Stage; attempt: number; outcome: string; 
 const stageOutcome = (f: OutcomeFields): LogRecord =>
   ({ type: 'fact', fact: { kind: 'stage-outcome', unit: f.unit ?? U1, stage: f.stage, attempt: f.attempt, outcome: f.outcome, class: f.class, chargeable: f.chargeable ?? false } }) as LogRecord;
 const dispatch = (riskFloor: RiskTier, scope = 'src/**'): LogRecord =>
-  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), scope: [repoPattern(scope)], riskFloor, routingRev: REV, at: AT } } });
+  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern(scope)], riskFloor, routingRev: REV, at: AT } } });
 
 function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
   assert.throws(() => fold(ARC, events), (err: unknown) => {
@@ -80,6 +80,7 @@ describe('fold derives', () => {
     ]));
     assert.deepEqual(state.units, [{
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
+      spec: { rev: 1, sha256: H }, reopened: null, redirectBase: 0,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,
@@ -272,6 +273,22 @@ describe('fold: command effects (step 13)', () => {
     const s = fold(ARC, chain([ack]));
     assert.deepEqual(s.needsUserAcked, ['sup-1-1'], 'any id form may be acknowledged');
     refuses(chain([ack, ack]), 2, /second acknowledgement/);
+  });
+
+  it('state.reopen: a reopen of a unit parked at a judgment stage onto the next spec rev starts it over at plan-check, counters kept and the redirect bound reset; any other reopen is refused', () => {
+    const H2 = sha256('e'.repeat(64));
+    const reopen = (rev: number): LogRecord => fact({ kind: 'reopened', unit: U1, command: C, specRev: specRev(rev), specSha256: H2 });
+    const redirect = stageOutcome({ stage: 'plan-check', attempt: 1, outcome: 'redirect', class: 'redirect' });
+    const gatePark = stageOutcome({ stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park' });
+    const s = fold(ARC, chain([dispatch('med'), redirect, gatePark, reopen(2)]));
+    const u = s.units[0]!;
+    assert.deepEqual(
+      [u.status, u.stage, u.decided, u.spec, u.reopened, u.redirectBase, u.counters.redirects, u.counters.attempts],
+      ['active', 'plan-check', null, { rev: 2, sha256: H2 }, { command: C, specRev: 2 }, 1, 1, 2],
+    );
+    refuses(chain([dispatch('med'), redirect, reopen(2)]), 3, /not parked/);
+    refuses(chain([dispatch('med'), stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park' }), reopen(2)]), 3, /parked at lanes, not at a judgment stage/);
+    refuses(chain([dispatch('med'), gatePark, reopen(3)]), 3, /spec rev 3; its recorded rev is 1/);
   });
 });
 

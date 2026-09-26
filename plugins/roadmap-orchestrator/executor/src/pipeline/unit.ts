@@ -17,15 +17,23 @@
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
-// interrupted attempt's invocation, read from the fold's `interrupted` fact. A pause or stop signal is
-// checked between stages; the stage in flight is ended by the command layer's kills (step 13), which the
-// stage records as `interrupted`.
+// interrupted attempt's invocation, read from the fold's `interrupted` fact. A pause or stop signal, and
+// the durable pause markers and `after` edges (`dispatchBlock`), are checked before a unit's first stage and
+// between stages; the stage in flight is ended by the command layer's kills (step 13), which the stage
+// records as `interrupted`. A unit re-opened after a park (`reopened`: no decided outcome) starts over at
+// plan-check, like a unit never dispatched.
 //
-// Needs-user content is produced here, never written: the writer is step 13's.
+// Needs-user content is produced here, never written: the writer is step 13's. A halt's item names its
+// evidence and says what `resume` does for it (`haltNeedsUser`).
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { OutcomeStage, StageOutcomeFact } from '../core/events.ts';
+import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
 import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
-import type { NeedsUserReason, NeedsUserContent } from '../core/records.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
+import { raisedFor, reentryRecommendation, reopenRecommendation } from '../needsuser.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
@@ -53,21 +61,97 @@ export type UnitResult =
 export type Step = UnitResult | Readonly<{ kind: 'continue' }>;
 
 // ---------------------------------------------------------------------------------------------------
+// Waiting at a unit
+
+/**
+ * Whether `id` no longer holds the units that name it in `after`: merged, or parked with the blocking
+ * needs-user of its park acknowledged.
+ */
+function settledForAfter(view: JournalView, id: UnitId): boolean {
+  const u = view.unit(id);
+  if (u.status === 'retired') return true;
+  if (u.status !== 'park-pending' || u.decided === null) return false;
+  const item = raisedFor(view, { type: 'stage', unit: id, stage: u.decided.stage, attempt: u.decided.attempt });
+  return item !== null && view.ackOf(item) !== null;
+}
+
+/** The units `unit` is still held after (plan `after`), in plan order. */
+export function heldAfter(view: JournalView, unit: PlanUnit): readonly UnitId[] {
+  return unit.after.filter((id) => !settledForAfter(view, id));
+}
+
+/**
+ * Why the serial arc may not start a stage of `unit` now, from the log alone, or null: the arc or the unit
+ * is paused, or a unit it runs after is neither merged nor parked-and-acknowledged. The arc waits at such a
+ * unit (M1 is serial), and so does every unit after it.
+ */
+export function dispatchBlock(view: JournalView, unit: PlanUnit): string | null {
+  const c = view.control();
+  if (c.pausedAll) return 'the arc is paused';
+  if (c.pausedUnits.includes(unit.id)) return `unit ${unit.id} is paused`;
+  const after = heldAfter(view, unit);
+  if (after.length > 0) return `unit ${unit.id} is held after ${after.join(', ')}`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Needs-user content
+
+/** The stages that make a backend call. */
+const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
 
 /** Reasons that concern the arc rather than one unit: the base is broken, or someone else moved a ref. */
 const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-ref-move', 'usage-limit']);
 
-/** The needs-user content of a halt the table decided, when the stage had nothing more specific to say. */
-function haltNeedsUser(unit: UnitId, reason: NeedsUserReason, summary: string): NeedsUserContent {
+/**
+ * What a halt's recommendation refers to (arc-1 feedback item 23): the deciding stage's backend call
+ * (result.json, which holds a judgment's reasons and patch, and stdout; stdout and stderr of a lost call),
+ * for a plan-check the redirect whose patch the unit's spec last took, a lanes or candidate attempt's
+ * evidence, a failed salvage's worktree, and the spec file.
+ */
+function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, specPath: AbsPath): readonly AbsPath[] {
+  const parent = stageParent(f);
+  const out: AbsPath[] = [];
+  const called = CALL_STAGES.includes(f.stage) ? recordedCall(ctx, parent) : null;
+  if (called?.kind === 'result') out.push(absPath(join(called.invDir, 'result.json')), absPath(join(called.invDir, STDOUT_FILE)));
+  if (called?.kind === 'lost') out.push(absPath(join(called.invDir, STDOUT_FILE)), absPath(join(called.invDir, STDERR_FILE)));
+  if (f.stage === 'plan-check') {
+    const view = ctx.journal.view;
+    const redirect = view.opsOf('spec.patch').flatMap((i) => {
+      const { by } = i.expect.patch;
+      return i.parent.type === 'stage' && i.parent.unit === unit.id && by.role === 'planCheck' && view.doneOf(i.op) !== null ? [by.inv] : [];
+    }).at(-1);
+    if (redirect !== undefined) out.push(absPath(join(invocationDir(ctx.runDir, redirect), 'result.json')));
+  }
+  if (f.stage === 'lanes') out.push(specSeriesRoot(ctx.runDir, parent));
+  if (f.stage === 'candidate') out.push(candidateSeriesRoot(ctx.runDir, parent));
+  if (f.stage === 'salvage') out.push(unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id));
+  out.push(specPath);
+  return [...new Set(out)].filter((p) => existsSync(p));
+}
+
+/**
+ * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
+ * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a park
+ * at a judgment stage re-opens after a spec edit; any other is re-entered under a new unit id.
+ */
+function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
+  const f = ctx.journal.view.unit(unit.id).decided;
+  if (f === null) throw new Error(`unit ${unit.id} halted without a decided outcome`);
+  const { path, spec } = loadUnitSpec(ctx, unit);
+  const recommendation = kind === 'stop'
+    ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
+      ? reopenRecommendation(unit.id, path, spec.rev)
+      : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan.arc, unit.id));
   return {
     blocking: true,
-    subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit },
+    subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
-    summary: `Unit ${unit}: ${summary}.`,
-    recommendation: `Read the unit's evidence and log; fix the cause (spec, environment or ruling), then resume unit ${unit}, or acknowledge to leave it parked.`,
+    summary: `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
+    recommendation,
     options: [],
-    evidence: [],
+    evidence: haltEvidence(ctx, unit, f, path),
   };
 }
 
@@ -227,9 +311,9 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<Target['
     case 'hold':
       return { kind: 'held', needsUser: done.needsUser };
     case 'park':
-      return { kind: 'parked', needsUser: done.needsUser ?? haltNeedsUser(unit.id, next.needsUser.reason, next.needsUser.summary) };
+      return { kind: 'parked', needsUser: done.needsUser ?? haltNeedsUser(ctx, unit, 'park', next.needsUser.reason, next.needsUser.summary) };
     case 'stop':
-      return { kind: 'stopped', needsUser: done.needsUser ?? haltNeedsUser(unit.id, next.needsUser.reason, next.needsUser.summary) };
+      return { kind: 'stopped', needsUser: done.needsUser ?? haltNeedsUser(ctx, unit, 'stop', next.needsUser.reason, next.needsUser.summary) };
     case 'retire':
       await retire(ctx, unit);
       return { kind: 'merged' };
@@ -238,8 +322,6 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<Target['
 
 // ---------------------------------------------------------------------------------------------------
 // A backend call a crash left unrecorded
-
-const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
 
 /**
  * The outcome of a stage attempt a crash cut short after its backend call: the fold's open attempt (no
@@ -308,9 +390,9 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
     case 'stage':
       return after(ctx, unit, await runStage(ctx, unit, decided.target, f));
     case 'park':
-      return { kind: 'parked', needsUser: haltNeedsUser(unit.id, decided.reason, factSummary(f)) };
+      return { kind: 'parked', needsUser: haltNeedsUser(ctx, unit, 'park', decided.reason, factSummary(f)) };
     case 'stop':
-      return { kind: 'stopped', needsUser: haltNeedsUser(unit.id, decided.reason, factSummary(f)) };
+      return { kind: 'stopped', needsUser: haltNeedsUser(ctx, unit, 'stop', decided.reason, factSummary(f)) };
     case 'retire':
       await retire(ctx, unit);
       return { kind: 'merged' };
@@ -318,12 +400,17 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 }
 
 /**
- * Runs `unit` stage by stage until it is merged, parked, held or stopped. `signal` (pause or stop) is
- * honoured between stages: the unit is left where the fold says, and the next call continues there.
+ * Runs `unit` stage by stage until it is merged, parked, held or stopped. `signal` (pause or stop) and the
+ * unit's `dispatchBlock` (a pause marker, an unmet `after`) are honoured before its first stage and between
+ * stages: the unit is left where the fold says, and the next call continues there.
  */
 export async function runUnit(ctx: StageContext, unit: PlanUnit, signal: AbortSignal): Promise<UnitResult> {
   for (;;) {
-    if (signal.aborted) return { kind: 'held', needsUser: null };
+    // The durable markers too, not only the signal the command loop aborts on its next poll: a unit paused
+    // (or waiting on `after`) is never dispatched, and no further stage of it starts (arc-1 feedback item 16).
+    // A merged, parked or stopped unit starts no stage: its step only reads its result back.
+    const ended = ['retired', 'park-pending', 'stop-pending'].includes(ctx.journal.view.unit(unit.id).status);
+    if (signal.aborted || (!ended && dispatchBlock(ctx.journal.view, unit) !== null)) return { kind: 'held', needsUser: null };
     const s = await step(ctx, unit);
     if (s.kind !== 'continue') return s;
     crashPoint('unit.after-stage');

@@ -38,7 +38,7 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 /** The plan's suite: every test file of the repo (node's default patterns). */
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[] }>;
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[] }>;
 
 export type ArcOptions = Readonly<{
   steps: readonly Step[];
@@ -92,7 +92,9 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'),
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: ['src/**', 'test/**', 'contracts/**'], resources: [] })),
+    units: units.map((u) => ({
+      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: ['src/**', 'test/**', 'contracts/**'], resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+    })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
   const scenario = writeScenario(scenarioDir, opts.steps);

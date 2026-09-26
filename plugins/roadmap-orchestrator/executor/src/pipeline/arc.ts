@@ -1,9 +1,12 @@
 // The serial arc (M1): the plan's units in plan order, one at a time, each through the unit driver.
 //
 // Terminal predicate (plan "Salvage", DESIGN-1.0.md §2.10): every unit merged, or parked with an open
-// blocking needs-user. M1 has no edges, so a parked unit does not stop the ones after it. A held unit (an
+// blocking needs-user. M1 has no DAG, so a parked unit does not stop the ones after it, unless one names it
+// in `after` (plan.json): that unit waits until the parked one's needs-user is acknowledged. A held unit (an
 // interrupted stage, a backend parked on a usage limit, or a pause between stages) ends the run without
-// ending the arc: the next run continues it from the journal. A stop (a foreign ref move) ends the run at
+// ending the arc: the next run continues it from the journal. So does a unit the arc may not start
+// (`dispatchBlock`: paused, or waiting on `after`): the arc waits at it, with no dispatch fact and no
+// invocation, and every unit after it waits too (M1 is serial). A stop (a foreign ref move) ends the run at
 // once. The needs-user content of every park and stop is returned for the writer (the executor); a park's
 // is also handed to `onParked` the moment the unit parks, so its item is raised while later units run
 // rather than when the arc returns.
