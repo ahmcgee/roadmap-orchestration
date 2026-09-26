@@ -10,7 +10,7 @@ import {
 import { specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
 import { repoPattern } from '../src/core/values.ts';
-import { type Next, type StageOutcome, TABLE, outcomeFact, transition } from '../src/pipeline/transitions.ts';
+import { type Next, type StageOutcome, TABLE, decidedBy, outcomeFact, transition } from '../src/pipeline/transitions.ts';
 import { ARC, AT, REV, U1, chain } from './fixtures/log-records.ts';
 
 type Counter = Exclude<keyof UnitCounters, 'retries' | 'attempts'> | `retries.${RetryStage}`;
@@ -138,7 +138,9 @@ const ROWS: readonly Row[] = [
   ['candidate', 'red', {}, 'build/fix@med', 'candidate-red', { candidateReds: 1, chargeableFailures: 1 }],
   ['candidate', 'red', { counters: { candidateReds: 1 } }, 'park:candidate-red', 'park', {}],
   ['candidate', 'base-red', {}, 'park:base-red', 'park', {}],
+  ['candidate', 'blocked', {}, 'park:lane-blocked', 'park', {}],
   ['candidate', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['candidate', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['candidate', 'interrupted', {}, 'hold', 'hold', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
@@ -166,6 +168,34 @@ describe('transitions', () => {
       const after = afterStageOutcome(u, fact);
       assert.deepEqual(delta(u.counters, after.counters), deltas, `${label}: counter deltas`);
       if (n.kind === 'stage') assert.deepEqual(n.counters, after.counters, `${label}: Next.counters are the recorded counters`);
+    }
+  });
+
+  it('transitions.decided-by: the recorded fact alone reads back the decision transition made, for every row and the bound', () => {
+    const cases = [
+      ...ROWS.map(([stage, kind, given]) => ({ u: unit(given), o: outcome(stage, kind) })),
+      { u: unit({ counters: { chargeableFailures: 2 } }), o: outcome('lanes', 'red') },
+    ];
+    for (const { u, o } of cases) {
+      const label = `${o.stage} ${o.kind} ${JSON.stringify(u.counters)}`;
+      const n = transition(u, o);
+      const fact = outcomeFact(u, o, 1);
+      if (n.kind === 'hold') {
+        assert.throws(() => decidedBy(fact), /a hold decides nothing/, label);
+        continue;
+      }
+      const d = decidedBy(fact);
+      switch (n.kind) {
+        case 'stage':
+          assert.deepEqual(d, { kind: 'stage', target: n.stage === 'build' ? { stage: 'build', round: n.round } : { stage: n.stage } }, label);
+          break;
+        case 'park':
+        case 'stop':
+          assert.deepEqual(d, { kind: n.kind, reason: n.needsUser.reason }, label);
+          break;
+        case 'retire':
+          assert.deepEqual(d, { kind: 'retire' }, label);
+      }
     }
   });
 

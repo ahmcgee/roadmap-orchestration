@@ -1,0 +1,37 @@
+// The serial arc (M1): the plan's units in plan order, one at a time, each through the unit driver.
+//
+// Terminal predicate (plan "Salvage", DESIGN-1.0.md §2.10): every unit merged, or parked with an open
+// blocking needs-user. M1 has no edges, so a parked unit does not stop the ones after it. A held unit (an
+// interrupted stage, a backend parked on a usage limit, or a pause between stages) ends the run without
+// ending the arc: the next run continues it from the journal. A stop (a foreign ref move) ends the run at
+// once. The needs-user content of every park and stop is returned for the writer (step 13).
+import type { UnitId } from '../core/ids.ts';
+import type { NeedsUserContent } from '../resources/probe.ts';
+import type { StageContext } from './dispatch.ts';
+import { type UnitResult, runUnit } from './unit.ts';
+
+export type Settled = Readonly<{ unit: UnitId; result: Extract<UnitResult, Readonly<{ kind: 'merged' | 'parked' }>> }>;
+
+export type ArcResult =
+  /** Every unit merged or parked; each parked unit carries the blocking needs-user it waits on. */
+  | Readonly<{ kind: 'terminal'; units: readonly Settled[] }>
+  /** `unit` waits for a resume; the units before it are settled. */
+  | Readonly<{ kind: 'held'; unit: UnitId; needsUser: NeedsUserContent | null; settled: readonly Settled[] }>
+  | Readonly<{ kind: 'stopped'; unit: UnitId; needsUser: NeedsUserContent; settled: readonly Settled[] }>;
+
+export async function runArc(ctx: StageContext, signal: AbortSignal): Promise<ArcResult> {
+  const settled: Settled[] = [];
+  for (const unit of ctx.plan.units) {
+    const result = await runUnit(ctx, unit, signal);
+    switch (result.kind) {
+      case 'held':
+        return { kind: 'held', unit: unit.id, needsUser: result.needsUser, settled };
+      case 'stopped':
+        return { kind: 'stopped', unit: unit.id, needsUser: result.needsUser, settled };
+      case 'merged':
+      case 'parked':
+        settled.push({ unit: unit.id, result });
+    }
+  }
+  return { kind: 'terminal', units: settled };
+}

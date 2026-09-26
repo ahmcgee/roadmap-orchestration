@@ -14,16 +14,25 @@
 //
 // Deadlines. A fix round's window is the measured lane series plus an edit allowance; the allowance and the
 // fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds.
-import { existsSync } from 'node:fs';
+//
+// Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
+// the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
+// retries such a call once, as a new invocation with the same deadline.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
 import { type ImplementerSessionId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
-import type { ImplementerSession } from '../core/records.ts';
+import { type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { worktreeCreateOp } from '../git/worktree.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { type ImplementerDispatch, type StageContext, type StageParent, runOp, unitBranch, unitWorktree } from './dispatch.ts';
+import {
+  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, runOp, unitBranch,
+  unitWorktree,
+} from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
@@ -82,6 +91,16 @@ export function gateReviseRound(directives: readonly string[], ledger: readonly 
   return { kind: 'fix', fix: { failingEvidenceDirs: [], directives }, ledger, verification, salvage };
 }
 
+/**
+ * The fix round after a refused or red candidate (step 12): the suite's failing evidence (red) or the
+ * executor's directive naming what the transient check refused, over `ledger` (the series the window is
+ * measured from); the unit's green verification checkout, if still there, is removed first.
+ */
+export function candidateFixRound(fix: FixRound, ledger: readonly LaneRecord[], verification: VerificationTree | null, salvage: Sha): RoundInput {
+  if (fix.failingEvidenceDirs.length === 0 && fix.directives.length === 0) throw new Error('candidateFixRound: a fix round names failing evidence or directives');
+  return { kind: 'fix', fix, ledger, verification, salvage };
+}
+
 /** The window of a fix round: the measured lane series plus the edit allowance. */
 export function fixWindowMs(ledger: readonly LaneRecord[]): number {
   return seriesDurationMs(ledger) + EDIT_ALLOWANCE_MS;
@@ -111,6 +130,32 @@ function resumed(ctx: StageContext, unit: UnitId, dispatch: ImplementerDispatch)
 }
 
 const inMs = (ms: number): IsoTime => isoTimeOf(new Date(Date.now() + ms));
+
+/**
+ * How the Codex CLI reports a resume onto a thread another live session still holds. No capture exists:
+ * the text is the fragment 0.x matched on the CLI's stderr after arc 1 observed it ("thread already has
+ * a..."). Read from stderr and from the CLI's own error events, never from model output.
+ */
+export const CODEX_RESUME_COLLISION = /thread already/i;
+/** Default, unmeasured: how long a collided resume waits for the other session to let go. */
+export const COLLISION_RETRY_DELAY_MS = 5_000;
+
+/** A failed Codex resume whose CLI said the thread is held by another live session. */
+function resumeCollided(spec: BackendCallSpec, called: BackendCallOutcome): boolean {
+  const { request } = spec;
+  if (request.kind !== 'implementer' || request.session.backend !== 'codex' || request.session.mode !== 'resume') return false;
+  if (called.kind !== 'result' || called.result.outcome.kind === 'success') return false;
+  const stderr = readFileSync(join(called.invDir, STDERR_FILE), 'utf8');
+  return CODEX_RESUME_COLLISION.test(stderr) || called.result.backendErrors.some((e) => CODEX_RESUME_COLLISION.test(e.message));
+}
+
+/** The implementer's call for a round: one retry, as a new invocation, when a Codex resume collided. */
+export async function callImplementer(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
+  const first = await callBackend(ctx, spec);
+  if (!resumeCollided(spec, first)) return first;
+  await sleep(COLLISION_RETRY_DELAY_MS);
+  return callBackend(ctx, spec);
+}
 
 /** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
 async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {

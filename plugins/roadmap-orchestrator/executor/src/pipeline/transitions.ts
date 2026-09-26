@@ -64,7 +64,8 @@ export const MAX_REVISE_ROUNDS = 2;
 export const MAX_CANDIDATE_REDS = 1;
 export const MAX_RETRIES = 1;
 
-type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build'> }>;
+/** Where a decision sends the unit: a build round, or another stage. */
+export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build'> }>;
 
 /** On to `to`; `chargeable` on the plan's C rows; `trigger` raises a risk trigger. */
 type Go = Readonly<{ do: 'go'; to: Target; chargeable: boolean; trigger: boolean }>;
@@ -169,7 +170,11 @@ export const TABLE: Table = {
     red: { do: 'bounded', round: 'candidate-red', max: MAX_CANDIDATE_REDS, to: build('fix'), chargeable: true, then: park('candidate-red') },
     // Red with T alone red too: the base is broken, not the unit; uncharged.
     'base-red': park('base-red'),
+    // A suite lane its runner ended (deadline) or lost: no product verdict, and no retry at this stage.
+    blocked: park('lane-blocked'),
     occupied: park('occupancy-unlabelled'),
+    // A suite lane's resources could not be cleaned: a residue, never released.
+    'cleanup-failed': park('residue'),
     interrupted: hold,
   },
   ff: {
@@ -302,4 +307,63 @@ export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number
   return {
     kind: 'stage-outcome', unit: u.unit, stage: outcome.stage, attempt, outcome: outcome.kind, class: d.class, chargeable: d.chargeable,
   } as StageOutcomeFact;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Reading a recorded decision back (the unit driver, src/pipeline/unit.ts)
+
+/** What a recorded outcome decided, read from the fact alone: the unit's next target, or its end. */
+export type Decided =
+  | Readonly<{ kind: 'stage'; target: Target }>
+  | Readonly<{ kind: 'park' | 'stop'; reason: NeedsUserReason }>
+  | Readonly<{ kind: 'retire' }>;
+
+/** The halt reason of a rule that ended in park or stop (a retry or route-up past its limit, a bounded round's `then`). */
+function haltReasonOf(rule: Rule<OutcomeStage>): NeedsUserReason {
+  switch (rule.do) {
+    case 'park':
+    case 'stop':
+    case 'retry':
+      return rule.reason;
+    case 'route-up':
+      return rule.reason;
+    case 'bounded':
+      return haltReasonOf(rule.then);
+    case 'go':
+    case 'retire':
+    case 'hold':
+      throw new Error(`a ${rule.do} rule never halts`);
+  }
+}
+
+/**
+ * The decision a recorded `stage-outcome` fact carries, from its class and the table. A pure function of
+ * the fact, so a restarted driver continues exactly where the log says: the counters that chose the class
+ * are no longer needed to read it. `hold` is not a decision (the held stage re-runs the one before it).
+ */
+export function decidedBy(fact: StageOutcomeFact): Decided {
+  const rule = ruleOf({ stage: fact.stage, kind: fact.outcome } as StageOutcome);
+  switch (fact.class) {
+    case 'advance':
+    case 'trigger':
+      if (rule.do !== 'go') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
+      return { kind: 'stage', target: rule.to };
+    case 'redirect':
+    case 'revise':
+    case 'candidate-red':
+      if (rule.do !== 'bounded') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
+      return { kind: 'stage', target: rule.to };
+    case 'retry':
+      return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build'>) };
+    case 'route-up':
+      return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build'>) };
+    case 'park':
+    case 'stop':
+      // A chargeable park is only ever the bound (decide); every other halt carries its rule's reason.
+      return { kind: fact.class, reason: fact.chargeable ? 'chargeable-bound' : haltReasonOf(rule) };
+    case 'retire':
+      return { kind: 'retire' };
+    case 'hold':
+      throw new Error(`decidedBy: a hold decides nothing (${fact.unit} ${fact.stage}#${fact.attempt})`);
+  }
 }

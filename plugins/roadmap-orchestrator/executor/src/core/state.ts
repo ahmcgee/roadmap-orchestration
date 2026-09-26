@@ -16,7 +16,7 @@ import {
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import type { ContainmentMode, DispatchRecord, Stage } from './records.ts';
+import type { ApprovalFingerprint, ContainmentMode, DispatchRecord, Stage } from './records.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
@@ -70,12 +70,20 @@ export type UnitState = Readonly<{
   routedUp: readonly JudgmentStage[];
   /** A risk trigger is pending: the next judgment dispatch sits on the high seat. */
   promotion: boolean;
+  /**
+   * The latest stage-outcome fact that decided the unit's next step: every class but `hold` (a held stage
+   * re-runs what this outcome decided). The unit driver derives its next stage and that stage's inputs from
+   * it; null before the first outcome.
+   */
+  decided: StageOutcomeFact | null;
+  /** The latest gate approval: its attempt and the fingerprint it binds to; null before one. */
+  approval: Readonly<{ attempt: number; fingerprint: ApprovalFingerprint }> | null;
 }>;
 
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
-    unit, stage, risk, status: 'active', routedUp: [], promotion: false,
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, approval: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
   };
 }
@@ -348,7 +356,13 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         u.state = afterStageOutcome(u.state, f);
+        if (f.class !== 'hold') u.state = { ...u.state, decided: f };
         this.#start(u, key);
+        return;
+      }
+      case 'approval': {
+        const u = this.#unit(f.unit, 'gate');
+        u.state = { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } };
         return;
       }
       case 'backend-park':

@@ -8,38 +8,45 @@
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
 //               envelope; a raised risk re-pins the dispatch record.
 //   build       the implementer round (rounds.ts) under the unit's declared resources, held from reserve
-//               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope.
+//               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope. A
+//               resolve round must leave the merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
-//               declared outputs in the worktree.
-//   salvage     `salvage.commit` under the pinned scope; a contract path touched is a risk trigger.
+//               declared outputs in the worktree; then the implementer's decisions.json is appended to
+//               the spec's decisions (spec.patch by the executor).
+//   salvage     `salvage.commit` under the pinned scope; a contract path in the unit's merge-base diff is
+//               a risk trigger; a merge left in progress parks.
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate.
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
-import type { OutcomeStage, StageOutcomeKind } from '../core/events.ts';
+import type { IntentOf, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
   type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, rulingId,
 } from '../core/ids.ts';
-import type { SpecM1 } from '../core/records.ts';
+import type { SpecM1, SpecPatchOp } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
 } from '../core/values.ts';
-import { evidenceSnapshotOp } from '../git/evidence.ts';
-import { GitError, git, revParse } from '../git/git.ts';
+import { FILES_DIR, evidenceSnapshotOp } from '../git/evidence.ts';
+import { GitError, type Identity, git, revParse } from '../git/git.ts';
+import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
 import {
   SalvageStateError, SalvageUnmergedError, planSalvage, salvageCommitOp, type SalvageRules,
 } from '../git/salvage.ts';
+import { unitDiffPaths } from '../git/transient.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { DocText, FastLane, RulingText } from '../prompts/inputs.ts';
-import { type PlanCheckOutput, validateBuildOutput, validatePlanCheckOutput } from '../prompts/schemas.ts';
+import {
+  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
+} from '../prompts/schemas.ts';
 import { type NeedsUserContent, probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -47,11 +54,11 @@ import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp 
 import { loadSpec } from '../spec/spec.ts';
 import {
   type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
-  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, verdictOf, workDir,
+  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { quiescent } from './invoke.ts';
-import { type LaneRecord, type VerificationTree, removeVerificationTree, runLaneSeries } from './lanes.ts';
-import { type RoundInput, laneFixRound, prepareRound } from './rounds.ts';
+import { type LaneRecord, type VerificationTree, laneOrder, removeVerificationTree, runLaneSeries, specSeriesRoot } from './lanes.ts';
+import { type RoundInput, callImplementer, laneFixRound, prepareRound } from './rounds.ts';
 import { type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
@@ -63,12 +70,12 @@ export type StageDone<S extends OutcomeStage> = Readonly<{
 }>;
 
 /** A new attempt of `stage`: attempts are numbered across the unit's stages, from the fold's count. */
-function start(ctx: StageContext, unit: UnitId, stage: OutcomeStage): StageParent {
+export function start(ctx: StageContext, unit: UnitId, stage: OutcomeStage): StageParent {
   return { type: 'stage', unit, stage, attempt: ctx.journal.view.unit(unit).counters.attempts + 1 };
 }
 
 /** Records the attempt's stage-outcome fact and returns the decision the table makes from the fold's state. */
-function record<S extends OutcomeStage>(
+export function record<S extends OutcomeStage>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, kind: StageOutcomeKind<S>, needsUser: NeedsUserContent | null = null,
 ): StageDone<S> {
   const outcome = { stage: parent.stage, kind } as Extract<StageOutcome, Readonly<{ stage: S }>>;
@@ -78,7 +85,7 @@ function record<S extends OutcomeStage>(
   return { attempt: parent.attempt, outcome, next, needsUser };
 }
 
-const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParent & Readonly<{ stage: S }> => {
+export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParent & Readonly<{ stage: S }> => {
   if (p.stage !== stage) throw new Error(`a ${p.stage} attempt used as ${stage}`);
   return p as StageParent & Readonly<{ stage: S }>;
 };
@@ -119,15 +126,17 @@ export function loadRulings(ctx: StageContext): readonly RulingText[] {
   });
 }
 
-/** The cited contracts (M1: every plan contract) and the architecture doc at the integration tip. */
-function documents(ctx: StageContext): Readonly<{ contracts: readonly DocText[]; architectureDoc: DocText }> {
-  const tip = integrationTip(ctx);
+/** The cited contracts (M1: every plan contract) and the architecture doc at `tip`, by default the integration tip. */
+export function documents(ctx: StageContext, tip: Sha = integrationTip(ctx)): Readonly<{ contracts: readonly DocText[]; architectureDoc: DocText }> {
   return { contracts: ctx.plan.contracts.map((c) => docAt(ctx, tip, c)), architectureDoc: docAt(ctx, tip, ctx.plan.architectureDoc) };
 }
 
-const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));
+export const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));
 
-function verdictKind<S extends 'plan-check' | 'build'>(
+type JudgmentOrBuild = 'plan-check' | 'build' | 'gate';
+
+/** Records a call that did not succeed: interrupted (hold), refusal, malformed or process fault. */
+export function verdictKind<S extends JudgmentOrBuild>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, v: Exclude<BackendVerdict, Readonly<{ kind: 'success' }>>,
 ): StageDone<S> {
   if (v.kind === 'interrupted') return record(ctx, parent, 'interrupted' as StageOutcomeKind<S>, v.needsUser);
@@ -203,8 +212,6 @@ export type BuildRun = Readonly<{
   invDir: AbsPath;
   worktree: AbsPath;
   branch: RefName;
-  /** HEAD before the round: salvage diffs the round's work from here. */
-  startHead: Sha;
   /** The implementer's evidence dir (decisions.json). */
   workDir: AbsPath;
   /** Held from reserve to teardown; null when the unit declares no resources. */
@@ -240,14 +247,13 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
 
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
-  const startHead = revParse(round.worktree, 'HEAD');
   const prompt = promptFor('build', dispatch.triple.model);
   const { contracts } = documents(ctx);
   const rendered = prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, contracts, rulings: loadRulings(ctx),
     fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: round.fixRound,
   });
-  const called = await callBackend(ctx, {
+  const called = await callImplementer(ctx, {
     unit: unit.id, parent,
     request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...(round.fixRound?.failingEvidenceDirs ?? [])] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
@@ -262,15 +268,35 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
       malformed = true;
     }
   }
+  // A resolve round must end with the merge committed: HEAD with parents [old, T] (mergeinCompleted). A
+  // report of success without it does not describe the tree, so it is read as a malformed report.
+  if (v.kind === 'success' && !malformed && round.kind === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
   if (v.kind === 'success' && !malformed && called.kind === 'result') {
     return {
       ...record(ctx, parent, 'success'),
-      run: { inv: called.inv, invDir: called.invDir, worktree: round.worktree, branch: round.branch, startHead, workDir: work, reservation: held },
+      run: { inv: called.inv, invDir: called.invDir, worktree: round.worktree, branch: round.branch, workDir: work, reservation: held },
     };
   }
   // Nothing downstream runs after a failed build, so its resources are cleaned now (the workload is quiescent).
   if (held !== null && (await cleanup(ctx, held, parent)).kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed'));
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v));
+}
+
+/** The unit's latest merge-in: the conflicted one a resolve round resolves. */
+export function latestMergein(ctx: StageContext, unit: UnitId): IntentOf<'mergein.prepare'> | null {
+  return ctx.journal.view.opsOf('mergein.prepare').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit).at(-1) ?? null;
+}
+
+function mergeinResolved(ctx: StageContext, unit: UnitId): boolean {
+  const intent = latestMergein(ctx, unit);
+  if (intent === null) throw new Error(`a resolve round of ${unit} without a merge-in`);
+  try {
+    mergeinCompleted(intent);
+    return true;
+  } catch (error) {
+    if (error instanceof MergeinStateError) return false;
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -302,16 +328,47 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
     dirs.push(absPath(join(root, 'tree')));
     await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, { source: run.worktree, globs, dest: dirs[1]! });
   }
+  await appendDecisions(ctx, unit, run, absPath(join(dirs[0]!, FILES_DIR, work, DECISIONS_FILE)), parent);
   return { ...record(ctx, parent, 'captured'), evidence: dirs };
+}
+
+/**
+ * The implementer's decisions.json, as captured by the snapshot, appended to the spec's decisions section
+ * (lead ruling, step 12): one `spec.patch` by the executor, so the gate grades against every decision taken
+ * and the new revision is part of the approval fingerprint. A new id is added, a decision restated with new
+ * text replaces the active one, a decision restated verbatim is already there. A file that does not
+ * validate, or an entry naming an item that is not an active decision, is not appended: it stays in the
+ * build's evidence dir, which the gate reads.
+ */
+async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun, file: AbsPath, parent: StageParent): Promise<void> {
+  if (!existsSync(file)) return;
+  let decisions: DecisionsFile;
+  try {
+    decisions = validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof SchemaError) return;
+    throw error;
+  }
+  const { path, spec } = loadUnitSpec(ctx, unit);
+  const ops = decisions.decisions.flatMap((d): SpecPatchOp[] => {
+    const other = [...spec.lanes, ...spec.acceptance, ...spec.facts].some((i) => i.id === d.id);
+    const decided = spec.decisions.find((i) => i.id === d.id);
+    if (other || (decided !== undefined && decided.state !== 'active')) return [];
+    if (decided === undefined) return [{ op: 'add', section: 'decisions', item: d }];
+    return decided.text === d.text ? [] : [{ op: 'replace', section: 'decisions', item: d }];
+  });
+  if (ops.length === 0) return;
+  await runOp(ctx.journal, specPatchFileOp, `spec:${unit.id}`, parent, { path, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });
 }
 
 export type SalvageDone = StageDone<'salvage'> & Readonly<{ sha: Sha | null }>;
 
 const EXECUTOR = { name: 'Roadmap Executor', email: 'executor@roadmap.invalid' } as const;
 
-/** The paths `from..to` changed. */
-function changedPaths(ctx: StageContext, from: Sha, to: Sha): readonly RepoPath[] {
-  return git(ctx.repo, ['diff', '--no-renames', '--name-only', '-z', from, to]).split('\0').filter((p) => p !== '').map((p) => repoPath(p));
+/** The identity of every commit the executor makes (salvage, merge-in, candidate, snapshot), dated now. */
+export function executorIdentity(): Identity {
+  const date = gitDate(`${Math.floor(Date.now() / 1000)} +0000`);
+  return { author: { ...EXECUTOR, date }, committer: { ...EXECUTOR, date } };
 }
 
 export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun): Promise<SalvageDone> {
@@ -323,15 +380,16 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
     excluded: unique(spec.lanes.flatMap((l) => l.evidenceGlobs)),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };
-  const date = gitDate(`${Math.floor(Date.now() / 1000)} +0000`);
   const request = {
     worktree: run.worktree, branch: run.branch,
-    identity: { author: { ...EXECUTOR, date }, committer: { ...EXECUTOR, date } },
+    identity: executorIdentity(),
     message: `roadmap ${ctx.plan.arc}: salvage of unit ${unit.id} (build ${run.inv})\n`,
   };
   const op = salvageCommitOp(rules);
   let prepared;
   try {
+    // A merge left in progress (a resolve round that never committed) is never salvaged as a plain commit.
+    if (mergeHead(run.worktree) !== null) throw new SalvageUnmergedError(run.worktree, [repoPath('MERGE_HEAD')]);
     const decision = planSalvage(rules, request);
     prepared = decision.kind === 'no-change' ? null : await op.prepare(decision.plan);
   } catch (error) {
@@ -346,8 +404,10 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   const next = prepared === null
     ? revParse(run.worktree, 'HEAD')
     : (await runPrepared(ctx.journal, op, `salvage:${unit.id}`, parent, prepared)).post.new;
+  // A risk trigger when the unit's diff (merge-base with the integration tip, so what a merge-in brought
+  // is not the unit's) touches a contract or the architecture doc.
   const contracts = new Set<string>([...ctx.plan.contracts, ctx.plan.architectureDoc]);
-  const touched = changedPaths(ctx, run.startHead, next).some((p) => contracts.has(p));
+  const touched = unitDiffPaths(ctx.repo, integrationTip(ctx), next).some((p) => contracts.has(p));
   return { ...record(ctx, parent, touched ? 'committed-contract-touched' : 'committed'), sha: next };
 }
 
@@ -375,7 +435,8 @@ export type LanesDone = StageDone<'lanes'> & Readonly<{
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone> {
   const { spec } = loadUnitSpec(ctx, unit);
   const parent = at(start(ctx, unit.id, 'lanes'), 'lanes');
-  const series = await runLaneSeries(ctx, parent, spec, salvaged);
+  const checkout = { path: verificationWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
+  const series = await runLaneSeries(ctx, parent, laneOrder(spec), 'spec', checkout, specSeriesRoot(ctx.runDir, parent));
   const { end } = series;
   const kind: StageOutcomeKind<'lanes'> = end.kind === 'green' ? (series.dirty.length > 0 ? 'not-certified' : 'green') : end.kind;
   const keep = kind === 'green' ? series.tree : null;

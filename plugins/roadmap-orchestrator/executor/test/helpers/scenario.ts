@@ -57,12 +57,19 @@ export type WorldAct =
    * in stdin, and `<dir>/<file>` must contain `contains`; otherwise the call fails (exit 99). How a fake
    * implementer proves it read the evidence a fix round named, whose path is known only at run time.
    */
-  | Readonly<{ type: 'readFromPrompt'; pattern: string; file: string; contains: string }>;
+  | Readonly<{ type: 'readFromPrompt'; pattern: string; file: string; contains: string }>
+  /**
+   * Write `<dir>/<file>` with `text`, where `pattern` (a regex source with one capture group) finds `dir`
+   * in stdin: how a fake implementer writes into the evidence dir its prompt names (decisions.json).
+   */
+  | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>;
 
 /** Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable. */
 export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }>;
+/** `codex exec resume` onto a thread another live session holds: CODEX_RESUME_COLLISION on stderr, exit 1. */
+export type CodexOnlyAct = Readonly<{ type: 'resumeCollision' }>;
 
-export type CodexAct = OutputAct | WorldAct;
+export type CodexAct = OutputAct | WorldAct | CodexOnlyAct;
 export type ClaudeAct = OutputAct | WorldAct | ClaudeOnlyAct;
 export type Act = CodexAct | ClaudeAct;
 
@@ -90,6 +97,11 @@ export const CALLS_FILE = 'calls.jsonl';
 export const CODEX_USAGE_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:05 PM.";
 /** Hand-written: Claude Code's subscription limit text; the object around it is the captured api-error result. */
 export const CLAUDE_USAGE_LIMIT = "You've hit your limit · resets 3am (UTC)";
+/**
+ * Hand-written, never captured: a resume collision as 0.x saw it on the Codex CLI's stderr in arc 1
+ * ("thread already has a..."); the executor matches `thread already` (src/pipeline/rounds.ts).
+ */
+export const CODEX_RESUME_COLLISION = 'Error: thread already has an active turn held by another codex process';
 /** Outage-looking text inside a normal answer: must never be classified as a backend error. */
 export const CAPACITY_TEXT = 'Selected model is at capacity. Please try a different model. (Also: usage limit reached, rate limit, quota.)';
 

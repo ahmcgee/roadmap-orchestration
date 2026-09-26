@@ -150,6 +150,7 @@ in the line belongs to `arc`.
 | `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
 | `stop-requested` | `command`: the durable stop marker (step 13) |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
+| `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 
 **`stage-outcome`** records one stage attempt's outcome as the transition table
 (`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
@@ -167,7 +168,10 @@ The fold derives each unit's `UnitState` from these facts through `afterStageOut
 the same function the transition table uses, so a decision's counters are the log's:
 `{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
 chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
-routedUp: JudgmentStage[], promotion}`. `attempts` counts distinct `(stage, attempt)` pairs named by a
+routedUp: JudgmentStage[], promotion, decided, approval}`. `decided` is the unit's latest stage-outcome fact
+whose class is not `hold` (null before one): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
+it (`decidedBy` in `transitions.ts`), and a held stage re-runs what it decided. `approval` is the latest
+`approval` fact's `{attempt, fingerprint}`, or null. `attempts` counts distinct `(stage, attempt)` pairs named by a
 stage-parented intent or a stage-outcome fact. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
 a plan-check that raises the risk re-pins the dispatch. `promotion` is set by a `trigger` and cleared by the
 next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class.
@@ -291,7 +295,9 @@ expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `
 
 `ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; cited contracts and the
 architecture doc at the gated tip), rulingRevs: [{id, rev}] (ascending id)}`; `obligationRevs` arrive in M3.
-Recomputed at T before `integration.ff`; any mismatch re-gates.
+Recorded with the approval as an `approval` fact. Recomputed at the tip being published onto before
+`integration.ff`; any mismatch re-gates. M1's C-nn ledger has one line per ruling and no supersede mechanism, so
+every cited ruling is at rev 1 (a ruling id listed twice is refused).
 
 `DispatchRecord = {unit, specRev, scope: RepoPattern[] (sorted), riskFloor, routingRev, at}`, recorded once per
 dispatch as a `dispatch` fact. A redirect cannot widen `scope` or lower `riskFloor`.
@@ -308,7 +314,9 @@ resources, decisions, facts}`; item ids unique across all sections.
 | `NoteDef` (decisions, facts) | `id: ClauseId, text` |
 
 Every stored item adds `state: active | struck | deferred`; ids are never deleted or reused.
-`SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv}, ops (non-empty)}`; ops `add{section, item} |
+`SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv} | {role:'executor', inv}, ops (non-empty)}`; `by`
+is a plan-check redirect's judgment invocation, or the executor appending the build invocation `inv`'s
+`decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12); ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id}`, sections `lanes | acceptance | decisions | facts`. Scope and
 resources are not patchable in M1.
 
@@ -416,7 +424,8 @@ Where the plan left a shape open. Each is the simplest shape that keeps illegal 
 13. **Lane `env` = `{set, pass}`**: literal values, plus host variables that must exist (missing →
     `spec-lane-unrunnable`).
 14. **Spec items carry `state`**; strike and defer never delete, so ids are never reused. Scope and resources
-    are not patchable in M1. `SpecPatch.by` is plan-check only in M1.
+    are not patchable in M1. `SpecPatch.by` is a plan-check redirect or, from step 12, the executor appending
+    an implementer's decisions.
 15. **Id forms**: slugs for arc, unit and resource ids (safe in refs and file names); `cmd-<16 hex>`;
     `NeedsUserId` prefixes `nu-`, `sup-`, `host-`; `RoutingRev` = 16 hex content hash; session ids are uuids.
 16. **Fingerprint and dispatch sets are sorted arrays**, not maps, so canonical bytes compare equal.

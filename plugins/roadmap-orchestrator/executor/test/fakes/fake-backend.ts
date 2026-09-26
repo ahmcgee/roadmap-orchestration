@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAUDE_USAGE_LIMIT, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAUDE_USAGE_LIMIT, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -188,6 +188,18 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'barrier':
       waitAtBarrier(scenarioDir, act.name, act.timeoutMs);
       return;
+    case 'resumeCollision':
+      process.stderr.write(`${CODEX_RESUME_COLLISION}\n`);
+      process.exit(1);
+    case 'writeToPrompt': {
+      const dir = new RegExp(act.pattern).exec(call.stdin)?.[1];
+      if (dir === undefined) {
+        process.stderr.write(`fake ${call.as}: writeToPrompt ${act.pattern}: no match in stdin\n`);
+        process.exit(99);
+      }
+      writeFileSync(join(dir, act.file), act.text);
+      return;
+    }
     case 'readFromPrompt': {
       const dir = new RegExp(act.pattern).exec(call.stdin)?.[1];
       const fail = (why: string): never => {

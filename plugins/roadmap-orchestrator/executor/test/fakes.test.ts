@@ -45,7 +45,7 @@ function invoke(scenario: Scenario, backend: Backend, cwd: string, prompt = 'Rep
 }
 
 function oneStep(backend: Backend, acts: readonly (CodexAct | ClaudeAct)[]): Scenario {
-  const step: Step = backend === 'codex' ? { as: 'codex', expect: {}, acts: acts as CodexAct[] } : { as: 'claude', expect: {}, acts };
+  const step: Step = backend === 'codex' ? { as: 'codex', expect: {}, acts: acts as CodexAct[] } : { as: 'claude', expect: {}, acts: acts as ClaudeAct[] };
   return writeScenario(tmpDir('scenario'), [step]);
 }
 
