@@ -157,7 +157,7 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
       const launch = prepareLaunch({
         v: SCHEMA_VERSION, arc: ctx.journal.view.arc, op, inv, argv: prepared.argv, cwd: prepared.cwd, env: ctx.hostEnv,
         stdinPath: STDIN_FILE in prepared.inputs ? absPath(join(invDir, STDIN_FILE)) : null,
-        deadlineAt, graceMs: SMOKE_GRACE_MS, containment: detectContainmentMode(), terminal: prepared.terminal,
+        deadlineAt, stallMs: null, graceMs: SMOKE_GRACE_MS, containment: detectContainmentMode(), terminal: prepared.terminal,
       });
       planned = { invDir, prepared, launch };
       return { expect: { subject, launchSha256: launchSha256(launch) }, post: null };

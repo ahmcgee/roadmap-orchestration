@@ -39,6 +39,7 @@ export function newInvocation(): Invocation {
 export type LaunchOptions = Readonly<{
   argv: readonly string[];
   deadlineMs?: number;
+  stallMs?: number | null;
   graceMs?: number;
   stdinPath?: AbsPath | null;
 }>;
@@ -58,6 +59,7 @@ export function launchBase(inv: Invocation, options: LaunchOptions): Omit<Launch
     stdinPath: options.stdinPath ?? null,
     // The default outlasts every test's timeout: a deadline fires only in a test that asks for one.
     deadlineAt: isoTimeOf(new Date(Date.now() + (options.deadlineMs ?? 60_000))),
+    stallMs: options.stallMs ?? null,
     graceMs: options.graceMs ?? 1000,
     containment: 'session',
     terminal: { type: 'command', purpose: 'lane', expectedExit: 0 },

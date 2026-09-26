@@ -40,7 +40,7 @@ function launchFor(invDir: string, argv: readonly string[]): LaunchFile {
   return {
     v: SCHEMA_VERSION, arc: arcId('arc-1'), op: opIdOf('arc-1/7'), inv,
     argv, cwd: absPath(invDir), env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin' }, stdinPath: null,
-    deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)), graceMs: 1000, containment: 'cgroup', test: null,
+    deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)), stallMs: null, graceMs: 1000, containment: 'cgroup', test: null,
     terminal: { type: 'command', purpose: 'probe', expectedExit: 0 },
   };
 }

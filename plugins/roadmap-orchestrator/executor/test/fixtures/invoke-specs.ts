@@ -69,7 +69,7 @@ export function specFor(d: SpecDescriptor): LaunchSpec {
         const session = freshJudgmentSession();
         const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' }, session, schemaText: SCHEMA_TEXT, system: 'You answer with the JSON object the schema describes.', evidenceDirs: [] });
         return {
-          argv, cwd, env, stdinPath: null, graceMs: d.graceMs,
+          argv, cwd, env, stdinPath: null, stallMs: null, graceMs: d.graceMs,
           terminal: { type: 'backend', purpose: 'backend', role: 'gate', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), session },
         };
       },
@@ -83,7 +83,7 @@ export function specFor(d: SpecDescriptor): LaunchSpec {
   return {
     runDir, origin, subject,
     launch: (): LaunchContent => ({
-      argv, cwd, env: { PATH: path() }, stdinPath: null, graceMs: d.graceMs,
+      argv, cwd, env: { PATH: path() }, stdinPath: null, stallMs: null, graceMs: d.graceMs,
       terminal: { type: 'command', purpose: d.purpose as Exclude<Purpose, 'backend'>, expectedExit: 0 },
     }),
   };

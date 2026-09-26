@@ -245,8 +245,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 
 ## Op kinds (`OP_KINDS`, `OP_SCHEMAS`)
 
-`proc.spawn` purposes: `backend | lane | teardown | probe | smoke`. `proc.kill` reasons: `deadline | pause | stop |
-recovery | external-unknown`.
+`proc.spawn` purposes: `backend | lane | teardown | probe | smoke`. `proc.kill` reasons: `deadline | stall | pause |
+stop | recovery | external-unknown`.
 
 | Kind | `expect` (`OpExpect`) | `post` (`OpPost`) | done `outcome` (`OpOutcome`) |
 |---|---|---|---|
@@ -311,10 +311,10 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 
 | File | Type / reader | Writer, when | Fields |
 |---|---|---|---|
-| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
+| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; absent in a 1.0.0-dev.1 launch.json, read as null), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery, at` |
-| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
+| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
 
@@ -324,7 +324,8 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
-exitCode|null, expectedExit, verdict: pass|fail|process-fault}` (`exitCode: null` ⇒ `process-fault`; a
+exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault}` (`exitCode: null` ⇒ `stall` or
+`process-fault`; cause `stall` ⇒ `stall`, whatever the exit: a lane that hung is red, a verdict on the tree; a
 cancelled command is a `process-fault` verdict, and lanes read cancel.json for the reason).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
 cancelled{reason: pause|stop}`; `usage = known{tokens: TokenUsage} | unavailable{reason}` with `TokenUsage =
@@ -339,7 +340,7 @@ cancel.json or null):
 
 1. cause `cancel` → `cancelled{reason}` (cancel.json's `pause | stop`; any other cancel.json is a loud error),
    whatever the output: an interruption, not a failure of the call;
-2. cause `deadline | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
+2. cause `deadline | stall | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
 3. non-zero exit with schema-valid output → `malformed`; non-zero exit without it → `process-fault`;
 4. exit 0 without schema-valid output → `malformed`;
 5. exit 0 with schema-valid output → `success{value}`.

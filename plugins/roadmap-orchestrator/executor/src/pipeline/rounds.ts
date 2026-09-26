@@ -55,7 +55,7 @@ import {
   unitWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
+import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 
@@ -112,10 +112,15 @@ export function decidedRound(input: RoundInput): BuildRound {
   return input.kind === 'continue' ? input.of.kind : input.kind;
 }
 
+/** What a fix round is told about a lane the stall watchdog killed: its output alone does not say it hung. */
+export function stallDirectives(ledger: readonly LaneRecord[]): readonly string[] {
+  return ledger.filter((l) => l.verdict === 'stall').map((l) => `Lane ${l.lane} hung: it made no progress (no CPU time, no output, no process started or ended) for ${LANE_STALL_MS / 60_000} minutes and was killed. Its output so far is in the evidence. Find and fix what it waits on.`);
+}
+
 /** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
 export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha): DecidedRound {
-  const red = ledger.filter((l) => l.verdict === 'fail');
-  if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: red.flatMap((l) => l.fixDirs), directives: [] }, ledger, verification: null, salvage };
+  const red = ledger.filter((l) => l.verdict === 'fail' || l.verdict === 'stall');
+  if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: red.flatMap((l) => l.fixDirs), directives: stallDirectives(red) }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',

@@ -49,6 +49,7 @@ export type LaunchContent = Readonly<{
   cwd: AbsPath;
   env: Readonly<Record<string, string>>;
   stdinPath: AbsPath | null;
+  stallMs: number | null;
   graceMs: number;
   terminal: LaunchTerminal;
 }>;
@@ -261,7 +262,7 @@ export function quiescent(ctx: Pick<ProcContext, 'containment' | 'runDir'>, targ
 }
 
 const CANCEL_REASONS: Readonly<Record<KillTarget['reason'], CancelReason | null>> = {
-  pause: 'pause', stop: 'stop', recovery: 'recovery', deadline: null, 'external-unknown': null,
+  pause: 'pause', stop: 'stop', recovery: 'recovery', deadline: null, stall: null, 'external-unknown': null,
 };
 
 /**

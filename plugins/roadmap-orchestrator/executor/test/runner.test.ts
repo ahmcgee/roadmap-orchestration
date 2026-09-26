@@ -175,6 +175,42 @@ test('runner.grandchild-killed-at-deadline', T, async () => {
   assert.deepEqual(opMembers(inv.op), []);
 });
 
+// The stall watchdog: no progress for stallMs kills the workload; a slow workload making progress, by output
+// alone or by CPU alone, runs to its end.
+const STALL_MS = 1_500;
+
+test('runner.stall-killed', T, async () => {
+  const inv = newInvocation();
+  const started = Date.now();
+  const handle = start(inv, { argv: workload('workload-hang.ts'), stallMs: STALL_MS });
+  const exit = await exited(handle);
+  assert.equal(exit.cause, 'stall');
+  assert.equal(exit.child.type, 'signalled');
+  const took = new Date(exit.endedAt).getTime() - started;
+  assert.ok(took >= STALL_MS && took < 10_000, `stalled after ${took} ms`);
+  assert.deepEqual(opMembers(inv.op), []);
+});
+
+test('runner.stall-grandchild-killed', T, async () => {
+  const inv = newInvocation();
+  // The child exits; its grandchild lingers without progress: the runner kills it as a stall.
+  const handle = start(inv, { argv: workload('workload-fork.ts', 'same', 'keep', 'exit', 'workload-hang.ts'), stallMs: STALL_MS });
+  const exit = await exited(handle);
+  assert.deepEqual(exit.child, { type: 'exited', code: 0 });
+  assert.equal(exit.cause, 'stall');
+  assert.deepEqual(opMembers(inv.op), []);
+});
+
+for (const mode of ['print', 'spin'] as const) {
+  test(`runner.stall-progress-${mode}`, T, async () => {
+    const inv = newInvocation();
+    const handle = start(inv, { argv: workload('workload-slow.ts', mode, String(3 * STALL_MS)), stallMs: STALL_MS });
+    const exit = await exited(handle);
+    assert.deepEqual(exit.child, { type: 'exited', code: 0 });
+    assert.equal(exit.cause, 'exited');
+  });
+}
+
 test('runner.spawn-failed', T, async () => {
   const inv = newInvocation();
   const handle = start(inv, { argv: [join(inv.root, 'no-such-binary')] });

@@ -43,7 +43,7 @@ import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
-import { type DecidedRound, type RoundInput, candidateFixRound, gateReviseRound, laneFixRound } from './rounds.ts';
+import { type DecidedRound, type RoundInput, candidateFixRound, gateReviseRound, laneFixRound, stallDirectives } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
   recordedCall, salvage, teardown,
@@ -227,7 +227,7 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       const at = stageParent(f);
       const suite = seriesLedger(ctx, at, ctx.plan.suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
       const failing = suite.filter((l) => l.verdict !== 'pass');
-      return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap((l) => l.fixDirs), directives: [] }, suite, verification, tip);
+      return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap((l) => l.fixDirs), directives: stallDirectives(failing) }, suite, verification, tip);
     }
     default:
       throw new Error(`unit ${unit.id}: no fix round follows ${f.stage} ${f.outcome}`);
