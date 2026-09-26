@@ -16,6 +16,19 @@ branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands in M3 and M4. In M1 you 
 unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 subset" sections of
 `executor/SCHEMAS.md`. For a worked plan, run the M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
+## What judgments read
+
+- **Cites.** Each `spec.json` carries `cites: {contracts, rulings}`: the plan contracts and C-nn rulings the
+  unit's prompts embed in full. Cite what the unit's clauses rest on. Every other contract and ruling reaches
+  the prompt as one index line that a judge reads on demand. A plan-check redirect may add cites; nothing
+  removes them.
+- **Rulings ledger.** The plan's `rulings` file holds rule text only, one `C-nn — <rule>` per line.
+  Provenance ("ruled by", "architect") goes in the in-tree `constraints.md`, never here. To supersede or
+  withdraw a ruling, replace its line with `C-nn — withdrawn by C-mm`.
+- **Architecture digest.** A plan may name `architectureDigest`: an owner-approved digest of the architecture
+  doc (a section index plus the normative sentences, each with its line anchor). Judgments embed the digest and
+  read the full doc from their checkout on demand. Get the owner's approval before you name one.
+
 ## What you never do
 
 - Run a backend, a lane or a teardown yourself. The executor launches `codex exec` and `claude -p`.

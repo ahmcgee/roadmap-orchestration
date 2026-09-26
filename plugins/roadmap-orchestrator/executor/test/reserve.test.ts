@@ -158,7 +158,7 @@ test('res.estate-refused-for-implementer', () => {
   const spec = (lanes: readonly unknown[]) => specM1({
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes,
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: ['db', 'queue'], decisions: [], facts: [],
+    scope: ['src/**'], resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   }, 'spec');
   const r = newRun();
   const { ctx, journal } = openRun(r);

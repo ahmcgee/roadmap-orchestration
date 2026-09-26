@@ -6,49 +6,55 @@
 //
 //   plan-check  fresh judgment session (never a resume) → approve | redirect (spec.patch, rev+1) |
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
-//               envelope; a raised risk re-pins the dispatch record.
+//               envelope, and may cite only plan contracts and ledger rulings; a raised risk re-pins the
+//               dispatch record. The session reads detached checkouts of the integration tip (its cwd) and
+//               of the unit branch when one exists, created for the attempt and removed when it is read.
 //   build       the implementer round (rounds.ts) under the unit's declared resources, held from reserve
-//               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope. A
-//               resolve round, or the continue of one, must leave the merge-in committed.
+//               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope, the
+//               approving plan-check's notes. A resolve round, or the continue of one, must leave the
+//               merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
 //               the spec's decisions (spec.patch by the executor).
-//   salvage     `salvage.commit` under the pinned scope; a contract path in the unit's merge-base diff is
-//               a risk trigger; a merge left in progress parks.
+//   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
+//               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks.
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate.
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
 import { existsSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
 import { durableMkdir } from '../core/fsx.ts';
-import {
-  type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, invocationId, rulingId,
-} from '../core/ids.ts';
+import { type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, invocationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR } from '../git/evidence.ts';
-import { GitError, type Identity, git, revParse } from '../git/git.ts';
+import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
+import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
-import type { DocText, FastLane, RulingText } from '../prompts/inputs.ts';
+import type {
+  ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText,
+} from '../prompts/inputs.ts';
 import {
-  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
+  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
+import { resolveArgv0 } from '../preflight/argv0.ts';
+import type { JudgmentRole } from '../routing/types.ts';
 import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
+import { type Ruling, loadRulings } from '../spec/rulings.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../spec/patch.ts';
 import { loadSpec } from '../spec/spec.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -59,11 +65,12 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type VerificationTree, laneOrder, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries, specSeriesRoot,
+  type LaneRecord, type VerificationTree, dirtyPaths, laneOrder, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries,
+  specSeriesRoot,
 } from './lanes.ts';
 import { type DecidedRound, type RoundInput, callImplementer, decidedRound, laneFixRound, prepareRound } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
-import { evidenceSnapshotOp, salvageCommitOp } from '../recover/ops.ts';
+import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
 export type StageDone<S extends OutcomeStage> = Readonly<{
@@ -113,26 +120,59 @@ export function docAt(ctx: StageContext, tip: Sha, path: RepoPath): DocText {
   return { path, text: git(ctx.repo, ['cat-file', 'blob', `${tip}:${path}`]) };
 }
 
-const RULING_LINE = /^(C-[0-9]+) — (.+)$/;
+/** The rulings ledger's path (plan `rulings`, relative to the plan dir); judgments read it through `--add-dir`. */
+export const ledgerPath = (ctx: StageContext): AbsPath => absPath(join(ctx.planDir, ctx.plan.rulings));
+/** The directory a session is given to read the ledger from. */
+export const ledgerDir = (ctx: StageContext): AbsPath => absPath(dirname(ledgerPath(ctx)));
 
-/**
- * The C-nn ledger (plan `rulings`, relative to the plan dir): one ruling per line, `C-<n> — <rule>`
- * (DESIGN-1.0.md §2.6); blank lines and `#` headings are skipped, anything else is refused. M1 specs cite
- * no subset, so every ruling is cited.
- */
-export function loadRulings(ctx: StageContext): readonly RulingText[] {
-  const path = join(ctx.planDir, ctx.plan.rulings);
-  return readFileSync(path, 'utf8').split('\n').flatMap((line, i) => {
-    if (line.trim() === '' || line.startsWith('#')) return [];
-    const m = RULING_LINE.exec(line);
-    if (m === null) throw new SchemaError(`${path}:${i + 1}`, 'a ruling line "C-<n> — <rule>"', line);
-    return [{ id: rulingId(m[1]), text: m[2]! }];
-  });
+export function ledger(ctx: StageContext): readonly Ruling[] {
+  return loadRulings(ledgerPath(ctx));
 }
 
-/** The cited contracts (M1: every plan contract) and the architecture doc at `tip`, by default the integration tip. */
-export function documents(ctx: StageContext, tip: Sha = integrationTip(ctx)): Readonly<{ contracts: readonly DocText[]; architectureDoc: DocText }> {
-  return { contracts: ctx.plan.contracts.map((c) => docAt(ctx, tip, c)), architectureDoc: docAt(ctx, tip, ctx.plan.architectureDoc) };
+/** A document's first Markdown heading, for the reference index. */
+function firstHeading(text: string): string {
+  return /^#{1,6}[ \t]+(.*\S)[ \t]*$/m.exec(text)?.[1] ?? '(no heading)';
+}
+
+/** A rule's first sentence, for the reference index. */
+function firstSentence(text: string): string {
+  return /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+}
+
+/** What a unit's prompts embed in full (its cited contracts and active rulings) and the index of the rest. */
+export type Library = Readonly<{ contracts: readonly DocText[]; rulings: readonly RulingText[]; index: ReferenceIndex }>;
+
+/**
+ * The unit's library at `tip`: the contracts and active rulings its spec cites, in full, and every other
+ * plan contract and ledger ruling as one index line (a withdrawn ruling, cited or not, is its fold line).
+ * Startup refuses a cite the plan or ledger does not hold (the plan-invalid `unknown-cite` row).
+ */
+export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
+  const rulings = ledger(ctx);
+  const cited = (r: Ruling): boolean => r.status === 'active' && spec.cites.rulings.includes(r.id);
+  return {
+    contracts: spec.cites.contracts.map((c) => docAt(ctx, tip, c)),
+    rulings: rulings.flatMap((r) => (r.status === 'active' && cited(r) ? [{ id: r.id, text: r.text }] : [])),
+    index: {
+      contracts: ctx.plan.contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({ path, heading: firstHeading(docAt(ctx, tip, path).text) })),
+      rulings: rulings.filter((r) => !cited(r)).map((r) => ({ id: r.id, line: r.status === 'active' ? firstSentence(r.text) : `withdrawn by ${r.by}` })),
+      ledger: ledgerPath(ctx),
+    },
+  };
+}
+
+/** The architecture doc a judgment embeds at `tip`: the plan's digest when it names one, else the whole doc. */
+export function architecture(ctx: StageContext, tip: Sha): ArchitectureInput {
+  const digest = ctx.plan.architectureDigest;
+  return digest === undefined
+    ? { kind: 'full', doc: docAt(ctx, tip, ctx.plan.architectureDoc) }
+    : { kind: 'digest', digest: docAt(ctx, tip, digest), doc: ctx.plan.architectureDoc };
+}
+
+/** The product documents whose change touches the unit's authority: every plan contract, the architecture doc and its digest. */
+export function authorityPaths(ctx: StageContext): ReadonlySet<RepoPath> {
+  const digest = ctx.plan.architectureDigest;
+  return new Set<RepoPath>([...ctx.plan.contracts, ctx.plan.architectureDoc, ...(digest === undefined ? [] : [digest])]);
 }
 
 export const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));
@@ -159,23 +199,167 @@ function widenedResources(unit: PlanUnit, patch: PlanCheckOutput['patch']): read
     : []);
 }
 
+/** A plan-check attempt's checkout of the integration tip (`tip`) or of the unit branch (`branch`). */
+export const planCheckWorktree = (ctx: StageContext, parent: StageParent, tree: 'tip' | 'branch'): AbsPath =>
+  absPath(join(ctx.plan.worktreeRoot, ctx.plan.arc, `${parent.unit}.plan-check-${parent.attempt}${tree === 'branch' ? '-branch' : ''}`));
+
+/** The checkouts a plan-check attempt created, read back from its `worktree.create` intents. */
+function planCheckCheckoutsOf(ctx: StageContext, parent: StageParent): PlanCheckCheckouts {
+  const created = attemptOps(ctx, parent, 'worktree.create');
+  const tree = (which: 'tip' | 'branch'): Checkout | null => {
+    const c = created.find((i) => i.expect.path === planCheckWorktree(ctx, parent, which));
+    if (c === undefined) return null;
+    if (c.expect.checkout.type !== 'detached') throw new Error(`plan-check checkout ${c.expect.path} is not detached`);
+    return { path: c.expect.path, at: c.expect.checkout.at };
+  };
+  const tip = tree('tip');
+  if (tip === null) throw new Error(`plan-check ${parent.unit}#${parent.attempt} made no checkout of the integration tip`);
+  return { tip, branch: tree('branch') };
+}
+
+/**
+ * Removes every plan-check checkout of the unit still present (this attempt's once its call is read, or a
+ * leftover of an attempt a crash cut short), each citing a snapshot of whatever it holds beyond its commit
+ * (a judge is read-only, so normally a manifest of zero files; lead ruling 14c). Verification checkouts
+ * are the lanes stage's and retire's to remove, never this one's.
+ */
+async function removePlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
+  const present = presentCheckouts(ctx.journal.view, unit).filter((c) => c.parent.type === 'stage' && c.parent.stage === 'plan-check');
+  for (const created of present) {
+    if (created.parent.type !== 'stage') throw new Error(`${created.expect.path}: a plan-check checkout without a stage parent`);
+    const { path } = created.expect;
+    const dest = absPath(join(evidenceRoot(ctx.runDir, created.parent), basename(path)));
+    const view = ctx.journal.view;
+    const snapped = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
+      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map((p) => repoPattern(p)), dest });
+    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
+  }
+}
+
+/** Creates the attempt's checkouts: the integration tip, and the unit branch when it exists and differs. */
+async function createPlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<PlanCheckCheckouts> {
+  const create = async (tree: 'tip' | 'branch', at: Sha): Promise<Checkout> => {
+    const path = planCheckWorktree(ctx, parent, tree);
+    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path, checkout: { type: 'detached', at } });
+    return { path, at };
+  };
+  const tip = integrationTip(ctx);
+  const branchTip = refTarget(ctx.repo, unitBranch(ctx.plan.arc, unit));
+  return { tip: await create('tip', tip), branch: branchTip === null || branchTip === tip ? null : await create('branch', branchTip) };
+}
+
+/** A path a premise cites, as a repository path, or null when it names nothing in a tree (absolute, or outside). */
+function premiseRepoPath(path: string): string | null {
+  if (isAbsolute(path)) return null;
+  const p = normalize(path);
+  return p === '..' || p.startsWith('../') ? null : p;
+}
+
+/** The blob id of `path` at `commit`, or null when the commit has no such file. */
+function blobAt(ctx: StageContext, commit: Sha, path: string): string | null {
+  const r = gitRun(ctx.repo, ['rev-parse', '--verify', '-q', `${commit}:${path}`], { okCodes: [0, 1, 128] });
+  return r.code === 0 ? r.stdout.trim() : null;
+}
+
+/**
+ * The files a round's premises cite whose content differs between the trees that round read and the ones
+ * the next round reads (`pairs`: [then, now] commits, either null when that tree did not exist). A path
+ * that names no repository file (an evidence dir, say) cannot be compared and counts as changed.
+ */
+export function changedPremiseFiles(ctx: StageContext, premises: readonly Premise[], pairs: readonly (readonly [Sha | null, Sha | null])[]): readonly string[] {
+  const paths = [...new Set(premises.flatMap((p) => p.evidence.map((e) => e.path)))];
+  return paths.filter((path) => {
+    const p = premiseRepoPath(path);
+    if (p === null) return true;
+    return pairs.some(([then, now]) => (then === null ? null : blobAt(ctx, then, p)) !== (now === null ? null : blobAt(ctx, now, p)));
+  }).sort();
+}
+
+/** A unit's backend spawns of one judgment role, in log order. */
+export const judgmentSpawns = (ctx: StageContext, unit: UnitId, role: JudgmentRole): readonly IntentOf<'proc.spawn'>[] =>
+  ctx.journal.view.opsOf('proc.spawn').filter((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'backend' && s.role === role && s.unit === unit;
+  });
+
+/** The validated output of a judgment spawn, or null when it has none (a fault, a refusal, a malformed answer). */
+export function judgmentOutput<T>(ctx: StageContext, intent: IntentOf<'proc.spawn'>, validate: (value: unknown) => T): T | null {
+  if (ctx.journal.view.doneOf(intent.op)?.outcome.kind !== 'result') return null;
+  const inv = invocationId(intent.op, intent.ordinal);
+  const result = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('result.json');
+  if (result === null || result.type !== 'backend') throw new Error(`${inv}: a done judgment spawn without its backend result`);
+  if (result.outcome.kind !== 'success') return null;
+  try {
+    return validate(result.outcome.value);
+  } catch (error) {
+    if (error instanceof SchemaError) return null;
+    throw error;
+  }
+}
+
+/**
+ * The round handoff of a plan-check after its own redirect: the unit's latest plan-check answer, when it
+ * redirected and its patch was applied (a redirect beyond the bound escalates unpatched, and the next
+ * check starts fresh). Changed premise files compare the prior attempt's checkouts with `now`'s.
+ */
+function planCheckPriorRound(ctx: StageContext, unit: UnitId, now: PlanCheckCheckouts): PlanCheckPriorRound | null {
+  const spawns = judgmentSpawns(ctx, unit, 'planCheck');
+  for (let i = spawns.length - 1; i >= 0; i--) {
+    const spawn = spawns[i]!;
+    const out = judgmentOutput(ctx, spawn, validatePlanCheckOutput);
+    if (out === null) continue;
+    if (out.decision !== 'redirect' || spawn.parent.type !== 'stage') return null;
+    const applied = attemptOps(ctx, spawn.parent, 'spec.patch').find((p) => ctx.journal.view.doneOf(p.op) !== null && p.expect.patch.by.role === 'planCheck');
+    if (applied === undefined) return null;
+    const then = planCheckCheckoutsOf(ctx, spawn.parent);
+    return {
+      patch: out.patch, reasons: out.reasons, premises: out.premises, patchedRev: applied.post.newRev,
+      changedPremiseFiles: changedPremiseFiles(ctx, out.premises, [[then.tip.at, now.tip.at], [then.branch?.at ?? null, now.branch?.at ?? null]]),
+    };
+  }
+  return null;
+}
+
+/** The approving plan-check's notes: facts it reported for the build and the gate (arc-1 feedback item 26). */
+export function planCheckNotes(ctx: StageContext, unit: UnitId): string {
+  const spawns = judgmentSpawns(ctx, unit, 'planCheck');
+  for (let i = spawns.length - 1; i >= 0; i--) {
+    const out = judgmentOutput(ctx, spawns[i]!, validatePlanCheckOutput);
+    if (out !== null) return out.decision === 'approve' ? out.notes : '';
+  }
+  return '';
+}
+
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone> {
-  const { path, spec } = loadUnitSpec(ctx, unit);
+  const { spec } = loadUnitSpec(ctx, unit);
   const pinned = pinDispatch(ctx, unit, spec.rev);
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
+  // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
+  await removePlanCheckCheckouts(ctx, unit.id, parent);
   const seat = judgmentDispatch(ctx, unit.id, 'plan-check');
   const prompt = promptFor('planCheck', seat.triple.model);
   const session = freshJudgmentSession();
-  const { contracts, architectureDoc } = documents(ctx);
+  const checkouts = await createPlanCheckCheckouts(ctx, unit.id, parent);
+  const lib = library(ctx, spec, checkouts.tip.at);
   const rendered = prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, contracts, rulings: loadRulings(ctx), architectureDoc,
-    direction: ctx.plan.direction, scope: pinned.scope, risk: pinned.riskFloor,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...lib, architecture: architecture(ctx, checkouts.tip.at),
+    direction: ctx.plan.direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
+    lanePrograms: laneOrder(spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
+    priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
   });
+  const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
   const called = await callBackend(ctx, {
-    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [] },
-    system: prompt.system, rendered, schema: prompt.schema, cwd: ctx.repo, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
+    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: dirs },
+    system: prompt.system, rendered, schema: prompt.schema, cwd: checkouts.tip.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
   });
   return planCheckRead(ctx, unit, parent, called, session.id);
+}
+
+/** Cites a patch adds that name no plan contract or no ledger ruling: an unusable judgment. */
+function unknownCites(ctx: StageContext, patch: PlanCheckOutput['patch']): boolean {
+  const rulings = ledger(ctx).map((r) => r.id);
+  return (patch ?? []).some((op) => op.op === 'cite'
+    && (op.contracts.some((c) => !ctx.plan.contracts.includes(c)) || op.rulings.some((r) => !rulings.includes(r))));
 }
 
 /**
@@ -186,6 +370,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
 export async function planCheckRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'plan-check' }>, called: BackendCallOutcome, session: JudgmentSessionId,
 ): Promise<PlanCheckDone> {
+  // The session has ended (or never ran): its checkouts go before anything is recorded.
+  await removePlanCheckCheckouts(ctx, unit.id, parent);
   const { path, spec } = loadUnitSpec(ctx, unit);
   const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;
   const specRev = applied?.expect.expectRev ?? spec.rev;
@@ -204,6 +390,7 @@ export async function planCheckRead(
   // R2: the judgment may raise the floor, never lower it, and a redirect may not widen the envelope.
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));
   if (widenedResources(unit, out.patch).length > 0) return done(record(ctx, parent, 'scope-widened'));
+  if (unknownCites(ctx, out.patch)) return done(record(ctx, parent, 'malformed'));
   const patch = out.patch === null ? null : { expectRev: specRev, by: { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv }, ops: out.patch } as const;
   if (patch !== null && applied === null) {
     try {
@@ -291,14 +478,14 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
   const prompt = promptFor('build', dispatch.triple.model);
-  const { contracts } = documents(ctx);
   const rendered = prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, contracts, rulings: loadRulings(ctx),
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...library(ctx, spec, integrationTip(ctx)),
+    planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: round.fixRound,
   });
   const called = await callImplementer(ctx, {
     unit: unit.id, parent,
-    request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...round.evidenceDirs] },
+    request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...round.evidenceDirs, ledgerDir(ctx)] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
   return buildRead(ctx, unit, parent, decidedRound(input), called, held);
@@ -469,9 +656,9 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
     ? revParse(run.worktree, 'HEAD')
     : (await runPrepared(ctx.journal, op, `salvage:${unit.id}`, parent, prepared)).post.new;
   // A risk trigger when the unit's diff (merge-base with the integration tip, so what a merge-in brought
-  // is not the unit's) touches a contract or the architecture doc.
-  const contracts = new Set<string>([...ctx.plan.contracts, ctx.plan.architectureDoc]);
-  const touched = unitDiffPaths(ctx.repo, integrationTip(ctx), next).some((p) => contracts.has(p));
+  // is not the unit's) touches any plan contract, cited or not, the architecture doc or its digest.
+  const authority = authorityPaths(ctx);
+  const touched = unitDiffPaths(ctx.repo, integrationTip(ctx), next).some((p) => authority.has(p));
   return { ...record(ctx, parent, touched ? 'committed-contract-touched' : 'committed'), sha: next };
 }
 

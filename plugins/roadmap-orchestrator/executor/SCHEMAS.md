@@ -57,8 +57,9 @@ per-unit route layers.
 | `baseline` | `Sha` | ancestor of the integration tip (startup row) |
 | `worktreeRoot` | `AbsPath` | not tmpfs, writable (startup row) |
 | `contracts` | `RepoPath[]` | product-tree paths |
-| `rulings` | `PlanPath` | the C-nn ledger |
+| `rulings` | `PlanPath` | the C-nn ledger (format below) |
 | `architectureDoc` | `RepoPath` | |
+| `architectureDigest?` | `RepoPath` | the owner-approved digest of the architecture doc (section index + normative sentences with line anchors); when present, judgments embed it and read the whole doc from their checkout on demand |
 | `direction` | non-empty string | the Direction text |
 | `routing?` | `RoutingLayer` | the `plan` routing layer |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
@@ -70,6 +71,11 @@ per-unit route layers.
 is a probe process fault. A probe and a teardown get the unit's owner label `<arc>/<unit>` in `RESOURCE_OWNER`
 (step 10); a residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
 filesystem, git or specs are startup rows.
+
+**Rulings ledger** (`src/spec/rulings.ts`): one ruling per line, `C-<n> — <rule>`, rule text only; provenance
+lives in the in-tree `constraints.md`. A superseded or withdrawn ruling folds to `C-<n> — withdrawn by C-<m>`,
+where `C-<m>` is in the same ledger. Blank lines and `#` headings are skipped; any other line, or an id listed
+twice, is refused. A withdrawn ruling is never embedded in full: prompts show its fold line in the index.
 
 ## Startup rejection table
 
@@ -93,7 +99,7 @@ means before any *pipeline* intent.
 | `host-busy` | live host owner, or live recovery-lock holder | `holder: owner\|recovery, arc, generation, pid` | **75** |
 | `previous-arc-unreconciled` | previous claim's arc has unreconcilable invocations (R18); durable needs-user | `arc, invocations[]` | 78 |
 | `backend-smoke` | smoke missing or failed for a backend the resolved profile uses | `profile, backend, problem: missing\|failed, detail` | 78 |
-| `plan-invalid` | schema invalid, unknown spec path, baseline not an ancestor, unknown resource request | `problem: schema{field,detail} \| unknown-spec-path \| baseline-not-ancestor \| unknown-resource` | 78 |
+| `plan-invalid` | schema invalid (plan, spec or rulings ledger), unknown spec path, baseline not an ancestor, unknown resource request, a spec cite naming no plan contract or no ledger ruling | `problem: schema{field,detail} \| unknown-spec-path \| baseline-not-ancestor \| unknown-resource \| unknown-cite{unit, cite}` | 78 |
 | `recovery-holder-dead` | recovery lock held by a dead process; needs-user | `pid` | 78 |
 | `owner-mismatch` | missing or mismatched owner metadata at takeover; needs-user | `detail` | 78 |
 | `log-corrupt` | an invalid complete log line; host-level needs-user | `file, offset, detail` | 78 |
@@ -303,11 +309,13 @@ expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `
 
 ## Approval fingerprint and dispatch record
 
-`ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; cited contracts and the
-architecture doc at the gated tip), rulingRevs: [{id, rev}] (ascending id)}`; `obligationRevs` arrive in M3.
-Recorded with the approval as an `approval` fact. Recomputed at the tip being published onto before
-`integration.ff`; any mismatch re-gates. M1's C-nn ledger has one line per ruling and no supersede mechanism, so
-every cited ruling is at rev 1 (a ruling id listed twice is refused).
+`ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; the spec's cited
+contracts, the architecture doc and its digest when the plan names one, at the gated tip), rulingRevs: [{id, rev}]
+(ascending id; the spec's cited rulings that are active)}`; `obligationRevs` arrive in M3. Recorded with the
+approval as an `approval` fact. Recomputed at the tip being published onto before `integration.ff`; any mismatch
+re-gates. M1's C-nn ledger has no supersede beyond the withdrawn fold, so every active ruling is at rev 1; a cited
+ruling that is withdrawn leaves the set, which changes the fingerprint. An uncited contract is outside the
+fingerprint (binding the documents a judgment actually read is backlog).
 
 `DispatchRecord = {unit, specRev, scope: RepoPattern[] (sorted), riskFloor, routingRev, at}`, recorded once per
 dispatch as a `dispatch` fact. A redirect cannot widen `scope` or lower `riskFloor`.
@@ -315,7 +323,11 @@ dispatch as a `dispatch` fact. A redirect cannot widen `scope` or lower `riskFlo
 ## `spec.json` M1 subset and `SpecPatch`
 
 `SpecM1 = {schema:'roadmap/spec-m1', unit, rev: SpecRev, lanes, acceptance (non-empty), scope (non-empty),
-resources, decisions, facts}`; item ids unique across all sections.
+resources, decisions, facts, cites: {contracts: RepoPath[], rulings: RulingId[]}}`; item ids unique across all
+sections. `cites` is required (may be empty; a spec without it is refused, no conversion): the plan contracts and
+ledger rulings every prompt of the unit embeds in full; the rest reach prompts as a one-line index (contract: path
+and first Markdown heading; ruling: id and first sentence, or its fold line) to read on demand. Each cite must
+name a plan contract and a ledger ruling (startup row `plan-invalid` `unknown-cite`).
 
 | Item | Fields |
 |---|---|
@@ -327,8 +339,27 @@ Every stored item adds `state: active | struck | deferred`; ids are never delete
 `SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv} | {role:'executor', inv}, ops (non-empty)}`; `by`
 is a plan-check redirect's judgment invocation, or the executor appending the build invocation `inv`'s
 `decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12); ops `add{section, item} |
-replace{section, item} | strike{id} | defer{id}`, sections `lanes | acceptance | decisions | facts`. Scope and
-resources are not patchable in M1.
+replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sections `lanes | acceptance |
+decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
+removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`. Scope and resources
+are not patchable in M1.
+
+**Judgment outputs** (`src/prompts/schemas.ts`): plan-check `{decision, reasons, patch, risk, notes, premises}`,
+gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, evidence: [{path, line}]}]` (the
+premises the decision relies on, the next round's handoff). A plan-check's `notes` go to the architect on escalate
+or infeasible; on approve they are facts for the build and the gate, which receive the approving plan-check's
+notes. A plan-check after its own applied redirect gets `priorRound {patch, reasons, premises, patchedRev,
+changedPremiseFiles}`; a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
+changedPremiseFiles}`. Changed premise files compare blobs between the commits the prior round read (a plan-check's
+checkouts from its `worktree.create` intents; a gate's verification checkout from its launch cwd) and the current
+ones; a premise path that names no repository file counts as changed.
+
+**Plan-check checkouts**: each plan-check attempt reads detached checkouts at
+`<worktreeRoot>/<arc>/<unit>.plan-check-<attempt>` (the integration tip, its cwd) and, when the unit branch
+exists and differs from the tip, `...-branch` (passed with `--add-dir`, as is the rulings ledger's directory). They
+are `worktree.create` ops of the attempt, removed (each citing a snapshot of its dirty paths, normally zero files)
+when the attempt's call is read, live or after recovery, and by the next plan-check attempt or retire when a crash
+left one.
 
 ## Routing types (`src/routing/types.ts`)
 
@@ -523,7 +554,7 @@ Where the plan left a shape open. Each is the simplest shape that keeps illegal 
     contract `0/10/11`: the startup row "resource request unknown" and the reservation cycle need declarations
     the plan's M1 shape omitted.
 12. **Run-input paths in `plan.json` (`rulings`, unit `spec`) are relative to the plan file's directory**;
-    product paths (`contracts`, `architectureDoc`) are repo-relative.
+    product paths (`contracts`, `architectureDoc`, `architectureDigest`) are repo-relative.
 13. **Lane `env` = `{set, pass}`**: literal values, plus host variables that must exist (missing →
     `spec-lane-unrunnable`).
 14. **Spec items carry `state`**; strike and defer never delete, so ids are never reused. Scope and resources

@@ -58,3 +58,23 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - Decisions an interrupted or malformed attempt wrote to its own evidence dir are never appended: its
   evidence stage never runs. CONTINUE_DIRECTIVE asks the session to rewrite decisions.json complete in the
   new dir; the resume after a malformed report relies on the same rule in the build prompt.
+
+## Deferred from arc-1 feedback (2026-09-26)
+
+- **Arc-constant documents as a cache boundary** (item 11). The executor sends spec, documents and diff as one
+  stdin text block, and the API caches only at content-block boundaries, so today only the tools and the
+  role's `--system-prompt` prefix are reused across sessions. A probe on 2026-09-26 (Opus 5.5, ~107 KB of
+  contracts) showed documents in `--system-prompt` read back from cache in a fresh session (write 1,429 / read
+  44,441, $0.025 against $0.371). Placement: system prompt = role instructions, architecture doc (or digest),
+  cited contracts in fixed sorted order, rulings, Direction, byte-identical per (role, model); first message =
+  spec, scope, diff, lane ledger, evidence dirs, prior round; implementer-authored content never in the system
+  prompt. Deferred until an A/B of one real plan-check under both layouts on a unit with known findings shows
+  the same verdicts and reasons; the saving is modest (~190k tokens move from cache-write to cache-read per
+  hit, hits mostly in redirect and re-gate bursts), and cites already shrink the documents.
+- **A `respec` gate outcome** (item 27b). M1 has no gate→planner path: a gate that finds the spec wrong can only
+  escalate. Wanted: the gate emits spec directives, the architect or a fresh plan-check with a handoff proposes
+  a SpecPatch that bumps the spec rev, and the build resumes its session with the amendment as fix-round input.
+  Until then the architect's reopen of a parked unit after a spec edit covers it by hand.
+- **Bind recorded reads into the approval fingerprint** (item 22, second half). The fingerprint covers the
+  cited contracts only; a gate that reads an uncited contract from the index does not bind it. Needs the
+  judgments' read paths recorded first (stream-json or a kept session transcript).
