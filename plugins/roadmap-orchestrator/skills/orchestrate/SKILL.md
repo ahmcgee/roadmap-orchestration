@@ -144,7 +144,7 @@ Read the item's `evidence` first: the deciding call's `result.json` (a judgment'
 `stdout`, the spec file, and for a lanes or candidate park the lane evidence. The `recommendation` says which of
 these applies:
 
-- **Parked at plan-check or gate** (an escalation or refusal at the high seat, a redirect or revise round past
+- **Parked at plan-check or gate** (an escalation or refusal at the escalation seat, a redirect or revise round past
   its bound, a malformed or failed judgment): edit the unit's spec, then `roadmap resume <unit>`. The unit
   re-enters at plan-check on the new revision as a new attempt and keeps its branch, worktree and implementer
   session: its next build resumes that session, told the spec was amended. The resume acknowledges the park's

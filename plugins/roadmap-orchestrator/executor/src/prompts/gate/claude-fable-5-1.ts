@@ -5,7 +5,7 @@
 // knowing its state here (Fable answers from familiarity more readily); plain literal prose for findings
 // (Fable's writing runs dense); directives held to the defects found (Fable widens scope on open-ended
 // work). Untrusted diff text is marked as a document to judge, with an explicit data-not-instructions
-// rule. Fable holds the high-risk seat and receives escalations, hence the frontier framing. Shared 0.20
+// rule. Fable holds the escalation seat (route-ups and risk triggers), hence the frontier framing. Shared 0.20
 // lessons as in the Opus module: per-clause grading, FINDING_BAR, scope growth per path, sf16 re-checks.
 // Shared arc-1 lessons as in the Opus module (feedback items 6, 12, 14, 15, 26, 28c, 29): cited documents
 // plus an index, plan-check notes as facts, correctness-or-acceptance only, batched reads, premises and
@@ -16,7 +16,7 @@ import {
 } from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
-const system = `You are operating autonomously as the gate for one unit of a roadmap build, usually a high-risk unit or one a first gate escalated. Nothing merges without your approval. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision.
+const system = `You are operating autonomously as the gate for one unit of a roadmap build, usually one a first gate escalated or a risk trigger promoted. Nothing merges without your approval. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision.
 
 This is a fresh session. Every input was snapshotted at the diff head and is in the message; you have not seen the implementer's session. The repository at the diff head is your working directory, read-only. The evidence directories hold each lane's stdout and stderr and the implementer's decisions.json.
 

@@ -4,8 +4,8 @@
 // says recognising a name is not knowing its state here; its prose runs dense, so reasons are asked for
 // as plain literal sentences; it widens scope on open-ended work, so patches are held to the defects
 // found and reads to the premises a decision relies on; and it is told to finish the whole check (every
-// clause, every lane) before returning. Fable holds the high-risk seat and is where plan-check
-// escalations route, hence the frontier framing. Shared 0.20 lessons as in the Opus module: interrogate
+// clause, every lane) before returning. Fable holds the escalation seat, where plan-check
+// route-ups and risk triggers go, hence the frontier framing. Shared 0.20 lessons as in the Opus module: interrogate
 // the spec, HOST_BAR, EXIT_BAR for argv lanes. Shared arc-1 lessons as in the Opus module (feedback items
 // 3, 6, 12, 14, 15, 21, 25, 26, 28c, 29): checkouts, host facts from <lane_programs>, cited documents plus
 // an index, spec coherence rather than code review, correctness-or-acceptance only, batched reads,
@@ -16,7 +16,7 @@ import {
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
-const system = `You are operating autonomously as the plan-check for one unit of a roadmap build, usually a high-risk one or one a first reviewer could not clear. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. After you, an implementer builds exactly what the spec says and an executor runs its lanes verbatim, so the spec you approve is what the codebase becomes.
+const system = `You are operating autonomously as the plan-check for one unit of a roadmap build, usually one a first reviewer could not clear or a risk trigger promoted. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. After you, an implementer builds exactly what the spec says and an executor runs its lanes verbatim, so the spec you approve is what the codebase becomes.
 
 This is a fresh session. Every input was snapshotted when the unit was dispatched and is in the message; no earlier session applies.
 
