@@ -50,7 +50,7 @@ describe('needs-user', () => {
     assert.equal(sha256(sha256Hex(bytes)), intent.post.sha256);
     assert.deepEqual(intent.expect, { id, path: needsUserPath(runDir, id), blocking: true });
     const record = needsUserRecord(JSON.parse(bytes.toString('utf8')), 'nu');
-    assert.deepEqual({ ...record, raisedAt: null }, { v: 2, id, arc, raisedAt: null, ...CONTENT });
+    assert.deepEqual({ ...record, raisedAt: null }, { v: 1, id, arc, raisedAt: null, ...CONTENT });
     assert.deepEqual(journal.view.needsUser().map((n) => [n.id, n.blocking, n.ack]), [[id, true, null], [other, false, null]]);
     assert.deepEqual(openBlocking(journal.view), [id]);
     // Acknowledged (by the ack command's fact), it no longer blocks; a second acknowledgement is illegal.

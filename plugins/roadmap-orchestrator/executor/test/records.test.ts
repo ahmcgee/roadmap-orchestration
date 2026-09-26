@@ -10,7 +10,7 @@ import { SchemaError } from '../src/core/validate.ts';
 const UUID = '0190f6c2-8f3a-7d21-9a4e-3b5c6d7e8f90';
 const T0 = '2026-09-25T12:00:00.000Z';
 const T1 = '2026-09-25T12:00:01.000Z';
-const bind = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
+const bind = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
 
 const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> } = {
   'launch.json': {
@@ -179,29 +179,29 @@ describe('records', () => {
   it('host files validate', () => {
     const proc = { pid: 10, start: 20 };
     const nonce = 'e'.repeat(32);
-    const claim = { v: 2, nonce, generation: 1, bootId: UUID, supervisor: proc, arc: 'arc-1', runDir: '/r/.git/roadmap-runtime/arc-1', repo: '/r' };
+    const claim = { v: 1, nonce, generation: 1, bootId: UUID, supervisor: proc, arc: 'arc-1', runDir: '/r/.git/roadmap-runtime/arc-1', repo: '/r' };
     assert.deepEqual(hostLockClaim(claim, 'host.lock'), claim);
     assert.throws(() => hostLockClaim(without(claim, 'runDir'), 'host.lock'), /host\.lock\.runDir/);
-    assert.ok(hostOwner({ v: 2, nonce, generation: 1, executor: null }, 'owner'));
-    assert.ok(recoveryLockClaim({ v: 2, nonce, bootId: UUID, holder: proc, at: T0 }, 'rec'));
-    assert.ok(handshakeFile({ v: 2, nonce, generation: 2 }, 'hs'));
-    assert.ok(readinessFile({ v: 2, generation: 2, state: 'failed', at: T0, reason: 'x' }, 'ready'));
-    assert.throws(() => readinessFile({ v: 2, generation: 2, state: 'ready', at: T0, reason: 'x' }, 'ready'), /ready\.reason/);
-    assert.ok(supervisorState({ v: 2, generation: 3, crashes: [T0, T1], heartbeatStaleMs: 300_000 }, 'sup'));
-    assert.throws(() => supervisorState({ v: 2, generation: 3, crashes: [T1, T0], heartbeatStaleMs: 300_000 }, 'sup'), /sup\.crashes/);
+    assert.ok(hostOwner({ v: 1, nonce, generation: 1, executor: null }, 'owner'));
+    assert.ok(recoveryLockClaim({ v: 1, nonce, bootId: UUID, holder: proc, at: T0 }, 'rec'));
+    assert.ok(handshakeFile({ v: 1, nonce, generation: 2 }, 'hs'));
+    assert.ok(readinessFile({ v: 1, generation: 2, state: 'failed', at: T0, reason: 'x' }, 'ready'));
+    assert.throws(() => readinessFile({ v: 1, generation: 2, state: 'ready', at: T0, reason: 'x' }, 'ready'), /ready\.reason/);
+    assert.ok(supervisorState({ v: 1, generation: 3, crashes: [T0, T1], heartbeatStaleMs: 300_000 }, 'sup'));
+    assert.throws(() => supervisorState({ v: 1, generation: 3, crashes: [T1, T0], heartbeatStaleMs: 300_000 }, 'sup'), /sup\.crashes/);
   });
 
   it('commands, receipts and needs-user validate', () => {
-    assert.ok(commandFile({ v: 2, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'resume', target: { type: 'backend', backend: 'codex' } } }, 'cmd'));
-    assert.throws(() => commandFile({ v: 2, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'rule' } }, 'cmd'), /cmd\.body\.type/);
-    assert.ok(receipt({ v: 2, command: 'cmd-0123456789abcdef', state: 'applied', at: T0, op: 'arc-1/9', verified: ['unit u1 parked'] }, 'r'));
-    assert.throws(() => receipt({ v: 2, command: 'cmd-0123456789abcdef', state: 'applied', at: T0 }, 'r'), /r\.op/);
+    assert.ok(commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'resume', target: { type: 'backend', backend: 'codex' } } }, 'cmd'));
+    assert.throws(() => commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'rule' } }, 'cmd'), /cmd\.body\.type/);
+    assert.ok(receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0, op: 'arc-1/9', verified: ['unit u1 parked'] }, 'r'));
+    assert.throws(() => receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0 }, 'r'), /r\.op/);
     const nu = {
-      v: 2, id: 'nu-9', arc: 'arc-1', raisedAt: T0, blocking: true, subject: { type: 'unit', unit: 'u1' }, reason: 'residue',
+      v: 1, id: 'nu-9', arc: 'arc-1', raisedAt: T0, blocking: true, subject: { type: 'unit', unit: 'u1' }, reason: 'residue',
       summary: 's', recommendation: 'isolate', options: [{ id: 'isolated', label: 'I isolated it' }, { id: 'transferred', label: 'I own it now' }], evidence: [],
     };
     assert.deepEqual(needsUserRecord(nu, 'nu'), nu);
     assert.throws(() => needsUserRecord({ ...nu, reason: 'other' }, 'nu'), /nu\.reason/);
-    assert.ok(needsUserAck({ v: 2, id: 'nu-9', command: 'cmd-0123456789abcdef', choice: 'isolated', at: T1 }, 'ack'));
+    assert.ok(needsUserAck({ v: 1, id: 'nu-9', command: 'cmd-0123456789abcdef', choice: 'isolated', at: T1 }, 'ack'));
   });
 });

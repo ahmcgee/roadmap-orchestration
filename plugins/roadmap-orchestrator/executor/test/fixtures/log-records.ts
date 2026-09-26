@@ -75,7 +75,7 @@ export function chain(records: readonly LogRecord[], arc: ArcId = ARC): Event[] 
   const out: Event[] = [];
   let prev: Event | null = null;
   for (const [i, record] of records.entries()) {
-    const event = { v: 2, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at: AT, arc, ...record } as Event;
+    const event = { v: 1, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at: AT, arc, ...record } as Event;
     out.push(event);
     prev = event;
   }

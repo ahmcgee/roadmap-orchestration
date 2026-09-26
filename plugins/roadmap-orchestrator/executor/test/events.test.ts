@@ -116,7 +116,7 @@ const FACTS: readonly Fact[] = [
 ];
 
 function envelope(seq: number): Envelope {
-  return { v: 2, seq, prev: seq === 1 ? null : H, at, arc };
+  return { v: 1, seq, prev: seq === 1 ? null : H, at, arc };
 }
 
 function event(record: LogRecord, seq = 2): Event {
@@ -176,7 +176,7 @@ describe('events', () => {
 
   it('serialises canonically: sorted keys, no whitespace', () => {
     const line = serializeEvent(event({ type: 'abort', op, reason: { detail: 'd', code: 'precondition' } }));
-    assert.equal(line, `{"arc":"arc-1","at":"${at}","op":"arc-1/7","prev":"${H}","reason":{"code":"precondition","detail":"d"},"seq":2,"type":"abort","v":2}\n`);
+    assert.equal(line, `{"arc":"arc-1","at":"${at}","op":"arc-1/7","prev":"${H}","reason":{"code":"precondition","detail":"d"},"seq":2,"type":"abort","v":1}\n`);
   });
 
   it('prevHash is sha256 over the exact line bytes including the trailing newline', () => {
@@ -197,11 +197,11 @@ describe('events', () => {
       ['empty line', '', /^event: expected JSON/],
       ['embedded newline', `${good}\n`, /without its terminating newline/],
       ['non-canonical whitespace', JSON.stringify(obj(), null, 1).replace(/\n/g, ' '), /canonical JSON/],
-      ['non-canonical key order', JSON.stringify({ v: 2, ...obj() }), /canonical JSON/],
+      ['non-canonical key order', JSON.stringify({ v: 1, ...obj() }), /canonical JSON/],
       ['unknown field', canonical(JSON.stringify({ ...obj(), extra: 1 })), /^event\.extra: expected no such field/],
       ['missing envelope field', canonical(JSON.stringify({ ...obj(), prev: undefined })), /^event\.prev: .*field missing/],
       ['seq 1 with a prev', canonical(JSON.stringify({ ...obj(), seq: 1 })), /^event\.prev: expected null on seq 1/],
-      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 1 })), /^event\.v: expected 2/],
+      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 2 })), /^event\.v: expected 1/],
       ['unknown record type', canonical(JSON.stringify({ ...obj(), type: 'note' })), /^event\.type:/],
       ['unknown op kind', canonical(JSON.stringify({ ...obj(), kind: 'git.reset' })), /^event\.kind:/],
       ['op of another arc', canonical(JSON.stringify({ ...obj(), op: 'arc-2/7' })), /^event\.op: expected an op of arc arc-1/],
@@ -240,10 +240,10 @@ describe('events', () => {
 
   it('residue lines follow the same chain rules without an arc', () => {
     const key = { arc, unit, inv, resource: resourceName('db') };
-    const line = serializeChainLine<ResidueRecord>({ v: 2, seq: 1, prev: null, at, type: 'residue', key, teardown: { argv: ['make', 'down'], cwd: absPath('/repo'), env: {} }, label: 'roadmap.owner=arc-1/u1/arc-1/7#1' });
+    const line = serializeChainLine<ResidueRecord>({ v: 1, seq: 1, prev: null, at, type: 'residue', key, teardown: { argv: ['make', 'down'], cwd: absPath('/repo'), env: {} }, label: 'roadmap.owner=arc-1/u1/arc-1/7#1' });
     const parsed = parseChainLine(line.slice(0, -1), residueRecord, 'residues');
     assert.equal(serializeChainLine(parsed), line);
-    const disp = serializeChainLine<ResidueRecord>({ v: 2, seq: 2, prev: H, at, type: 'disposition', key, disposition: 'isolated', by: { arc, needsUser: needsUserId('nu-9') } });
+    const disp = serializeChainLine<ResidueRecord>({ v: 1, seq: 2, prev: H, at, type: 'disposition', key, disposition: 'isolated', by: { arc, needsUser: needsUserId('nu-9') } });
     assert.equal(serializeChainLine(parseChainLine(disp.slice(0, -1), residueRecord, 'residues')), disp);
     const cleanedByAck = disp.replace('"isolated"', '"cleaned"');
     assert.throws(() => parseChainLine(cleanedByAck.slice(0, -1), residueRecord, 'residues'), SchemaError);
