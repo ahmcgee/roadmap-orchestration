@@ -7,10 +7,11 @@
 // environment, so it reaches the supervisor, the executor and the runners alike; only the executor reaches
 // an executor label. When the executor has fired it, the supervisor backs off 2 s and restarts it, and the
 // restarted executor runs its startup smoke again. The fakes consume steps strictly in order, so the
-// watcher stops the supervisor (SIGSTOP) the moment the trigger has fired, waits until every backend call
-// the dead executor had started has reached the fake (its runner lives on), inserts the smoke's steps
-// there, dropping the dead executor's unmade smoke calls, and lets the supervisor go on (SIGCONT). Nothing
-// but that delay changes: the restart itself is the supervisor's own.
+// supervisor stops itself (SIGSTOP, pm-stop.ts) once the trigger has fired, before its backoff ends; the
+// watcher then waits until every backend call the dead executor had started has reached the fake (its
+// runner lives on), inserts the smoke's steps there, dropping the dead executor's unmade smoke calls, and
+// lets the supervisor go on (SIGCONT). Nothing but that delay changes: the restart itself is the
+// supervisor's own.
 //
 // A recording run (pm-record.ts) runs the same scenario uncrashed and lists every crash point each roadmap
 // process reached, and how often: the cells of a scenario are its executor's labels at occurrence 1, and 2
@@ -20,7 +21,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { isAlive, scan } from '../../src/contain/proc.ts';
+import { isAlive, scan, statOf } from '../../src/contain/proc.ts';
 import { arcId, invocationId } from '../../src/core/ids.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { readJournal } from '../../src/core/log.ts';
@@ -30,7 +31,7 @@ import { lastGeneration } from '../../src/host/lock.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { RESOLVE_DIRECTIVE } from '../../src/pipeline/rounds.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
-import { executorLogs, lastLine } from '../../src/supervisor.ts';
+import { BACKOFF_MS, executorLogs, lastLine } from '../../src/supervisor.ts';
 import { reached, release } from '../helpers/barrier.ts';
 import { type Exit, fixture, runUntilExit } from '../helpers/proc.ts';
 import { type FileSet, tmpDir } from '../helpers/repo.ts';
@@ -45,6 +46,8 @@ import {
 /** How long one supervised run (all its starts and restarts) may take before the cell calls it hung. */
 export const RUN_TIMEOUT_MS = 300_000;
 const POLL_MS = 25;
+/** How long the watcher waits on the crashed generation's supervisor and executor: many backoffs, for a loaded host. */
+const CRASH_WAIT_MS = 15 * BACKOFF_MS[0];
 
 // ---------------------------------------------------------------------------------------------------
 // Scenarios
@@ -278,7 +281,7 @@ export function advanceIntegration(repo: string, files: FileSet, message: string
 // The supervised run and its watcher
 
 export type RunOptions = Readonly<{
-  /** Crash trigger path (ROADMAP_TEST_CRASH): the watcher handles the executor's crash and restart. */
+  /** Crash trigger path (ROADMAP_TEST_CRASH): the supervisor stops itself once it fires (pm-stop.ts) for the watcher. */
   trigger?: string;
   /** Recording file (PM_RECORD): every roadmap process runs with pm-record.ts. */
   record?: string;
@@ -297,10 +300,12 @@ export type Supervised = Readonly<{ start: Exit; firstGeneration: number | null 
  */
 export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Set<string> = new Set()): Promise<Supervised> {
   const { r } = laid;
+  const preloads = [...(opts.trigger === undefined ? [] : ['pm-stop.ts']), ...(opts.record === undefined ? [] : ['pm-record.ts'])];
   const env: NodeJS.ProcessEnv = {
     ...execEnv(r),
     ...(opts.trigger === undefined ? {} : { ROADMAP_TEST_CRASH: opts.trigger }),
-    ...(opts.record === undefined ? {} : { NODE_OPTIONS: `--import=${pathToFileURL(fixture('pm-record.ts')).href}`, PM_RECORD: opts.record }),
+    ...(opts.record === undefined ? {} : { PM_RECORD: opts.record }),
+    ...(preloads.length === 0 ? {} : { NODE_OPTIONS: preloads.map((f) => `--import=${pathToFileURL(fixture(f)).href}`).join(' ') }),
   };
   const deadline = Date.now() + RUN_TIMEOUT_MS;
   let startExit: Exit | null = null;
@@ -334,7 +339,6 @@ export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Se
     return supervisor === null || !isAlive(supervisor);
   };
 
-  // The crash loop does only synchronous work until the supervisor is stopped: it must win the 2 s backoff.
   const crashes = (async () => {
     while (!finished()) {
       if (Date.now() >= deadline) throw new Error(`the supervised run of ${r.arc} outlived ${RUN_TIMEOUT_MS} ms`);
@@ -376,21 +380,27 @@ export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Se
 }
 
 /**
- * The executor of `generation` died at its crash point: stop its supervisor before the restart, let every
- * backend call the dead executor started reach the fake, adjust the scenario for the restarted executor's
- * smoke, do `whileDown`, then let the supervisor go on.
+ * The executor of `generation` died at its crash point: once its supervisor has stopped itself before the
+ * restart (pm-stop.ts), let every backend call the dead executor started reach the fake, adjust the
+ * scenario for the restarted executor's smoke, do `whileDown`, then let the supervisor go on.
  */
 async function restartAdjusted(r: ExecRun, supervisor: ProcIdentity, generation: number, whileDown: RunOptions['whileDown']): Promise<void> {
-  process.kill(supervisor.pid, 'SIGSTOP');
   try {
+    await until(() => statOf(supervisor.pid)?.state === 'T', CRASH_WAIT_MS, `supervisor ${supervisor.pid} to stop itself after generation ${generation}'s crash`);
     const claim = claimOf(r);
     if (claim === null || claim.generation !== generation) {
-      throw new Error(`the supervisor had claimed generation ${claim?.generation ?? 'none'} before the watcher could adjust the scenario for generation ${generation}'s crash`);
+      throw new Error(`the supervisor had claimed generation ${claim?.generation ?? 'none'} before it stopped for the scenario to be adjusted for generation ${generation}'s crash`);
     }
-    // The trigger is renamed before the SIGKILL, so the executor may still be exiting.
-    const dead = ownerOf(r)?.executor ?? null;
-    if (dead === null) throw new Error(`the crash trigger fired, but no executor of generation ${generation} was published`);
-    await until(() => !isAlive(dead), 10_000, `executor ${dead.pid} of generation ${generation} to die at its crash point`);
+    // The owner record names the executor before its handshake, so before any executor label; the trigger
+    // is renamed before the SIGKILL, so the executor may still be exiting.
+    let dead: ProcIdentity | null = null;
+    await until(() => {
+      const owner = ownerOf(r);
+      dead = owner !== null && owner.generation === generation ? owner.executor : null;
+      return dead !== null;
+    }, CRASH_WAIT_MS, `the executor of generation ${generation}, whose crash trigger fired, in host.owner.json`);
+    const executor = dead as unknown as ProcIdentity;
+    await until(() => !isAlive(executor), CRASH_WAIT_MS, `executor ${executor.pid} of generation ${generation} to die at its crash point`);
     await settleDeadCalls(r);
     insertSmoke(r);
     whileDown?.(r);

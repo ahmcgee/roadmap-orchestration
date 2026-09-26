@@ -12,10 +12,9 @@ and the files it points to. The reasons are in `RATIONALE-1.0.md`.
 ## What M1 covers
 
 One unit, serially: plan-check, build, salvage, lanes, gate, candidate merge, fast-forward of the integration
-branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands later: obligations and the holistic layer in
-M3, plan authoring in the M4 skill text. In M1 you write `plan.json` and each unit's `spec.json` by hand, following the
-"Input contract" and "`spec.json` M1 subset" sections of `executor/SCHEMAS.md`. For a worked plan, run the
-M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
+branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands in M3 and M4. In M1 you write `plan.json` and each
+unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 subset" sections of
+`executor/SCHEMAS.md`. For a worked plan, run the M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
 ## What you never do
 
@@ -45,9 +44,10 @@ M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 | `--version` | Print the executor version |
 
 `start` prints one JSON line and returns while the run goes on: `{"kind":"ready",...}` (exit 0) once the
-executor has passed every startup check. The run's end is in `status`, not in `start`'s exit code. Exit 70
-with `{"kind":"failed",...}` or `{"kind":"timeout",...}` means the supervisor died or did not report ready in
-time; read `status` and the supervisor's logs in the host dir before starting again.
+executor is alive and reconciling. The backend smoke runs after recovery, so a smoke refusal after `ready`
+shows in `status` (`rejection`) and the run exits `refused`. The run's end is in `status`. Exit 70 with
+`{"kind":"failed",...}` or `{"kind":"timeout",...}` means the supervisor died or did not report ready in time;
+read `status` and the supervisor's logs in the host dir before starting again.
 
 The other commands only queue a file and print its id. Queued is not applied: check
 `commands/receipts/<id>.{accepted,applied,rejected}.json`.
@@ -57,7 +57,7 @@ The other commands only queue a file and print its id. Queued is not applied: ch
 `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
 
 - `needs-user/<id>.json`: `summary`, `reason`, `subject`, `recommendation`, `options[{id, label}]`, `evidence[]`
-  (paths). Read the evidence before you answer. `<id>.ack.json` appears once acknowledged.
+  (paths). `<id>.ack.json` appears once acknowledged.
 - `heartbeat.json`: every 10 s; stale after 5 minutes means the executor is dead or wedged.
 - `inv/<seq>-<ordinal>/`: one directory per invocation, with `stdout`, `stderr`, `exit.json`, `result.json`.
 

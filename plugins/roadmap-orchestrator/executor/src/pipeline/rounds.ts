@@ -10,7 +10,10 @@
 //   resolve  resume after a conflicted merge-in: "resolve and commit".
 //
 // A resumed session is found from the log, not kept in memory: the latest build invocation of the unit
-// whose result reported a session. The implementer keeps its seat for the whole unit (implementerDispatch).
+// whose result reported a session. When none did (the unit's builds were lost with tree effects, or a
+// fresh build was malformed without reporting one), a fix, resume or resolve round starts a fresh session
+// instead, with the same inputs plus NO_SESSION_NOTE; the round keeps its kind, and its launch.json
+// records the session as fresh. The implementer keeps its seat for the whole unit (implementerDispatch).
 //
 // Deadlines. A fix round's window is the measured lane series plus an edit allowance; the allowance and the
 // fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds.
@@ -43,6 +46,7 @@ export const EDIT_ALLOWANCE_MS = 60 * 60_000;
 export const FRESH_BUILD_MS = 3 * 60 * 60_000;
 
 export const RESUME_DIRECTIVE = 'Your previous final report did not match the required structured format. Do not change any code: return the structured report for the work in this worktree now.';
+export const NO_SESSION_NOTE = 'No earlier session of yours exists for this unit, so this is a fresh session: the worktree holds the work done so far. Read it before you change anything.';
 export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit), run the fast lanes and return your report.';
 
 /** What the caller knows about the round it asks for. */
@@ -123,10 +127,19 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): Impleme
   return null;
 }
 
-function resumed(ctx: StageContext, unit: UnitId, dispatch: ImplementerDispatch): ImplementerSession {
+function freshSession(dispatch: ImplementerDispatch): ImplementerSession {
+  return dispatch.triple.backend === 'claude' ? freshClaudeImplementerSession() : { backend: 'codex', mode: 'fresh' };
+}
+
+/**
+ * The session and inputs of a round that resumes the implementer: the unit's last reported session, or,
+ * when no build reported one, a fresh session told so by NO_SESSION_NOTE.
+ */
+function resumed(ctx: StageContext, unit: UnitId, dispatch: ImplementerDispatch, fix: FixRound): Readonly<{ session: ImplementerSession; fixRound: FixRound }> {
   const id = lastImplementerSession(ctx, unit);
-  if (id === null) throw new Error(`unit ${unit}: a resumed build round, but no earlier build reported a session`);
-  return dispatch.triple.backend === 'claude' ? { backend: 'claude', mode: 'resume', id } : { backend: 'codex', mode: 'resume', id };
+  if (id === null) return { session: freshSession(dispatch), fixRound: { ...fix, directives: [...fix.directives, NO_SESSION_NOTE] } };
+  const session: ImplementerSession = dispatch.triple.backend === 'claude' ? { backend: 'claude', mode: 'resume', id } : { backend: 'codex', mode: 'resume', id };
+  return { session, fixRound: fix };
 }
 
 const inMs = (ms: number): IsoTime => isoTimeOf(new Date(Date.now() + ms));
@@ -176,8 +189,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
   switch (input.kind) {
     case 'fresh': {
       const { worktree, branch } = await ensureWorktree(ctx, unit, parent);
-      const session: ImplementerSession = dispatch.triple.backend === 'claude' ? freshClaudeImplementerSession() : { backend: 'codex', mode: 'fresh' };
-      return { kind: 'fresh', worktree, branch, session, fixRound: null, deadlineAt: inMs(FRESH_BUILD_MS) };
+      return { kind: 'fresh', worktree, branch, session: freshSession(dispatch), fixRound: null, deadlineAt: inMs(FRESH_BUILD_MS) };
     }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
@@ -186,10 +198,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       if (head !== input.salvage) throw new Error(`fix round of ${unit}: the unit worktree is at ${head}, not the salvage SHA ${input.salvage}`);
       const dirty = dirtyPaths(worktree);
       if (dirty.length > 0) throw new Error(`fix round of ${unit}: the unit worktree is not clean after salvage: ${dirty.join(', ')}`);
-      return {
-        kind: 'fix', worktree, branch: unitBranch(ctx.plan.arc, unit), session: resumed(ctx, unit, dispatch), fixRound: input.fix,
-        deadlineAt: inMs(fixWindowMs(input.ledger)),
-      };
+      return { kind: 'fix', worktree, branch: unitBranch(ctx.plan.arc, unit), ...resumed(ctx, unit, dispatch, input.fix), deadlineAt: inMs(fixWindowMs(input.ledger)) };
     }
     case 'resume':
     case 'resolve':
@@ -197,8 +206,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
         kind: input.kind,
         worktree: unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit),
         branch: unitBranch(ctx.plan.arc, unit),
-        session: resumed(ctx, unit, dispatch),
-        fixRound: { failingEvidenceDirs: [], directives: [input.kind === 'resume' ? RESUME_DIRECTIVE : RESOLVE_DIRECTIVE] },
+        ...resumed(ctx, unit, dispatch, { failingEvidenceDirs: [], directives: [input.kind === 'resume' ? RESUME_DIRECTIVE : RESOLVE_DIRECTIVE] }),
         deadlineAt: inMs(EDIT_ALLOWANCE_MS),
       };
   }

@@ -2,7 +2,8 @@
 // processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the two
 // deterministic fixtures of this step (redirect then approve; red lane → fix round reading the evidence
 // dir) and the named tests session.judgment-never-resumes, redirect.no-widen, backend.usage-limit,
-// stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids.
+// stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids,
+// rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,10 +11,11 @@ import { test } from 'node:test';
 import { invocationId, resourceName } from '../src/core/ids.ts';
 import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch } from '../src/pipeline/dispatch.ts';
-import { killWorkload } from '../src/pipeline/invoke.ts';
-import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
+import { NO_SESSION_NOTE, RESUME_DIRECTIVE, type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import {
-  type BuildRun, type LanesDone, build, evidence, lanes, planCheck, quiesce, salvage, teardown,
+  type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, planCheck, quiesce, salvage, teardown,
 } from '../src/pipeline/stages.ts';
 import type { Next } from '../src/pipeline/transitions.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -46,7 +48,11 @@ function show(n: Next): string {
 
 /** build → quiesce → evidence → salvage → teardown, each advancing; returns the salvage SHA. */
 async function buildToLanes(run: StageRun, input: RoundInput): Promise<Readonly<{ run: BuildRun; sha: string }>> {
-  const b = await build(run.ctx, run.unit, input);
+  return afterBuild(run, await build(run.ctx, run.unit, input));
+}
+
+/** quiesce → evidence → salvage → teardown after build `b`, each advancing; returns the salvage SHA. */
+async function afterBuild(run: StageRun, b: BuildDone): Promise<Readonly<{ run: BuildRun; sha: string }>> {
   assert.equal(show(b.next), 'quiesce', `build ${b.outcome.kind}`);
   assert.ok(b.run !== null);
   assert.equal(show(quiesce(run.ctx, U1, b.run).next), 'evidence');
@@ -180,6 +186,75 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
   const deadline = (i: (typeof builds)[number]) => new Date(launchOf(run, i).deadlineAt).getTime() - new Date(i.at).getTime();
   assert.ok(deadline(builds[1]!) < deadline(builds[0]!));
   assert.ok(deadline(builds[1]!) >= 60 * 60_000 && deadline(builds[1]!) < 65 * 60_000, `fix window ${deadline(builds[1]!)} ms`);
+});
+
+/** The implementer's build launched as a fresh session: its launch.json names no session to resume. */
+function launchedFresh(run: StageRun): boolean {
+  const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
+  const terminal = launchOf(run, builds.at(-1)!).terminal;
+  return terminal.type === 'backend' && terminal.purpose === 'backend' && 'session' in terminal && terminal.session.mode === 'fresh';
+}
+
+test('rounds.fix-without-session-starts-fresh: after a build lost with tree effects, the fix round starts a fresh session with the failing evidence and the no-session note', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'dirty', files: { 'NOTES.md': 'Started.\n' } }, { type: 'barrier', name: 'lost', timeoutMs: 120_000 }] },
+    ],
+  });
+  appendStep(run, {
+    as: 'codex',
+    expect: { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE] },
+    acts: [
+      { type: 'readFromPrompt', pattern: laneEvidencePattern(run, 'unit'), file: 'stdout', contains: 'ADD-MARKER' },
+      { type: 'commit', message: 'fix add', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } },
+      { type: 'emit', value: BUILD_REPORT },
+    ],
+  });
+  await planCheck(run.ctx, run.unit);
+  const building = build(run.ctx, run.unit, { kind: 'fresh' });
+  await reached(run.scenario.dir, 'lost', 60_000);
+  // The runner dies mid-call, after the implementer changed the tree: no session was ever reported.
+  const spawn = run.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
+  assert.ok(spawn !== undefined, 'the build invocation is open');
+  const inv = invocationId(spawn.op, spawn.ordinal);
+  const runner = runnerFiles(invocationDir(run.runDir, inv), inv).read('runner.json');
+  assert.ok(runner !== null);
+  process.kill(runner.runner.pid, 'SIGKILL');
+  const lost = await building;
+  assert.equal(lost.outcome.kind, 'lost-tree-effects');
+  const first = await afterBuild(run, lost);
+  const red = await lanes(run.ctx, run.unit, first.sha as LanesDone['at']);
+  assert.equal(red.outcome.kind, 'red');
+  assert.ok(red.fix !== null && red.fix.kind === 'fix');
+
+  const fixed = await build(run.ctx, run.unit, red.fix);
+  assert.equal(fixed.outcome.kind, 'success');
+  assert.ok(launchedFresh(run), 'the fix round\'s launch.json records a fresh session');
+  const calls = readCalls(run.scenario.path);
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
+  assert.ok(calls[2]!.stdin.includes(red.fix.fix.failingEvidenceDirs[0]!), 'the failing evidence dir is in the fresh session\'s prompt');
+});
+
+test('rounds.resume-without-session-starts-fresh: after a malformed fresh build that reported no session, the resume round starts a fresh session with the resume directive and the no-session note', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'exitZeroNoop' }] },
+      codexBuild([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [RESUME_DIRECTIVE, NO_SESSION_NOTE] }),
+    ],
+  });
+  await planCheck(run.ctx, run.unit);
+  const malformed = await build(run.ctx, run.unit, { kind: 'fresh' });
+  assert.equal(malformed.outcome.kind, 'malformed');
+  assert.equal(show(malformed.next), 'build/resume@med');
+  const b = await build(run.ctx, run.unit, { kind: 'resume' });
+  assert.equal(b.outcome.kind, 'success');
+  assert.ok(launchedFresh(run), 'the resume round\'s launch.json records a fresh session');
+  const calls = readCalls(run.scenario.path);
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
 });
 
 test('rounds.gate-revise: the verification checkout is removed first, then the session resumes with the directives', T, async () => {

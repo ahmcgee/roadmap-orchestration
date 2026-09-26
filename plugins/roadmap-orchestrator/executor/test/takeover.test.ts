@@ -4,17 +4,18 @@
 // host.takeover-cross-arc-live-runner, host.takeover-cross-arc-unreconcilable.
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants, existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { IntentOf } from '../src/core/events.ts';
 import { arcId, invocationId } from '../src/core/ids.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { EXIT_REASON_FILE, REJECTION_FILE, executorArgv } from '../src/executor.ts';
-import { isAlive } from '../src/contain/proc.ts';
+import { isAlive, statOf } from '../src/contain/proc.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
+import { claimHost, readClaim, readRecoveryClaim, releaseHost } from '../src/host/lock.ts';
 import { createHandshake, publishOwner } from '../src/host/owner.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type Exit } from './helpers/proc.ts';
@@ -26,6 +27,7 @@ import {
 } from './fixtures/sup-common.ts';
 
 const T = { timeout: EXEC_TIMEOUT_MS };
+const { O_APPEND } = constants;
 const EXECUTOR = new URL('../src/executor.ts', import.meta.url).pathname;
 
 function run(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<Exit> {
@@ -74,6 +76,39 @@ async function strandedArc(): Promise<Readonly<{ a: ExecRun; spawn: IntentOf<'pr
   return { a, spawn: open[0] as IntentOf<'proc.spawn'> };
 }
 
+/**
+ * Resolves once the recovery-lock holder is waiting on A's live runner. Its reconcile pass runs without a
+ * pause from the recovery lock to the first wait of `awaitRunner`, so the only observable end of that pass
+ * is the holder going to sleep: it has A's journal open for append (the read-only survivor pass is behind
+ * it) and its main thread is found sleeping on consecutive samples, which the pass never does.
+ */
+async function adopting(a: ExecRun): Promise<void> {
+  const holder = readRecoveryClaim(absPath(a.hostDir));
+  if (holder === null) throw new Error('host.recovery.lock vanished before A was adopted');
+  const { pid } = holder.holder;
+  const events = realpathSync(join(a.runDir, 'events.jsonl'));
+  await until(() => readdirSync(`/proc/${pid}/fd`).some((fd) => appendFdOn(pid, fd) === events), WAIT_MS, 'B\'s supervisor to open A\'s journal for append');
+  let asleep = 0;
+  const deadline = Date.now() + WAIT_MS;
+  while (asleep < 5) {
+    if (Date.now() >= deadline) throw new Error(`B's supervisor ${pid} never settled into waiting on A's runner`);
+    asleep = statOf(pid)?.state === 'S' ? asleep + 1 : 0;
+    await sleep(10);
+  }
+}
+
+/** The file `fd` of `pid` names when it is open for append (the journal; the survivor pass only reads), else null. */
+function appendFdOn(pid: number, fd: string): string | null {
+  try {
+    const flags = /^flags:\s+([0-7]+)$/m.exec(readFileSync(`/proc/${pid}/fdinfo/${fd}`, 'utf8'))?.[1];
+    if (flags === undefined) throw new Error(`/proc/${pid}/fdinfo/${fd} has no flags line`);
+    return (parseInt(flags, 8) & O_APPEND) !== 0 ? readlinkSync(`/proc/${pid}/fd/${fd}`) : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; // the fd closed between the listing and the read
+    throw error;
+  }
+}
+
 test('host.takeover-cross-arc-live-runner: arc B takes over a dead claim of arc A whose runner lives; A\'s invocation is adopted first, with exactly one result, then B runs', T, async () => {
   const { a, spawn: stranded } = await strandedArc();
   const inv = invocationId(stranded.op, stranded.ordinal);
@@ -84,6 +119,9 @@ test('host.takeover-cross-arc-live-runner: arc B takes over a dead claim of arc 
   // B's supervisor holds the recovery lock while it waits on A's live runner; host.lock is still A's.
   await until(() => existsSync(hostFile(a, 'host.recovery.lock')), WAIT_MS, 'B to reconcile A under the recovery lock');
   assert.equal(claimOf(a)?.arc, a.arc, 'no new claim before the reconcile');
+  // A's build stays parked until B's supervisor is adopting it: releasing earlier lets the runner finish
+  // before the takeover sees it live, and the reconciler then closes the invocation without adopting it.
+  await adopting(a);
   release(a.scenarioDir, 'check1');
 
   const exit = await running.exit;
