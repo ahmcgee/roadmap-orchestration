@@ -109,14 +109,14 @@ export function backendArgv(call: BackendCall): Argv {
     case 'claude-judgment':
       return [
         'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--tools', JUDGMENT_TOOLS, '--session-id', call.session.id, '--no-session-persistence',
+        '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, '--session-id', call.session.id, '--no-session-persistence',
         '--system-prompt', call.system, ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
         'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        '--effort', call.triple.effort, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }

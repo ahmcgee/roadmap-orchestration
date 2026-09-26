@@ -18,12 +18,14 @@ export type Backend = (typeof BACKENDS)[number];
 
 export const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 export type CodexEffort = (typeof CODEX_EFFORTS)[number];
-/** Claude takes no effort flag; its triples carry the literal 'default'. */
-export type Effort = CodexEffort | 'default';
+/** `claude --effort <level>` (Claude Code 2.1.283); models.ts lists which a model takes. */
+export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
+export type Effort = CodexEffort | ClaudeEffort;
 
 /** A Claude triple with a Codex effort, or a model on the other backend, is unrepresentable. */
 export type Triple =
-  | { readonly backend: 'claude'; readonly model: ClaudeModelId; readonly effort: 'default' }
+  | { readonly backend: 'claude'; readonly model: ClaudeModelId; readonly effort: ClaudeEffort }
   | { readonly backend: 'codex'; readonly model: CodexModelId; readonly effort: CodexEffort };
 
 export const ROLES = ['planCheck', 'build', 'gate'] as const;
@@ -125,7 +127,7 @@ export const triple: Read<Triple> = (value, path) => {
     return object((f): Triple => ({
       backend: f.get('backend', literal('claude')),
       model: f.get('model', oneOf(CLAUDE_MODELS)),
-      effort: f.get('effort', oneOf(['default'] as const)),
+      effort: f.get('effort', oneOf(CLAUDE_EFFORTS)),
     }))(value, path);
   }
   return object((f): Triple => ({

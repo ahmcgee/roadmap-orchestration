@@ -84,7 +84,8 @@ builds every tier, judgment as in `default`. `.roadmap/config.json` (committed, 
 ```
 
 Every key is optional. `seats` overrides the profile's class per seat. `classes` rebinds a class to a
-`{backend, model, effort}` triple, and it is the only place you name a model. `plan.json`'s `routing` names
+`{backend, model, effort}` triple, and it is the only place you name a model. A Claude effort is
+`low|medium|high|xhigh|max` (the built-in `frontier` and `summit` run at `high`); a Codex effort `low|medium|high`. `plan.json`'s `routing` names
 classes per seat the same way and cannot rebind a class. Routing is read at `start`. A judgment seat may
 change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
 (`routing-changed`); the needs-user names the seat (below).

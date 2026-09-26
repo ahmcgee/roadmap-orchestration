@@ -68,10 +68,6 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
     operator stores for the executor, passed as `CLAUDE_CODE_OAUTH_TOKEN`, never refreshed by the CLI.
   - The logged-in account's email still reaches every Claude session in a user-context block; no flag
     removes it.
-  - Claude effort is no longer inherited from the operator's user settings (`--setting-sources` excludes
-    `user`; this host's settings set `effortLevel: high` and `alwaysThinkingEnabled`), so Claude calls run
-    at the CLI's default effort. Claude triples carry `effort: 'default'` and the argv has no effort flag;
-    `claude --effort <low|medium|high|xhigh|max>` exists if a seat should pin one.
   - reads.json is audit only (item 22, second half). The approval fingerprint covers the cited contracts
     only; a gate that reads an uncited contract from the index does not bind it. Binding what a judgment read
     (reads.json) into the fingerprint, and handing a later round its predecessor's reads, is the follow-up.

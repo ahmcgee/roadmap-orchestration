@@ -21,8 +21,8 @@
 //                      { "backend", "model", "effort" } } } }
 //
 //   Classes: `efficient | frontier | summit`. A seat value that is a triple is refused: triples are bound
-//   only under `classes`, which is repo-level (a plan cannot rebind a class). A Claude binding's effort is
-//   "default"; a Codex binding's effort is one its model lists in models.ts (low | medium | high). Unknown
+//   only under `classes`, which is repo-level (a plan cannot rebind a class). A binding's effort is one its
+//   model lists in models.ts: a Claude model low | medium | high | xhigh | max, a Codex model low | medium | high. Unknown
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
 //   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
 //   `profile`, else `default`.

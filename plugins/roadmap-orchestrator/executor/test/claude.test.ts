@@ -11,7 +11,7 @@ import { SchemaError } from '../src/core/validate.ts';
 import { BACKEND_FIXTURES, CLAUDE_USAGE_LIMIT, capturedClaudeResult, editClaudeResult, fixtureInvocation } from './helpers/scenario.ts';
 
 const EXIT0 = { type: 'exited', code: 0 } as const;
-const TRIPLE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } as const;
+const TRIPLE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const stdoutOf = (name: string): string => readFileSync(join(BACKEND_FIXTURES, name, 'stdout'), 'utf8');
 /** A one-event stream: the captured api-error result with `fields` replaced. */
 const errorStream = (fields: Readonly<Record<string, unknown>>): string => `${JSON.stringify({ ...capturedClaudeResult('claude-api-error'), ...fields })}\n`;

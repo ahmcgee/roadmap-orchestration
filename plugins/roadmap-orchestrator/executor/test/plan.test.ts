@@ -101,8 +101,8 @@ describe('plan.json (M1)', () => {
   }
 
   it('rejects a triple at a seat: a plan names classes and cannot bind one (hard cutover)', () => {
-    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } } } }, 'plan.routing.build.high');
-    rejects({ ...validPlan(), routing: { classes: { frontier: { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } } } }, 'plan.routing.classes');
+    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } } } }, 'plan.routing.build.high');
+    rejects({ ...validPlan(), routing: { classes: { frontier: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } } } }, 'plan.routing.classes');
   });
 
   it('rejects an unknown class, and an escalation seat for build', () => {

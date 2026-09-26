@@ -4,14 +4,14 @@
 //   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it
 //   codex.fresh/resume  gpt-5.6-sol, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
-//   claude.judgment     claude-opus-5-5 judgment argv: --system-prompt, and --add-dir reading an evidence
+//   claude.judgment     claude-opus-5-5 (effort high) judgment argv: --system-prompt, and --add-dir reading an evidence
 //                       dir outside the cwd (the answer must carry a token only that dir holds); reads.json
 //                       must record the Read of that file
 //   claude.clean-context claude-opus-5-5 judgment argv in a git repo whose CLAUDE.md and AGENTS.md carry
 //                       canaries: the stream's init event must list only Glob, Grep, Read and
 //                       StructuredOutput, no MCP server, no skill and no memory path, and the model must
 //                       report seeing neither canary, no memory and no MCP instructions
-//   claude.build.fresh/resume  claude-opus-5-5 implementer argv: writes a file (bypassPermissions), then
+//   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
 //   claude.build.killed-resume  claude-opus-5-5 implementer told to write a random token to a file then
@@ -44,8 +44,8 @@ import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { Backend, Role } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 
-const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } as const;
-const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } as const;
+const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
+const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
 const SOL = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
 const SYSTEM = 'You are a probe of an unattended build orchestrator. Do exactly what the message asks, then answer in the structured format requested.';
 

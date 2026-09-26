@@ -17,18 +17,18 @@ const EXECUTOR = new URL('..', import.meta.url).pathname;
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`fixtures/routing/${name}`, import.meta.url), 'utf8'));
 const layer = (v: unknown): RoutingLayer => routingLayer(v, 'layer');
 
-const OPUS: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' };
-const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' };
+const OPUS: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
+const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
 const LUNA: Triple = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' };
 const SOL_HIGH: Triple = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' };
 const base: RoutingStack = arcStack('default', null, null);
 
 describe('routing', () => {
-  it('catalogue: four pinned models, Claude effort default, Codex low|medium|high', () => {
+  it('catalogue: four pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {
     assert.deepEqual(Object.keys(MODELS).sort(), [...MODEL_IDS].sort());
     for (const m of MODEL_IDS) {
       const info = MODELS[m];
-      assert.deepEqual(info.efforts, info.backend === 'claude' ? ['default'] : ['low', 'medium', 'high'], m);
+      assert.deepEqual(info.efforts, info.backend === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high'], m);
     }
   });
 
@@ -131,7 +131,7 @@ describe('routing', () => {
     assert.deepEqual(parseRepoConfig({ routing: { seats: { gate: { escalation: 'frontier' } } } }).routing?.seats, { gate: { escalation: 'frontier' } });
     assert.throws(() => parseRepoConfig({ routing: { profile: 'claude-only', extra: 1 } }), SchemaError);
     assert.throws(() => parseRepoConfig({ routing: { profile: 'fast' } }), SchemaError);
-    assert.throws(() => parseRepoConfig({ routing: { classes: { frontier: { backend: 'claude', model: 'gpt-5.6-luna', effort: 'default' } } } }), SchemaError);
+    assert.throws(() => parseRepoConfig({ routing: { classes: { frontier: { backend: 'claude', model: 'gpt-5.6-luna', effort: 'high' } } } }), SchemaError);
     assert.throws(() => parseRepoConfig({ routing: { classes: { turbo: OPUS } } }), SchemaError);
     assert.deepEqual(parseRepoConfig({}), {});
   });

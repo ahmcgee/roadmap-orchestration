@@ -422,15 +422,16 @@ architect creates at the parked unit's tip).
 ## Routing types (`src/routing/types.ts`)
 
 `ModelId = 'claude-opus-5-5' | 'claude-fable-5-1' | 'gpt-5.6-luna' | 'gpt-5.6-sol'` (closed). `Backend = claude |
-codex`. `Triple = {backend:'claude', model: ClaudeModelId, effort:'default'} | {backend:'codex', model:
-CodexModelId, effort: low|medium|high|xhigh}`. `Role = planCheck | build | gate`; `RiskTier = low | med | high` (a
+codex`. `Triple = {backend:'claude', model: ClaudeModelId, effort: low|medium|high|xhigh|max} | {backend:'codex', model:
+CodexModelId, effort: low|medium|high|xhigh}`; a Claude triple's effort is passed as `claude --effort <e>` on
+judgment and build calls. `Role = planCheck | build | gate`; `RiskTier = low | med | high` (a
 unit's risk); `JudgmentSeat = RiskTier | escalation`; seats: build has `RiskTier`, planCheck and gate have
 `JudgmentSeat` (`SeatRef = {role, tier}`, `build.escalation` unrepresentable). `ModelClass = efficient | frontier |
-summit`; the class catalogue binds `efficient` → codex gpt-5.6-luna medium, `frontier` → claude-opus-5-5,
-`summit` → claude-fable-5-1. `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
+summit`; the class catalogue binds `efficient` → codex gpt-5.6-luna medium, `frontier` → claude-opus-5-5 high,
+`summit` → claude-fable-5-1 high. `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
 SeatTable<ModelClass>` (the built-in profiles); `RoutingLayer` = a class at any subset of seats (a named role needs
-≥ 1 seat; a triple is refused); `ClassBindings` = a triple for any subset of classes (repo config only; a Codex
-binding's effort must be one `models.ts` lists: low|medium|high); `RoutingLayerName = builtin | repo-config | plan
+≥ 1 seat; a triple is refused); `ClassBindings` = a triple for any subset of classes (repo config only; a
+binding's effort must be one `models.ts` lists for its model: Claude low|medium|high|xhigh|max, Codex low|medium|high); `RoutingLayerName = builtin | repo-config | plan
 | unit` (lowest to highest precedence); `ProfileName = default | claude-only`. `.roadmap/config.json` = `{routing?:
 {profile?, seats?: RoutingLayer, classes?: ClassBindings}}`, unknown keys refused. `resolveRouting` →
 `{table, classes, sources, bindings: {[C]: builtin|repo-config}, rev}`. `PromptTable<P> = {[R in Role]: {[M in ModelId]: prompt{prompt} |

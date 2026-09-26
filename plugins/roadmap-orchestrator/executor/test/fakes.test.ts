@@ -14,7 +14,7 @@ import {
 } from './helpers/scenario.ts';
 
 const CODEX = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
-const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } as const;
+const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const SCHEMA_TEXT = readFileSync(OK_SCHEMA, 'utf8').trim();
 const TIMEOUT_MS = 20_000;
 
