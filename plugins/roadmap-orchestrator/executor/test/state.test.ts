@@ -40,7 +40,7 @@ describe('fold derives', () => {
       meter(inv1(1), 'planCheck', 100, 10, 5), // 2
       spawnResult(op(1)), // 3
       spawnIntent(4), // 4 build attempt 1
-      { type: 'fact', fact: { kind: 'usage-unavailable', inv: inv1(4), role: 'build', tier: 'med', routingRev: REV, unit: null, reason: 'no-result' } }, // 5
+      { type: 'fact', fact: { kind: 'usage-unavailable', inv: inv1(4), routingRev: REV, subject: { type: 'seat', role: 'build', tier: 'med', unit: U1, attempt: 1 }, reason: 'no-result' } }, // 5
       spawnLost(op(4)), // 6
       spawnIntent(4, { ordinal: 2 }), // 7 retry, same stage attempt
       meter(inv1(4, 2), 'build', 1000, 200, null), // 8 (the retry stays open)
@@ -58,8 +58,8 @@ describe('fold derives', () => {
     assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 }, open: { stage: 'build', attempt: 2 } }], 'build#2 has no outcome: open');
     assert.deepEqual(state.needsUser, ['nu-9']);
     assert.deepEqual(state.meter, [
-      { role: 'build', routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      { role: 'planCheck', routingRev: REV, known: 1, unavailable: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 0 },
+      { charge: { type: 'role', role: 'build' }, routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
+      { charge: { type: 'role', role: 'planCheck' }, routingRev: REV, known: 1, unavailable: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
     ]);
     assert.deepEqual(state.tailDiscarded, []);
   });

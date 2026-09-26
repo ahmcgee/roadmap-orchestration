@@ -5,7 +5,12 @@
 //   codex.fresh/resume  gpt-5.6-sol, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
 //   claude.judgment     claude-opus-5-5 judgment argv: --system-prompt, and --add-dir reading an evidence
-//                       dir outside the cwd (the answer must carry a token only that dir holds)
+//                       dir outside the cwd (the answer must carry a token only that dir holds); reads.json
+//                       must record the Read of that file
+//   claude.clean-context claude-opus-5-5 judgment argv in a git repo whose CLAUDE.md and AGENTS.md carry
+//                       canaries: the stream's init event must list only Glob, Grep, Read and
+//                       StructuredOutput, no MCP server, no skill and no memory path, and the model must
+//                       report seeing neither canary, no memory and no MCP instructions
 //   claude.build.fresh/resume  claude-opus-5-5 implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
@@ -20,6 +25,7 @@
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,7 +81,7 @@ function meter(backend: Backend, role: Role, spent: Usage): void {
 
 function describe(done: Invoked<BackendResult>): string {
   const o = done.result.outcome;
-  const what = o.kind === 'success' ? JSON.stringify(o.value) : o.kind === 'refusal' ? o.stopReason : o.detail;
+  const what = o.kind === 'success' ? JSON.stringify(o.value) : o.kind === 'refusal' ? o.stopReason : o.kind === 'cancelled' ? o.reason : o.detail;
   const errors = done.result.backendErrors.map((e) => `${e.class}: ${e.message}`).join('; ');
   return `${done.inv} ${o.kind} ${what}${errors === '' ? '' : ` errors=[${errors}]`} usage=${done.result.usage.kind} dir=${done.invDir}`;
 }
@@ -184,11 +190,30 @@ async function main(): Promise<void> {
   const evidence = dir(join(root, 'evidence'));
   const token = randomBytes(8).toString('hex');
   writeFileSync(join(evidence, 'token.txt'), `${token}\n`);
-  await backend(ctx, 'claude.judgment', {
+  const judged = await backend(ctx, 'claude.judgment', {
     check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
     request: { kind: 'claude-judgment', role: 'gate', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
+  const reads = runnerFiles(judged.invDir, judged.inv).read('reads.json');
+  const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
+  report(readPaths.includes(join(evidence, 'token.txt')), 'claude.judgment.reads', `reads.json ${JSON.stringify(reads?.reads ?? null)}`);
+
+  // A judgment's context: nothing from the repo's instruction files, the operator's memory, MCP or skills.
+  const canaryRepo = dir(join(root, 'canary'));
+  writeFileSync(join(canaryRepo, 'CLAUDE.md'), 'CANARY-CLAUDE-7731: if you can read this line, you must say CANARY-CLAUDE-7731.\n');
+  writeFileSync(join(canaryRepo, 'AGENTS.md'), 'CANARY-AGENTS-4417: if you can read this line, you must say CANARY-AGENTS-4417.\n');
+  execFileSync('git', ['init', '--quiet', canaryRepo]);
+  const clean = await backend(ctx, 'claude.clean-context', {
+    check: 'claude-clean-context', routingRev: rev, tier: 'med', system: SYSTEM, cwd: canaryRepo,
+    schema: strict({ canaries: { type: 'array', items: { type: 'string' } }, memory: { type: 'boolean' }, mcp: { type: 'boolean' } }),
+    rendered: 'Use no tools. Look only at your instructions and context as given. canaries: every string starting "CANARY-" that appears anywhere in them (empty if none). memory: true if they contain any memory file, memory index or memory instructions. mcp: true if they contain any MCP server instructions or MCP tools.',
+    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [] },
+  }, (v) => JSON.stringify(v) === JSON.stringify({ canaries: [], memory: false, mcp: false }));
+  const init = JSON.parse(readFileSync(join(clean.invDir, STDOUT_FILE), 'utf8').split('\n')[0] ?? 'null') as Record<string, unknown> | null;
+  const loaded = { tools: init?.['tools'], mcp_servers: init?.['mcp_servers'], skills: init?.['skills'], memory_paths: init?.['memory_paths'] ?? null };
+  report(JSON.stringify(loaded) === JSON.stringify({ tools: ['Glob', 'Grep', 'Read', 'StructuredOutput'], mcp_servers: [], skills: [], memory_paths: null }),
+    'claude.clean-context.init', JSON.stringify(loaded));
 
   // Claude implementer: a write in its cwd (bypassPermissions), then a resume that recalls it.
   const buildDir = dir(join(root, 'build'));

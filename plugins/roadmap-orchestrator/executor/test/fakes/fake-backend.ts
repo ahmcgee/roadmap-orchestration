@@ -2,7 +2,8 @@
 //   node fake-entry.ts --scenario /abs/scenario.json --as codex|claude <the CLI's own argv...>
 // It reads the scenario (test/helpers/scenario.ts), logs the call to calls.jsonl beside it, matches the call
 // to the next unconsumed step and performs that step's acts. Output acts write each CLI's real format:
-// Claude's result objects are the captured fixtures (test/fixtures/backend-output) with fields replaced,
+// Claude's stream is the captured fixtures' init event and result object (test/fixtures/backend-output)
+// with fields replaced,
 // Codex's event stream follows the captured event vocabulary, so what the fake emits is what the adapter
 // was pinned against.
 import { spawn } from 'node:child_process';
@@ -101,10 +102,22 @@ function codexUsageLimit(thread: string): never {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Claude: one result object on stdout, built from the captured fixtures.
+// Claude: stream-json on stdout, the captured init event then one result object, built from the fixtures.
+
+function capturedEvent(name: 'claude-judgment' | 'claude-api-error', type: 'system' | 'result'): Record<string, unknown> {
+  const events = readFileSync(join(FIXTURES, name, 'stdout'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>);
+  const found = events.find((e) => e['type'] === type);
+  if (found === undefined) throw new Error(`fake claude: capture ${name} has no ${type} event`);
+  return found;
+}
 
 function template(name: 'claude-judgment' | 'claude-api-error'): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(FIXTURES, name, 'stdout'), 'utf8')) as Record<string, unknown>;
+  return capturedEvent(name, 'result');
+}
+
+/** The init event every stream-json run prints first. */
+function claudeInit(session: string): void {
+  out(`${JSON.stringify({ ...capturedEvent('claude-judgment', 'system'), session_id: session })}\n`);
 }
 
 function claudeSession(argv: readonly string[]): string {
@@ -116,11 +129,13 @@ function claudeSession(argv: readonly string[]): string {
 function claudeResult(session: string, fields: Readonly<Record<string, unknown>>, drop: readonly string[] = []): void {
   const r: Record<string, unknown> = { ...template('claude-judgment'), session_id: session, ...fields };
   for (const k of drop) delete r[k];
+  claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
 }
 
 function claudeUsageLimit(session: string): never {
   const r = { ...template('claude-api-error'), session_id: session, result: CLAUDE_USAGE_LIMIT, api_error_status: 429 };
+  claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
   process.exit(1);
 }

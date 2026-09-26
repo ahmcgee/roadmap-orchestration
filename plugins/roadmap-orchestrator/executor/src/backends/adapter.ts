@@ -9,6 +9,9 @@
 // 3. apply the precedence rule (`classifyTerminal`, records.ts);
 // 4. a Claude `stop_reason: "refusal"` with no schema-valid output turns `malformed` into `refusal`;
 // 5. a reported session id that differs from the launched one turns `success` into `malformed`.
+//
+// A Claude call's Read/Grep/Glob calls are written beside result.json as reads.json (`ReadsFile`), by the
+// same write-once rule; Codex writes none.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
@@ -16,7 +19,7 @@ import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts'
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type ExitFile, type LaunchFile,
+  type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type CancelFile, type ExitFile, type ReadsFile, type ToolRead,
   type ResultFile, type Usage, RUNNER_FILE_READERS, STDERR_FILE, STDOUT_FILE, classifyCommand, classifyTerminal,
 } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -34,6 +37,8 @@ export type BackendReading = Readonly<{
   backendErrors: readonly BackendError[];
   /** The backend's stop reason when it reports one (Claude); refusal is read from it. */
   stopReason: string | null;
+  /** The session's read-only tool calls (Claude); null for Codex, or when the output could not be read. */
+  reads: readonly ToolRead[] | null;
 }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -132,11 +137,11 @@ function read(terminal: BackendTerminal, stdoutPath: AbsPath): BackendReading {
     return readClaude(readText(terminal.outputPath) ?? '');
   } catch (error) {
     if (!(error instanceof MalformedOutputError)) throw error;
-    return { sessionId: null, output: { kind: 'absent', why: error.message }, usage: { kind: 'unavailable', reason: 'malformed' }, backendErrors: [], stopReason: null };
+    return { sessionId: null, output: { kind: 'absent', why: error.message }, usage: { kind: 'unavailable', reason: 'malformed' }, backendErrors: [], stopReason: null, reads: null };
   }
 }
 
-function backendOutcome(exit: ExitFile, terminal: BackendTerminal, reading: BackendReading): BackendOutcome {
+function backendOutcome(exit: ExitFile, cancel: CancelFile | null, terminal: BackendTerminal, reading: BackendReading): BackendOutcome {
   let valid = false;
   let why = reading.output.kind === 'absent' ? reading.output.why : '';
   if (reading.output.kind === 'present') {
@@ -146,13 +151,13 @@ function backendOutcome(exit: ExitFile, terminal: BackendTerminal, reading: Back
     if (violation !== null) why = `schema violation at ${violation}`;
   }
   const value = reading.output.kind === 'present' ? reading.output.value : null;
-  const outcome = classifyTerminal(exit, value, valid);
+  const outcome = classifyTerminal(exit, cancel, value, valid);
   if (outcome.kind === 'malformed' && !valid && reading.stopReason === 'refusal') return { kind: 'refusal', stopReason: reading.stopReason };
   const launched = 'id' in terminal.session ? terminal.session.id : null;
   if (outcome.kind === 'success' && launched !== null && reading.sessionId !== null && reading.sessionId !== launched) {
     return { kind: 'malformed', detail: `the CLI reported session ${reading.sessionId}, launched as ${launched}` };
   }
-  if (outcome.kind !== 'success' && why !== '' && exit.cause === 'exited' && exit.child.type === 'exited') {
+  if ((outcome.kind === 'malformed' || outcome.kind === 'process-fault') && why !== '' && exit.cause === 'exited' && exit.child.type === 'exited') {
     return { ...outcome, detail: `${outcome.detail}: ${why}` };
   }
   return outcome;
@@ -165,66 +170,95 @@ function implementerSession(terminal: Extract<BackendTerminal, { role: 'build' }
   return implementerSessionId(reading.sessionId, 'stdout thread.started.thread_id');
 }
 
-function backendResult(launch: LaunchFile, exit: ExitFile, terminal: BackendTerminal, stdoutPath: AbsPath): BackendResult {
-  const reading = read(terminal, stdoutPath);
+type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
+
+function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
+  const { launch, exit } = input;
+  const reading = read(terminal, input.stdoutPath);
+  const bound = { v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv };
   const base = {
-    v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv, type: 'backend' as const,
+    ...bound, type: 'backend' as const,
     routingRev: terminal.routingRev,
-    outcome: backendOutcome(exit, terminal, reading),
+    outcome: backendOutcome(exit, input.cancel, terminal, reading),
     usage: reading.usage,
     backendErrors: reading.backendErrors,
   };
-  if (terminal.role === 'build') return { ...base, role: terminal.role, session: implementerSession(terminal, reading) };
-  return { ...base, role: terminal.role, session: terminal.session.id };
+  const result: BackendResult = terminal.role === 'build'
+    ? { ...base, role: terminal.role, session: implementerSession(terminal, reading) }
+    : { ...base, role: terminal.role, session: terminal.session.id };
+  return { result, reads: reading.reads === null ? null : { ...bound, reads: reading.reads } };
 }
 
-/** The `Adapter` of core/interfaces.ts: pure over the invocation's files. */
-export function adapter(input: AdapterInput): ResultFile {
+function adapted(input: AdapterInput): Adapted {
   const { launch, exit } = input;
   if (exit.arc !== launch.arc || exit.op !== launch.op || exit.inv !== launch.inv) {
     throw new Error(`exit.json is bound to ${exit.inv}, launch.json to ${launch.inv}`);
   }
   const terminal = launch.terminal;
-  if (terminal.type === 'backend') return backendResult(launch, exit, terminal, input.stdoutPath);
+  if (terminal.type === 'backend') return backendAdapted(input, terminal);
   const { exitCode, verdict } = classifyCommand(exit, terminal.expectedExit);
   return {
-    v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv, type: 'command',
-    purpose: terminal.purpose, exitCode, expectedExit: terminal.expectedExit, verdict,
+    result: {
+      v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv, type: 'command',
+      purpose: terminal.purpose, exitCode, expectedExit: terminal.expectedExit, verdict,
+    },
+    reads: null,
   };
 }
 
-function readRunnerJson(invDir: string, name: 'launch.json' | 'exit.json'): unknown {
+/** The `Adapter` of core/interfaces.ts: pure over the invocation's files. */
+export function adapter(input: AdapterInput): ResultFile {
+  return adapted(input).result;
+}
+
+function readRunnerJson(invDir: string, name: 'launch.json' | 'exit.json' | 'cancel.json'): unknown {
   return JSON.parse(readFileSync(join(invDir, name), 'utf8'));
 }
 
-/** Read launch.json and exit.json from `invDir` and adapt. Throws if either is missing or invalid. */
-export function adapt(invDir: string): ResultFile {
+function inputOf(invDir: string): AdapterInput {
   const dir = absPath(invDir, 'invDir');
-  return adapter({
+  return {
     launch: RUNNER_FILE_READERS['launch.json'](readRunnerJson(dir, 'launch.json'), 'launch.json'),
     exit: RUNNER_FILE_READERS['exit.json'](readRunnerJson(dir, 'exit.json'), 'exit.json'),
+    cancel: existsSync(join(dir, 'cancel.json')) ? RUNNER_FILE_READERS['cancel.json'](readRunnerJson(dir, 'cancel.json'), 'cancel.json') : null,
     stdoutPath: absPath(join(dir, STDOUT_FILE)),
     stderrPath: absPath(join(dir, STDERR_FILE)),
-  });
+  };
 }
 
-/** The bytes of result.json: canonical JSON and a newline, validated by its own reader first. */
-export function resultBytes(result: ResultFile): string {
-  const text = canonicalJson(result);
-  RUNNER_FILE_READERS['result.json'](JSON.parse(text), 'result.json');
+/** Read launch.json, exit.json and cancel.json (if any) from `invDir` and adapt. Throws if launch or exit is missing or invalid. */
+export function adapt(invDir: string): ResultFile {
+  return adapter(inputOf(invDir));
+}
+
+/** The bytes of a record the adapter writes: canonical JSON and a newline, validated by its own reader first. */
+function recordBytes(name: 'result.json' | 'reads.json', record: ResultFile | ReadsFile): string {
+  const text = canonicalJson(record);
+  RUNNER_FILE_READERS[name](JSON.parse(text), name);
   return `${text}\n`;
 }
 
-/** Adapt and write result.json durably, once. Re-running over the same files is a no-op. */
-export function writeResult(invDir: string): ResultFile {
-  const result = adapt(invDir);
-  const bytes = resultBytes(result);
-  const path = join(invDir, 'result.json');
+export function resultBytes(result: ResultFile): string {
+  return recordBytes('result.json', result);
+}
+
+/** Write-once: equal bytes already there are a no-op, different ones a loud error. */
+function writeOnce(path: string, bytes: string): void {
   // The executor is the only writer, so check-then-write does not race; durableWrite never leaves a torn file.
   if (existsSync(path)) {
     if (readFileSync(path, 'utf8') !== bytes) throw new ResultConflictError(path);
   } else {
     durableWrite(path, bytes);
   }
+}
+
+/**
+ * Adapt and write reads.json (a Claude call's) then result.json durably, once each. Re-running over the same
+ * files is a no-op; result.json last, so its presence means both are written.
+ */
+export function writeResult(invDir: string): ResultFile {
+  const { result, reads } = adapted(inputOf(invDir));
+  if (reads !== null) writeOnce(join(invDir, 'reads.json'), recordBytes('reads.json', reads));
+  writeOnce(join(invDir, 'result.json'), resultBytes(result));
   return result;
 }

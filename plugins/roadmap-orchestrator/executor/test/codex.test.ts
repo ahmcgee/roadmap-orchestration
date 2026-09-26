@@ -27,7 +27,7 @@ describe('codex', () => {
     const r = readCodex(fixture('codex-fresh', 'stdout'), fixture('codex-fresh', 'last.json'));
     assert.equal(r.sessionId, '01a0daac-53f4-7f51-87b9-3a5724d59f6e');
     assert.deepEqual(r.output, { kind: 'present', value: { ok: true } });
-    assert.deepEqual(r.usage, { kind: 'known', tokens: { inputTokens: 14524, outputTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+    assert.deepEqual(r.usage, { kind: 'known', tokens: { inputTokens: 14524, outputTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0, turns: null, costUsd: null } });
     assert.deepEqual(r.backendErrors, []);
   });
 

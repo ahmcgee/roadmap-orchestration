@@ -58,7 +58,7 @@ export type TransientRules = Readonly<{
 }>;
 
 const RUN_STATE_SEGMENTS: ReadonlySet<string> = new Set(['roadmap-runtime', '.roadmap-runtime', '__preview', '__codex']);
-const RUNNER_FILES: ReadonlySet<string> = new Set(['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json', 'stdout', 'stderr', 'runner.log']);
+const RUNNER_FILES: ReadonlySet<string> = new Set(['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json', 'reads.json', 'stdout', 'stderr', 'runner.log']);
 /** `<seq>-<ordinal>`: the name of an invocation dir under the run dir's `inv/`. */
 const INVOCATION_DIR = /^[1-9][0-9]*-[1-9][0-9]*$/;
 

@@ -217,7 +217,14 @@ export type DoneRecord = { [K in OpKind]: DoneOf<K> }[OpKind];
 
 export type AbortRecord = Readonly<{ type: 'abort'; op: OpId; reason: Readonly<{ code: AbortCode; detail: string }> }>;
 
-export type MeterSubject = Readonly<{ unit: UnitId; attempt: number }> | null;
+/**
+ * Whom a usage fact charges: a unit's backend call at its seat (`tier` is the seat's risk tier, never a
+ * model: with `role` and the fact's `routingRev` it names exactly one seat of that revision's table, so a
+ * by-model view is exact; lead ruling, 13b), or a backend's start-up smoke, which is no seat's spend.
+ */
+export type MeterSubject =
+  | Readonly<{ type: 'seat'; role: Role; tier: RiskTier; unit: UnitId; attempt: number }>
+  | Readonly<{ type: 'smoke'; backend: Backend }>;
 
 // ---------------------------------------------------------------------------------------------------
 // Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
@@ -278,13 +285,9 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
-  /**
-   * One usage fact per invocation. `tier` is the seat's risk tier (never a model): with `role` and
-   * `routingRev` it names exactly one seat of that revision's table, so a by-model view is exact (lead
-   * ruling, 13b).
-   */
-  | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
-  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
+  /** One usage fact per invocation, charged to `subject`. */
+  | Readonly<{ kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage }>
+  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
    * A backend reported a usage-limit or capacity error on a failed invocation: it is parked arc-wide until
@@ -423,7 +426,7 @@ const worktreeCheckout: Read<WorktreeCheckout> = tagged('type', {
 });
 
 const resultSummary: Read<ResultSummary> = tagged('type', {
-  backend: object((f): ResultSummary => ({ type: f.get('type', literal('backend')), outcome: f.get('outcome', oneOf(['success', 'refusal', 'malformed', 'process-fault'] as const)) })),
+  backend: object((f): ResultSummary => ({ type: f.get('type', literal('backend')), outcome: f.get('outcome', oneOf(['success', 'refusal', 'malformed', 'process-fault', 'cancelled'] as const)) })),
   command: object((f): ResultSummary => ({ type: f.get('type', literal('command')), verdict: f.get('verdict', oneOf(['pass', 'fail', 'process-fault'] as const)) })),
 });
 
@@ -586,18 +589,23 @@ const parent: Read<Parent> = tagged('type', {
   arc: object((f): Parent => ({ type: f.get('type', literal('arc')) })),
 });
 
-const meterSubject: Read<MeterSubject> = nullable(object((f) => ({ unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })));
+const meterSubject: Read<MeterSubject> = tagged('type', {
+  seat: object((f): MeterSubject => ({
+    type: f.get('type', literal('seat')), role: f.get('role', role), tier: f.get('tier', riskTier), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
+  })),
+  smoke: object((f): MeterSubject => ({ type: f.get('type', literal('smoke')), backend: f.get('backend', backend) })),
+});
 
 export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
   meter: object((f): Fact => ({
-    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
-    unit: f.get('unit', meterSubject), usage: f.get('usage', tokenUsage),
+    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+    usage: f.get('usage', tokenUsage),
   })),
   'usage-unavailable': object((f): Fact => ({
-    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
-    unit: f.get('unit', meterSubject), reason: f.get('reason', usageUnavailableReason),
+    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+    reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
   'backend-park': object((f): Fact => ({

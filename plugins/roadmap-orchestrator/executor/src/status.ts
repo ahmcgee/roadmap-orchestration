@@ -35,7 +35,7 @@ import {
   HEARTBEAT_FILE, REJECTION_FILE, START_FILE, fileNeedsUser, holdsArc, nextUnit, openBlockingItems, recordOf,
 } from './executor.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
-import { type ModelTotal, type RoleTotal, byModel, meterOf } from './meter.ts';
+import { type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
@@ -81,6 +81,8 @@ export type Status = Readonly<{
   spend: Readonly<{
     byRole: readonly RoleTotal[];
     byModel: Readonly<{ models: readonly ModelTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
+    /** Start-up smokes per backend: in neither `byRole` nor `byModel`. */
+    bySmoke: readonly SmokeTotal[];
   }>;
   host: Readonly<{ containment: Readonly<{ mode: ContainmentMode | null; guarantee: string }> }>;
   parkedBackends: readonly Backend[];
@@ -166,7 +168,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
       ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
     ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     commands: commandsOf(runDir, arc),
-    spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs } },
+    spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs }, bySmoke: meter.bySmoke },
     host: { containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE } },
     parkedBackends: view.parkedBackends(),
     rejection,

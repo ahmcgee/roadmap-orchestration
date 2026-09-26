@@ -7,23 +7,9 @@
 import type { BackendError, TokenUsage, Usage } from '../core/records.ts';
 import type { BackendReading } from './adapter.ts';
 import { MalformedOutputError, classifyBackendError } from './errors.ts';
+import { type StreamEvent, jsonLines } from './jsonl.ts';
 
-type Event = Readonly<Record<string, unknown>>;
-
-function events(stdout: string, file: string): readonly Event[] {
-  return stdout.split('\n').filter((line) => line !== '').map((line, i) => {
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      throw new MalformedOutputError(file, `line ${i + 1} is not JSON: ${line.slice(0, 120)}`);
-    }
-    if (typeof value !== 'object' || value === null || Array.isArray(value) || typeof (value as Event)['type'] !== 'string') {
-      throw new MalformedOutputError(file, `line ${i + 1} is not an event object with a string type`);
-    }
-    return value as Event;
-  });
-}
+type Event = StreamEvent;
 
 const count = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
@@ -41,6 +27,9 @@ function turnUsage(u: unknown): TokenUsage | null {
     outputTokens: r['output_tokens'],
     cacheReadTokens: read === undefined ? null : read,
     cacheWriteTokens: write === undefined ? null : write,
+    // Codex reports neither a turn count nor a cost.
+    turns: null,
+    costUsd: null,
   };
 }
 
@@ -51,6 +40,8 @@ function sum(a: TokenUsage, b: TokenUsage): TokenUsage {
     outputTokens: a.outputTokens + b.outputTokens,
     cacheReadTokens: add(a.cacheReadTokens, b.cacheReadTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
+    turns: null,
+    costUsd: null,
   };
 }
 
@@ -84,7 +75,7 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
   let usage: TokenUsage | null = null;
   let usageProblem: 'absent' | 'malformed' | null = null;
   const errors: BackendError[] = [];
-  for (const e of events(stdout, file)) {
+  for (const e of jsonLines(stdout, file)) {
     switch (e['type']) {
       case 'thread.started':
         if (typeof e['thread_id'] !== 'string') throw new MalformedOutputError(file, 'thread.started without a string thread_id');
@@ -127,5 +118,5 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
     : usageProblem !== null || usage === null
       ? { kind: 'unavailable', reason: usageProblem ?? 'absent' }
       : { kind: 'known', tokens: usage };
-  return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null };
+  return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null, reads: null };
 }

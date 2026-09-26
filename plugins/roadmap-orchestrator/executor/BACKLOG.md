@@ -53,8 +53,31 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - A Claude build killed before the CLI persisted its session (a pause within its first moments) is continued
   with `--resume` of an id the CLI never saved; that call fails as a process fault and parks the unit. Nothing
   in the invocation's files tells the two cases apart today.
-- A Codex exec killed mid-write of a stdout line leaves a truncated last line; the reader refuses the whole
-  stream, so the thread id it did report is lost and the continue starts fresh with NO_SESSION_NOTE.
 - Decisions an interrupted or malformed attempt wrote to its own evidence dir are never appended: its
   evidence stage never runs. CONTINUE_DIRECTIVE asks the session to rewrite decisions.json complete in the
   new dir; the resume after a malformed report relies on the same rule in the build prompt.
+
+## Deferred from arc-1 feedback (2026-09-26)
+
+- Backends (items 5, 19, 22, 24):
+  - No arc-private Claude config dir. Claude Code 2.1.283 writes `.credentials.json` by temp file and
+    rename, so a symlink to the operator's file would be replaced by a private copy at the first OAuth
+    refresh, and the rotated refresh token would leave the operator's own login dead. Calls keep the
+    operator's `CLAUDE_CONFIG_DIR`; context is cut by flags and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` instead
+    (backends/argv.ts). If an isolated dir is still wanted: a long-lived `claude setup-token` token the
+    operator stores for the executor, passed as `CLAUDE_CODE_OAUTH_TOKEN`, never refreshed by the CLI.
+  - The logged-in account's email still reaches every Claude session in a user-context block; no flag
+    removes it.
+  - Claude effort is no longer inherited from the operator's user settings (`--setting-sources` excludes
+    `user`; this host's settings set `effortLevel: high` and `alwaysThinkingEnabled`), so Claude calls run
+    at the CLI's default effort. Claude triples carry `effort: 'default'` and the argv has no effort flag;
+    `claude --effort <low|medium|high|xhigh|max>` exists if a seat should pin one.
+  - reads.json is audit only. Binding what a judgment read into the approval fingerprint (and handing a
+    later round its predecessor's reads) is the follow-up.
+  - A cancelled command (a lane paused or stopped mid-run) still records verdict `process-fault` in
+    result.json; lanes read the reason from cancel.json (`cancelledFor`). Backend calls record
+    `cancelled{reason}` and `verdictOf` reads that.
+  - Arc 1's all-`usage-unavailable` meter was not reproduced: the reader read the current result shape
+    (captured 2026-09-26, 2.1.283, plain `json` and `stream-json` alike) as `known`, as did this host's
+    probe runs. The arc's own invocation dirs were not available; the new captures pin the shape, and
+    `status.spend` now carries turns and cost, so a recurrence shows at once.

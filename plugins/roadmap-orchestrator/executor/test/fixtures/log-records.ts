@@ -39,7 +39,7 @@ export const spawnLost = (op: OpId): LogRecord =>
   ({ type: 'done', op, kind: 'proc.spawn', outcome: { kind: 'lost', treeEffects: false }, recoveredBy: 'reconciled' });
 
 export function meter(inv: InvocationId, role: Role, input: number, output: number, cacheRead: number | null): LogRecord {
-  return { type: 'fact', fact: { kind: 'meter', inv, role, tier: 'med', routingRev: REV, unit: { unit: U1, attempt: 1 }, usage: { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: null } } };
+  return { type: 'fact', fact: { kind: 'meter', inv, routingRev: REV, subject: { type: 'seat', role, tier: 'med', unit: U1, attempt: 1 }, usage: { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: null, turns: null, costUsd: null } } };
 }
 
 export const inv1 = (seq: number, ordinal = 1): InvocationId => invocationId(opId(ARC, seq), ordinal);

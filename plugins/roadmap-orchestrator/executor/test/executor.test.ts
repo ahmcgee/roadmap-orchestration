@@ -271,8 +271,8 @@ test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the s
   const published = events.filter((e) => e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published');
   assert.equal(published.length, 1);
   assert.deepEqual(parentsOf(r.repo, git(r.repo, 'rev-parse', 'main')), [base, git(r.repo, 'rev-parse', `refs/heads/roadmap/${r.arc}/u1`)]);
-  // Smokes are metered with no unit; the build invocation has exactly one fact.
-  const usage = facts(r).filter((f) => (f.kind === 'meter' || f.kind === 'usage-unavailable') && f.role === 'build' && f.unit !== null);
+  // Smokes are charged to their backend, not a seat; the build invocation has exactly one fact.
+  const usage = facts(r).filter((f) => (f.kind === 'meter' || f.kind === 'usage-unavailable') && f.subject.type === 'seat' && f.subject.role === 'build');
   assert.equal(usage.length, 1, 'one usage fact for the adopted build');
   assert.deepEqual(started(r), [1, 2]);
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));

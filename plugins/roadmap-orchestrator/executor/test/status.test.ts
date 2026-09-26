@@ -66,7 +66,7 @@ describe('status.subset', () => {
       units: [],
       needsUser: [],
       commands: { pending: [], receipts: [] },
-      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] } },
+      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, bySmoke: [] },
       host: { containment: { mode: null, guarantee: SESSION_GUARANTEE } },
       parkedBackends: [],
       rejection: null,
@@ -82,10 +82,11 @@ describe('status.subset', () => {
     assert.deepEqual(s.units, [{ unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null }]);
     assert.deepEqual(s.needsUser, []);
     assert.deepEqual(s.commands, { pending: [], receipts: [] });
-    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 2], ['gate', 1], ['planCheck', 2]], 'the smokes count by role too');
+    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 1], ['gate', 1], ['planCheck', 1]], 'the unit\'s own calls only');
+    assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
-    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 3], ['gpt-5.6-luna', 2]]);
+    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['gpt-5.6-luna', 1]]);
     assert.deepEqual(s.host.containment, { mode: 'session', guarantee: SESSION_GUARANTEE });
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
     assert.deepEqual(s.parkedBackends, []);

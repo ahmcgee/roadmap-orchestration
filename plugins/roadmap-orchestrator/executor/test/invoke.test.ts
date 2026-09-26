@@ -105,7 +105,9 @@ test('invoke.cancel', T, async () => {
   assert.equal(outcome.kind, 'result');
   assert.equal(files.read('cancel.json')?.reason, 'pause');
   assert.equal(files.read('exit.json')?.cause, 'cancel');
-  assert.deepEqual(summaryOf(r.runDir), { type: 'backend', outcome: 'process-fault' });
+  assert.deepEqual(summaryOf(r.runDir), { type: 'backend', outcome: 'cancelled' });
+  const result = files.read('result.json');
+  assert.deepEqual(result?.type === 'backend' ? result.outcome : null, { kind: 'cancelled', reason: 'pause' }, 'an honest record: a pause, not a fault');
   const [kill] = intents(r.runDir, 'proc.kill');
   assert.ok(kill !== undefined && kill.kind === 'proc.kill');
   assert.deepEqual(kill.expect, { inv, scope: 'invocation', reason: 'pause' });
@@ -191,7 +193,7 @@ for (const { boundary, label } of killCells) {
     const spawns = spawnDones(r.runDir);
     assert.equal(spawns.length, 1);
     assert.ok(want.spawn.includes(spawns[0]!.recoveredBy), `spawn recoveredBy ${spawns[0]!.recoveredBy}`);
-    assert.deepEqual(summaryOf(r.runDir), { type: 'backend', outcome: 'process-fault' });
+    assert.deepEqual(summaryOf(r.runDir), { type: 'backend', outcome: 'cancelled' });
     const inv = invocationId(opId(arcId(r.arc), 1), 1);
     const files = runnerFiles(invocationDir(absPath(r.runDir), inv), inv);
     assert.equal(files.read('exit.json')?.cause, 'cancel');

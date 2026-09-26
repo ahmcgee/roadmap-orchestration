@@ -8,7 +8,7 @@ import type {
 } from './events.ts';
 import type { ArcId, CommandId, InvocationId, NeedsUserId, OpId, OpKey, UnitId } from './ids.ts';
 import type {
-  ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
+  CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
 import type { UnitState } from './state.ts';
@@ -129,7 +129,8 @@ export interface RunnerFiles {
 // ---------------------------------------------------------------------------------------------------
 // Adapter: pure over the invocation's files, run only after exit.json (workload quiescent). Re-runnable.
 
-export type AdapterInput = Readonly<{ launch: LaunchFile; exit: ExitFile; stdoutPath: AbsPath; stderrPath: AbsPath }>;
+/** `cancel`: cancel.json when the executor wrote one (it does before cancelling the workload), else null. */
+export type AdapterInput = Readonly<{ launch: LaunchFile; exit: ExitFile; cancel: CancelFile | null; stdoutPath: AbsPath; stderrPath: AbsPath }>;
 export type Adapter = (input: AdapterInput) => ResultFile;
 
 // ---------------------------------------------------------------------------------------------------

@@ -438,12 +438,17 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
   ];
   for (const text of written) for (const model of MODEL_IDS) assert.ok(!text.includes(model), `${model} in ${text.slice(0, 120)}`);
   assert.ok(facts(run).some((f) => f.kind === 'dispatch' && f.record.riskFloor === 'high'), 'the raised dispatch fact is among them');
-  const launches = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend').map((i) => launchOf(run, i));
-  assert.ok(launches.length >= 3);
-  for (const l of launches) {
+  const backendSpawns = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend');
+  assert.ok(backendSpawns.length >= 3);
+  assert.ok(backendSpawns.some((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role !== 'build'), 'a judgment call among them');
+  for (const i of backendSpawns) {
+    const l = launchOf(run, i);
     assert.ok(MODEL_IDS.some((m) => l.argv.includes(m)), 'the backend argv names its model');
     assert.ok(!MODEL_IDS.some((m) => JSON.stringify({ ...l, argv: [] }).includes(m)), 'only inside argv');
-    assert.equal(l.env['RESOURCE_OWNER'], `${run.ctx.plan.arc}/${U1}`);
-    assert.deepEqual(Object.keys(l.env).sort(), ['HOME', 'PATH', 'RESOURCE_OWNER'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined)).sort());
+    // Only the implementer gets the owner label: a judgment holds no resource.
+    const build = i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build';
+    assert.equal(l.env['RESOURCE_OWNER'], build ? `${run.ctx.plan.arc}/${U1}` : undefined);
+    const base = ['HOME', 'PATH', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined));
+    assert.deepEqual(Object.keys(l.env).sort(), (build ? [...base, 'RESOURCE_OWNER'] : base).sort());
   }
 });

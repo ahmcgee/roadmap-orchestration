@@ -134,10 +134,11 @@ describe('smoke', () => {
     assert.equal(smokeIntents(events).length, 1);
   });
 
-  it('backendEnv passes PATH, HOME and the CLIs\' config dirs, nothing else, and requires PATH and HOME', () => {
-    const host = { PATH: '/bin', HOME: '/home/u', CODEX_HOME: '/c', CLAUDE_CONFIG_DIR: '/k', CLAUDE_CODE_SESSION_ID: 'x', OTHER: 'y' };
-    assert.deepEqual(backendEnv(host), { PATH: '/bin', HOME: '/home/u', CODEX_HOME: '/c', CLAUDE_CONFIG_DIR: '/k' });
-    assert.deepEqual(backendEnv({ PATH: '/bin', HOME: '/home/u' }), { PATH: '/bin', HOME: '/home/u' });
+  it('backendEnv passes PATH, HOME and the CLIs\' config dirs, turns auto-memory off, nothing else, and requires PATH and HOME', () => {
+    const host = { PATH: '/bin', HOME: '/home/u', CODEX_HOME: '/c', CLAUDE_CONFIG_DIR: '/k', CLAUDE_CODE_SESSION_ID: 'x', OTHER: 'y', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0' };
+    const off = { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
+    assert.deepEqual(backendEnv(host), { PATH: '/bin', HOME: '/home/u', CODEX_HOME: '/c', CLAUDE_CONFIG_DIR: '/k', ...off });
+    assert.deepEqual(backendEnv({ PATH: '/bin', HOME: '/home/u' }), { PATH: '/bin', HOME: '/home/u', ...off });
     assert.throws(() => backendEnv({ PATH: '/bin' }), /HOME/);
   });
 });

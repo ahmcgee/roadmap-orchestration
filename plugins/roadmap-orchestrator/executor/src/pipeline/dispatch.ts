@@ -201,7 +201,8 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
-  const env = { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan.arc, spec.unit) };
+  // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none.
+  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan.arc, spec.unit) } : backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
@@ -247,7 +248,10 @@ function backendParkNeedsUser(parent: StageParent, backend: Backend, park: Backe
   };
 }
 
-/** The pause or stop that cancelled an invocation, if its runner ended it for one. */
+/**
+ * The pause or stop that cancelled a command invocation (a lane), if its runner ended it for one. A backend
+ * call's result.json records the same as outcome `cancelled`, which `verdictOf` reads instead.
+ */
 export function cancelledFor(invDir: AbsPath, inv: InvocationId): 'pause' | 'stop' | null {
   const files = runnerFiles(invDir, inv);
   const exit = files.read('exit.json');
@@ -258,14 +262,14 @@ export function cancelledFor(invDir: AbsPath, inv: InvocationId): 'pause' | 'sto
 }
 
 /**
- * Reads a finished call. Order: an interruption (pause or stop) first, then the usage-limit/capacity park
- * (outcome != success with such an error: `backend-park` fact, arc-wide), then the outcome itself.
+ * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
+ * usage-limit/capacity park (outcome != success with such an error: `backend-park` fact, arc-wide), then the
+ * outcome itself.
  */
 export function verdictOf(ctx: StageContext, parent: StageParent, called: BackendCallOutcome): BackendVerdict {
   if (called.kind === 'lost') return { kind: 'process-fault', detail: `${called.inv} was lost with its runner` };
-  const interrupted = cancelledFor(called.invDir, called.inv);
-  if (interrupted !== null) return { kind: 'interrupted', reason: interrupted, needsUser: null };
   const { result } = called;
+  if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, needsUser: null };
   if (result.outcome.kind !== 'success') {
     const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {

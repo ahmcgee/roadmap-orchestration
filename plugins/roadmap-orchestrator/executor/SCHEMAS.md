@@ -68,7 +68,8 @@ per-unit route layers.
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
 is a probe process fault. A probe and a teardown get the unit's owner label `<arc>/<unit>` in `RESOURCE_OWNER`
-(step 10); a residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
+(step 10), and so does an implementer call (a build runs the unit's tooling); a judgment call and a smoke do
+not (they hold no resource). A residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
 filesystem, git or specs are startup rows.
 
 ## Startup rejection table
@@ -144,8 +145,8 @@ in the line belongs to `arc`.
 |---|---|
 | `tail-discarded` | `offset, length, sha256` (fragment file `events.torn.<offset>.<sha256[0:8]>`) |
 | `containment-mode` | `mode: session\|cgroup` |
-| `meter` | `inv, role, tier, routingRev, unit: {unit, attempt}\|null, usage: TokenUsage`; `tier` is the seat's risk tier, so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
-| `usage-unavailable` | `inv, role, tier, routingRev, unit: {unit, attempt}\|null, reason: no-result\|absent\|malformed` |
+| `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage` |
+| `usage-unavailable` | `inv, routingRev, subject: MeterSubject, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
 | `backend-park` | `backend, class: usage-limit\|capacity, inv`: a failed invocation whose backend reported such an error parks that backend arc-wide until `resume --backend` (lead ruling, 11b) |
@@ -271,7 +272,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 
 | File | Type / reader | Writer, when | Fields |
 |---|---|---|---|
-| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv, cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
+| `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery, at` |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
@@ -284,19 +285,39 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
-exitCode|null, expectedExit, verdict: pass|fail|process-fault}` (`exitCode: null` ⇒ `process-fault`).
-`outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail}`;
-`usage = known{tokens: {inputTokens, outputTokens, cacheReadTokens|null, cacheWriteTokens|null}} |
-unavailable{reason}`; `backendErrors[].class = usage-limit | capacity | platform | backend`, classified only from
+exitCode|null, expectedExit, verdict: pass|fail|process-fault}` (`exitCode: null` ⇒ `process-fault`; a
+cancelled command is a `process-fault` verdict, and lanes read cancel.json for the reason).
+`outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
+cancelled{reason: pause|stop}`; `usage = known{tokens: TokenUsage} | unavailable{reason}` with `TokenUsage =
+{inputTokens, outputTokens, cacheReadTokens|null, cacheWriteTokens|null, turns|null, costUsd|null}` (`turns`
+and `costUsd` are the CLI's own `num_turns` and `total_cost_usd`, list price: Claude reports both, Codex
+neither); `backendErrors[].class = usage-limit | capacity | platform | backend`, classified only from
 `turn.failed` / CLI error events. A judgment result's `session` is its assigned id; an implementer's may be
 `null` (died before reporting one).
 
-**Precedence** (`classifyTerminal(exit, output, schemaValid): TerminalOutcome`, pure):
+**Precedence** (`classifyTerminal(exit, cancel, output, schemaValid): TerminalOutcome`, pure; `cancel` is
+cancel.json or null):
 
-1. cause `deadline | cancel | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
-2. non-zero exit with schema-valid output → `malformed`; non-zero exit without it → `process-fault`;
-3. exit 0 without schema-valid output → `malformed`;
-4. exit 0 with schema-valid output → `success{value}`.
+1. cause `cancel` → `cancelled{reason}` (cancel.json's `pause | stop`; any other cancel.json is a loud error),
+   whatever the output: an interruption, not a failure of the call;
+2. cause `deadline | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
+3. non-zero exit with schema-valid output → `malformed`; non-zero exit without it → `process-fault`;
+4. exit 0 without schema-valid output → `malformed`;
+5. exit 0 with schema-valid output → `success{value}`.
+
+`verdictOf` (`src/pipeline/dispatch.ts`) reads a backend call's interruption from `outcome: cancelled` alone.
+
+**`reads.json`** (`ReadsFile` / `readsFile`, written by the adapter beside `result.json` for every Claude call,
+write-once by the same rule and before it): `{v, arc, op, inv, reads: ToolRead[]}`, `ToolRead =
+Read{path} | Grep{pattern, path|null} | Glob{pattern, path|null}`, the session's read-only tool calls in call
+order, from the tool_use blocks of its stream-json stdout (`path: null`: the session's cwd). A call whose
+required argument is not a string is left out (the CLI refuses it unrun). Audit only: the approval fingerprint
+does not bind it.
+
+**Claude stdout** is `--output-format stream-json --verbose` JSONL (`src/backends/argv.ts`): the reader takes
+the last `type: "result"` event, the object `--output-format json` prints alone. Both CLIs' JSONL is read by
+`jsonLines` (`src/backends/jsonl.ts`): complete lines only, so the unterminated fragment a killed workload
+leaves is dropped and the events before it are kept; a malformed complete line is malformed output.
 
 `refusal` is the adapter's reading of a backend stop reason (step 4). Commands: `classifyCommand(exit,
 expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `fail`.
@@ -472,7 +493,8 @@ items and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `run.sta
 holds the arc by the executor's rule (`holdsArc`: arc-wide, naming the next unit, or no unit left to run), so a unit-scoped
 park while later units run is `running` (step 14b);
 `commands{pending[{id, type}], receipts[]}` (the last 10 terminal receipts); `spend{byRole, byModel{models,
-unresolvedRevs}}`; `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with
+unresolvedRevs}, bySmoke}` (every total: `calls, input, output, cacheRead, cacheWrite, turns, costUsd,
+unavailable`; `bySmoke` per backend and revision, in no role or model total); `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with
 `readJournal` (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left
 out). `byModel` is the only place a model id appears: seat totals (`meterOf(...).bySeat`) looked up in each
 revision's table, re-resolved from `start.json`'s plan and repo config under every built-in profile.
@@ -517,7 +539,10 @@ Where the plan left a shape open. Each is the simplest shape that keeps illegal 
 8. **`cancel.json.reason` is `pause | stop | recovery`**: deadline kills are the runner's own; cause
    `recovery-kill` in `exit.json` is a cancel with reason `recovery`.
 9. **Usage split**: `meter` facts carry known token usage; `usage-unavailable` facts carry the reason. One fact
-   per inv either way. `unit` is `{unit, attempt} | null` (null for smokes). Both carry the seat's `tier` (13b).
+   per inv either way, written before the spawn's done. `subject: MeterSubject = seat{role, tier, unit,
+   attempt} | smoke{backend}`: a unit call names its seat (`tier` is the seat's risk tier, so `(role, tier,
+   routingRev)` names one seat and a by-model view is exact; 13b); a start-up smoke is charged to its backend,
+   never to a seat, so seat spend is the units' own (arc-1 feedback item 24d).
 10. **`dispatch` fact** holds the `DispatchRecord`, so the pin is in the WAL.
 11. **`plan.json` gains `resources: ResourceDecl[]`** (probe + teardown per named resource) and the probe exit
     contract `0/10/11`: the startup row "resource request unknown" and the reservation cycle need declarations

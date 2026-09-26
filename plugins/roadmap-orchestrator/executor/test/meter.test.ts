@@ -21,37 +21,54 @@ function factEvent(fact: Fact): Event {
   return { v: 1, seq, prev: null, at: '2026-09-25T12:00:00.000Z', arc: ARC, type: 'fact', fact } as Event;
 }
 const inv = (n: number) => invocationId(opId(ARC, n), 1);
-const tokens = (input: number, output: number, cacheRead: number | null = null, cacheWrite: number | null = null): TokenUsage =>
-  ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
+const tokens = (input: number, output: number, cacheRead: number | null = null, cacheWrite: number | null = null, turns: number | null = null, costUsd: number | null = null): TokenUsage =>
+  ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, turns, costUsd });
+const seat = (role: 'build' | 'gate' | 'planCheck', tier: 'low' | 'med' | 'high', unit: typeof U1, attempt: number) => ({ type: 'seat', role, tier, unit, attempt }) as const;
 
 describe('meter', () => {
-  it('spend.by-role: totals per role and routing revision, and per unit; smokes count only by role; never a model', () => {
+  it('spend.by-role: totals per role and routing revision, per seat and per unit, with turns and cost; never a model', () => {
     const log = [
-      factEvent({ kind: 'meter', inv: inv(1), role: 'build', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 2 }, usage: tokens(100, 10, 50, 5) }),
-      factEvent({ kind: 'meter', inv: inv(2), role: 'build', tier: 'high', routingRev: REV_A, unit: { unit: U2, attempt: 2 }, usage: tokens(200, 20) }),
-      factEvent({ kind: 'usage-unavailable', inv: inv(3), role: 'build', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 5 }, reason: 'no-result' }),
-      factEvent({ kind: 'meter', inv: inv(4), role: 'gate', tier: 'med', routingRev: REV_A, unit: { unit: U1, attempt: 7 }, usage: tokens(7, 3, 1, null) }),
-      factEvent({ kind: 'meter', inv: inv(5), role: 'planCheck', tier: 'low', routingRev: REV_A, unit: null, usage: tokens(1, 1) }),
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: REV_A, subject: seat('build', 'med', U1, 2), usage: tokens(100, 10, 50, 5) }),
+      factEvent({ kind: 'meter', inv: inv(2), routingRev: REV_A, subject: seat('build', 'high', U2, 2), usage: tokens(200, 20) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(3), routingRev: REV_A, subject: seat('build', 'med', U1, 5), reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(4), routingRev: REV_A, subject: seat('gate', 'med', U1, 7), usage: tokens(7, 3, 1, null, 12, 0.5) }),
+      factEvent({ kind: 'meter', inv: inv(5), routingRev: REV_A, subject: seat('gate', 'med', U2, 1), usage: tokens(1, 1, 0, 0, 3, 0.25) }),
       factEvent({ kind: 'containment-mode', mode: 'session' }),
     ];
     const m = meterOf(log);
+    const zero = { turns: 0, costUsd: 0 };
     assert.deepEqual(m.byRole, [
-      { role: 'build', routingRev: REV_A, calls: 3, input: 300, output: 30, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
-      { role: 'gate', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, unavailable: 0 },
-      { role: 'planCheck', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { role: 'build', routingRev: REV_A, calls: 3, input: 300, output: 30, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
+      { role: 'gate', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
     ]);
     assert.deepEqual(m.bySeat, [
-      { role: 'build', tier: 'high', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
-      { role: 'build', tier: 'med', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
-      { role: 'gate', tier: 'med', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, unavailable: 0 },
-      { role: 'planCheck', tier: 'low', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { role: 'build', tier: 'high', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, ...zero, unavailable: 0 },
+      { role: 'build', tier: 'med', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
+      { role: 'gate', tier: 'med', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
     ]);
     assert.deepEqual(m.byUnit, [
-      { unit: U1, role: 'build', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, unavailable: 1 },
-      { unit: U1, role: 'gate', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, unavailable: 0 },
-      { unit: U2, role: 'build', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { unit: U1, role: 'build', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
+      { unit: U1, role: 'gate', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, turns: 12, costUsd: 0.5, unavailable: 0 },
+      { unit: U2, role: 'build', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, ...zero, unavailable: 0 },
+      { unit: U2, role: 'gate', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 0.25, unavailable: 0 },
     ]);
+    assert.deepEqual(m.bySmoke, []);
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
+  });
+
+  it('spend.smoke-apart: a smoke is charged to its backend, in no role, seat or unit total', () => {
+    const log = [
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: REV_A, subject: { type: 'smoke', backend: 'claude' }, usage: tokens(9, 9, 0, 100, 2, 0.1) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(2), routingRev: REV_A, subject: { type: 'smoke', backend: 'codex' }, reason: 'absent' }),
+      factEvent({ kind: 'meter', inv: inv(3), routingRev: REV_A, subject: seat('planCheck', 'low', U1, 1), usage: tokens(5, 5) }),
+    ];
+    const m = meterOf(log);
+    assert.deepEqual(m.bySmoke, [
+      { backend: 'claude', routingRev: REV_A, calls: 1, input: 9, output: 9, cacheRead: 0, cacheWrite: 100, turns: 2, costUsd: 0.1, unavailable: 0 },
+      { backend: 'codex', routingRev: REV_A, calls: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 1 },
+    ]);
+    assert.deepEqual(m.byRole.map((t) => [t.role, t.calls, t.input]), [['planCheck', 1, 5]]);
+    assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['planCheck', 'low', 1]]);
   });
 
   it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {
@@ -60,11 +77,11 @@ describe('meter', () => {
     const claudeOnly = table('claude-only');
     const tables = new Map<RoutingRev, typeof def.table>([[def.rev, def.table], [claudeOnly.rev, claudeOnly.table]]);
     const t = (role: 'build' | 'gate', tier: 'low' | 'med' | 'high', rev: RoutingRev, input: number) =>
-      ({ role, tier, routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 });
+      ({ role, tier, routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     assert.deepEqual(byModel([t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 3)], tables), [
-      { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
-      { model: 'claude-opus-5-5', calls: 2, input: 17, output: 2, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
-      { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, unavailable: 0 },
+      { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
+      { model: 'claude-opus-5-5', calls: 2, input: 17, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
+      { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
     ]);
     assert.throws(() => byModel([t('gate', 'low', REV_A, 1)], tables), /no routing table for revision aaaaaaaaaaaaaaaa/);
   });

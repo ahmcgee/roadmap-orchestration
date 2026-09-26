@@ -135,9 +135,12 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
   };
 }
 
-/** Spend per seat: `known` invocations with token usage, `unavailable` ones without. Never a model id. */
+/** Whom a meter total charges: a role's unit calls, or a backend's start-up smokes. */
+export type MeterCharge = Readonly<{ type: 'role'; role: Role }> | Readonly<{ type: 'smoke'; backend: Backend }>;
+
+/** Spend per role (or smoke backend) and revision: `known` invocations with token usage, `unavailable` ones without. Never a model id. */
 export type MeterTotal = Readonly<{
-  role: Role;
+  charge: MeterCharge;
   routingRev: RoutingRev;
   known: number;
   unavailable: number;
@@ -146,6 +149,8 @@ export type MeterTotal = Readonly<{
   /** Sums of the reported figures; a backend that reports null for a figure contributes nothing. */
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  turns: number;
+  costUsd: number;
 }>;
 
 /** The fold's result, and the content of the `state.json` cache. Sets are sorted arrays. */
@@ -328,9 +333,10 @@ export class Fold implements JournalView {
         // One usage fact per invocation, so a replayed or duplicated report can never count twice.
         if (this.#metered.has(f.inv)) fail(`second usage fact for ${f.inv}`);
         this.#metered.add(f.inv);
-        const key = `${f.role} ${f.routingRev}`;
+        const charge: MeterCharge = f.subject.type === 'seat' ? { type: 'role', role: f.subject.role } : { type: 'smoke', backend: f.subject.backend };
+        const key = `${charge.type === 'role' ? charge.role : `smoke:${charge.backend}`} ${f.routingRev}`;
         const m = this.#meter.get(key) ?? {
-          role: f.role, routingRev: f.routingRev, known: 0, unavailable: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+          charge, routingRev: f.routingRev, known: 0, unavailable: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0,
         };
         if (f.kind === 'meter') {
           m.known += 1;
@@ -338,6 +344,8 @@ export class Fold implements JournalView {
           m.outputTokens += f.usage.outputTokens;
           m.cacheReadTokens += f.usage.cacheReadTokens ?? 0;
           m.cacheWriteTokens += f.usage.cacheWriteTokens ?? 0;
+          m.turns += f.usage.turns ?? 0;
+          m.costUsd += f.usage.costUsd ?? 0;
         } else {
           m.unavailable += 1;
         }
@@ -453,6 +461,8 @@ export class Fold implements JournalView {
       out[`meter ${key} outputTokens`] = m.outputTokens;
       out[`meter ${key} cacheReadTokens`] = m.cacheReadTokens;
       out[`meter ${key} cacheWriteTokens`] = m.cacheWriteTokens;
+      out[`meter ${key} turns`] = m.turns;
+      out[`meter ${key} costUsd`] = m.costUsd;
     }
     return out;
   }
