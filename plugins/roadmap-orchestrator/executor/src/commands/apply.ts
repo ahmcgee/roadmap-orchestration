@@ -1,0 +1,296 @@
+// The `command.apply` op (plan "File mutations", R10; DESIGN §2.3): one op per command, done only when its
+// terminal receipt exists. `applied` names the op and the postconditions it verified; `accepted` (written
+// at pickup, queue.ts) is never done.
+//
+//   intent{command, commandSha256} → effect → receipt → done{applied{receiptSha256} | rejected{reason}}
+//
+// Every effect checks its postcondition before acting, so running it again (recovery after a crash
+// between the effect and the receipt) applies only what is missing:
+//
+//   pause    `paused{target}` fact: the durable marker the driver consults (it cancels the unit's live
+//            invocation; step 13b). Applied immediately (control).
+//   stop     `stop-requested` fact. Control.
+//   ack      `needs-user/<id>.ack.json` (write-once, naming this command), then a `needs-user-acked` fact
+//            the fold uses to tell open items from acknowledged ones. Rejected for an unknown id, an id
+//            another command already acknowledged, or a choice the item does not offer. Control.
+//   resume   unit | all: a `resumed` fact that clears the pause and the hold (the unit re-runs its stage
+//            as a new, uncharged attempt). backend: that backend's smoke alone, then `resumed{backend}`,
+//            which clears its arc-wide park; a failed smoke is rejected. Mutation (safe points only).
+//   sweep    re-drives resources an earlier sweep left reserved or cleaning, then, per undispositioned
+//            host residue (in recorded order): take the resource under the sweep holder (reserve when it is
+//            free here; reclaim when it is this arc's own cleanup-failed resource) → the recorded teardown →
+//            release and the residue's `cleaned` disposition. A failed teardown leaves the resource
+//            cleaning under the sweep and the residue undisposed (a sweep records no failure), and the
+//            receipt says so. A resource another holder has is left alone. Mutation.
+//   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
+//
+// Control commands wait only for an open `integration.ff` (the publication critical section); mutations
+// wait for a safe point: no open stage-level intent.
+import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
+import { crashPoint } from '../core/crash.ts';
+import { canonicalJson } from '../core/json.ts';
+import { exclusiveCreate } from '../core/fsx.ts';
+import { type CommandId, type ResourceName, invocationId, opKey } from '../core/ids.ts';
+import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey } from '../core/records.ts';
+import { isoTimeOf } from '../core/values.ts';
+import { SCHEMA_VERSION } from '../core/version.ts';
+import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
+import { needsUserAckPath, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
+import { type SmokeRouting, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
+import type { ResidueRecipe } from '../recover/residue.ts';
+import {
+  type CleanupResult, type Reservation, type ResourceContext, type SweepHolder, cleanup, entryOf, finishCleanup, reclaimForSweep,
+  reserveForSweep, resourceTable,
+} from '../resources/reserve.ts';
+import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
+
+/** Everything an effect may touch: the reservation cycle's context, plus what a backend smoke needs. */
+export type CommandContext = ResourceContext & Readonly<{
+  /** The backend workload environment (`backendEnv(process.env)`), for `resume --backend`'s smoke. */
+  hostEnv: Readonly<Record<string, string>>;
+  routing: SmokeRouting;
+}>;
+
+export type CommandOutcome = OpOutcome['command.apply'];
+
+/** What an effect established: the postconditions it verified, or why the command is refused. */
+type Effect = Readonly<{ kind: 'applied'; verified: readonly string[] }> | Readonly<{ kind: 'rejected'; reason: string }>;
+
+const keyOf = (id: CommandId) => opKey(`command:${id}`);
+export const parentOf = (id: CommandId): Parent => ({ type: 'command', command: id });
+
+/** The command's op, if one was begun. */
+function opOf(ctx: CommandContext, id: CommandId): IntentOf<'command.apply'> | null {
+  return ctx.journal.view.opsOf('command.apply').find((i) => i.expect.command === id) ?? null;
+}
+
+/**
+ * Applies one command through its op. A command whose op is already done is a no-op returning the recorded
+ * outcome (re-delivery is idempotent); an open one is recovery's (`commandReconciler`) and throws here.
+ */
+export async function applyCommand(ctx: CommandContext, command: CommandFile): Promise<CommandOutcome> {
+  const existing = opOf(ctx, command.id);
+  if (existing !== null) {
+    const done = ctx.journal.view.doneOf(existing.op);
+    if (done === null || done.kind !== 'command.apply') throw new Error(`command ${command.id}: its op ${existing.op} is still open; recovery applies it`);
+    return done.outcome;
+  }
+  const { sha256 } = readCommand(ctx.runDir, command.id, ctx.journal.view.arc);
+  const { op } = ctx.journal.begin({
+    kind: 'command.apply',
+    key: keyOf(command.id),
+    parent: parentOf(command.id),
+    deadlineAt: null,
+    body: () => ({ expect: { command: command.id, commandSha256: sha256 }, post: null }),
+  });
+  crashPoint('command.apply.before-effect');
+  const outcome = await finish(ctx, ctx.journal.view.latestIntent(op) as IntentOf<'command.apply'>, command);
+  ctx.journal.done(op, 'command.apply', outcome, null);
+  return outcome;
+}
+
+/**
+ * Effect (only what is missing), then the terminal receipt; an existing terminal receipt decides alone.
+ * The normal path and recovery (src/recover/command.ts) both end an op here.
+ */
+export async function finish(ctx: CommandContext, intent: IntentOf<'command.apply'>, command: CommandFile): Promise<CommandOutcome> {
+  const id = command.id;
+  const applied = readReceipt(ctx.runDir, id, 'applied');
+  if (applied !== null) {
+    if (applied.state !== 'applied' || applied.op !== intent.op) throw new Error(`command ${id}: its applied receipt names another op than ${intent.op}`);
+    return { kind: 'applied', receiptSha256: receiptSha256(ctx.runDir, id, 'applied') };
+  }
+  const rejected = readReceipt(ctx.runDir, id, 'rejected');
+  if (rejected !== null && rejected.state === 'rejected') return { kind: 'rejected', reason: rejected.reason };
+
+  const effect = await effectOf(ctx, command);
+  crashPoint('command.apply.after-effect');
+  const at = isoTimeOf(new Date());
+  if (effect.kind === 'rejected') {
+    writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'rejected', at, reason: effect.reason });
+    return { kind: 'rejected', reason: effect.reason };
+  }
+  const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified: effect.verified });
+  crashPoint('command.apply.after-receipt');
+  return { kind: 'applied', receiptSha256: sha };
+}
+
+async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effect> {
+  const body: CommandBody = command.body;
+  switch (body.type) {
+    case 'pause':
+      return pause(ctx, command.id, body.target);
+    case 'stop': {
+      if (ctx.journal.view.control().stop === null) ctx.journal.fact({ kind: 'stop-requested', command: command.id });
+      return { kind: 'applied', verified: [`stop requested (by ${ctx.journal.view.control().stop})`] };
+    }
+    case 'ack':
+      return ack(ctx, command.id, body);
+    case 'resume':
+      return resume(ctx, command.id, body.target);
+    case 'sweep':
+      return sweep(ctx, command.id, body.resource);
+  }
+}
+
+function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
+  const view = ctx.journal.view;
+  if (target.type === 'unit' && !ctx.plan.units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
+  const c = view.control();
+  const paused = c.pausedAll || (target.type === 'unit' && c.pausedUnits.includes(target.unit));
+  if (!paused) ctx.journal.fact({ kind: 'paused', command: id, target });
+  return { kind: 'applied', verified: [target.type === 'all' ? 'every unit paused' : `unit ${target.unit} paused`] };
+}
+
+function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { type: 'ack' }>): Effect {
+  const view = ctx.journal.view;
+  const item = readNeedsUser(ctx.runDir, body.needsUser);
+  if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
+  const file = readNeedsUserAck(ctx.runDir, body.needsUser);
+  const fact = view.ackOf(body.needsUser);
+  const by = file?.command ?? fact?.command ?? null;
+  if (by !== null && by !== id) return { kind: 'rejected', reason: `needs-user ${body.needsUser} is already acknowledged by ${by}` };
+  if (body.choice !== null && !item.options.some((o) => o.id === body.choice)) {
+    return { kind: 'rejected', reason: `needs-user ${body.needsUser} offers no option ${body.choice} (options: ${item.options.map((o) => o.id).join(', ') || 'none'})` };
+  }
+  if (file === null) {
+    const record: NeedsUserAck = { v: SCHEMA_VERSION, id: body.needsUser, command: id, choice: body.choice, at: isoTimeOf(new Date()) };
+    exclusiveCreate(needsUserAckPath(ctx.runDir, body.needsUser), canonicalJson(record));
+  }
+  if (fact === null) ctx.journal.fact({ kind: 'needs-user-acked', id: body.needsUser, command: id, choice: body.choice });
+  return { kind: 'applied', verified: [`needs-user/${body.needsUser}.ack.json written by ${id}`, `needs-user ${body.needsUser} acknowledged in the log`] };
+}
+
+async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
+  const view = ctx.journal.view;
+  switch (target.type) {
+    case 'unit': {
+      if (!ctx.plan.units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
+      if (view.control().pausedAll) return { kind: 'rejected', reason: 'the whole arc is paused; `resume` without a unit clears it' };
+      const done = !view.control().pausedUnits.includes(target.unit) && view.unit(target.unit).status !== 'held';
+      if (!done) ctx.journal.fact({ kind: 'resumed', command: id, target });
+      return { kind: 'applied', verified: [`unit ${target.unit} neither paused nor held`] };
+    }
+    case 'all': {
+      const c = view.control();
+      const done = !c.pausedAll && c.pausedUnits.length === 0 && ctx.plan.units.every((u) => view.unit(u.id).status !== 'held');
+      if (!done) ctx.journal.fact({ kind: 'resumed', command: id, target });
+      return { kind: 'applied', verified: ['no unit paused or held'] };
+    }
+    case 'backend': {
+      if (view.parkedBackends().includes(target.backend)) {
+        const report = await smokeBackends(ctx.routing, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, [target.backend]);
+        const failures = smokeRejections(report);
+        if (failures.length > 0) return { kind: 'rejected', reason: `smoke-failed: ${failures.map((f) => `${f.problem}: ${f.detail}`).join('; ')}` };
+        ctx.journal.fact({ kind: 'resumed', command: id, target });
+      }
+      return { kind: 'applied', verified: [`backend ${target.backend} not parked`] };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// sweep
+
+const keyText = (k: ResidueKey): string => `${k.arc}/${k.unit}/${k.inv}/${k.resource}`;
+const recipeOf = (r: ResidueEntry): ResidueRecipe => ({ teardown: r.teardown, label: r.label });
+
+/** The latest teardown invocation of `resource` (the one a cleanup just ran). */
+function lastTeardown(ctx: CommandContext, resource: ResourceName) {
+  const intent = [...ctx.journal.view.opsOf('proc.spawn')].reverse().find((i) => i.expect.subject.purpose === 'teardown' && i.expect.subject.resource === resource);
+  if (intent === undefined) throw new Error(`no teardown invocation of ${resource} after a sweep cleanup`);
+  return invocationId(intent.op, intent.ordinal);
+}
+
+/**
+ * The residue a sweep-held resource was being swept for: the first undisposed one of that resource (a
+ * sweep takes residues in recorded order and stops a resource at its first failure), or, when every one is
+ * disposed of already, the last recorded one (its teardown still releases the resource).
+ */
+function residueFor(hostResidues: readonly ResidueEntry[], open: readonly ResidueKey[], resource: ResourceName): ResidueEntry {
+  const same = hostResidues.filter((r) => r.key.resource === resource);
+  const pending = same.find((r) => open.some((k) => canonicalJson(k) === canonicalJson(r.key)));
+  const chosen = pending ?? same[same.length - 1];
+  if (chosen === undefined) throw new Error(`resource ${resource} is held by a sweep, but no host residue names it`);
+  return chosen;
+}
+
+async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | null): Promise<Effect> {
+  const parent = parentOf(id);
+  const holder: SweepHolder = { type: 'sweep', command: id };
+  const verified: string[] = [];
+  const hostResidues = (): ResidueEntry[] => readResidues(ctx.hostDir).flatMap((l) => (l.type === 'residue' ? [l as ResidueEntry] : []));
+  const wanted = (resource: ResourceName): boolean => only === null || resource === only;
+
+  const settle = async (r: ResidueEntry, result: CleanupResult<SweepHolder>): Promise<void> => {
+    if (result.kind === 'released') {
+      recordDisposition(ctx.hostDir, { type: 'disposition', key: r.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: lastTeardown(ctx, r.key.resource) } });
+      verified.push(`residue ${keyText(r.key)}: cleaned`);
+    } else {
+      verified.push(`residue ${keyText(r.key)}: teardown failed, left undisposed; ${r.key.resource} stays cleaning under the sweep`);
+    }
+  };
+
+  // 1. Resources a sweep (this one after a crash, or an earlier one whose teardown failed) left behind.
+  for (const [resource, entry] of resourceTable(ctx.journal.view)) {
+    const { status } = entry;
+    if (!wanted(resource) || entry.pending !== null || status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type !== 'sweep') continue;
+    if (status.state === 'running') throw new Error(`resource ${resource} is running under sweep ${status.holder.command}; a sweep never runs a workload`);
+    const r = residueFor(hostResidues(), undispositioned(ctx.hostDir), resource);
+    const recipes = new Map([[resource, recipeOf(r)]]);
+    const held = { holder: status.holder, resources: [resource], recipes } as const;
+    const result = status.state === 'reserved'
+      ? await cleanup(ctx, { ...held, state: 'reserved' } as Reservation<'reserved', SweepHolder>, parent)
+      : await finishCleanup(ctx, { ...held, state: 'cleaning' } as Reservation<'cleaning', SweepHolder>, parent);
+    if (undispositioned(ctx.hostDir).some((k) => canonicalJson(k) === canonicalJson(r.key))) await settle(r, result);
+    else if (result.kind === 'released') verified.push(`${resource} released by the sweep that held it`);
+  }
+
+  // 2. Every residue still undisposed, one at a time: at most one sweep reservation per resource name.
+  for (const key of undispositioned(ctx.hostDir)) {
+    if (!wanted(key.resource)) continue;
+    const r = hostResidues().find((x) => canonicalJson(x.key) === canonicalJson(key));
+    if (r === undefined) throw new Error(`undispositioned residue ${keyText(key)} has no residue record`);
+    const recipes = new Map([[key.resource, recipeOf(r)]]);
+    const { status } = entryOf(resourceTable(ctx.journal.view), key.resource);
+    // A residue of this arc: its resource is cleanup-failed here, and only the sweep takes it back.
+    if (key.arc === ctx.journal.view.arc && status.state === 'cleanup-failed') {
+      await settle(r, await finishCleanup(ctx, reclaimForSweep(ctx, holder, recipes, parent), parent));
+      continue;
+    }
+    const reserved = reserveForSweep(ctx, holder, recipes, parent);
+    if (reserved.state === 'refused') {
+      verified.push(`residue ${keyText(key)}: ${key.resource} is held, left undisposed`);
+      continue;
+    }
+    await settle(r, await cleanup(ctx, reserved, parent));
+  }
+  if (verified.length === 0) verified.push(only === null ? 'no undispositioned residue' : `no undispositioned residue of ${only}`);
+  return { kind: 'applied', verified };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// When commands apply
+
+export type ControlResult = Readonly<{ kind: 'applied'; outcomes: readonly Readonly<{ command: CommandId; outcome: CommandOutcome }>[] }>
+  | Readonly<{ kind: 'deferred'; reason: string }>;
+
+async function applyAll(ctx: CommandContext, commands: readonly CommandFile[]): Promise<ControlResult> {
+  const outcomes = [];
+  for (const command of commands) outcomes.push({ command: command.id, outcome: await applyCommand(ctx, command) });
+  return { kind: 'applied', outcomes };
+}
+
+/** Control commands, immediately, in id order; deferred only while an `integration.ff` is open. */
+export function applyControl(ctx: CommandContext, pending: readonly CommandFile[]): Promise<ControlResult> {
+  const ff = ctx.journal.view.openIntents().find((i) => i.kind === 'integration.ff');
+  if (ff !== undefined) return Promise.resolve({ kind: 'deferred', reason: `integration.ff ${ff.op} is in its critical section` });
+  return applyAll(ctx, pending.filter((c) => isControl(c.body)));
+}
+
+/** Mutations, in id order, only at a safe point: no open stage-level intent. The driver calls it between stages. */
+export function applyAtSafePoint(ctx: CommandContext, pending: readonly CommandFile[]): Promise<ControlResult> {
+  const busy = ctx.journal.view.openIntents().find((i) => i.parent.type === 'stage');
+  if (busy !== undefined) return Promise.resolve({ kind: 'deferred', reason: `${busy.kind} ${busy.op} of a stage is open` });
+  return applyAll(ctx, pending.filter((c) => !isControl(c.body)));
+}

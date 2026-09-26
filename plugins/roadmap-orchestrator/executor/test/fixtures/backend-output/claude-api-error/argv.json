@@ -1,0 +1,9 @@
+[
+  "claude",
+  "-p",
+  "--output-format",
+  "json",
+  "--model",
+  "claude-nonexistent-9",
+  "--no-session-persistence"
+]
