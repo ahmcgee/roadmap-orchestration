@@ -5,14 +5,16 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, resourceName, sha256, specRev } from '../src/core/ids.ts';
+import { invocationId, laneId, opIdOf, resourceName, sha, sha256, specRev } from '../src/core/ids.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
+import { LANE_STALL_MS, type LaneRecord } from '../src/pipeline/lanes.ts';
+import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { absPath } from '../src/core/values.ts';
+import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
@@ -55,6 +57,8 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
     assert.equal(launch.cwd, done.verification?.path);
     assert.deepEqual(launch.env, { LOG: log, PATH: run.ctx.hostEnv['PATH'], RESOURCE_OWNER: `${run.ctx.plan.arc}/${U1}` });
     assert.equal(s.expect.subject.purpose === 'lane' && s.expect.subject.at, run.base);
+    // The stall watchdog, not a short deadline, ends a hung lane.
+    assert.equal(launch.stallMs, LANE_STALL_MS);
   }
   // Serial: each lane's spawn is done before the next one's intent, and the workloads never overlapped.
   const all = events(run.runDir);
@@ -127,4 +131,20 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
   assert.equal(u.status, 'held');
   assert.equal(u.counters.chargeableFailures, 0);
   assert.equal(u.counters.retries.lanes, 0);
+});
+
+test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its output and is told it hung', () => {
+  const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
+    lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`),
+    inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
+  });
+  const salvage = sha('a'.repeat(40));
+  const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
+  assert.equal(stalled.kind, 'fix');
+  if (stalled.kind !== 'fix') return;
+  assert.deepEqual(stalled.fix.failingEvidenceDirs, ['/ev/suite/output/files']);
+  assert.equal(stalled.fix.directives.length, 1);
+  assert.match(stalled.fix.directives[0]!, /^Lane suite hung: .* for 10 minutes/);
+  const red = laneFixRound([lane('suite', 'fail')], [], salvage);
+  assert.ok(red.kind === 'fix' && red.fix.directives.length === 0);
 });

@@ -7,7 +7,12 @@
 // Per lane: reserve its declared resources → occupancy probe → run (step 10's cycle) → `invoke` purpose
 // `lane` with the exact argv, cwd and env (plus the unit's owner label) → evidence snapshots → cleanup.
 // The series stops at the first lane that does not pass: one failure is what a fix round needs, and
-// nothing after it is spent. The checkout is created just before the first lane runs, so a series that
+// nothing after it is spent.
+//
+// A lane runs under the runner's stall watchdog (LANE_STALL_MS without progress: no CPU time, no output, no
+// process started or ended) and a distant deadline (LANE_DEADLINE_MS), the backstop for a busy loop. A long
+// suite that is working is never cut short. A stalled lane is red, a verdict on the tree: it hung, and the fix
+// round reads its output. A deadline kill or a lost runner is `blocked`, no verdict. The checkout is created just before the first lane runs, so a series that
 // ends before any lane ran leaves no tree behind.
 //
 // After the series the checkout must still be clean: a lane that wrote a tracked or unignored file into
@@ -23,6 +28,7 @@ import { type InvocationId, type OpId, type Sha, type UnitId, invocationId, opKe
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type CommandVerdict, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent } from '../core/records.ts';
+import { DEV1_LANE_DEADLINE_MS } from '../core/upgrade.ts';
 import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
 import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
@@ -36,8 +42,10 @@ import { type StageContext, type StageParent, cancelledFor, evidenceRoot, runOp 
 import { invocationDir, invoke } from './invoke.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
-/** A lane's deadline. Default, unmeasured: lane durations are measured per invocation from arc 2 on. */
-export const LANE_DEADLINE_MS = 30 * 60_000;
+/** A lane with no progress this long has hung. Default, unmeasured: re-derive once arcs have measured stalls. */
+export const LANE_STALL_MS = 10 * 60_000;
+/** A lane's deadline: only the backstop for a busy loop, which the stall watchdog cannot see. */
+export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
 const LANE_GRACE_MS = 5_000;
 
 /**
@@ -55,8 +63,9 @@ export type LaneSet = 'spec' | 'suite';
 
 export type SeriesEnd =
   | Readonly<{ kind: 'green' }>
+  /** A lane failed or stalled. */
   | Readonly<{ kind: 'red'; lane: LaneRecord }>
-  /** Ended by its runner (deadline) or lost with it: no product verdict. */
+  /** Ended by its runner's deadline or lost with it: no product verdict. */
   | Readonly<{ kind: 'blocked'; lane: LaneRecord | null; detail: string }>
   | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
@@ -121,7 +130,8 @@ function laneDirs(root: AbsPath, lane: LaneDef): Readonly<{ dir: AbsPath; fixDir
 /**
  * A lane's record, read from its spawn and invocation files: what ran (the definition), how it ended
  * (result.json, or none when lost with its runner), when (a lane's deadline is its start plus
- * LANE_DEADLINE_MS, so launch.json carries the start; exit.json the end). The live series and every later
+ * LANE_DEADLINE_MS, or 1.0.0-dev.1's fixed deadline for a lane it launched, so launch.json carries the start;
+ * exit.json the end). The live series and every later
  * reader build records here, so they are the same record.
  */
 function laneRecord(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, root: AbsPath): LaneRecord {
@@ -132,7 +142,7 @@ function laneRecord(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: Lan
   if (launch === null) throw new Error(`lane ${lane.id} ${inv}: no launch.json`);
   const result = files.read('result.json');
   if (result !== null && result.type !== 'command') throw new Error(`${inv}: a lane produced a ${result.type} result`);
-  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - LANE_DEADLINE_MS));
+  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - (launch.stallMs === null ? DEV1_LANE_DEADLINE_MS : LANE_DEADLINE_MS)));
   const { dir, fixDirs } = laneDirs(root, lane);
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
@@ -155,7 +165,7 @@ async function runLane(ctx: StageContext, parent: StageParent, lane: LaneDef, se
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
     subject: { purpose: 'lane', unit: parent.unit, lane: lane.id, set, at },
     launch: () => ({
-      argv: lane.argv, cwd: absPath(join(tree, lane.cwd)), env: laneEnv(ctx, parent.unit, lane), stdinPath: null, graceMs: LANE_GRACE_MS,
+      argv: lane.argv, cwd: absPath(join(tree, lane.cwd)), env: laneEnv(ctx, parent.unit, lane), stdinPath: null, stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
       terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit },
     }),
   });
@@ -222,7 +232,7 @@ export async function runLaneSeries(
     }
     if (ran.interrupted !== null) end = { kind: 'interrupted', reason: ran.interrupted };
     else if (ran.blocked !== null) end = { kind: 'blocked', lane: ran.record, detail: ran.blocked };
-    else if (ran.record.verdict === 'fail') end = { kind: 'red', lane: ran.record };
+    else if (ran.record.verdict === 'fail' || ran.record.verdict === 'stall') end = { kind: 'red', lane: ran.record };
     if (end.kind !== 'green') break;
   }
   if (evidence === null) return { end, ledger, tree: null, dirty: [] };

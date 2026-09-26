@@ -128,5 +128,21 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - `test/upgrade.test.ts` covers a stop mid-build and a reopen stopped mid-plan-check. Not yet: the previous
   release crashing mid-op (HEAD recovering its open intents), a backend parked on a usage limit across the
   update, the Claude-only profile. Add a variant when a record change touches one of them.
-- No read-time defaulting module exists yet: the first additive record change after 1.0.0-dev.1 adds it
-  (SCHEMAS.md "Record evolution"), with its warning surfaced in `status`.
+- `src/core/upgrade.ts` is the read-time defaulting module (first entry: launch.json `stallMs`, and the
+  1.0.0-dev.1 lane deadline `laneRecord` derives a lane's start from). Delete it, and the `stallMs === null`
+  branch in `laneRecord`, once no arc started on 1.0.0-dev.1 is in flight. Its warning goes to the executor's
+  stderr only, once per process per kind; `status` does not surface it yet, since the status process never reads
+  invocation files. Surface it (a per-run-dir record the executor writes) if an upgrade default ever matters
+  to the operator.
+
+## Lane stall watchdog (2026-09-26)
+
+- The 10-min stall threshold and the 6 h backstop are defaults, unmeasured. Re-derive once arcs have recorded
+  stalls and long lanes. A lane whose suite is legitimately silent and idle for over 10 min (waiting on an
+  external service with its own long timeout) would need a per-lane `stallMin` in spec.json; add it only when
+  one exists.
+- Backend calls keep fixed deadlines (judgment 45 min, fresh build 3 h, fix window measured). Their JSONL event
+  stream is a progress signal the same watchdog could read, replacing those deadlines too. Take it up if a
+  healthy long build or judgment is ever cut short.
+- A lane that hits the 6 h backstop is `blocked`, retried once at the lanes stage (another 6 h), parked at
+  the candidate. If backstop hits turn out to be busy-loop product bugs, send them to a fix round like a stall.

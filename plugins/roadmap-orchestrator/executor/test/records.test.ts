@@ -12,10 +12,13 @@ const T0 = '2026-09-25T12:00:00.000Z';
 const T1 = '2026-09-25T12:00:01.000Z';
 const bind = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
 
+/** Fields read with a default when absent (upgrade scaffolding): the missing-field sweep skips them. */
+const UPGRADE_DEFAULTED: { readonly [N in RunnerFileName]?: readonly string[] } = { 'launch.json': ['stallMs'] };
+
 const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> } = {
   'launch.json': {
     ...bind, argv: ['codex', 'exec', '-'], cwd: '/var/tmp/wt/u1', env: { HOME: '/home/x' }, stdinPath: '/run/inv/7-1/stdin',
-    deadlineAt: T1, graceMs: 5000, containment: 'session', test: null,
+    deadlineAt: T1, stallMs: null, graceMs: 5000, containment: 'session', test: null,
     terminal: { type: 'backend', purpose: 'backend', role: 'build', routingRev: '0123456789abcdef', schemaPath: '/run/s.json', outputPath: '/run/inv/7-1/last.json', session: { backend: 'codex', mode: 'fresh' } },
   },
   'runner.json': { ...bind, runner: { pid: 100, start: 5555, bootId: UUID }, child: { pid: 101, start: 5556, sid: 101 } },
@@ -46,6 +49,14 @@ describe('records', () => {
     for (const graceMs of [MIN_GRACE_MS - 1, 500, 0]) {
       assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], graceMs }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.graceMs');
     }
+  });
+
+  it('launch.json stallMs: a positive count or null; absent (1.0.0-dev.1) reads as null, no watchdog', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    assert.equal(read({ ...RUNNER_SAMPLES['launch.json'], stallMs: 600_000 }, 'launch.json').stallMs, 600_000);
+    const { stallMs: _, ...dev1 } = RUNNER_SAMPLES['launch.json'];
+    assert.equal(read(dev1, 'launch.json').stallMs, null);
+    assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], stallMs: 0 }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.stallMs');
   });
 
   it('launch.json argv: an empty argument is allowed (`--setting-sources \'\'`), an empty program name is not', () => {
@@ -95,12 +106,15 @@ describe('records', () => {
   });
 
   describe('classifyCommand', () => {
-    it('grades by expected exit, and faults on a runner kill or signal', () => {
+    it('grades by expected exit, a stall kill as stall, and faults on any other runner kill or signal', () => {
       assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }), 0), { exitCode: 0, verdict: 'pass' });
       assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 1 }), 0), { exitCode: 1, verdict: 'fail' });
       assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 3 }), 3), { exitCode: 3, verdict: 'pass' });
       assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'deadline'), 0), { exitCode: 0, verdict: 'process-fault' });
       assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }), 0), { exitCode: null, verdict: 'process-fault' });
+      assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'stall'), 0), { exitCode: null, verdict: 'stall' });
+      // A lingering descendant stalled after the child exited: still a stall, whatever the child's code.
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'stall'), 0), { exitCode: 0, verdict: 'stall' });
     });
   });
 
@@ -110,7 +124,8 @@ describe('records', () => {
       it(`${name} accepts the sample`, () => {
         assert.deepEqual(RUNNER_FILE_READERS[name](sample, name), sample);
       });
-      for (const field of Object.keys(sample)) {
+      // A field the previous release did not write is defaulted at read time (src/core/upgrade.ts), tested above.
+      for (const field of Object.keys(sample).filter((f) => !(UPGRADE_DEFAULTED[name] ?? []).includes(f))) {
         it(`${name} rejects a missing ${field}`, () => {
           assert.throws(() => RUNNER_FILE_READERS[name](without(sample, field), name), (err: unknown) =>
             err instanceof SchemaError && err.field === `${name}.${field}`);

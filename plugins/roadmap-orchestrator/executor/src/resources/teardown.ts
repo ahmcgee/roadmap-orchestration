@@ -89,7 +89,7 @@ export async function runResourceCommand(
     origin: { type: 'new', key: opKey(`${purpose}:${resource}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + timeout)) },
     subject: { purpose, unit, resource },
     launch: () => ({
-      argv: recipe.argv, cwd: recipe.cwd, env: recipe.env, stdinPath: null, graceMs: GRACE_MS,
+      argv: recipe.argv, cwd: recipe.cwd, env: recipe.env, stdinPath: null, stallMs: null, graceMs: GRACE_MS,
       terminal: { type: 'command', purpose, expectedExit: 0 },
     }),
   });

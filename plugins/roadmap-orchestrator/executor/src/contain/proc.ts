@@ -6,7 +6,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import type { ProcIdentity } from '../core/records.ts';
 import { type BootId, bootId } from '../core/values.ts';
 
-export type ProcStat = Readonly<{ pid: number; state: string; ppid: number; sid: number; start: number }>;
+/** `cpu`: CPU time consumed so far, user plus system (fields 14 and 15), in clock ticks. */
+export type ProcStat = Readonly<{ pid: number; state: string; ppid: number; sid: number; start: number; cpu: number }>;
 
 /**
  * `env` is null for a non-dumpable process (one that ran a setuid binary or called prctl(PR_SET_DUMPABLE, 0)):
@@ -34,7 +35,7 @@ export function parseStat(pid: number, text: string): ProcStat {
     if (value === undefined) throw new Error(`/proc/${pid}/stat: field ${n} missing in ${JSON.stringify(text)}`);
     return value;
   };
-  return { pid, state: field(3), ppid: Number(field(4)), sid: Number(field(6)), start: Number(field(22)) };
+  return { pid, state: field(3), ppid: Number(field(4)), sid: Number(field(6)), start: Number(field(22)), cpu: Number(field(14)) + Number(field(15)) };
 }
 
 /** The stat of a live pid, or null when it is gone. */

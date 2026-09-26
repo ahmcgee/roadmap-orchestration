@@ -17,6 +17,7 @@ import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
+import { launchStallMs } from './upgrade.ts';
 import type { SchemaVersion } from './version.ts';
 import {
   type Backend, type ImplementerRole, type JudgmentRole, type ProfileName, type RiskTier, type Role, backend, profileName, riskTier,
@@ -28,11 +29,11 @@ import {
 export type ProcIdentity = Readonly<{ pid: number; start: number }>;
 export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid', positive), start: f.get('start', nat) }));
 
-export const KILL_REASONS = ['deadline', 'pause', 'stop', 'recovery', 'external-unknown'] as const;
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
-/** What the executor writes into cancel.json. `deadline` is the runner's own; `external-unknown` kills are not invocation cancels. */
+/** What the executor writes into cancel.json. `deadline` and `stall` are the runner's own; `external-unknown` kills are not invocation cancels. */
 export const CANCEL_REASONS = ['pause', 'stop', 'recovery'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
@@ -117,6 +118,11 @@ export type LaunchFile = InvocationBinding & Readonly<{
   env: Readonly<Record<string, string>>;
   stdinPath: AbsPath | null;
   deadlineAt: IsoTime;
+  /**
+   * The stall watchdog: the runner kills the workload once it has made no progress (no CPU time, no output,
+   * no member started or ended) for this long. null: no watchdog, the deadline alone (every non-lane launch).
+   */
+  stallMs: number | null;
   graceMs: number;
   containment: ContainmentMode;
   test: Readonly<{ crash: AbsPath }> | null;
@@ -185,6 +191,7 @@ export const launchFile: Read<LaunchFile> = object((f) => ({
   env: f.get('env', declaredEnv),
   stdinPath: f.get('stdinPath', nullable(abs)),
   deadlineAt: f.get('deadlineAt', time),
+  stallMs: launchStallMs(f.optional('stallMs', nullable(positive)), f.path),
   graceMs: f.get('graceMs', graceMs),
   containment: f.get('containment', containmentMode),
   test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
@@ -216,7 +223,7 @@ export type ChildEnd =
   | Readonly<{ type: 'signalled'; signal: string }>
   | Readonly<{ type: 'spawn-failed'; error: string }>;
 /** `exited` = the child ended on its own; the others name why the runner killed the workload. */
-export type ExitCause = 'exited' | 'deadline' | 'cancel' | 'recovery-kill';
+export type ExitCause = 'exited' | 'deadline' | 'stall' | 'cancel' | 'recovery-kill';
 
 /** exit.json: written by the runner after the workload is empty, before the adapter runs. */
 export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime }>;
@@ -238,7 +245,7 @@ export const exitFile: Read<ExitFile> = object((f) => {
   const out: ExitFile = {
     ...binding(f),
     child: f.get('child', childEnd),
-    cause: f.get('cause', oneOf(['exited', 'deadline', 'cancel', 'recovery-kill'] as const)),
+    cause: f.get('cause', oneOf(['exited', 'deadline', 'stall', 'cancel', 'recovery-kill'] as const)),
     endedAt: f.get('endedAt', time),
     quiescedAt: f.get('quiescedAt', time),
   };
@@ -302,7 +309,9 @@ export type BackendOutcomeKind = BackendOutcome['kind'];
 /** What the precedence rule alone decides; refusal is the adapter's reading of a backend stop reason. */
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
 
-export type CommandVerdict = 'pass' | 'fail' | 'process-fault';
+/** `stall`: the runner's stall watchdog killed the workload; a verdict on the command (it hung), not a process fault. */
+export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault'] as const;
+export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
 
 type BackendResultBase = InvocationBinding & Readonly<{
   type: 'backend';
@@ -365,9 +374,9 @@ export const resultFile: Read<ResultFile> = tagged('type', {
       purpose: f.get('purpose', oneOf(COMMAND_PURPOSES)),
       exitCode: f.get('exitCode', nullable(exitCode)),
       expectedExit: f.get('expectedExit', exitCode),
-      verdict: f.get('verdict', oneOf(['pass', 'fail', 'process-fault'] as const)),
+      verdict: f.get('verdict', oneOf(COMMAND_VERDICTS)),
     };
-    if (out.exitCode === null && out.verdict !== 'process-fault') throw new SchemaError(`${f.path}.verdict`, '"process-fault" when exitCode is null', out.verdict);
+    if (out.exitCode === null && out.verdict !== 'process-fault' && out.verdict !== 'stall') throw new SchemaError(`${f.path}.verdict`, '"process-fault" or "stall" when exitCode is null', out.verdict);
     return out;
   }),
 });
@@ -383,7 +392,7 @@ function processFault(exit: ExitFile): string | null {
 /**
  * The result.json precedence rule for backends, pure over the terminal files:
  * 1. cause cancel → cancelled{cancel.json's reason: pause|stop}, whatever the output (cancel.json must say so);
- * 2. cause deadline/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
+ * 2. cause deadline/stall/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
  * 3. non-zero exit with schema-valid output → malformed; non-zero exit without it → process-fault;
  * 4. exit 0 without schema-valid output → malformed;
  * 5. exit 0 with schema-valid output → success.
@@ -405,9 +414,13 @@ export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, outp
   return { kind: 'success', value: output as JsonValue };
 }
 
-/** The same precedence for commands: a runner kill or signal is a process fault; otherwise the exit code decides. */
+/**
+ * The same precedence for commands: a stall kill is a stall; any other runner kill or a signal is a process
+ * fault; otherwise the exit code decides.
+ */
 export function classifyCommand(exit: ExitFile, expectedExit: number): Readonly<{ exitCode: number | null; verdict: CommandVerdict }> {
   const exitCode = exit.child.type === 'exited' ? exit.child.code : null;
+  if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
 }

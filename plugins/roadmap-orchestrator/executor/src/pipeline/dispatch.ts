@@ -272,7 +272,7 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
     subject: { purpose: 'backend', ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir);
-      return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
+      return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
     },
   });
   const key = opKey(`backend:${spec.unit}:${spec.parent.stage}`);

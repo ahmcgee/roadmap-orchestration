@@ -9,7 +9,7 @@ import {
 } from './ids.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
-  type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode, type DispatchRecord,
+  COMMAND_VERDICTS, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode, type DispatchRecord,
   type KillReason, type PauseTarget, type ResidueRecord, type ResumeTarget, type SpecPatch, type Stage, type TokenUsage,
   type UsageUnavailableReason, approvalFingerprint, containmentMode, dispatchRecord, killReason, optionId, pauseTarget,
   resumeTarget, specPatch, stage, tokenUsage, usageUnavailableReason,
@@ -440,7 +440,7 @@ const worktreeCheckout: Read<WorktreeCheckout> = tagged('type', {
 
 const resultSummary: Read<ResultSummary> = tagged('type', {
   backend: object((f): ResultSummary => ({ type: f.get('type', literal('backend')), outcome: f.get('outcome', oneOf(['success', 'refusal', 'malformed', 'process-fault', 'cancelled'] as const)) })),
-  command: object((f): ResultSummary => ({ type: f.get('type', literal('command')), verdict: f.get('verdict', oneOf(['pass', 'fail', 'process-fault'] as const)) })),
+  command: object((f): ResultSummary => ({ type: f.get('type', literal('command')), verdict: f.get('verdict', oneOf(COMMAND_VERDICTS)) })),
 });
 
 const kindOnly = <K extends string>(kind: K) => object((f) => ({ kind: f.get('kind', literal(kind)) }));
