@@ -4,7 +4,7 @@
 // executor.pause-holds-then-resume, executor.stop-releases-lock, executor.restart-clears-stop-not-pause,
 // executor.blocking-needs-user-waits, executor.crash-restart-continues, startup.resource-command-unrunnable,
 // executor.unit-park-does-not-hold-arc, executor.arc-wide-park-holds-arc, executor.park-raised-promptly,
-// cli.start-wait-flag.
+// cli.start-wait-flag, executor.pause-fix-round-continues.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ import { START_WAIT_MS } from '../src/supervisor.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE } from '../src/pipeline/rounds.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git } from './helpers/repo.ts';
@@ -386,4 +387,34 @@ test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-re
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
+});
+
+test('executor.pause-fix-round-continues: a pause while a fix round is live (its tree dirtied) holds the unit; resume continues that round in the dirty worktree and the unit completes', T, async (t) => {
+  const thread = '00000000-0000-4000-8000-00000000f1f1';
+  const broken = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
+  const r = setupExec(t, {
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }),
+      { ...codexStep([{ type: 'commit', message: 'add mul', files: broken }], { argv: ['exec', '-C'] }), threadId: thread } as Step,
+      codexStep([{ type: 'dirty', files: { 'src/mul.js': MUL['src/mul.js'] } }, { type: 'barrier', name: 'fix1', timeoutMs: 120_000 }], { argv: ['exec', 'resume', thread] }),
+      codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [CONTINUE_DIRECTIVE] }),
+      gateStep({ decision: 'approve' }),
+    ],
+  });
+  const run = startExec(r);
+  await reached(r.scenarioDir, 'fix1', WAIT_MS);
+  await cli(r, ['pause', 'u1']);
+  await until(() => has(r, 'build:interrupted'), WAIT_MS, 'the fix round to be interrupted');
+  await cli(r, ['resume', 'u1']);
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  assert.deepEqual(started(r), [1], 'the executor never crashed');
+  assert.deepEqual(outcomes(r), [...STRAIGHT.slice(0, 6), 'lanes:red', 'build:interrupted', ...AFTER_BUILD]);
+  const continued = readCalls(r.scenarioPath).filter((c) => c.stdin.includes(CONTINUE_DIRECTIVE));
+  assert.equal(continued.length, 1);
+  assert.ok(!continued[0]!.stdin.includes(NO_SESSION_NOTE), 'the continued session is not told it is fresh');
+  // The continue only reported: the fix it made before the pause, left uncommitted, is what merged.
+  assert.equal(git(r.repo, 'show', 'main:src/mul.js') + '\n', MUL['src/mul.js']);
+  assert.equal(journalOf(r).view.unit(U1).counters.chargeableFailures, 1, 'the red series alone charged');
 });

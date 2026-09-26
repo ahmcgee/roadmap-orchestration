@@ -45,3 +45,16 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - Adopting a live runner across arcs holds the recovery lock until that runner exits, which can outlast
   `start`'s wait.
 - Host directory log files accumulate until `gc` (M3).
+
+## Found fixing interrupted rounds (2026-09-26)
+
+- A `continue` round gets the full window of the round it continues, not the time the interrupted attempt
+  had left. A remaining-time deadline would read the interrupted invocation's launch and end times.
+- A Claude build killed before the CLI persisted its session (a pause within its first moments) is continued
+  with `--resume` of an id the CLI never saved; that call fails as a process fault and parks the unit. Nothing
+  in the invocation's files tells the two cases apart today.
+- A Codex exec killed mid-write of a stdout line leaves a truncated last line; the reader refuses the whole
+  stream, so the thread id it did report is lost and the continue starts fresh with NO_SESSION_NOTE.
+- Decisions an interrupted or malformed attempt wrote to its own evidence dir are never appended: its
+  evidence stage never runs. CONTINUE_DIRECTIVE asks the session to rewrite decisions.json complete in the
+  new dir; the resume after a malformed report relies on the same rule in the build prompt.

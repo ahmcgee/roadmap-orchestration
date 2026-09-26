@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { type Event, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
+import { type Event, type LogRecord, type StageOutcomeFact, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
 import { type UnitId, arcId, commandId, needsUserId, opId, specRev, unitId } from '../src/core/ids.ts';
 import type { Stage } from '../src/core/records.ts';
@@ -79,7 +79,7 @@ describe('fold derives', () => {
       stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }), // 11
     ]));
     assert.deepEqual(state.units, [{
-      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null,
+      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,
@@ -245,6 +245,16 @@ describe('fold: command effects (step 13)', () => {
     assert.deepEqual([s2.control.pausedUnits, s2.units[0]?.status, s2.units[0]?.counters.attempts], [[], 'active', 1]);
     const s3 = fold(ARC, chain([hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'resumed', command: C, target: { type: 'all' } })]));
     assert.deepEqual([s3.control.pausedAll, s3.units[0]?.status], [false, 'active']);
+  });
+
+  it('interrupted: the latest hold since the last decision; a resume keeps it, the next decided outcome clears it', () => {
+    const decided = stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true });
+    const again = stageOutcome({ stage: 'build', attempt: 3, outcome: 'interrupted', class: 'hold' });
+    const held = fold(ARC, chain([decided, hold, again, fact({ kind: 'resumed', command: C, target: { type: 'all' } })])).units[0]!;
+    const at = (f: StageOutcomeFact | null): string | null => (f === null ? null : `${f.stage}#${f.attempt}`);
+    assert.deepEqual([at(held.decided), at(held.interrupted), held.status], ['lanes#1', 'build#3', 'active']);
+    const next = fold(ARC, chain([decided, hold, stageOutcome({ stage: 'build', attempt: 2, outcome: 'success', class: 'advance' })])).units[0]!;
+    assert.equal(next.interrupted, null);
   });
 
   it('executor-started clears the stop marker and nothing else: pauses and holds persist', () => {

@@ -164,7 +164,8 @@ in the line belongs to `arc`.
 `plan-check, build, lanes, gate`) \| `route-up` (re-dispatched on the role's high seat; only at `plan-check,
 gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the high seat) \| `hold` (exactly the
 `interrupted` outcome, never chargeable: a pause or stop cancel, or the stage's backend parked on a usage
-limit; the unit waits at its stage and a resume re-runs it as a new attempt; lead ruling, 11b) \| `park` \|
+limit; the unit waits at its stage and a resume re-runs it as a new attempt, a build as a `continue` of the
+interrupted session; lead ruling, 11b) \| `park` \|
 `stop` \| `retire`. The attempt number of a stage start is the unit's `attempts` count plus one (numbered
 across the unit's stages).
 
@@ -172,9 +173,11 @@ The fold derives each unit's `UnitState` from these facts through `afterStageOut
 the same function the transition table uses, so a decision's counters are the log's:
 `{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
 chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
-routedUp: JudgmentStage[], promotion, decided, approval, open}`. `decided` is the unit's latest stage-outcome fact
+routedUp: JudgmentStage[], promotion, decided, interrupted, approval, open}`. `decided` is the unit's latest stage-outcome fact
 whose class is not `hold` (null before one): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
-it (`decidedBy` in `transitions.ts`), and a held stage re-runs what it decided. `approval` is the latest
+it (`decidedBy` in `transitions.ts`), and a held stage re-runs what it decided. `interrupted` is the unit's
+latest `hold` fact while no later outcome has decided (else null): a held build re-runs as a `continue` round
+of that attempt's last invocation, resuming its session in the worktree as left (`src/pipeline/rounds.ts`). `approval` is the latest
 `approval` fact's `{attempt, fingerprint}`, or null. `attempts` counts distinct `(stage, attempt)` pairs named by a
 stage-parented intent or a stage-outcome fact. `open` is the latest such pair (highest attempt) while no stage-outcome fact records it, else null:
 an attempt a crash cut short (step 14b: the driver consumes its completed backend call rather than dispatching
