@@ -1,7 +1,7 @@
 // The supervisor (plan "Supervisor (R19)", "Host lock and ownership (R17-R18)"; DESIGN-1.0.md §2): it owns
 // the executor and nothing else.
 //
-//   node src/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]
+//   node src/entry/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]
 //
 // `roadmap start` launches it (`launchSupervisor`) detached (setsid) with ROADMAP_ROLE=supervisor, stdout and
 // stderr to `supervisor.<token>.out|.err` in the host dir. Its stdout is agent-facing JSON lines: one
@@ -9,7 +9,7 @@
 //
 //   claim (claimHost, under the recovery lock; a takeover of another arc reconciles that arc's surviving
 //   invocations first, recover.ts) → per executor:
-//     spawn `node src/executor.ts` (claim in argv; stdio to `executor.<generation>.out|.err`)
+//     spawn `node src/entry/executor.ts` (claim in argv; stdio to `executor.<generation>.out|.err`)
 //     → publish host.owner.json naming it → write `handshake.<generation>`
 //     → watch: its first heartbeat of this generation is readiness (`supervisor.ready.<generation>`: the
 //       executor passed its startup checks); every 10 s the heartbeat is checked, and one older than the
@@ -61,8 +61,8 @@ import { reconcilePreviousArc } from './recover/recover.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 
 export const SUPERVISOR_STATE = 'supervisor.state.json';
-export const SUPERVISOR_ENTRY = fileURLToPath(import.meta.url);
-const EXECUTOR_ENTRY = fileURLToPath(new URL('./executor.ts', import.meta.url));
+export const SUPERVISOR_ENTRY = fileURLToPath(new URL('./entry/supervisor.ts', import.meta.url));
+const EXECUTOR_ENTRY = fileURLToPath(new URL('./entry/executor.ts', import.meta.url));
 
 export const ROLE_ENV = 'ROADMAP_ROLE';
 export const CRASH_LIMIT = 3;
@@ -422,4 +422,7 @@ export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Recor
   }
 }
 
-if (import.meta.main) process.exitCode = await supervise(parseSupervisorArgv(process.argv.slice(2)));
+/** The supervisor process's main (src/entry/supervisor.ts): argv after the script. */
+export function supervisorMain(argv: readonly string[]): Promise<number> {
+  return supervise(parseSupervisorArgv(argv));
+}

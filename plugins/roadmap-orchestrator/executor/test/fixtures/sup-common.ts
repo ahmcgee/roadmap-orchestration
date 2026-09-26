@@ -140,7 +140,7 @@ export function executorsOf(nonce: string): readonly ProcIdentity[] {
       return []; // exited between the stat and the read
     }
     const i = argv.indexOf('--nonce');
-    return argv.some((a) => a.endsWith('/src/executor.ts')) && i !== -1 && argv[i + 1] === nonce ? [{ pid, start: stat.start }] : [];
+    return argv.some((a) => a.endsWith('/src/entry/executor.ts')) && i !== -1 && argv[i + 1] === nonce ? [{ pid, start: stat.start }] : [];
   });
 }
 

@@ -86,7 +86,7 @@ function kill(pid: number): void {
   }
 }
 
-const isScript = (p: Proc, script: string): boolean => p.argv[1]?.endsWith(`/src/${script}`) ?? false;
+const isScript = (p: Proc, script: string): boolean => p.argv[1]?.endsWith(`/src/entry/${script}`) ?? false;
 
 function healthy(ps: readonly Proc[]): boolean {
   return ps.some((p) => isScript(p, 'supervisor.ts') && p.state !== 'T' && p.state !== 't') && ps.some((p) => isScript(p, 'executor.ts'));

@@ -413,14 +413,14 @@ by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), whic
 
 ## Supervisor and handshake (step 14a)
 
-`roadmap start` → `launchSupervisor` (`src/supervisor.ts`): spawns `node src/supervisor.ts <hostDir> --repo
+`roadmap start` → `launchSupervisor` (`src/supervisor.ts`): spawns `node src/entry/supervisor.ts <hostDir> --repo
 --plan [--profile] [--heartbeat-stale-ms]` detached (setsid) with `ROADMAP_ROLE=supervisor`, then waits at most
 `--wait <ms>` (default `START_WAIT_MS`, 240 s, past the smoke's 180 s deadline; lead ruling 14b) for the supervisor's first stdout line
 and for that generation's readiness marker only. It prints one line
 and exits: `{kind: ready, generation, supervisor}` 0; the refused exit line, with its code (78/75); `{kind:
 failed|timeout, …}` 70. The supervisor: claim (`claimHost`, `reconcilePreviousArc`; a 78 refusal writes
 `status.rejection.json` and a durable `host-<kind>-<n>` needs-user in its run dir) → per executor: spawn `node
-src/executor.ts <hostDir> --generation --nonce --repo --plan [--profile] [--control-only]` (the claim in argv;
+src/entry/executor.ts <hostDir> --generation --nonce --repo --plan [--profile] [--control-only]` (the claim in argv;
 `ROADMAP_ROLE` removed) → `host.owner.json` names it → `handshake.<generation>` → watch (readiness; heartbeat
 checked every 10 s, stale after `heartbeatStaleMs` → SIGKILL, a crash). An exit with `exit.reason.json` of its
 generation is intentional: release, readiness marker, exit with the executor's code. Otherwise a crash: window

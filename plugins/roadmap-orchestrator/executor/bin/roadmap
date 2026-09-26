@@ -1,4 +1,8 @@
 #!/usr/bin/env node
 // Entry point for the roadmap-orchestrator 1.0 executor. Plain JavaScript so it runs from any
 // path (no type stripping needed here); everything else is TypeScript run directly by Node 24.
+// Like every process entry (src/entry/), it enables Node's compile cache before importing the code.
+import { enableCompileCache } from 'node:module';
+
+enableCompileCache();
 import('../src/cli/main.ts').then((m) => m.main(process.argv.slice(2)));

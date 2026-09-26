@@ -22,7 +22,7 @@ import { runnerFiles } from './files.ts';
 
 /** The runner's own stdout and stderr, both appended to one file in the invocation dir. */
 export const RUNNER_LOG = 'runner.log';
-const RUNNER_SCRIPT = fileURLToPath(new URL('./runner.ts', import.meta.url));
+const RUNNER_SCRIPT = fileURLToPath(new URL('../entry/runner.ts', import.meta.url));
 const POLL_MS = 100;
 
 /** Completes a launch record: the crash trigger in the executor's environment, if any, rides into test.crash. */

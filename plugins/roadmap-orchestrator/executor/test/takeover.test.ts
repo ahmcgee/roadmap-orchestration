@@ -32,7 +32,7 @@ after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 const { O_APPEND } = constants;
-const EXECUTOR = new URL('../src/executor.ts', import.meta.url).pathname;
+const EXECUTOR = new URL('../src/entry/executor.ts', import.meta.url).pathname;
 
 function run(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<Exit> {
   return new Promise((resolve) => {
