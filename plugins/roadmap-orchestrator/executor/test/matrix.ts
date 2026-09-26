@@ -637,8 +637,8 @@ export const MATRIX: readonly Row[] = [
       B2: { status: 'excluded', why: 'no runner exists before the act; the executor crash there is the whole-pipeline rows\' spawn.after-intent cells' },
       B3: {
         status: 'kill',
-        when: 'the build\'s runner, SIGKILLed while its backend call waits at a barrier (the executor alive)',
-        recovery: 'the live executor finds its runner gone: the workload killed (proc.kill{recovery}), the build closed lost, uncharged build:process-fault → park with one blocking process-fault needs-user (the transition table; the pipeline does not retry a lost call); the build never called twice; after the ack the arc ends complete with u1 parked, integration untouched',
+        when: 'the build\'s runner, SIGKILLed while its backend call waits at a barrier after changing the tree (the executor alive)',
+        recovery: 'the live executor finds its runner gone: the workload killed (proc.kill{recovery}), the build closed lost{treeEffects: true}, usage unavailable{no-result}; uncharged build:lost-tree-effects → quiesce, and what the workload left is salvaged and verified (lanes, gate) like a report (the plan\'s recovery table, lead ruling 14c); the build never called twice; the arc ends complete with u1 merged, the tree as uncrashed. Without tree effects a lost call is retried once as ordinal 2 (same deadlineAt), then build:lost parks (build-lost)',
       },
       B4: { status: 'excluded', why: 'act complete means the runner wrote exit.json and exited; its death after exit.json is the runner-death row\'s runner.after-exit-json' },
       B5: { status: 'excluded', why: 'after done the runner has long exited; nothing of it is left to die' },

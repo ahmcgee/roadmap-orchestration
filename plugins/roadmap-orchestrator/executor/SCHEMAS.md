@@ -76,9 +76,11 @@ filesystem, git or specs are startup rows.
 `src/preflight/startup.ts`: `StartupRejection` (one member per row), `exitCodeFor(rejection)`,
 `StartupCheck<K>{kind, check(StartupContext) → rejections[]}`. Each refuses before any pipeline intent and is
 shown in `status`: a refused start (exit 78) writes `status.rejection.json` in the run dir (`RejectionFile
-{v, at, rejections}`, reader `rejectionFile`; step 13b), removed by the next start that passes. Order of evaluation (lead ruling, 1a): the pure and host rows run first, before the journal
-is opened; `backend-smoke` runs last, after host takeover and journal open, and its spawns are journaled as
-`proc.spawn{purpose: smoke}` so a refused start still leaves an audit trail. "Before any intent" therefore
+{v, at, rejections}`, reader `rejectionFile`; step 13b), removed by the next start that passes. Order of evaluation (lead ruling, 1a; 14c): the pure and host rows run first, before the journal
+is opened; `backend-smoke` runs last, after host takeover, journal open, `executor-started` and recovery (which
+closes a smoke spawn a crashed start left open, like any other spawn), and its spawns are journaled as
+`proc.spawn{purpose: smoke}` so a refused start still leaves an audit trail. `runChecks` is every row but the
+smoke; `smokeCheck` is the smoke. "Before any intent" therefore
 means before any *pipeline* intent.
 
 | `kind` | Row | Fields | Exit |
@@ -210,7 +212,7 @@ recovery | external-unknown`.
 | `resource.transition` | `holder, resources` (lock order), `edge` | `null` | `transitioned` |
 | `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
-| `evidence.snapshot` | `source, globs, dest` | `{manifest}` | `captured{manifestSha256, files}` |
+| `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c) | `{manifest}` | `captured{manifestSha256, files}` |
 | `salvage.commit` | see git table | `{new}` | `committed` |
 | `mergein.prepare` | see git table | `clean-merged{new}` \| `conflicted` | `clean-merged` \| `conflicted` \| `completed{head}` |
 | `spec.patch` | `path, oldSha256, expectRev, patch: SpecPatch` | `{newSha256, newRev = expectRev+1}` | `patched` |
@@ -395,7 +397,9 @@ exitCode: 78|75}`; any other end is a thrown error, a crash, which the superviso
 exit reason. The executor prints the reason as one canonical JSON line on its stdout. Sequence: the handshake
 (step 14a) → `runChecks` → (refused: `status.rejection.json` for exit 78, `exit.reason.json {refused}`) →
 `start.json`, heartbeat, `executor-started` → the control-only phase when started `--control-only` → `recover` →
-the command loop:
+the outcome of every stage attempt whose backend call recovery closed is recorded (the adopted-build rule below,
+at startup, so a paused unit needs one `resume`; lead ruling 14c) → `smokeCheck` (refused as above, after
+readiness) → the command loop:
 control commands, then mutations at the safe point, then due needs-user items; exit `stop` on the stop marker
 or a stop-pending unit (after cleaning what a stage still holds); exit `complete` when every unit is merged or
 parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user holds the arc (arc-wide:
@@ -443,7 +447,16 @@ claim, before any dispatch.
 Adopted-build rule (lead ruling 14a/14b, `src/pipeline/unit.ts`): when the fold's `open` attempt is a plan-check,
 build or gate whose backend call recovery closed with a result (adopted, reconciled or redone), the driver records
 that attempt's outcome from the result (`planCheckRead`, `buildRead`, `gateRead`, the same code the live stage
-runs after its call) and never dispatches the call again. A lost call, or none, re-runs the stage as a new attempt. `reconcilePreviousArc(previous)` is the `reconcilePrevious` hook (step
+runs after its call) and never dispatches the call again. A build call lost with tree effects is consumed too, as
+`build:lost-tree-effects`; any other lost call, or none, re-runs the stage as a new attempt. The executor records
+these outcomes at startup, right after recovery (lead ruling 14c).
+
+Lost backend calls (lead ruling 14c, the plan's recovery table: neither exit.json nor result → `lost{treeEffects}`,
+usage `unavailable{no-result}`): `callBackend` retries a lost call once, uncharged, as the op's next ordinal with
+the same `deadlineAt`, except an implementer call with tree effects (its workload started). Build outcomes:
+`lost-tree-effects` → quiesce, uncharged (what the workload left is salvaged, then the lanes and the gate judge
+it); `lost` (lost again after the retry) → park, reason `build-lost`. A lost judgment call after its retry is
+`process-fault` (park); a lost lane is `blocked` (the lanes stage's one uncharged retry). `reconcilePreviousArc(previous)` is the `reconcilePrevious` hook (step
 14a, R18): read only unless an open spawn of that arc has a live runner or workload; then, under the recovery lock,
 its journal is opened and open kills, then the surviving spawns, go through the existing reconcilers (adopt or
 settle, never dispatch). Unreconciled: a corrupt log, a survivor whose launch.json is not its intent's, or a

@@ -92,6 +92,12 @@ const ROWS: readonly Row[] = [
   ['build', 'malformed', {}, 'build/resume@med', 'retry', { 'retries.build': 1 }],
   ['build', 'malformed', { counters: { 'retries.build': 1 } }, 'park:malformed', 'park', {}],
   ['build', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  // transitions.lost-build: a lost implementer call never charges. Without tree effects it was already
+  // retried once inside the stage (new invocation, same deadline): park. With them: salvage and verify.
+  ['build', 'lost', {}, 'park:build-lost', 'park', {}],
+  ['build', 'lost', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'park:build-lost', 'park', {}],
+  ['build', 'lost-tree-effects', {}, 'quiesce', 'advance', {}],
+  ['build', 'lost-tree-effects', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'quiesce', 'advance', {}],
   ['build', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
   ['build', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['build', 'interrupted', {}, 'hold', 'hold', {}],

@@ -226,7 +226,7 @@ export type MeterSubject = Readonly<{ unit: UnitId; attempt: number }> | null;
 /** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
 export const STAGE_OUTCOME_KINDS = {
   'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted'],
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'occupied', 'cleanup-failed', 'interrupted'],
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted'],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
@@ -473,7 +473,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     outcome: kindOnly('quiesced'),
   },
   'evidence.snapshot': {
-    expect: object((f) => ({ source: f.get('source', absR), globs: f.get('globs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), dest: f.get('dest', absR) })),
+    expect: object((f) => ({ source: f.get('source', absR), globs: f.get('globs', arrayOf((v, p) => repoPattern(v, p))), dest: f.get('dest', absR) })),
     post: object((f) => ({ manifest: f.get('manifest', absR) })),
     outcome: object((f) => ({ kind: f.get('kind', literal('captured')), manifestSha256: f.get('manifestSha256', sha256R), files: f.get('files', nat) })),
   },

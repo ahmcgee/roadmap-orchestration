@@ -58,7 +58,9 @@ import {
   verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
-import { type LaneRecord, type VerificationTree, laneOrder, removeVerificationTree, runLaneSeries, specSeriesRoot } from './lanes.ts';
+import {
+  type LaneRecord, type VerificationTree, laneOrder, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries, specSeriesRoot,
+} from './lanes.ts';
 import { type RoundInput, callImplementer, laneFixRound, prepareRound } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 import { evidenceSnapshotOp, salvageCommitOp } from '../recover/ops.ts';
@@ -238,7 +240,7 @@ export function recordedCall(ctx: StageContext, parent: StageParent): BackendCal
   if (done === null || done.kind !== 'proc.spawn') return null;
   const inv = invocationId(spawn.op, spawn.ordinal);
   const invDir = invocationDir(ctx.runDir, inv);
-  if (done.outcome.kind === 'lost') return { kind: 'lost', inv, invDir };
+  if (done.outcome.kind === 'lost') return { kind: 'lost', inv, invDir, treeEffects: done.outcome.treeEffects };
   const result = runnerFiles(invDir, inv).read('result.json');
   if (result === null || result.type !== 'backend') throw new Error(`${inv}: a done backend spawn without its backend result`);
   return { kind: 'result', inv, invDir, result };
@@ -312,6 +314,13 @@ export async function buildRead(
   held: Reservation<'running', StageHolder> | null,
 ): Promise<BuildDone> {
   const failed = (d: StageDone<'build'>): BuildDone => ({ ...d, run: null });
+  const worktree = unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id);
+  const branch = unitBranch(ctx.plan.arc, unit.id);
+  if (called.kind === 'lost' && called.treeEffects) {
+    // What the workload left is salvaged and verified like a report's (the plan's recovery table), uncharged.
+    const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
+    return { ...record(ctx, parent, 'lost-tree-effects'), run };
+  }
   const v = verdictOf(ctx, parent, called);
   let malformed = false;
   if (v.kind === 'success') {
@@ -326,14 +335,13 @@ export async function buildRead(
   // report of success without it does not describe the tree, so it is read as a malformed report.
   if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
   if (v.kind === 'success' && !malformed && called.kind === 'result') {
-    const run: BuildRun = {
-      inv: called.inv, invDir: called.invDir, worktree: unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id), branch: unitBranch(ctx.plan.arc, unit.id),
-      workDir: workDir(ctx.runDir, parent), reservation: held,
-    };
+    const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
     return { ...record(ctx, parent, 'success'), run };
   }
   // Nothing downstream runs after a failed build, so its resources are cleaned now (the workload is quiescent).
   if (held !== null && (await cleanup(ctx, held, parent)).kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed'));
+  // Lost again after its retry, with no effect on the tree.
+  if (called.kind === 'lost') return failed(record(ctx, parent, 'lost'));
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v));
 }
 
@@ -487,9 +495,16 @@ export type LanesDone = StageDone<'lanes'> & Readonly<{
   fix: RoundInput | null;
 }>;
 
+/** Every lane's declared evidence, the unit's and the suite's: what a leftover checkout's removal captures. */
+export function laneGlobs(ctx: StageContext, spec: SpecM1): readonly RepoPattern[] {
+  return unique([...spec.lanes, ...ctx.plan.suite.lanes].flatMap((l) => l.evidenceGlobs));
+}
+
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone> {
   const { spec } = loadUnitSpec(ctx, unit);
   const parent = at(start(ctx, unit.id, 'lanes'), 'lanes');
+  // A checkout an earlier attempt left (a crash cut its stage short) goes first: this series makes its own.
+  for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const series = await runLaneSeries(ctx, parent, laneOrder(spec), 'spec', checkout, specSeriesRoot(ctx.runDir, parent));
   const { end } = series;

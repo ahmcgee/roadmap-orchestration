@@ -814,7 +814,7 @@ export const NEEDS_USER_REASONS = [
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
-  'recovery-holder-dead', 'previous-arc-unreconciled',
+  'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost',
 ] as const;
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

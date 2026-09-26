@@ -185,6 +185,8 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
 
   const second = startExec(r);
   await until(() => started(r).length === 2, WAIT_MS, 'the second start');
+  // The smoke runs after executor-started and recovery (lead ruling 14c): wait for it, then for anything more.
+  await until(() => readCalls(r.scenarioPath).length === 5, WAIT_MS, 'the second smoke');
   await sleep(2_500);
   const c = journalOf(r).view.control();
   assert.deepEqual([c.stop, c.pausedAll], [null, true], 'the restart cleared the stop and kept the pause');
@@ -369,6 +371,8 @@ test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-re
 
   const run = startExec(r);
   await until(() => started(r).length === 1, WAIT_MS, 'the executor to start');
+  // The smoke runs after executor-started and recovery (lead ruling 14c): wait for it, then for anything more.
+  await until(() => readCalls(r.scenarioPath).length === 2, WAIT_MS, 'the smoke');
   await sleep(3_000);
   assert.equal(readCalls(r.scenarioPath).length, 2, 'only the smoke ran: u1 is held by the arc-wide item that names u2');
   assert.equal(run.child.exitCode, null);

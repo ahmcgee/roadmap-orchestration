@@ -8,7 +8,10 @@
 //   2. environment  worktree root, lanes, routing, host residues             (pure: no effect yet)
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode
-//   5. smoke        backend-smoke for the resolved profile, last: its spawns are journaled
+//
+// `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
+// separate: its spawns are journaled, so the executor runs it only after `executor-started` and recovery,
+// which closes a smoke spawn a crashed start left open like any other (lead ruling, 14c).
 //
 // Order within groups 1 and 2 follows the table. Nothing here names a model: routing refusals name the
 // seat and the layer.
@@ -285,10 +288,10 @@ export type StartChecks =
     rejections: readonly StartupRejection[];
     /** Held when a later group refused. The executor never releases it: its supervisor does, after it exits. */
     claim: HostLockClaim | null;
-    /** Open when the smoke refused: the caller closes it. */
+    /** Open when the containment mode refused: the caller closes it. */
     journal: OpenJournal | null;
   }>
-  | Readonly<{ kind: 'passed'; context: StartupContext; routing: SmokeRouting; claim: HostLockClaim; journal: OpenJournal; smoke: SmokeReport }>;
+  | Readonly<{ kind: 'passed'; context: StartupContext; routing: SmokeRouting; claim: HostLockClaim; journal: OpenJournal }>;
 
 /** The absolute git common dir of `repo`, where the run dirs live. */
 export function gitCommonDir(repo: AbsPath): AbsPath {
@@ -342,10 +345,14 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
 
-  // 5. smoke
-  const routing: SmokeRouting = { profile, resolved };
-  const report = await smoke(routing, { journal, runDir: context.runDir, hostEnv: backendEnv(input.env) });
-  const smokeRows = smokeRejections(report);
-  if (smokeRows.length > 0) return refused(smokeRows, claim, journal);
-  return { kind: 'passed', context, routing, claim, journal, smoke: report };
+  return { kind: 'passed', context, routing: { profile, resolved }, claim, journal };
+}
+
+/** Group 5: the backend smoke for the resolved profile, over the passed checks' journal. */
+export async function smokeCheck(
+  passed: Extract<StartChecks, { kind: 'passed' }>, env: Readonly<Record<string, string | undefined>>,
+): Promise<Readonly<{ kind: 'refused'; rejections: readonly StartupRejection[] }> | Readonly<{ kind: 'passed'; smoke: SmokeReport }>> {
+  const report = await smoke(passed.routing, { journal: passed.journal, runDir: passed.context.runDir, hostEnv: backendEnv(env) });
+  const rejections = smokeRejections(report);
+  return rejections.length > 0 ? { kind: 'refused', rejections } : { kind: 'passed', smoke: report };
 }

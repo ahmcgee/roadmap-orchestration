@@ -37,7 +37,7 @@ import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { type Backend, RISK_TIERS, type JudgmentRole, type RiskTier, type Role } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { invocationDir, invoke } from './invoke.ts';
+import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
 import { judgmentSeat } from './transitions.ts';
 
 /** Everything a unit's stages need: processes, resources, the resolved routing and the host environment. */
@@ -148,7 +148,8 @@ export type BackendCallSpec = Readonly<{
 
 export type BackendCallOutcome =
   | Readonly<{ kind: 'result'; inv: InvocationId; invDir: AbsPath; result: BackendResult }>
-  | Readonly<{ kind: 'lost'; inv: InvocationId; invDir: AbsPath }>;
+  /** Lost with its runner (no exit.json); `treeEffects`: its workload was started, so it may have changed the tree. */
+  | Readonly<{ kind: 'lost'; inv: InvocationId; invDir: AbsPath; treeEffects: boolean }>;
 
 /** Writes `text` once under `<runDir>/inputs/<sha256>.<ext>`; the name certifies the content. */
 export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
@@ -188,7 +189,12 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
   }
 }
 
-/** One backend invocation of a unit's stage, through `invoke` (proc.spawn{purpose: backend}). */
+/**
+ * One backend call of a unit's stage, through `invoke` (proc.spawn{purpose: backend}). A call lost with its
+ * runner is retried once, uncharged, as the op's next invocation with the same deadline (the plan's
+ * recovery table); the outcome is the retry's. An implementer call that may have changed the tree is not
+ * retried: its work is salvaged and verified (`lost-tree-effects`).
+ */
 export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
   const role: Role = spec.request.dispatch.role;
   const schemaText = canonicalJson(spec.schema);
@@ -196,17 +202,21 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
   const env = { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan.arc, spec.unit) };
-  const outcome = await invoke(ctx.journal, ctx.containment, {
+  const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
-    origin: { type: 'new', key: opKey(`backend:${spec.unit}:${spec.parent.stage}`), parent: spec.parent, deadlineAt: spec.deadlineAt },
+    origin,
     subject: { purpose: 'backend', role, tier: spec.request.dispatch.tier, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
     },
   });
+  const key = opKey(`backend:${spec.unit}:${spec.parent.stage}`);
+  const first = await invoke(ctx.journal, ctx.containment, launch({ type: 'new', key, parent: spec.parent, deadlineAt: spec.deadlineAt }));
+  const retry = first.kind === 'lost' && !(role === 'build' && first.treeEffects);
+  const outcome = retry ? await invoke(ctx.journal, ctx.containment, launch({ type: 'retry', op: first.op })) : first;
   const invDir = invocationDir(ctx.runDir, outcome.inv);
-  if (outcome.kind === 'lost') return { kind: 'lost', inv: outcome.inv, invDir };
+  if (outcome.kind === 'lost') return { kind: 'lost', inv: outcome.inv, invDir, treeEffects: outcome.treeEffects };
   if (outcome.result.type !== 'backend') throw new Error(`${outcome.inv}: a backend spawn produced a ${outcome.result.type} result`);
   return { kind: 'result', inv: outcome.inv, invDir, result: outcome.result };
 }

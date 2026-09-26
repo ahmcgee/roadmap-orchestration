@@ -10,9 +10,10 @@
 // reconciled journal exactly as a live one would.
 //
 // Inside a stage, after recovery (src/recover/recover.ts) has closed what a dead executor left open: a
-// plan-check, build or gate attempt whose backend call ended with a result but whose stage-outcome fact is
-// missing (the fold's `open` attempt) is recorded from that result, never dispatched again. Any other cut
-// short attempt (no call yet, a lost call, a stage without one) runs again as a new, uncharged attempt.
+// plan-check, build or gate attempt whose backend call ended with a result (or, for a build, was lost with
+// tree effects) but whose stage-outcome fact is missing (the fold's `open` attempt) is recorded from that
+// call, never dispatched again. Any other cut short attempt (no call yet, a lost call, a stage without one)
+// runs again as a new, uncharged attempt. The executor records these at startup, right after recovery.
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
 // the resume. A pause or stop signal is checked between stages; the stage in flight is ended by the
@@ -20,22 +21,21 @@
 //
 // Needs-user content is produced here, never written: the writer is step 13's.
 import { crashPoint } from '../core/crash.ts';
-import type { OutcomeStage, Parent, StageOutcomeFact } from '../core/events.ts';
+import type { OutcomeStage, StageOutcomeFact } from '../core/events.ts';
 import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
 import type { NeedsUserReason, NeedsUserContent } from '../core/records.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { stageRecipes } from '../resources/teardown.ts';
-import { canonicalJson } from '../core/json.ts';
 import { type StageContext, type StageParent, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSeries, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { type RoundInput, candidateFixRound, gateReviseRound, laneFixRound } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
+  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
   recordedCall, salvage, teardown,
 } from './stages.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
@@ -177,26 +177,25 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
 // retire
 
 /**
- * Removes every worktree the unit still has, verification checkouts first and its own worktree last, each
- * citing its captured evidence (the series' snapshot; for the unit worktree, its latest build evidence).
- * Branches and the candidate ref are kept. Re-runnable: what the journal says is gone is not touched.
+ * Removes every worktree the unit still has, verification checkouts first (each citing its series' evidence
+ * snapshot, or a leftover's own: `removeCheckout`) and its own worktree last, citing its latest build
+ * evidence. Branches and the candidate ref are kept. Re-runnable: what the journal says is gone is not touched.
  */
 async function retire(ctx: StageContext, unit: PlanUnit): Promise<void> {
   const view = ctx.journal.view;
   const parent: StageParent = { type: 'stage', unit: unit.id, stage: 'retire', attempt: view.unit(unit.id).counters.attempts + 1 };
-  const ofUnit = (p: Parent): boolean => p.type === 'stage' && p.unit === unit.id;
-  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
-  const present = view.opsOf('worktree.create').filter((i) => ofUnit(i.parent) && view.doneOf(i.op) !== null && !removed.has(i.expect.path));
-  const evidenceOps = view.opsOf('evidence.snapshot').filter((i) => ofUnit(i.parent) && view.doneOf(i.op) !== null);
-  const ordered = [...present.filter((i) => i.expect.checkout.type === 'detached'), ...present.filter((i) => i.expect.checkout.type === 'branch')];
-  for (const created of ordered) {
-    // A series checkout cites its series' last snapshot; the unit worktree, its latest build evidence.
-    const evidenceOp: OpId | undefined = (created.expect.checkout.type === 'detached'
-      ? evidenceOps.filter((i) => canonicalJson(i.parent) === canonicalJson(created.parent))
-      : evidenceOps.filter((i) => i.parent.type === 'stage' && i.parent.stage === 'evidence')).at(-1)?.op;
-    if (evidenceOp === undefined) throw new Error(`retire of ${unit.id}: no captured evidence to cite for ${created.expect.path}`);
+  const { spec } = loadUnitSpec(ctx, unit);
+  for (const created of presentCheckouts(view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
+  const after = ctx.journal.view;
+  const removed = new Set(after.opsOf('worktree.remove').filter((i) => after.doneOf(i.op) !== null).map((i) => i.expect.path));
+  const own = after.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.expect.checkout.type === 'branch'
+    && after.doneOf(i.op) !== null && !removed.has(i.expect.path));
+  for (const created of own) {
+    const evidenceOp: OpId | undefined = after.opsOf('evidence.snapshot')
+      .filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'evidence' && after.doneOf(i.op) !== null).at(-1)?.op;
+    if (evidenceOp === undefined) throw new Error(`retire of ${unit.id}: its worktree ${created.expect.path} has no build evidence to cite`);
     await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit.id}:retire`, parent, {
-      path: created.expect.path, evidence: capturedEvidence(view, evidenceOp),
+      path: created.expect.path, evidence: capturedEvidence(after, evidenceOp),
     });
   }
 }
@@ -232,23 +231,27 @@ const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
  * stage-outcome fact) at plan-check, build or gate whose call recovery has since closed with a result
  * (adopted, reconciled or redone). That result is consumed as the attempt's outcome, exactly as the live
  * stage would have read it; the call is never dispatched again (lead ruling 14a/14b: completed but
- * unrecorded is never treated as not started). A lost call, or none, returns null: the stage runs again as
- * a new attempt.
+ * unrecorded is never treated as not started), and so is a build lost with tree effects (its work is
+ * salvaged, the plan's recovery table). Any other lost call, or none, returns null: the stage runs again as
+ * a new, uncharged attempt.
  */
 async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact | null): Promise<StageDone<Target['stage']> | null> {
   const open = ctx.journal.view.unit(unit.id).open;
   if (open === null || !CALL_STAGES.includes(open.stage as OutcomeStage)) return null;
   const parent: StageParent = { type: 'stage', unit: unit.id, stage: open.stage, attempt: open.attempt };
   const called = recordedCall(ctx, parent);
-  if (called === null || called.kind === 'lost') return null;
+  // A lost implementer call that may have changed the tree is consumed too (salvaged and verified); any
+  // other lost call is not: its stage runs again.
+  if (called === null || (called.kind === 'lost' && !(open.stage === 'build' && called.treeEffects))) return null;
   const decided = f === null ? null : decidedBy(f);
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
   const target: Target = decided === null ? { stage: 'plan-check' } : decided.target;
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
-  const { result } = called;
   switch (target.stage) {
     case 'plan-check':
     case 'gate': {
+      if (called.kind === 'lost') throw new Error(`${called.inv}: a lost judgment call is never consumed`);
+      const { result } = called;
       if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${target.stage}`);
       if (target.stage === 'plan-check') return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
       return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, integrationTip(ctx), unitTip(ctx, unit.id));
@@ -266,14 +269,24 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
 }
 
 /**
+ * The step that records a stage attempt a crash cut short after its backend call, from the call recovery
+ * closed (`consumeRecorded`); null when the unit has no such attempt. The executor calls it for every unit
+ * at startup, right after recovery (lead ruling, 14c), and `step` calls it first, so it is recorded once.
+ */
+export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
+  const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
+  return recorded === null ? null : after(ctx, unit, recorded);
+}
+
+/**
  * One step of the unit: the stage its latest decided outcome names, run and recorded (or, when a crash cut
  * that stage short after its backend call, consumed from the recorded call); or, when that outcome ended
  * the unit, its result (a merged unit's retire is finished first if a restart cut it short).
  */
 export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
+  const consumed = await consume(ctx, unit);
+  if (consumed !== null) return consumed;
   const f = ctx.journal.view.unit(unit.id).decided;
-  const recorded = await consumeRecorded(ctx, unit, f);
-  if (recorded !== null) return after(ctx, unit, recorded);
   if (f === null) return after(ctx, unit, await planCheck(ctx, unit));
   const decided = decidedBy(f);
   switch (decided.kind) {

@@ -14,11 +14,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Event, IntentOf } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, invocationId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import type { ExitReason } from '../src/executor.ts';
 import { EXIT_REASON_FILE } from '../src/executor.ts';
-import { openBlocking } from '../src/needsuser.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
@@ -27,14 +26,14 @@ import {
   PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
 } from './matrix.ts';
 import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf } from './oracle.ts';
-import { type ExecRun, SMOKE_DEFAULT, cli, hostFile, journalOf } from './fixtures/exec-common.ts';
+import { type ExecRun, SMOKE_DEFAULT, hostFile } from './fixtures/exec-common.ts';
 import {
   BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
   STRAIGHT_OUTCOMES, type Scenario, blockedAt, buildRunner, callsMatchSteps, finalReason, layout, moveIntegration, readRecord, release, supervisedRun,
 } from './fixtures/pm-common.ts';
 import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from './fixtures/sup-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
-import { MUL, gateStep } from './fixtures/unit-common.ts';
+import { MUL, codexStep, gateStep } from './fixtures/unit-common.ts';
 
 /** Supervised runs at once: each is a handful of short-lived processes, mostly waiting on 500 ms polls. */
 const CONCURRENCY = 10;
@@ -221,40 +220,43 @@ function pipelineCells(row: string, ref: Reference, s: Scenario): readonly CellS
 
 const reachedBuild = (r: ExecRun): boolean => existsSync(join(r.scenarioDir, 'build1.reached'));
 
-/** The build's runner SIGKILLed mid-call: the live executor parks u1 on a process fault; the test acks it. */
+/**
+ * The build's runner SIGKILLed mid-call, after the implementer changed the tree: the live executor finds
+ * the invocation lost with tree effects and salvages and verifies what it left (lead ruling, 14c).
+ */
 const RUNNER_DEATH: Scenario = {
   arc: () => ({}),
-  steps: () => [planCheckStep({ decision: 'approve' }), blockedAt()],
+  steps: () => [
+    planCheckStep({ decision: 'approve' }),
+    codexStep([{ type: 'dirty', files: MUL }, { type: 'barrier', name: 'build1', timeoutMs: 120_000 }], { argv: ['exec', '-C'] }),
+    gateStep({ decision: 'approve' }),
+  ],
   hooks: (r): readonly Hook[] => [
     { name: 'kill-runner', when: () => reachedBuild(r), act: async () => void process.kill(buildRunner(r).pid, 'SIGKILL') },
-    {
-      name: 'ack',
-      when: () => reachedBuild(r) && openBlocking(journalOf(r).view).length > 0,
-      act: async () => void (await cli(r, ['ack', openBlocking(journalOf(r).view)[0]!])),
-    },
   ],
 };
 
-async function runnerDeath(): Promise<void> {
+async function runnerDeath(ref: Reference): Promise<void> {
   const laid = layout(RUNNER_DEATH);
   const { r } = laid;
   await supervisedRun(laid);
   const run = runOf(r);
-  const reason = finalReason(r);
-  const [item] = run.view.needsUser();
-  assert.ok(item !== undefined);
-  assert.deepEqual(reason, { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item.id }] });
+  assert.deepEqual(finalReason(r), ref.reason);
   const builds = run.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
   assert.equal(builds.length, 1, 'the lost build is not called again');
+  const inv = invocationId(builds[0]!.op, builds[0]!.ordinal);
+  assert.equal(builds[0]!.ordinal, 1, 'a build lost with tree effects is not retried');
   const done = run.view.doneOf(builds[0]!.op);
-  assert.ok(done?.kind === 'proc.spawn' && done.outcome.kind === 'lost' && done.recoveredBy === null, `closed lost by the live executor: ${JSON.stringify(done)}`);
+  assert.ok(done?.kind === 'proc.spawn' && done.outcome.kind === 'lost' && done.outcome.treeEffects && done.recoveredBy === null, `closed lost with tree effects by the live executor: ${JSON.stringify(done)}`);
+  const usage = run.events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable') && e.fact.inv === inv ? [e.fact] : []));
+  assert.deepEqual(usage.map((f) => (f.kind === 'usage-unavailable' ? f.reason : f.kind)), ['no-result'], 'its usage is unavailable{no-result}');
   assert.deepEqual(run.view.opsOf('proc.kill').map((k) => k.expect.reason), ['recovery'], 'its orphaned workload killed');
-  assert.equal(run.view.unit('u1' as never).counters.chargeableFailures, 0, 'a process fault never charges');
+  assert.equal(run.view.unit('u1' as never).counters.chargeableFailures, 0, 'a lost build never charges');
   assert.equal(stateOf(r).crashes.length, 0);
   assert.equal(readCalls(r.scenarioPath).filter((c) => c.as === 'codex' && c.step !== null).length, 2, 'the codex smoke and the one build');
   assertOracle(run, {
-    integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', `${baselineOf(r)}^{tree}`), units: { u1: 'parked' },
-    outcomes: { u1: ['plan-check:approve', 'build:process-fault'] }, needsUser: ['process-fault'], trace: UNCRASHED,
+    integration: 'main', baseline: baselineOf(r), tree: ref.tree, units: { u1: 'merged' },
+    outcomes: { u1: ['plan-check:approve', 'build:lost-tree-effects', ...STRAIGHT_OUTCOMES.u1.slice(2)] }, needsUser: [], trace: UNCRASHED,
   });
 }
 
@@ -378,7 +380,7 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
   assert.deepEqual(killCells(PIPELINE_SUPERVISOR_DEATH).map((c) => c.boundary), ['B3']);
   assert.deepEqual(killCells(PIPELINE_HOST_DEATH).map((c) => c.boundary), ['B3']);
   const kills: readonly CellSpec[] = [
-    { name: `${PIPELINE_RUNNER_DEATH}: B3 kill`, run: runnerDeath },
+    { name: `${PIPELINE_RUNNER_DEATH}: B3 kill`, run: () => runnerDeath(straight) },
     { name: `${PIPELINE_SUPERVISOR_DEATH}: B3 kill`, run: () => supervisorDeath(straight) },
     { name: `${PIPELINE_HOST_DEATH}: B3 kill`, run: () => hostDeath(straight) },
   ];

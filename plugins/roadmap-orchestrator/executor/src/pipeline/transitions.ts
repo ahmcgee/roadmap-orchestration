@@ -10,7 +10,9 @@
 // - Bounded rounds: plan-check redirect ≤ 1, gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
 // - One uncharged retry at plan-check, build (a resume), lanes and gate, then park. Retries are counted per
-//   stage over the whole unit.
+//   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
+//   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
+//   that may have changed the tree is not retried: `lost-tree-effects` salvages and verifies its work.
 // - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's high seat;
 //   at the high seat it parks with a needs-user. A routed-up role stays on the high seat for the unit.
 // - A risk trigger (contract path touched at salvage, scope growth at the candidate) puts the next judgment
@@ -123,6 +125,11 @@ export const TABLE: Table = {
     refusal: park('refusal'),
     malformed: retry('malformed'),
     'process-fault': park('process-fault'),
+    // The implementer's runner died without exit.json (lost{treeEffects}; the plan's recovery table). No
+    // tree effects: the call was already retried once as a new invocation with the same deadline, and was
+    // lost again. Tree effects: what the workload left is salvaged and verified like a report, uncharged.
+    lost: park('build-lost'),
+    'lost-tree-effects': go(at('quiesce')),
     // The reservation cycle's occupancy probe found unlabelled or undeclared occupancy (decided before any charge).
     occupied: park('occupancy-unlabelled'),
     // The build's resources could not be cleaned after a failed build: a residue, never released.

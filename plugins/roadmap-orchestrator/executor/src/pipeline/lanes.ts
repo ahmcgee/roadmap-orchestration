@@ -23,7 +23,7 @@ import { type InvocationId, type OpId, type Sha, type UnitId, invocationId, opKe
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type CommandVerdict, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RepoPath, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
+import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
 import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
@@ -242,6 +242,37 @@ const dirtyDir = (root: AbsPath): AbsPath => absPath(join(root, '_dirty'));
 /** Tracked or unignored changes in a checkout; ignored files never count. */
 export function dirtyPaths(tree: AbsPath): readonly RepoPath[] {
   return statusPorcelainV2Z(tree, false).map((s) => s.path);
+}
+
+/**
+ * `worktree.remove` of a verification checkout `created` made (any series, any attempt), from the stage
+ * attempt `parent`. It cites the series' last done evidence snapshot; a series that captured none (a crash
+ * cut its stage short once the checkout existed, so no lane finished) first gets one, under its own evidence
+ * root, of what the checkout holds beyond its commit and of the lanes' declared evidence (`laneGlobs`): a
+ * complete manifest, of zero files when nothing ran (lead ruling, 14c). Never an unrecorded removal.
+ */
+export async function removeCheckout(
+  ctx: StageContext, created: IntentOf<'worktree.create'>, parent: StageParent, laneGlobs: readonly RepoPattern[],
+): Promise<void> {
+  if (created.expect.checkout.type !== 'detached' || created.parent.type !== 'stage') throw new Error(`${created.expect.path} is not a verification checkout`);
+  const view = ctx.journal.view;
+  const { path } = created.expect;
+  const series = created.parent;
+  let evidence = view.opsOf('evidence.snapshot').filter((i) => sameParent(i.parent, series) && view.doneOf(i.op) !== null).at(-1)?.op;
+  if (evidence === undefined) {
+    const globs = [...new Set<RepoPattern>([...dirtyPaths(path).map((p) => repoPattern(p)), ...laneGlobs])].sort();
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
+      source: path, globs, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
+    })).op;
+  }
+  await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, { path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+}
+
+/** The unit's verification checkouts still present: created (done) by one of its stage attempts and not removed. */
+export function presentCheckouts(view: JournalView, unit: UnitId): readonly IntentOf<'worktree.create'>[] {
+  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
+  return view.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.expect.checkout.type === 'detached'
+    && view.doneOf(i.op) !== null && !removed.has(i.expect.path));
 }
 
 /** `worktree.remove` of a series checkout, citing the series' last done evidence snapshot. */

@@ -1,4 +1,5 @@
-// startup.rejections: every row of the startup rejection table through `runChecks` (src/preflight/checks.ts),
+// startup.rejections: every row of the startup rejection table through `runChecks` and then `smokeCheck`
+// (src/preflight/checks.ts; the executor runs recovery between the two),
 // over a real repo, real host files, a real journal and fake backends for the smoke. One case per kind, each
 // with its exit code, and a fully valid setup that passes.
 import assert from 'node:assert/strict';
@@ -20,7 +21,8 @@ import { type PreviousArcVerdict, claimHost, releaseHost } from '../src/host/loc
 import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
-import { type StartChecks, type StartInput, gitCommonDir, runChecks } from '../src/preflight/checks.ts';
+import { type StartChecks, type StartInput, gitCommonDir, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
 import { makeRepo, revParse, tmpDir } from './helpers/repo.ts';
 import { type Step, writeScenario } from './helpers/scenario.ts';
@@ -102,13 +104,24 @@ async function deadClaim(s: Setup, opts: Readonly<{ arc?: string; owner: boolean
   return claim;
 }
 
-function refusedWith(result: StartChecks, kind: StartupRejectionKind, exit: 75 | 78): readonly StartupRejection[] {
+type Checked = Extract<StartChecks, { kind: 'refused' }> | (Extract<StartChecks, { kind: 'passed' }> & Readonly<{ smoke: SmokeReport }>);
+
+/** Groups 1 to 4, then the smoke on the journal they opened: the table in the executor's order. */
+async function allChecks(i: StartInput): Promise<Checked> {
+  const checks = await runChecks(i);
+  if (checks.kind === 'refused') return checks;
+  const smoked = await smokeCheck(checks, i.env);
+  if (smoked.kind === 'refused') return { kind: 'refused', rejections: smoked.rejections, claim: checks.claim, journal: checks.journal };
+  return { ...checks, smoke: smoked.smoke };
+}
+
+function refusedWith(result: Checked, kind: StartupRejectionKind, exit: 75 | 78): readonly StartupRejection[] {
   assert.equal(result.kind, 'refused', JSON.stringify(result));
-  const { rejections } = result as Extract<StartChecks, { kind: 'refused' }>;
+  const { rejections } = result as Extract<Checked, { kind: 'refused' }>;
   assert.deepEqual(rejections.map((r) => r.kind), rejections.map(() => kind), JSON.stringify(rejections));
   assert.ok(rejections.length > 0);
   for (const r of rejections) assert.equal(exitCodeFor(r), exit);
-  const r = result as Extract<StartChecks, { kind: 'refused' }>;
+  const r = result as Extract<Checked, { kind: 'refused' }>;
   r.journal?.close();
   return rejections;
 }
@@ -116,7 +129,7 @@ function refusedWith(result: StartChecks, kind: StartupRejectionKind, exit: 75 |
 describe('startup.rejections', () => {
   it('a fully valid setup produces no rejection: claimed, journal open, mode recorded, both smokes green', T, async () => {
     const s = setup();
-    const result = await runChecks(input(s));
+    const result = await allChecks(input(s));
     assert.equal(result.kind, 'passed', JSON.stringify(result));
     if (result.kind !== 'passed') return;
     assert.equal(result.context.profile, 'default');
@@ -133,14 +146,14 @@ describe('startup.rejections', () => {
     writeFileSync(join(s.repo, '.roadmap', 'config.json'), '{}');
     writeFileSync(join(s.repo, '.roadmap', 'state.json'), '{}');
     mkdirSync(join(s.repo, '.roadmap', 'waves'));
-    const [r] = refusedWith(await runChecks(input(s)), 'legacy-roadmap-dir', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'legacy-roadmap-dir', 78);
     assert.deepEqual(r?.kind === 'legacy-roadmap-dir' ? r.unexpected : null, ['state.json', 'waves']);
   });
 
   it('plan-invalid: schema (78)', T, async () => {
     const s = setup();
     write({ ...s, plan: { ...s.plan, units: [{ id: 'u1', spec: 'u1.json', risk: 'extreme', scope: ['src/**'], resources: [] }] } });
-    const [r] = refusedWith(await runChecks(input(s)), 'plan-invalid', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
     assert.deepEqual(r?.kind === 'plan-invalid' && r.problem.type === 'schema' ? r.problem.field : null, 'plan.units[0].risk');
   });
 
@@ -157,7 +170,7 @@ describe('startup.rejections', () => {
         ],
       },
     });
-    const rejections = refusedWith(await runChecks(input(s)), 'plan-invalid', 78);
+    const rejections = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
     assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' ? r.problem.type : null)).sort(), ['baseline-not-ancestor', 'unknown-resource', 'unknown-spec-path']);
   });
 
@@ -168,7 +181,7 @@ describe('startup.rejections', () => {
     try {
       const s = setup();
       write({ ...s, plan: { ...s.plan, worktreeRoot: shm } });
-      const [r] = refusedWith(await runChecks(input(s)), 'worktree-root-unusable', 78);
+      const [r] = refusedWith(await allChecks(input(s)), 'worktree-root-unusable', 78);
       assert.equal(r?.kind === 'worktree-root-unusable' ? r.problem : null, 'tmpfs');
     } finally {
       rmSync(shm, { recursive: true });
@@ -177,7 +190,7 @@ describe('startup.rejections', () => {
     const readOnly = tmpDir('st-ro');
     chmodSync(readOnly, 0o555);
     write({ ...s, plan: { ...s.plan, worktreeRoot: readOnly } });
-    const [r] = refusedWith(await runChecks(input(s)), 'worktree-root-unusable', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'worktree-root-unusable', 78);
     chmodSync(readOnly, 0o755);
     assert.equal(r?.kind === 'worktree-root-unusable' ? r.problem : null, 'not-writable');
   });
@@ -197,7 +210,7 @@ describe('startup.rejections', () => {
       },
       plan: { ...s.plan, resources: [{ name: 'db', probe: tool, teardown: tool }, { name: 'cache', probe: tool, teardown: tool }] },
     });
-    const rejections = refusedWith(await runChecks(input(s)), 'spec-lane-unrunnable', 78);
+    const rejections = refusedWith(await allChecks(input(s)), 'spec-lane-unrunnable', 78);
     assert.deepEqual(rejections.map((r) => (r.kind === 'spec-lane-unrunnable' && 'lane' in r ? `${r.lane} ${r.problem.type}` : null)), [
       'ghost argv0-unresolvable', 'needsenv env-missing', 'estate estate-lane-for-implementer',
     ]);
@@ -206,14 +219,14 @@ describe('startup.rejections', () => {
   it('unsupported-routing: a Codex judgment seat, named by seat and layer, never by model (78)', T, async () => {
     const s = setup();
     write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } } } });
-    const [r] = refusedWith(await runChecks(input(s)), 'unsupported-routing', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);
     assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', unit: null, why: 'codex-judgment' });
   });
 
   it('undispositioned-residue (78)', T, async () => {
     const s = setup();
     recordResidue(s.hostDir, residueEntry(FAILED[0]!));
-    const [r] = refusedWith(await runChecks(input(s)), 'undispositioned-residue', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'undispositioned-residue', 78);
     assert.deepEqual(r?.kind === 'undispositioned-residue' ? r.residues : null, [residueEntry(FAILED[0]!).key]);
   });
 
@@ -221,7 +234,7 @@ describe('startup.rejections', () => {
     const s = setup();
     const held = await claimHost(s.hostDir, { arc: arcId('other-arc'), runDir: absPath('/elsewhere'), repo: absPath('/elsewhere'), supervisor: selfIdentity() }, async () => assert.fail());
     assert.equal(held.kind, 'claimed');
-    const [r] = refusedWith(await runChecks(input(s)), 'host-busy', 75);
+    const [r] = refusedWith(await allChecks(input(s)), 'host-busy', 75);
     assert.equal(r?.kind === 'host-busy' ? r.holder : null, 'owner');
   });
 
@@ -229,7 +242,7 @@ describe('startup.rejections', () => {
     const s = setup();
     await deadClaim(s, { arc: 'prev-arc', owner: true });
     const left = invocationId(opId(arcId('prev-arc'), 4), 1);
-    const [r] = refusedWith(await runChecks(input(s, async () => ({ kind: 'unreconciled', invocations: [left] }))), 'previous-arc-unreconciled', 78);
+    const [r] = refusedWith(await allChecks(input(s, async () => ({ kind: 'unreconciled', invocations: [left] }))), 'previous-arc-unreconciled', 78);
     assert.deepEqual(r, { kind: 'previous-arc-unreconciled', arc: 'prev-arc', invocations: [left] });
   });
 
@@ -239,14 +252,14 @@ describe('startup.rejections', () => {
     const holder = await deadIdentity();
     const recovery: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: nonce('1'.repeat(32)), bootId: readBootId(), holder, at: isoTimeOf(new Date()) };
     atomicJson(hostPath(s.hostDir, RECOVERY_LOCK), recovery);
-    const [r] = refusedWith(await runChecks(input(s)), 'recovery-holder-dead', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'recovery-holder-dead', 78);
     assert.deepEqual(r, { kind: 'recovery-holder-dead', pid: holder.pid });
   });
 
   it('owner-mismatch: a dead claim without its owner record (78)', T, async () => {
     const s = setup();
     await deadClaim(s, { owner: false });
-    const [r] = refusedWith(await runChecks(input(s)), 'owner-mismatch', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'owner-mismatch', 78);
     assert.match(r?.kind === 'owner-mismatch' ? r.detail : '', /missing/);
   });
 
@@ -255,7 +268,7 @@ describe('startup.rejections', () => {
     const dir = runDirOf(s);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'events.jsonl'), 'not a record\n');
-    const result = await runChecks(input(s));
+    const result = await allChecks(input(s));
     const [r] = refusedWith(result, 'log-corrupt', 78);
     assert.deepEqual(r?.kind === 'log-corrupt' ? [r.file, r.offset] : null, [join(dir, 'events.jsonl'), 0]);
     assert.ok(result.kind === 'refused' && result.claim !== null);
@@ -269,7 +282,7 @@ describe('startup.rejections', () => {
     const journal = openJournal(dir, arcId(s.arc));
     journal.fact({ kind: 'containment-mode', mode: 'cgroup' });
     journal.close();
-    const [r] = refusedWith(await runChecks(input(s)), 'containment-mode-changed', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'containment-mode-changed', 78);
     assert.deepEqual(r, { kind: 'containment-mode-changed', recorded: 'cgroup', detected: 'session' });
   });
 
@@ -278,7 +291,7 @@ describe('startup.rejections', () => {
       { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'exit', code: 1 }] },
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },
     ]);
-    const [r] = refusedWith(await runChecks(input(s)), 'backend-smoke', 78);
+    const [r] = refusedWith(await allChecks(input(s)), 'backend-smoke', 78);
     assert.deepEqual(r?.kind === 'backend-smoke' ? [r.profile, r.backend, r.problem] : null, ['default', 'claude', 'failed']);
     assert.equal(existsSync(join(runDirOf(s), 'events.jsonl')), true);
   });

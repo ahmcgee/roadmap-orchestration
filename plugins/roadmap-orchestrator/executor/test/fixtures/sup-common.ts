@@ -84,10 +84,30 @@ export function supervisorOf(r: ExecRun): ProcIdentity {
 export const factsOf = (r: ExecRun): readonly Fact[] => journalOf(r).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 export const startedGenerations = (r: ExecRun): readonly number[] => factsOf(r).flatMap((f) => (f.kind === 'executor-started' ? [f.generation] : []));
 
-/** Waits until the executor of `generation` has started and is idle in its loop (it applied the pause). */
+/**
+ * Whether the executor of `generation` has finished its startup smoke: every backend any start of the arc
+ * smoked has a done smoke spawn after its `executor-started{generation}` (the smoke runs after that fact and
+ * after recovery; lead ruling 14c). The first start's smoke finished before it applied the pause.
+ */
+function smoked(r: ExecRun, generation: number): boolean {
+  const { events, view } = journalOf(r);
+  const started = events.findIndex((e) => e.type === 'fact' && e.fact.kind === 'executor-started' && e.fact.generation === generation);
+  if (started === -1) return false;
+  const smokeOf = (e: (typeof events)[number]): string | null =>
+    e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'smoke' && e.expect.subject.target.type === 'backend' ? e.expect.subject.target.backend : null;
+  const all = new Set(events.flatMap((e) => smokeOf(e) ?? []));
+  const done = new Set(events.slice(started).flatMap((e) => {
+    const backend = smokeOf(e);
+    return backend !== null && e.type === 'intent' && view.doneOf(e.op) !== null ? [backend] : [];
+  }));
+  return all.size > 0 && [...all].every((b) => done.has(b));
+}
+
+/** Waits until the executor of `generation` has started, smoked, and is idle in its loop (it applied the pause). */
 export async function idle(r: ExecRun, generation: number): Promise<ProcIdentity> {
   await until(() => existsSync(join(r.runDir, 'events.jsonl')) && startedGenerations(r).includes(generation), WAIT_MS, `executor-started{${generation}}`);
   await until(() => journalOf(r).view.control().pausedAll, WAIT_MS, 'the pause to be applied');
+  await until(() => smoked(r, generation), WAIT_MS, `the smoke of generation ${generation}`);
   return executorOf(r, generation);
 }
 

@@ -167,7 +167,7 @@ test('supervisor.control-only-restart: after the crash limit, start runs the exe
   await until(() => startedGenerations(r).includes(g4), WAIT_MS, 'executor-started of the control-only executor');
   await cli(r, ['resume']);
   await sleep(3_000);
-  assert.equal(readCalls(r.scenarioPath).length, 4, 'only the four smokes ran: nothing dispatched while the sup item is open');
+  assert.equal(readCalls(r.scenarioPath).length, 3, 'only the three earlier starts\' smokes ran: nothing dispatched while the sup item is open, and the control-only executor smokes after recovery, once it is acknowledged (lead ruling 14c)');
   assert.equal(run.child.exitCode, null, 'the control-only executor waits');
   assert.ok(isAlive(executor));
 

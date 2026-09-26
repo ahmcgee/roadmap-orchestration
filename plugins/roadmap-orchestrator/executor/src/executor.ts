@@ -8,10 +8,13 @@
 // process under that nonce and generation and that host.lock is that claim, and otherwise exits 78 having
 // written nothing at all (not even exit.reason.json). Then:
 //
-//   runChecks (the startup table, frozen order; the host claim is the handshaken one) → refused:
-//   `status.rejection.json` in the run dir for exit 78, exit.reason.json{refused}, exit 78/75
+//   runChecks (the startup table but the smoke, frozen order; the host claim is the handshaken one) →
+//   refused: `status.rejection.json` in the run dir for exit 78, exit.reason.json{refused}, exit 78/75
 //   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation}`
-//   (clears the stop marker) → control-only phase (below) → recovery (recover.ts) → the command loop:
+//   (clears the stop marker) → control-only phase (below) → recovery (recover.ts), which closes a smoke
+//   spawn a crashed start left open like any other → the outcomes of the stage attempts whose backend call
+//   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
+//   refusal exits `refused` as above, after readiness) → the command loop:
 //
 //     control commands (pause, stop, ack) → mutations (resume, sweep) at this safe point → needs-user due
 //     → stop marker: stop · a unit stop-pending: stop · everything settled and no open blocking needs-user:
@@ -67,8 +70,8 @@ import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor,
 import { type ArcResult, runArc } from './pipeline/arc.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from './pipeline/invoke.ts';
-import { step } from './pipeline/unit.ts';
-import { runChecks } from './preflight/checks.ts';
+import { consume, step } from './pipeline/unit.ts';
+import { runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupRejection, exitCodeFor, startupRejection,
@@ -249,12 +252,8 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
   const { claim } = args;
   const checks = await runChecks({ ...args, claim: async () => ({ kind: 'claimed', claim, previous: null }) });
   if (checks.kind === 'refused') {
-    const reason = refusedOf(checks.rejections);
     checks.journal?.close();
-    // A busy host is "try later", not a verdict on this arc: its run dir is left alone.
-    if (reason.exitCode === EXIT_REFUSED) writeRejection(claim.runDir, reason.rejections);
-    writeExitReason(args.hostDir, claim, 'refused');
-    return reason;
+    return refuse(args, checks.rejections);
   }
 
   const { context, journal, routing } = checks;
@@ -274,12 +273,48 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     const commands: CommandContext = { ...stage, hostEnv: backendEnv(args.env), routing };
     const x: Exec = { stage, commands, journal };
     const stopped = args.controlOnly ? await controlOnly(x) : null;
-    const reason = stopped ?? (await recover({ stage, commands }), await drive(x));
+    if (stopped !== null) {
+      writeExitReason(args.hostDir, claim, stopped.kind);
+      return stopped;
+    }
+    // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
+    await recover({ stage, commands });
+    await consumeRecovered(x);
+    const smoked = await smokeCheck(checks, args.env);
+    if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
+    const reason = await drive(x);
     writeExitReason(args.hostDir, claim, reason.kind);
     return reason;
   } finally {
     clearInterval(heartbeat);
     journal.close();
+  }
+}
+
+/** A refused start: `status.rejection.json` for exit 78, then `exit.reason.json {refused}`. */
+function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): RefusedReason {
+  const reason = refusedOf(rejections);
+  // A busy host is "try later", not a verdict on this arc: its run dir is left alone.
+  if (reason.exitCode === EXIT_REFUSED) writeRejection(args.claim.runDir, reason.rejections);
+  writeExitReason(args.hostDir, args.claim, 'refused');
+  return reason;
+}
+
+/**
+ * Records, at startup, the outcome of every stage attempt whose backend call recovery closed (`consume` in
+ * unit.ts), and raises the needs-user it decides. Done before the command loop, so a unit that a pause
+ * holds does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
+ */
+async function consumeRecovered(x: Exec): Promise<void> {
+  for (const unit of x.stage.plan.units) {
+    const s = await consume(x.stage, unit);
+    if (s === null) continue;
+    if (s.kind === 'parked' || s.kind === 'stopped') {
+      const parent = decidedParent(x.journal.view, unit.id);
+      if (raisedFor(x.journal.view, parent) === null) raiseNeedsUser(x.journal, x.stage.runDir, s.needsUser, parent);
+    } else if (s.kind === 'held' && s.needsUser !== null) {
+      await raiseDue(x, { kind: 'held', unit: unit.id, needsUser: s.needsUser, settled: [] });
+    }
   }
 }
 
