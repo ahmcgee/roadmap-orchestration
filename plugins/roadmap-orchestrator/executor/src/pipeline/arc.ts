@@ -6,9 +6,9 @@
 // ending the arc: the next run continues it from the journal. A stop (a foreign ref move) ends the run at
 // once. The needs-user content of every park and stop is returned for the writer (step 13).
 import type { UnitId } from '../core/ids.ts';
-import type { NeedsUserContent } from '../resources/probe.ts';
 import type { StageContext } from './dispatch.ts';
 import { type UnitResult, runUnit } from './unit.ts';
+import type { NeedsUserContent } from '../core/records.ts';
 
 export type Settled = Readonly<{ unit: UnitId; result: Extract<UnitResult, Readonly<{ kind: 'merged' | 'parked' }>> }>;
 

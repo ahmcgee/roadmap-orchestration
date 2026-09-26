@@ -11,13 +11,10 @@
 // this returns the record's content. The reservation stays reserved, and the caller cleans it up.
 import type { Parent } from '../core/events.ts';
 import type { ResourceName } from '../core/ids.ts';
-import type { NeedsUserRecord } from '../core/records.ts';
+import type { NeedsUserContent } from '../core/records.ts';
 import { PROBE_EXIT } from '../input/plan.ts';
 import type { Reservation, ResourceContext, StageHolder } from './reserve.ts';
 import { type CommandRun, ownerLabel, resolveCommand, resourceDecl, runResourceCommand, teardown } from './teardown.ts';
-
-/** A needs-user record without what the writer assigns (`v`, `id`, `arc`, `raisedAt`). */
-export type NeedsUserContent = Omit<NeedsUserRecord, 'v' | 'id' | 'arc' | 'raisedAt'>;
 
 export type Occupancy =
   | Readonly<{ kind: 'clear' }>

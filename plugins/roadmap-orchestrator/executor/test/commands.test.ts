@@ -42,7 +42,7 @@ const poll = (ctx: CommandContext): readonly CommandFile[] => pollCommands(ctx.r
 function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = []) {
   return raiseNeedsUser(ctx.journal, ctx.runDir, {
     blocking, subject: { type: 'unit', unit: UNIT }, reason: 'lane-blocked', summary: 'lane blocked twice', recommendation: 'look at the lane', options, evidence: [],
-  });
+  }, { type: 'arc' });
 }
 
 /** A stage-parented intent left open: the stage is mid-flight. */

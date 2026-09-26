@@ -41,8 +41,8 @@ describe('needs-user', () => {
     const runDir = absPath(tmpDir('nu'));
     const arc = newArc();
     const journal = openJournal(runDir, arc);
-    const id = raiseNeedsUser(journal, runDir, CONTENT);
-    const other = raiseNeedsUser(journal, runDir, { ...CONTENT, blocking: false });
+    const id = raiseNeedsUser(journal, runDir, CONTENT, { type: 'arc' });
+    const other = raiseNeedsUser(journal, runDir, { ...CONTENT, blocking: false }, { type: 'arc' });
     assert.match(id, /^nu-[0-9]+$/);
     const intent = journal.view.opsOf('needsuser.raise')[0];
     assert.ok(intent !== undefined);

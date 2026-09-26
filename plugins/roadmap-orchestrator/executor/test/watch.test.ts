@@ -54,7 +54,7 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
     const journal = openJournal(runDir, arc);
     const id = raiseNeedsUser(journal, runDir, {
       blocking: true, subject: { type: 'arc' }, reason: 'usage-limit', summary: 'codex is parked', recommendation: 'resume --backend codex', options: [], evidence: [],
-    });
+    }, { type: 'arc' });
     journal.close();
     const raisedAt = Date.now();
     const raised = await until(lines, (l) => l['event'] === 'needs-user', 2_000, 'the raised needs-user');

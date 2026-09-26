@@ -75,7 +75,8 @@ filesystem, git or specs are startup rows.
 
 `src/preflight/startup.ts`: `StartupRejection` (one member per row), `exitCodeFor(rejection)`,
 `StartupCheck<K>{kind, check(StartupContext) → rejections[]}`. Each refuses before any pipeline intent and is
-shown in `status`. Order of evaluation (lead ruling, 1a): the pure and host rows run first, before the journal
+shown in `status`: a refused start (exit 78) writes `status.rejection.json` in the run dir (`RejectionFile
+{v, at, rejections}`, reader `rejectionFile`; step 13b), removed by the next start that passes. Order of evaluation (lead ruling, 1a): the pure and host rows run first, before the journal
 is opened; `backend-smoke` runs last, after host takeover and journal open, and its spawns are journaled as
 `proc.spawn{purpose: smoke}` so a refused start still leaves an audit trail. "Before any intent" therefore
 means before any *pipeline* intent.
@@ -84,7 +85,7 @@ means before any *pipeline* intent.
 |---|---|---|---|
 | `legacy-roadmap-dir` | in-tree `.roadmap/` beyond `contracts/`, `constraints.md`, `invariants.md`, `debt.md`, `config.json` | `path, unexpected[]` | 78 |
 | `worktree-root-unusable` | `worktreeRoot` on tmpfs or not writable | `path, problem: tmpfs\|not-writable, detail` | 78 |
-| `spec-lane-unrunnable` | lane `argv[0]` unresolvable, env prerequisite missing, estate lane for the implementer | `unit\|null, lane, problem` | 78 |
+| `spec-lane-unrunnable` | lane `argv[0]` unresolvable, env prerequisite missing, estate lane for the implementer; resource variant (lead ruling, 13b): a declared resource's probe or teardown `argv[0]` unresolvable or env prerequisite missing | `unit\|null, lane, problem` \| `resource, command: probe\|teardown, problem` | 78 |
 | `unsupported-routing` | a seat resolves to an unsupported triple (every Codex judgment triple) | `role, tier, layer, unit\|null, why: codex-judgment\|no-prompt` | 78 |
 | `undispositioned-residue` | a host residue neither `cleaned` nor `isolated\|transferred` | `residues: ResidueKey[]` | 78 |
 | `host-busy` | live host owner, or live recovery-lock holder | `holder: owner\|recovery, arc, generation, pid` | **75** |
@@ -141,14 +142,15 @@ in the line belongs to `arc`.
 |---|---|
 | `tail-discarded` | `offset, length, sha256` (fragment file `events.torn.<offset>.<sha256[0:8]>`) |
 | `containment-mode` | `mode: session\|cgroup` |
-| `meter` | `inv, role, routingRev, unit: {unit, attempt}\|null, usage: TokenUsage` |
-| `usage-unavailable` | `inv, role, routingRev, unit: {unit, attempt}\|null, reason: no-result\|absent\|malformed` |
+| `meter` | `inv, role, tier, routingRev, unit: {unit, attempt}\|null, usage: TokenUsage`; `tier` is the seat's risk tier, so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
+| `usage-unavailable` | `inv, role, tier, routingRev, unit: {unit, attempt}\|null, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
 | `backend-park` | `backend, class: usage-limit\|capacity, inv`: a failed invocation whose backend reported such an error parks that backend arc-wide until `resume --backend` (lead ruling, 11b) |
 | `needs-user-acked` | `id, command, choice\|null`: at most one per id, any id form; the file twin is `<id>.ack.json` (step 13) |
 | `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
 | `stop-requested` | `command`: the durable stop marker (step 13) |
+| `executor-started` | `generation`: written at every start once the journal is open; clears the stop marker (a stop ends one run, not the arc). Pause markers and holds persist until `resume` (lead ruling, 13b) |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 
@@ -216,8 +218,9 @@ recovery | external-unknown`.
 | `needsuser.raise` | `id, path, blocking` | `{sha256}` | `raised` |
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
-`SpawnSubject`: `backend{role, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
-`teardown|probe{unit\|null, resource}` \| `smoke{check, target: backend{backend, role, routingRev} \| command}`.
+`SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
+`teardown|probe{unit\|null, resource}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`.
+`tier` is the seat's risk tier, which the usage fact copies.
 The invocation is `op#ordinal`; its launch.json is written after the intent is durable and must hash to
 `launchSha256`.
 
@@ -346,7 +349,9 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 
 `ResidueRecord = residue{key, teardown: {argv, cwd, env}, label} | disposition{key, cleaned, by{arc, inv}} |
 disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, unit, inv, resource}` (per
-resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10 s, stale at 5 min.
+resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10 s, stale at 5 min; `start.json`
+(`RunStart {v, generation, at, repo, planFile, profile}` with the resolved profile, rewritten by every start that
+passes, read by `status` to re-resolve routing tables); `status.rejection.json` (`RejectionFile`, above).
 
 ## Commands, receipts, needs-user
 
@@ -354,7 +359,7 @@ resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10
 |---|---|---|
 | `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null}` |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each |
-| `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once |
+| `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}` |
 
 Control commands (`CONTROL_COMMANDS = pause, stop, ack`) apply immediately, waiting only for an
@@ -373,6 +378,46 @@ rejected); `sweep` → per undispositioned residue, reserve (or `reclaim` this a
 resource) under the sweep holder, the recorded teardown, release, `cleaned` disposition; a failed teardown
 leaves the resource cleaning under the sweep and the residue undisposed, the receipt's `verified` says so, and
 the next sweep re-drives it first.
+
+Step 13b (`src/executor.ts`): `raiseNeedsUser(journal, runDir, content, parent)` parents each raise by what it
+answers for: the stage attempt whose outcome parked or stopped a unit (`{stage, unit, stage, attempt}` of the
+unit's `decided` fact; a backend park's by the held attempt), the op a recovery parked (`{op}`), or the arc.
+`raisedFor(view, parent)` finds it, so the executor raises each item once however often it re-reads the arc.
+
+## Executor, status, recovery (step 13b)
+
+`runExecutor(args) → ExitReason = complete{units} | stop{cause: command|unit, needsUser} | refused{rejections,
+exitCode: 78|75}`; any other end is a thrown error, a crash, which leaves the claim for takeover and writes no
+exit reason. `roadmap start` prints the reason as one canonical JSON line and exits 0 (complete, stop) or its
+code. Sequence: `runChecks` → (refused: `status.rejection.json` for exit 78; `exit.reason.json {refused}` and
+release when a claim was held) → `start.json`, heartbeat, `executor-started` → `recover` → the command loop:
+control commands, then mutations at the safe point, then due needs-user items; exit `stop` on the stop marker
+or a stop-pending unit (after cleaning what a stage still holds); exit `complete` when every unit is merged or
+parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user is open, the arc or the
+next unit is paused, or the next unit is held; otherwise `runArc`. While the arc runs, control commands apply
+every poll; a pause or stop aborts its signal and cancels the running stage's live backend or lane invocation
+by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), which the stage records as
+`interrupted` (hold). In 13b the process claims the host itself and publishes itself as owner
+(`claimForeground`); 14a moves the claim to the supervisor and adds the handshake wait and owner check.
+
+`recover(ctx) → {recovered, parked}` (`src/recover/recover.ts`): passes in the order proc.kill, proc.spawn → git
+(`worktree.create`, `worktree.remove`, `evidence.snapshot`, `salvage.commit`, `mergein.prepare`, `candidate.merge`,
+`integration.ff`, `snapshot.publish`) → resources (`recoverReservations`) → files (`spec.patch`, `needsuser.raise`,
+`command.apply`). Dispositions: `done` → done `reconciled`; `redo` → the op's act and verify, done `redone`;
+`abort` → abort + needs-user; `recovery-required` (ff) → done `recovery-required{observed}` + needs-user; `park`
+→ intent left open + needs-user. Each needs-user: blocking, reason `recovery-required`, parent `{op}`. A second
+pass must only re-park what the first parked (`RecoveryNotIdempotentError` otherwise). Crash points
+`recover.before-op` / `recover.after-op`. `previousArcVerdict(previous)` is the `reconcilePrevious` hook: the
+previous arc's log, read only, reconciled when no spawn is open.
+
+`status(runDir, arc, hostDir) → Status` (`src/status.ts`, `roadmap status [--repo --arc]`, JSON only): `arc`;
+`run{state: running|held|parked|complete|refused|no-owner, owner, heartbeatAt}`; `units[{unit, stage, status,
+attempts, chargeableFailures, risk, seat{role, tier}|null}]`; `needsUser[{id, reason, blocking}]` (unacknowledged);
+`commands{pending[{id, type}], receipts[]}` (the last 10 terminal receipts); `spend{byRole, byModel{models,
+unresolvedRevs}}`; `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with
+`readJournal` (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left
+out). `byModel` is the only place a model id appears: seat totals (`meterOf(...).bySeat`) looked up in each
+revision's table, re-resolved from `start.json`'s plan and repo config under every built-in profile.
 
 ## Cross-module interfaces (`src/core/interfaces.ts`)
 
@@ -414,7 +459,7 @@ Where the plan left a shape open. Each is the simplest shape that keeps illegal 
 8. **`cancel.json.reason` is `pause | stop | recovery`**: deadline kills are the runner's own; cause
    `recovery-kill` in `exit.json` is a cancel with reason `recovery`.
 9. **Usage split**: `meter` facts carry known token usage; `usage-unavailable` facts carry the reason. One fact
-   per inv either way. `unit` is `{unit, attempt} | null` (null for smokes).
+   per inv either way. `unit` is `{unit, attempt} | null` (null for smokes). Both carry the seat's `tier` (13b).
 10. **`dispatch` fact** holds the `DispatchRecord`, so the pin is in the WAL.
 11. **`plan.json` gains `resources: ResourceDecl[]`** (probe + teardown per named resource) and the probe exit
     contract `0/10/11`: the startup row "resource request unknown" and the reservation cycle need declarations

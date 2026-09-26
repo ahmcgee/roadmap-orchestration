@@ -114,7 +114,7 @@ describe('journal append', () => {
       return { expect: spawnIntent(1).expect as IntentBody<'proc.spawn'>['expect'], post: null };
     } });
     assert.deepEqual(a, { op: 'arc-1/1', inv: 'arc-1/1#1', seq: 1 });
-    assert.equal(j.fact({ kind: 'meter', inv: a.inv, role: 'build', routingRev: REV, unit: { unit: U1, attempt: 1 }, usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }), 2);
+    assert.equal(j.fact({ kind: 'meter', inv: a.inv, role: 'build', tier: 'med', routingRev: REV, unit: { unit: U1, attempt: 1 }, usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }), 2);
     assert.equal(j.done(a.op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled'), 3);
     assert.equal(j.view.highWater(), 3);
     assert.deepEqual(j.view.openIntents(), []);

@@ -27,12 +27,11 @@ import { type ArcId, type InvocationId, type RoutingRev, type SpecRev, type Unit
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
 import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
 import {
-  type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE,
+  type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, absPath, isoTimeOf, refName } from '../core/values.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
-import type { NeedsUserContent } from '../resources/probe.ts';
 import type { ResourceContext } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
@@ -200,7 +199,7 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
     origin: { type: 'new', key: opKey(`backend:${spec.unit}:${spec.parent.stage}`), parent: spec.parent, deadlineAt: spec.deadlineAt },
-    subject: { purpose: 'backend', role, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
+    subject: { purpose: 'backend', role, tier: spec.request.dispatch.tier, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };

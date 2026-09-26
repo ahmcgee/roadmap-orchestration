@@ -100,12 +100,14 @@ async function main(): Promise<void> {
     }
   }
 
+  // The calls below exercise triples directly, not seats; each meter fact names the default table's seat of
+  // the same backend and role at the nearest tier (codex build: med; Opus build: high; Fable plan-check: high).
   // Codex fresh then resume, in one working dir (a resume runs where its thread was created).
   const codexDir = dir(join(root, 'codex'));
   const okSchema = SMOKE_SCHEMA;
   const isOk = (v: JsonValue): boolean => JSON.stringify(v) === '{"ok":true}';
   const fresh = await backend(ctx, 'codex.fresh', {
-    check: 'codex-fresh', routingRev: rev, system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: codexDir,
+    check: 'codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: codexDir,
     request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'fresh' } },
   }, isOk);
   const thread = fresh.result.role === 'build' ? fresh.result.session : null;
@@ -113,7 +115,7 @@ async function main(): Promise<void> {
     report(false, 'codex.resume', 'no thread id from the fresh call');
   } else {
     const resumed = await backend(ctx, 'codex.resume', {
-      check: 'codex-resume', routingRev: rev, system: SYSTEM, rendered: 'Reply with the same JSON object again.', schema: okSchema, cwd: codexDir,
+      check: 'codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the same JSON object again.', schema: okSchema, cwd: codexDir,
       request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'resume', id: thread } },
     }, isOk);
     if (resumed.result.role === 'build' && resumed.result.session !== thread) report(false, 'codex.resume-session', `resumed ${thread}, got ${resumed.result.session}`);
@@ -131,7 +133,7 @@ async function main(): Promise<void> {
   const token = randomBytes(8).toString('hex');
   writeFileSync(join(evidence, 'token.txt'), `${token}\n`);
   await backend(ctx, 'claude.judgment', {
-    check: 'claude-judgment', routingRev: rev, system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
+    check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
     request: { kind: 'claude-judgment', role: 'gate', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
@@ -140,20 +142,20 @@ async function main(): Promise<void> {
   const buildDir = dir(join(root, 'build'));
   const session = freshClaudeImplementerSession();
   const built = await backend(ctx, 'claude.build.fresh', {
-    check: 'claude-build-fresh', routingRev: rev, system: SYSTEM, schema: okSchema, cwd: buildDir,
+    check: 'claude-build-fresh', routingRev: rev, tier: 'high', system: SYSTEM, schema: okSchema, cwd: buildDir,
     rendered: 'Create the file probe.txt in the current directory containing the word probe, then reply with {"ok": true}.',
     request: { kind: 'claude-build', triple: OPUS, session, evidenceDirs: [] },
   }, isOk);
   if (built.result.outcome.kind === 'success' && !existsSync(join(buildDir, 'probe.txt'))) report(false, 'claude.build.write', `no ${buildDir}/probe.txt`);
   await backend(ctx, 'claude.build.resume', {
-    check: 'claude-build-resume', routingRev: rev, system: SYSTEM, schema: strict({ file: { type: 'string' } }), cwd: buildDir,
+    check: 'claude-build-resume', routingRev: rev, tier: 'high', system: SYSTEM, schema: strict({ file: { type: 'string' } }), cwd: buildDir,
     rendered: 'Which file did you create in your previous turn? Reply with {"file": "<its name>"}.',
     request: { kind: 'claude-build', triple: OPUS, session: { ...session, mode: 'resume' }, evidenceDirs: [] },
   }, (v) => JSON.stringify(v) === '{"file":"probe.txt"}');
 
   // Fable id pin: the id resolves and answers.
   await backend(ctx, 'fable.pin', {
-    check: 'fable-pin', routingRev: rev, system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
+    check: 'fable-pin', routingRev: rev, tier: 'high', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 
