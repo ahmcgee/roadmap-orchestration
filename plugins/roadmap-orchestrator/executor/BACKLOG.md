@@ -114,3 +114,11 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
     should enter a class (or a unit-level class rebind), since routing layers never name a model.
   - One binding per class, and a Codex binding carries its effort: a second Codex effort would be a new class.
     None is needed yet.
+
+## Found fixing the fixture restart (2026-09-26)
+
+- Runner identity is `ROADMAP_INV=<arc>/<seq>#<n>`, scanned machine-wide, and is unique only because the host
+  lock allows one run per machine. Two concurrent runs sharing an arc name under different host dirs (as the
+  fake fixtures did before they got per-dir arcs) see each other's runners and crash, or would kill them. Key the
+  identity on the run dir too (e.g. `ROADMAP_INV_DIR`) if runs ever share a machine outside the host lock;
+  touches containment, recovery and reattach lookups.
