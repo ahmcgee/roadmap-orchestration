@@ -10,14 +10,18 @@
 //   files       spec.patch, needsuser.raise, command.apply.
 //
 // A `park` leaves its intent open and raises one blocking needs-user (reason recovery-required) naming the
-// op, parented by the op so a later pass raises it once. `recovery-required` (integration.ff) closes the
-// intent with that outcome and raises the same needs-user; `abort` (candidate, snapshot) aborts and raises
-// it. Then the passes run again until one changes nothing: a second pass must find only the parked
-// intents, else a reconciler is not idempotent and recovery fails loud.
+// op, parented by the op so a later pass raises it once. `recovery-required` (integration.ff) raises the
+// same needs-user, then closes the intent with that outcome; `abort` (candidate, snapshot) raises it, then
+// aborts. Then a second pass checks the fixed point: it must find only the parked intents and append
+// nothing, else a reconciler is not idempotent and recovery fails loud.
+//
+// It runs in the executor after the ownership handshake, under the supervisor's host claim (a takeover
+// already ran under host.recovery.lock, with `reconcilePreviousArc` below), before anything is dispatched.
+// A crash inside it (`recover.before-op` / `recover.after-op` around each op, or inside an op's own act)
+// leaves open intents the next start's recovery reconciles to the same fixed point, with no effect twice.
 //
 // Also here: `reconcilePreviousArc`, claimHost's `reconcilePrevious` hook (R18), which settles what a dead
-// claim of another arc left running before a takeover. Crash-during-recovery cells are 14b's, at
-// `recover.before-op` / `recover.after-op`.
+// claim of another arc left running before a takeover.
 import { join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
 import { containmentFor, detectContainmentMode } from '../contain/detect.ts';
@@ -28,14 +32,8 @@ import type { Disposition, DispositionKind, Journal, JournalView } from '../core
 import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
 import type { HostLockClaim, NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
-import { candidateMergeOp } from '../git/candidate.ts';
-import { evidenceSnapshotOp } from '../git/evidence.ts';
-import { integrationFfOp } from '../git/ff.ts';
 import { refTarget } from '../git/git.ts';
-import { mergeinOp } from '../git/mergein.ts';
-import { type SalvageRules, salvageCommitOp } from '../git/salvage.ts';
-import { snapshotPublishOp } from '../git/snapshot.ts';
-import { worktreeCreateOp, worktreeRemoveOp } from '../git/worktree.ts';
+import type { SalvageRules } from '../git/salvage.ts';
 import type { PreviousArcVerdict } from '../host/lock.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { needsUserReconciler, publishNeedsUser, raiseNeedsUser, raisedFor } from '../needsuser.ts';
@@ -50,6 +48,9 @@ import { commandReconciler } from './command.ts';
 import { killReconciler } from './kill.ts';
 import { recoverReservations } from './resource.ts';
 import { spawnReconciler } from './spawn.ts';
+import {
+  candidateMergeOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
+} from './ops.ts';
 
 /** The stage context the git and resource reconcilers need, and the command context command.apply needs. */
 export type RecoveryContext = Readonly<{ stage: StageContext; commands: CommandContext }>;
@@ -131,14 +132,21 @@ function recoveryNeedsUser(intent: IntentRecord, detail: string): NeedsUserConte
   };
 }
 
-/** One blocking needs-user per op, parented by the op; a later pass or start finds it raised. */
-function raiseOnce(journal: Journal, runDir: AbsPath, intent: IntentRecord, detail: string): void {
+/**
+ * One blocking needs-user per op, parented by the op; a later pass or start finds it raised. Raised before
+ * the op is closed (abort, recovery-required), so a crash in between leaves the op open and the next
+ * recovery reaches the same disposition and finds the item raised. A raise a crash left open holds the
+ * one `needs-user` key, so it is finished first (it may be this op's own).
+ */
+async function raiseOnce(ctx: RecoveryContext, intent: IntentRecord, detail: string): Promise<void> {
+  const { journal, runDir } = ctx.stage;
+  for (const open of openOf(journal, ['needsuser.raise'])) await step(ctx, open);
   const parent: Parent = { type: 'op', op: intent.op };
   if (raisedFor(journal.view, parent) === null) raiseNeedsUser(journal, runDir, recoveryNeedsUser(intent, detail), parent);
 }
 
 async function apply<K extends StepKind>(ctx: RecoveryContext, record: IntentRecord, op: Redoable<K>): Promise<DispositionKind> {
-  const { journal, runDir, repo } = ctx.stage;
+  const { journal, repo } = ctx.stage;
   const intent = record as IntentOf<K>;
   const d = await op.reconcile(intent, journal.view);
   switch (d.kind) {
@@ -150,17 +158,17 @@ async function apply<K extends StepKind>(ctx: RecoveryContext, record: IntentRec
       journal.done(intent.op, intent.kind, await op.verify(intent), 'redone');
       break;
     case 'abort':
+      await raiseOnce(ctx, record, d.detail);
       journal.abort(intent.op, 'recovery', d.detail);
-      raiseOnce(journal, runDir, record, d.detail);
       break;
     case 'recovery-required': {
       if (record.kind !== 'integration.ff') throw new Error(`${record.kind} ${record.op}: recovery-required is an integration.ff disposition`);
+      await raiseOnce(ctx, record, d.detail);
       journal.done(record.op, 'integration.ff', { kind: 'recovery-required', observed: refTarget(repo, record.expect.ref) }, 'reconciled');
-      raiseOnce(journal, runDir, record, d.detail);
       break;
     }
     case 'park':
-      raiseOnce(journal, runDir, record, d.detail);
+      await raiseOnce(ctx, record, d.detail);
       break;
     case 'adopt':
     case 'lost':
@@ -236,21 +244,26 @@ async function pass(ctx: RecoveryContext): Promise<readonly Recovered[]> {
 }
 
 export class RecoveryNotIdempotentError extends Error {
-  constructor(recovered: readonly Recovered[]) {
-    super(`a second recovery pass still changed ${recovered.map((r) => `${r.kind} ${r.op} (${r.disposition})`).join(', ')}; a reconciler is not idempotent`);
+  constructor(detail: string) {
+    super(`a second recovery pass ${detail}; a reconciler is not idempotent`);
     this.name = 'RecoveryNotIdempotentError';
   }
 }
 
 /**
  * Closes every open intent the log holds, then checks the fixed point: a second pass may only re-park what
- * the first parked. Returns what happened and which ops stay open (parked, each with its needs-user).
+ * the first parked, and appends nothing to the log. Returns what happened and which ops stay open (parked,
+ * each with its needs-user). A crash anywhere in here leaves a log the next start recovers the same way: every
+ * reconciler re-reads its postcondition first, and each needs-user is raised before its op is closed.
  */
 export async function recover(ctx: RecoveryContext): Promise<RecoveryReport> {
   const first = await pass(ctx);
+  const mark = ctx.stage.journal.view.highWater();
   const second = await pass(ctx);
   const changed = second.filter((r) => r.disposition !== 'park');
-  if (changed.length > 0) throw new RecoveryNotIdempotentError(changed);
+  if (changed.length > 0) throw new RecoveryNotIdempotentError(`still changed ${changed.map((r) => `${r.kind} ${r.op} (${r.disposition})`).join(', ')}`);
+  const appended = ctx.stage.journal.view.highWater() - mark;
+  if (appended > 0) throw new RecoveryNotIdempotentError(`appended ${appended} events to the log`);
   const parked = ctx.stage.journal.view.openIntents().map((i) => i.op);
   const reparked = second.map((r) => r.op);
   if (parked.length !== reparked.length || parked.some((op) => !reparked.includes(op))) {

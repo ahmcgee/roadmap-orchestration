@@ -271,7 +271,11 @@ export type StartInput = Readonly<{
   hostDir: AbsPath;
   /** The executor's environment: lane prerequisites resolve against it, and backends get `backendEnv(env)`. */
   env: Readonly<Record<string, string | undefined>>;
-  /** Claims the host for the arc (step 7's `claimHost`, wired by the supervisor, step 14a). */
+  /**
+   * The host claim for the arc. The supervisor claims (`claimHost`, reconciling a dead claim of another arc)
+   * before it spawns the executor; the executor passes the claim it was handshaken with, so this returns
+   * that claim and touches no host file (step 14a). Group 3 still refuses whatever it reports.
+   */
   claim: (context: StartupContext) => Promise<ClaimOutcome>;
 }>;
 
@@ -279,7 +283,7 @@ export type StartChecks =
   | Readonly<{
     kind: 'refused';
     rejections: readonly StartupRejection[];
-    /** Held when a later group refused: the caller releases it. */
+    /** Held when a later group refused. The executor never releases it: its supervisor does, after it exits. */
     claim: HostLockClaim | null;
     /** Open when the smoke refused: the caller closes it. */
     journal: OpenJournal | null;

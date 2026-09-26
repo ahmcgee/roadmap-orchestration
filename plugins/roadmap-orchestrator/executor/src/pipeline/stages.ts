@@ -24,22 +24,21 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
-import type { IntentOf, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
+import type { IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, rulingId,
+  type InvocationId, type JudgmentSessionId, type Sha, type SpecRev, type UnitId, invocationId, rulingId,
 } from '../core/ids.ts';
+import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR, evidenceSnapshotOp } from '../git/evidence.ts';
+import { FILES_DIR } from '../git/evidence.ts';
 import { GitError, type Identity, git, revParse } from '../git/git.ts';
 import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
-import {
-  SalvageStateError, SalvageUnmergedError, planSalvage, salvageCommitOp, type SalvageRules,
-} from '../git/salvage.ts';
+import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
@@ -52,14 +51,17 @@ import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } 
 import { renderSpec } from '../spec/render.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../spec/patch.ts';
 import { loadSpec } from '../spec/spec.ts';
+import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
-  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, verdictOf, verificationWorktree, workDir,
+  type BackendCallOutcome, type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
+  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf,
+  verificationWorktree, workDir,
 } from './dispatch.ts';
-import { quiescent } from './invoke.ts';
+import { invocationDir, quiescent } from './invoke.ts';
 import { type LaneRecord, type VerificationTree, laneOrder, removeVerificationTree, runLaneSeries, specSeriesRoot } from './lanes.ts';
 import { type RoundInput, callImplementer, laneFixRound, prepareRound } from './rounds.ts';
-import { type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
+import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
+import { evidenceSnapshotOp, salvageCommitOp } from '../recover/ops.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
 export type StageDone<S extends OutcomeStage> = Readonly<{
@@ -171,7 +173,22 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: ctx.repo, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
   });
-  const done = (d: StageDone<'plan-check'>): PlanCheckDone => ({ ...d, session: session.id, specRev: spec.rev });
+  return planCheckRead(ctx, unit, parent, called, session.id);
+}
+
+/**
+ * Records a plan-check attempt from its call: the live one, or one recovery closed after a crash (consumed
+ * by the driver, never asked again). Re-entrant: a spec patch or risk raise this attempt already made is
+ * found in the log and not made twice, and the judgment is read against the spec revision it saw.
+ */
+export async function planCheckRead(
+  ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'plan-check' }>, called: BackendCallOutcome, session: JudgmentSessionId,
+): Promise<PlanCheckDone> {
+  const { path, spec } = loadUnitSpec(ctx, unit);
+  const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;
+  const specRev = applied?.expect.expectRev ?? spec.rev;
+  const pinned = dispatchOf(ctx.journal.view, unit.id);
+  const done = (d: StageDone<'plan-check'>): PlanCheckDone => ({ ...d, session, specRev });
   const v = verdictOf(ctx, parent, called);
   if (v.kind !== 'success') return done(verdictKind(ctx, parent, v));
 
@@ -185,8 +202,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   // R2: the judgment may raise the floor, never lower it, and a redirect may not widen the envelope.
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));
   if (widenedResources(unit, out.patch).length > 0) return done(record(ctx, parent, 'scope-widened'));
-  const patch = out.patch === null ? null : { expectRev: spec.rev, by: { role: 'planCheck', routingRev: seat.routingRev, inv: called.inv }, ops: out.patch } as const;
-  if (patch !== null) {
+  const patch = out.patch === null ? null : { expectRev: specRev, by: { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv }, ops: out.patch } as const;
+  if (patch !== null && applied === null) {
     try {
       applySpecPatch(spec, patch);
     } catch (error) {
@@ -195,12 +212,36 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       throw error;
     }
   }
-  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx.journal, pinned, out.risk, spec.rev);
+  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx.journal, pinned, out.risk, specRev);
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
-  if (patch !== null && outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect') {
+  const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
+  if (patch !== null && applied === null && redirects) {
     await runOp(ctx.journal, specPatchFileOp, `spec:${unit.id}`, parent, { path, patch });
   }
   return done(record(ctx, parent, out.decision));
+}
+
+/** The ops of `kind` a stage attempt began, in log order. */
+export function attemptOps<K extends OpKind>(ctx: StageContext, parent: StageParent, kind: K): readonly IntentOf<K>[] {
+  const key = canonicalJson(parent);
+  return ctx.journal.view.opsOf(kind).filter((i) => canonicalJson(i.parent) === key);
+}
+
+/**
+ * The backend call a stage attempt made, read back from the log once recovery closed it: the attempt's
+ * latest backend invocation with its result, or lost. Null when the attempt made none, or it is still open.
+ */
+export function recordedCall(ctx: StageContext, parent: StageParent): BackendCallOutcome | null {
+  const spawn = attemptOps(ctx, parent, 'proc.spawn').filter((i) => i.expect.subject.purpose === 'backend').at(-1);
+  if (spawn === undefined) return null;
+  const done = ctx.journal.view.doneOf(spawn.op);
+  if (done === null || done.kind !== 'proc.spawn') return null;
+  const inv = invocationId(spawn.op, spawn.ordinal);
+  const invDir = invocationDir(ctx.runDir, inv);
+  if (done.outcome.kind === 'lost') return { kind: 'lost', inv, invDir };
+  const result = runnerFiles(invDir, inv).read('result.json');
+  if (result === null || result.type !== 'backend') throw new Error(`${inv}: a done backend spawn without its backend result`);
+  return { kind: 'result', inv, invDir, result };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -258,6 +299,19 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...(round.fixRound?.failingEvidenceDirs ?? [])] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
+  return buildRead(ctx, unit, parent, round.kind, called, held);
+}
+
+/**
+ * Records a build attempt from its implementer call: the live one, or one recovery closed after a crash
+ * (consumed by the driver, never dispatched again; lead ruling 14a/14b). `held` is the reservation the
+ * attempt still holds: the live build's, or none once recovery has cleaned a dead holder's.
+ */
+export async function buildRead(
+  ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'build' }>, round: BuildRound, called: BackendCallOutcome,
+  held: Reservation<'running', StageHolder> | null,
+): Promise<BuildDone> {
+  const failed = (d: StageDone<'build'>): BuildDone => ({ ...d, run: null });
   const v = verdictOf(ctx, parent, called);
   let malformed = false;
   if (v.kind === 'success') {
@@ -270,12 +324,13 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   }
   // A resolve round must end with the merge committed: HEAD with parents [old, T] (mergeinCompleted). A
   // report of success without it does not describe the tree, so it is read as a malformed report.
-  if (v.kind === 'success' && !malformed && round.kind === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
+  if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
   if (v.kind === 'success' && !malformed && called.kind === 'result') {
-    return {
-      ...record(ctx, parent, 'success'),
-      run: { inv: called.inv, invDir: called.invDir, worktree: round.worktree, branch: round.branch, workDir: work, reservation: held },
+    const run: BuildRun = {
+      inv: called.inv, invDir: called.invDir, worktree: unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id), branch: unitBranch(ctx.plan.arc, unit.id),
+      workDir: workDir(ctx.runDir, parent), reservation: held,
     };
+    return { ...record(ctx, parent, 'success'), run };
   }
   // Nothing downstream runs after a failed build, so its resources are cleaned now (the workload is quiescent).
   if (held !== null && (await cleanup(ctx, held, parent)).kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed'));

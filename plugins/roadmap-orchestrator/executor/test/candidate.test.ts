@@ -7,15 +7,14 @@ import { before, describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import type { Sha } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import {
-  type CandidatePlan, candidateMergeOp, candidatePostcondition, candidateWorktreeRequest, planCandidate,
-} from '../src/git/candidate.ts';
+import { type CandidatePlan, candidatePostcondition, candidateWorktreeRequest, planCandidate } from '../src/git/candidate.ts';
 import { parentsOf } from '../src/git/mergein.ts';
-import { inspectWorktree, worktreeCreateOp } from '../src/git/worktree.ts';
+import { inspectWorktree } from '../src/git/worktree.ts';
 import { openArc, runOp } from './fixtures/git-common.ts';
 import { CANDIDATE_REF, type Scene, candidateRequest, crashChild8b, recover8b, revOf, scene, sharedBase } from './fixtures/git8b-common.ts';
 import { git } from './helpers/repo.ts';
 import { CANDIDATE_FF_SNAPSHOT, crashCells } from './matrix.ts';
+import { candidateMergeOp, worktreeCreateOp } from '../src/recover/ops.ts';
 
 let base: string;
 before(() => {

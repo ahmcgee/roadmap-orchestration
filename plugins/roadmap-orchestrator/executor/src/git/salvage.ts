@@ -25,12 +25,11 @@ import { crashPoint } from '../core/crash.ts';
 import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type Sha, type Sha256Hex, sha256 } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, bool, literal, nat, nullable, object, oneOf, sortedBy, version } from '../core/validate.ts';
 import { type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
-import { reconcileSalvageCommit } from '../recover/salvage.ts';
 import { copyIfChanged, fileSha256 } from './evidence.ts';
 import {
   type Identity, type TreeEntry, commitTree, git, gitPath, lsTree, readTree, refTarget, revParse, statusPorcelainV2Z,
@@ -329,12 +328,11 @@ function verify(intent: IntentOf<'salvage.commit'>): OpOutcome['salvage.commit']
   return { kind: 'committed' };
 }
 
-export function salvageCommitOp(rules: SalvageRules): GitOp<'salvage.commit', SalvagePlan> {
+export function salvageCommitSteps(rules: SalvageRules): GitSteps<'salvage.commit', SalvagePlan> {
   return {
     kind: 'salvage.commit',
     prepare: async (plan) => prepare(plan),
     act: async (intent) => act(rules, intent),
     verify: async (intent) => verify(intent),
-    reconcile: reconcileSalvageCommit(rules),
   };
 }

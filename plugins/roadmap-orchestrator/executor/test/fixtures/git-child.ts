@@ -7,11 +7,11 @@
 import { readFileSync } from 'node:fs';
 import type { WorktreeCheckout } from '../../src/core/events.ts';
 import { opIdOf } from '../../src/core/ids.ts';
-import { capturedEvidence, evidenceSnapshotOp } from '../../src/git/evidence.ts';
-import { planSalvage, salvageCommitOp } from '../../src/git/salvage.ts';
-import { worktreeCreateOp, worktreeRemoveOp } from '../../src/git/worktree.ts';
+import { capturedEvidence } from '../../src/git/evidence.ts';
+import { planSalvage } from '../../src/git/salvage.ts';
 import { absPath, refName, repoPattern } from '../../src/core/values.ts';
 import { IDENTITY, openArc, rules, runOp } from './git-common.ts';
+import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../../src/recover/ops.ts';
 
 type Raw = Record<string, unknown>;
 const path = process.argv[2];

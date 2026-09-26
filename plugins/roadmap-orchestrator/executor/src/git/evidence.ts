@@ -13,12 +13,11 @@ import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type OpId, type Sha256Hex, sha256 } from '../core/ids.ts';
-import type { IntentBody, JournalView, Reconciler } from '../core/interfaces.ts';
+import type { IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type Brand, Fields, type Read, literal, nat, sortedBy, version } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
-import { reconcileEvidenceSnapshot } from '../recover/evidence.ts';
 
 export const MANIFEST_FILE = 'manifest.json';
 export const FILES_DIR = 'files';
@@ -182,15 +181,15 @@ function verify(intent: IntentOf<'evidence.snapshot'>): Promise<OpOutcome['evide
 }
 
 /**
- * `evidence.snapshot` is not a git kind (`GitOp` is limited to those), so it has its own op record of the
- * same shape: prepare records the inputs, act copies, verify re-reads the manifest, reconcile per the table.
+ * `evidence.snapshot` is not a git kind (`GitSteps` is limited to those), so its steps have their own record
+ * of the same shape: prepare records the inputs, act copies, verify re-reads the manifest. The op, with its
+ * reconciler, is assembled in src/recover/ops.ts.
  */
-export type EvidenceSnapshotOp = Readonly<{
+export type EvidenceSnapshotSteps = Readonly<{
   kind: 'evidence.snapshot';
   prepare(request: SnapshotRequest): Promise<IntentBody<'evidence.snapshot'>>;
   act(intent: IntentOf<'evidence.snapshot'>): Promise<void>;
   verify(intent: IntentOf<'evidence.snapshot'>): Promise<OpOutcome['evidence.snapshot']>;
-  reconcile: Reconciler<'evidence.snapshot'>;
 }>;
 
-export const evidenceSnapshotOp: EvidenceSnapshotOp = { kind: 'evidence.snapshot', prepare, act, verify, reconcile: reconcileEvidenceSnapshot };
+export const evidenceSnapshotSteps: EvidenceSnapshotSteps = { kind: 'evidence.snapshot', prepare, act, verify };

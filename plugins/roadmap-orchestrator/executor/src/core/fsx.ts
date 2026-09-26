@@ -123,6 +123,21 @@ export function durableLink(from: string, to: string): void {
   fsyncPath(dirname(to));
 }
 
+/**
+ * Write-once and atomic: `bytes` go to a durable temp file beside `path`, which is then linked to `path`
+ * (AlreadyExistsError if it exists) and removed. A reader sees no file or the whole file, never an empty or
+ * partial one, as it could between `exclusiveCreate`'s open and its write.
+ */
+export function exclusivePublish(path: string, bytes: Uint8Array | string): void {
+  const temp = `${path}.${process.pid}.tmp`;
+  exclusiveCreate(temp, bytes);
+  try {
+    durableLink(temp, path);
+  } finally {
+    durableUnlink(temp);
+  }
+}
+
 /** `unlink` with the parent directory fsynced, so the removal is not lost. */
 export function durableUnlink(path: string): void {
   unlinkSync(path);

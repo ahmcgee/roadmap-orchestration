@@ -26,7 +26,6 @@ import { type ImplementerSessionId, type Sha, type UnitId, invocationId } from '
 import { type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
-import { worktreeCreateOp } from '../git/worktree.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
@@ -36,6 +35,7 @@ import {
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
+import { worktreeCreateOp } from '../recover/ops.ts';
 
 /** Default, unmeasured: what a fix, resume or resolve round may spend editing on top of the lane series. */
 export const EDIT_ALLOWANCE_MS = 60 * 60_000;

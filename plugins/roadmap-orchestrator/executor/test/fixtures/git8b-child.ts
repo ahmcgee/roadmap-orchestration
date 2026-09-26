@@ -8,12 +8,11 @@ import { readFileSync } from 'node:fs';
 import type { IntentOf } from '../../src/core/events.ts';
 import { opIdOf, sha } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
-import { candidateMergeOp, planCandidate } from '../../src/git/candidate.ts';
-import { integrationFfOp, planFf } from '../../src/git/ff.ts';
-import { mergeinOp } from '../../src/git/mergein.ts';
-import { snapshotPublishOp } from '../../src/git/snapshot.ts';
+import { planCandidate } from '../../src/git/candidate.ts';
+import { planFf } from '../../src/git/ff.ts';
 import { ARC, IDENTITY, openArc, runOp } from './git-common.ts';
 import { INTEGRATION, MERGEIN_MESSAGE, type Scenario8b, UNIT, UNIT_BRANCH, candidateRequest, fingerprintFor } from './git8b-common.ts';
+import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../../src/recover/ops.ts';
 
 const path = process.argv[2];
 if (path === undefined) throw new Error('usage: git8b-child <scenario.json>');

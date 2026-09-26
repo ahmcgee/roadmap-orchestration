@@ -7,7 +7,12 @@
 // evidence, salvage or teardown works on and the reservation it still holds; the unit commit (its branch
 // tip, which only build rounds and merge-ins move); the lane series a fix round or the gate reads; the
 // gate's directives; the approval. So a restarted executor continues from any stage boundary of a
-// reconciled journal exactly as a live one would (recovery itself is step 14b's).
+// reconciled journal exactly as a live one would.
+//
+// Inside a stage, after recovery (src/recover/recover.ts) has closed what a dead executor left open: a
+// plan-check, build or gate attempt whose backend call ended with a result but whose stage-outcome fact is
+// missing (the fold's `open` attempt) is recorded from that result, never dispatched again. Any other cut
+// short attempt (no call yet, a lost call, a stage without one) runs again as a new, uncharged attempt.
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
 // the resume. A pause or stop signal is checked between stages; the stage in flight is ended by the
@@ -15,25 +20,26 @@
 //
 // Needs-user content is produced here, never written: the writer is step 13's.
 import { crashPoint } from '../core/crash.ts';
-import type { Parent, StageOutcomeFact } from '../core/events.ts';
+import type { OutcomeStage, Parent, StageOutcomeFact } from '../core/events.ts';
 import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
 import type { NeedsUserReason, NeedsUserContent } from '../core/records.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { worktreeRemoveOp } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { stageRecipes } from '../resources/teardown.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type StageContext, type StageParent, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
-import { gate, gateDirectives, unitTip } from './gate.ts';
+import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { type RoundInput, candidateFixRound, gateReviseRound, laneFixRound } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, build, evidence, lanes, loadUnitSpec, planCheck, quiesce, salvage, teardown,
+  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
+  recordedCall, salvage, teardown,
 } from './stages.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
+import { worktreeRemoveOp } from '../recover/ops.ts';
 
 export type UnitResult =
   | Readonly<{ kind: 'merged' }>
@@ -216,12 +222,58 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<Target['
   }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// A backend call a crash left unrecorded
+
+const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
+
 /**
- * One step of the unit: the stage its latest decided outcome names, run and recorded; or, when that
- * outcome ended the unit, its result (a merged unit's retire is finished first if a restart cut it short).
+ * The outcome of a stage attempt a crash cut short after its backend call: the fold's open attempt (no
+ * stage-outcome fact) at plan-check, build or gate whose call recovery has since closed with a result
+ * (adopted, reconciled or redone). That result is consumed as the attempt's outcome, exactly as the live
+ * stage would have read it; the call is never dispatched again (lead ruling 14a/14b: completed but
+ * unrecorded is never treated as not started). A lost call, or none, returns null: the stage runs again as
+ * a new attempt.
+ */
+async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact | null): Promise<StageDone<Target['stage']> | null> {
+  const open = ctx.journal.view.unit(unit.id).open;
+  if (open === null || !CALL_STAGES.includes(open.stage as OutcomeStage)) return null;
+  const parent: StageParent = { type: 'stage', unit: unit.id, stage: open.stage, attempt: open.attempt };
+  const called = recordedCall(ctx, parent);
+  if (called === null || called.kind === 'lost') return null;
+  const decided = f === null ? null : decidedBy(f);
+  if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
+  const target: Target = decided === null ? { stage: 'plan-check' } : decided.target;
+  if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
+  const { result } = called;
+  switch (target.stage) {
+    case 'plan-check':
+    case 'gate': {
+      if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${target.stage}`);
+      if (target.stage === 'plan-check') return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
+      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, integrationTip(ctx), unitTip(ctx, unit.id));
+    }
+    case 'build': {
+      const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: open.attempt };
+      // Recovery cleaned the dead attempt's reservation; a teardown that failed there is this attempt's outcome.
+      const failed = [...resourceTable(ctx.journal.view).values()].some((e) => e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder));
+      if (failed) return record(ctx, at(parent, 'build'), 'cleanup-failed');
+      return buildRead(ctx, unit, at(parent, 'build'), target.round, called, heldBy(ctx, holder));
+    }
+    default:
+      throw new Error(`unit ${unit.id}: ${target.stage} makes no backend call`);
+  }
+}
+
+/**
+ * One step of the unit: the stage its latest decided outcome names, run and recorded (or, when a crash cut
+ * that stage short after its backend call, consumed from the recorded call); or, when that outcome ended
+ * the unit, its result (a merged unit's retire is finished first if a restart cut it short).
  */
 export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const f = ctx.journal.view.unit(unit.id).decided;
+  const recorded = await consumeRecorded(ctx, unit, f);
+  if (recorded !== null) return after(ctx, unit, recorded);
   if (f === null) return after(ctx, unit, await planCheck(ctx, unit));
   const decided = decidedBy(f);
   switch (decided.kind) {

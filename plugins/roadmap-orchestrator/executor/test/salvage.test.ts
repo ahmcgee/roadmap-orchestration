@@ -7,13 +7,12 @@ import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import { type Sha, sha } from '../src/core/ids.ts';
-import {
-  SalvageUnmergedError, checkRejected, planSalvage, rejectedDir, salvageCommitOp, salvagePostcondition,
-} from '../src/git/salvage.ts';
+import { SalvageUnmergedError, checkRejected, planSalvage, rejectedDir, salvagePostcondition } from '../src/git/salvage.ts';
 import { type AbsPath, absPath, refName } from '../src/core/values.ts';
 import { IDENTITY, baseRepo, cloneRepo, crashChild, openArc, recoverOp, rules, runOp } from './fixtures/git-common.ts';
 import { git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { SALVAGE, crashCells } from './matrix.ts';
+import { salvageCommitOp } from '../src/recover/ops.ts';
 
 const BRANCH = refName('refs/heads/unit-a');
 const MESSAGE = 'unit-a: salvage\n';

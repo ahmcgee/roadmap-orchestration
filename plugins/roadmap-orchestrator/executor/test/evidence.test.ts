@@ -6,13 +6,12 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import {
-  ManifestMismatchError, type SnapshotRequest, evidenceSnapshotOp, manifestComplete, manifestPath, verifyManifest,
-} from '../src/git/evidence.ts';
+import { ManifestMismatchError, type SnapshotRequest, manifestComplete, manifestPath, verifyManifest } from '../src/git/evidence.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
 import { crashChild, openArc, recoverOp, runOp } from './fixtures/git-common.ts';
 import { tmpDir, writeFiles } from './helpers/repo.ts';
 import { WORKTREE_EVIDENCE, crashCells } from './matrix.ts';
+import { evidenceSnapshotOp } from '../src/recover/ops.ts';
 
 const FILES = { stdout: 'out\n', stderr: 'err\n', 'lanes/unit/decisions.json': '{"d":1}\n', 'lanes/unit/scratch.tmp': 'not evidence\n' };
 const GLOBS = ['stdout', 'stderr', 'lanes/**/*.json'];

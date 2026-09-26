@@ -12,10 +12,9 @@
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
 import type { AbsPath, RefName } from '../core/values.ts';
-import { reconcileIntegrationFf } from '../recover/ff.ts';
 import { GitError, gitRun, refTarget } from './git.ts';
 import { parentsOf } from './mergein.ts';
 
@@ -132,16 +131,11 @@ function verify(repo: AbsPath, intent: IntentOf<'integration.ff'>): OpOutcome['i
   }
 }
 
-/**
- * `fingerprintValid` is the caller's re-check of the recorded approval fingerprint at T (step 12 owns the
- * recomputation); recovery redoes a CAS that never happened only when it says the approval still holds.
- */
-export function integrationFfOp(repo: AbsPath, fingerprintValid: (fingerprint: ApprovalFingerprint) => boolean): GitOp<'integration.ff', FfPlan> {
+export function integrationFfSteps(repo: AbsPath): GitSteps<'integration.ff', FfPlan> {
   return {
     kind: 'integration.ff',
     prepare: async (plan) => plan.body,
     act: async (intent) => act(repo, intent),
     verify: async (intent) => verify(repo, intent),
-    reconcile: reconcileIntegrationFf(repo, fingerprintValid),
   };
 }

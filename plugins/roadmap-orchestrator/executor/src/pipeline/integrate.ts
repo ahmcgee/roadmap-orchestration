@@ -29,10 +29,9 @@ import type { IntentOf, OpOutcome } from '../core/events.ts';
 import { INTEGRATION_SLOT, type Sha, type UnitId } from '../core/ids.ts';
 import type { ApprovalFingerprint, NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
-import { type CandidateDecision, type CandidateRequest, candidateMergeOp, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
-import { integrationFfOp, planFf } from '../git/ff.ts';
-import { classifyMergein, mergeinOp } from '../git/mergein.ts';
-import { snapshotPublishOp } from '../git/snapshot.ts';
+import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
+import { planFf } from '../git/ff.ts';
+import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
@@ -42,6 +41,7 @@ import { type StageContext, type StageParent, evidenceRoot, runOp, runPrepared, 
 import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';
 import { type Series, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
 import { type StageDone, at, executorIdentity, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.candidate-${attempt}`));

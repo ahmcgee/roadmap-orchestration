@@ -319,7 +319,9 @@ test('arc.serial-terminal: units run in plan order; one merges, one parks with a
   });
   const r = contextFor(d);
   try {
-    const result = await runArc(r.ctx, live());
+    const parkedUnits: string[] = [];
+    const result = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
+    assert.deepEqual(parkedUnits, ['u2'], 'the park was handed over as it happened');
     assert.equal(result.kind, 'terminal');
     assert.ok(result.kind === 'terminal');
     assert.deepEqual(result.units.map((s) => [s.unit, s.result.kind]), [['u1', 'merged'], ['u2', 'parked']]);
@@ -331,7 +333,7 @@ test('arc.serial-terminal: units run in plan order; one merges, one parks with a
     assert.deepEqual(outcomes(d, 'u2'), ['plan-check:escalate', 'plan-check:escalate']);
     // A second run finds the arc where the log left it: nothing runs again.
     const calls = readCalls(d.scenarioPath).length;
-    const again = await runArc(r.ctx, live());
+    const again = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
     assert.ok(again.kind === 'terminal');
     assert.deepEqual(again.units.map((s) => [s.unit, s.result.kind, s.result.kind === 'parked' && s.result.needsUser.reason]), [['u1', 'merged', false], ['u2', 'parked', 'escalation']]);
     assert.equal(readCalls(d.scenarioPath).length, calls);

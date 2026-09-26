@@ -5,8 +5,7 @@
 // - anything else (someone else moved the executor-owned candidate ref) → abort; the caller parks the
 //   unit with a needs-user.
 //
-// Imports from src/git/candidate.ts, which imports this module back to build its op record: an ESM cycle
-// that is safe because both sides only reference each other's function declarations at call time.
+// Uses src/git/candidate.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
 import type { IntentOf } from '../core/events.ts';
 import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';

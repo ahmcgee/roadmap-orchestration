@@ -10,14 +10,14 @@ import type { IntentOf } from '../src/core/events.ts';
 import { needsUserIdForOp, opKey, sha, sha256 } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { type AbsPath, absPath, repoPattern } from '../src/core/values.ts';
-import { evidenceSnapshotOp } from '../src/git/evidence.ts';
 import { git as gitRaw } from '../src/git/git.ts';
 import { parentsOf } from '../src/git/mergein.ts';
-import { type SnapshotPublishRequest, snapshotPublishOp, snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
+import { type SnapshotPublishRequest, snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { ARC, IDENTITY, cloneRepo, openArc, runOp } from './fixtures/git-common.ts';
 import { UNIT, crashChild8b, recover8b, revOf, sharedBase } from './fixtures/git8b-common.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { CANDIDATE_FF_SNAPSHOT, crashCells } from './matrix.ts';
+import { evidenceSnapshotOp, snapshotPublishOp } from '../src/recover/ops.ts';
 
 const REF = snapshotRef(ARC);
 

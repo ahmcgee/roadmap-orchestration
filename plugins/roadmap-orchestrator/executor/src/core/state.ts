@@ -78,12 +78,18 @@ export type UnitState = Readonly<{
   decided: StageOutcomeFact | null;
   /** The latest gate approval: its attempt and the fingerprint it binds to; null before one. */
   approval: Readonly<{ attempt: number; fingerprint: ApprovalFingerprint }> | null;
+  /**
+   * The latest stage start (highest attempt) while no stage-outcome fact records it: an attempt a crash cut
+   * short, whose invocations recovery has since closed (the driver consumes a completed backend call instead
+   * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome.
+   */
+  open: Readonly<{ stage: Stage; attempt: number }> | null;
 }>;
 
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
-    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, approval: null,
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
   };
 }
@@ -274,7 +280,7 @@ export class Fold implements JournalView {
 
   #start(u: UnitEntry, start: string): void {
     u.starts.add(start);
-    u.state = { ...u.state, counters: { ...u.state.counters, attempts: u.starts.size } };
+    u.state = { ...u.state, counters: { ...u.state.counters, attempts: u.starts.size }, open: openStart(u) };
   }
 
   #openEntry(op: OpId, what: string, fail: (detail: string) => never): OpEntry {
@@ -523,6 +529,17 @@ export class Fold implements JournalView {
       parkedBackends: this.parkedBackends(),
     };
   }
+}
+
+/** The highest-attempt start of a unit when it has no outcome yet (`UnitState.open`). */
+function openStart(u: UnitEntry): UnitState['open'] {
+  let latest: { stage: Stage; attempt: number } | null = null;
+  for (const key of u.starts) {
+    const at = key.lastIndexOf('#');
+    const attempt = Number(key.slice(at + 1));
+    if (latest === null || attempt > latest.attempt) latest = { stage: key.slice(0, at) as Stage, attempt };
+  }
+  return latest === null || u.outcomes.has(`${latest.stage}#${latest.attempt}`) ? null : latest;
 }
 
 function retryable(closure: Closure): boolean {

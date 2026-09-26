@@ -2,8 +2,7 @@
 // all hash as listed, and which lists exactly the source's current evidence set → done; anything else
 // → redo, which is an idempotent copy that fills the gaps.
 //
-// Imports from src/git/evidence.ts, which imports this module back to build its op record: an ESM cycle
-// that is safe because both sides only reference each other's function declarations at call time.
+// Uses src/git/evidence.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
 import type { IntentOf } from '../core/events.ts';
 import type { Disposition, JournalView } from '../core/interfaces.ts';
 import { checkManifest, listEvidence } from '../git/evidence.ts';

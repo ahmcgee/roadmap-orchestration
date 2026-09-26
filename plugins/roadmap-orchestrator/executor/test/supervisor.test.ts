@@ -190,7 +190,8 @@ test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once 
   assert.equal(stateOf(r).heartbeatStaleMs, STALE_MS, 'the explicit threshold is recorded');
   process.kill(executor.pid, 'SIGSTOP');
   await gone(executor, 3 * WAIT_MS);
-  assert.equal(stateOf(r).crashes.length, 1);
+  // The supervisor records the crash after its SIGKILL has reaped the executor.
+  await until(() => stateOf(r).crashes.length === 1, WAIT_MS, 'the crash to be recorded');
   await idle(r, g1 + 1);
   assert.ok(isAlive(supervisor), 'the supervisor restarted the executor');
   await cli(r, ['stop']);

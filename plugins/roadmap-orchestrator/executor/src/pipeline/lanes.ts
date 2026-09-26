@@ -24,9 +24,9 @@ import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type CommandVerdict, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RepoPath, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence, evidenceSnapshotOp } from '../git/evidence.ts';
+import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
-import { type WorktreeCreateRequest, worktreeCreateOp, worktreeRemoveOp } from '../git/worktree.ts';
+import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { LaneLedgerEntry } from '../prompts/inputs.ts';
 import { probe } from '../resources/probe.ts';
 import { type SpecLane, cleanup, reserve, run } from '../resources/reserve.ts';
@@ -34,6 +34,7 @@ import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { type StageContext, type StageParent, cancelledFor, evidenceRoot, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
+import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** A lane's deadline. Default, unmeasured: lane durations are measured per invocation from arc 2 on. */
 export const LANE_DEADLINE_MS = 30 * 60_000;
