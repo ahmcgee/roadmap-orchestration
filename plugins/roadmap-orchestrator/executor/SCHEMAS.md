@@ -8,7 +8,7 @@ Other steps request changes rather than edit.
 
 | Rule | Where |
 |---|---|
-| Every executor-written file and log line carries `v: 1`, the one constant `SCHEMA_VERSION` | `src/core/version.ts` |
+| Every executor-written file and log line carries `v: 2`, the one constant `SCHEMA_VERSION` | `src/core/version.ts` |
 | Serialisation is canonical JSON: keys sorted, no whitespace, finite numbers, no `undefined` | `canonicalJson` in `src/core/json.ts` |
 | Every reader takes `unknown`, returns the typed value or throws `SchemaError{field, value}`; field paths look like `plan.units[0].risk` | `src/core/validate.ts` |
 | Readers reject unknown fields. Optional fields are absent, never `undefined`; nullable fields are explicit `null` | `Fields.end()` |

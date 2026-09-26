@@ -129,7 +129,7 @@ export function readCalls(scenarioPath: string): readonly CallRecord[] {
 // ---------------------------------------------------------------------------------------------------
 // Runner stand-in for adapter-level tests.
 
-const BIND = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
+const BIND = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
 const DEADLINE = '2026-09-25T13:00:00.000Z';
 
 /** Write a valid launch.json into `invDir` (bound to arc-1/7#1) and return it as read back. */

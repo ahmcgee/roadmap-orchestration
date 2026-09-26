@@ -55,7 +55,7 @@ describe('supervisor.intentional-exit', () => {
     const executor = await executorOf(r, generation);
     const seen = await watchEnd(r, supervisor, executor);
     assert.ok(seen.executorGone <= seen.lockGone && seen.lockGone <= seen.supervisorGone, JSON.stringify(seen));
-    assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'complete' });
+    assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'complete' });
     const state = stateOf(r);
     assert.deepEqual(state.crashes, [], 'no crash counted');
     assert.equal(state.heartbeatStaleMs, HEARTBEAT_STALE_MS, 'the default threshold is recorded');
@@ -72,7 +72,7 @@ describe('supervisor.intentional-exit', () => {
     await cli(r, ['stop']);
     const seen = await watchEnd(r, supervisor, executor);
     assert.ok(seen.executorGone <= seen.lockGone, JSON.stringify(seen));
-    assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'stop' });
+    assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'stop' });
     assert.deepEqual(stateOf(r).crashes, []);
     assert.deepEqual(startedGenerations(r), [generation]);
   });
@@ -89,7 +89,7 @@ test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and 
   await cli(r, ['stop']);
   const seen = await watchEnd(r, supervisor, executor);
   assert.ok(seen.executorGone > 0 && seen.executorGone <= seen.lockGone && seen.lockGone <= seen.supervisorGone, JSON.stringify(seen));
-  assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'stop' });
+  assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'stop' });
   assert.equal(outcomes(r).at(-1), 'plan-check:interrupted', 'the running stage was cancelled before the executor exited');
   assert.deepEqual(journalOf(r).view.openIntents(), [], 'nothing left open');
   assert.deepEqual(stateOf(r).crashes, []);
@@ -139,7 +139,7 @@ test('supervisor.ready-generation: start waits for its own generation; older rea
   writeFileSync(join(r.repo, '.roadmap', 'state.json'), '{}\n');
   writeFileSync(hostFile(r, 'host.generation'), '5\n');
   for (let g = 1; g <= 5; g++) {
-    writeFileSync(hostFile(r, `supervisor.ready.${g}`), JSON.stringify({ v: 1, generation: g, state: 'ready', at: new Date().toISOString() }));
+    writeFileSync(hostFile(r, `supervisor.ready.${g}`), JSON.stringify({ v: 2, generation: g, state: 'ready', at: new Date().toISOString() }));
   }
   const exit = await startCli(r);
   assert.equal(exit.code, 78, exit.stdout + exit.stderr);
@@ -200,7 +200,7 @@ test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once 
   assert.ok(isAlive(supervisor), 'the supervisor restarted the executor');
   await cli(r, ['stop']);
   await gone(supervisor);
-  assert.deepEqual(exitReason(r), { v: 1, generation: g1 + 1, reason: 'stop' });
+  assert.deepEqual(exitReason(r), { v: 2, generation: g1 + 1, reason: 'stop' });
 });
 
 describe(`crash matrix: ${SUPERVISOR_HOST}`, () => {
@@ -223,7 +223,7 @@ describe(`crash matrix: ${SUPERVISOR_HOST}`, () => {
       if (!handshaken && cell.label !== 'sup.after-claim') assert.match(readFileSync(logs.err, 'utf8'), /refused before any effect: the supervisor that spawned this executor died/);
       const effects = startedGenerations(r);
       assert.deepEqual(effects, handshaken ? [dead.generation] : [], 'only a handshaken executor acted');
-      if (handshaken) assert.deepEqual(exitReason(r), { v: 1, generation: dead.generation, reason: 'complete' });
+      if (handshaken) assert.deepEqual(exitReason(r), { v: 2, generation: dead.generation, reason: 'complete' });
       else assert.ok(!existsSync(r.runDir), 'the orphan wrote nothing, not even its run dir');
 
       const exit = await startExec(r, CLAUDE_ONLY).exit;
