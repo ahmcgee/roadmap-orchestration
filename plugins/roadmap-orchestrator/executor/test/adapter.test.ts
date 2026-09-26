@@ -6,7 +6,7 @@ import { adapt, schemaViolation, writeResult } from '../src/backends/adapter.ts'
 import { ResultConflictError, UnsupportedSchemaError } from '../src/backends/errors.ts';
 import type { BackendOutcomeKind, ExitFile, ResultFile } from '../src/core/records.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { CAPACITY_TEXT, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
+import { CAPACITY_TEXT, editClaudeResult, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
 
 const EXIT0: ExitFile['child'] = { type: 'exited', code: 0 };
 const EXIT1: ExitFile['child'] = { type: 'exited', code: 1 };
@@ -24,8 +24,7 @@ function edited(name: string, child: ExitFile['child'], edit: (invDir: string) =
 }
 
 const schemaInvalidClaude = (invDir: string): void => {
-  const r = JSON.parse(readFileSync(join(invDir, 'stdout'), 'utf8')) as Record<string, unknown>;
-  writeFileSync(join(invDir, 'stdout'), JSON.stringify({ ...r, structured_output: { ok: 'yes' } }));
+  editClaudeResult(invDir, (r) => ({ ...r, structured_output: { ok: 'yes' } }));
 };
 
 describe('adapter', () => {
@@ -36,11 +35,15 @@ describe('adapter', () => {
       { name: 'claude', valid: 'claude-judgment', failed: 'claude-api-error' },
     ] as const;
     for (const b of backends) {
-      for (const cause of ['deadline', 'cancel', 'recovery-kill'] as const) {
+      for (const cause of ['deadline', 'recovery-kill'] as const) {
         it(`${b.name}: cause ${cause} with schema-valid output → process-fault`, () => {
           assert.equal(outcome(adapt(fixtureInvocation(b.valid, EXIT0, cause))), 'process-fault');
         });
       }
+      it(`${b.name}: cause cancel (a pause) with schema-valid output → cancelled{pause}, not a fault`, () => {
+        const r = adapt(fixtureInvocation(b.valid, EXIT0, 'cancel'));
+        assert.deepEqual(r.type === 'backend' ? r.outcome : null, { kind: 'cancelled', reason: 'pause' });
+      });
       it(`${b.name}: a signal with schema-valid output → process-fault`, () => {
         assert.equal(outcome(adapt(fixtureInvocation(b.valid, { type: 'signalled', signal: 'SIGSEGV' }))), 'process-fault');
       });
@@ -67,24 +70,36 @@ describe('adapter', () => {
       assert.equal(outcome(adapt(edited('claude-judgment', EXIT0, schemaInvalidClaude))), 'malformed');
     });
     it('claude: stop_reason refusal without schema-valid output → refusal', () => {
-      const r = adapt(edited('claude-judgment', EXIT0, (d) => {
-        const o = JSON.parse(readFileSync(join(d, 'stdout'), 'utf8')) as Record<string, unknown>;
+      const r = adapt(edited('claude-judgment', EXIT0, (d) => editClaudeResult(d, (o) => {
         delete o['structured_output'];
-        writeFileSync(join(d, 'stdout'), JSON.stringify({ ...o, stop_reason: 'refusal', result: "I can't help with that." }));
-      }));
+        return { ...o, stop_reason: 'refusal', result: "I can't help with that." };
+      })));
       assert.deepEqual(r.type === 'backend' ? r.outcome : null, { kind: 'refusal', stopReason: 'refusal' });
     });
     it('claude: a reported session id other than the launched one turns success into malformed', () => {
-      const r = adapt(edited('claude-judgment', EXIT0, (d) => {
-        const o = JSON.parse(readFileSync(join(d, 'stdout'), 'utf8')) as Record<string, unknown>;
-        writeFileSync(join(d, 'stdout'), JSON.stringify({ ...o, session_id: '11111111-1111-4111-8111-111111111111' }));
-      }));
+      const r = adapt(edited('claude-judgment', EXIT0, (d) => editClaudeResult(d, (o) => ({ ...o, session_id: '11111111-1111-4111-8111-111111111111' }))));
       assert.equal(outcome(r), 'malformed');
     });
-    it('a torn stdout is malformed output, with usage malformed', () => {
-      const r = adapt(edited('codex-fresh', EXIT0, (d) => writeFileSync(join(d, 'stdout'), '{"type":"thread.started","thr')));
+    it('a malformed complete stdout line is malformed output, with usage malformed', () => {
+      const r = adapt(edited('codex-fresh', EXIT0, (d) => writeFileSync(join(d, 'stdout'), '{"type":"thread.started","thr\n')));
       assert.equal(outcome(r), 'malformed');
       assert.deepEqual(r.type === 'backend' ? r.usage : null, { kind: 'unavailable', reason: 'malformed' });
+    });
+    it('a torn final line (killed mid-write) is dropped: the complete events before it are still read', () => {
+      const cut = (d: string): void => {
+        const text = readFileSync(join(d, 'stdout'), 'utf8');
+        const lines = text.split('\n').filter((l) => l !== '');
+        // Every line but the last, then half of the last without its newline.
+        writeFileSync(join(d, 'stdout'), `${lines.slice(0, -1).map((l) => `${l}\n`).join('')}${lines.at(-1)!.slice(0, 20)}`);
+      };
+      const codex = adapt(fixtureInvocation('codex-fresh', { type: 'signalled', signal: 'SIGKILL' }, 'deadline'));
+      const codexCut = adapt(edited('codex-fresh', { type: 'signalled', signal: 'SIGKILL' }, cut));
+      assert.equal(outcome(codexCut), 'process-fault');
+      // The thread id of the first line survives: a continue can still resume it.
+      assert.equal(codexCut.type === 'backend' && codexCut.role === 'build' ? codexCut.session : null, codex.type === 'backend' && codex.role === 'build' ? codex.session : 'x');
+      const claude = adapt(edited('claude-judgment', EXIT0, cut));
+      assert.equal(outcome(claude), 'malformed', 'no result event: the result line was the torn one');
+      assert.deepEqual(claude.type === 'backend' ? claude.usage : null, { kind: 'unavailable', reason: 'no-result' });
     });
   });
 
@@ -102,10 +117,7 @@ describe('adapter', () => {
       assert.deepEqual(r.type === 'backend' ? r.backendErrors : null, []);
     });
     it('claude: capacity text in a normal result is not a backend error', () => {
-      const r = adapt(edited('claude-judgment', EXIT0, (d) => {
-        const o = JSON.parse(readFileSync(join(d, 'stdout'), 'utf8')) as Record<string, unknown>;
-        writeFileSync(join(d, 'stdout'), JSON.stringify({ ...o, result: CAPACITY_TEXT }));
-      }));
+      const r = adapt(edited('claude-judgment', EXIT0, (d) => editClaudeResult(d, (o) => ({ ...o, result: CAPACITY_TEXT }))));
       assert.equal(outcome(r), 'success');
       assert.deepEqual(r.type === 'backend' ? r.backendErrors : null, []);
     });

@@ -38,7 +38,7 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 /** The plan's suite: every test file of the repo (node's default patterns). */
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[] }>;
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[] }>;
 
 export type ArcOptions = Readonly<{
   steps: readonly Step[];
@@ -83,6 +83,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
       lanes: (u.lanes ?? [MUL_LANE]).map((l) => ({ ...laneJson(l), state: 'active' })),
       acceptance: [{ id: 'A1', clause: 'mul(2, 3) is 6', failLoudIfUndelivered: true, state: 'active' }],
       scope: ['src/**', 'test/**', 'contracts/**'], resources: [], decisions: [], facts: [],
+      cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     }));
   }
   cpSync(RULINGS, join(planDir, 'rulings.md'));
@@ -92,7 +93,9 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'),
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: ['src/**', 'test/**', 'contracts/**'], resources: [] })),
+    units: units.map((u) => ({
+      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: ['src/**', 'test/**', 'contracts/**'], resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+    })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
   const scenario = writeScenario(scenarioDir, opts.steps);
@@ -111,7 +114,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const ctx: StageContext = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
-    routing: resolveRouting({ profile: 'default', repoConfig: null, plan: null, unit: null }),
+    routing: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }),
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
   };
@@ -131,14 +134,21 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 
 const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
 
-export type GateAnswer = Readonly<{ decision: 'approve' | 'revise' | 'escalate'; directives?: readonly string[] }>;
+export type GateAnswer = Readonly<{
+  decision: 'approve' | 'revise' | 'escalate';
+  directives?: readonly string[];
+  findings?: readonly JsonValue[];
+  premises?: readonly JsonValue[];
+}>;
 
 /** A gate the fake Claude answers after `before`: a fresh judgment call. `expect` adds to the judgment argv check. */
 export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
     expect: { ...JUDGMENT, ...expect, argv: [...(JUDGMENT.argv ?? []), ...(expect.argv ?? [])] },
-    acts: [...before, { type: 'emit', value: { decision: a.decision, findings: [], directives: [...(a.directives ?? [])], reasons: ['A1 holds'] } as JsonValue }],
+    acts: [...before, { type: 'emit', value: {
+      decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+    } as JsonValue }],
   };
 }
 

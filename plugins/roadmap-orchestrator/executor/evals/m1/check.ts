@@ -293,6 +293,7 @@ export function check(dir: string): CheckResult {
   if (!existsSync(l.report)) throw new Error(`${l.report} is missing: run evals/m1/driver.ts first`);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   const plan = parsePlan(JSON.parse(readFileSync(l.plan, 'utf8')));
+  if (plan.arc !== l.arc) throw new Error(`${l.plan} names arc ${plan.arc}, but the fixture dir ${dir} is arc ${l.arc}: was it moved after setup?`);
   const arc = arcId(plan.arc);
   const runDir = absPath(l.runDir);
   const { view, events } = readJournal(runDir, arc);

@@ -3,9 +3,10 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type Sha, type SpecRev,
-  type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf, judgmentSessionId,
-  laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, sha, specRev, unitId,
+  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha,
+  type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf,
+  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, seatRev, sha,
+  sha256, specRev, unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -34,6 +35,9 @@ export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 /** What the executor writes into cancel.json. `deadline` is the runner's own; `external-unknown` kills are not invocation cancels. */
 export const CANCEL_REASONS = ['pause', 'stop', 'recovery'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
+/** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
+export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
+export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
@@ -62,7 +66,12 @@ const rev: Read<RoutingRev> = (v, p) => routingRev(v, p);
 const abs: Read<AbsPath> = (v, p) => absPath(v, p);
 const time: Read<IsoTime> = (v, p) => isoTime(v, p);
 const resource: Read<ResourceName> = (v, p) => resourceName(v, p);
-const argv: Read<readonly string[]> = arrayOf(str, { nonEmpty: true });
+/** argv[0] names the program; a later argument may be empty (`claude --setting-sources ''`). */
+const argv: Read<readonly string[]> = (v, p) => {
+  const out = arrayOf(text, { nonEmpty: true })(v, p);
+  str(out[0], `${p}[0]`);
+  return out;
+};
 const exitCode = int(0, 255);
 
 // ---------------------------------------------------------------------------------------------------
@@ -89,7 +98,7 @@ type BackendTerminalBase = Readonly<{
   purpose: 'backend' | 'smoke';
   routingRev: RoutingRev;
   schemaPath: AbsPath;
-  /** Codex: the `-o` file. Claude: the invocation's stdout file (its `--output-format json` result). */
+  /** Codex: the `-o` file. Claude: the invocation's stdout file (its stream-json events, the result last). */
   outputPath: AbsPath;
 }>;
 export type BackendTerminal =
@@ -246,17 +255,27 @@ export type TokenUsage = Readonly<{
   /** null: the backend did not report this figure (both CLIs report cache writes as of the captured fixtures; older Codex output omitted it). */
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
+  /** The CLI's own turn count (Claude `num_turns`: each model request of the tool loop); null when not reported (Codex). */
+  turns: number | null;
+  /** The CLI's own list-price cost estimate in USD (Claude `total_cost_usd`); null when not reported (Codex). */
+  costUsd: number | null;
 }>;
 export const USAGE_UNAVAILABLE_REASONS = ['no-result', 'absent', 'malformed'] as const;
 export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
 /** Usage validity is independent of the outcome: missing usage never invalidates a judgment. */
 export type Usage = Readonly<{ kind: 'known'; tokens: TokenUsage }> | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
 
+const usd: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new SchemaError(path, 'a finite non-negative number', value);
+  return value;
+};
 export const tokenUsage: Read<TokenUsage> = object((f) => ({
   inputTokens: f.get('inputTokens', nat),
   outputTokens: f.get('outputTokens', nat),
   cacheReadTokens: f.get('cacheReadTokens', nullable(nat)),
   cacheWriteTokens: f.get('cacheWriteTokens', nullable(nat)),
+  turns: f.get('turns', nullable(nat)),
+  costUsd: f.get('costUsd', nullable(usd)),
 }));
 export const usageUnavailableReason: Read<UsageUnavailableReason> = oneOf(USAGE_UNAVAILABLE_REASONS);
 const usage: Read<Usage> = tagged('kind', {
@@ -273,7 +292,12 @@ export type BackendOutcome =
   | Readonly<{ kind: 'success'; value: JsonValue }>
   | Readonly<{ kind: 'refusal'; stopReason: string }>
   | Readonly<{ kind: 'malformed'; detail: string }>
-  | Readonly<{ kind: 'process-fault'; detail: string }>;
+  | Readonly<{ kind: 'process-fault'; detail: string }>
+  /**
+   * The executor cancelled the workload for a pause or stop (exit cause `cancel`); `reason` is cancel.json's.
+   * Not a failure of the call. A recovery cancel ends as cause `recovery-kill`, a process fault.
+   */
+  | Readonly<{ kind: 'cancelled'; reason: InterruptReason }>;
 export type BackendOutcomeKind = BackendOutcome['kind'];
 /** What the precedence rule alone decides; refusal is the adapter's reading of a backend stop reason. */
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
@@ -309,6 +333,7 @@ const backendOutcome: Read<BackendOutcome> = tagged('kind', {
   refusal: object((f): BackendOutcome => ({ kind: f.get('kind', literal('refusal')), stopReason: f.get('stopReason', str) })),
   malformed: object((f): BackendOutcome => ({ kind: f.get('kind', literal('malformed')), detail: f.get('detail', str) })),
   'process-fault': object((f): BackendOutcome => ({ kind: f.get('kind', literal('process-fault')), detail: f.get('detail', str) })),
+  cancelled: object((f): BackendOutcome => ({ kind: f.get('kind', literal('cancelled')), reason: f.get('reason', oneOf(INTERRUPT_REASONS)) })),
 });
 
 const backendError: Read<BackendError> = object((f) => ({
@@ -357,12 +382,17 @@ function processFault(exit: ExitFile): string | null {
 
 /**
  * The result.json precedence rule for backends, pure over the terminal files:
- * 1. cause deadline/cancel/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
- * 2. non-zero exit with schema-valid output → malformed; non-zero exit without it → process-fault;
- * 3. exit 0 without schema-valid output → malformed;
- * 4. exit 0 with schema-valid output → success.
+ * 1. cause cancel → cancelled{cancel.json's reason: pause|stop}, whatever the output (cancel.json must say so);
+ * 2. cause deadline/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
+ * 3. non-zero exit with schema-valid output → malformed; non-zero exit without it → process-fault;
+ * 4. exit 0 without schema-valid output → malformed;
+ * 5. exit 0 with schema-valid output → success.
  */
-export function classifyTerminal(exit: ExitFile, output: unknown, schemaValid: boolean): TerminalOutcome {
+export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, output: unknown, schemaValid: boolean): TerminalOutcome {
+  if (exit.cause === 'cancel') {
+    if (cancel === null || cancel.reason === 'recovery') throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
+    return { kind: 'cancelled', reason: cancel.reason };
+  }
   const fault = processFault(exit);
   if (fault !== null) return { kind: 'process-fault', detail: fault };
   const code = (exit.child as Extract<ChildEnd, { type: 'exited' }>).code;
@@ -382,7 +412,26 @@ export function classifyCommand(exit: ExitFile, expectedExit: number): Readonly<
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
 }
 
-export const RUNNER_FILES = ['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json'] as const;
+// reads.json -------------------------------------------------------------------------------------------
+
+/**
+ * One read-only tool call a Claude session made, as its tool_use input named it: Read's `file_path`;
+ * Grep's and Glob's `pattern` and optional `path` (null: the session's cwd).
+ */
+export type ToolRead =
+  | Readonly<{ tool: 'Read'; path: string }>
+  | Readonly<{ tool: 'Grep' | 'Glob'; pattern: string; path: string | null }>;
+/** What a Claude session read, in call order, from its stream-json stdout. Audit only: nothing binds it. */
+export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[] }>;
+
+const toolRead: Read<ToolRead> = tagged('tool', {
+  Read: object((f): ToolRead => ({ tool: f.get('tool', literal('Read')), path: f.get('path', str) })),
+  Grep: object((f): ToolRead => ({ tool: f.get('tool', literal('Grep')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
+  Glob: object((f): ToolRead => ({ tool: f.get('tool', literal('Glob')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
+});
+export const readsFile: Read<ReadsFile> = object((f) => ({ ...binding(f), reads: f.get('reads', arrayOf(toolRead)) }));
+
+export const RUNNER_FILES = ['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json', 'reads.json'] as const;
 export type RunnerFileName = (typeof RUNNER_FILES)[number];
 export type RunnerFileMap = {
   'launch.json': LaunchFile;
@@ -390,6 +439,7 @@ export type RunnerFileMap = {
   'cancel.json': CancelFile;
   'exit.json': ExitFile;
   'result.json': ResultFile;
+  'reads.json': ReadsFile;
 };
 export const RUNNER_FILE_READERS: { readonly [N in RunnerFileName]: Read<RunnerFileMap[N]> } = {
   'launch.json': launchFile,
@@ -397,6 +447,7 @@ export const RUNNER_FILE_READERS: { readonly [N in RunnerFileName]: Read<RunnerF
   'cancel.json': cancelFile,
   'exit.json': exitFile,
   'result.json': resultFile,
+  'reads.json': readsFile,
 };
 /** The workload's stdout and stderr go to these files in the invocation dir; never pipes. */
 export const STDOUT_FILE = 'stdout';
@@ -422,22 +473,31 @@ export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => ({
   rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
 }));
 
-/** Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`. */
+/**
+ * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
+ * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
+ * `implementerSeatRev` hashes the triple of the implementer's seat (`build.<riskFloor>`) under `routingRev`,
+ * so a routing change can be judged by whether it moves the implementer without naming a model.
+ */
 export type DispatchRecord = Readonly<{
   unit: UnitId;
   specRev: SpecRev;
+  specSha256: Sha256Hex;
   scope: readonly RepoPattern[];
   riskFloor: RiskTier;
   routingRev: RoutingRev;
+  implementerSeatRev: SeatRev;
   at: IsoTime;
 }>;
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => ({
   unit: f.get('unit', unit),
   specRev: f.get('specRev', (v, p) => specRev(v, p)),
+  specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
   scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
   riskFloor: f.get('riskFloor', riskTier),
   routingRev: f.get('routingRev', rev),
+  implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
   at: f.get('at', time),
 }));
 
@@ -492,6 +552,21 @@ export type AcceptanceDef = Readonly<{ id: ClauseId; clause: string; failLoudIfU
 export type NoteDef = Readonly<{ id: ClauseId; text: string }>;
 type Stated<T> = T & Readonly<{ state: ItemState }>;
 
+/**
+ * What a unit's judgment and build prompts embed in full: plan contracts and C-nn rulings (arc-1 feedback
+ * item 12). Every other contract and ruling reaches a prompt as a one-line index entry, readable on demand.
+ * Filled at spec authoring; a plan-check redirect may add to it (the `cite` op), nothing removes from it.
+ */
+export type SpecCites = Readonly<{ contracts: readonly RepoPath[]; rulings: readonly RulingId[] }>;
+
+function citesFields(f: Fields): SpecCites {
+  const out = { contracts: f.get('contracts', arrayOf((v, p) => repoPath(v, p))), rulings: f.get('rulings', arrayOf((v, p) => rulingId(v, p))) };
+  assertUnique(out.contracts, (c) => c, `${f.path}.contracts`);
+  assertUnique(out.rulings, (r) => r, `${f.path}.rulings`);
+  return out;
+}
+export const specCites: Read<SpecCites> = object(citesFields);
+
 export const SPEC_SCHEMA = 'roadmap/spec-m1';
 export type SpecM1 = Readonly<{
   schema: typeof SPEC_SCHEMA;
@@ -503,6 +578,7 @@ export type SpecM1 = Readonly<{
   resources: readonly ResourceName[];
   decisions: readonly Stated<NoteDef>[];
   facts: readonly Stated<NoteDef>[];
+  cites: SpecCites;
 }>;
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
@@ -528,6 +604,7 @@ export const specM1: Read<SpecM1> = object((f) => {
     resources: f.get('resources', arrayOf(resource)),
     decisions: f.get('decisions', arrayOf(stated(noteFields))),
     facts: f.get('facts', arrayOf(stated(noteFields))),
+    cites: f.get('cites', specCites),
   };
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
@@ -539,11 +616,15 @@ export const SPEC_SECTIONS = ['lanes', 'acceptance', 'decisions', 'facts'] as co
 export type SpecSection = (typeof SPEC_SECTIONS)[number];
 type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef };
 
-/** Scope and resources are pinned at dispatch and are not patchable in M1. */
+/**
+ * Scope and resources are pinned at dispatch and are not patchable in M1. `cite` adds contracts and rulings
+ * to the spec's cites (at least one); there is no op that removes one.
+ */
 export type SpecPatchOp =
   | { readonly [S in SpecSection]: Readonly<{ op: 'add'; section: S; item: SectionItem[S] }> }[SpecSection]
   | { readonly [S in SpecSection]: Readonly<{ op: 'replace'; section: S; item: SectionItem[S] }> }[SpecSection]
-  | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>;
+  | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
+  | Readonly<{ op: 'cite' } & SpecCites>;
 
 /**
  * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
@@ -581,11 +662,18 @@ function idOp(op: 'strike' | 'defer'): Read<SpecPatchOp> {
   return object((f) => ({ op: f.get('op', literal(op)), id: f.get('id', (v, p): LaneId | ClauseId => clauseId(v, p)) }));
 }
 
+const citeOp: Read<SpecPatchOp> = (value, path) => {
+  const op = object((f) => ({ op: f.get('op', literal('cite')), ...citesFields(f) }))(value, path);
+  if (op.contracts.length + op.rulings.length === 0) throw new SchemaError(path, 'a cite op naming at least one contract or ruling', value);
+  return op;
+};
+
 export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
   add: itemOp('add'),
   replace: itemOp('replace'),
   strike: idOp('strike'),
   defer: idOp('defer'),
+  cite: citeOp,
 });
 
 export const specPatch: Read<SpecPatch> = object((f) => ({
@@ -814,7 +902,7 @@ export const NEEDS_USER_REASONS = [
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
-  'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost',
+  'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
 ] as const;
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

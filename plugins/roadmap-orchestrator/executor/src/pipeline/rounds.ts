@@ -2,7 +2,9 @@
 // five rounds: the four a decision asks for (`BuildRound`, transitions.ts) and `continue`:
 //
 //   fresh     a new session in the unit worktree (created on the unit branch at the integration tip the
-//             first time);
+//             first time); after a reopen (the architect edited the spec of a parked unit), the unit's
+//             latest implementer session is resumed instead, told by RESPEC_DIRECTIVE that the spec it
+//             now reads was amended and that the worktree holds its earlier work;
 //   fix       resume the implementer session with the failing lanes' evidence dirs and any directives (the
 //             gate's, or the executor's for a dirty checkout), in the unit worktree at the salvage SHA; the
 //             verification checkout of the failed series is removed first, citing its evidence snapshot;
@@ -21,10 +23,14 @@
 // also for an invocation killed mid-run. A fix, resume or resolve round resumes the latest build invocation
 // of the unit that has a session (`lastImplementerSession`); a continue resumes the interrupted one. When
 // there is none (the unit's builds were lost with tree effects, a fresh build was malformed without
-// reporting one, or a fresh Codex exec was interrupted before its thread started), the round starts a fresh
-// session instead, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's inputs, then
-// NO_SESSION_NOTE and CONTINUE_DIRECTIVE); the round keeps its kind, and its launch.json records the session
-// as fresh. The implementer keeps its seat for the whole unit (implementerDispatch).
+// reporting one, or a fresh Codex exec was interrupted before its thread started), or that session ran on
+// another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
+// model or backend: a session cannot move across them), the round starts a fresh session instead, on the
+// kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
+// inputs, then NO_SESSION_NOTE and CONTINUE_DIRECTIVE; a reopen's fresh round: RESPEC_DIRECTIVE, then
+// NO_SESSION_NOTE); the round keeps its kind, and its launch.json records the session as fresh. A session's
+// seat is the `implementerSeatRev` of the dispatch fact its spawn ran under (`spawnSeatRev`); a routing
+// change never moves the seat of a unit whose build started (implementerDispatch parks it instead).
 //
 // Deadlines. A fix round's window is the measured lane series plus an edit allowance; the allowance and the
 // fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds.
@@ -36,7 +42,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import { type ImplementerSessionId, type InvocationId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import type { IntentOf } from '../core/events.ts';
+import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
@@ -60,6 +67,7 @@ export const FRESH_BUILD_MS = 3 * 60 * 60_000;
 export const RESUME_DIRECTIVE = 'Your previous final report did not match the required structured format. Do not change any code: return the structured report for the work in this worktree now.';
 export const NO_SESSION_NOTE = 'No earlier session of yours exists for this unit, so this is a fresh session: the worktree holds the work done so far. Read it before you change anything.';
 export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit), run the fast lanes and return your report.';
+export const RESPEC_DIRECTIVE = 'The architect amended this unit\'s spec after your earlier work on it; the spec in this message is the amended revision and replaces the one you worked from. The worktree holds your earlier work, committed. Bring the work in line with the amended spec, run the fast lanes and return your report.';
 export const CONTINUE_DIRECTIVE = `You were paused partway through this task and are now resumed. The worktree holds your work so far, including uncommitted changes. Continue from where you stopped; do not restart. The evidence directory named in this message is new: rewrite ${DECISIONS_FILE} there, complete, with every decision so far.`;
 
 /** What a decision asks for: one of the table's rounds, with the inputs its kind needs. */
@@ -150,8 +158,29 @@ export function invocationSession(ctx: StageContext, inv: InvocationId): Impleme
   return result.session;
 }
 
-/** The session of the unit's latest build invocation that has one, from the log and `invocationSession`. */
-export function lastImplementerSession(ctx: StageContext, unit: UnitId): ImplementerSessionId | null {
+/** An implementer session and the implementer seat it ran on. */
+export type SeatedSession = Readonly<{ id: ImplementerSessionId; seatRev: SeatRev }>;
+
+/**
+ * The implementer seat a build spawn ran on: the `implementerSeatRev` of the unit's dispatch fact it was
+ * spawned under (the spawn names that fact's `routingRev` and floor as its own `routingRev` and `tier`).
+ */
+function spawnSeatRev(ctx: StageContext, intent: IntentOf<'proc.spawn'>): SeatRev {
+  const s = intent.expect.subject;
+  if (s.purpose !== 'backend' || s.role !== 'build') throw new Error(`${intent.op}: not a build spawn`);
+  const pinned = ctx.journal.view.dispatchesOf(s.unit).filter((d) => d.routingRev === s.routingRev && d.riskFloor === s.tier).at(-1);
+  if (pinned === undefined) throw new Error(`${intent.op}: a build spawn under routingRev ${s.routingRev} at ${s.tier} with no dispatch fact of ${s.unit} pinning it`);
+  return pinned.implementerSeatRev;
+}
+
+/** The session of build invocation `inv` with its seat, or null when it has no session. */
+function seatedSessionOf(ctx: StageContext, intent: IntentOf<'proc.spawn'>, inv: InvocationId): SeatedSession | null {
+  const id = invocationSession(ctx, inv);
+  return id === null ? null : { id, seatRev: spawnSeatRev(ctx, intent) };
+}
+
+/** The session of the unit's latest build invocation that has one, with its seat, from the log and `invocationSession`. */
+export function lastImplementerSession(ctx: StageContext, unit: UnitId): SeatedSession | null {
   const view = ctx.journal.view;
   const spawns = view.opsOf('proc.spawn');
   for (let i = spawns.length - 1; i >= 0; i--) {
@@ -159,10 +188,20 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): Impleme
     const s = intent.expect.subject;
     if (s.purpose !== 'backend' || s.role !== 'build' || s.unit !== unit) continue;
     if (view.doneOf(intent.op)?.outcome.kind !== 'result') continue;
-    const session = invocationSession(ctx, invocationId(intent.op, intent.ordinal));
+    const session = seatedSessionOf(ctx, intent, invocationId(intent.op, intent.ordinal));
     if (session !== null) return session;
   }
   return null;
+}
+
+/**
+ * The session a round on `dispatch` may resume: `earlier` when it ran on the same implementer seat, else null.
+ * A session cannot move across models or backends, so a build whose seat moved (a plan-check risk raise
+ * after a build) starts a fresh session on the kept branch and worktree, its round's inputs given with
+ * NO_SESSION_NOTE.
+ */
+function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): ImplementerSessionId | null {
+  return earlier !== null && earlier.seatRev === dispatch.seatRev ? earlier.id : null;
 }
 
 function freshSession(dispatch: ImplementerDispatch): ImplementerSession {
@@ -248,22 +287,30 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
   const branch = unitBranch(ctx.plan.arc, unit);
   const deadlineAt = inMs(windowMs(input.kind === 'continue' ? input.of : input));
   switch (input.kind) {
-    case 'fresh':
-      return { ...(await ensureWorktree(ctx, unit, parent)), session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt };
+    case 'fresh': {
+      const ready = await ensureWorktree(ctx, unit, parent);
+      // Only a reopen leads to a second fresh round, and the unit keeps its implementer session across it
+      // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
+      const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
+      if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt };
+      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE] }), evidenceDirs: [], deadlineAt };
+    }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
       const head = revParse(worktree, 'HEAD');
       if (head !== input.salvage) throw new Error(`fix round of ${unit}: the unit worktree is at ${head}, not the salvage SHA ${input.salvage}`);
       const dirty = dirtyPaths(worktree);
       if (dirty.length > 0) throw new Error(`fix round of ${unit}: the unit worktree is not clean after salvage: ${dirty.join(', ')}`);
-      return { worktree, branch, ...resumed(dispatch, lastImplementerSession(ctx, unit), input.fix), evidenceDirs: input.fix.failingEvidenceDirs, deadlineAt };
+      return { worktree, branch, ...resumed(dispatch, onSeat(dispatch, lastImplementerSession(ctx, unit)), input.fix), evidenceDirs: input.fix.failingEvidenceDirs, deadlineAt };
     }
     case 'resume':
     case 'resolve':
-      return { worktree, branch, ...resumed(dispatch, lastImplementerSession(ctx, unit), roundInputs(input)!), evidenceDirs: [], deadlineAt };
+      return { worktree, branch, ...resumed(dispatch, onSeat(dispatch, lastImplementerSession(ctx, unit)), roundInputs(input)!), evidenceDirs: [], deadlineAt };
     case 'continue': {
       const own = roundInputs(input.of) ?? { failingEvidenceDirs: [], directives: [] };
-      const id = invocationSession(ctx, input.interrupted);
+      const interrupted = ctx.journal.view.latestIntent(parseInvocationId(input.interrupted).op);
+      if (interrupted.kind !== 'proc.spawn') throw new Error(`${input.interrupted}: the interrupted build is not a spawn`);
+      const id = onSeat(dispatch, seatedSessionOf(ctx, interrupted, input.interrupted));
       // A resumed session already holds the spec and its round's inputs; a fresh one is given them again.
       const fixRound: FixRound = id === null
         ? { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }

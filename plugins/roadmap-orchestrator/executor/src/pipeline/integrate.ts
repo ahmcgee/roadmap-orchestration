@@ -35,6 +35,7 @@ import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
+import { reentryRecommendation } from '../needsuser.ts';
 import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, reserve, run } from '../resources/reserve.ts';
 import { type StageContext, type StageParent, evidenceRoot, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
@@ -152,20 +153,21 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const baseFault = seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return { kind: 'red', needsUser: null };
-      return { kind: 'base-red', needsUser: baseRedNeedsUser(ctx, unit.id, tip) };
+      return { kind: 'base-red', needsUser: baseRedNeedsUser(ctx, unit.id, tip, [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]) };
     }
   }
 }
 
-function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha): NeedsUserContent {
+/** `evidence`: the suite series on the candidate and on T alone. */
+function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha, evidence: readonly AbsPath[]): NeedsUserContent {
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'base-red',
     summary: `The suite is red on ${ctx.plan.integrationBranch} at ${tip} alone, without unit ${unit}: the base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
-    recommendation: `Repair ${ctx.plan.integrationBranch} (or the suite), then resume unit ${unit}.`,
+    recommendation: `Repair ${ctx.plan.integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', unitBranch(ctx.plan.arc, unit))}`,
     options: [],
-    evidence: [],
+    evidence,
   };
 }
 

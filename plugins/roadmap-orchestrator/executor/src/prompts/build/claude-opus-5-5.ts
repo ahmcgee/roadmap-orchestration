@@ -9,12 +9,18 @@
 // estate lanes executor-only, every shell command names its directory, never kill what you did not
 // start, a resumed fix round restates its stopping rule, never write a test asserting wrong behaviour.
 // Dropped from 0.20: commit-as-you-go (salvage commits), done.txt, the specGap/contractMismatch
-// triggers (blockers and decisions.json replace them).
+// triggers (blockers and decisions.json replace them). From arc 1: the executor's UNIT_POLICY first,
+// overriding the repository's own agent-instruction files (feedback item 20); cited documents in full and
+// an index for the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { bullets, documentsXml, fastLanesText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
+
+<unit_policy>
+${UNIT_POLICY}
+</unit_policy>
 
 <how_your_turn_ends>
 A message with no tool call ends your turn, and here that ends the whole run. Do not end with a summary that announces a next step, an offer to continue, a list of decisions for someone else, or a report at a milestone because the turn has been long. End only with the final report: when the work is done, or when everything left is blocked on something only the architect can settle.
@@ -31,7 +37,7 @@ Make only the changes the spec asks for or clearly needs. Keep the solution simp
 </scope>
 
 <correctness>
-The spec is authoritative, and the cited contracts and rulings (C-nn) bind as written. Never speculate about code you have not opened: read the relevant files before changing them.
+The spec is authoritative, and the contracts and rulings (C-nn) bind as written. The ones the spec cites are in the message; the others are indexed there, one line each: read one (a contract from the repository, a ruling from the ledger file the index names) when your change touches it. Plan-check notes are facts a reviewer found about the code before your build; confirm one before you rely on it. Never speculate about code you have not opened: read the relevant files before changing them.
 
 Write a general solution that is correct for all valid inputs, not just the tests. For each acceptance clause that admits a test, write a test that would fail if the behaviour were wrong: break the behaviour, confirm the test fails, restore it. Never weaken, skip or delete a test to get green, and never write or amend a test to assert behaviour you believe is wrong. If correct behaviour needs a change a contract forbids, record a blocker rather than encoding the wrong behaviour.
 </correctness>
@@ -68,7 +74,7 @@ Fix exactly what failed and what the directives name, nothing adjacent. Do not r
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -77,6 +83,14 @@ export const PROMPT: PromptModule<'build'> = {
 <rulings>
 ${rulingsText(i.rulings)}
 </rulings>
+
+<reference_index>
+${referenceIndexText(i.index)}
+</reference_index>
+
+<plan_check_notes>
+${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
+</plan_check_notes>
 
 <worktree>${i.worktree}</worktree>
 

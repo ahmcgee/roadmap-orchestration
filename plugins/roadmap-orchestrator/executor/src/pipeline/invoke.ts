@@ -32,7 +32,7 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import type { RiskTier, Role } from '../routing/types.ts';
+import { type SeatRef, seatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { awaitRunner, cancel, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 
@@ -153,10 +153,10 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     recoveredBy = mode === 'live' ? null : 'reconciled';
   }
 
-  const seat = seatOf(intent.expect.subject);
-  if (seat !== null && !ctx.journal.view.usageRecorded(inv)) {
+  const charge = chargeOf(intent.expect.subject);
+  if (charge !== null && !ctx.journal.view.usageRecorded(inv)) {
     if (usage === null) throw new Error(`${inv}: a backend spawn produced a command result`);
-    ctx.journal.fact(usageFact(seat, inv, usage));
+    ctx.journal.fact(usageFact(charge, inv, usage));
   }
   crashPoint('spawn.after-usage');
   ctx.journal.done(intent.op, 'proc.spawn', doneOutcome(outcome), recoveredBy);
@@ -173,15 +173,15 @@ function doneOutcome(outcome: InvocationOutcome): OpOutcome['proc.spawn'] {
   return { kind: 'result', resultSha256: outcome.resultSha256, summary };
 }
 
-type Seat = Readonly<{ role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject }>;
+type Charge = Readonly<{ routingRev: RoutingRev; subject: MeterSubject }>;
 
-/** The seat a backend spawn's usage is charged to; commands carry no usage. */
-function seatOf(subject: SpawnSubject): Seat | null {
+/** Whom a backend spawn's usage is charged to (a unit's seat, or its backend's smoke); commands carry no usage. */
+export function chargeOf(subject: SpawnSubject): Charge | null {
   switch (subject.purpose) {
     case 'backend':
-      return { role: subject.role, tier: subject.tier, routingRev: subject.routingRev, unit: { unit: subject.unit, attempt: subject.attempt } };
+      return { routingRev: subject.routingRev, subject: { type: 'seat', ...seatRef(subject.role, subject.tier), unit: subject.unit, attempt: subject.attempt } };
     case 'smoke':
-      return subject.target.type === 'backend' ? { role: subject.target.role, tier: subject.target.tier, routingRev: subject.target.routingRev, unit: null } : null;
+      return subject.target.type === 'backend' ? { routingRev: subject.target.routingRev, subject: { type: 'smoke', backend: subject.target.backend } } : null;
     case 'lane':
     case 'teardown':
     case 'probe':
@@ -189,10 +189,11 @@ function seatOf(subject: SpawnSubject): Seat | null {
   }
 }
 
-function usageFact(seat: Seat, inv: InvocationId, usage: Usage): Fact {
+/** The one usage fact of a backend invocation. */
+export function usageFact(charge: Charge, inv: InvocationId, usage: Usage): Fact {
   return usage.kind === 'known'
-    ? { kind: 'meter', inv, ...seat, usage: usage.tokens }
-    : { kind: 'usage-unavailable', inv, ...seat, reason: usage.reason };
+    ? { kind: 'meter', inv, ...charge, usage: usage.tokens }
+    : { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason };
 }
 
 /** The intent's subject and launch.json's terminal must describe the same thing; a mismatch is a caller bug. */

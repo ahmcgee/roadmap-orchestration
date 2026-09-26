@@ -1,20 +1,24 @@
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
 // A fresh judgment session (never a resume) on the gate role's seat, which a pending risk promotion or a
-// route-up moves to the high seat (judgmentDispatch). Its inputs, snapshotted at the integration tip T the
-// gate judges against: the rendered spec, the cited contracts and C-nn rulings, the architecture doc, the
-// Direction, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so after a merge-in
-// the base is T), the lane ledger of the unit's latest spec series and its evidence dirs, the build's
-// evidence (decisions.json), the pinned scope envelope and the diff's paths outside it, and on a later round
-// the prior revise directives. The session reads the green verification checkout, read-only.
+// route-up moves to the escalation seat (judgmentDispatch). Its inputs, snapshotted at the integration tip
+// T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
+// and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
+// approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
+// after a merge-in the base is T), the lane ledger of the unit's latest spec series and its evidence dirs,
+// the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it, and on
+// a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
+// and the premise files whose blobs changed since (items 25, 29). The session reads the green verification
+// checkout, read-only, and the rulings ledger's directory.
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
 // before any call (park) · refusal, malformed and faults as at plan-check.
 //
 // The approval fingerprint (R2) = {unitCommit, specRev, contractRevs, rulingRevs}: contractRevs are the
-// blob ids at T of every cited contract and the architecture doc, rulingRevs the revision of every cited
-// C-nn. Before `integration.ff` it is recomputed at the tip being published onto; any difference re-gates.
+// blob ids at T of every cited contract, the architecture doc and its digest when the plan names one,
+// rulingRevs the revision of every cited active C-nn. Before `integration.ff` it is recomputed at the tip
+// being published onto; any difference re-gates.
 import { matchesGlob } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf } from '../core/events.ts';
@@ -22,11 +26,12 @@ import { type JudgmentSessionId, type Sha, type UnitId, invocationId } from '../
 import { canonicalJson } from '../core/json.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import type { AbsPath, RepoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, repoPath } from '../core/values.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
+import type { GatePriorRound } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -35,7 +40,10 @@ import {
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
-import { type StageDone, at, documents, inMs, integrationTip, loadRulings, loadUnitSpec, record, start, verdictKind } from './stages.ts';
+import {
+  type StageDone, architecture, at, changedPremiseFiles, inMs, integrationTip, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec,
+  planCheckNotes, record, start, verdictKind,
+} from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
 export function unitTip(ctx: StageContext, unit: UnitId): Sha {
@@ -49,18 +57,19 @@ export function unitTip(ctx: StageContext, unit: UnitId): Sha {
 
 /**
  * The fingerprint an approval of `unit` at integration tip `tip` binds to: the unit's commit now, its spec
- * revision now, the blob ids at `tip` of the cited contracts and the architecture doc, and the cited
- * rulings' revisions. M1's C-nn ledger has one line per ruling and no supersede mechanism (M3), so every
- * cited ruling is at revision 1; a ruling id listed twice is refused.
+ * revision now, the blob ids at `tip` of the contracts the spec cites and of the architecture doc (and its
+ * digest), and the cited active rulings' revisions. M1's C-nn ledger has no supersede beyond the withdrawn
+ * fold (a ruling id listed twice is refused where the ledger is read), so every active ruling is at
+ * revision 1; a cited ruling that is withdrawn leaves the set, which changes the fingerprint.
  */
 export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): ApprovalFingerprint {
-  const paths = [...new Set<RepoPath>([...ctx.plan.contracts, ctx.plan.architectureDoc])].sort();
-  const rulings = loadRulings(ctx).map((r) => r.id);
-  const repeated = rulings.find((id, i) => rulings.indexOf(id) !== i);
-  if (repeated !== undefined) throw new Error(`the rulings ledger lists ${repeated} twice; M1 has no supersede`);
+  const { spec } = loadUnitSpec(ctx, unit);
+  const digest = ctx.plan.architectureDigest;
+  const paths = [...new Set<RepoPath>([...spec.cites.contracts, ctx.plan.architectureDoc, ...(digest === undefined ? [] : [digest])])].sort();
+  const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
   return {
     unitCommit: unitTip(ctx, unit.id),
-    specRev: loadUnitSpec(ctx, unit).spec.rev,
+    specRev: spec.rev,
     contractRevs: paths.map((path) => ({ path, blob: revParse(ctx.repo, `${tip}:${path}`) })),
     rulingRevs: [...rulings].sort().map((id) => ({ id, rev: 1 })),
   };
@@ -81,41 +90,44 @@ export function fingerprintValid(ctx: StageContext, unit: PlanUnit): (fingerprin
 // ---------------------------------------------------------------------------------------------------
 // Earlier gate rounds, read back from their results
 
-/** The validated output of a gate spawn, or null when it has none (a fault, a refusal, a malformed answer). */
-function gateOutputOf(ctx: StageContext, intent: IntentOf<'proc.spawn'>): GateOutput | null {
-  if (ctx.journal.view.doneOf(intent.op)?.outcome.kind !== 'result') return null;
-  const inv = invocationId(intent.op, intent.ordinal);
-  const result = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('result.json');
-  if (result === null || result.type !== 'backend') throw new Error(`${inv}: a done gate spawn without its backend result`);
-  if (result.outcome.kind !== 'success') return null;
-  try {
-    return validateGateOutput(result.outcome.value);
-  } catch (error) {
-    if (error instanceof SchemaError) return null;
-    throw error;
-  }
-}
-
-const gateSpawns = (ctx: StageContext, unit: UnitId): readonly IntentOf<'proc.spawn'>[] =>
-  ctx.journal.view.opsOf('proc.spawn').filter((i) => {
-    const s = i.expect.subject;
-    return s.purpose === 'backend' && s.role === 'gate' && s.unit === unit;
-  });
+const gateSpawns = (ctx: StageContext, unit: UnitId) => judgmentSpawns(ctx, unit, 'gate');
 
 /** The directives of the gate attempt `parent`, which revised. */
 export function gateDirectives(ctx: StageContext, parent: StageParent): readonly string[] {
   const spawn = gateSpawns(ctx, parent.unit).filter((i) => canonicalJson(i.parent) === canonicalJson(parent)).at(-1);
-  const out = spawn === undefined ? null : gateOutputOf(ctx, spawn);
+  const out = spawn === undefined ? null : judgmentOutput(ctx, spawn, validateGateOutput);
   if (out === null || out.decision !== 'revise') throw new Error(`gate ${parent.unit}#${parent.attempt} recorded revise without a revise answer`);
   return out.directives;
 }
 
-/** The latest gate answer of the unit, when it revised: its directives are what a later round re-checks. */
-function priorRound(ctx: StageContext, unit: UnitId): Readonly<{ directives: readonly string[] }> | null {
+/** The diff head a gate spawn judged: the commit of the verification checkout it ran in. */
+function judgedHead(ctx: StageContext, spawn: IntentOf<'proc.spawn'>): Sha {
+  const inv = invocationId(spawn.op, spawn.ordinal);
+  const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
+  if (launch === null) throw new Error(`${inv}: a gate spawn without launch.json`);
+  const created = ctx.journal.view.opsOf('worktree.create').find((i) => i.expect.path === launch.cwd);
+  if (created === undefined || created.expect.checkout.type !== 'detached') throw new Error(`${inv}: the gate ran in ${launch.cwd}, which is no verification checkout`);
+  return created.expect.checkout.at;
+}
+
+/**
+ * The round handoff of a gate after its own revise (arc-1 feedback item 29): the unit's latest gate answer,
+ * when it revised, with its directives, findings and premises; the paths the fix changed between the head
+ * that round judged and `head`; and the premise files whose blobs differ between the two.
+ */
+function priorRound(ctx: StageContext, unit: UnitId, head: Sha): GatePriorRound | null {
   const spawns = gateSpawns(ctx, unit);
   for (let i = spawns.length - 1; i >= 0; i--) {
-    const out = gateOutputOf(ctx, spawns[i]!);
-    if (out !== null) return out.decision === 'revise' ? { directives: out.directives } : null;
+    const spawn = spawns[i]!;
+    const out = judgmentOutput(ctx, spawn, validateGateOutput);
+    if (out === null) continue;
+    if (out.decision !== 'revise') return null;
+    const then = judgedHead(ctx, spawn);
+    const fixPaths = git(ctx.repo, ['diff', '--name-only', '--no-renames', '-z', then, head]).split('\0').filter((p) => p !== '').map((p) => repoPath(p));
+    return {
+      directives: out.directives, findings: out.findings, premises: out.premises, fixPaths,
+      changedPremiseFiles: changedPremiseFiles(ctx, out.premises, [[then, head]]),
+    };
   }
   return null;
 }
@@ -148,23 +160,24 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
   const series = latestSeries(ctx.journal.view, unit.id, 'spec');
   const tree = series === null ? null : seriesTree(ctx.journal.view, series);
   if (series === null || tree === null || tree.at !== head) throw new Error(`gate of ${unit.id}: no green verification checkout at ${head}`);
-  const ledger = seriesLedger(ctx, series, spec.lanes, head, specSeriesRoot(ctx.runDir, series));
-  const evidence = [...ledger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id)];
+  const laneLedger = seriesLedger(ctx, series, spec.lanes, head, specSeriesRoot(ctx.runDir, series));
+  const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id)];
   const base = diffBase(ctx.repo, tip, head);
   const growth = paths.filter((p) => !pinned.scope.some((g) => matchesGlob(p, g)));
 
-  const seat = judgmentDispatch(ctx, unit.id, 'gate');
+  const seated = judgmentDispatch(ctx, unit.id, 'gate');
+  if (seated.kind !== 'pinned') return { ...record(ctx, parent, 'routing-changed', seated.needsUser), session: null, fingerprint: null };
+  const seat = seated.dispatch;
   const prompt = promptFor('gate', seat.triple.model);
   const session = freshJudgmentSession();
-  const { contracts, architectureDoc } = documents(ctx, tip);
   const rendered = prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, contracts, rulings: loadRulings(ctx), architectureDoc,
-    direction: ctx.plan.direction,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), architecture: architecture(ctx, tip),
+    direction: ctx.plan.direction, planCheckNotes: planCheckNotes(ctx, unit.id),
     diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
-    laneLedger: ledger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id),
+    laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
   });
   const called = await callBackend(ctx, {
-    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: evidence },
+    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [...evidence, ledgerDir(ctx)] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: tree.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
   });
   return gateRead(ctx, unit, parent, called, session.id, tip, head);

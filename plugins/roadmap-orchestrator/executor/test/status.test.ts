@@ -66,30 +66,39 @@ describe('status.subset', () => {
       units: [],
       needsUser: [],
       commands: { pending: [], receipts: [] },
-      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] } },
+      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, bySmoke: [] },
       host: { containment: { mode: null, guarantee: SESSION_GUARANTEE } },
       parkedBackends: [],
+      routing: null,
       rejection: null,
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
-    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'rejection', 'run', 'spend', 'units']);
+    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'rejection', 'routing', 'run', 'spend', 'units']);
     assert.equal(s.run.state, 'complete');
     assert.equal(s.run.owner.state, 'none', 'the lock was released');
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
     assert.deepEqual(s.units, [{ unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null }]);
     assert.deepEqual(s.needsUser, []);
     assert.deepEqual(s.commands, { pending: [], receipts: [] });
-    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 2], ['gate', 1], ['planCheck', 2]], 'the smokes count by role too');
+    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 1], ['gate', 1], ['planCheck', 1]], 'the unit\'s own calls only');
+    assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
-    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 3], ['gpt-5.6-luna', 2]]);
+    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['gpt-5.6-luna', 1]]);
     assert.deepEqual(s.host.containment, { mode: 'session', guarantee: SESSION_GUARANTEE });
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
     assert.deepEqual(s.parkedBackends, []);
     assert.equal(s.rejection, null);
+    // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
+    assert.equal(s.routing?.profile, 'default');
+    assert.deepEqual(s.routing?.seats.gate, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
+    assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
+    assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin' });
+    for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
   });
 });
 

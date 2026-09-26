@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, resourceName, specRev } from '../src/core/ids.ts';
+import { invocationId, resourceName, sha256, specRev } from '../src/core/ids.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
@@ -22,7 +22,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 
 function laneRun(lanesJson: readonly LaneJson[], resources: readonly string[] = []): StageRun {
   const run = setupUnit({ steps: [], lanes: lanesJson, resources });
-  pinDispatch(run.ctx, run.unit, specRev(1));
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
   return run;
 }
 

@@ -18,7 +18,8 @@
           }
         ],
         "risk": "med",
-        "notes": ""
+        "notes": "",
+        "premises": []
       }
     },
     {
@@ -30,7 +31,8 @@
         ],
         "patch": null,
         "risk": "med",
-        "notes": ""
+        "notes": "",
+        "premises": []
       },
       "stdinContains": [
         "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
@@ -77,7 +79,8 @@
         "directives": [],
         "reasons": [
           "A1, A2 and A3 hold after the fix round."
-        ]
+        ],
+        "premises": []
       }
     },
     {
@@ -89,7 +92,8 @@
         ],
         "patch": null,
         "risk": "med",
-        "notes": ""
+        "notes": "",
+        "premises": []
       }
     },
     {
@@ -123,7 +127,8 @@
         ],
         "reasons": [
           "B2 is not delivered."
-        ]
+        ],
+        "premises": []
       }
     },
     {
@@ -151,7 +156,8 @@
         "directives": [],
         "reasons": [
           "B1 to B4 hold after the revise round."
-        ]
+        ],
+        "premises": []
       },
       "stdinContains": [
         "Deliver B2: when slugify(title) is empty, pageId must use 'page' as the slug part (pageId('!!!', 3) is 'page-3'), and test it."

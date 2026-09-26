@@ -33,7 +33,7 @@ function rejects(plan: unknown, field: string): void {
 const REQUIRED = ['schema', 'arc', 'integrationBranch', 'baseline', 'worktreeRoot', 'contracts', 'rulings', 'architectureDoc', 'direction', 'suite', 'resources', 'units'] as const;
 
 // One wrong-typed or malformed value per field.
-const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } = {
+const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing' | 'architectureDigest']: unknown } = {
   schema: 'roadmap/plan-m2',
   arc: 'Arc 2',
   integrationBranch: 'bad..branch',
@@ -42,6 +42,7 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } 
   contracts: ['../outside.md'],
   rulings: '/abs/rulings.jsonl',
   architectureDoc: 42,
+  architectureDigest: '/abs/digest.md',
   direction: '',
   suite: { lanes: 'npm test' },
   resources: [{ name: 'integration-slot', probe: tool, teardown: tool }],
@@ -50,14 +51,30 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } 
 };
 
 describe('plan.json (M1)', () => {
-  it('a valid plan parses unchanged', () => {
-    assert.deepEqual(parsePlan(validPlan()), validPlan());
+  it('a valid plan parses unchanged, with `after` defaulting to none', () => {
+    const plan = validPlan();
+    assert.deepEqual(parsePlan(plan), { ...plan, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [] })) });
   });
 
-  it('routing is optional and, when present, parses as a layer', () => {
-    const routing = { gate: { high: { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } }, build: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } };
+  it('plan.after: a unit may run after units earlier in plan order; a later, unknown, own or repeated id is refused, naming it', () => {
+    const u = (id: string, after?: readonly string[]) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: ['src/**'], resources: [], ...(after === undefined ? {} : { after }) });
+    const plan = (...units: object[]) => ({ ...validPlan(), units });
+    assert.deepEqual(parsePlan(plan(u('a'), u('b', ['a']), u('c', ['a', 'b']))).units.map((x) => x.after), [[], ['a'], ['a', 'b']]);
+    rejects(plan(u('a', ['b']), u('b')), 'plan.units[0].after[0]');
+    rejects(plan(u('a'), u('b', ['nope'])), 'plan.units[1].after[0]');
+    rejects(plan(u('a'), u('b', ['b'])), 'plan.units[1].after[0]');
+    rejects(plan(u('a'), u('b', ['a', 'a'])), 'plan.units[1].after[1]');
+  });
+
+  it('routing is optional and, when present, parses as a layer of classes', () => {
+    const routing = { gate: { high: 'summit', escalation: 'frontier' }, build: { low: 'frontier' } };
     assert.deepEqual(parsePlan({ ...validPlan(), routing }).routing, routing);
     assert.equal('routing' in parsePlan(validPlan()), false);
+  });
+
+  it('architectureDigest is optional and, when present, a repo path', () => {
+    assert.equal(parsePlan({ ...validPlan(), architectureDigest: 'docs/digest.md' }).architectureDigest, 'docs/digest.md');
+    assert.equal('architectureDigest' in parsePlan(validPlan()), false);
   });
 
   for (const field of REQUIRED) {
@@ -83,12 +100,14 @@ describe('plan.json (M1)', () => {
     });
   }
 
-  it('rejects a Claude triple with a Codex effort', () => {
-    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } } } }, 'plan.routing.build.high.effort');
+  it('rejects a triple at a seat: a plan names classes and cannot bind one (hard cutover)', () => {
+    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } } } }, 'plan.routing.build.high');
+    rejects({ ...validPlan(), routing: { classes: { frontier: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } } } }, 'plan.routing.classes');
   });
 
-  it('rejects an unknown model id', () => {
-    rejects({ ...validPlan(), routing: { build: { high: { backend: 'claude', model: 'claude-sonnet-5', effort: 'default' } } } }, 'plan.routing.build.high.model');
+  it('rejects an unknown class, and an escalation seat for build', () => {
+    rejects({ ...validPlan(), routing: { build: { high: 'opus' } } }, 'plan.routing.build.high');
+    rejects({ ...validPlan(), routing: { build: { escalation: 'summit' } } }, 'plan.routing.build.escalation');
   });
 
   it('names nested unit fields', () => {

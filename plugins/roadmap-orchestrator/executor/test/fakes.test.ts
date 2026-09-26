@@ -14,7 +14,7 @@ import {
 } from './helpers/scenario.ts';
 
 const CODEX = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
-const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } as const;
+const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const SCHEMA_TEXT = readFileSync(OK_SCHEMA, 'utf8').trim();
 const TIMEOUT_MS = 20_000;
 
@@ -80,12 +80,15 @@ describe('fakes', () => {
       assert.deepEqual(types(readFileSync(join(invDir, 'stdout'), 'utf8')), types(readFileSync(join(BACKEND_FIXTURES, 'codex-fresh', 'stdout'), 'utf8')));
       assert.equal(result.session, '00000000-0000-4000-8000-000000000000');
     });
-    it('claude emit: the result object has exactly the captured keys and the launched session id', () => {
+    it('claude emit: a stream of the captured init event then a result with exactly the captured keys and the launched session id', () => {
       const { result, invDir } = invoke(oneStep('claude', [{ type: 'emit', value: OK }]), 'claude', tmpDir('work'));
-      const keys = (text: string): string[] => Object.keys(JSON.parse(text) as object).sort();
-      assert.deepEqual(keys(readFileSync(join(invDir, 'stdout'), 'utf8')), keys(readFileSync(join(BACKEND_FIXTURES, 'claude-judgment', 'stdout'), 'utf8')));
-      const reported = (JSON.parse(readFileSync(join(invDir, 'stdout'), 'utf8')) as { session_id: string }).session_id;
-      assert.equal(reported, result.session);
+      const events = (text: string): Record<string, unknown>[] => text.trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+      const fake = events(readFileSync(join(invDir, 'stdout'), 'utf8'));
+      const captured = events(readFileSync(join(BACKEND_FIXTURES, 'claude-judgment', 'stdout'), 'utf8'));
+      assert.deepEqual(fake.map((e) => e['type']), ['system', 'result']);
+      assert.deepEqual(Object.keys(fake[1]!).sort(), Object.keys(captured.at(-1)!).sort());
+      assert.equal(fake[0]!['session_id'], result.session);
+      assert.equal(fake[1]!['session_id'], result.session);
     });
     it('the usage-limit messages are the ones the fakes emit', () => {
       const codex = invoke(oneStep('codex', [{ type: 'usageLimit' }]), 'codex', tmpDir('work')).result;
@@ -167,7 +170,7 @@ describe('fakes', () => {
       assert.equal(child.exitCode, null, 'parked at the barrier');
       release(s.dir, 'mid');
       assert.equal(await closed, 0);
-      assert.equal((JSON.parse(stdout) as { session_id: string }).session_id, launch.terminal.type === 'backend' && 'id' in launch.terminal.session ? launch.terminal.session.id : '');
+      assert.equal((JSON.parse(stdout.trim().split('\n').at(-1)!) as { session_id: string }).session_id, launch.terminal.type === 'backend' && 'id' in launch.terminal.session ? launch.terminal.session.id : '');
     });
   });
 });

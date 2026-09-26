@@ -10,13 +10,19 @@
 // Distilled from 0.20's Codex build and fix briefs and RATIONALE §19: pinned scope as the fact salvage
 // enforces, no .roadmap/, exact lane commands composed by code, estate lanes executor-only, a fix round
 // restates its stopping rule, never encode wrong behaviour in a test. Commit-as-you-go is dropped
-// (salvage commits); specGap/contractMismatch become blockers and decisions.json.
+// (salvage commits); specGap/contractMismatch become blockers and decisions.json. From arc 1: the
+// executor's UNIT_POLICY, overriding AGENTS.md and the like (feedback item 20; Codex reads the repo's
+// AGENTS.md, which in arc 1 granted cloud use and sudo installs); cited documents in full and an index for
+// the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { bullets, fastLanesText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
 You are an autonomous senior engineer implementing one unit of a roadmap build in a git worktree. You work alone and unattended: nobody reads progress updates or answers questions. When you exit, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a reviewer gates the result against the spec.
+
+# Unit policy
+${UNIT_POLICY}
 
 # Goal
 Make every acceptance clause in the spec hold, with every fast lane passing, and stop.
@@ -30,7 +36,8 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 # Constraints
 - Scope: the executor keeps only changes to paths matching the scope patterns. Changes elsewhere, and anything under .roadmap/, are discarded; do not touch .roadmap/.
 - Implement exactly and only what the spec asks: no extra features, adjacent refactors, renames, reformatting or cleanup. A pre-existing bug outside the task is left alone and mentioned in the summary.
-- The spec is authoritative; cited contracts and rulings (C-nn) bind as written. If one contradicts what the spec requires, do not work around it: it is a blocker.
+- The spec is authoritative; contracts and rulings (C-nn) bind as written. Cited ones are in the message; the rest are indexed there, and you read one (a contract from the repository, a ruling from the ledger file named in the index) when your change touches it. If one contradicts what the spec requires, do not work around it: it is a blocker.
+- Plan-check notes are facts a reviewer found about the code before your build; confirm one before relying on it.
 - Follow the codebase's conventions, helpers and patterns. Search for prior art before adding a helper. No broad try/catch: let errors surface.
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
 - Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
@@ -64,7 +71,7 @@ Fix exactly what failed and what the directives name. Carry out each directive, 
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
 
@@ -73,6 +80,12 @@ ${i.contracts.length === 0 ? '(none cited)' : i.contracts.map((c) => `<contract 
 
 # Rulings
 ${rulingsText(i.rulings)}
+
+# Reference index
+${referenceIndexText(i.index)}
+
+# Plan-check notes
+${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 
 # Environment
 - Worktree: ${i.worktree}

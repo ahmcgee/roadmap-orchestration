@@ -2,7 +2,12 @@
   "claude",
   "-p",
   "--output-format",
-  "json",
+  "stream-json",
+  "--verbose",
+  "--strict-mcp-config",
+  "--disable-slash-commands",
+  "--setting-sources",
+  "",
   "--json-schema",
   "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"]}",
   "--model",
@@ -10,6 +15,8 @@
   "--tools",
   "Read,Grep,Glob",
   "--session-id",
-  "18b3bbf3-98ce-4ced-87c2-639d61b25ef1",
-  "--no-session-persistence"
+  "8519f8cd-0b40-4801-8782-5bbf12dbaf58",
+  "--no-session-persistence",
+  "--system-prompt",
+  "You are a probe of an unattended build orchestrator. Do exactly what the message asks, then answer in the structured format requested."
 ]

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
@@ -22,6 +22,7 @@ import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
 import { type StartChecks, type StartInput, gitCommonDir, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import { resolveArgv0 } from '../src/preflight/argv0.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
 import { makeRepo, revParse, tmpDir } from './helpers/repo.ts';
@@ -53,7 +54,7 @@ function setup(steps: readonly Step[] = SMOKE_OK): Setup {
   const spec: Raw = {
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane(), state: 'active' }],
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: ['db'], decisions: [], facts: [],
+    scope: ['src/**'], resources: ['db'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   };
   const plan: Raw = {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'HEAD'), worktreeRoot: tmpDir('st-wt'),
@@ -73,6 +74,7 @@ function setup(steps: readonly Step[] = SMOKE_OK): Setup {
 function write(s: Setup): void {
   writeFileSync(s.planFile, JSON.stringify(s.plan));
   writeFileSync(join(s.planDir, 'u1.json'), JSON.stringify(s.spec));
+  writeFileSync(join(s.planDir, 'rulings.md'), '# Rulings\n\nC-1 — Helpers live in src/.\nC-2 — withdrawn by C-1\n');
 }
 
 function input(s: Setup, reconcile: () => Promise<PreviousArcVerdict> = async () => assert.fail('no previous arc to reconcile')): StartInput {
@@ -174,6 +176,19 @@ describe('startup.rejections', () => {
     assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' ? r.problem.type : null)).sort(), ['baseline-not-ancestor', 'unknown-resource', 'unknown-spec-path']);
   });
 
+  it('plan-invalid: a spec cite naming no plan contract or no ledger ruling; an unreadable ledger (78)', T, async () => {
+    const s = setup();
+    write({ ...s, spec: { ...s.spec, cites: { contracts: ['docs/nope.md'], rulings: ['C-2', 'C-9'] } } });
+    const rejections = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
+    assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'unknown-cite' ? r.problem.cite : null)), ['docs/nope.md', 'C-9'],
+      'a withdrawn ruling is still in the ledger');
+    const t = setup();
+    write(t);
+    writeFileSync(join(t.planDir, 'rulings.md'), 'C-1 — One.\nC-1 — Two.\n');
+    const [r] = refusedWith(await allChecks(input(t)), 'plan-invalid', 78);
+    assert.equal(r?.kind === 'plan-invalid' ? r.problem.type : null, 'schema');
+  });
+
   it('worktree-root-unusable: tmpfs, and not writable (78)', T, async () => {
     assert.equal(statfsSync('/dev/shm').type, TMPFS_MAGIC, 'this host has tmpfs at /dev/shm');
     const shm = join('/dev/shm', `roadmap-st-${randomBytes(4).toString('hex')}`);
@@ -193,6 +208,21 @@ describe('startup.rejections', () => {
     const [r] = refusedWith(await allChecks(input(s)), 'worktree-root-unusable', 78);
     chmodSync(readOnly, 0o755);
     assert.equal(r?.kind === 'worktree-root-unusable' ? r.problem : null, 'not-writable');
+  });
+
+  it('argv0.resolves: a bare name on the lane\'s own PATH, followed through a symlink to its real path', () => {
+    const dir = tmpDir('argv0');
+    mkdirSync(join(dir, 'lib'));
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(join(dir, 'lib', 'tool'), '#!/bin/sh\n', { mode: 0o755 });
+    symlinkSync(join(dir, 'lib', 'tool'), join(dir, 'bin', 'tool'));
+    const bin = join(dir, 'bin');
+    const cmd = (argv0: string, env: Raw) => ({ argv: [argv0], env: { set: {}, pass: [], ...env } as { set: Record<string, string>; pass: string[] } });
+    assert.deepEqual(resolveArgv0(cmd('tool', { set: { PATH: bin } }), {}), { kind: 'program', realpath: realpathSync(join(dir, 'lib', 'tool')) });
+    assert.deepEqual(resolveArgv0(cmd('tool', { pass: ['PATH'] }), { PATH: bin }), { kind: 'program', realpath: realpathSync(join(dir, 'lib', 'tool')) });
+    assert.deepEqual(resolveArgv0(cmd('tool', {}), { PATH: bin }), { kind: 'not-found' }, 'a PATH the lane does not declare is not searched');
+    assert.deepEqual(resolveArgv0(cmd('scripts/run.sh', {}), {}), { kind: 'repository-file' });
+    assert.deepEqual(resolveArgv0(cmd(join(bin, 'tool'), {}), {}), { kind: 'program', realpath: realpathSync(join(dir, 'lib', 'tool')) });
   });
 
   it('spec-lane-unrunnable: argv[0] unresolvable, env prerequisite missing, estate lane for the implementer (78)', T, async () => {
@@ -216,11 +246,11 @@ describe('startup.rejections', () => {
     ]);
   });
 
-  it('unsupported-routing: a Codex judgment seat, named by seat and layer, never by model (78)', T, async () => {
+  it('unsupported-routing: a Codex judgment seat, named by seat, layer and class, never by model (78)', T, async () => {
     const s = setup();
-    write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } } } });
+    write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: 'efficient' } } } });
     const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);
-    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', unit: null, why: 'codex-judgment' });
+    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment' });
   });
 
   it('undispositioned-residue (78)', T, async () => {

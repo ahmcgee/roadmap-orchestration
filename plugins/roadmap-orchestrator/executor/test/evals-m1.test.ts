@@ -7,7 +7,7 @@
 // evals-m1.tamper-integration, evals-m1.tamper-snapshot.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
@@ -16,7 +16,7 @@ import { absPath } from '../src/core/values.ts';
 import { loadSpec } from '../src/spec/spec.ts';
 import { BRANCHES, type Branch, type CheckResult } from '../evals/m1/check.ts';
 import type { Report } from '../evals/m1/driver.ts';
-import { ARC, INTEGRATION, MAIN, UNITS, layout } from '../evals/m1/layout.ts';
+import { INTEGRATION, MAIN, UNITS, layout } from '../evals/m1/layout.ts';
 import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type ScenarioFile, readCalls } from './helpers/scenario.ts';
@@ -73,7 +73,7 @@ async function fakeRun(profile: 'default' | 'claude-only', scenario: string): Pr
   const scope: RunScope = {
     paths: [dir],
     stop: async () => {
-      const stop = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), join(l.fake, 'host'), 'stop', '--repo', l.repo, '--arc', ARC], { env: process.env, timeoutMs: 30_000 });
+      const stop = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), join(l.fake, 'host'), 'stop', '--repo', l.repo, '--arc', l.arc], { env: process.env, timeoutMs: 30_000 });
       assert.equal(stop.code, 0, `roadmap stop: ${stop.stderr}`);
     },
   };
@@ -92,11 +92,18 @@ function playedThrough(f: Fixture): readonly CallRecord[] {
   return calls;
 }
 
+/** Every executor's stderr in the fixture's host dir: why a generation ended without an exit reason. */
+function executorErrs(f: Fixture): string {
+  const host = join(layout(f.dir).fake, 'host');
+  return readdirSync(host).filter((n) => /^executor\.[0-9]+\.err$/.test(n)).sort()
+    .map((n) => `${join(host, n)}:\n${readFileSync(join(host, n), 'utf8')}`).join('\n');
+}
+
 function assertPassed(f: Fixture): void {
   assert.equal(f.driver.code, 0, `driver: ${f.driver.stdout} ${f.driver.stderr}`);
   assert.equal(f.report.endedBy, 'exit');
-  assert.equal(f.report.start.ready?.generation, 1);
-  assert.equal(f.report.generation, 1);
+  assert.equal(f.report.start.ready?.generation, 1, executorErrs(f));
+  assert.equal(f.report.generation, 1, `the executor was restarted:\n${executorErrs(f)}`);
   assert.deepEqual(f.report.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
   assert.equal(f.report.status.run.state, 'complete');
   assert.deepEqual(failing(f.checked), [], JSON.stringify(f.checked.result.criteria));
@@ -112,7 +119,7 @@ test('evals-m1.setup-valid: setup lays out a plan parsePlan accepts, specs the s
   assert.equal(out.code, 0, out.stderr);
   const l = layout(dir);
   const plan = parsePlan(JSON.parse(readFileSync(l.plan, 'utf8')));
-  assert.equal(plan.arc, ARC);
+  assert.equal(plan.arc, l.arc);
   assert.equal(plan.integrationBranch, INTEGRATION);
   assert.deepEqual(plan.units.map((u) => u.id), [...UNITS]);
   assert.deepEqual(plan.suite.lanes.map((x) => x.argv), [['npm', 'test']]);
@@ -135,13 +142,13 @@ test('evals-m1.setup-valid: setup lays out a plan parsePlan accepts, specs the s
   const [decl] = plan.resources;
   assert.ok(decl !== undefined);
   const probe = (owner: string) => runUntilExit(decl.probe.argv[0]!, decl.probe.argv.slice(1), { env: { PATH: process.env['PATH'], RESOURCE_OWNER: owner }, cwd: l.repo, timeoutMs: 10_000 });
-  assert.equal((await probe(`${ARC}/slug`)).code, 0);
-  writeFileSync(join(l.resource, 'scratch.owner'), `${ARC}/slug`);
-  assert.equal((await probe(`${ARC}/slug`)).code, 10);
-  assert.equal((await probe(`${ARC}/page-id`)).code, 11);
+  assert.equal((await probe(`${l.arc}/slug`)).code, 0);
+  writeFileSync(join(l.resource, 'scratch.owner'), `${l.arc}/slug`);
+  assert.equal((await probe(`${l.arc}/slug`)).code, 10);
+  assert.equal((await probe(`${l.arc}/page-id`)).code, 11);
   const teardown = await runUntilExit(decl.teardown.argv[0]!, decl.teardown.argv.slice(1), { env: { PATH: process.env['PATH'] }, cwd: l.repo, timeoutMs: 10_000 });
   assert.equal(teardown.code, 0);
-  assert.equal((await probe(`${ARC}/slug`)).code, 0, 'free again after the teardown');
+  assert.equal((await probe(`${l.arc}/slug`)).code, 0, 'free again after the teardown');
 });
 
 describe('evals-m1: fake-backed fixture runs', () => {
@@ -151,10 +158,10 @@ describe('evals-m1: fake-backed fixture runs', () => {
   let parked: Fixture;
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
-    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '' } };
-    // Each unit escalates on its seat and again on the high seat it routes up to: both park.
+    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] } };
+    // Each unit escalates on its seat and again on the escalation seat it routes up to: both park.
     writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate, escalate, escalate] }));
-    // Independent fixture dirs and host dirs: the four runs go in parallel.
+    // Independent fixture dirs, host dirs and arcs: the four runs go in parallel.
     [clean, claudeOnly, bumpy, parked] = await Promise.all([
       fakeRun('default', join(SCENARIOS, 'clean.json')),
       fakeRun('claude-only', join(SCENARIOS, 'clean.json')),
@@ -164,6 +171,8 @@ describe('evals-m1: fake-backed fixture runs', () => {
   }, T);
 
   test('evals-m1.clean-default: both units merge, every criterion passes, and the non-exercised list names every branch', () => {
+    // Invocation ids key workload membership host-wide, so the parallel runs must not share an arc.
+    assert.equal(new Set([clean, claudeOnly, bumpy, parked].map((f) => layout(f.dir).arc)).size, 4, 'each fixture dir has its own arc');
     assertPassed(clean);
     const calls = playedThrough(clean);
     assert.ok(calls.some((c) => c.as === 'codex'), 'default builds on Codex');
@@ -190,7 +199,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
   test('evals-m1.parked-stop: units parked on blocking needs-user items make the driver stop the run; check grades them coherent', () => {
     assert.equal(parked.driver.code, 0, parked.driver.stderr);
     assert.equal(parked.report.endedBy, 'parked-stop');
-    assert.equal(parked.report.generation, parked.report.start.ready?.generation);
+    assert.equal(parked.report.generation, parked.report.start.ready?.generation, `the executor was restarted:\n${executorErrs(parked)}`);
     assert.deepEqual(parked.report.exit, { kind: 'stop', cause: 'command', needsUser: null });
     assert.deepEqual(failing(parked.checked), [], JSON.stringify(parked.checked.result.criteria));
     playedThrough(parked);
@@ -217,7 +226,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
 
   test('evals-m1.tamper-snapshot: a snapshot blob that no longer matches its manifest fails the snapshot criterion', async () => {
     const repo = layout(clean.dir).repo;
-    const ref = `refs/roadmap/${ARC}`;
+    const ref = `refs/roadmap/${layout(clean.dir).arc}`;
     const at = git(repo, 'rev-parse', ref);
     const blob = git(repo, 'rev-parse', `${ref}:state.json`);
     const forged = gitStdin(repo, ['hash-object', '-w', '--stdin'], `${git(repo, 'cat-file', 'blob', blob)} `);

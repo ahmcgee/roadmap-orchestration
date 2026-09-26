@@ -4,7 +4,7 @@
 // executor.pause-holds-then-resume, executor.stop-releases-lock, executor.restart-clears-stop-not-pause,
 // executor.blocking-needs-user-waits, executor.crash-restart-continues, startup.resource-command-unrunnable,
 // executor.unit-park-does-not-hold-arc, executor.arc-wide-park-holds-arc, executor.park-raised-promptly,
-// cli.start-wait-flag, executor.pause-fix-round-continues.
+// cli.start-wait-flag, executor.pause-fix-round-continues, executor.paused-unit-never-dispatched.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -271,8 +271,8 @@ test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the s
   const published = events.filter((e) => e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published');
   assert.equal(published.length, 1);
   assert.deepEqual(parentsOf(r.repo, git(r.repo, 'rev-parse', 'main')), [base, git(r.repo, 'rev-parse', `refs/heads/roadmap/${r.arc}/u1`)]);
-  // Smokes are metered with no unit; the build invocation has exactly one fact.
-  const usage = facts(r).filter((f) => (f.kind === 'meter' || f.kind === 'usage-unavailable') && f.role === 'build' && f.unit !== null);
+  // Smokes are charged to their backend, not a seat; the build invocation has exactly one fact.
+  const usage = facts(r).filter((f) => (f.kind === 'meter' || f.kind === 'usage-unavailable') && f.subject.type === 'seat' && f.subject.role === 'build');
   assert.equal(usage.length, 1, 'one usage fact for the adopted build');
   assert.deepEqual(started(r), [1, 2]);
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
@@ -326,25 +326,36 @@ test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait ov
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking unit-scoped needs-user, the loop still dispatches u2 (resumed after a pause); the run completes once the item is acknowledged', T, async (t) => {
-  const blockedU2 = planCheckStep({ decision: 'approve' });
+test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatched: with u1 parked on an open blocking unit-scoped needs-user, the arc waits at paused u2 without dispatching it; resumed, u2 runs; the run completes once the item is acknowledged', T, async (t) => {
+  const escalate = planCheckStep({ decision: 'escalate' });
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
-      { ...blockedU2, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...blockedU2.acts] } as Step,
+      ...SMOKE_DEFAULT, { ...escalate, acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }, ...escalate.acts] } as Step, escalate,
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     ],
   });
-  // u2 is paused from the start: the arc interrupts it once u1 has parked, and the loop then waits on the
-  // pause alone, with u1's item raised and open. Resuming u2 must dispatch it with that item still open.
+  // u2 is paused from the start: once u1 has parked the arc reaches u2 and waits at it, with u1's item raised
+  // and open. Resuming u2 must dispatch it with that item still open.
   mkdirSync(r.runDir, { recursive: true });
   await cli(r, ['pause', 'u2']);
   const run = startExec(r);
-  await until(() => existsSync(join(r.runDir, 'events.jsonl')) && outcomes(r, 'u2').includes('plan-check:interrupted') && openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 parked and u2 held');
+  await reached(r.scenarioDir, 'u1check', WAIT_MS);
+  assert.equal((await statusOf(r)).run.state, 'running', 'u1 is in flight: a pause of another unit does not hold the run (arc-1 feedback item 24b)');
+  release(r.scenarioDir, 'u1check');
+  await until(() => existsSync(join(r.runDir, 'events.jsonl')) && openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 parked');
   const [item] = openBlocking(journalOf(r).view);
   assert.ok(item !== undefined);
   assert.equal(journalOf(r).view.unit(U1).status, 'park-pending');
+  await sleep(2_500);
+  // A paused unit is never dispatched: no dispatch fact pinned, no stage started, no backend called (arc-1 feedback item 16).
+  const view = journalOf(r).view;
+  assert.equal(view.dispatchOf(U2), null, 'no dispatch fact for the paused unit');
+  assert.deepEqual(outcomes(r, 'u2'), []);
+  assert.equal(view.unit(U2).counters.attempts, 0, 'no stage of u2 started');
+  assert.equal(readCalls(r.scenarioPath).length, 4, 'the two smoke calls and u1\'s two plan-checks only');
+  const s = await statusOf(r);
+  assert.equal(s.run.state, 'held', 'nothing can proceed: the next unit is paused');
   await cli(r, ['resume', 'u2']);
   await until(() => journalOf(r).view.unit(U2).status === 'retired', WAIT_MS, 'u2 to merge');
   assert.equal(journalOf(r).view.ackOf(item), null, 'u2 ran and merged while u1\'s blocking item was open');
@@ -356,7 +367,7 @@ test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking u
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item }, { unit: 'u2', result: 'merged' }] });
-  assert.deepEqual(outcomes(r, 'u2'), ['plan-check:interrupted', ...STRAIGHT]);
+  assert.deepEqual(outcomes(r, 'u2'), STRAIGHT);
 });
 
 test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-required, naming u2) holds u1 too; its ack lets both run', T, async (t) => {

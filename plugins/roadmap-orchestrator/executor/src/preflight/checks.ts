@@ -16,7 +16,7 @@
 // Order within groups 1 and 2 follows the table. Nothing here names a model: routing refusals name the
 // seat and the layer.
 import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { detectContainmentMode } from '../contain/detect.ts';
 import { durableMkdir, readJson } from '../core/fsx.ts';
 import { INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
@@ -30,9 +30,13 @@ import type { ClaimOutcome } from '../host/lock.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
-import { type RepoConfig, type ResolvedRouting, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats } from '../routing/layers.ts';
+import {
+  type RepoConfig, type ResolvedRouting, arcStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
+} from '../routing/layers.ts';
 import type { ProfileName } from '../routing/types.ts';
+import { type Ruling, loadRulings } from '../spec/rulings.ts';
 import { SpecFileError, loadSpec } from '../spec/spec.ts';
+import { resolveArgv0 } from './argv0.ts';
 import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from './smoke.ts';
 import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
@@ -42,8 +46,6 @@ type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, {
 export const ROADMAP_DIR_ALLOWED = ['config.json', 'constraints.md', 'contracts', 'debt.md', 'invariants.md'] as const;
 /** statfs(2) f_type of tmpfs. */
 const TMPFS_MAGIC = 0x01021994;
-/** What Node's spawn searches when a workload's env has no PATH (and the runner passes only the declared env). */
-const DEFAULT_SEARCH_PATH = '/usr/bin:/bin';
 
 const planDir = (context: StartupContext): string => dirname(context.planFile);
 const specPath = (context: StartupContext, unit: PlanUnit): AbsPath => absPath(join(planDir(context), unit.spec));
@@ -104,7 +106,27 @@ function specs(context: StartupContext): ReadonlyMap<UnitId, SpecOrRejection> {
 
 const isSpec = (s: SpecOrRejection): s is SpecM1 => !('kind' in s);
 
-/** Spec files, baseline ancestry and resource names (the plan's schema row is `loadPlan`). */
+/** The rulings ledger, or its schema rejection. */
+function ledger(context: StartupContext): readonly Ruling[] | Rejection<'plan-invalid'> {
+  const file = join(planDir(context), context.plan.rulings);
+  if (!existsSync(file)) return { kind: 'plan-invalid', problem: { type: 'schema', field: 'plan.rulings', detail: `${file} does not exist` } };
+  try {
+    return loadRulings(file);
+  } catch (error) {
+    return schemaRejection(error);
+  }
+}
+
+/** A spec's cites that name no plan contract or no ledger ruling. */
+function unknownCites(plan: PlanM1, rulings: readonly Ruling[], unit: UnitId, spec: SpecM1): Rejection<'plan-invalid'>[] {
+  const cites = [
+    ...spec.cites.contracts.filter((c) => !plan.contracts.includes(c)),
+    ...spec.cites.rulings.filter((r) => !rulings.some((x) => x.id === r)),
+  ];
+  return cites.map((cite) => ({ kind: 'plan-invalid', problem: { type: 'unknown-cite', unit, cite } }));
+}
+
+/** Spec files, the rulings ledger, spec cites, baseline ancestry and resource names (the plan's schema row is `loadPlan`). */
 export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
   kind: 'plan-invalid',
   check: async (context) => {
@@ -112,6 +134,12 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
     const out: Rejection<'plan-invalid'>[] = [];
     const loaded = specs(context);
     for (const s of loaded.values()) if (!isSpec(s)) out.push(s);
+    const rulings = ledger(context);
+    if (!Array.isArray(rulings)) out.push(rulings as Rejection<'plan-invalid'>);
+    else for (const unit of plan.units) {
+      const spec = loaded.get(unit.id);
+      if (spec !== undefined && isSpec(spec)) out.push(...unknownCites(plan, rulings, unit.id, spec));
+    }
 
     const tip = refTarget(repo, branchRef(plan.integrationBranch));
     if (tip === null) throw new Error(`integration branch ${plan.integrationBranch} does not exist in ${repo}`);
@@ -154,36 +182,13 @@ export const worktreeRootCheck: StartupCheck<'worktree-root-unusable'> = {
   },
 };
 
-function executable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /** A declared command: a lane, or a resource's probe or teardown. */
 type Declared = Readonly<{ argv: readonly string[]; env: LaneEnv }>;
-
-/**
- * Where a command's argv[0] resolves, as the runner's spawn would: a bare name on the command's own PATH
- * (its declared `set.PATH`, or the host's when it passes PATH, else Node's default search path). A relative
- * path with a slash names a file of a tree (a lane's unit may create it): not decidable at startup.
- */
-function argv0Resolves(command: Declared, env: Readonly<Record<string, string | undefined>>): boolean {
-  const argv0 = command.argv[0];
-  if (argv0 === undefined) throw new Error(`a declared command has an empty argv`); // the validators require non-empty
-  if (isAbsolute(argv0)) return executable(argv0);
-  if (argv0.includes('/')) return true;
-  const path = command.env.set['PATH'] ?? (command.env.pass.includes('PATH') ? env['PATH'] : undefined) ?? DEFAULT_SEARCH_PATH;
-  return path.split(delimiter).some((dir) => dir !== '' && executable(join(dir, argv0)));
-}
 
 /** argv[0] and the declared host variables of one command. */
 function commandProblems(command: Declared, env: Readonly<Record<string, string | undefined>>): CommandProblem[] {
   const out: CommandProblem[] = [];
-  if (!argv0Resolves(command, env)) out.push({ type: 'argv0-unresolvable', argv0: command.argv[0] as string });
+  if (resolveArgv0(command, env).kind === 'not-found') out.push({ type: 'argv0-unresolvable', argv0: command.argv[0] as string });
   for (const name of command.env.pass) if (env[name] === undefined) out.push({ type: 'env-missing', name });
   return out;
 }
@@ -224,14 +229,9 @@ export function readRepoConfig(repo: AbsPath): RepoConfig | null {
   return existsSync(path) ? parseRepoConfig(JSON.parse(readFileSync(path, 'utf8'))) : null;
 }
 
-/** The stack for this arc: the profile, the repo config's seats, the plan's layer (no per-unit layers in M1). */
+/** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return resolveRouting({
-    profile: context.profile,
-    repoConfig: readRepoConfig(context.repo)?.routing?.seats ?? null,
-    plan: context.plan.routing ?? null,
-    unit: null,
-  });
+  return resolveRouting(arcStack(context.profile, readRepoConfig(context.repo), context.plan.routing ?? null));
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {

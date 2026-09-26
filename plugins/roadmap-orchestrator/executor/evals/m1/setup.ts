@@ -17,7 +17,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { ARC, INTEGRATION, MAIN, RESOURCE, UNITS, layout } from './layout.ts';
+import { INTEGRATION, MAIN, RESOURCE, UNITS, layout } from './layout.ts';
 
 const CONTRACT = `# Contract one: page identifiers
 
@@ -98,6 +98,7 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
     scope: SCOPE, resources: [RESOURCE],
     decisions: [],
     facts: [{ id: 'F1', text: 'package.json declares "type": "module", so src/*.js are ES modules.', state: 'active' }],
+    cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
   },
   'page-id': {
     schema: 'roadmap/spec-m1', unit: 'page-id', rev: 1,
@@ -111,6 +112,7 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
     scope: SCOPE, resources: [RESOURCE],
     decisions: [],
     facts: [{ id: 'F1', text: 'slugify is exported by src/slug.js once unit slug has merged.', state: 'active' }],
+    cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
   },
 };
 
@@ -167,7 +169,7 @@ export function setup(dir: string): void {
   for (const unit of UNITS) write(join(l.input, `${unit}.json`), json(SPECS[unit]));
   write(l.plan, json({
     schema: 'roadmap/plan-m1',
-    arc: ARC,
+    arc: l.arc,
     integrationBranch: INTEGRATION,
     baseline,
     worktreeRoot: l.worktrees,

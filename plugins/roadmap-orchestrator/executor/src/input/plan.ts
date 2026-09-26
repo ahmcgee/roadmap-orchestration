@@ -29,6 +29,12 @@ export type PlanUnit = Readonly<{
   risk: RiskTier;
   scope: readonly RepoPattern[];
   resources: readonly ResourceName[];
+  /**
+   * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
+   * any of them is neither merged nor parked with its needs-user acknowledged. Each names a unit earlier in
+   * plan order, never itself.
+   */
+  after: readonly UnitId[];
 }>;
 
 export type PlanM1 = Readonly<{
@@ -43,6 +49,11 @@ export type PlanM1 = Readonly<{
   /** The C-nn ledger, relative to the plan's directory. */
   rulings: PlanPath;
   architectureDoc: RepoPath;
+  /**
+   * The owner-approved digest of the architecture doc (section index and normative sentences with line
+   * anchors). When present, judgments embed it and read the full doc from their checkout on demand.
+   */
+  architectureDigest?: RepoPath;
   direction: string;
   routing?: RoutingLayer;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
@@ -69,9 +80,11 @@ const planUnit: Read<PlanUnit> = object((f) => {
     risk: f.get('risk', riskTier),
     scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
+    after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
   };
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
+  assertUnique(out.after, (u) => u, `${f.path}.after`);
   return out;
 });
 
@@ -79,6 +92,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
 export function parsePlan(value: unknown): PlanM1 {
   return object((f): PlanM1 => {
     const routing = f.optional('routing', routingLayer);
+    const architectureDigest = f.optional('architectureDigest', (v, p) => repoPath(v, p));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -88,6 +102,7 @@ export function parsePlan(value: unknown): PlanM1 {
       contracts: f.get('contracts', arrayOf((v, p) => repoPath(v, p))),
       rulings: f.get('rulings', (v, p) => planPath(v, p)),
       architectureDoc: f.get('architectureDoc', (v, p) => repoPath(v, p)),
+      ...(architectureDigest === undefined ? {} : { architectureDigest }),
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),
@@ -99,6 +114,12 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
+    out.units.forEach((u, i) => {
+      const earlier = out.units.slice(0, i).map((e) => e.id);
+      u.after.forEach((id, j) => {
+        if (!earlier.includes(id)) throw new SchemaError(`plan.units[${i}].after[${j}]`, `a unit earlier in plan order than ${u.id}`, id);
+      });
+    });
     return out;
   })(value, 'plan');
 }

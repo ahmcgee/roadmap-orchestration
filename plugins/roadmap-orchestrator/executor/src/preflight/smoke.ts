@@ -3,8 +3,8 @@
 //
 // For each backend the resolved routing uses, one minimal real call goes through the production path:
 // the argv builder (backends/argv.ts), a `proc.spawn{purpose: smoke}` intent, the runner (runner/launch.ts),
-// the adapter (backends/adapter.ts), the spawn's done record and a meter fact. Nothing is special-cased
-// beyond the purpose. The smoke runs after the journal is open (lead ruling, 1a), so a refused start still
+// the adapter (backends/adapter.ts), a usage fact charged to the backend's smoke (not to a seat, so seat
+// spend is the units' own) and the spawn's done record. Nothing is special-cased beyond the purpose. The smoke runs after the journal is open (lead ruling, 1a), so a refused start still
 // leaves an audit trail.
 //
 // `claude-only` never runs the Codex smoke; instead it requires that no seat resolves to Codex. A backend
@@ -29,7 +29,10 @@ import {
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
-import { BACKENDS, type Backend, type JudgmentRole, type ProfileName, RISK_TIERS, ROLES, type RiskTier, type Role } from '../routing/types.ts';
+import {
+  BACKENDS, type Backend, type JudgmentRole, type ProfileName, type Role, SEAT_REFS, type Seat as SeatName, type SeatRef, atSeat, seatRef,
+} from '../routing/types.ts';
+import { chargeOf, usageFact } from '../pipeline/invoke.ts';
 import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 import type { StartupRejection } from './startup.ts';
 
@@ -67,11 +70,24 @@ export type InvocationContext = Readonly<{
  * live (verified 2026-09-25: without CLAUDE_CONFIG_DIR, `claude -p` answers "Not logged in"; without
  * CODEX_HOME, `codex exec` gets HTTP 401). Nothing else passes: in particular no CLAUDE_CODE_* variable of
  * an enclosing session.
+ *
+ * The operator's config dir is used as it is, never an arc-private copy: the CLI rotates the OAuth refresh
+ * token on refresh and writes `.credentials.json` by temp file and rename (Claude Code 2.1.283), which
+ * would replace a symlink to the operator's file with a private file and leave the operator's login on a
+ * spent token. The context it would otherwise load is cut by flags (backends/argv.ts) and by
+ * `BACKEND_ENV_SET`.
  */
 export const BACKEND_ENV_PASS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
 
+/**
+ * Set for every backend workload. Claude: no auto-memory, so no session reads the operator's project memory
+ * or writes one that a later unit would read (verified 2026-09-26: the init event's `memory_paths` is absent
+ * with it). Codex ignores it.
+ */
+export const BACKEND_ENV_SET: Readonly<Record<string, string>> = { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
+
 export function backendEnv(host: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = { ...BACKEND_ENV_SET };
   for (const name of ['PATH', 'HOME']) {
     const value = host[name];
     if (value === undefined) throw new Error(`the executor's environment has no ${name}; backend CLIs need it`);
@@ -95,8 +111,8 @@ export type CallRequest =
 export type BackendInvocation = Readonly<{
   check: string;
   routingRev: RoutingRev;
-  /** The seat's risk tier, which the meter fact records beside the role. */
-  tier: RiskTier;
+  /** The seat's tier within the request's role: which seat a probe call stands for (smoke usage is charged to the backend, not the seat). */
+  tier: SeatName;
   request: CallRequest;
   system: string;
   rendered: string;
@@ -125,7 +141,7 @@ type Prepared = Readonly<{
 
 /**
  * One invocation, end to end: the spawn intent (durable before any act), its inputs and launch.json, the
- * runner, the adapter's result.json, the done record and, for a backend, the meter fact.
+ * runner, the adapter's result.json, for a backend the usage fact, then the done record.
  */
 async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invDir: AbsPath) => Prepared): Promise<Invoked<ResultFile>> {
   const deadlineAt = isoTimeOf(new Date(Date.now() + SMOKE_DEADLINE_MS));
@@ -157,14 +173,13 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
   const summary = result.type === 'backend'
     ? { type: 'backend', outcome: result.outcome.kind } as const
     : { type: 'command', verdict: result.verdict } as const;
-  ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary }, null);
+  // The usage fact precedes the done, as in pipeline/invoke.ts, so a crash between them cannot lose it.
+  const charge = chargeOf(subject);
   if (result.type === 'backend') {
-    if (subject.target.type !== 'backend') throw new Error(`${inv}: a command smoke produced a backend result`);
-    const meter = { inv, role: result.role, tier: subject.target.tier, routingRev: result.routingRev, unit: null } as const;
-    ctx.journal.fact(result.usage.kind === 'known'
-      ? { kind: 'meter', ...meter, usage: result.usage.tokens }
-      : { kind: 'usage-unavailable', ...meter, reason: result.usage.reason });
+    if (charge === null) throw new Error(`${inv}: a command smoke produced a backend result`);
+    ctx.journal.fact(usageFact(charge, inv, result.usage));
   }
+  ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary }, null);
   return { inv, invDir, argv: prepared.argv, exit: end.exit, result };
 }
 
@@ -202,7 +217,7 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
   const subject: SmokeSubject = {
     purpose: 'smoke',
     check: b.check,
-    target: { type: 'backend', backend: b.request.triple.backend, role: roleOf(b.request), tier: b.tier, routingRev: b.routingRev },
+    target: { type: 'backend', backend: b.request.triple.backend, ...seatRef(roleOf(b.request), b.tier), routingRev: b.routingRev },
   };
   const done = await run(ctx, subject, (invDir) => {
     const call = backendCall(b, invDir);
@@ -233,7 +248,7 @@ export async function invokeCommand(ctx: InvocationContext, c: CommandInvocation
 // ---------------------------------------------------------------------------------------------------
 // The smoke proper.
 
-export type Seat = Readonly<{ role: Role; tier: RiskTier }>;
+export type Seat = SeatRef;
 const seatName = (s: Seat): string => `${s.role}.${s.tier}`;
 
 export type BackendSmoke =
@@ -261,7 +276,7 @@ export type SmokeReport = Readonly<{ profile: ProfileName; routingRev: RoutingRe
 export type SmokeRouting = Readonly<{ profile: ProfileName; resolved: ResolvedRouting }>;
 
 function seatsOn(resolved: ResolvedRouting, backend: Backend): readonly Seat[] {
-  return ROLES.flatMap((role) => RISK_TIERS.filter((tier) => resolved.table[role][tier].backend === backend).map((tier) => ({ role, tier })));
+  return SEAT_REFS.filter((s) => atSeat(resolved.table, s).backend === backend);
 }
 
 /**
@@ -273,7 +288,7 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   const seats = seatsOn(resolved, backend);
   const seat = seats[0];
   if (seat === undefined) return null;
-  const triple = resolved.table[seat.role][seat.tier];
+  const triple = atSeat(resolved.table, seat);
   if (triple.backend === 'claude') {
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
@@ -336,7 +351,8 @@ export function smokeRejections(report: SmokeReport): Extract<StartupRejection, 
       continue;
     }
     if (b.outcome.kind === 'success') continue;
-    const why = b.outcome.kind === 'refusal' ? `stop reason ${b.outcome.stopReason}` : b.outcome.detail;
+    const o = b.outcome;
+    const why = o.kind === 'refusal' ? `stop reason ${o.stopReason}` : o.kind === 'cancelled' ? `cancelled for ${o.reason}` : o.detail;
     const errors = b.errorClasses.length === 0 ? '' : `; backend errors: ${b.errorClasses.join(', ')}`;
     reject(b.backend, 'failed', `seat ${seatName(b.seat)} (${b.inv}): ${b.outcome.kind}: ${why}${errors}`);
   }

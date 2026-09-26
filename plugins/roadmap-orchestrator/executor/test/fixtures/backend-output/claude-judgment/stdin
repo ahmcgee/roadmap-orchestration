@@ -1,1 +1,1 @@
-Reply with the JSON object {"ok": true}
+Use Glob to list the *.txt files here, Grep for "probe" in them, and Read notes.txt. Then reply with the JSON object {"ok": true}.

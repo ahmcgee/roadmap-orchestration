@@ -30,6 +30,25 @@
 // worktree but writes decisions.json into an evidence dir outside it and, in a fix round, reads the failing
 // lanes' evidence dirs: the same `--add-dir` pairs, last. Codex runs with danger-full-access, so nothing is
 // needed on the Codex side.
+//
+// Output and context, verified against the real CLI (Claude Code 2.1.283, 2026-09-26; captures in
+// test/fixtures/backend-output/claude-*):
+// - Every Claude call runs `--output-format stream-json --verbose`: stdout is JSONL, a `system/init` event
+//   first and the same `type:"result"` object `--output-format json` prints as its last line
+//   (`structured_output` under `--json-schema` included). The stream keeps the session's tool calls, so
+//   what a judgment read is on record (reads.json, backends/claude.ts); plain `json` keeps the result only.
+// - Clean contexts (arc-1 feedback item 19). Run from the operator's own config dir with the default
+//   sources, a judgment loaded the repo's CLAUDE.md, the operator's CLAUDE.md and auto-memory, the claude.ai
+//   MCP connectors of the logged-in account (their tools too: `--tools` does not restrict MCP tools) and the
+//   installed skills. `--setting-sources ''` loads no user, project or local settings, and with them no
+//   CLAUDE.md file; `--strict-mcp-config` with no `--mcp-config` loads no MCP server of any source;
+//   `--disable-slash-commands` loads no skill. The init event then lists tools Glob, Grep, Read and
+//   StructuredOutput only, no MCP server and no skill; a canary CLAUDE.md is not seen (evals/probe.ts pins
+//   both). Auto-memory is turned off by environment for every Claude call (`backendEnv`,
+//   preflight/smoke.ts). The implementer keeps `--setting-sources project` so the repo's CLAUDE.md
+//   conventions reach it (the unit policy in its prompt overrides their permissions), but gets no MCP, no
+//   skills and no memory the same way. What stays: the logged-in account's email in a user-context block,
+//   and the built-in plugins, neither of which a flag removes.
 import { randomUUID } from 'node:crypto';
 import { implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
@@ -82,19 +101,22 @@ export type BackendCall =
 
 export type Argv = readonly [string, ...string[]];
 
+/** Every Claude call: JSONL on stdout, no MCP server, no skill. */
+const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--disable-slash-commands'] as const;
+
 export function backendArgv(call: BackendCall): Argv {
   switch (call.kind) {
     case 'claude-judgment':
       return [
-        'claude', '-p', '--output-format', 'json', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--tools', JUDGMENT_TOOLS, '--session-id', call.session.id, '--no-session-persistence',
+        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
+        '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, '--session-id', call.session.id, '--no-session-persistence',
         '--system-prompt', call.system, ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', '--output-format', 'json', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
+        '--effort', call.triple.effort, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }

@@ -176,8 +176,6 @@ export const BACKEND_FIXTURES = fileURLToPath(new URL('../fixtures/backend-outpu
 /** The strict schema every capture was run with: `{ok: boolean}`, every key required. */
 export const OK_SCHEMA = join(BACKEND_FIXTURES, 'schema.json');
 export const ROUTING_REV = routingRev('0123456789abcdef');
-/** Session id for a Claude capture whose argv named none (claude-api-error): the id it reported. */
-const UNNAMED_SESSION = '0b38176f-0cee-4758-9231-aa2561f4cf4f';
 
 export function capturedArgv(name: string): readonly string[] {
   return JSON.parse(readFileSync(join(BACKEND_FIXTURES, name, 'argv.json'), 'utf8')) as string[];
@@ -190,8 +188,8 @@ function after(argv: readonly string[], flag: string): string | undefined {
 
 /**
  * The launch terminal an argv implies: Codex resume or fresh by `exec resume <sid>` (output file
- * `<invDir>/last.json`); Claude judgment (role gate) when it has `--tools` or names no session, implementer
- * otherwise (output file `<invDir>/stdout`).
+ * `<invDir>/last.json`); Claude judgment (role gate) when it has `--tools`, implementer otherwise (output
+ * file `<invDir>/stdout`). Every Claude capture names its session.
  */
 export function terminalFor(argv: readonly string[], invDir: string, schemaPath: string = OK_SCHEMA): LaunchTerminal {
   const base = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath: absPath(schemaPath) } as const;
@@ -203,9 +201,7 @@ export function terminalFor(argv: readonly string[], invDir: string, schemaPath:
   const outputPath = absPath(join(invDir, 'stdout'));
   const fresh = after(argv, '--session-id');
   const resume = after(argv, '--resume');
-  if (argv.includes('--tools') || (fresh === undefined && resume === undefined)) {
-    return { ...base, outputPath, role: 'gate', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(fresh ?? UNNAMED_SESSION) } };
-  }
+  if (argv.includes('--tools')) return { ...base, outputPath, role: 'gate', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(fresh) } };
   const session = resume === undefined
     ? { backend: 'claude', mode: 'fresh', id: implementerSessionId(fresh) } as const
     : { backend: 'claude', mode: 'resume', id: implementerSessionId(resume) } as const;
@@ -214,7 +210,8 @@ export function terminalFor(argv: readonly string[], invDir: string, schemaPath:
 
 /**
  * A fresh invocation dir holding capture `name`'s stdout, stderr and `-o` file (as `last.json`), a
- * launch.json derived from its argv, and an exit.json with `child` and `cause`. Returns the dir.
+ * launch.json derived from its argv, and an exit.json with `child` and `cause` (cause `cancel` also writes
+ * the cancel.json the executor writes first, reason `pause`). Returns the dir.
  */
 export function fixtureInvocation(name: string, child: ExitFile['child'], cause: ExitFile['cause'] = 'exited', schemaPath: string = OK_SCHEMA): string {
   const invDir = tmpDir('inv');
@@ -222,6 +219,28 @@ export function fixtureInvocation(name: string, child: ExitFile['child'], cause:
   for (const f of ['stdout', 'stderr', 'last.json']) if (existsSync(join(src, f))) copyFileSync(join(src, f), join(invDir, f));
   const argv = capturedArgv(name);
   writeLaunch(invDir, { argv, cwd: invDir, terminal: terminalFor(argv, invDir, schemaPath), stdinPath: null });
+  if (cause === 'cancel') writeFileSync(join(invDir, 'cancel.json'), JSON.stringify({ ...BIND, reason: 'pause', at: '2026-09-25T11:59:59.000Z' }));
   writeExit(invDir, child, cause);
   return invDir;
+}
+
+const streamEvents = (text: string): Record<string, unknown>[] =>
+  text.split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>);
+
+/** Rewrite the `result` event of the Claude stream-json stdout in `invDir`, keeping every other line. */
+export function editClaudeResult(invDir: string, edit: (result: Record<string, unknown>) => Record<string, unknown>): string {
+  const path = join(invDir, 'stdout');
+  const events = streamEvents(readFileSync(path, 'utf8'));
+  const i = events.findLastIndex((e) => e['type'] === 'result');
+  if (i === -1) throw new Error(`${path}: no result event`);
+  events[i] = edit(events[i]!);
+  writeFileSync(path, events.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  return invDir;
+}
+
+/** The `result` event of Claude capture `name`'s stdout. */
+export function capturedClaudeResult(name: string): Record<string, unknown> {
+  const r = streamEvents(readFileSync(join(BACKEND_FIXTURES, name, 'stdout'), 'utf8')).findLast((e) => e['type'] === 'result');
+  if (r === undefined) throw new Error(`capture ${name}: no result event`);
+  return r;
 }

@@ -25,6 +25,7 @@ const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> 
     ...bind, type: 'backend', role: 'gate', routingRev: '0123456789abcdef', session: UUID,
     outcome: { kind: 'success', value: { decision: 'approve' } }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [],
   },
+  'reads.json': { ...bind, reads: [{ tool: 'Read', path: '/w/a.ts' }, { tool: 'Grep', pattern: 'TODO', path: null }, { tool: 'Glob', pattern: '*.md', path: '/w/docs' }] },
 };
 
 function exit(child: ExitFile['child'], cause: ExitFile['cause'] = 'exited'): ExitFile {
@@ -47,31 +48,49 @@ describe('records', () => {
     }
   });
 
+  it('launch.json argv: an empty argument is allowed (`--setting-sources \'\'`), an empty program name is not', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    assert.deepEqual(read({ ...RUNNER_SAMPLES['launch.json'], argv: ['claude', '--setting-sources', ''] }, 'launch.json').argv, ['claude', '--setting-sources', '']);
+    assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], argv: ['', 'x'] }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.argv[0]');
+  });
+
   describe('classifyTerminal precedence', () => {
     const output = { decision: 'approve' };
-    for (const cause of ['deadline', 'cancel', 'recovery-kill'] as const) {
+    for (const cause of ['deadline', 'recovery-kill'] as const) {
       it(`cause ${cause} → process-fault regardless of schema-valid output`, () => {
-        assert.equal(classifyTerminal(exit({ type: 'exited', code: 0 }, cause), output, true).kind, 'process-fault');
-        assert.equal(classifyTerminal(exit({ type: 'signalled', signal: 'SIGKILL' }, cause), output, true).kind, 'process-fault');
+        assert.equal(classifyTerminal(exit({ type: 'exited', code: 0 }, cause), null, output, true).kind, 'process-fault');
+        assert.equal(classifyTerminal(exit({ type: 'signalled', signal: 'SIGKILL' }, cause), null, output, true).kind, 'process-fault');
       });
     }
+    for (const reason of ['pause', 'stop'] as const) {
+      it(`cause cancel for a ${reason} → cancelled{${reason}} regardless of output, not a process fault`, () => {
+        const cancel = RUNNER_FILE_READERS['cancel.json']({ ...bind, reason, at: T0 }, 'cancel.json');
+        assert.deepEqual(classifyTerminal(exit({ type: 'exited', code: 0 }, 'cancel'), cancel, output, true), { kind: 'cancelled', reason });
+        assert.deepEqual(classifyTerminal(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), cancel, undefined, false), { kind: 'cancelled', reason });
+      });
+    }
+    it('cause cancel without a pause or stop cancel.json is a loud error', () => {
+      const recovery = RUNNER_FILE_READERS['cancel.json']({ ...bind, reason: 'recovery', at: T0 }, 'cancel.json');
+      assert.throws(() => classifyTerminal(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), null, undefined, false), /cancel\.json null/);
+      assert.throws(() => classifyTerminal(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), recovery, undefined, false), /cancel\.json "recovery"/);
+    });
     it('a signal → process-fault regardless of schema-valid output', () => {
-      assert.equal(classifyTerminal(exit({ type: 'signalled', signal: 'SIGSEGV' }), output, true).kind, 'process-fault');
+      assert.equal(classifyTerminal(exit({ type: 'signalled', signal: 'SIGSEGV' }), null, output, true).kind, 'process-fault');
     });
     it('a failed spawn → process-fault', () => {
-      assert.equal(classifyTerminal(exit({ type: 'spawn-failed', error: 'EACCES' }), undefined, false).kind, 'process-fault');
+      assert.equal(classifyTerminal(exit({ type: 'spawn-failed', error: 'EACCES' }), null, undefined, false).kind, 'process-fault');
     });
     it('non-zero exit with schema-valid output → malformed', () => {
-      assert.equal(classifyTerminal(exit({ type: 'exited', code: 1 }), output, true).kind, 'malformed');
+      assert.equal(classifyTerminal(exit({ type: 'exited', code: 1 }), null, output, true).kind, 'malformed');
     });
     it('non-zero exit without schema-valid output → process-fault', () => {
-      assert.equal(classifyTerminal(exit({ type: 'exited', code: 1 }), undefined, false).kind, 'process-fault');
+      assert.equal(classifyTerminal(exit({ type: 'exited', code: 1 }), null, undefined, false).kind, 'process-fault');
     });
     it('exit 0 without schema-valid output → malformed', () => {
-      assert.equal(classifyTerminal(exit({ type: 'exited', code: 0 }), { partial: true }, false).kind, 'malformed');
+      assert.equal(classifyTerminal(exit({ type: 'exited', code: 0 }), null, { partial: true }, false).kind, 'malformed');
     });
     it('exit 0 with schema-valid output → success carrying the output', () => {
-      assert.deepEqual(classifyTerminal(exit({ type: 'exited', code: 0 }), output, true), { kind: 'success', value: output });
+      assert.deepEqual(classifyTerminal(exit({ type: 'exited', code: 0 }), null, output, true), { kind: 'success', value: output });
     });
   });
 
@@ -140,7 +159,7 @@ describe('records', () => {
     const spec = {
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [lane],
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [],
+      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
     };
     assert.deepEqual(specM1(spec, 'spec'), spec);
     assert.throws(() => specM1({ ...spec, facts: [{ id: 'A1', text: 'dup', state: 'active' }] }, 'spec'), /spec\.<item ids>/);

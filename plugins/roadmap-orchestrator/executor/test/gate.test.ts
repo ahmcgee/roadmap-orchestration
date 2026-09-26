@@ -1,9 +1,10 @@
 // The gate stage (src/pipeline/gate.ts) through the unit driver, fake-backed: real processes, real git.
 // Named tests: gate.fingerprint-invalidated, gate.risk-promotion; also the approval fingerprint's content,
-// a revise round's directives and their re-check, and the empty-diff refusal.
+// a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
+// the empty-diff refusal.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { rulingId } from '../src/core/ids.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
@@ -48,7 +49,27 @@ test('gate.fingerprint-invalidated: a contract changes on T between approve and 
   }
 });
 
-test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate dispatch to the high seat', T, async () => {
+test('gate.fingerprint-cited-only: the approval binds the spec\'s cited contracts and rulings; an uncited contract changing on T does not re-gate', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const specFile = join(dirname(d.planPath), 'u1.json');
+  writeFileSync(specFile, JSON.stringify({ ...JSON.parse(readFileSync(specFile, 'utf8')), cites: { contracts: [], rulings: [] } }));
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
+    const { fingerprint } = r.journal.view.unit(U1).approval!;
+    assert.deepEqual(fingerprint.contractRevs.map((c) => c.path), ['ARCHITECTURE.md'], 'the architecture doc always, no uncited contract');
+    assert.deepEqual(fingerprint.rulingRevs, []);
+    writeFileSync(join(d.repo, 'contracts', 'api.md'), '# API contract\n\nChanged, but no spec cites it.\n');
+    git(d.repo, 'commit', '--quiet', '-am', 'an uncited contract changes on integration');
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.ok(!outcomes(d).includes('ff:fingerprint-invalid'), 'the approval still holds');
+    assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 1);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate dispatch to the escalation seat', T, async () => {
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }),
@@ -65,7 +86,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-opus-5-5'), 'plan-check sat on the unit\'s med seat');
-    assert.ok(gateCall!.argv.includes('claude-fable-5-1'), 'the gate sat on the high seat');
+    assert.ok(gateCall!.argv.includes('claude-fable-5-1'), 'the gate sat on the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
@@ -73,15 +94,25 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
   }
 });
 
-test('gate.revise: the directives go to a fix round, and the next gate re-checks them', T, async () => {
+test('gate.revise: the directives go to a fix round, and the next gate rules on its prior round with the delta since', T, async () => {
   const directive = 'Export mul as the default export too.';
+  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md' };
+  const premises = [
+    { claim: 'mul multiplies', evidence: [{ path: 'src/mul.js', line: 2 }] },
+    { claim: 'add is untouched', evidence: [{ path: 'src/add.js', line: 1 }] },
+  ];
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild(),
-      gateStep({ decision: 'revise', directives: [directive] }),
+      gateStep({ decision: 'revise', directives: [directive], findings: [finding], premises }),
       codexStep([{ type: 'commit', message: 'default export', files: { 'src/mul.js': `${MUL['src/mul.js']}export default mul;\n` } }], { argv: ['exec', 'resume'], stdinContains: [directive] }),
-      gateStep({ decision: 'approve' }, { stdinContains: [directive] }),
+      gateStep({ decision: 'approve' }, {
+        stdinContains: [
+          directive, '[blocking] src/mul.js: mul has no default export. (contracts/api.md)', 'mul multiplies [src/mul.js:2]',
+          'Paths the fix changed since:\n- src/mul.js\n', 'Premise files changed since:\n- src/mul.js\nRules',
+        ],
+      }),
     ],
   });
   const r = contextFor(d);
