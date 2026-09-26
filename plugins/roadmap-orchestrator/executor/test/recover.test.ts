@@ -450,6 +450,9 @@ async function clearAndRunB(b: ExecRun, releaseA: (() => void) | null): Promise<
   const running = startExec(b, CLAUDE_ONLY);
   if (releaseA !== null) {
     await until(() => existsSync(recoveryLock(b)), WAIT_MS, 'B to reconcile A under the recovery lock');
+    // As in the B3 and B4 cells: B scans A's survivors just after the lock appears. Released before that, A's
+    // runner can exit first, and B finds it re-adaptable (redone) instead of live (adopted).
+    await sleep(ADOPTION_SETTLE_MS);
     releaseA();
   }
   const exit = await running.exit;

@@ -1,8 +1,9 @@
-// The operation/state × boundary crash matrix (plan "Tests", R23). One row per operation or state, one
-// cell per boundary. A cell is crashed at each `crashPoint` label it lists, across every occurrence the
-// row's scenario produces, and its recovery is checked against the row's oracle. Each step that lands an
-// operation turns its `pending` cells into `crash` cells and drives them from its own test file, reading
-// the cells from here so the table and the tests cannot drift apart.
+// The operation/state × boundary crash matrix (plan "Tests", R23), and the single index of the crash and
+// deterministic-fixture evidence. One row per operation, state or scenario, one cell per boundary. A cell
+// is crashed at each `crashPoint` label it lists, across every occurrence the row's scenario produces, and
+// its recovery is checked against the row's oracle. Each test file reads its row's cells from here, so the
+// table and the tests cannot drift apart; test/matrix.test.ts checks the table itself (no pending cell,
+// every label a real crash point, every named test file and fixture test present).
 
 export const BOUNDARIES = {
   B1: 'torn or short intent',
@@ -23,18 +24,15 @@ export type Cell =
   | Readonly<{ status: 'kill'; when: string; recovery: string }>
   /** Not a distinct crash state for this row; `why` says which cell covers it or why none exists. */
   | Readonly<{ status: 'excluded'; why: string }>
+  /**
+   * A deterministic fixture (plan R25): the named test (by the name before its colon, in the row's test file)
+   * is the uncrashed hard evidence of this path; `crashedIn` is the row whose cells crash it.
+   */
+  | Readonly<{ status: 'fixture'; test: string; crashedIn: string }>
   /** Filled by the step that implements the row. */
   | Readonly<{ status: 'pending'; step: string }>;
 
 export type Row = Readonly<{ row: string; test: string; cells: Readonly<Record<Boundary, Cell>> }>;
-
-const pending = (step: string): Readonly<Record<Boundary, Cell>> => ({
-  B1: { status: 'excluded', why: EXCLUDED_B1 },
-  B2: { status: 'pending', step },
-  B3: { status: 'pending', step },
-  B4: { status: 'pending', step },
-  B5: { status: 'pending', step },
-});
 
 /**
  * Every op's intent is one `Journal` append, so a torn or short intent is the same state for every kind:
@@ -73,6 +71,73 @@ export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
 export const ADVERSARIAL_TAKEOVER = 'adversarial: cross-arc takeover with a live runner crashed mid-adoption';
+export const PIPELINE_STRAIGHT = 'whole pipeline: one unit straight through (supervised roadmap start)';
+export const PIPELINE_BUMPY = 'whole pipeline: two units through every bumpy branch (supervised roadmap start)';
+export const PIPELINE_RUNNER_DEATH = 'whole pipeline: runner death mid-build';
+export const PIPELINE_SUPERVISOR_DEATH = 'whole pipeline: supervisor death mid-run';
+export const PIPELINE_HOST_DEATH = 'whole pipeline: supervisor and executor death mid-build';
+export const ADVERSARIAL_MALFORMED = 'adversarial: malformed result mid-pipeline';
+export const ADVERSARIAL_CANCEL = 'adversarial: cancellation mid-build, then resume';
+export const ADVERSARIAL_STALE = 'adversarial: failed publication (stale tip)';
+export const ADVERSARIAL_CLEANUP_FAILED = 'adversarial: cleanup-failed';
+export const ADVERSARIAL_FOREIGN_MOVE = 'adversarial: foreign ref move';
+export const ADVERSARIAL_ORPHAN = 'adversarial: orphan adoption';
+export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
+export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
+export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
+export const FIXTURE_RED_CANDIDATE = 'fixture: red candidate → fix → fresh gate → green';
+
+/**
+ * The executor's crash points a supervised one-unit run passes through, by boundary (the whole-pipeline
+ * rows). The test enumerates them from a recording run (test/fixtures/pm-record.ts) and requires exactly
+ * these. Not here: runner.* (occurrences count per process and every runner is its own process, so
+ * occurrence 1 always lands in the first runner, the startup smoke's: the proc.spawn and runner-death rows
+ * crash them) and sup.* (the supervisor's, crashed by the supervisor/host row on the same one-unit arc).
+ */
+const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
+  B1: ['log.append.before-write', 'log.append.after-partial-write'],
+  B2: [
+    'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
+    'salvage.act-start', 'candidate.act-start', 'ff.act-start', 'snapshot.act-start', 'spec.patch.before-write', 'recover.before-op',
+  ],
+  B3: [
+    'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'salvage.after-copy-out',
+    'salvage.after-commit-tree', 'salvage.after-cas', 'salvage.after-read-tree', 'candidate.after-commit-tree', 'snapshot.after-commit-tree',
+  ],
+  B4: [
+    'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'salvage.act-end', 'candidate.act-end', 'ff.act-end',
+    'snapshot.act-end', 'spec.patch.after-write',
+  ],
+  B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
+};
+/** The bumpy run adds the merge-in's conflicted path. */
+const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'] };
+
+/** A whole-pipeline row's cells: every label at occurrence 1, and 2 where the label repeats. */
+function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[]>>>, recovery: Readonly<Record<Boundary, string>>): Readonly<Record<Boundary, Cell>> {
+  const cell = (b: Boundary): Cell => ({ status: 'crash', labels: [...PIPELINE_LABELS[b], ...(extra[b] ?? [])], recovery: recovery[b] });
+  return { B1: cell('B1'), B2: cell('B2'), B3: cell('B3'), B4: cell('B4'), B5: cell('B5') };
+}
+
+const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
+  B1: 'the torn or unwritten record is absent after the restart (a torn line is discarded with one tail-discarded fact); a lost done leaves its op open for its reconciler, a lost intent never began; the arc ends as uncrashed',
+  B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
+  B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; the arc ends as uncrashed',
+  B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the arc ends as uncrashed',
+  B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
+};
+
+/** The four deterministic fixtures' cells: the uncrashed test, crashed by the bumpy whole-pipeline row. */
+const fixtureCells = (test: string): Readonly<Record<Boundary, Cell>> => {
+  const cell: Cell = { status: 'fixture', test, crashedIn: PIPELINE_BUMPY };
+  return { B1: cell, B2: cell, B3: cell, B4: cell, B5: cell };
+};
+
+/** An adversarial scenario whose every boundary another row or named test already crashes. */
+const coveredBy = (why: string): Readonly<Record<Boundary, Cell>> => {
+  const cell: Cell = { status: 'excluded', why };
+  return { B1: cell, B2: cell, B3: cell, B4: cell, B5: cell };
+};
 
 /**
  * The effect-before-done crash point of each op kind's recovery: the reconciler's effect (a redo's act, the
@@ -548,7 +613,163 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: 'after the adoption is closed the takeover renames the claim: the host takeover row\'s B4 cell' },
     },
   },
-  { row: 'adversarial: cleanup-failed, foreign ref move, malformed result, cancellation mid-build, orphan adoption, failed publication', test: 'pending', cells: pending('14c') },
+  {
+    // The straight scenario (test/fixtures/pm-common.ts STRAIGHT): u1 with a declared resource, decisions.json,
+    // work salvage commits, through `roadmap start`. Each cell SIGKILLs the executor at its label; the
+    // supervisor restarts it; the oracle (test/oracle.ts) compares the end with the uncrashed run.
+    row: PIPELINE_STRAIGHT,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: pipelineCells({}, PIPELINE_RECOVERY),
+  },
+  {
+    // The bumpy scenario (pm-common.ts BUMPY): u1 redirect, red lane + fix, gate revise; u2 integration moved
+    // under it, conflict → merge-in → resolve, red candidate → fix → fresh gate. Two units, because three
+    // chargeable failures in one unit park it.
+    row: PIPELINE_BUMPY,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: pipelineCells(MERGEIN_LABELS, PIPELINE_RECOVERY),
+  },
+  {
+    row: PIPELINE_RUNNER_DEATH,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no runner exists before the act; the executor crash there is the whole-pipeline rows\' spawn.after-intent cells' },
+      B3: {
+        status: 'kill',
+        when: 'the build\'s runner, SIGKILLed while its backend call waits at a barrier (the executor alive)',
+        recovery: 'the live executor finds its runner gone: the workload killed (proc.kill{recovery}), the build closed lost, uncharged build:process-fault → park with one blocking process-fault needs-user (the transition table; the pipeline does not retry a lost call); the build never called twice; after the ack the arc ends complete with u1 parked, integration untouched',
+      },
+      B4: { status: 'excluded', why: 'act complete means the runner wrote exit.json and exited; its death after exit.json is the runner-death row\'s runner.after-exit-json' },
+      B5: { status: 'excluded', why: 'after done the runner has long exited; nothing of it is left to die' },
+    },
+  },
+  {
+    row: PIPELINE_SUPERVISOR_DEATH,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the supervisor journals nothing; the supervisor/host row crashes its own points' },
+      B2: { status: 'excluded', why: 'before its executor is handshaken a dead supervisor is the supervisor/host row\'s B2 and B3 cells (sup.after-claim, sup.after-spawn, sup.after-owner-publish)' },
+      B3: {
+        status: 'kill',
+        when: 'the supervisor, SIGKILLed while its executor\'s build waits at a barrier',
+        recovery: 'the executor runs on unsupervised: a start meanwhile is refused host-busy (exit 75, never two executors); it finishes the arc and exits complete; the next start takes the dead claim over and finds the arc complete; nothing recovered, the arc as uncrashed',
+      },
+      B4: { status: 'excluded', why: 'a supervisor dead after the handshake is this row\'s B3 state; the supervisor/host row\'s B4 cell crashes it at sup.after-handshake' },
+      B5: { status: 'excluded', why: 'after its executor exits a dead supervisor is a dead claim: the host takeover row' },
+    },
+  },
+  {
+    row: PIPELINE_HOST_DEATH,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'a host death before the build\'s runner starts leaves no survivor: the whole-pipeline rows\' spawn.after-intent cells' },
+      B3: {
+        status: 'kill',
+        when: 'the supervisor and then the executor, SIGKILLed while the build\'s backend call waits at a barrier (its runner lives on)',
+        recovery: 'the next start takes the dead claim of the same arc over; its recovery adopts the live runner (or re-adapts its exit.json once it has exited): the build closed adopted or redone and consumed, called once; the arc ends as uncrashed',
+      },
+      B4: { status: 'excluded', why: 'with the runner exited before the takeover the build is re-adapted from exit.json: the whole-pipeline rows\' spawn.after-runner-exit cells' },
+      B5: { status: 'excluded', why: 'after the build\'s done nothing survives the host: the whole-pipeline rows\' spawn.after-done cells' },
+    },
+  },
+  {
+    // pm-common.ts MALFORMED: the gate's first answer is not JSON; its uncharged retry approves. Each cell's
+    // occurrence is the malformed gate's own (its index among the run's invocations, or among its stages).
+    row: ADVERSARIAL_MALFORMED,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['spawn.after-intent'],
+        recovery: 'the malformed gate\'s spawn, intent durable and no runner: closed lost (reconciled); the gate runs again as a new attempt, gets the malformed answer, retries once uncharged and approves; the arc ends as uncrashed',
+      },
+      B3: { status: 'excluded', why: 'inside the malformed call are the runner\'s own points (the proc.spawn row); a malformed answer changes nothing there' },
+      B4: {
+        status: 'crash',
+        labels: ['spawn.after-result'],
+        recovery: 'the malformed result is written, the done is not: closed reconciled and consumed as gate:malformed (never asked again), then the one uncharged retry; the arc ends as uncrashed',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['unit.after-stage'],
+        recovery: 'gate:malformed is recorded: the restarted driver runs the retry it decided; nothing recovered; the arc ends as uncrashed',
+      },
+    },
+  },
+  {
+    // pm-common.ts CANCEL: `pause u1` mid-build, the executor killed inside the proc.kill{pause}, then `resume u1`.
+    row: ADVERSARIAL_CANCEL,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['kill.after-intent'],
+        recovery: 'no cancel.json yet: the kill re-run by its reconciler (redone), the build closed redone from its exit.json and consumed as build:interrupted (uncharged hold); the pause survives the restart; resume re-runs the build; the arc ends as uncrashed',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['kill.after-cancel'],
+        recovery: 'cancel.json written: the kill closed reconciled or redone, the build redone and consumed as build:interrupted; resume re-runs it; the arc ends as uncrashed',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['kill.after-quiesced'],
+        recovery: 'the workload is gone: the kill closed reconciled, the build reconciled or redone and consumed as build:interrupted; resume re-runs it; the arc ends as uncrashed',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['kill.after-done'],
+        recovery: 'the kill is closed: the build redone and consumed as build:interrupted; resume re-runs it; the arc ends as uncrashed',
+      },
+    },
+  },
+  {
+    // B2: pm-common.ts STALE, integration moved while the crashed executor is down. B5: STALE_LANE, integration
+    // moved by someone else while the candidate's suite runs, so the live ff finds the tip stale.
+    row: ADVERSARIAL_STALE,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['ff.act-start'],
+        recovery: 'the ff intent open and integration advanced past its T (what a CAS lost to a mover leaves): closed unpublished at the new tip (reconciled); the driver records ff:cas-stale, a fresh candidate onto the new tip, no new gate, published once',
+      },
+      B3: { status: 'excluded', why: 'the act is one update-ref CAS: there is no point inside it' },
+      B4: {
+        status: 'excluded',
+        why: 'a CAS that lost to a mover leaves the ff intent open with integration advanced past T, which is this row\'s B2 state once integration moved; a mover cannot be placed between the intent and the CAS from outside the process, and the unmoved ff.act-end is the whole-pipeline rows\' cell',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['unit.after-stage'],
+        recovery: 'ff:cas-stale is recorded: the restarted driver makes the fresh candidate onto the new tip, no new gate, published once; nothing recovered',
+      },
+    },
+  },
+  {
+    row: ADVERSARIAL_CLEANUP_FAILED,
+    test: 'test/residue.test.ts, test/resource-recover.test.ts',
+    cells: coveredBy('crashed by the resource.transition fail + residue row (residue before and after the host append) and the reserve/run/clean/release row\'s failed-cleanup scenario: residues once per resource, never released'),
+  },
+  {
+    row: ADVERSARIAL_FOREIGN_MOVE,
+    test: 'test/integrate.test.ts, test/ff.test.ts, test/recover.test.ts',
+    cells: coveredBy('ff.foreign-move (the live stop and its needs-user), git.foreign-mover (typed before the intent, recovery-required after it) and recover.no-duplicate-needs-user (integration rewritten under a pending ff, the candidate ref moved: recovery killed around the raise raises it once)'),
+  },
+  {
+    row: ADVERSARIAL_ORPHAN,
+    test: 'test/recover.test.ts, test/runner.test.ts, test/recover-spawn.test.ts',
+    cells: coveredBy('crashed by the proc.spawn and runner-death rows (orphan kill, lost) and the two adversarial live-runner rows (adoption through a crash in recovery and through a cross-arc takeover); the whole-pipeline host-death row adopts through roadmap start'),
+  },
+  { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },
+  { row: FIXTURE_RED_LANE, test: 'test/stages.test.ts', cells: fixtureCells('stages.red-lane-fix-round') },
+  { row: FIXTURE_CONFLICT, test: 'test/unit.test.ts', cells: fixtureCells('fixture conflict → merge-in → resolve') },
+  { row: FIXTURE_RED_CANDIDATE, test: 'test/unit.test.ts', cells: fixtureCells('fixture red candidate → fix → fresh gate → green') },
 ];
 
 /** Justified exclusions, listed beside the table (plan "Tests"). */
