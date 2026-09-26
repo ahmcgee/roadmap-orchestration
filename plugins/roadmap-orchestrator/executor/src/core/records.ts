@@ -537,10 +537,17 @@ export type SpecPatchOp =
   | { readonly [S in SpecSection]: Readonly<{ op: 'replace'; section: S; item: SectionItem[S] }> }[SpecSection]
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>;
 
-/** M1 patches come only from plan-check redirects. */
+/**
+ * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
+ * `decisions.json` after a build round's evidence snapshot (`inv` is the build invocation that wrote it).
+ */
+export type SpecPatchBy =
+  | Readonly<{ role: 'planCheck'; routingRev: RoutingRev; inv: InvocationId }>
+  | Readonly<{ role: 'executor'; inv: InvocationId }>;
+
 export type SpecPatch = Readonly<{
   expectRev: SpecRev;
-  by: Readonly<{ role: 'planCheck'; routingRev: RoutingRev; inv: InvocationId }>;
+  by: SpecPatchBy;
   ops: readonly SpecPatchOp[];
 }>;
 
@@ -575,7 +582,10 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
 
 export const specPatch: Read<SpecPatch> = object((f) => ({
   expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
-  by: f.get('by', object((g) => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) }))),
+  by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
+    planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
+    executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
+  })),
   ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
 }));
 

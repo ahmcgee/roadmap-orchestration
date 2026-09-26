@@ -228,7 +228,7 @@ export const STAGE_OUTCOME_KINDS = {
   teardown: ['released', 'cleanup-failed'],
   lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed'],
   gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted'],
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'occupied', 'interrupted'],
+  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted'],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
@@ -282,6 +282,11 @@ export type Fact =
    * whose result carried the error.
    */
   | Readonly<{ kind: 'backend-park'; backend: Backend; class: BackendParkClass; inv: InvocationId }>
+  /**
+   * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
+   * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
+   */
+  | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
   | StageOutcomeFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
@@ -566,6 +571,9 @@ export const fact: Read<Fact> = tagged('kind', {
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
   'backend-park': object((f): Fact => ({
     kind: f.get('kind', literal('backend-park')), backend: f.get('backend', backend), class: f.get('class', oneOf(BACKEND_PARK_CLASSES)), inv: f.get('inv', invR),
+  })),
+  approval: object((f): Fact => ({
+    kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
   })),
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
