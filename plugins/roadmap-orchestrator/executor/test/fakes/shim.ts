@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const FAKE_BACKEND = fileURLToPath(new URL('./fake-backend.ts', import.meta.url));
+export const FAKE_BACKEND = fileURLToPath(new URL('./fake-entry.ts', import.meta.url));
 
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
