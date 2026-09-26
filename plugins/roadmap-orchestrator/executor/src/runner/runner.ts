@@ -1,4 +1,4 @@
-// The runner: `node src/runner/runner.ts <invDir>`, launched detached by launch.ts. It is the invocation's
+// The runner: `node src/entry/runner.ts <invDir>`, launched detached by launch.ts. It is the invocation's
 // controller and never a workload member (ROADMAP_ROLE=runner). It owns the workload from spawn to
 // quiescence on its own, so a dead executor cannot leave a workload past its deadline:
 //
@@ -28,7 +28,8 @@ type Stop = Readonly<{ cause: Exclude<ExitCause, 'exited'>; reason: KillReason }
 
 const now = (): IsoTime => isoTimeOf(new Date());
 
-async function main(): Promise<void> {
+/** The runner process's main (src/entry/runner.ts); the entry exits 0 once it returns. */
+export async function runnerMain(): Promise<void> {
   const invDir = absPath(process.argv[2], 'argv[2] (invocation dir)');
   const inv = invocationIdOf(process.env[ENV_INV], ENV_INV);
   const self = identityOf(process.pid);
@@ -103,5 +104,3 @@ async function main(): Promise<void> {
   crashPoint('runner.after-exit-json');
 }
 
-await main();
-process.exit(0);

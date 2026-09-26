@@ -280,28 +280,49 @@ describe('journal open', () => {
     assert.throws(() => open(dir), (err: unknown) => err instanceof LogCorruptError && err.file === join(dir, 'events.torn.12.0000abcd') && err.offset === 12);
   });
 
-  it('opens a 100k-line log in linear time: under 10 s of CPU', (t) => {
-    const dir = tmpDir('log');
+  it('opens a log in time linear in its length: 10x the lines costs under 15x the CPU', (t) => {
     const records: LogRecord[] = [];
     for (let seq = 1; records.length < 100_000; seq += 3) {
       records.push(spawnIntent(seq), meter(inv1(seq), 'build', seq, 1, null), spawnResult(spawnIntent(seq).op));
     }
-    writeFileSync(eventsPath(dir), logBytes(chain(records.slice(0, 100_000))));
+    const small = tmpDir('log');
+    const large = tmpDir('log');
+    writeFileSync(eventsPath(small), logBytes(chain(records.slice(0, 10_000))));
+    writeFileSync(eventsPath(large), logBytes(chain(records.slice(0, 100_000))));
     // The main thread's CPU time (user + system) of the synchronous open, not wall time: the full suite
-    // runs test files concurrently, and wall time would measure the host's load rather than the open's cost.
-    // CPU time still stretches on a contended host (about 1.8 s idle, up to 5.4 s seen with the host at
-    // twice its CPU count in load), so the bound guards the growth class: a fold that went quadratic, or
-    // several times slower per line, fails it on any host.
-    const started = process.threadCpuUsage();
-    const wallStarted = performance.now();
-    const j = open(dir);
-    const { user, system } = process.threadCpuUsage(started);
-    const wall = performance.now() - wallStarted;
-    assert.equal(j.view.highWater(), 100_000);
-    j.close();
-    const cpuMs = (user + system) / 1000;
-    t.diagnostic(`open of ${bytesLength(dir)} bytes took ${Math.round(cpuMs)} ms CPU (${Math.round(wall)} ms wall)`);
-    assert.ok(cpuMs < 10_000, `open used ${Math.round(cpuMs)} ms of CPU time (bound 10000 ms: about 1800 ms idle, 5400 ms on a host loaded to twice its CPU count; more means the open no longer scales linearly)`);
+    // runs test files concurrently, and wall time would measure the host's load. Absolute CPU time stretches
+    // too (the 100k-line open: about 1.6 s idle, 10 to 11.5 s seen under the full suite on a loaded host),
+    // so no absolute bound is both tight and stable. Instead the test compares two sizes opened in the same
+    // process under the same load: a linear open costs about 10x for 10x the lines, a quadratic one tends
+    // to 100x. Measured ratios: 9.7 to 10.2 idle, 9.6 to 9.7 under the full suite's load; a simulated
+    // quadratic term (a linear scan of the offsets seen so far, per line) measured 23.7. The bound of 15
+    // leaves half again the worst linear ratio seen and fails that small quadratic term. Each size is opened
+    // twice, alternating, and the cheaper open counts, which damps a GC pause or a descheduling landing in
+    // one measurement. The 30 s ceiling on the large open is a backstop for a catastrophic regression that
+    // the ratio alone would miss (both sizes equally slow per line).
+    const openCpuMs = (dir: string, lines: number): { cpuMs: number; wallMs: number } => {
+      const started = process.threadCpuUsage();
+      const wallStarted = performance.now();
+      const j = open(dir);
+      const { user, system } = process.threadCpuUsage(started);
+      const wallMs = performance.now() - wallStarted;
+      assert.equal(j.view.highWater(), lines);
+      j.close();
+      return { cpuMs: (user + system) / 1000, wallMs };
+    };
+    const smallRuns: { cpuMs: number; wallMs: number }[] = [];
+    const largeRuns: { cpuMs: number; wallMs: number }[] = [];
+    for (let i = 0; i < 2; i++) {
+      smallRuns.push(openCpuMs(small, 10_000));
+      largeRuns.push(openCpuMs(large, 100_000));
+    }
+    const smallMs = Math.min(...smallRuns.map((r) => r.cpuMs));
+    const largeMs = Math.min(...largeRuns.map((r) => r.cpuMs));
+    const ratio = largeMs / smallMs;
+    const fmt = (runs: { cpuMs: number; wallMs: number }[]): string => runs.map((r) => `${Math.round(r.cpuMs)} ms CPU (${Math.round(r.wallMs)} ms wall)`).join(', ');
+    t.diagnostic(`open of ${bytesLength(small)} bytes: ${fmt(smallRuns)}; open of ${bytesLength(large)} bytes: ${fmt(largeRuns)}; ratio ${ratio.toFixed(1)}`);
+    assert.ok(ratio < 15, `opening 10x the lines cost ${ratio.toFixed(1)}x the CPU (${Math.round(largeMs)} ms vs ${Math.round(smallMs)} ms; linear is about 10x, the bound 15x): the open no longer scales linearly`);
+    assert.ok(largeMs < 30_000, `the 100k-line open used ${Math.round(largeMs)} ms of CPU time (backstop 30000 ms; about 1600 ms idle)`);
   });
 });
 

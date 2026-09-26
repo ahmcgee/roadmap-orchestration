@@ -1,5 +1,5 @@
 // Fake `codex` / `claude` CLI, run through the PATH shims in shim.ts:
-//   node fake-backend.ts --scenario /abs/scenario.json --as codex|claude <the CLI's own argv...>
+//   node fake-entry.ts --scenario /abs/scenario.json --as codex|claude <the CLI's own argv...>
 // It reads the scenario (test/helpers/scenario.ts), logs the call to calls.jsonl beside it, matches the call
 // to the next unconsumed step and performs that step's acts. Output acts write each CLI's real format:
 // Claude's result objects are the captured fixtures (test/fixtures/backend-output) with fields replaced,
@@ -231,7 +231,8 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
   }
 }
 
-function main(): void {
+/** The fake's main (test/fakes/fake-entry.ts, which the shims exec). */
+export function main(): void {
   const { scenario, as, argv } = parseArgs(process.argv.slice(2));
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (k.startsWith('ROADMAP_') && v !== undefined) env[k] = v;
@@ -251,4 +252,3 @@ function main(): void {
   process.exit(0);
 }
 
-main();

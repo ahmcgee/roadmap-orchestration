@@ -1,7 +1,7 @@
 // The executor process (plan "Runtime components"; DESIGN-1.0.md §2.3, §2.10): one run of an arc, from the
 // ownership handshake to an exit reason. The supervisor (src/supervisor.ts) spawns it as
 //
-//   node src/executor.ts <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]
+//   node src/entry/executor.ts <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]
 //
 // with the claim it holds for this executor in argv, never in the environment. Nothing here acts before the
 // handshake: the executor waits for `handshake.<generation>`, verifies that host.owner.json names this
@@ -608,4 +608,3 @@ export async function executorMain(argv: readonly string[]): Promise<number> {
   return exitCodeOf(reason);
 }
 
-if (import.meta.main) process.exitCode = await executorMain(process.argv.slice(2));
