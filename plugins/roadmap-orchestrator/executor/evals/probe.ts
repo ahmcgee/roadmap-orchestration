@@ -9,24 +9,34 @@
 //   claude.build.fresh/resume  claude-opus-5-5 implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
+//   claude.build.killed-resume  claude-opus-5-5 implementer told to write a random token to a file then
+//                       sleep; killed once the file exists through the production kill path (killWorkload,
+//                       reason pause, as the executor's interruptLive runs it); the file is deleted and the
+//                       launch-assigned session resumed with a CONTINUE_DIRECTIVE-style message: the answer
+//                       must carry the token, which only the killed conversation holds
+//   codex.killed-resume the same with gpt-5.6-sol, effort low: killed after thread.started and the file;
+//                       the resume uses the thread id the adapter read into result.json
 //
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
-import { arcId } from '../src/core/ids.ts';
+import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
+import { type ImplementerSessionId, arcId, invocationId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
-import type { BackendResult, Usage } from '../src/core/records.ts';
+import { type BackendResult, STDOUT_FILE, type Usage } from '../src/core/records.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
 } from '../src/preflight/smoke.ts';
+import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import type { Backend, Role } from '../src/routing/types.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'default' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'default' } as const;
@@ -76,6 +86,48 @@ async function backend(ctx: InvocationContext, name: string, b: BackendInvocatio
   const o = done.result.outcome;
   report(o.kind === 'success' && grade(o.value), name, describe(done));
   return done;
+}
+
+/** How long a killed-resume check waits for its workload to reach the kill point. */
+const KILL_WAIT_MS = 150_000;
+
+/**
+ * Runs `b` and, once its runner is up and `ready(invDir)` holds, kills it with killWorkload{pause} exactly as
+ * the executor's interruptLive does; then resumes the session the adapter recorded and grades the answer.
+ * `after` runs between the kill and the resume.
+ */
+async function killedResume(
+  ctx: InvocationContext, name: string, b: BackendInvocation, ready: (invDir: string) => boolean,
+  resumeOf: (id: ImplementerSessionId) => BackendInvocation['request'], after: () => void, resume: Omit<BackendInvocation, 'request'>, grade: (value: JsonValue) => boolean,
+): Promise<void> {
+  const proc = { journal: ctx.journal, containment: containmentFor(detectContainmentMode()), runDir: ctx.runDir };
+  let settled = false;
+  const running = invokeBackend(ctx, b).finally(() => { settled = true; });
+  const until = Date.now() + KILL_WAIT_MS;
+  let waited = 'timeout';
+  for (;;) {
+    const intent = ctx.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'smoke' && i.expect.subject.check === b.check);
+    if (settled) { waited = 'workload ended before the kill point'; break; }
+    if (intent !== undefined) {
+      const inv = invocationId(intent.op, intent.ordinal);
+      const invDir = invocationDir(ctx.runDir, inv);
+      const files = runnerFiles(invDir, inv);
+      if (files.read('runner.json') !== null && files.read('exit.json') === null && (ready(invDir) || Date.now() >= until)) {
+        if (Date.now() < until) waited = 'ready';
+        await killWorkload(proc, { inv, scope: 'invocation', reason: 'pause' });
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const killed = await running;
+  meter(b.request.triple.backend, killed.result.role, killed.result.usage);
+  const session = killed.result.role === 'build' ? killed.result.session : null;
+  const ok = waited === 'ready' && killed.exit.cause === 'cancel' && session !== null;
+  report(ok, `${name}.kill`, `${waited} cause=${killed.exit.cause} session=${session} ${describe(killed)}`);
+  if (!ok || session === null) return;
+  after();
+  await backend(ctx, name, { ...resume, request: resumeOf(session) }, grade);
 }
 
 async function main(): Promise<void> {
@@ -158,6 +210,34 @@ async function main(): Promise<void> {
     check: 'fable-pin', routingRev: rev, tier: 'high', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
+
+  // Killed mid-run, then resumed: the token is in the killed conversation only (its file is deleted first).
+  // The resume message is CONTINUE_DIRECTIVE's opening (rounds.ts); its evidence-dir sentence has no referent here.
+  const killTask = (t: string): string =>
+    `This task has three steps. 1. Create the file killed.txt in the current directory containing exactly ${t}. 2. Run the shell command \`sleep 90\` and wait for it to finish. 3. Reply with {"token": "<the token you wrote in step 1>"}.`;
+  const CONTINUE = 'You were paused partway through this task and are now resumed. Continue from where you stopped; do not restart. The sleep of step 2 has already finished; do not run it again.';
+  const tokenSchema = strict({ token: { type: 'string' } });
+
+  const claudeKillDir = dir(join(root, 'claude-killed'));
+  const claudeToken = randomBytes(8).toString('hex');
+  const claudeKillFile = join(claudeKillDir, 'killed.txt');
+  const claudeBase = { routingRev: rev, tier: 'high', system: SYSTEM, schema: tokenSchema, cwd: claudeKillDir } as const;
+  await killedResume(ctx, 'claude.build.killed-resume', {
+    ...claudeBase, check: 'claude-build-killed', rendered: killTask(claudeToken),
+    request: { kind: 'claude-build', triple: OPUS, session: freshClaudeImplementerSession(), evidenceDirs: [] },
+  }, () => existsSync(claudeKillFile), (id) => ({ kind: 'claude-build', triple: OPUS, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] }), () => rmSync(claudeKillFile),
+  { ...claudeBase, check: 'claude-build-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: claudeToken }));
+
+  const codexKillDir = dir(join(root, 'codex-killed'));
+  const codexToken = randomBytes(8).toString('hex');
+  const codexKillFile = join(codexKillDir, 'killed.txt');
+  const codexBase = { routingRev: rev, tier: 'med', system: SYSTEM, schema: tokenSchema, cwd: codexKillDir } as const;
+  await killedResume(ctx, 'codex.killed-resume', {
+    ...codexBase, check: 'codex-killed', rendered: killTask(codexToken),
+    request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'fresh' } },
+  }, (invDir) => existsSync(codexKillFile) && existsSync(join(invDir, STDOUT_FILE)) && readFileSync(join(invDir, STDOUT_FILE), 'utf8').includes('"thread.started"'),
+  (id) => ({ kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
+  { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
 
   journal.close();
   for (const [key, t] of [...usage].sort(([a], [b]) => a.localeCompare(b))) {

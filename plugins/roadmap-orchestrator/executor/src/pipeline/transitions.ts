@@ -19,6 +19,7 @@
 //   dispatch, and only that one, on the high seat. The implementer keeps the unit's risk seat throughout.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
 //   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
+//   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 import {
   type JudgmentStage, type OutcomeClass, type OutcomeStage, type RetryStage, type StageOutcomeFact, type StageOutcomeKind,
@@ -35,9 +36,10 @@ export type Seat = RiskTier;
 export type StageOutcome = { [S in OutcomeStage]: Readonly<{ stage: S; kind: StageOutcomeKind<S> }> }[OutcomeStage];
 
 /**
- * How the implementer is dispatched. `fresh`: a new session. `fix`: resume with the failing evidence dirs
- * and any gate directives. `resume`: the uncharged resume after a malformed report. `resolve`: resume to
- * resolve and commit a prepared merge-in conflict.
+ * How a decision dispatches the implementer. `fresh`: a new session. `fix`: resume with the failing evidence
+ * dirs and any gate directives. `resume`: the uncharged resume after a malformed report. `resolve`: resume to
+ * resolve and commit a prepared merge-in conflict. No decision asks for the fifth round, `continue`: the
+ * driver runs it in place of the decided round after an interrupted build attempt (rounds.ts).
  */
 export type BuildRound = 'fresh' | 'fix' | 'resume' | 'resolve';
 

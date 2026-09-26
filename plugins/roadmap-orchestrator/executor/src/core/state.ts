@@ -76,6 +76,12 @@ export type UnitState = Readonly<{
    * it; null before the first outcome.
    */
   decided: StageOutcomeFact | null;
+  /**
+   * The unit's latest `hold` fact while no later outcome has decided, else null: the interrupted attempt the
+   * held stage's re-run starts from. An interrupted build is continued, not restarted (the `continue` round,
+   * src/pipeline/rounds.ts); a chain of pauses keeps the latest.
+   */
+  interrupted: StageOutcomeFact | null;
   /** The latest gate approval: its attempt and the fingerprint it binds to; null before one. */
   approval: Readonly<{ attempt: number; fingerprint: ApprovalFingerprint }> | null;
   /**
@@ -89,7 +95,7 @@ export type UnitState = Readonly<{
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
-    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, approval: null, open: null,
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
   };
 }
@@ -362,7 +368,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         u.state = afterStageOutcome(u.state, f);
-        if (f.class !== 'hold') u.state = { ...u.state, decided: f };
+        u.state = f.class === 'hold' ? { ...u.state, interrupted: f } : { ...u.state, decided: f, interrupted: null };
         this.#start(u, key);
         return;
       }

@@ -9,7 +9,7 @@
 //               envelope; a raised risk re-pins the dispatch record.
 //   build       the implementer round (rounds.ts) under the unit's declared resources, held from reserve
 //               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope. A
-//               resolve round must leave the merge-in committed.
+//               resolve round, or the continue of one, must leave the merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
@@ -61,7 +61,7 @@ import { invocationDir, quiescent } from './invoke.ts';
 import {
   type LaneRecord, type VerificationTree, laneOrder, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries, specSeriesRoot,
 } from './lanes.ts';
-import { type RoundInput, callImplementer, laneFixRound, prepareRound } from './rounds.ts';
+import { type DecidedRound, type RoundInput, callImplementer, decidedRound, laneFixRound, prepareRound } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 import { evidenceSnapshotOp, salvageCommitOp } from '../recover/ops.ts';
 
@@ -298,16 +298,17 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   });
   const called = await callImplementer(ctx, {
     unit: unit.id, parent,
-    request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...(round.fixRound?.failingEvidenceDirs ?? [])] },
+    request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...round.evidenceDirs] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
-  return buildRead(ctx, unit, parent, round.kind, called, held);
+  return buildRead(ctx, unit, parent, decidedRound(input), called, held);
 }
 
 /**
  * Records a build attempt from its implementer call: the live one, or one recovery closed after a crash
- * (consumed by the driver, never dispatched again; lead ruling 14a/14b). `held` is the reservation the
- * attempt still holds: the live build's, or none once recovery has cleaned a dead holder's.
+ * (consumed by the driver, never dispatched again; lead ruling 14a/14b). `round` is the decided round (a
+ * continue runs under the round it continues). `held` is the reservation the attempt still holds: the live
+ * build's, or none once recovery has cleaned a dead holder's.
  */
 export async function buildRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'build' }>, round: BuildRound, called: BackendCallOutcome,
@@ -492,7 +493,7 @@ export type LanesDone = StageDone<'lanes'> & Readonly<{
   /** The checkout the gate reads, kept only on green; every other outcome removes it here. */
   verification: VerificationTree | null;
   /** The fix round a red or not-certified series calls for (rounds.ts), else null. */
-  fix: RoundInput | null;
+  fix: DecidedRound | null;
 }>;
 
 /** Every lane's declared evidence, the unit's and the suite's: what a leftover checkout's removal captures. */

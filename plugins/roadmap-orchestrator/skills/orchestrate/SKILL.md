@@ -36,8 +36,8 @@ unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 s
 | `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>]` | Launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. Waits up to 240 s (or `--wait`) for readiness |
 | `status` | Agent-facing JSON snapshot of the run |
 | `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
-| `pause <unit>` / `pause --all` | Kill, tear down, keep commits; the unit holds at its stage |
-| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; `--backend` clears a usage-limit park after a passing smoke |
+| `pause <unit>` / `pause --all` | Kill, tear down, keep commits and the worktree as left; the unit holds at its stage |
+| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `--backend` clears a usage-limit park after a passing smoke |
 | `stop` | Park everything, tear down, release the host lock |
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |

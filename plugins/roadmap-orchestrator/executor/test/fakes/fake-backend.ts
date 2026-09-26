@@ -66,11 +66,20 @@ function codexThread(argv: readonly string[], step: Extract<Step, { as: 'codex' 
   return step.threadId ?? `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
 }
 
+/** Set once `thread.started` is printed (by a `threadStarted` act or an output act): Codex prints it once. */
+let threadAnnounced = false;
+
+function threadStarted(thread: string): readonly object[] {
+  if (threadAnnounced) return [];
+  threadAnnounced = true;
+  return [{ type: 'thread.started', thread_id: thread }];
+}
+
 function codexEmit(argv: readonly string[], thread: string, message: string, extras: readonly object[], usage: boolean): void {
   const o = flagValue(argv, '-o');
   if (o === undefined) throw new Error('fake codex: an output act needs -o in argv');
   const events: object[] = [
-    { type: 'thread.started', thread_id: thread },
+    ...threadStarted(thread),
     { type: 'turn.started' },
     ...extras,
     { type: 'item.completed', item: { id: `item_${extras.length}`, type: 'agent_message', text: message } },
@@ -82,7 +91,7 @@ function codexEmit(argv: readonly string[], thread: string, message: string, ext
 
 function codexUsageLimit(thread: string): never {
   const events = [
-    { type: 'thread.started', thread_id: thread },
+    ...threadStarted(thread),
     { type: 'turn.started' },
     { type: 'error', message: CODEX_USAGE_LIMIT },
     { type: 'turn.failed', error: { message: CODEX_USAGE_LIMIT } },
@@ -187,6 +196,9 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     }
     case 'barrier':
       waitAtBarrier(scenarioDir, act.name, act.timeoutMs);
+      return;
+    case 'threadStarted':
+      out(threadStarted(thread()).map((e) => `${JSON.stringify(e)}\n`).join(''));
       return;
     case 'resumeCollision':
       process.stderr.write(`${CODEX_RESUME_COLLISION}\n`);

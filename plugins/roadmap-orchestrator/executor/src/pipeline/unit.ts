@@ -16,8 +16,10 @@
 // runs again as a new, uncharged attempt. The executor records these at startup, right after recovery.
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
-// the resume. A pause or stop signal is checked between stages; the stage in flight is ended by the
-// command layer's kills (step 13), which the stage records as `interrupted`.
+// the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
+// interrupted attempt's invocation, read from the fold's `interrupted` fact. A pause or stop signal is
+// checked between stages; the stage in flight is ended by the command layer's kills (step 13), which the
+// stage records as `interrupted`.
 //
 // Needs-user content is produced here, never written: the writer is step 13's.
 import { crashPoint } from '../core/crash.ts';
@@ -33,7 +35,7 @@ import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
-import { type RoundInput, candidateFixRound, gateReviseRound, laneFixRound } from './rounds.ts';
+import { type DecidedRound, type RoundInput, candidateFixRound, gateReviseRound, laneFixRound } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
   recordedCall, salvage, teardown,
@@ -107,7 +109,7 @@ function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
 }
 
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
-function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
+function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -143,6 +145,19 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
     default:
       throw new Error(`unit ${unit.id}: no fix round follows ${f.stage} ${f.outcome}`);
   }
+}
+
+/**
+ * The round the build after decision `f` runs: the decided round, or, when an attempt of it was interrupted
+ * since, the continue of that attempt's last invocation (a hold is only ever recorded from a call's result).
+ */
+function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
+  const of = decidedInput(ctx, unit, round, f);
+  const held = ctx.journal.view.unit(unit.id).interrupted;
+  if (held === null) return of;
+  const called = recordedCall(ctx, stageParent(held));
+  if (held.stage !== 'build' || called === null || called.kind !== 'result') throw new Error(`unit ${unit.id}: ${held.stage} attempt ${held.attempt} was interrupted before a build, or without a call result`);
+  return { kind: 'continue', of, interrupted: called.inv };
 }
 
 /** Runs the stage `target` names, from inputs read back from the journal. */

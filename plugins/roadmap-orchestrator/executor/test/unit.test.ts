@@ -2,7 +2,8 @@
 // real processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the
 // deterministic fixtures of this step (conflict → merge-in → resolve; red candidate → fix → fresh gate →
 // green) and the named tests ff.exact-head, snapshot.after-publish, unit.decisions-appended,
-// unit.reentrant, arc.serial-terminal, codex.resume-collision-retry.
+// unit.reentrant, arc.serial-terminal, codex.resume-collision-retry, continue.claude-session,
+// continue.codex-thread-chain, continue.no-session-fresh.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,16 +14,17 @@ import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { runArc } from '../src/pipeline/arc.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
-import { RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { killWorkload } from '../src/pipeline/invoke.ts';
+import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
 import { type UnitResult, runUnit } from '../src/pipeline/unit.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
+import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
 import {
   ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
@@ -337,6 +339,97 @@ test('arc.serial-terminal: units run in plan order; one merges, one parks with a
     assert.ok(again.kind === 'terminal');
     assert.deepEqual(again.units.map((s) => [s.unit, s.result.kind, s.result.kind === 'parked' && s.result.needsUser.reason]), [['u1', 'merged', false], ['u2', 'parked', 'escalation']]);
     assert.equal(readCalls(d.scenarioPath).length, calls);
+  } finally {
+    r.journal.close();
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// A paused build continues its session
+
+/** Runs u1 until a build parks at barrier `name`, then ends that build as the pause command does: the unit holds. */
+async function pauseAt(r: ArcRun, name: string): Promise<void> {
+  const running = runUnit(r.ctx, r.unit('u1'), live());
+  await reached(r.d.scenarioDir, name, 60_000);
+  const spawn = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
+  assert.ok(spawn !== undefined, 'the build invocation is open');
+  await killWorkload(r.ctx, { inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause' });
+  assert.deepEqual(await running, { kind: 'held', needsUser: null });
+}
+
+const barrier = (name: string) => ({ type: 'barrier', name, timeoutMs: 120_000 } as const);
+const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => c.argv.includes('--permission-mode') || c.as === 'codex');
+const flag = (argv: readonly string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
+/** The unit's edits reached integration as the paused session left them. */
+const mulMerged = (r: ArcRun): void => {
+  for (const [path, text] of Object.entries(MUL)) assert.equal(`${git(r.d.repo, 'show', `main:${path}`)}\n`, text, path);
+};
+
+test('continue.claude-session: a pause mid fresh build holds it; resume continues the same Claude session, told only to continue, in the worktree with its uncommitted edits', T, async () => {
+  const d = setupArc({
+    steps: [
+      planCheckStep({ decision: 'approve', risk: 'high' }),
+      { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'dirty', files: MUL }, barrier('b1')] },
+      { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--resume'], stdinContains: [CONTINUE_DIRECTIVE] }, acts: [{ type: 'emit', value: BUILD_REPORT }] },
+      gateStep({ decision: 'approve' }),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    await pauseAt(r, 'b1');
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    const [killed, continued] = implementerCalls(r);
+    assert.ok(killed !== undefined && continued !== undefined);
+    assert.equal(flag(continued.argv, '--resume'), flag(killed.argv, '--session-id'), 'the session the killed build was launched with');
+    assert.ok(!continued.stdin.includes(NO_SESSION_NOTE));
+    assert.equal(continued.cwd, unitWorktreePath(r));
+    mulMerged(r);
+    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('continue.codex-thread-chain: a Codex build paused after its thread started, then paused again while continued; each resume continues the thread read from the killed fresh exec\'s stdout', T, async () => {
+  const thread = '00000000-0000-4000-8000-0000000c0de1';
+  const d = setupArc({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { as: 'codex', threadId: thread, expect: { argv: ['exec', '-C'] }, acts: [{ type: 'threadStarted' }, { type: 'dirty', files: { 'src/mul.js': MUL['src/mul.js'] } }, barrier('b1')] },
+      { as: 'codex', expect: { argv: ['exec', 'resume', thread], stdinContains: [CONTINUE_DIRECTIVE] }, acts: [{ type: 'dirty', files: { 'test/mul.test.js': MUL['test/mul.test.js'] } }, barrier('b2')] },
+      codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [CONTINUE_DIRECTIVE] }),
+      gateStep({ decision: 'approve' }),
+    ] satisfies readonly Step[],
+  });
+  const r = contextFor(d);
+  try {
+    await pauseAt(r, 'b1');
+    await pauseAt(r, 'b2');
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    assert.equal(implementerCalls(r).length, 3);
+    mulMerged(r);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('continue.no-session-fresh: a Codex exec killed before its thread started has no session; the continue is a fresh session told so, and the worktree keeps its edits', T, async () => {
+  const d = setupArc({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      codexStep([{ type: 'dirty', files: MUL }, barrier('b1')], { argv: ['exec', '-C'] }),
+      codexStep([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }),
+      gateStep({ decision: 'approve' }),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    await pauseAt(r, 'b1');
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    mulMerged(r);
   } finally {
     r.journal.close();
   }
