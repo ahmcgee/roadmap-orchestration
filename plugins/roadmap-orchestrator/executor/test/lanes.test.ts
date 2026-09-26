@@ -10,9 +10,11 @@ import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { LANE_STALL_MS, type LaneRecord } from '../src/pipeline/lanes.ts';
+import { LANE_DEADLINE_MS, LANE_STALL_MS, type LaneRecord, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
-import { lanes } from '../src/pipeline/stages.ts';
+import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { DEV1_LANE_DEADLINE_MS } from '../src/core/upgrade.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
@@ -147,4 +149,21 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   assert.match(stalled.fix.directives[0]!, /^Lane suite hung: .* for 10 minutes/);
   const red = laneFixRound([lane('suite', 'fail')], [], salvage);
   assert.ok(red.kind === 'fix' && red.fix.directives.length === 0);
+});
+
+test('lanes.dev1-launch: a lane 1.0.0-dev.1 launched (no stallMs, 30-min deadline) reads back with its true start', T, async () => {
+  const run = laneRun([{ id: 'fast1', tier: 'fast', resources: [], argv: ['true'], env: { set: {}, pass: ['PATH'] } }]);
+  const done = await lanes(run.ctx, run.unit, run.base);
+  assert.equal(done.outcome.kind, 'green');
+  const [spawn] = laneSpawns(run);
+  assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
+  const parent = spawn.parent;
+  const launch = launchOf(run, spawn);
+  const start = new Date(launch.deadlineAt).getTime() - LANE_DEADLINE_MS;
+  // Rewrite the launch as 1.0.0-dev.1 wrote it: no stallMs, its deadline 30 min after the start.
+  const { stallMs: _, ...rest } = launch;
+  const path = join(invocationDir(run.runDir, invocationId(spawn.op, spawn.ordinal)), 'launch.json');
+  writeFileSync(path, JSON.stringify({ ...rest, deadlineAt: isoTimeOf(new Date(start + DEV1_LANE_DEADLINE_MS)) }));
+  const [record] = seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, parent));
+  assert.equal(record?.at, isoTimeOf(new Date(start)));
 });
