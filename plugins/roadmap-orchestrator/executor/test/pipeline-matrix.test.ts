@@ -39,8 +39,12 @@ import { MUL, codexStep, gateStep } from './fixtures/unit-common.ts';
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
 
-/** Supervised runs at once: each is a handful of short-lived processes, mostly waiting on 500 ms polls. */
-const CONCURRENCY = 10;
+/**
+ * Supervised runs at once: each is a handful of short-lived processes, often waiting on polls and the
+ * supervisor's backoff. At 10 the host sat at about two-thirds busy with the matrix alone; at 16 it is
+ * CPU-bound, alone and in the full suite, and the matrix is the suite's longest file.
+ */
+const CONCURRENCY = 16;
 const CELL = { timeout: 360_000 };
 const WAIT_MS = 120_000;
 
