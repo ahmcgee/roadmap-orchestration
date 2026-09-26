@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import type { CommandContext } from '../../src/commands/apply.ts';
 import type { OpenJournal } from '../../src/core/log.ts';
+import { absPath } from '../../src/core/values.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import { type ResRun, openRun } from './res-plan.ts';
 
@@ -19,6 +20,7 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; jou
     ctx: {
       ...ctx,
       hostEnv: { PATH: run.binDir, HOME: home },
+      planDir: absPath(run.repo),
       routing: { profile: 'default', resolved: resolveRouting({ profile: 'default', repoConfig: null, plan: null, unit: null }) },
     },
   };

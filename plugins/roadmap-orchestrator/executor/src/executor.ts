@@ -18,8 +18,9 @@
 //
 //     control commands (pause, stop, ack) → mutations (resume, sweep) at this safe point → needs-user due
 //     → stop marker: stop · a unit stop-pending: stop · everything settled and no open blocking needs-user:
-//     complete · a blocking needs-user that holds the arc, the arc or the next unit paused, the next unit
-//     held: wait (poll 1 s) · otherwise run the arc.
+//     complete · a blocking needs-user that holds the arc, the next unit held, or the next unit blocked
+//     (`dispatchBlock`: the arc or the unit paused, or a unit it runs `after` unsettled): wait (poll 1 s)
+//     · otherwise run the arc, which itself stops at the first blocked unit before dispatching it.
 //
 //   A blocking needs-user holds the arc only when it is arc-wide (a host or arc subject, or a reason in
 //   ARC_WIDE_REASONS) or concerns the next unit; a unit-scoped park lets later units run (lead ruling 14a).
@@ -70,7 +71,7 @@ import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor,
 import { type ArcResult, runArc } from './pipeline/arc.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from './pipeline/invoke.ts';
-import { consume, step } from './pipeline/unit.ts';
+import { consume, dispatchBlock, step } from './pipeline/unit.ts';
 import { runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
@@ -380,11 +381,8 @@ function waitReason(x: Exec, current: PlanUnit): string | null {
   const view = x.journal.view;
   const holding = blockingOpen(x).filter((id) => holdsArc(recordOf(x.stage.runDir, id), current.id));
   if (holding.length > 0) return `blocking needs-user ${holding.join(', ')}`;
-  const c = view.control();
-  if (c.pausedAll) return 'the arc is paused';
-  if (c.pausedUnits.includes(current.id)) return `unit ${current.id} is paused`;
   if (view.unit(current.id).status === 'held') return `unit ${current.id} is held`;
-  return null;
+  return dispatchBlock(view, current);
 }
 
 async function drive(x: Exec): Promise<ExitReason> {

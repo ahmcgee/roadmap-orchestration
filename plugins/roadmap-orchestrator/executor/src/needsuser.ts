@@ -14,10 +14,10 @@ import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
 import type { IntentOf, Parent } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
-import { type NeedsUserId, type Sha256Hex, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
+import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
 import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
-import { type NeedsUserAck, type NeedsUserRecord, needsUserAck, needsUserRecord, type NeedsUserContent } from './core/records.ts';
+import { type NeedsUserAck, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord, type NeedsUserContent } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 
@@ -113,4 +113,28 @@ export function readNeedsUser(runDir: AbsPath, id: NeedsUserId): NeedsUserRecord
 export function readNeedsUserAck(runDir: AbsPath, id: NeedsUserId): NeedsUserAck | null {
   const path = needsUserAckPath(runDir, id);
   return existsSync(path) ? needsUserAck(readJson(path), `${NEEDS_USER_DIR}/${id}.ack.json`) : null;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// What a park's recommendation says: exactly what `resume` does for it
+
+/**
+ * A unit parked at a judgment stage (plan-check or gate): `resume <unit>` re-opens it once its spec is at
+ * the next revision (commands/apply.ts), so that is what the item recommends.
+ */
+export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecRev): string {
+  return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, then run `
+    + `\`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
+    + 'session. Or acknowledge this item to leave the unit parked.';
+}
+
+/**
+ * A unit parked anywhere else: M1 does not re-open it (`resume <unit>` is rejected), so the item names the
+ * re-entry: a new unit id whose branch starts at the parked unit's tip.
+ */
+export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string): string {
+  return `Read the evidence. A park at ${stage} is final in M1: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
+    + `add a unit with a new id to the plan (its fixed spec, the same scope), create that unit's branch roadmap/<arc>/<new id> at the tip of `
+    + `${branch}, acknowledge this item, then \`roadmap stop\` and \`roadmap start\` with the revised plan. Or acknowledge this item to `
+    + 'leave the unit parked.';
 }

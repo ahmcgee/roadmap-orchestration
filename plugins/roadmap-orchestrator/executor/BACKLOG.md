@@ -58,3 +58,21 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - Decisions an interrupted or malformed attempt wrote to its own evidence dir are never appended: its
   evidence stage never runs. CONTINUE_DIRECTIVE asks the session to rewrite decisions.json complete in the
   new dir; the resume after a malformed report relies on the same rule in the build prompt.
+
+## Deferred from arc-1 feedback (2026-09-26)
+
+- Parks outside plan-check and gate (lost build, residue, red candidate, red base, failed salvage, blocked
+  lane) are not re-openable: `resume <unit>` rejects them and their needs-user names the re-entry under a new
+  unit id. Retryable parks are M2.
+- A reopen resets only the redirect bound. The gate's revise bound, the red-candidate bound, per-stage retries
+  and routed-up seats carry on, so a unit re-opened after a revise-bound park escalates at its next revise.
+  Reset them too if re-opened units keep parking on a carried-over count.
+- A spec edited while its unit is in flight (not parked) is not detected: later stages read the edited file
+  and the gate's fingerprint binds whatever rev is on disk. Only a reopen checks the architect's rev rule. A
+  per-stage check of the file against `UnitState.spec` would catch it.
+- A reopen does not re-pin routing: a unit re-opened under a changed routing table meets the pinned
+  `routingRev` check at its plan-check like any other dispatched unit.
+- `resume <unit>` of a unit that is both paused and parked clears the pause only; a second `resume` re-opens.
+- `run.state` shows `held` while the next unit waits on `after` for another unit's open needs-user, though
+  what it waits on is that item; `units[].status` (`held-after:<ids>`) names the units.
+- Shared-resource owner leases are a documented probe convention (SKILL.md), not executor code.

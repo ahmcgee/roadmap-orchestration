@@ -7,8 +7,10 @@
 // Rules the table encodes (test/transitions.test.ts pins them row by row):
 // - `chargeableFailures` grows only on design-class rows (`charge`, the plan's C). Deadline, cancel and
 //   process faults never charge. The third chargeable failure parks the unit, whatever its row says.
-// - Bounded rounds: plan-check redirect ≤ 1, gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
+// - Bounded rounds: plan-check redirect ≤ 2, gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
+//   The redirect bound counts only the redirects since the architect's latest spec revision (a reopen,
+//   `redirectsSinceEdit`): plan-check patches bump the rev too, but only a reopen resets the count.
 // - One uncharged retry at plan-check, build (a resume), lanes and gate, then park. Retries are counted per
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
@@ -26,7 +28,7 @@ import {
   JUDGMENT_STAGES,
 } from '../core/events.ts';
 import type { NeedsUserReason } from '../core/records.ts';
-import { CHARGEABLE_BOUND, type UnitCounters, type UnitState, afterStageOutcome } from '../core/state.ts';
+import { CHARGEABLE_BOUND, type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
 import type { RiskTier } from '../routing/types.ts';
 
 /** A seat is a role's risk tier in the routing table. */
@@ -63,7 +65,8 @@ export type Next =
 // ---------------------------------------------------------------------------------------------------
 // The table
 
-export const MAX_REDIRECTS = 1;
+/** Two, not one: arc 1's high-risk adopted units each found real defects in a second round (arc-1 feedback item 2). */
+export const MAX_REDIRECTS = 2;
 export const MAX_REVISE_ROUNDS = 2;
 export const MAX_CANDIDATE_REDS = 1;
 export const MAX_RETRIES = 1;
@@ -254,7 +257,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
     case 'go':
       return { class: rule.trigger ? 'trigger' : 'advance', chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
     case 'bounded': {
-      const taken = u.counters[ROUND_COUNTERS[rule.round]];
+      const taken = rule.round === 'redirect' ? redirectsSinceEdit(u) : u.counters[ROUND_COUNTERS[rule.round]];
       if (taken < rule.max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
       return apply(u, o, rule.then, `${why} beyond ${rule.max} ${rule.round} round${rule.max === 1 ? '' : 's'}`);
     }

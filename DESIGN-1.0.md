@@ -137,7 +137,7 @@ before next-stage dispatch and before merge publication. Prompt inputs are snaps
 | Command | What it does | Refuses |
 |---|---|---|
 | `start` / `status` / `ack <id>` | launch or recover / §2.4 / acknowledge a `needs-user` item | a live owner or undispositioned residue / — / unknown id |
-| `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth); `--backend` clears a `usage-limit` park after a passing smoke | discarding commits; pausing mid-ff; `--backend` when the smoke fails |
+| `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth); `--backend` clears a `usage-limit` park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has edited its spec to the next revision (the in-place stand-in for `patch-spec`), keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit whose spec is unedited, or parked at any other stage |
 | `run-only <ids>` | dispatch allowlist (arc 1's `dispatchOnly`, used W29–34) | ids outside the plan |
 | `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it), validated against old revisions, published together (§2.6); invalidates citing approvals | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match; stale base; an obligation effect from the checkpoint |
 | `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7) | merged units; stale revision; scope growth without a cited C-nn |

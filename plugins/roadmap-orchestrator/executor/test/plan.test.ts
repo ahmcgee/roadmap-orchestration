@@ -50,8 +50,19 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing']: unknown } 
 };
 
 describe('plan.json (M1)', () => {
-  it('a valid plan parses unchanged', () => {
-    assert.deepEqual(parsePlan(validPlan()), validPlan());
+  it('a valid plan parses unchanged, with `after` defaulting to none', () => {
+    const plan = validPlan();
+    assert.deepEqual(parsePlan(plan), { ...plan, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [] })) });
+  });
+
+  it('plan.after: a unit may run after units earlier in plan order; a later, unknown, own or repeated id is refused, naming it', () => {
+    const u = (id: string, after?: readonly string[]) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: ['src/**'], resources: [], ...(after === undefined ? {} : { after }) });
+    const plan = (...units: object[]) => ({ ...validPlan(), units });
+    assert.deepEqual(parsePlan(plan(u('a'), u('b', ['a']), u('c', ['a', 'b']))).units.map((x) => x.after), [[], ['a'], ['a', 'b']]);
+    rejects(plan(u('a', ['b']), u('b')), 'plan.units[0].after[0]');
+    rejects(plan(u('a'), u('b', ['nope'])), 'plan.units[1].after[0]');
+    rejects(plan(u('a'), u('b', ['b'])), 'plan.units[1].after[0]');
+    rejects(plan(u('a'), u('b', ['a', 'a'])), 'plan.units[1].after[1]');
   });
 
   it('routing is optional and, when present, parses as a layer', () => {

@@ -11,7 +11,7 @@ import { specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
 import { repoPattern } from '../src/core/values.ts';
 import { type Next, type StageOutcome, TABLE, decidedBy, outcomeFact, transition } from '../src/pipeline/transitions.ts';
-import { ARC, AT, REV, U1, chain } from './fixtures/log-records.ts';
+import { ARC, AT, H, REV, U1, chain } from './fixtures/log-records.ts';
 
 type Counter = Exclude<keyof UnitCounters, 'retries' | 'attempts'> | `retries.${RetryStage}`;
 type Given = Readonly<{
@@ -19,6 +19,7 @@ type Given = Readonly<{
   routedUp?: UnitState['routedUp'];
   promotion?: boolean;
   risk?: UnitState['risk'];
+  redirectBase?: number;
 }>;
 
 /** A unit at risk `med` with nothing counted, patched by `g`. */
@@ -29,7 +30,7 @@ function unit(g: Given = {}): UnitState {
     if (name.startsWith('retries.')) c.retries[name.slice('retries.'.length) as RetryStage] = n;
     else c[name as Exclude<Counter, `retries.${RetryStage}`>] = n;
   }
-  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false };
+  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false, redirectBase: g.redirectBase ?? 0 };
 }
 
 const outcome = <S extends OutcomeStage>(stage: S, kind: StageOutcomeKind<S>): StageOutcome => ({ stage, kind }) as StageOutcome;
@@ -71,8 +72,12 @@ const ROWS: readonly Row[] = [
   // plan-check (fresh judgment)
   ['plan-check', 'approve', {}, 'build/fresh@med', 'advance', {}],
   ['plan-check', 'redirect', {}, 'plan-check@med', 'redirect', { redirects: 1 }],
-  ['plan-check', 'redirect', { counters: { redirects: 1 } }, 'plan-check@high', 'route-up', {}],
-  ['plan-check', 'redirect', { counters: { redirects: 1 }, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
+  ['plan-check', 'redirect', { counters: { redirects: 1 } }, 'plan-check@med', 'redirect', { redirects: 1 }],
+  ['plan-check', 'redirect', { counters: { redirects: 2 } }, 'plan-check@high', 'route-up', {}],
+  ['plan-check', 'redirect', { counters: { redirects: 2 }, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
+  // The bound counts redirects since the latest reopen (the architect's spec edit), not over the unit.
+  ['plan-check', 'redirect', { counters: { redirects: 3 }, redirectBase: 2, routedUp: ['plan-check'] }, 'plan-check@high', 'redirect', { redirects: 1 }],
+  ['plan-check', 'redirect', { counters: { redirects: 4 }, redirectBase: 2, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
   ['plan-check', 'infeasible', {}, 'plan-check@high', 'route-up', {}],
   ['plan-check', 'infeasible', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
   ['plan-check', 'escalate', {}, 'plan-check@high', 'route-up', {}],
@@ -303,7 +308,7 @@ type Driven = Readonly<{ nexts: readonly Next[]; facts: readonly ReturnType<type
  */
 function drive(outcomes: readonly StageOutcome[]): Driven {
   const records: LogRecord[] = [{
-    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, at: AT } },
+    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, at: AT } },
   }];
   const attempts = new Map<OutcomeStage, number>();
   const nexts: Next[] = [];

@@ -7,11 +7,14 @@
 // (`start.json`) under every built-in profile, and a revision none of them yields is listed as unresolved.
 //
 // `run.state` (§2.10, M1 subset):
-//   running    a live executor owns the run and nothing below holds it
+//   running    a live executor owns the run and nothing below holds it: a stage is in flight (an open
+//              stage-parented intent), or the unit that runs next may start
 //   parked     a live executor waits on a blocking needs-user nobody has acknowledged that holds the arc: an
 //              arc-wide one, or one naming the unit that runs next, or any once no unit is left to run (the
 //              executor's own rule, `holdsArc`); a unit-scoped park while later units run is `running`
-//   held       a live executor waits on a pause, a held unit or a parked backend
+//   held       a live executor can start nothing: the unit that runs next is held (an interrupted stage, a
+//              parked backend) or blocked (`dispatchBlock`: a pause, an unsettled `after`). A pause of some
+//              other unit does not make the run held while this one proceeds
 //   refused    no live executor, and the latest start was refused (`rejection` says why)
 //   complete   no live executor; every unit merged or parked, and no blocking needs-user open
 //   no-owner   no live executor, and work remains
@@ -34,11 +37,12 @@ import type { AbsPath, IsoTime } from './core/values.ts';
 import {
   HEARTBEAT_FILE, REJECTION_FILE, START_FILE, fileNeedsUser, holdsArc, nextUnit, openBlockingItems, recordOf,
 } from './executor.ts';
-import { type PlanM1, parsePlan } from './input/plan.ts';
+import { type PlanM1, type PlanUnit, parsePlan } from './input/plan.ts';
 import { type ModelTotal, type RoleTotal, byModel, meterOf } from './meter.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
+import { dispatchBlock, heldAfter } from './pipeline/unit.ts';
 import { resolveRouting } from './routing/layers.ts';
 import { type Backend, PROFILES, type RiskTier, type Role, type RoutingTable } from './routing/types.ts';
 import { type OwnerState, ownerState } from './watch.ts';
@@ -58,6 +62,7 @@ export const SESSION_GUARANTEE = 'Every process that keeps ROADMAP_INV in its ex
 export type UnitStatusLine = Readonly<{
   unit: UnitId;
   stage: Stage;
+  /** The fold's `UnitStatus`, or `held-after:<ids>` for an active unit its `after` units still hold. */
   status: string;
   attempts: number;
   chargeableFailures: number;
@@ -126,15 +131,17 @@ function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | nul
   }));
 }
 
-function stateOf(runDir: AbsPath, view: JournalView, units: readonly UnitId[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
+function stateOf(runDir: AbsPath, view: JournalView, planUnits: readonly PlanUnit[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
+  const units = planUnits.map((u) => u.id);
   const open = openBlockingItems(runDir, view);
   const blocking = open.length > 0;
   if (owner.state === 'alive') {
     const next = nextUnit(units, view);
     if (open.some((id) => holdsArc(recordOf(runDir, id), next))) return 'parked';
-    const c = view.control();
-    const held = c.pausedAll || c.pausedUnits.length > 0 || view.parkedBackends().length > 0 || units.some((u) => view.unit(u).status === 'held');
-    return held ? 'held' : 'running';
+    if (view.openIntents().some((i) => i.parent.type === 'stage')) return 'running';
+    const unit = planUnits.find((u) => u.id === next);
+    if (unit === undefined) return 'running';
+    return view.unit(unit.id).status === 'held' || dispatchBlock(view, unit) !== null ? 'held' : 'running';
   }
   if (rejection !== null) return 'refused';
   const settled = units.length > 0 && units.every((u) => ['retired', 'park-pending'].includes(view.unit(u).status));
@@ -145,7 +152,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const { view, events } = readJournal(runDir, arc);
   const record = readIf(join(runDir, START_FILE), runStart);
   const start = record === null ? null : { record, plan: parsePlan(JSON.parse(readFileSync(record.planFile, 'utf8'))) };
-  const units = start?.plan.units.map((u) => u.id) ?? [];
+  const planUnits = start?.plan.units ?? [];
   const rejection = readIf(join(runDir, REJECTION_FILE), rejectionFile);
   const owner = ownerState(runDir, hostDir);
 
@@ -156,10 +163,14 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
 
   return {
     arc,
-    run: { state: stateOf(runDir, view, units, owner, rejection), owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: units.map((id) => {
-      const u = view.unit(id);
-      return { unit: id, stage: u.stage, status: u.status, attempts: u.counters.attempts, chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, id) };
+    run: { state: stateOf(runDir, view, planUnits, owner, rejection), owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
+    units: planUnits.map((unit) => {
+      const u = view.unit(unit.id);
+      const after = u.status === 'active' ? heldAfter(view, unit) : [];
+      return {
+        unit: unit.id, stage: u.stage, status: after.length > 0 ? `held-after:${after.join(',')}` : u.status, attempts: u.counters.attempts,
+        chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, unit.id),
+      };
     }),
     needsUser: [
       ...view.needsUser().filter((n) => n.ack === null).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),

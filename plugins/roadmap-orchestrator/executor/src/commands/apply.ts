@@ -16,6 +16,11 @@
 //   resume   unit | all: a `resumed` fact that clears the pause and the hold (the unit re-runs its stage
 //            as a new, uncharged attempt). backend: that backend's smoke alone, then `resumed{backend}`,
 //            which clears its arc-wide park; a failed smoke is rejected. Mutation (safe points only).
+//            `resume <unit>` of a unit parked at a judgment stage (plan-check or gate) re-opens it once the
+//            architect has edited its spec (`reopen`): the file must be at the unit's recorded spec rev + 1
+//            (SCHEMAS.md "Architect spec edits"); the park's open needs-user is acknowledged by this
+//            command, then a `reopened` fact sends the unit back to plan-check as a new attempt. An
+//            unedited spec, or any other parked, stopped or merged unit, is rejected with the reason.
 //   sweep    re-drives resources an earlier sweep left reserved or cleaning, then, per undispositioned
 //            host residue (in recorded order): take the resource under the sweep holder (reserve when it is
 //            free here; reclaim when it is this arc's own cleanup-failed resource) → the recorded teardown →
@@ -30,12 +35,17 @@ import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusiveCreate } from '../core/fsx.ts';
-import { type CommandId, type ResourceName, invocationId, opKey } from '../core/ids.ts';
-import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey } from '../core/records.ts';
-import { isoTimeOf } from '../core/values.ts';
+import { JUDGMENT_STAGES } from '../core/events.ts';
+import { type CommandId, type NeedsUserId, type ResourceName, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, Stage } from '../core/records.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import { needsUserAckPath, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
+import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
+import { decidedBy } from '../pipeline/transitions.ts';
+import { SpecFileError } from '../spec/spec.ts';
 import { type SmokeRouting, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
 import {
@@ -49,6 +59,8 @@ export type CommandContext = ResourceContext & Readonly<{
   /** The backend workload environment (`backendEnv(process.env)`), for `resume --backend`'s smoke. */
   hostEnv: Readonly<Record<string, string>>;
   routing: SmokeRouting;
+  /** The plan file's directory: unit spec paths are relative to it (a reopen reads the edited spec). */
+  planDir: AbsPath;
 }>;
 
 export type CommandOutcome = OpOutcome['command.apply'];
@@ -146,19 +158,76 @@ function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { ty
   const view = ctx.journal.view;
   const item = readNeedsUser(ctx.runDir, body.needsUser);
   if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
-  const file = readNeedsUserAck(ctx.runDir, body.needsUser);
-  const fact = view.ackOf(body.needsUser);
-  const by = file?.command ?? fact?.command ?? null;
+  const by = ackedBy(ctx, body.needsUser);
   if (by !== null && by !== id) return { kind: 'rejected', reason: `needs-user ${body.needsUser} is already acknowledged by ${by}` };
   if (body.choice !== null && !item.options.some((o) => o.id === body.choice)) {
     return { kind: 'rejected', reason: `needs-user ${body.needsUser} offers no option ${body.choice} (options: ${item.options.map((o) => o.id).join(', ') || 'none'})` };
   }
-  if (file === null) {
-    const record: NeedsUserAck = { v: SCHEMA_VERSION, id: body.needsUser, command: id, choice: body.choice, at: isoTimeOf(new Date()) };
-    exclusiveCreate(needsUserAckPath(ctx.runDir, body.needsUser), canonicalJson(record));
+  return { kind: 'applied', verified: acknowledge(ctx, id, body.needsUser, body.choice) };
+}
+
+/** The command that acknowledged `item` (its ack file or its fact), or null. */
+function ackedBy(ctx: CommandContext, item: NeedsUserId): CommandId | null {
+  return readNeedsUserAck(ctx.runDir, item)?.command ?? ctx.journal.view.ackOf(item)?.command ?? null;
+}
+
+/** The ack's effect, only what is missing: `<id>.ack.json` naming `id`, then the `needs-user-acked` fact. */
+function acknowledge(ctx: CommandContext, id: CommandId, item: NeedsUserId, choice: string | null): readonly string[] {
+  if (readNeedsUserAck(ctx.runDir, item) === null) {
+    const record: NeedsUserAck = { v: SCHEMA_VERSION, id: item, command: id, choice, at: isoTimeOf(new Date()) };
+    exclusiveCreate(needsUserAckPath(ctx.runDir, item), canonicalJson(record));
   }
-  if (fact === null) ctx.journal.fact({ kind: 'needs-user-acked', id: body.needsUser, command: id, choice: body.choice });
-  return { kind: 'applied', verified: [`needs-user/${body.needsUser}.ack.json written by ${id}`, `needs-user ${body.needsUser} acknowledged in the log`] };
+  if (ctx.journal.view.ackOf(item) === null) ctx.journal.fact({ kind: 'needs-user-acked', id: item, command: id, choice });
+  return [`needs-user/${item}.ack.json written by ${id}`, `needs-user ${item} acknowledged in the log`];
+}
+
+/**
+ * `resume <unit>` of a parked unit: re-opened when it parked at a judgment stage and the architect has
+ * edited its spec to the next revision; otherwise rejected, saying what would work.
+ */
+function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
+  const view = ctx.journal.view;
+  const u = view.unit(unitId);
+  const f = u.decided;
+  const unit = ctx.plan.units.find((p) => p.id === unitId);
+  if (f === null || unit === undefined) throw new Error(`reopen of ${unitId}: a parked unit without its decided outcome or plan unit`);
+  const decided = decidedBy(f);
+  const reason = decided.kind === 'park' ? decided.reason : f.outcome;
+  const judgment = (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage);
+  if (!judgment) {
+    return {
+      kind: 'rejected',
+      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, which is not re-openable in M1; re-enter it under a new unit id with a branch at the same tip`,
+    };
+  }
+  let loaded;
+  try {
+    loaded = loadUnitSpec(ctx, unit);
+  } catch (error) {
+    if (error instanceof SchemaError || error instanceof SpecFileError) return { kind: 'rejected', reason: `unit ${unitId}: its spec does not load: ${error.message}` };
+    throw error;
+  }
+  const { spec, sha256, path } = loaded;
+  const known = u.spec;
+  if (known === null) throw new Error(`reopen of ${unitId}: parked at ${f.stage} without a recorded spec (no dispatch fact)`);
+  if (spec.rev === known.rev && sha256 === known.sha256) {
+    return { kind: 'rejected', reason: `unit ${unitId} is parked (${reason}); edit its spec ${path} (rev ${known.rev}), set rev ${known.rev + 1}, then resume` };
+  }
+  if (spec.rev === known.rev) {
+    return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} changed but is still at rev ${known.rev}; an architect edit sets rev ${known.rev + 1}` };
+  }
+  if (spec.rev !== known.rev + 1) {
+    return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} is at rev ${spec.rev}, but the unit's recorded rev is ${known.rev}; an architect edit sets rev ${known.rev + 1}` };
+  }
+  const verified: string[] = [];
+  const item = raisedFor(view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
+  if (item !== null) {
+    const by = ackedBy(ctx, item);
+    if (by === null || by === id) verified.push(...acknowledge(ctx, id, item, null));
+  }
+  ctx.journal.fact({ kind: 'reopened', unit: unitId, command: id, specRev: spec.rev, specSha256: sha256 });
+  verified.push(`unit ${unitId} re-opened at plan-check on spec rev ${spec.rev}`);
+  return { kind: 'applied', verified };
 }
 
 async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
@@ -167,8 +236,14 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
     case 'unit': {
       if (!ctx.plan.units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
       if (view.control().pausedAll) return { kind: 'rejected', reason: 'the whole arc is paused; `resume` without a unit clears it' };
-      const done = !view.control().pausedUnits.includes(target.unit) && view.unit(target.unit).status !== 'held';
-      if (!done) ctx.journal.fact({ kind: 'resumed', command: id, target });
+      const u = view.unit(target.unit);
+      // Run again after a crash past the reopen: its fact is the postcondition.
+      if (u.reopened?.command === id) return { kind: 'applied', verified: [`unit ${target.unit} re-opened at plan-check on spec rev ${u.reopened.specRev}`] };
+      const paused = view.control().pausedUnits.includes(target.unit);
+      if (!paused && u.status === 'park-pending') return reopen(ctx, id, target.unit);
+      if (!paused && u.status === 'stop-pending') return { kind: 'rejected', reason: `unit ${target.unit} stopped the arc; resume does not undo a stop` };
+      if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
+      if (paused || u.status === 'held') ctx.journal.fact({ kind: 'resumed', command: id, target });
       return { kind: 'applied', verified: [`unit ${target.unit} neither paused nor held`] };
     }
     case 'all': {

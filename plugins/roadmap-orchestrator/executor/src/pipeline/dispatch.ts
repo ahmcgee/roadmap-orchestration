@@ -23,8 +23,9 @@ import {
   BACKEND_PARK_CLASSES, type BackendParkClass, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type ArcId, type InvocationId, type RoutingRev, type SpecRev, type UnitId, opKey } from '../core/ids.ts';
+import { type ArcId, type InvocationId, type RoutingRev, type UnitId, opKey } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
+import type { SpecState } from '../core/state.ts';
 import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
 import {
   type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
@@ -68,16 +69,16 @@ const now = (): IsoTime => isoTimeOf(new Date());
 
 /**
  * The unit's dispatch record: the latest `dispatch` fact, or the first one, recorded now from the plan
- * (scope envelope and Phase-0 risk floor) and the spec revision being dispatched.
+ * (scope envelope and Phase-0 risk floor) and the spec revision being dispatched (its rev and file hash).
  */
-export function pinDispatch(ctx: StageContext, unit: PlanUnit, specRev: SpecRev): DispatchRecord {
+export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState): DispatchRecord {
   const current = ctx.journal.view.dispatchOf(unit.id);
   if (current !== null) {
     if (current.routingRev !== ctx.routing.rev) throw new RoutingChangedError(unit.id, current.routingRev, ctx.routing.rev);
     return current;
   }
   const record: DispatchRecord = {
-    unit: unit.id, specRev, scope: [...unit.scope].sort(), riskFloor: unit.risk, routingRev: ctx.routing.rev, at: now(),
+    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor: unit.risk, routingRev: ctx.routing.rev, at: now(),
   };
   ctx.journal.fact({ kind: 'dispatch', record });
   return record;
@@ -92,10 +93,10 @@ export function dispatchOf(view: JournalView, unit: UnitId): DispatchRecord {
 
 export const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.indexOf(a) > RISK_TIERS.indexOf(b);
 
-/** A plan-check raised the risk: re-pin with the same scope and the higher floor (a new dispatch fact). */
-export function raiseRisk(journal: Journal, record: DispatchRecord, risk: RiskTier, specRev: SpecRev): DispatchRecord {
+/** A plan-check raised the risk: re-pin with the same scope and the higher floor (a new dispatch fact) at the spec it read. */
+export function raiseRisk(journal: Journal, record: DispatchRecord, risk: RiskTier, spec: SpecState): DispatchRecord {
   if (!riskAbove(risk, record.riskFloor)) throw new Error(`raiseRisk: ${risk} is not above the floor ${record.riskFloor} of ${record.unit}`);
-  const next: DispatchRecord = { ...record, specRev, riskFloor: risk, at: now() };
+  const next: DispatchRecord = { ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, at: now() };
   journal.fact({ kind: 'dispatch', record: next });
   return next;
 }

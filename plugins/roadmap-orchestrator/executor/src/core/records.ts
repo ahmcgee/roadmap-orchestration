@@ -3,9 +3,10 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type Sha, type SpecRev,
-  type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf, judgmentSessionId,
-  laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, sha, specRev, unitId,
+  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type Sha, type Sha256Hex,
+  type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf, judgmentSessionId,
+  laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, sha, sha256, specRev,
+  unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -422,10 +423,14 @@ export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => ({
   rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
 }));
 
-/** Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`. */
+/**
+ * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
+ * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
+ */
 export type DispatchRecord = Readonly<{
   unit: UnitId;
   specRev: SpecRev;
+  specSha256: Sha256Hex;
   scope: readonly RepoPattern[];
   riskFloor: RiskTier;
   routingRev: RoutingRev;
@@ -435,6 +440,7 @@ export type DispatchRecord = Readonly<{
 export const dispatchRecord: Read<DispatchRecord> = object((f) => ({
   unit: f.get('unit', unit),
   specRev: f.get('specRev', (v, p) => specRev(v, p)),
+  specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
   scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
   riskFloor: f.get('riskFloor', riskTier),
   routingRev: f.get('routingRev', rev),

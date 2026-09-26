@@ -303,6 +303,12 @@ export type Fact =
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
   /**
+   * `resume <unit>` re-opened a unit parked at a judgment stage after the architect edited its spec: the
+   * file is at `specRev` (the unit's recorded spec rev + 1) with bytes hashing to `specSha256`. The unit
+   * re-enters at plan-check as a new attempt; its counters are kept, and the redirect bound counts from here.
+   */
+  | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId; specRev: SpecRev; specSha256: Sha256Hex }>
+  /**
    * An executor started under host generation `generation` (step 13b), written at every start once the
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
    * persist until a `resume`.
@@ -610,6 +616,10 @@ export const fact: Read<Fact> = tagged('kind', {
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
+  reopened: object((f): Fact => ({
+    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', cmdR), specRev: f.get('specRev', specRevR),
+    specSha256: f.get('specSha256', sha256R),
+  })),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),

@@ -103,7 +103,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'containment-mode', mode: 'session' },
   { kind: 'meter', inv, role: 'gate', tier: 'high', routingRev: rev, unit: { unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null } },
   { kind: 'usage-unavailable', inv, role: 'build', tier: 'low', routingRev: rev, unit: null, reason: 'no-result' },
-  { kind: 'dispatch', record: { unit, specRev: specRev(1), scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, at } },
+  { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, at } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
   { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
