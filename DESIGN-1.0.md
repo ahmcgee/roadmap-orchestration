@@ -1,7 +1,7 @@
 # roadmap-orchestrator 1.0 — design brief (draft for audit)
 
-Status: draft 6, 2026-09-25. Distilled from 0.20.0, `orchestrator-observations.md`, RATIONALE §1–25, DESIGN.md,
-PROMPT.md, the Codex-native sibling skill, and arc 1's full `.roadmap/` record (`calibration-0.20.0.md` §3.1–3.23,
+Status: draft 6, 2026-09-25. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
+all since removed from the tree), `orchestrator-observations.md`, and arc 1's full `.roadmap/` record (`calibration-0.20.0.md` §3.1–3.23,
 `skill-feedback-0.16.0.md`, the wave 33–38 audits, the architect log, the hand-written boundary patches);
 citations will be folded into RATIONALE 1.0. Draft 3 incorporated the adjudicated cross-model review (gpt-6-astra,
 29 findings, all accepted, 11 narrowed) and two owner rulings: no spend cap (review item 6 withdrawn), and the

@@ -21,7 +21,7 @@ milestone M1 (one serial unit).
 - A holistic layer (obligations, cadence audits, a checkpoint that steers) that keeps the run converging on the
   target rather than on the original plan.
 
-The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). `DESIGN.md` and `PROMPT.md` are the 0.x record.
+The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). The 0.x design record is in git history at tag `v0.20.0`.
 
 ## Install
 
@@ -45,9 +45,8 @@ For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 plugins/roadmap-orchestrator/
   .claude-plugin/plugin.json
   executor/                         # the 1.0 executor (TypeScript on Node 24)
-  skills/orchestrate/               # SKILL.md (M1 stub); RATIONALE.md, reference.md are 0.x history
+  skills/orchestrate/               # SKILL.md (M1 stub), RATIONALE-1.0.md, templates/
 DESIGN-1.0.md                       # binding 1.0 design brief
-DESIGN.md, PROMPT.md                # 0.x design record
 ```
 
 ## Development

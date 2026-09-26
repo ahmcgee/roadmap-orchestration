@@ -10,7 +10,7 @@ inside the skill address agents running an arc with it; they do not bind you her
   erasable syntax only (no enums, namespaces or parameter properties).
 - The binding design brief is `DESIGN-1.0.md`. The M1 plan's frozen schemas and contracts live in
   `executor/SCHEMAS.md`.
-- `DESIGN.md`, `RATIONALE.md`, `reference.md` and `PROMPT.md` are 0.x history and do not bind. 0.20.0 remains
+- The 0.x design record (`DESIGN.md`, `PROMPT.md`, `RATIONALE.md`, `reference.md`) lives only in git history at tag `v0.20.0` and does not bind. 0.20.0 remains
   on `main` and tag `v0.20.0`.
 
 ## Eval ladder
