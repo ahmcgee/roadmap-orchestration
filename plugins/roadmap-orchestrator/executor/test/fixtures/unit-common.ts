@@ -10,7 +10,7 @@ import { sessionContainment } from '../../src/contain/session.ts';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
 import { type UnitId, arcId, unitId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
+import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
@@ -20,7 +20,7 @@ import { resolveRouting } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
-import { arcFor, events } from './invoke-specs.ts';
+import { arcFor } from './invoke-specs.ts';
 import { BUILD_REPORT, type LaneJson } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
@@ -185,7 +185,10 @@ export async function stepUntil(r: ArcRun, id: string, until: (f: StageOutcomeFa
   throw new Error(`unit ${id}: the condition did not hold within 60 steps`);
 }
 
-/** `stage:outcome` of every stage-outcome fact of `unit`, in log order. */
+/**
+ * `stage:outcome` of every stage-outcome fact of `unit`, in log order. Read as `status` reads the log
+ * (`readJournal`), because executor tests poll this while the executor is appending.
+ */
 export function outcomes(d: ArcDescriptor, unit = 'u1'): readonly string[] {
-  return events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
 }

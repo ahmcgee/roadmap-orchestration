@@ -6,7 +6,8 @@
 // Lines follow the event log's rules: canonical JSON chained by the sha256 of the previous line's bytes
 // (`parseChainLine`, `prevHash` from events.ts), appended with a full write and fsync. The tail rule is
 // the log's: after verifying the valid prefix, only a terminal suffix without `\n` may be discarded. It
-// is saved durably as `residues.torn.<offset>.<sha8>` and truncated away. The index has no fact record,
+// is saved durably as `residues.torn.<offset>.<sha8>` and truncated away, by a host-lock holder only; the
+// pre-claim startup check reads read-only and leaves such a suffix alone. The index has no fact record,
 // so the saved fragment file itself is the record of the discard. Any invalid complete line refuses
 // (LogCorruptError, reported as `log-corrupt`).
 //
@@ -74,8 +75,15 @@ function bodyOf(line: ResidueLine): ResidueRecord {
 
 const parseResidueLine = (text: string): ResidueLine => parseChainLine(text, residueRecord, 'residue');
 
-/** Verifies the index, applies the tail rule, and returns the fold. An absent file is an empty index. */
-function load(dir: AbsPath): ResidueFold {
+/**
+ * Verifies the index and returns the fold. An absent file is an empty index. `owner` (a caller holding the
+ * host lock, about to append or acting on the index) applies the tail rule. `read-only` (a reader that may
+ * run beside a live executor, such as the startup check before the host claim) treats a terminal suffix
+ * without `\n` as an append in flight: not yet written, left out, never saved or truncated. The file is
+ * read once, so a line completing during the read is wholly in or wholly out. Both refuse an invalid
+ * complete line.
+ */
+function load(dir: AbsPath, mode: 'owner' | 'read-only'): ResidueFold {
   const path = hostPath(dir, RESIDUES);
   const fold = new ResidueFold();
   if (!existsSync(path)) return fold;
@@ -94,7 +102,7 @@ function load(dir: AbsPath): ResidueFold {
     }
     start = nl + 1;
   }
-  if (start < bytes.length) discardTail(dir, path, bytes.subarray(start), start);
+  if (mode === 'owner' && start < bytes.length) discardTail(dir, path, bytes.subarray(start), start);
   return fold;
 }
 
@@ -112,7 +120,7 @@ function discardTail(dir: AbsPath, path: AbsPath, fragment: Buffer, offset: numb
 
 /** Every line of the index, after verification and the tail rule. */
 export function readResidues(dir: AbsPath): readonly ResidueLine[] {
-  return load(dir).lines;
+  return load(dir, 'owner').lines;
 }
 
 function append(dir: AbsPath, fold: ResidueFold, record: ResidueRecord): void {
@@ -137,7 +145,7 @@ function append(dir: AbsPath, fold: ResidueFold, record: ResidueRecord): void {
  * Returns once the line is durable. Idempotent, so a reconciler may re-run it after a crash.
  */
 export function recordResidue(dir: AbsPath, residue: ResidueEntry): 'appended' | 'present' {
-  const fold = load(dir);
+  const fold = load(dir, 'owner');
   const existing = fold.residues.get(keyOf(residue.key));
   if (existing !== undefined) {
     if (canonicalJson(existing) !== canonicalJson(residue)) {
@@ -151,7 +159,7 @@ export function recordResidue(dir: AbsPath, residue: ResidueEntry): 'appended' |
 
 /** Appends a disposition; the same disposition again is a no-op, a different one throws. */
 export function recordDisposition(dir: AbsPath, disposition: DispositionEntry): 'appended' | 'present' {
-  const fold = load(dir);
+  const fold = load(dir, 'owner');
   const existing = fold.dispositions.get(keyOf(disposition.key));
   if (existing !== undefined) {
     if (canonicalJson(existing) !== canonicalJson(disposition)) {
@@ -163,17 +171,22 @@ export function recordDisposition(dir: AbsPath, disposition: DispositionEntry): 
   return 'appended';
 }
 
-/** Residues neither `cleaned` nor `isolated | transferred`, in the order they were recorded. */
+const openKeys = (fold: ResidueFold): readonly ResidueKey[] =>
+  [...fold.residues.entries()].filter(([k]) => !fold.dispositions.has(k)).map(([, r]) => r.key);
+
+/** Residues neither `cleaned` nor `isolated | transferred`, in the order they were recorded. Host-lock holders only. */
 export function undispositioned(dir: AbsPath): readonly ResidueKey[] {
-  const fold = load(dir);
-  return [...fold.residues.entries()].filter(([k]) => !fold.dispositions.has(k)).map(([, r]) => r.key);
+  return openKeys(load(dir, 'owner'));
 }
 
-/** Startup row `undispositioned-residue`: any undisposed residue on this host refuses the start. */
+/**
+ * Startup row `undispositioned-residue`: any undisposed residue on this host refuses the start. It runs
+ * before the host claim, beside whatever executor may own the host, so it reads the index read-only.
+ */
 export const undispositionedResidueCheck: StartupCheck<'undispositioned-residue'> = {
   kind: 'undispositioned-residue',
   check: async (context) => {
-    const residues = undispositioned(context.hostDir);
+    const residues = openKeys(load(context.hostDir, 'read-only'));
     return residues.length === 0 ? [] : [{ kind: 'undispositioned-residue', residues }];
   },
 };

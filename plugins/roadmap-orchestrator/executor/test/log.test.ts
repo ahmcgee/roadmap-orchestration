@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { type Event, type LogRecord, parseEventLine } from '../src/core/events.ts';
 import { commandId, opKey, sha256 } from '../src/core/ids.ts';
 import type { IntentBody } from '../src/core/interfaces.ts';
-import { EVENTS_FILE, LogCorruptError, type OpenJournal, STATE_FILE, fragmentName, openJournal } from '../src/core/log.ts';
+import { EVENTS_FILE, LogCorruptError, type OpenJournal, STATE_FILE, fragmentName, openJournal, readJournal } from '../src/core/log.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { absPath } from '../src/core/values.ts';
@@ -301,6 +302,64 @@ describe('journal open', () => {
     const cpuMs = (user + system) / 1000;
     t.diagnostic(`open of ${bytesLength(dir)} bytes took ${Math.round(cpuMs)} ms CPU (${Math.round(wall)} ms wall)`);
     assert.ok(cpuMs < 10_000, `open used ${Math.round(cpuMs)} ms of CPU time (bound 10000 ms: about 1800 ms idle, 5400 ms on a host loaded to twice its CPU count; more means the open no longer scales linearly)`);
+  });
+});
+
+describe('journal read-only', () => {
+  it('log.readonly-tolerates-inflight-append', async (t) => {
+    const dir = tmpDir('log');
+    open(dir).close();
+    const appendMs = 4_000;
+    const readMs = 3_000;
+    const child = runFixture('log-child.ts', ['append-for', dir, ARC, String(appendMs)], { env: childEnv(undefined), timeoutMs: CHILD_TIMEOUT_MS });
+    // What each read returned: its high-water mark and its last event, checked against the final log below.
+    const seen: { highWater: number; last: Event | undefined }[] = [];
+    let inFlight = 0;
+    const until = Date.now() + readMs;
+    while (Date.now() < until) {
+      const { view, events: got } = readJournal(absPath(dir), ARC);
+      got.forEach((e, i) => assert.equal(e.seq, i + 1, 'a snapshot is contiguous from seq 1'));
+      assert.equal(view.highWater(), got.length);
+      assert.ok(view.highWater() >= (seen.at(-1)?.highWater ?? 0), 'the folded seq never decreases');
+      seen.push({ highWater: view.highWater(), last: got.at(-1) });
+      if (!readLog(dir).toString('latin1').endsWith('\n')) inFlight++;
+      await yieldToLoop();
+    }
+    const exit = await child;
+    assert.equal(exit.code, 0, exit.stderr);
+    assert.deepEqual(fragments(dir), [], 'a read-only reader saves no fragment');
+    const final = events(dir);
+    for (const { highWater, last } of seen) assert.deepEqual(last, final[highWater - 1], `the snapshot at seq ${highWater} is a prefix of the final log`);
+    t.diagnostic(`${seen.length} reads, up to seq ${seen.at(-1)?.highWater}; ${inFlight} separate raw reads found an append in flight; final seq ${final.length}`);
+    assert.ok(seen.at(-1)!.highWater > 0, 'the reads saw the child append');
+    assert.ok(inFlight > 0, 'the reads overlapped appends in flight, so the race was exercised');
+  });
+
+  it('log.readonly-refuses-corrupt-complete-line', () => {
+    const dir = tmpDir('log');
+    const original = populate(dir, 2);
+    const starts = lineStarts(original);
+    const bad = Buffer.from(original);
+    bad[starts[1]!] = 0x78;
+    const torn = Buffer.from('{"arc":"arc-1","at":"2026');
+    writeFileSync(eventsPath(dir), Buffer.concat([bad, torn]));
+    const before = readLog(dir);
+    assert.throws(() => readJournal(absPath(dir), ARC), (err: unknown) => {
+      assert.ok(err instanceof LogCorruptError, `expected LogCorruptError, got ${String(err)}`);
+      assert.equal(err.file, eventsPath(dir));
+      assert.equal(err.offset, starts[1]);
+      return true;
+    });
+    assert.ok(readLog(dir).equals(before), 'a refused read leaves the log exactly as found');
+    assert.deepEqual(fragments(dir), []);
+
+    // The same log without the bad line: the unterminated suffix is left out and left in place.
+    writeFileSync(eventsPath(dir), Buffer.concat([original, torn]));
+    const { view, events: got } = readJournal(absPath(dir), ARC);
+    assert.equal(view.highWater(), starts.length);
+    assert.equal(got.length, starts.length);
+    assert.ok(readLog(dir).equals(Buffer.concat([original, torn])), 'not truncated');
+    assert.deepEqual(fragments(dir), [], 'no fragment saved');
   });
 });
 

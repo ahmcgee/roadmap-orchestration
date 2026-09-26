@@ -155,6 +155,16 @@ describe('residue.chain-and-tail', () => {
     });
   }
 
+  it('the pre-claim startup check reads read-only: an unterminated suffix is left out and left in place', async () => {
+    const dir = hostDir();
+    recordResidue(dir, residueEntry(DB));
+    appendFileSync(hostPath(dir, RESIDUES), '{"at":"2026');
+    const before = indexBytes(dir);
+    assert.deepEqual(await undispositionedResidueCheck.check(contextFor(dir)), [{ kind: 'undispositioned-residue', residues: [keyOf(DB)] }]);
+    assert.ok(indexBytes(dir).equals(before), 'nothing truncated');
+    assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('residues.torn.')), [], 'nothing saved');
+  });
+
   it('an invalid complete line or a broken chain refuses with LogCorruptError at its offset', () => {
     for (const corrupt of ['garbage', 'chain'] as const) {
       const dir = hostDir();

@@ -78,9 +78,12 @@ export type LogSnapshot = Readonly<{ view: JournalView; events: readonly Event[]
 
 /**
  * Reads a run's log without opening it for append: no lock, no tail repair, no fact, no state cache. For
- * readers beside a live executor (`roadmap status`, a previous arc's run dir at takeover). Every complete
- * line is verified and folded; an unterminated suffix is the writer's to repair and is left out. An absent
- * log is empty. Throws LogCorruptError on an invalid complete line, as `openJournal` would.
+ * readers beside a live executor (`roadmap status`, a previous arc's run dir at takeover). An absent log
+ * is empty. Every complete line is verified and folded; a terminal suffix without `\n` is an append in
+ * flight (the writer's two-part write, or a torn tail only the owner's open may repair), so it is "not yet
+ * written" and left out, never raised, saved or truncated. The file is read once, so a line that completes
+ * during the read is either wholly in the snapshot or wholly absent. Throws LogCorruptError on an invalid
+ * complete line, as `openJournal` would.
  */
 export function readJournal(runDir: AbsPath, arc: ArcId): LogSnapshot {
   const path = absPath(join(runDir, EVENTS_FILE));
@@ -91,17 +94,7 @@ export function readJournal(runDir: AbsPath, arc: ArcId): LogSnapshot {
   const bytes = readFileSync(path);
   let start = 0;
   for (let nl = bytes.indexOf(0x0a, start); nl !== -1; nl = bytes.indexOf(0x0a, start)) {
-    const line = bytes.subarray(start, nl + 1);
-    try {
-      const event = parseEventLine(utf8.decode(line.subarray(0, -1)));
-      fold.apply(event, prevHash(line));
-      events.push(event);
-    } catch (error) {
-      if (error instanceof SchemaError || error instanceof FoldInvariantError || error instanceof CounterRegressionError || error instanceof TypeError) {
-        throw new LogCorruptError(path, start, error.message);
-      }
-      throw error;
-    }
+    events.push(verifyLine(path, fold, utf8, bytes.subarray(start, nl + 1), start));
     start = nl + 1;
   }
   return { view: fold, events };
@@ -145,10 +138,12 @@ function verify(path: AbsPath, fold: Fold): { validEnd: number; size: number } {
   }
 }
 
-function verifyLine(path: AbsPath, fold: Fold, utf8: TextDecoder, line: Buffer, offset: number): void {
+/** Parses and folds one complete line (its `\n` included); any failure is LogCorruptError at `offset`. */
+function verifyLine(path: AbsPath, fold: Fold, utf8: TextDecoder, line: Buffer, offset: number): Event {
   try {
     const event = parseEventLine(utf8.decode(line.subarray(0, -1)));
     fold.apply(event, prevHash(line));
+    return event;
   } catch (error) {
     // Exactly the failures a bad line produces: invalid UTF-8 (TypeError from the fatal decoder or a
     // non-finite number in canonicalJson), a schema or canonical-form failure, a fold invariant.
