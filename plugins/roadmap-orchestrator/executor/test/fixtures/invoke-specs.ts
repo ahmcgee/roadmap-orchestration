@@ -132,9 +132,11 @@ export function openIntents(runDir: string, arc: string): readonly IntentRecord[
   }
 }
 
+/** The log's complete lines. An unterminated last line is one a live writer is appending: left out. */
 export function events(runDir: string): readonly Event[] {
-  const text = readFileSync(join(runDir, EVENTS_FILE), 'utf8');
-  return text.split('\n').filter((l) => l !== '').map(parseEventLine);
+  const lines = readFileSync(join(runDir, EVENTS_FILE), 'utf8').split('\n');
+  lines.pop();
+  return lines.map(parseEventLine);
 }
 
 export const intents = (runDir: string, kind: IntentRecord['kind']): readonly IntentRecord[] =>

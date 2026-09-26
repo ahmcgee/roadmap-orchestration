@@ -660,12 +660,16 @@ export const readinessFile: Read<ReadinessFile> = tagged('state', {
   failed: object((f): ReadinessFile => ({ v: f.get('v', version), generation: f.get('generation', positive), state: f.get('state', literal('failed')), at: f.get('at', time), reason: f.get('reason', str) })),
 });
 
-/** supervisor.state.json: the crash window survives supervisor restarts. */
-export type SupervisorState = Readonly<{ v: SchemaVersion; generation: number; crashes: readonly IsoTime[] }>;
+/**
+ * supervisor.state.json: the crash window survives supervisor restarts. `heartbeatStaleMs` is the stale
+ * threshold in force: 5 min unless the supervisor was started with `--heartbeat-stale-ms` (step 14a).
+ */
+export type SupervisorState = Readonly<{ v: SchemaVersion; generation: number; crashes: readonly IsoTime[]; heartbeatStaleMs: number }>;
 export const supervisorState: Read<SupervisorState> = object((f) => ({
   v: f.get('v', version),
   generation: f.get('generation', positive),
   crashes: f.get('crashes', sortedBy(time, (t) => t)),
+  heartbeatStaleMs: f.get('heartbeatStaleMs', positive),
 }));
 
 /** exit.reason.json: intentional executor exits, which the supervisor does not count as crashes. */

@@ -4,7 +4,7 @@
 // executor, and only then writes `handshake.<generation>`. The executor blocks on the handshake, re-reads
 // the owner record and performs no effect unless it names exactly itself under the claim it was started
 // for. So a second executor (a double spawn, a crash between spawn and publish) can never act: the record
-// names only one (pid, start). The supervisor itself is step 14a; these are its primitives.
+// names only one (pid, start). The supervisor (src/supervisor.ts) and the executor (src/executor.ts) use these.
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { atomicJson, canonicalJson, exclusiveCreate, readJson } from '../core/fsx.ts';
@@ -63,23 +63,39 @@ export class HandshakeMismatchError extends Error {
   }
 }
 
+export class HandshakeAbandonedError extends Error {
+  constructor(path: string) {
+    super(`the supervisor that spawned this executor died before writing ${path}`);
+    this.name = 'HandshakeAbandonedError';
+  }
+}
+
+export class OwnerMismatchError extends Error {
+  constructor(path: string, detail: string) {
+    super(`handshake ${path} arrived but ${detail}`);
+    this.name = 'OwnerMismatchError';
+  }
+}
+
 const HANDSHAKE_POLL_MS = 50;
 
 /**
  * Executor side: waits for `handshake.<generation>` of its claim, then verifies the owner record names
- * itself. Throws on timeout, on a handshake of another claim, or on an owner mismatch; the executor then
- * exits without having performed any effect.
+ * itself. Throws on timeout, when `supervisorAlive` turns false first (the handshake can then never come:
+ * generations are never reissued), on a handshake of another claim, or on an owner mismatch; the executor
+ * then exits without having performed any effect.
  */
-export async function awaitHandshake(dir: AbsPath, claim: ClaimRef, self: ProcIdentity, timeoutMs: number): Promise<HostOwner> {
+export async function awaitHandshake(dir: AbsPath, claim: ClaimRef, self: ProcIdentity, timeoutMs: number, supervisorAlive: () => boolean): Promise<HostOwner> {
   const path = handshakePath(dir, claim.generation);
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
+    if (!supervisorAlive()) throw new HandshakeAbandonedError(path);
     if (Date.now() >= deadline) throw new HandshakeTimeoutError(path, timeoutMs);
     await sleep(HANDSHAKE_POLL_MS);
   }
   const found = handshakeFile(readJson(path), `handshake.${claim.generation}`);
   if (found.nonce !== claim.nonce || found.generation !== claim.generation) throw new HandshakeMismatchError(path, found, claim);
   const check = verifyOwner(dir, claim, self);
-  if (check.kind === 'mismatch') throw new Error(`handshake ${path} arrived but ${check.detail}`);
+  if (check.kind === 'mismatch') throw new OwnerMismatchError(path, check.detail);
   return check.owner;
 }

@@ -15,16 +15,17 @@
 // it. Then the passes run again until one changes nothing: a second pass must find only the parked
 // intents, else a reconciler is not idempotent and recovery fails loud.
 //
-// Seams left for later steps: the recovery lock and the takeover order are 14a's (claimHost's
-// `reconcilePrevious` hook, fed by `previousArcVerdict` below); crash-during-recovery cells are 14b's, at
+// Also here: `reconcilePreviousArc`, claimHost's `reconcilePrevious` hook (R18), which settles what a dead
+// claim of another arc left running before a takeover. Crash-during-recovery cells are 14b's, at
 // `recover.before-op` / `recover.after-op`.
 import { join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
+import { containmentFor, detectContainmentMode } from '../contain/detect.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, IntentRecord, OpKind, OpOutcome, Parent } from '../core/events.ts';
-import { type OpId, invocationId } from '../core/ids.ts';
+import { type InvocationId, type OpId, invocationId } from '../core/ids.ts';
 import type { Disposition, DispositionKind, Journal, JournalView } from '../core/interfaces.ts';
-import { readJournal } from '../core/log.ts';
+import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
 import type { HostLockClaim, NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { candidateMergeOp } from '../git/candidate.ts';
@@ -40,7 +41,10 @@ import type { PlanUnit } from '../input/plan.ts';
 import { needsUserReconciler, publishNeedsUser, raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import { type StageContext, dispatchOf } from '../pipeline/dispatch.ts';
 import { fingerprintValid } from '../pipeline/gate.ts';
+import { type ProcContext, invocationDir, liveRunner, quiescent } from '../pipeline/invoke.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
+import { launchSha256 } from '../runner/launch.ts';
+import { runnerFiles } from '../runner/files.ts';
 import { specPatchFileOp } from '../spec/patch.ts';
 import { commandReconciler } from './command.ts';
 import { killReconciler } from './kill.ts';
@@ -258,14 +262,60 @@ export async function recover(ctx: RecoveryContext): Promise<RecoveryReport> {
 // ---------------------------------------------------------------------------------------------------
 // The previous arc (R18)
 
+const invOf = (intent: IntentOf<'proc.spawn'>): InvocationId => invocationId(intent.op, intent.ordinal);
+const filesOf = (runDir: AbsPath, intent: IntentOf<'proc.spawn'>) => runnerFiles(invocationDir(runDir, invOf(intent)), invOf(intent));
+
+/** Open spawns with a live runner or a live workload member (by ROADMAP_INV): what outlived the dead executor. */
+function survivors(ctx: Pick<ProcContext, 'containment' | 'runDir'>, view: JournalView): readonly IntentOf<'proc.spawn'>[] {
+  return view.openIntents().flatMap((i) => {
+    if (i.kind !== 'proc.spawn') return [];
+    const intent = i as IntentOf<'proc.spawn'>;
+    const live = liveRunner(filesOf(ctx.runDir, intent)) !== null || !quiescent(ctx, { inv: invOf(intent), scope: 'invocation', reason: 'recovery' });
+    return live ? [intent] : [];
+  });
+}
+
+/** The spawn reconciler's precondition: a live invocation's launch.json is the one its intent recorded. */
+function launchMatches(runDir: AbsPath, intent: IntentOf<'proc.spawn'>): boolean {
+  const launch = filesOf(runDir, intent).read('launch.json');
+  return launch !== null && launchSha256(launch) === intent.expect.launchSha256;
+}
+
 /**
- * The verdict `claimHost` asks for when it takes over a dead claim of another arc: reconciled when that
- * arc's log holds no open spawn, else unreconciled, naming the invocations (start refuses with
- * `previous-arc-unreconciled`). Read only: this start never acts on another arc's run dir. Step 14a/14b
- * replace this check with the cross-arc reconcile under the recovery lock.
+ * The `reconcilePrevious` hook `claimHost` runs, under the recovery lock, when it takes over a dead claim
+ * of another arc. That arc's runners are setsid'd and may have outlived its executor. Read only first:
+ * when no open spawn has a live runner or workload, nothing is written and the previous arc's own next
+ * start recovers the rest. Otherwise its journal is opened (its executor is verified dead, and the recovery
+ * lock keeps its own start out) and the existing reconcilers settle the survivors: open kills first, then
+ * each surviving spawn (a live runner is adopted: waited for, its result recorded once; an orphan workload
+ * is killed and the invocation closed lost). Nothing is dispatched. Unreconcilable, so the takeover refuses
+ * with `previous-arc-unreconciled`: the log is corrupt (no survivor can be named), a survivor's launch.json
+ * is not the one its intent recorded, or a survivor remains after the pass.
  */
-export async function previousArcVerdict(previous: HostLockClaim): Promise<PreviousArcVerdict> {
-  const { view } = readJournal(previous.runDir, previous.arc);
-  const invocations = view.openIntents().flatMap((i) => (i.kind === 'proc.spawn' ? [invocationId(i.op, i.ordinal)] : []));
-  return invocations.length === 0 ? { kind: 'reconciled' } : { kind: 'unreconciled', invocations };
+export async function reconcilePreviousArc(previous: HostLockClaim): Promise<PreviousArcVerdict> {
+  let snapshot: LogSnapshot;
+  try {
+    snapshot = readJournal(previous.runDir, previous.arc);
+  } catch (error) {
+    if (!(error instanceof LogCorruptError)) throw error;
+    return { kind: 'unreconciled', invocations: [] };
+  }
+  const containment = containmentFor(snapshot.view.containmentMode() ?? detectContainmentMode());
+  const found = survivors({ containment, runDir: previous.runDir }, snapshot.view);
+  if (found.length === 0) return { kind: 'reconciled' };
+  const mismatched = found.filter((i) => !launchMatches(previous.runDir, i));
+  if (mismatched.length > 0) return { kind: 'unreconciled', invocations: mismatched.map(invOf) };
+
+  const journal = openJournal(previous.runDir, previous.arc);
+  try {
+    const ctx: ProcContext = { journal, containment, runDir: previous.runDir };
+    const kill = killReconciler(ctx);
+    for (const intent of openOf(journal, ['proc.kill'])) await kill(intent as IntentOf<'proc.kill'>, journal.view);
+    const spawn = spawnReconciler(ctx);
+    for (const intent of survivors(ctx, journal.view)) await spawn(intent, journal.view);
+    const left = survivors(ctx, journal.view);
+    return left.length === 0 ? { kind: 'reconciled' } : { kind: 'unreconciled', invocations: left.map(invOf) };
+  } finally {
+    journal.close();
+  }
 }

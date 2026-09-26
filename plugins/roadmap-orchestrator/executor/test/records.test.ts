@@ -168,8 +168,8 @@ describe('records', () => {
     assert.ok(handshakeFile({ v: 1, nonce, generation: 2 }, 'hs'));
     assert.ok(readinessFile({ v: 1, generation: 2, state: 'failed', at: T0, reason: 'x' }, 'ready'));
     assert.throws(() => readinessFile({ v: 1, generation: 2, state: 'ready', at: T0, reason: 'x' }, 'ready'), /ready\.reason/);
-    assert.ok(supervisorState({ v: 1, generation: 3, crashes: [T0, T1] }, 'sup'));
-    assert.throws(() => supervisorState({ v: 1, generation: 3, crashes: [T1, T0] }, 'sup'), /sup\.crashes/);
+    assert.ok(supervisorState({ v: 1, generation: 3, crashes: [T0, T1], heartbeatStaleMs: 300_000 }, 'sup'));
+    assert.throws(() => supervisorState({ v: 1, generation: 3, crashes: [T1, T0], heartbeatStaleMs: 300_000 }, 'sup'), /sup\.crashes/);
   });
 
   it('commands, receipts and needs-user validate', () => {

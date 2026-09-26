@@ -2,8 +2,10 @@
 // their run dir through the RunLocator: the host lock claim's, or `--repo` + `--arc` explicitly. Commands
 // for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`) only write a file into its durable queue and
 // print the command id; the executor applies it and writes the receipts. Output is agent-facing JSON.
-// `start` runs the executor in the foreground (13b; the supervisor is 14a's) and prints its exit reason as
-// one JSON line, exiting 0 (stop, complete) or 78/75 (refused). `status` prints the status object.
+// `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
+// executor, and waits at most 30 s for its own generation's readiness. It prints one JSON line: `ready`
+// (exit 0, the run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The
+// run's own end is in exit.reason.json and `status`. `status` prints the status object.
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { resolve } from 'node:path';
@@ -13,12 +15,12 @@ import type { ArcId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CommandBody } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
-import { exitCodeOf, exitLine, runExecutor } from '../executor.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir } from '../preflight/checks.ts';
 import { status } from '../status.ts';
+import { launchSupervisor } from '../supervisor.ts';
 import { watch } from '../watch.ts';
 
 const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
@@ -67,11 +69,11 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'start': {
-      const reason = await runExecutor({
-        repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, hostDir, env: process.env,
-      });
-      process.stdout.write(`${exitLine(reason)}\n`);
-      process.exitCode = exitCodeOf(reason);
+      const outcome = await launchSupervisor({
+        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null,
+      }, process.env);
+      process.stdout.write(`${outcome.line}\n`);
+      process.exitCode = outcome.code;
       return;
     }
     case 'status': {
