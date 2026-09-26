@@ -42,7 +42,7 @@ import { type ProfileName, profileName } from '../../src/routing/types.ts';
 import type { ArcState, Status } from '../../src/status.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { ARC, layout } from './layout.ts';
+import { layout } from './layout.ts';
 import { fakeSteps, readScenario } from './scenario.ts';
 
 const BIN_ROADMAP = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
@@ -194,7 +194,7 @@ export async function drive(args: Args): Promise<Report> {
   const l = layout(args.dir);
   const c = prepare(args);
   const limits = args.fake === null ? TIMEOUTS.real : TIMEOUTS.fake;
-  const run = ['--repo', l.repo, '--arc', ARC];
+  const run = ['--repo', l.repo, '--arc', l.arc];
   const startedAt = new Date();
   const deadline = startedAt.getTime() + limits.runMs;
   const s = spawnSync(process.execPath, c.argv(['start', '--repo', l.repo, '--plan', l.plan, '--profile', args.profile]), { env: c.env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS });

@@ -37,7 +37,9 @@ node evals/m1/check.ts /var/tmp/m1-claude-only
 - `setup.ts <dir>` lays out the fixture: `repo/` (branches `main` and `integration`, in-tree `.roadmap/` with one
   contract, the C-nn ledger, invariants and an empty-routing config) and `input/` (plan.json, one spec per unit,
   rulings.md). Unit `slug` adds `slugify`; unit `page-id` builds on it, so it can only merge after `slug` and from
-  the advanced integration tip, and its clause B2 is one a careless implementation misses.
+  the advanced integration tip, and its clause B2 is one a careless implementation misses. The arc is
+  `m1-fixture-<12 hex of sha256(dir)>`: unique per fixture dir, so fake runs going in parallel (each with its
+  own host dir) never share invocation ids, which key workload membership host-wide.
 - `driver.ts <dir> --profile default|claude-only` runs `bin/roadmap start`, which returns once the detached
   supervisor reports ready (`{kind: ready, generation, supervisor}`) while the run goes on in the background.
   The driver then polls `roadmap status` (every 10 s, 90 minute hard timeout) until the supervisor process has
