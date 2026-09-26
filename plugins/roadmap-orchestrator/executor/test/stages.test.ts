@@ -25,7 +25,7 @@ import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
-  planCheckStep, setupUnit, spawnIntents, worktreeOf,
+  planCheckStep, seated, setupUnit, spawnIntents, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 
@@ -126,19 +126,19 @@ test('redirect.no-widen: a redirect that widens the envelope or lowers the risk 
   const run = setupUnit({ steps: [planCheckStep({ decision: 'redirect', patch: widening }), planCheckStep({ decision: 'approve', risk: 'low' })] });
   const widened = await planCheck(run.ctx, run.unit);
   assert.equal(widened.outcome.kind, 'scope-widened');
-  assert.equal(show(widened.next), 'plan-check@high', 'refused → escalate: the role\'s high seat');
+  assert.equal(show(widened.next), 'plan-check@escalation', 'refused → escalate: the role\'s escalation seat');
   assert.equal(JSON.parse(readFileSync(run.specPath, 'utf8')).rev, 1, 'the spec is not patched');
   assert.deepEqual(intents(run.runDir, 'spec.patch'), []);
-  assert.equal(judgmentDispatch(run.ctx, U1, 'plan-check').tier, 'high');
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'plan-check')).tier, 'escalation');
 
   const lowered = await planCheck(run.ctx, run.unit);
   assert.equal(lowered.outcome.kind, 'risk-lowered');
-  assert.equal(show(lowered.next), 'park:escalation', 'refused again at the high seat: park');
+  assert.equal(show(lowered.next), 'park:escalation', 'refused again at the escalation seat: park');
   const dispatches = facts(run).filter((f) => f.kind === 'dispatch');
   assert.equal(dispatches.length, 1, 'the dispatch record is never re-pinned lower');
   assert.equal(run.journal.view.dispatchOf(U1)?.riskFloor, 'med');
   const calls = readCalls(run.scenario.path);
-  assert.ok(calls[1]!.argv.includes('claude-fable-5-1'), 'the routed-up check ran on the high seat');
+  assert.ok(calls[1]!.argv.includes('claude-fable-5-1'), 'the routed-up check ran on the escalation seat');
 });
 
 test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {
@@ -386,8 +386,8 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
   assert.equal(show(s.next), 'teardown');
   assert.equal(s.sha, headOf(worktreeOf(run)));
   assert.equal(run.journal.view.unit(U1).promotion, true);
-  assert.equal(judgmentDispatch(run.ctx, U1, 'gate').tier, 'high', 'the next judgment dispatch sits on the high seat');
-  assert.equal(implementerDispatch(run.ctx, U1).tier, 'med', 'the implementer keeps its seat');
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'escalation', 'the next judgment dispatch sits on the escalation seat');
+  assert.equal(seated(implementerDispatch(run.ctx, U1)).tier, 'med', 'the implementer keeps its seat');
   const fact = outcomeFacts(run).at(-1)!;
   assert.ok(fact.kind === 'stage-outcome' && fact.class === 'trigger' && !fact.chargeable);
 });

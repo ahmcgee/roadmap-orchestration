@@ -58,6 +58,10 @@ export const sha256: IdReader<Sha256Hex> = textual('Sha256Hex', /^[0-9a-f]{64}$/
 export type RoutingRev = Brand<string, 'RoutingRev'>;
 export const routingRev: IdReader<RoutingRev> = textual('RoutingRev', /^[0-9a-f]{16}$/, '16 lowercase hex');
 
+/** One seat's resolved triple, hashed: records compare seats across routing revisions without a model id. */
+export type SeatRev = Brand<string, 'SeatRev'>;
+export const seatRev: IdReader<SeatRev> = textual('SeatRev', /^[0-9a-f]{16}$/, '16 lowercase hex');
+
 export type CommandId = Brand<string, 'CommandId'>;
 export const commandId: IdReader<CommandId> = textual('CommandId', /^cmd-[0-9a-f]{16}$/, 'cmd-<16 lowercase hex>');
 

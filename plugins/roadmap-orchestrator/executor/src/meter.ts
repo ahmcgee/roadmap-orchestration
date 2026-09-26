@@ -10,7 +10,7 @@
 // exactly one model.
 import type { Event, Fact } from './core/events.ts';
 import type { RoutingRev, UnitId } from './core/ids.ts';
-import type { ModelId, RiskTier, Role, RoutingTable } from './routing/types.ts';
+import { type ModelId, type Role, type RoutingTable, type SeatRef, atSeat, seatRef } from './routing/types.ts';
 
 export type UsageTotals = Readonly<{
   /** Invocations with a usage fact: `known` ones plus `unavailable` ones. */
@@ -24,7 +24,7 @@ export type UsageTotals = Readonly<{
 }>;
 
 export type RoleTotal = Readonly<{ role: Role; routingRev: RoutingRev }> & UsageTotals;
-export type SeatTotal = Readonly<{ role: Role; tier: RiskTier; routingRev: RoutingRev }> & UsageTotals;
+export type SeatTotal = SeatRef & Readonly<{ routingRev: RoutingRev }> & UsageTotals;
 export type UnitTotal = Readonly<{ unit: UnitId; role: Role; routingRev: RoutingRev }> & UsageTotals;
 
 export type Meter = Readonly<{
@@ -69,7 +69,7 @@ export function meterOf(events: Iterable<Event>): Meter {
     const rk = `${f.role} ${f.routingRev}`;
     roles.set(rk, { role: f.role, routingRev: f.routingRev, ...add(roles.get(rk) ?? ZERO, f) });
     const sk = `${f.role} ${f.tier} ${f.routingRev}`;
-    seats.set(sk, { role: f.role, tier: f.tier, routingRev: f.routingRev, ...add(seats.get(sk) ?? ZERO, f) });
+    seats.set(sk, { ...seatRef(f.role, f.tier), routingRev: f.routingRev, ...add(seats.get(sk) ?? ZERO, f) });
     if (f.unit === null) continue;
     const uk = `${f.unit.unit} ${rk}`;
     units.set(uk, { unit: f.unit.unit, role: f.role, routingRev: f.routingRev, ...add(units.get(uk) ?? ZERO, f) });
@@ -88,7 +88,7 @@ export function byModel(totals: readonly SeatTotal[], tables: ReadonlyMap<Routin
   for (const t of totals) {
     const table = tables.get(t.routingRev);
     if (table === undefined) throw new Error(`byModel: no routing table for revision ${t.routingRev}`);
-    const model = table[t.role][t.tier].model;
+    const model = atSeat(table, t).model;
     const sum = models.get(model) ?? { ...ZERO };
     for (const k of Object.keys(ZERO) as (keyof UsageTotals)[]) sum[k] += t[k];
     models.set(model, sum);

@@ -150,7 +150,8 @@ export function verdictKind<S extends JudgmentOrBuild>(
 // ---------------------------------------------------------------------------------------------------
 // plan-check
 
-export type PlanCheckDone = StageDone<'plan-check'> & Readonly<{ session: JudgmentSessionId; specRev: SpecRev }>;
+/** `session` is null when no judgment was asked (a routing change parked the unit first). */
+export type PlanCheckDone = StageDone<'plan-check'> & Readonly<{ session: JudgmentSessionId | null; specRev: SpecRev }>;
 
 /** The resources a patch's lanes would take beyond the unit's declared set: widening its envelope. */
 function widenedResources(unit: PlanUnit, patch: PlanCheckOutput['patch']): readonly string[] {
@@ -161,9 +162,14 @@ function widenedResources(unit: PlanUnit, patch: PlanCheckOutput['patch']): read
 
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone> {
   const { path, spec } = loadUnitSpec(ctx, unit);
-  const pinned = pinDispatch(ctx, unit, spec.rev);
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
-  const seat = judgmentDispatch(ctx, unit.id, 'plan-check');
+  const pin = pinDispatch(ctx, unit, spec.rev);
+  const judged = pin.kind === 'pinned' ? judgmentDispatch(ctx, unit.id, 'plan-check') : pin;
+  if (pin.kind !== 'pinned' || judged.kind !== 'pinned') {
+    return { ...record(ctx, parent, 'routing-changed', judged.kind === 'pinned' ? null : judged.needsUser), session: null, specRev: spec.rev };
+  }
+  const pinned = pin.dispatch;
+  const seat = judged.dispatch;
   const prompt = promptFor('planCheck', seat.triple.model);
   const session = freshJudgmentSession();
   const { contracts, architectureDoc } = documents(ctx);
@@ -214,7 +220,7 @@ export async function planCheckRead(
       throw error;
     }
   }
-  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx.journal, pinned, out.risk, specRev);
+  if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, specRev);
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
   if (patch !== null && applied === null && redirects) {
@@ -268,11 +274,13 @@ const activeFastLanes = (spec: SpecM1): readonly FastLane[] =>
 
 export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone> {
   const { spec } = loadUnitSpec(ctx, unit);
-  const pinned = dispatchOf(ctx.journal.view, unit.id);
-  const dispatch = implementerDispatch(ctx, unit.id);
   const parent = at(start(ctx, unit.id, 'build'), 'build');
-  const round = await prepareRound(ctx, dispatch, input, parent);
   const failed = (d: StageDone<'build'>): BuildDone => ({ ...d, run: null });
+  const seated = implementerDispatch(ctx, unit.id);
+  if (seated.kind !== 'pinned') return failed(record(ctx, parent, 'routing-changed', seated.needsUser));
+  const dispatch = seated.dispatch;
+  const pinned = dispatchOf(ctx.journal.view, unit.id);
+  const round = await prepareRound(ctx, dispatch, input, parent);
 
   let held: Reservation<'running', StageHolder> | null = null;
   if (unit.resources.length > 0) {

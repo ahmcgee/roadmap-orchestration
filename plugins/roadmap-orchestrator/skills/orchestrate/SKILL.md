@@ -52,6 +52,30 @@ read `status` and the supervisor's logs in the host dir before starting again.
 The other commands only queue a file and print its id. Queued is not applied: check
 `commands/receipts/<id>.{accepted,applied,rejected}.json`.
 
+## Routing
+
+A seat is `role.tier`: `build.low|med|high`, and `planCheck` and `gate` each with `low|med|high|escalation`.
+The unit's risk picks the tier. A refusal or escalation at a judgment stage, or a risk trigger, moves that
+judgment to its role's `escalation` seat in a fresh session; escalating again there parks the unit with a
+needs-user for you.
+
+Seats name a model class, never a model: `efficient`, `frontier` or `summit`. `default`: efficient builds
+low and med, frontier builds high and judges every tier, summit takes escalations. `claude-only`: frontier
+builds every tier, judgment as in `default`. `.roadmap/config.json` (committed, set once per repo):
+
+```json
+{ "routing": {
+    "profile": "claude-only",
+    "seats": { "gate": { "high": "summit" } },
+    "classes": { "efficient": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" } } } }
+```
+
+Every key is optional. `seats` overrides the profile's class per seat. `classes` rebinds a class to a
+`{backend, model, effort}` triple, and it is the only place you name a model. `plan.json`'s `routing` names
+classes per seat the same way and cannot rebind a class. Routing is read at `start`. A judgment seat may
+change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
+(`routing-changed`); the needs-user names the seat.
+
 ## The run dir
 
 `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
@@ -72,7 +96,10 @@ One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held
   `run.state` is `parked` only when an item holds the whole arc; a parked unit with later units running
   shows `running`.
 - `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per plan unit; `seat` is the
-  `{role, tier}` the current stage dispatches on, or null.
+  `{role, tier}` the current stage dispatches on (`tier` may be `escalation` for a judgment), or null.
+- `routing`: the latest start's routing under the current config and plan: `profile`, `rev`, the class per
+  seat (`seats`), the layer that chose each (`sources`), and where each class is bound (`bindings`:
+  `builtin|repo-config`). No model ids.
 - `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
 - `spend`: `byRole` token totals per role and routing revision; `byModel` derives the models from those
   seats at render time, the only place `status` names a model.

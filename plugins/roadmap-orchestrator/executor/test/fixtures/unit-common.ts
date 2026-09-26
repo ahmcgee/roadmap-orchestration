@@ -111,7 +111,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const ctx: StageContext = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
-    routing: resolveRouting({ profile: 'default', repoConfig: null, plan: null, unit: null }),
+    routing: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }),
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
   };

@@ -216,11 +216,11 @@ describe('startup.rejections', () => {
     ]);
   });
 
-  it('unsupported-routing: a Codex judgment seat, named by seat and layer, never by model (78)', T, async () => {
+  it('unsupported-routing: a Codex judgment seat, named by seat, layer and class, never by model (78)', T, async () => {
     const s = setup();
-    write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } } } } });
+    write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: 'efficient' } } } });
     const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);
-    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', unit: null, why: 'codex-judgment' });
+    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment' });
   });
 
   it('undispositioned-residue (78)', T, async () => {

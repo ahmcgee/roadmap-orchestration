@@ -30,7 +30,9 @@ import type { ClaimOutcome } from '../host/lock.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
-import { type RepoConfig, type ResolvedRouting, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats } from '../routing/layers.ts';
+import {
+  type RepoConfig, type ResolvedRouting, arcStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
+} from '../routing/layers.ts';
 import type { ProfileName } from '../routing/types.ts';
 import { SpecFileError, loadSpec } from '../spec/spec.ts';
 import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from './smoke.ts';
@@ -224,14 +226,9 @@ export function readRepoConfig(repo: AbsPath): RepoConfig | null {
   return existsSync(path) ? parseRepoConfig(JSON.parse(readFileSync(path, 'utf8'))) : null;
 }
 
-/** The stack for this arc: the profile, the repo config's seats, the plan's layer (no per-unit layers in M1). */
+/** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return resolveRouting({
-    profile: context.profile,
-    repoConfig: readRepoConfig(context.repo)?.routing?.seats ?? null,
-    plan: context.plan.routing ?? null,
-    unit: null,
-  });
+  return resolveRouting(arcStack(context.profile, readRepoConfig(context.repo), context.plan.routing ?? null));
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {

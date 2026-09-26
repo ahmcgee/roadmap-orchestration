@@ -66,7 +66,7 @@ test('merge.stale-tip-fresh-candidate: T advances between the green candidate an
   }
 });
 
-test('merge.transient-refusal: a path the transient check refuses sends the unit to a scope-growth fix round, and the next gate sits on the high seat', T, async () => {
+test('merge.transient-refusal: a path the transient check refuses sends the unit to a scope-growth fix round, and the next gate sits on the escalation seat', T, async () => {
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }),

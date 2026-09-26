@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type LogRecord, type StageOutcomeFact, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, commandId, needsUserId, opId, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, commandId, needsUserId, opId, seatRev, specRev, unitId } from '../src/core/ids.ts';
 import type { Stage } from '../src/core/records.ts';
 import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
@@ -22,7 +22,7 @@ type OutcomeFields = Readonly<{ stage: Stage; attempt: number; outcome: string; 
 const stageOutcome = (f: OutcomeFields): LogRecord =>
   ({ type: 'fact', fact: { kind: 'stage-outcome', unit: f.unit ?? U1, stage: f.stage, attempt: f.attempt, outcome: f.outcome, class: f.class, chargeable: f.chargeable ?? false } }) as LogRecord;
 const dispatch = (riskFloor: RiskTier, scope = 'src/**'): LogRecord =>
-  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), scope: [repoPattern(scope)], riskFloor, routingRev: REV, at: AT } } });
+  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), scope: [repoPattern(scope)], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT } } });
 
 function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
   assert.throws(() => fold(ARC, events), (err: unknown) => {

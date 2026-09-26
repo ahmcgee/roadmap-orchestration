@@ -5,6 +5,8 @@
 // Nothing here names a model except `spend.byModel`, which looks each seat's model up in its revision's
 // routing table at render time: the tables are re-resolved from the latest start's plan and repo config
 // (`start.json`) under every built-in profile, and a revision none of them yields is listed as unresolved.
+// `routing` is the routing the latest start's profile resolves to under the current repo config and plan,
+// as classes per seat with the layer that named each and where each class's binding came from: no model.
 //
 // `run.state` (§2.10, M1 subset):
 //   running    a live executor owns the run and nothing below holds it
@@ -39,8 +41,11 @@ import { type ModelTotal, type RoleTotal, byModel, meterOf } from './meter.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
-import { resolveRouting } from './routing/layers.ts';
-import { type Backend, PROFILES, type RiskTier, type Role, type RoutingTable } from './routing/types.ts';
+import { type SeatSources, arcStack, resolveRouting } from './routing/layers.ts';
+import {
+  type Backend, type ClassSource, type ClassTable, type ModelClass, PROFILES, type ProfileName, type RiskTier, type SeatRef,
+  type RoutingTable,
+} from './routing/types.ts';
 import { type OwnerState, ownerState } from './watch.ts';
 
 export type ArcState = 'running' | 'held' | 'parked' | 'complete' | 'refused' | 'no-owner';
@@ -63,7 +68,16 @@ export type UnitStatusLine = Readonly<{
   chargeableFailures: number;
   risk: RiskTier | null;
   /** The seat the unit's current stage dispatches on, when that stage calls a backend and the unit is dispatched. */
-  seat: Readonly<{ role: Role; tier: RiskTier }> | null;
+  seat: SeatRef | null;
+}>;
+
+/** The routing in force for the latest start, as classes: never a model. */
+export type RoutingView = Readonly<{
+  profile: ProfileName;
+  rev: RoutingRev;
+  seats: ClassTable;
+  sources: SeatSources;
+  bindings: { readonly [C in ModelClass]: ClassSource };
 }>;
 
 export type Status = Readonly<{
@@ -84,6 +98,8 @@ export type Status = Readonly<{
   }>;
   host: Readonly<{ containment: Readonly<{ mode: ContainmentMode | null; guarantee: string }> }>;
   parkedBackends: readonly Backend[];
+  /** Null before any start. */
+  routing: RoutingView | null;
   rejection: RejectionFile | null;
 }>;
 
@@ -119,11 +135,17 @@ function commandsOf(runDir: AbsPath, arc: ArcId): Status['commands'] {
 function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null): ReadonlyMap<RoutingRev, RoutingTable> {
   if (start === null) return new Map();
   const { record, plan } = start;
-  const seats = readRepoConfig(record.repo)?.routing?.seats ?? null;
+  const config = readRepoConfig(record.repo);
   return new Map(PROFILES.map((profile) => {
-    const r = resolveRouting({ profile, repoConfig: seats, plan: plan.routing ?? null, unit: null });
+    const r = resolveRouting(arcStack(profile, config, plan.routing ?? null));
     return [r.rev, r.table] as const;
   }));
+}
+
+function routingView(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null): RoutingView | null {
+  if (start === null) return null;
+  const r = resolveRouting(arcStack(start.record.profile, readRepoConfig(start.record.repo), start.plan.routing ?? null));
+  return { profile: start.record.profile, rev: r.rev, seats: r.classes, sources: r.sources, bindings: r.bindings };
 }
 
 function stateOf(runDir: AbsPath, view: JournalView, units: readonly UnitId[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
@@ -169,6 +191,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs } },
     host: { containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE } },
     parkedBackends: view.parkedBackends(),
+    routing: routingView(start),
     rejection,
   };
 }

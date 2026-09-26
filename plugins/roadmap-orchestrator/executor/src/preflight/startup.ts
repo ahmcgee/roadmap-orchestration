@@ -12,7 +12,7 @@ import { type AbsPath, type IsoTime, type PlanPath, absPath, isoTime, planPath }
 import type { SchemaVersion } from '../core/version.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import {
-  type Backend, type ProfileName, type RiskTier, type Role, type RoutingLayerName, backend, profileName, riskTier, role,
+  type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
 } from '../routing/types.ts';
 
 /** EX_CONFIG: start refused; fixing the input or disposing the blocker is the user's move. */
@@ -35,8 +35,9 @@ export type StartupRejection =
   // Row: spec-lane-unrunnable, resource variant (lead ruling, 13b): a declared resource's probe or teardown
   // command cannot run. Told apart from the lane form by `resource` in place of `lane`.
   | Readonly<{ kind: 'spec-lane-unrunnable'; resource: ResourceName; command: 'probe' | 'teardown'; problem: CommandProblem }>
-  // Row: a role resolving to an unsupported triple (including every Codex judgment triple).
-  | Readonly<{ kind: 'unsupported-routing'; role: Role; tier: RiskTier; layer: RoutingLayerName; unit: UnitId | null; why: 'codex-judgment' | 'no-prompt' }>
+  // Row: a seat resolving to an unsupported triple (including every Codex judgment triple). Names the seat,
+  // the layer that chose its class and the class, never the model.
+  | (Readonly<{ kind: 'unsupported-routing'; layer: RoutingLayerName; class: ModelClass; unit: UnitId | null; why: 'codex-judgment' | 'no-prompt' }> & SeatRef)
   // Row: undispositioned host residue.
   | Readonly<{ kind: 'undispositioned-residue'; residues: readonly ResidueKey[] }>
   // Row: live host owner (or a live recovery-lock holder). Exit 75.
@@ -151,8 +152,8 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   })),
   'spec-lane-unrunnable': specLaneUnrunnable,
   'unsupported-routing': object((f): StartupRejection => ({
-    kind: f.get('kind', literal('unsupported-routing')), role: f.get('role', role), tier: f.get('tier', riskTier),
-    layer: f.get('layer', oneOf(['builtin', 'repo-config', 'plan', 'unit'] as const)), unit: f.get('unit', nullable(unitId)), why: f.get('why', oneOf(['codex-judgment', 'no-prompt'] as const)),
+    kind: f.get('kind', literal('unsupported-routing')), ...seatFields(f),
+    layer: f.get('layer', oneOf(['builtin', 'repo-config', 'plan', 'unit'] as const)), class: f.get('class', modelClass), unit: f.get('unit', nullable(unitId)), why: f.get('why', oneOf(['codex-judgment', 'no-prompt'] as const)),
   })),
   'undispositioned-residue': object((f): StartupRejection => ({ kind: f.get('kind', literal('undispositioned-residue')), residues: f.get('residues', arrayOf(residueKey)) })),
   'host-busy': object((f): StartupRejection => ({

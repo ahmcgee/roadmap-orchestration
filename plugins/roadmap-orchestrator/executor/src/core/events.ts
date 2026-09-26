@@ -23,7 +23,7 @@ import {
   refName, repoPath, repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import { type Backend, type RiskTier, type Role, backend, riskTier, role } from '../routing/types.ts';
+import { type Backend, type SeatRef, backend, seatFields } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -75,13 +75,13 @@ export type ResourceEdge =
 
 /** What a spawn runs. Model ids never appear: a backend is named by role and routingRev. */
 export type SpawnSubject =
-  | Readonly<{ purpose: 'backend'; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: UnitId; attempt: number }>
+  | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & SeatRef)
   | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceName }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
-    target: Readonly<{ type: 'backend'; backend: Backend; role: Role; tier: RiskTier; routingRev: RoutingRev }> | Readonly<{ type: 'command' }>;
+    target: (Readonly<{ type: 'backend'; backend: Backend; routingRev: RoutingRev }> & SeatRef) | Readonly<{ type: 'command' }>;
   }>;
 
 export type WorktreeCheckout =
@@ -225,14 +225,14 @@ export type MeterSubject = Readonly<{ unit: UnitId; attempt: number }> | null;
 
 /** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
 export const STAGE_OUTCOME_KINDS = {
-  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted'],
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted'],
+  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed'],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
   teardown: ['released', 'cleanup-failed'],
   lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed'],
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted'],
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
   candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted'],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
@@ -252,8 +252,8 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
  * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
  * `candidate-red`: a bounded round within its bound. `retry`: the stage's one uncharged retry.
- * `route-up`: re-dispatched at the role's high seat. `trigger`: a risk trigger (contract path touched,
- * scope growth) that puts the next judgment dispatch on the high seat. `hold`: the stage was interrupted
+ * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
+ * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
  * (a pause or stop cancel, or its backend parked arc-wide on a usage limit); the unit stays at the stage,
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
@@ -279,12 +279,12 @@ export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   /**
-   * One usage fact per invocation. `tier` is the seat's risk tier (never a model): with `role` and
-   * `routingRev` it names exactly one seat of that revision's table, so a by-model view is exact (lead
-   * ruling, 13b).
+   * One usage fact per invocation. `role` and `tier` name the seat (never a model; `escalation` only for a
+   * judgment role): with `routingRev` exactly one seat of that revision's table, so a by-model view is exact
+   * (lead ruling, 13b).
    */
-  | Readonly<{ kind: 'meter'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }>
-  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; role: Role; tier: RiskTier; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }>
+  | (Readonly<{ kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; unit: MeterSubject; usage: TokenUsage }> & SeatRef)
+  | (Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; unit: MeterSubject; reason: UsageUnavailableReason }> & SeatRef)
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
    * A backend reported a usage-limit or capacity error on a failed invocation: it is parked arc-wide until
@@ -395,7 +395,7 @@ const resourceEdge: Read<ResourceEdge> = tagged('type', {
 
 const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   backend: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('backend')), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('backend')), ...seatFields(f), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   lane: object((f): SpawnSubject => ({
@@ -409,7 +409,7 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     check: f.get('check', str),
     target: f.get('target', tagged<'backend' | 'command', Extract<SpawnSubject, { purpose: 'smoke' }>['target']>('type', {
       backend: object((g) => ({
-        type: g.get('type', literal('backend')), backend: g.get('backend', backend), role: g.get('role', role), tier: g.get('tier', riskTier),
+        type: g.get('type', literal('backend')), backend: g.get('backend', backend), ...seatFields(g),
         routingRev: g.get('routingRev', revR),
       })),
       command: object((g) => ({ type: g.get('type', literal('command')) })),
@@ -592,11 +592,11 @@ export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
   meter: object((f): Fact => ({
-    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
+    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), ...seatFields(f), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', meterSubject), usage: f.get('usage', tokenUsage),
   })),
   'usage-unavailable': object((f): Fact => ({
-    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), role: f.get('role', role), tier: f.get('tier', riskTier), routingRev: f.get('routingRev', revR),
+    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), ...seatFields(f), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', meterSubject), reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),

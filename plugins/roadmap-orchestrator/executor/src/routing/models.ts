@@ -1,6 +1,7 @@
 // The pinned model catalogue (DESIGN-1.0.md §4, Routing profiles). One entry per ModelId, so a model
 // added to the union fails compilation here until it is catalogued, and again in src/prompts/index.ts
-// until every role has a prompt decision for it. Code, not state: records name roles, never these ids.
+// until every role has a prompt decision for it. Code, not state: records name roles, never these ids, and
+// seats reach a model only through a class binding (classes.ts, or a repo rebind).
 import type { ClaudeModelId, CodexEffort, CodexModelId, ModelId, Triple } from './types.ts';
 
 export type ClaudeModel = Readonly<{ backend: 'claude'; displayName: string; efforts: readonly ['default'] }>;

@@ -18,7 +18,7 @@ const T = { timeout: 60_000 };
 const OK = { ok: true } as const;
 
 function routing(profile: ProfileName, plan: RoutingLayer | null = null): SmokeRouting {
-  return { profile, resolved: resolveRouting({ profile, repoConfig: null, plan, unit: null }) };
+  return { profile, resolved: resolveRouting({ profile, classes: null, repoConfig: null, plan, unit: null }) };
 }
 
 type Run = Readonly<{ report: SmokeReport; runDir: string; events: readonly Event[] }>;
@@ -99,7 +99,7 @@ describe('smoke', () => {
 
   it('claude-only with a seat that resolves to Codex is a missing Codex smoke', T, async () => {
     const s = writeScenario(tmpDir('scenario'), [claudeStep([{ type: 'emit', value: OK }])]);
-    const plan: RoutingLayer = { build: { low: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } } };
+    const plan: RoutingLayer = { build: { low: 'efficient' } };
     const { report } = await runSmoke(routing('claude-only', plan), s.binDir);
     assert.deepEqual(readCalls(s.path).map((c) => c.as), ['claude']);
     const [rejection, ...rest] = smokeRejections(report);

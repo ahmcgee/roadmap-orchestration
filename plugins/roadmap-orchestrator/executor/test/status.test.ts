@@ -69,13 +69,14 @@ describe('status.subset', () => {
       spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] } },
       host: { containment: { mode: null, guarantee: SESSION_GUARANTEE } },
       parkedBackends: [],
+      routing: null,
       rejection: null,
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
-    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'rejection', 'run', 'spend', 'units']);
+    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'rejection', 'routing', 'run', 'spend', 'units']);
     assert.equal(s.run.state, 'complete');
     assert.equal(s.run.owner.state, 'none', 'the lock was released');
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
@@ -90,6 +91,13 @@ describe('status.subset', () => {
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
     assert.deepEqual(s.parkedBackends, []);
     assert.equal(s.rejection, null);
+    // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
+    assert.equal(s.routing?.profile, 'default');
+    assert.deepEqual(s.routing?.seats.gate, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
+    assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
+    assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin' });
+    for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
   });
 });
 
