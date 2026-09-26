@@ -122,3 +122,11 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
   fake fixtures did before they got per-dir arcs) see each other's runners and crash, or would kill them. Key the
   identity on the run dir too (e.g. `ROADMAP_INV_DIR`) if runs ever share a machine outside the host lock;
   touches containment, recovery and reattach lookups.
+
+## Upgrade in place (2026-09-26)
+
+- `test/upgrade.test.ts` covers a stop mid-build and a reopen stopped mid-plan-check. Not yet: the previous
+  release crashing mid-op (HEAD recovering its open intents), a backend parked on a usage limit across the
+  update, the Claude-only profile. Add a variant when a record change touches one of them.
+- No read-time defaulting module exists yet: the first additive record change after 1.0.0-dev.1 adds it
+  (SCHEMAS.md "Record evolution"), with its warning surfaced in `status`.

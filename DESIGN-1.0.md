@@ -535,7 +535,9 @@ code-owned.
 
 ## 10. Cutover
 
-Hard cutover: 0.x state is refused (§2.9), not converted. `RATIONALE.md` is rewritten from the distillation
+Hard cutover from 0.x only: 0.x state is refused (§2.9), not converted. Within 1.x an executor update adopts
+an arc started on the previous release (arcs run for days, fixes land mid-run): record changes are additive with
+read-time defaults, and the executor's `SCHEMAS.md` "Record evolution" holds the rule. `RATIONALE.md` is rewritten from the distillation
 reports, keeping the incident record; the sibling skill and AGENTS.md are deleted. Schemas (event envelope,
 result, spec, obligations, witness record) are documented before their first slice. Each slice ends at a green
 ladder with its own runnable fixture:
