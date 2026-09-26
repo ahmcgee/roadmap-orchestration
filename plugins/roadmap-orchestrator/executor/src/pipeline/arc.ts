@@ -4,7 +4,9 @@
 // blocking needs-user. M1 has no edges, so a parked unit does not stop the ones after it. A held unit (an
 // interrupted stage, a backend parked on a usage limit, or a pause between stages) ends the run without
 // ending the arc: the next run continues it from the journal. A stop (a foreign ref move) ends the run at
-// once. The needs-user content of every park and stop is returned for the writer (step 13).
+// once. The needs-user content of every park and stop is returned for the writer (the executor); a park's
+// is also handed to `onParked` the moment the unit parks, so its item is raised while later units run
+// rather than when the arc returns.
 import type { UnitId } from '../core/ids.ts';
 import type { StageContext } from './dispatch.ts';
 import { type UnitResult, runUnit } from './unit.ts';
@@ -19,7 +21,10 @@ export type ArcResult =
   | Readonly<{ kind: 'held'; unit: UnitId; needsUser: NeedsUserContent | null; settled: readonly Settled[] }>
   | Readonly<{ kind: 'stopped'; unit: UnitId; needsUser: NeedsUserContent; settled: readonly Settled[] }>;
 
-export async function runArc(ctx: StageContext, signal: AbortSignal): Promise<ArcResult> {
+/** Called for each unit the arc finds parked, before the next unit runs; the writer raises each item once. */
+export type OnParked = (unit: UnitId, needsUser: NeedsUserContent) => void;
+
+export async function runArc(ctx: StageContext, signal: AbortSignal, onParked: OnParked): Promise<ArcResult> {
   const settled: Settled[] = [];
   for (const unit of ctx.plan.units) {
     const result = await runUnit(ctx, unit, signal);
@@ -28,8 +33,11 @@ export async function runArc(ctx: StageContext, signal: AbortSignal): Promise<Ar
         return { kind: 'held', unit: unit.id, needsUser: result.needsUser, settled };
       case 'stopped':
         return { kind: 'stopped', unit: unit.id, needsUser: result.needsUser, settled };
-      case 'merged':
       case 'parked':
+        onParked(unit.id, result.needsUser);
+        settled.push({ unit: unit.id, result });
+        break;
+      case 'merged':
         settled.push({ unit: unit.id, result });
     }
   }

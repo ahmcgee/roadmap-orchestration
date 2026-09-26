@@ -174,11 +174,16 @@ export type Reconcilers = { readonly [K in OpKind]: Reconciler<K> };
 // ---------------------------------------------------------------------------------------------------
 // Git operations: prepare computes every recorded input and the expected new id without moving a ref;
 // act performs it after the intent is durable; verify re-reads the postcondition into an outcome.
+// Each git module exports its steps; src/recover/ops.ts assembles the op with its kind's reconciler, so a
+// reconciler may use its op's pure helpers without the git module importing it back.
 
-export interface GitOp<K extends GitOpKind, Request> {
+export interface GitSteps<K extends GitOpKind, Request> {
   readonly kind: K;
   prepare(request: Request): Promise<IntentBody<K>>;
   act(intent: IntentOf<K>): Promise<void>;
   verify(intent: IntentOf<K>): Promise<OpOutcome[K]>;
+}
+
+export interface GitOp<K extends GitOpKind, Request> extends GitSteps<K, Request> {
   readonly reconcile: Reconciler<K>;
 }

@@ -34,7 +34,7 @@ M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
 | Command | Effect |
 |---|---|
-| `start --repo <path> --plan <plan.json> [--profile default\|claude-only]` | Launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default` |
+| `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>]` | Launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. Waits up to 240 s (or `--wait`) for readiness |
 | `status` | Agent-facing JSON snapshot of the run |
 | `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
 | `pause <unit>` / `pause --all` | Kill, tear down, keep commits; the unit holds at its stage |
@@ -43,6 +43,11 @@ M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |
 | `--version` | Print the executor version |
+
+`start` prints one JSON line and returns while the run goes on: `{"kind":"ready",...}` (exit 0) once the
+executor has passed every startup check. The run's end is in `status`, not in `start`'s exit code. Exit 70
+with `{"kind":"failed",...}` or `{"kind":"timeout",...}` means the supervisor died or did not report ready in
+time; read `status` and the supervisor's logs in the host dir before starting again.
 
 The other commands only queue a file and print its id. Queued is not applied: check
 `commands/receipts/<id>.{accepted,applied,rejected}.json`.
@@ -62,8 +67,10 @@ One JSON object. Start with `run`: `state` is `running`, `held` (a pause, a held
 `parked` (a blocking needs-user waits on you), `complete`, `refused` or `no-owner`; `owner` is
 `{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
 
-- `needsUser`: the unacknowledged items, `{id, reason, blocking}`, ascending id. The summary, recommendation,
-  options and evidence are in `needs-user/<id>.json`.
+- `needsUser`: the unacknowledged items, `{id, reason, blocking}`, ascending id, including the host-level
+  `sup-*` and `host-*` items. The summary, recommendation, options and evidence are in `needs-user/<id>.json`.
+  `run.state` is `parked` only when an item holds the whole arc; a parked unit with later units running
+  shows `running`.
 - `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per plan unit; `seat` is the
   `{role, tier}` the current stage dispatches on, or null.
 - `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
@@ -87,6 +94,14 @@ startup row refused. The reason is in `status`; fix the input or dispose the blo
 - `undispositioned-residue`: run `sweep`, or answer its needs-user.
 - `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`,
   `containment-mode-changed`: host-level; read `status` and any needs-user, never clear host files by hand.
+
+## When the executor keeps crashing
+
+Three executor crashes within an hour stop the supervisor. It raises `sup-<generation>-<n>` (reason
+`supervisor-crash-limit`) with the crashed executors' stderr logs as evidence, releases the host and exits;
+a `start` still waiting for readiness exits 70. Read the logs and fix the cause. Then run
+`roadmap ack sup-<generation>-<n> --repo <path> --arc <arc>` and `roadmap start`. That start runs control-only: it applies your ack and any
+other commands before recovery, and dispatches only once nothing blocking remains.
 
 ## Usage limits
 

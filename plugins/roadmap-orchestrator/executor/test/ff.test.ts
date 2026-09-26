@@ -9,8 +9,8 @@ import type { IntentOf } from '../src/core/events.ts';
 import { type Sha, opKey, sha } from '../src/core/ids.ts';
 import type { ApprovalFingerprint } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { candidateMergeOp, planCandidate } from '../src/git/candidate.ts';
-import { type FfPlan, integrationFfOp, planFf } from '../src/git/ff.ts';
+import { planCandidate } from '../src/git/candidate.ts';
+import { type FfPlan, planFf } from '../src/git/ff.ts';
 import { parentsOf } from '../src/git/mergein.ts';
 import { openArc, runOp } from './fixtures/git-common.ts';
 import {
@@ -18,6 +18,7 @@ import {
 } from './fixtures/git8b-common.ts';
 import { git } from './helpers/repo.ts';
 import { CANDIDATE_FF_SNAPSHOT, crashCells } from './matrix.ts';
+import { candidateMergeOp, integrationFfOp } from '../src/recover/ops.ts';
 
 let base: string;
 before(() => {

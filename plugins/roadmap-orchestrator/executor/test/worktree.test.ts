@@ -7,13 +7,14 @@ import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import type { WorktreeCheckout } from '../src/core/events.ts';
 import { type OpId, opKey, sha } from '../src/core/ids.ts';
-import { capturedEvidence, evidenceSnapshotOp } from '../src/git/evidence.ts';
+import { capturedEvidence } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { type WorktreeRemoveRequest, inspectWorktree, worktreeCreateOp, worktreeGone, worktreeRemoveOp } from '../src/git/worktree.ts';
+import { type WorktreeRemoveRequest, inspectWorktree, worktreeGone } from '../src/git/worktree.ts';
 import { type AbsPath, absPath, refName, repoPattern } from '../src/core/values.ts';
 import { baseRepo, cloneRepo, crashChild, openArc, recoverOp, runOp } from './fixtures/git-common.ts';
 import { git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { WORKTREE_EVIDENCE, crashCells } from './matrix.ts';
+import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../src/recover/ops.ts';
 
 const BRANCH = refName('refs/heads/unit-a');
 

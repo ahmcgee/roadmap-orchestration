@@ -16,6 +16,11 @@ export type Boundary = keyof typeof BOUNDARIES;
 export type Cell =
   /** Crashed at every listed label, per occurrence; `recovery` is the allowed recovery trace. */
   | Readonly<{ status: 'crash'; labels: readonly string[]; recovery: string }>
+  /**
+   * SIGKILLed from outside while blocked (`when`), a state no crash point reaches because the process only
+   * waits there; `recovery` is the allowed recovery trace.
+   */
+  | Readonly<{ status: 'kill'; when: string; recovery: string }>
   /** Not a distinct crash state for this row; `why` says which cell covers it or why none exists. */
   | Readonly<{ status: 'excluded'; why: string }>
   /** Filled by the step that implements the row. */
@@ -65,6 +70,31 @@ export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
 export const SUPERVISOR_HOST = 'supervisor/host';
+export const RECOVERY_CRASH = 'crash during recovery';
+export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
+export const ADVERSARIAL_TAKEOVER = 'adversarial: cross-arc takeover with a live runner crashed mid-adoption';
+
+/**
+ * The effect-before-done crash point of each op kind's recovery: the reconciler's effect (a redo's act, the
+ * spawn's adapter and usage fact, a command's remainder and receipt, a failed teardown's residue) is durable
+ * and its done is not. proc.kill has none distinct: its reconciler's effect is the kill's own act, and a
+ * kill quiesced but not closed is the proc.kill row's B4 state.
+ */
+export const RECOVERY_EFFECT_LABELS = {
+  'proc.spawn': 'spawn.after-usage',
+  'worktree.create': 'worktree.add.inside',
+  'worktree.remove': 'worktree.remove.inside',
+  'evidence.snapshot': 'evidence.act-end',
+  'salvage.commit': 'salvage.act-end',
+  'mergein.prepare': 'mergein.act-end',
+  'candidate.merge': 'candidate.act-end',
+  'integration.ff': 'ff.act-end',
+  'snapshot.publish': 'snapshot.act-end',
+  'resource.transition': 'residue.after-host-append',
+  'spec.patch': 'spec.patch.after-write',
+  'needsuser.raise': 'needsuser.raise.after-publish',
+  'command.apply': 'command.apply.after-receipt',
+} as const;
 
 export const MATRIX: readonly Row[] = [
   {
@@ -440,7 +470,85 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: 'after the handshake the supervisor only watches; its death then is the B4 state (the executor runs on), and after the executor exits it is a dead claim, the host takeover row' },
     },
   },
-  { row: 'adversarial', test: 'pending', cells: pending('14c') },
+  {
+    // One scenario per op kind that has a reconciler (test/fixtures/rec-common.ts `deadRun`): the real code
+    // that writes the op (unit driver, paused backend call, needs-user raise, command) is crashed inside it, so
+    // the dead executor's log holds an open intent of that kind; then the recovery engine is crashed at the
+    // cell's label, at occurrences 1 and 2 (every pass has a resources phase, so both always exist), and a
+    // clean recovery follows. Oracle: the fixed point of an uncrashed recovery of the same scenario.
+    row: RECOVERY_CRASH,
+    test: 'test/recover.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['recover.before-op'],
+        recovery: 'the next recovery reaches the same fixed point as an uncrashed one: every open intent closed alike, the same ops begun by recovery, no effect twice (the SHAs the intents recorded, one result and one usage fact per invocation, one residue per resource, one needs-user per cause), recoveredBy as the uncrashed run or reconciled',
+      },
+      B3: { status: 'excluded', why: 'inside a redo the op runs its own act and crash points; the state it leaves is that op row\'s B3 state, which its reconciler already settles' },
+      B4: {
+        status: 'crash',
+        labels: Object.values(RECOVERY_EFFECT_LABELS),
+        recovery: 'the effect is durable and the done is not: the next recovery finds the postcondition and closes the op reconciled; the same fixed point, no effect twice',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['recover.after-op'],
+        recovery: 'the op is closed: the next recovery leaves it and settles the rest; the same fixed point, no effect twice',
+      },
+    },
+  },
+  {
+    // The dead executor's build of u1 is parked at a fake-backend barrier, its runner alive; the recovery
+    // engine that adopts it dies too (test/recover.test.ts).
+    row: ADVERSARIAL_LIVE_RUNNER,
+    test: 'test/recover.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['recover.before-op'],
+        recovery: 'the runner lives on: the next recovery adopts it, once (done adopted, one result, one usage fact); the driver consumes the build',
+      },
+      B3: {
+        status: 'kill',
+        when: 'the recovering executor waits on the adopted runner',
+        recovery: 'the runner lives on: the next recovery adopts it (adopted), or, when it exited in between, re-runs the adapter from its exit.json (redone); one result, one usage fact, the build never dispatched again',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['spawn.after-result'],
+        recovery: 'the adopted runner exited and its result is written, the done is not: the next recovery finds the runner gone and result.json valid (reconciled); one usage fact',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['recover.after-op'],
+        recovery: 'the adoption is closed (adopted): nothing is open for it; the driver consumes the build',
+      },
+    },
+  },
+  {
+    // Arc A is stranded with a plan-check runner alive at a barrier; arc B's start takes the dead claim over
+    // and adopts A's runner under host.recovery.lock (test/recover.test.ts).
+    row: ADVERSARIAL_TAKEOVER,
+    test: 'test/recover.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the takeover appends to A\'s log only through the spawn reconciler: its torn line is the journal.append row' },
+      B2: { status: 'excluded', why: 'before the adoption starts, a dead takeover is the host takeover row\'s B2 cell (host.takeover.after-recovery-claim)' },
+      B3: {
+        status: 'kill',
+        when: 'B\'s supervisor waits on A\'s live runner under the recovery lock',
+        recovery: 'B\'s next start refuses recovery-holder-dead (exit 78, one host needs-user however often it is refused); A\'s log and runner untouched; once the user clears the dead recovery lock, B adopts A\'s invocation once and runs its arc',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['spawn.after-result'],
+        recovery: 'A\'s result written, its done not, the recovery lock held by the dead supervisor: B refuses recovery-holder-dead; once cleared, nothing of A survives, so B takes over without writing to A\'s log, and A\'s own recovery closes the invocation reconciled',
+      },
+      B5: { status: 'excluded', why: 'after the adoption is closed the takeover renames the claim: the host takeover row\'s B4 cell' },
+    },
+  },
+  { row: 'adversarial: cleanup-failed, foreign ref move, malformed result, cancellation mid-build, orphan adoption, failed publication', test: 'pending', cells: pending('14c') },
 ];
 
 /** Justified exclusions, listed beside the table (plan "Tests"). */
@@ -450,6 +558,16 @@ export function exclusions(): readonly Readonly<{ row: string; boundary: Boundar
       const cell = r.cells[b];
       return cell.status === 'excluded' ? [{ row: r.row, boundary: b, why: cell.why }] : [];
     }));
+}
+
+/** The kill cells of one row. */
+export function killCells(row: string): readonly Readonly<{ boundary: Boundary; when: string; recovery: string }>[] {
+  const r = MATRIX.find((m) => m.row === row);
+  if (r === undefined) throw new Error(`matrix: no row ${row}`);
+  return (Object.keys(BOUNDARIES) as Boundary[]).flatMap((b) => {
+    const cell = r.cells[b];
+    return cell.status === 'kill' ? [{ boundary: b, when: cell.when, recovery: cell.recovery }] : [];
+  });
 }
 
 /** The crash cells of one row, as `(boundary, label)` pairs. */

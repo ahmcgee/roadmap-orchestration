@@ -1,17 +1,25 @@
 // `roadmap status` (src/status.ts) through the real CLI, and the global state.no-model-ids test over full
-// fake-backed runs under both profiles. Named tests: status.subset, state.no-model-ids.
+// fake-backed runs under both profiles. Named tests: status.subset, state.no-model-ids,
+// status.sup-items-and-arc-wide-state.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { before, describe, test } from 'node:test';
+import { arcId, hostNeedsUserId, supervisorNeedsUserId } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
+import { openBlocking } from '../src/needsuser.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { SESSION_GUARANTEE, type Status } from '../src/status.ts';
+import { reached, release } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { BUILD_REPORT, planCheckStep } from './fixtures/stage-common.ts';
 import { MUL, gateStep, mulBuild } from './fixtures/unit-common.ts';
-import { EXEC_TIMEOUT_MS, type ExecRun, SMOKE_CLAUDE_ONLY, SMOKE_DEFAULT, reasonOf, setupExec, startExec, statusOf } from './fixtures/exec-common.ts';
+import {
+  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_CLAUDE_ONLY, SMOKE_DEFAULT, cli, journalOf, reasonOf, setupExec, startExec, statusOf, until,
+} from './fixtures/exec-common.ts';
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 
@@ -120,4 +128,52 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
   }
   const claudeOnly = await statusOf(runs[1]!);
   assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => m.model), ['claude-opus-5-5'], 'claude-only: Opus in every seat this run used');
+});
+
+test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async () => {
+  const check = planCheckStep({ decision: 'approve' });
+  const r = setupExec({
+    units: [{ id: 'u1' }, { id: 'u2' }],
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
+      { ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step,
+      mulBuild(), gateStep({ decision: 'approve' }),
+    ],
+  });
+  // What a supervisor's crash limit and a refused claim leave: host-level, blocking, outside the journal.
+  mkdirSync(r.runDir, { recursive: true });
+  const content = { blocking: true, subject: { type: 'host' }, summary: 'seeded', recommendation: 'ack it', options: [], evidence: [] } as const;
+  const sup = supervisorNeedsUserId(3, 3);
+  const host = hostNeedsUserId('owner-mismatch-1');
+  writeFileNeedsUser(absPath(r.runDir), arcId(r.arc), sup, { ...content, reason: 'supervisor-crash-limit' });
+  writeFileNeedsUser(absPath(r.runDir), arcId(r.arc), host, { ...content, reason: 'owner-mismatch' });
+  const both = [{ id: host, reason: 'owner-mismatch', blocking: true }, { id: sup, reason: 'supervisor-crash-limit', blocking: true }];
+  const idle = await statusOf(r);
+  assert.equal(idle.run.state, 'no-owner');
+  assert.deepEqual(idle.needsUser, both, 'listed with no executor running');
+
+  const run = startExec(r);
+  await until(async () => (await statusOf(r)).run.state === 'parked', 60_000, 'the executor to wait on the host items');
+  assert.deepEqual((await statusOf(r)).needsUser, both);
+  await cli(r, ['ack', sup]);
+  await cli(r, ['ack', host]);
+
+  // u1 parks on a unit-scoped item while u2 runs: running, and the acknowledged host items are gone.
+  await reached(r.scenarioDir, 'u2check', 60_000);
+  const [item] = openBlocking(journalOf(r).view);
+  assert.ok(item !== undefined);
+  const mid = await statusOf(r);
+  assert.equal(mid.run.state, 'running');
+  assert.deepEqual(mid.needsUser, [{ id: item, reason: 'escalation', blocking: true }]);
+
+  // No unit left to run: the open unit item now holds the arc.
+  release(r.scenarioDir, 'u2check');
+  await until(async () => (await statusOf(r)).run.state === 'parked', 60_000, 'the arc to wait on u1\'s item');
+  await cli(r, ['ack', item]);
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.equal(reasonOf(exit).kind, 'complete');
+  const done = await statusOf(r);
+  assert.equal(done.run.state, 'complete');
+  assert.deepEqual(done.needsUser, []);
 });

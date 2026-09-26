@@ -36,7 +36,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { identityOf, signal } from './contain/proc.ts';
 import { crashPoint } from './core/crash.ts';
-import { atomicJson, canonicalJson as fileJson, exclusiveCreate, readJson } from './core/fsx.ts';
+import { atomicJson, canonicalJson as fileJson, exclusivePublish, readJson } from './core/fsx.ts';
 import { supervisorNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
 import {
@@ -71,8 +71,11 @@ export const CRASH_WINDOW_MS = 60 * 60_000;
 export const BACKOFF_MS = [2_000, 10_000] as const;
 export const HEARTBEAT_STALE_MS = 5 * 60_000;
 export const HEARTBEAT_CHECK_MS = 10_000;
-/** How long `roadmap start` waits for its own generation's readiness. */
-export const START_WAIT_MS = 30_000;
+/**
+ * How long `roadmap start` waits for its own generation's readiness by default (`--wait <ms>` overrides):
+ * longer than the smoke's deadline (180 s), so a smoke refusal always reaches the caller (lead ruling 14b).
+ */
+export const START_WAIT_MS = 240_000;
 /** `roadmap start` when the supervisor failed or did not report in time (EX_SOFTWARE). */
 export const EXIT_START_FAILED = 70;
 const TICK_MS = 200;
@@ -125,7 +128,8 @@ function writeReadiness(dir: AbsPath, generation: number, failure: string | null
   const file: ReadinessFile = failure === null
     ? { v: SCHEMA_VERSION, generation, state: 'ready', at }
     : { v: SCHEMA_VERSION, generation, state: 'failed', at, reason: failure };
-  exclusiveCreate(failure === null ? readyPath(dir, generation) : failedPath(dir, generation), fileJson(file));
+  // Published whole: `roadmap start` polls for it and must never read it half-written.
+  exclusivePublish(failure === null ? readyPath(dir, generation) : failedPath(dir, generation), fileJson(file));
 }
 
 export function readReadiness(dir: AbsPath, generation: number): ReadinessFile | null {
@@ -367,11 +371,11 @@ function fromMarker(marker: ReadinessFile, supervisor: number): StartOutcome {
 }
 
 /**
- * `roadmap start`: launches the supervisor detached, then waits at most START_WAIT_MS for its claim (or its
+ * `roadmap start`: launches the supervisor detached, then waits at most `waitMs` for its claim (or its
  * refusal) and for that generation's readiness marker. Markers of other generations are never read. Returns
- * with the supervisor still running once it is ready.
+ * with the supervisor still running once it is ready, or once the wait is over (`timeout`).
  */
-export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Record<string, string | undefined>>): Promise<StartOutcome> {
+export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Record<string, string | undefined>>, waitMs: number): Promise<StartOutcome> {
   const dir = openHostDir(args.hostDir);
   const logs = supervisorLogs(dir, randomBytes(8).toString('hex'));
   const out = openSync(logs.out, 'a');
@@ -391,7 +395,7 @@ export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Recor
     const how: Exited | null = exited;
     return `the supervisor exited (code ${how?.code}, signal ${how?.signal}) before ${what}; see ${logs.err}`;
   };
-  const deadline = Date.now() + START_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   try {
     let generation: number | null = null;
     for (;;) {
@@ -410,7 +414,7 @@ export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Recor
         if (marker !== null) return fromMarker(marker, pid);
         if (endedBefore) return failed(generation, gone(`generation ${generation} was ready`));
       }
-      if (Date.now() >= deadline) return { line: canonicalJson({ kind: 'timeout', generation, waitedMs: START_WAIT_MS }), code: EXIT_START_FAILED };
+      if (Date.now() >= deadline) return { line: canonicalJson({ kind: 'timeout', generation, waitedMs: waitMs }), code: EXIT_START_FAILED };
       await sleep(TICK_MS / 4);
     }
   } finally {

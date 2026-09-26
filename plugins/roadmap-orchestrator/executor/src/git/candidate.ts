@@ -14,9 +14,8 @@
 import { crashPoint } from '../core/crash.ts';
 import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
 import type { ArcId, Sha, UnitId } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { type AbsPath, type RefName, type RepoPath, refName } from '../core/values.ts';
-import { reconcileCandidate } from '../recover/candidate.ts';
 import { type Identity, catFileType, commitTree, refTarget, updateRefCas } from './git.ts';
 import { mergeTree, parentsOf } from './mergein.ts';
 import { type PrefixCollision, type TransientRules, type TransientViolation, prefixCollisions, transientCheck } from './transient.ts';
@@ -120,12 +119,11 @@ export function candidateWorktreeRequest(intent: IntentOf<'candidate.merge'>): W
   return { path: intent.expect.worktree, checkout: { type: 'detached', at: intent.post.new } };
 }
 
-export function candidateMergeOp(repo: AbsPath): GitOp<'candidate.merge', CandidatePlan> {
+export function candidateMergeSteps(repo: AbsPath): GitSteps<'candidate.merge', CandidatePlan> {
   return {
     kind: 'candidate.merge',
     prepare: async (plan) => prepare(repo, plan),
     act: async (intent) => act(repo, intent),
     verify: async (intent) => verify(repo, intent),
-    reconcile: reconcileCandidate(repo),
   };
 }

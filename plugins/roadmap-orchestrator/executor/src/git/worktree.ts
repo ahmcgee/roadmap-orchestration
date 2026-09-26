@@ -7,9 +7,8 @@ import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome, WorktreeCheckout } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
-import { reconcileWorktreeCreate, reconcileWorktreeRemove } from '../recover/worktree.ts';
 import type { CapturedEvidence } from './evidence.ts';
 import {
   catFileType, gitCommonDir, refTarget, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList,
@@ -95,13 +94,12 @@ function verifyCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): OpOut
   return { kind: 'created', head: inspection.head };
 }
 
-export function worktreeCreateOp(repo: AbsPath): GitOp<'worktree.create', WorktreeCreateRequest> {
+export function worktreeCreateSteps(repo: AbsPath): GitSteps<'worktree.create', WorktreeCreateRequest> {
   return {
     kind: 'worktree.create',
     prepare: async (request) => prepareCreate(repo, request),
     act: async (intent) => actCreate(repo, intent),
     verify: async (intent) => verifyCreate(repo, intent),
-    reconcile: reconcileWorktreeCreate(repo),
   };
 }
 
@@ -136,12 +134,11 @@ function verifyRemove(repo: AbsPath, intent: IntentOf<'worktree.remove'>): OpOut
   return { kind: 'removed' };
 }
 
-export function worktreeRemoveOp(repo: AbsPath): GitOp<'worktree.remove', WorktreeRemoveRequest> {
+export function worktreeRemoveSteps(repo: AbsPath): GitSteps<'worktree.remove', WorktreeRemoveRequest> {
   return {
     kind: 'worktree.remove',
     prepare: async (request) => prepareRemove(repo, request),
     act: async (intent) => actRemove(repo, intent),
     verify: async (intent) => verifyRemove(repo, intent),
-    reconcile: reconcileWorktreeRemove(repo),
   };
 }

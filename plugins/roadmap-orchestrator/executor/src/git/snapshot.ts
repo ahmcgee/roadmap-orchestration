@@ -19,14 +19,13 @@ import { crashPoint } from '../core/crash.ts';
 import { type CommitInputs, type Event, type IntentOf, type OpOutcome, parseEventLine } from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import { type ArcId, type OpId, type Sha, type Sha256Hex, type UnitId, arcId, parseOpId, sha, sha256 } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
 import { fold } from '../core/state.ts';
 import { Fields, type Read, literal, nat, positive, sortedBy, version } from '../core/validate.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
-import { reconcileSnapshot } from '../recover/snapshot.ts';
 import { manifestPath } from './evidence.ts';
 import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
@@ -275,12 +274,11 @@ function verify(repo: AbsPath, intent: IntentOf<'snapshot.publish'>): OpOutcome[
   return { kind: 'published' };
 }
 
-export function snapshotPublishOp(repo: AbsPath): GitOp<'snapshot.publish', SnapshotPublishRequest> {
+export function snapshotPublishSteps(repo: AbsPath): GitSteps<'snapshot.publish', SnapshotPublishRequest> {
   return {
     kind: 'snapshot.publish',
     prepare: async (request) => prepare(repo, request),
     act: async (intent) => act(repo, intent),
     verify: async (intent) => verify(repo, intent),
-    reconcile: reconcileSnapshot(repo),
   };
 }

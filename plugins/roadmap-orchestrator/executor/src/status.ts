@@ -8,11 +8,17 @@
 //
 // `run.state` (§2.10, M1 subset):
 //   running    a live executor owns the run and nothing below holds it
-//   parked     a live executor waits on a blocking needs-user nobody has acknowledged
+//   parked     a live executor waits on a blocking needs-user nobody has acknowledged that holds the arc: an
+//              arc-wide one, or one naming the unit that runs next, or any once no unit is left to run (the
+//              executor's own rule, `holdsArc`); a unit-scoped park while later units run is `running`
 //   held       a live executor waits on a pause, a held unit or a parked backend
 //   refused    no live executor, and the latest start was refused (`rejection` says why)
 //   complete   no live executor; every unit merged or parked, and no blocking needs-user open
 //   no-owner   no live executor, and work remains
+//
+// `needsUser` lists every unacknowledged item: those the log raised, and the file-only ones outside it (the
+// supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`), read from `needs-user/`; an item is
+// acknowledged once the log holds its ack fact, as the executor reads it.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { terminalReceipt, readCommand } from './commands/queue.ts';
@@ -25,10 +31,11 @@ import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
 import type { AbsPath, IsoTime } from './core/values.ts';
-import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
+import {
+  HEARTBEAT_FILE, REJECTION_FILE, START_FILE, fileNeedsUser, holdsArc, nextUnit, openBlockingItems, recordOf,
+} from './executor.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
 import { type ModelTotal, type RoleTotal, byModel, meterOf } from './meter.ts';
-import { openBlocking, readNeedsUser } from './needsuser.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
@@ -63,7 +70,7 @@ export type Status = Readonly<{
   arc: ArcId;
   run: Readonly<{ state: ArcState; owner: OwnerState; heartbeatAt: IsoTime | null }>;
   units: readonly UnitStatusLine[];
-  /** Raised and not acknowledged, ascending id. */
+  /** Raised and not acknowledged, ascending id: the log's items and the file-only `sup-*` / `host-*` ones. */
   needsUser: readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>[];
   commands: Readonly<{
     /** Submitted, no terminal receipt yet, in submission order. */
@@ -119,10 +126,12 @@ function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | nul
   }));
 }
 
-function stateOf(view: JournalView, units: readonly UnitId[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
-  const blocking = openBlocking(view).length > 0;
+function stateOf(runDir: AbsPath, view: JournalView, units: readonly UnitId[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
+  const open = openBlockingItems(runDir, view);
+  const blocking = open.length > 0;
   if (owner.state === 'alive') {
-    if (blocking) return 'parked';
+    const next = nextUnit(units, view);
+    if (open.some((id) => holdsArc(recordOf(runDir, id), next))) return 'parked';
     const c = view.control();
     const held = c.pausedAll || c.pausedUnits.length > 0 || view.parkedBackends().length > 0 || units.some((u) => view.unit(u).status === 'held');
     return held ? 'held' : 'running';
@@ -147,16 +156,15 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
 
   return {
     arc,
-    run: { state: stateOf(view, units, owner, rejection), owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
+    run: { state: stateOf(runDir, view, units, owner, rejection), owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
     units: units.map((id) => {
       const u = view.unit(id);
       return { unit: id, stage: u.stage, status: u.status, attempts: u.counters.attempts, chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, id) };
     }),
-    needsUser: view.needsUser().filter((n) => n.ack === null).map((n) => {
-      const record = readNeedsUser(runDir, n.id);
-      if (record === null) throw new Error(`needs-user ${n.id} is raised in the log but its file is missing`);
-      return { id: n.id, reason: record.reason, blocking: n.blocking };
-    }),
+    needsUser: [
+      ...view.needsUser().filter((n) => n.ack === null).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
+      ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
+    ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     commands: commandsOf(runDir, arc),
     spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs } },
     host: { containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE } },

@@ -55,7 +55,7 @@ describe('fold derives', () => {
     assert.deepEqual(state.openIntents.map((i) => i.op), [op(4), op(13)]);
     // Stage starts: plan-check#1, build#1, build#2. The retry at seq 7 is not a new start.
     const u1 = newUnitState(U1, 'build', null);
-    assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 } }]);
+    assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 }, open: { stage: 'build', attempt: 2 } }], 'build#2 has no outcome: open');
     assert.deepEqual(state.needsUser, ['nu-9']);
     assert.deepEqual(state.meter, [
       { role: 'build', routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -79,7 +79,7 @@ describe('fold derives', () => {
       stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }), // 11
     ]));
     assert.deepEqual(state.units, [{
-      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null,
+      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,

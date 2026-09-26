@@ -34,7 +34,7 @@ per-unit route layers.
 | Form | `Command` |
 |---|---|
 | `--version` | `{command:'version'}` |
-| `start --repo <path> --plan <plan.json> [--profile default\|claude-only]` | `{command:'start', args:{repo, plan, profile}}`; `profile: null` when absent, so `selectProfile` lets `.roadmap/config.json` choose (explicit flag > config > `default`) |
+| `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>]` | `{command:'start', args:{repo, plan, profile, waitMs}}`; `profile: null` when absent, so `selectProfile` lets `.roadmap/config.json` choose (explicit flag > config > `default`); `waitMs: null` when absent (`START_WAIT_MS`, 240 s; step 14b) |
 | `status`, `watch`, `stop` `[--repo <p> --arc <a>]` | `{command, run: RunLocator}` |
 | `pause (<unit> \| --all)` | `{target: {type:'unit',unit} \| {type:'all'}}` |
 | `ack <needs-user-id> [--choice <option>]` | `{id, choice \| null}` |
@@ -170,11 +170,13 @@ The fold derives each unit's `UnitState` from these facts through `afterStageOut
 the same function the transition table uses, so a decision's counters are the log's:
 `{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
 chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
-routedUp: JudgmentStage[], promotion, decided, approval}`. `decided` is the unit's latest stage-outcome fact
+routedUp: JudgmentStage[], promotion, decided, approval, open}`. `decided` is the unit's latest stage-outcome fact
 whose class is not `hold` (null before one): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
 it (`decidedBy` in `transitions.ts`), and a held stage re-runs what it decided. `approval` is the latest
 `approval` fact's `{attempt, fingerprint}`, or null. `attempts` counts distinct `(stage, attempt)` pairs named by a
-stage-parented intent or a stage-outcome fact. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
+stage-parented intent or a stage-outcome fact. `open` is the latest such pair (highest attempt) while no stage-outcome fact records it, else null:
+an attempt a crash cut short (step 14b: the driver consumes its completed backend call rather than dispatching
+again), or a retire, which records none. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
 a plan-check that raises the risk re-pins the dispatch. `promotion` is set by a `trigger` and cleared by the
 next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class.
 
@@ -409,7 +411,8 @@ by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), whic
 
 `roadmap start` → `launchSupervisor` (`src/supervisor.ts`): spawns `node src/supervisor.ts <hostDir> --repo
 --plan [--profile] [--heartbeat-stale-ms]` detached (setsid) with `ROADMAP_ROLE=supervisor`, then waits at most
-30 s for the supervisor's first stdout line and for that generation's readiness marker only. It prints one line
+`--wait <ms>` (default `START_WAIT_MS`, 240 s, past the smoke's 180 s deadline; lead ruling 14b) for the supervisor's first stdout line
+and for that generation's readiness marker only. It prints one line
 and exits: `{kind: ready, generation, supervisor}` 0; the refused exit line, with its code (78/75); `{kind:
 failed|timeout, …}` 70. The supervisor: claim (`claimHost`, `reconcilePreviousArc`; a 78 refusal writes
 `status.rejection.json` and a durable `host-<kind>-<n>` needs-user in its run dir) → per executor: spawn `node
@@ -429,10 +432,18 @@ having written nothing. Crash points `sup.after-claim`, `sup.after-spawn`, `sup.
 (`worktree.create`, `worktree.remove`, `evidence.snapshot`, `salvage.commit`, `mergein.prepare`, `candidate.merge`,
 `integration.ff`, `snapshot.publish`) → resources (`recoverReservations`) → files (`spec.patch`, `needsuser.raise`,
 `command.apply`). Dispositions: `done` → done `reconciled`; `redo` → the op's act and verify, done `redone`;
-`abort` → abort + needs-user; `recovery-required` (ff) → done `recovery-required{observed}` + needs-user; `park`
-→ intent left open + needs-user. Each needs-user: blocking, reason `recovery-required`, parent `{op}`. A second
-pass must only re-park what the first parked (`RecoveryNotIdempotentError` otherwise). Crash points
-`recover.before-op` / `recover.after-op`. `reconcilePreviousArc(previous)` is the `reconcilePrevious` hook (step
+`abort` → needs-user + abort; `recovery-required` (ff) → needs-user + done `recovery-required{observed}`; `park`
+→ intent left open + needs-user. Each needs-user: blocking, reason `recovery-required`, parent `{op}`, raised before
+the op is closed (step 14b), after finishing any raise a crash left open (it holds the one `needs-user` key). A
+second pass must only re-park what the first parked and append nothing (`RecoveryNotIdempotentError` otherwise).
+Crash points `recover.before-op` / `recover.after-op`; a crash anywhere in recovery is finished by the next start
+to the same fixed point (matrix row "crash during recovery"). Runs in the executor under its supervisor's host
+claim, before any dispatch.
+
+Adopted-build rule (lead ruling 14a/14b, `src/pipeline/unit.ts`): when the fold's `open` attempt is a plan-check,
+build or gate whose backend call recovery closed with a result (adopted, reconciled or redone), the driver records
+that attempt's outcome from the result (`planCheckRead`, `buildRead`, `gateRead`, the same code the live stage
+runs after its call) and never dispatches the call again. A lost call, or none, re-runs the stage as a new attempt. `reconcilePreviousArc(previous)` is the `reconcilePrevious` hook (step
 14a, R18): read only unless an open spawn of that arc has a live runner or workload; then, under the recovery lock,
 its journal is opened and open kills, then the surviving spawns, go through the existing reconcilers (adopt or
 settle, never dispatch). Unreconciled: a corrupt log, a survivor whose launch.json is not its intent's, or a
@@ -440,7 +451,10 @@ survivor left after the pass.
 
 `status(runDir, arc, hostDir) → Status` (`src/status.ts`, `roadmap status [--repo --arc]`, JSON only): `arc`;
 `run{state: running|held|parked|complete|refused|no-owner, owner, heartbeatAt}`; `units[{unit, stage, status,
-attempts, chargeableFailures, risk, seat{role, tier}|null}]`; `needsUser[{id, reason, blocking}]` (unacknowledged);
+attempts, chargeableFailures, risk, seat{role, tier}|null}]`; `needsUser[{id, reason, blocking}]` (unacknowledged, the log's
+items and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `run.state` is `parked` only when an open blocking item
+holds the arc by the executor's rule (`holdsArc`: arc-wide, naming the next unit, or no unit left to run), so a unit-scoped
+park while later units run is `running` (step 14b);
 `commands{pending[{id, type}], receipts[]}` (the last 10 terminal receipts); `spend{byRole, byModel{models,
 unresolvedRevs}}`; `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with
 `readJournal` (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left
@@ -456,7 +470,7 @@ revision's table, re-resolved from `start.json`'s plan and repo config under eve
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |
-| `GitOp<K, Request>` | `kind, prepare(request) → IntentBody<K>, act(intent), verify(intent) → OpOutcome[K], reconcile` | 8a, 8b |
+| `GitOp<K, Request>` | `GitSteps<K, Request>` (`kind, prepare(request) → IntentBody<K>, act(intent), verify(intent) → OpOutcome[K]`, exported by each git module) + `reconcile`, assembled in `src/recover/ops.ts` (14b: no git ↔ recover import cycle) | 8a, 8b |
 | `Reservation<S, H>` (`src/resources/reserve.ts`) | typed handle, `S = reserved\|running\|cleaning`, `H = StageHolder\|SweepHolder`; `reserve(ctx, holder, resources, parent) → Reservation \| Refused{busy}` (no op on refusal), `probe → clear \| parked{needsUser}`, `run`, `cleanup → released \| cleanup-failed{failed, released}` (stage) `\| left-cleaning{failed, released}` (sweep), `cancel(live inv, pause\|stop)`; the table is derived from the journal (`resourceTable`) | 10 |
 | `Reconciler<K>` | `(IntentOf<K>, JournalView) → Disposition` limited to `AllowedDisposition[K]`: `done \| redo \| park \| abort \| adopt \| lost \| recovery-required` | 3c, 7, 8a, 8b, 9, 10, 13 |
 

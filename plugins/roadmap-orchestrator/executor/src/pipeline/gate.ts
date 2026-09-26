@@ -31,7 +31,7 @@ import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, judgmentDispatch, unitBranch, verdictOf,
+  type BackendCallOutcome, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, judgmentDispatch, unitBranch, verdictOf,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
@@ -138,14 +138,12 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
   const { spec } = loadUnitSpec(ctx, unit);
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const parent = at(start(ctx, unit.id, 'gate'), 'gate');
-  const done = (d: StageDone<'gate'>, session: JudgmentSessionId | null, fingerprint: ApprovalFingerprint | null = null): GateDone =>
-    ({ ...d, session, fingerprint });
 
   const tip = integrationTip(ctx);
   const head = unitTip(ctx, unit.id);
   const paths = unitDiffPaths(ctx.repo, tip, head);
   // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
-  if (paths.length === 0) return done(record(ctx, parent, 'empty-diff'), null);
+  if (paths.length === 0) return { ...record(ctx, parent, 'empty-diff'), session: null, fingerprint: null };
 
   const series = latestSeries(ctx.journal.view, unit.id, 'spec');
   const tree = series === null ? null : seriesTree(ctx.journal.view, series);
@@ -169,19 +167,34 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: evidence },
     system: prompt.system, rendered, schema: prompt.schema, cwd: tree.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
   });
+  return gateRead(ctx, unit, parent, called, session.id, tip, head);
+}
+
+/**
+ * Records a gate attempt from its call: the live one, or one recovery closed after a crash (consumed by
+ * the driver, never asked again). `tip` and `head` are the integration tip and unit commit it judged. An
+ * approval fact this attempt already recorded is kept, not recorded twice.
+ */
+export function gateRead(
+  ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, called: BackendCallOutcome, session: JudgmentSessionId,
+  tip: Sha, head: Sha,
+): GateDone {
+  const done = (d: StageDone<'gate'>, fingerprint: ApprovalFingerprint | null = null): GateDone => ({ ...d, session, fingerprint });
   const v = verdictOf(ctx, parent, called);
-  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v), session.id);
+  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v));
 
   let out: GateOutput;
   try {
     out = validateGateOutput(v.value);
   } catch (error) {
-    if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'), session.id);
+    if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'));
     throw error;
   }
-  if (out.decision !== 'approve') return done(record(ctx, parent, out.decision), session.id);
+  if (out.decision !== 'approve') return done(record(ctx, parent, out.decision));
+  const approved = ctx.journal.view.unit(unit.id).approval;
+  if (approved !== null && approved.attempt === parent.attempt) return done(record(ctx, parent, 'approve'), approved.fingerprint);
   const fingerprint = fingerprintAt(ctx, unit, tip);
   if (fingerprint.unitCommit !== head) throw new Error(`gate of ${unit.id}: the unit branch moved from ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
-  return done(record(ctx, parent, 'approve'), session.id, fingerprint);
+  return done(record(ctx, parent, 'approve'), fingerprint);
 }

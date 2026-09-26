@@ -8,8 +8,8 @@ import { before, describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import type { Sha } from '../src/core/ids.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
-import { candidateMergeOp, candidatePostcondition, planCandidate } from '../src/git/candidate.ts';
-import { classifyMergein, mergeHead, mergeinCompleted, mergeinOp, parentsOf } from '../src/git/mergein.ts';
+import { candidatePostcondition, planCandidate } from '../src/git/candidate.ts';
+import { classifyMergein, mergeHead, mergeinCompleted, parentsOf } from '../src/git/mergein.ts';
 import { diffBase, unitDiffPaths } from '../src/git/transient.ts';
 import { IDENTITY, openArc, runOp } from './fixtures/git-common.ts';
 import {
@@ -17,6 +17,7 @@ import {
 } from './fixtures/git8b-common.ts';
 import { git, writeFiles } from './helpers/repo.ts';
 import { MERGEIN, crashCells } from './matrix.ts';
+import { candidateMergeOp, mergeinOp } from '../src/recover/ops.ts';
 
 type Kind = 'clean' | 'conflict';
 type Checkout = Scene & Readonly<{ wt: AbsPath }>;

@@ -10,8 +10,7 @@
 // snapshot's recorded hash) or parks; no entry and no dir → done; a registered entry → redo; content at
 // the path that git does not list → park. Branches are never deleted by either.
 //
-// Imports from src/git/worktree.ts, which imports this module back to build its op records: an ESM cycle
-// that is safe because both sides only reference each other's function declarations at call time.
+// Uses src/git/worktree.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
 import { existsSync, readdirSync, rmdirSync } from 'node:fs';
 import type { IntentOf, IntentRecord } from '../core/events.ts';
 import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts';

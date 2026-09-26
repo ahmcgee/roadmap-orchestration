@@ -37,7 +37,8 @@
 // the claim after it has exited. Any other end is a crash: a thrown error, no exit reason.
 //
 // Needs-user content the driver returns is written here with `raiseNeedsUser`, parented by the stage attempt
-// that decided it, so an item is raised once however often the arc is re-read (`raisedFor`).
+// that decided it, so an item is raised once however often the arc is re-read (`raisedFor`). A park's item
+// is raised the moment the arc hands it over (`runArc`'s `onParked`), while later units still run.
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -46,7 +47,7 @@ import { applyAtSafePoint, applyCommand, applyControl } from './commands/apply.t
 import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import type { Parent, StageOutcomeFact } from './core/events.ts';
-import { atomicJson, durableMkdir, durableUnlink, exclusiveCreate } from './core/fsx.ts';
+import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
 import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId, invocationId, needsUserId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
@@ -172,7 +173,8 @@ const FILE_ITEM = /^(sup-[0-9]+-[0-9]+|host-[a-z0-9-]+)\.json$/;
 export function writeFileNeedsUser(runDir: AbsPath, arc: ArcId, id: NeedsUserId, content: NeedsUserContent): void {
   durableMkdir(join(runDir, NEEDS_USER_DIR));
   const record: NeedsUserRecord = { v: SCHEMA_VERSION, id, arc, raisedAt: isoTimeOf(new Date()), ...content };
-  exclusiveCreate(needsUserPath(runDir, id), canonicalJson(record));
+  // Published whole: the executor and `status` list the needs-user dir and read what they find.
+  exclusivePublish(needsUserPath(runDir, id), canonicalJson(record));
 }
 
 /** The claim refusals that carry a durable needs-user (SCHEMAS.md startup table); host-busy is only "try later". */
@@ -203,8 +205,8 @@ export function raiseClaimRefusal(runDir: AbsPath, arc: ArcId, rejection: ClaimR
   return id;
 }
 
-/** Blocking file-only items (sup-*, host-*) that no ack in the log answers. */
-function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
+/** The file-only items (sup-*, host-*) that no ack in the log answers, ascending id. */
+export function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserRecord[] {
   const dir = join(runDir, NEEDS_USER_DIR);
   if (!existsSync(dir)) return [];
   return readdirSync(dir).sort().flatMap((name) => {
@@ -213,8 +215,31 @@ function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserId
     const id = needsUserId(m[1]);
     const record = readNeedsUser(runDir, id);
     if (record === null) throw new Error(`needs-user ${name} vanished while it was listed`);
-    return record.blocking && view.ackOf(id) === null ? [id] : [];
+    return view.ackOf(id) === null ? [record] : [];
   });
+}
+
+/** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
+export function openBlockingItems(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
+  return [...openBlocking(view), ...fileNeedsUser(runDir, view).filter((r) => r.blocking).map((r) => r.id)];
+}
+
+/** The unit the serial arc works on next: the first in plan order that is neither merged nor parked. */
+export function nextUnit(units: readonly UnitId[], view: JournalView): UnitId | null {
+  return units.find((u) => {
+    const s = view.unit(u).status;
+    return s !== 'retired' && s !== 'park-pending';
+  }) ?? null;
+}
+
+/**
+ * Whether an open blocking item holds the arc (lead ruling 14a): it is arc-wide (a host or arc subject, or a
+ * reason in ARC_WIDE_REASONS), or it names the unit that would run next, or no unit is left to run.
+ */
+export function holdsArc(record: NeedsUserRecord, next: UnitId | null): boolean {
+  if (next === null || record.subject.type !== 'unit') return true;
+  if ((ARC_WIDE_REASONS as readonly NeedsUserReason[]).includes(record.reason)) return true;
+  return record.subject.unit === next;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -270,9 +295,8 @@ async function applyCommands(x: Exec): Promise<void> {
   await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc));
 }
 
-/** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
 function blockingOpen(x: Exec): readonly NeedsUserId[] {
-  return [...openBlocking(x.journal.view), ...fileNeedsUser(x.stage.runDir, x.journal.view)];
+  return openBlockingItems(x.stage.runDir, x.journal.view);
 }
 
 /**
@@ -295,14 +319,9 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
   }
 }
 
-const settledStatus = (view: JournalView, unit: PlanUnit): boolean => {
-  const s = view.unit(unit.id).status;
-  return s === 'retired' || s === 'park-pending';
-};
-
-/** The unit the serial arc works on next: the first in plan order that is neither merged nor parked. */
 function currentUnit(x: Exec): PlanUnit | null {
-  return x.stage.plan.units.find((u) => !settledStatus(x.journal.view, u)) ?? null;
+  const next = nextUnit(x.stage.plan.units.map((u) => u.id), x.journal.view);
+  return x.stage.plan.units.find((u) => u.id === next) ?? null;
 }
 
 /** What a pause or stop asks of the running arc, per the durable markers. */
@@ -314,19 +333,17 @@ function interruption(x: Exec): 'pause' | 'stop' | null {
   return null;
 }
 
-/** An open blocking item holds the arc when it is arc-wide or names the unit that would run next. */
-function holdsArc(x: Exec, id: NeedsUserId, current: PlanUnit): boolean {
-  const record = readNeedsUser(x.stage.runDir, id);
-  if (record === null) throw new Error(`needs-user ${id} is raised but ${needsUserPath(x.stage.runDir, id)} does not exist`);
-  if (record.subject.type !== 'unit') return true;
-  if ((ARC_WIDE_REASONS as readonly NeedsUserReason[]).includes(record.reason)) return true;
-  return record.subject.unit === current.id;
+/** The needs-user record of a raised id; its file must exist. */
+export function recordOf(runDir: AbsPath, id: NeedsUserId): NeedsUserRecord {
+  const record = readNeedsUser(runDir, id);
+  if (record === null) throw new Error(`needs-user ${id} is raised but ${needsUserPath(runDir, id)} does not exist`);
+  return record;
 }
 
 /** Why the loop does not dispatch now, or null when it may. */
 function waitReason(x: Exec, current: PlanUnit): string | null {
   const view = x.journal.view;
-  const holding = blockingOpen(x).filter((id) => holdsArc(x, id, current));
+  const holding = blockingOpen(x).filter((id) => holdsArc(recordOf(x.stage.runDir, id), current.id));
   if (holding.length > 0) return `blocking needs-user ${holding.join(', ')}`;
   const c = view.control();
   if (c.pausedAll) return 'the arc is paused';
@@ -357,7 +374,7 @@ async function drive(x: Exec): Promise<ExitReason> {
 async function runWithControl(x: Exec): Promise<ArcResult> {
   const abort = new AbortController();
   let finished = false;
-  const running = runArc(x.stage, abort.signal).finally(() => {
+  const running = runArc(x.stage, abort.signal, (unit, content) => raiseParked(x, unit, content)).finally(() => {
     finished = true;
   });
   // Settles when the arc does, without rethrowing here: `running` is returned and rethrows to the caller.
@@ -425,9 +442,19 @@ function contentOf(result: ArcResult | null, unit: UnitId): NeedsUserContent | n
 }
 
 /**
- * Writes every needs-user now due, once: each parked or stopped unit's (content from `result` when the arc
- * just decided it, else re-read from the driver, which returns it without running anything), and a held
- * unit's arc-wide item (a backend park), parented by the held attempt.
+ * A parked unit's needs-user, raised as the arc hands it over (`runArc`'s `onParked`), so the item is open
+ * while later units run; parented by the attempt that parked the unit, so it is raised once.
+ */
+function raiseParked(x: Exec, unit: UnitId, content: NeedsUserContent): void {
+  const { journal, runDir } = x.stage;
+  const parent = decidedParent(journal.view, unit);
+  if (raisedFor(journal.view, parent) === null) raiseNeedsUser(journal, runDir, content, parent);
+}
+
+/**
+ * Writes every needs-user now due, once: each parked or stopped unit's not yet raised (content from
+ * `result` when the arc just decided it, else re-read from the driver, which returns it without running
+ * anything), and a held unit's arc-wide item (a backend park), parented by the held attempt.
  */
 async function raiseDue(x: Exec, result: ArcResult | null): Promise<void> {
   const { journal, runDir } = x.stage;

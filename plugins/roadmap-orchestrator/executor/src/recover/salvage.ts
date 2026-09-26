@@ -6,8 +6,7 @@
 //   manifest and tree → redo, which makes the same commit (deterministic inputs); if it changed → park.
 // - anything else → park.
 //
-// Imports from src/git/salvage.ts, which imports this module back to build its op record: an ESM cycle
-// that is safe because both sides only reference each other's function declarations at call time.
+// Uses src/git/salvage.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
 import type { IntentOf } from '../core/events.ts';
 import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts';
 import { refTarget } from '../git/git.ts';

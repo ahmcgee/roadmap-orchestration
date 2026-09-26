@@ -13,8 +13,11 @@ export class CliError extends Error {
   }
 }
 
-/** `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose. */
-export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null }>;
+/**
+ * `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose.
+ * `waitMs`: how long `start` waits for readiness (`--wait <ms>`), null for the default (START_WAIT_MS).
+ */
+export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null }>;
 
 /**
  * How a run command finds its run: through the host lock claim (the one live arc on this host), or
@@ -92,14 +95,26 @@ function locator(p: Parsed, command: string): RunLocator {
 }
 
 export function parseStartArgs(argv: readonly string[]): StartArgs {
-  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value' }, 'start');
+  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value', wait: 'value' }, 'start');
   positionals(p, 'start', 0);
   const repo = value(p, 'repo');
   const plan = value(p, 'plan');
   if (repo === undefined) throw new CliError('start: --repo <path> is required');
   if (plan === undefined) throw new CliError('start: --plan <plan.json> is required');
   const profile = value(p, 'profile');
-  return { repo, plan, profile: profile === undefined ? null : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile) };
+  const wait = value(p, 'wait');
+  return {
+    repo, plan,
+    profile: profile === undefined ? null : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile),
+    waitMs: wait === undefined ? null : waitMs(wait),
+  };
+}
+
+/** `--wait <ms>`: a positive integer of milliseconds, digits only. */
+function waitMs(raw: string): number {
+  const ms = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(ms) || ms < 1) throw new CliError(`start: --wait takes a positive integer of milliseconds, got ${JSON.stringify(raw)}`);
+  return ms;
 }
 
 export function parseCommand(argv: readonly string[]): Command {

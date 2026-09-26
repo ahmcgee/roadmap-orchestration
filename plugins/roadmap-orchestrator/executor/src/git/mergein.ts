@@ -13,9 +13,8 @@
 import { crashPoint } from '../core/crash.ts';
 import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
 import { type Sha, sha } from '../core/ids.ts';
-import type { GitOp, IntentBody } from '../core/interfaces.ts';
+import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { type AbsPath, type RefName, type RepoPath, gitDate, repoPath } from '../core/values.ts';
-import { reconcileMergein } from '../recover/mergein.ts';
 import {
   type Identity, commitTree, git, gitPath, gitRun, refTarget, revParse, statusPorcelainV2Z, symbolicHead, updateRefCas,
   writeTreeFromIndex,
@@ -206,12 +205,11 @@ function verify(intent: IntentOf<'mergein.prepare'>): OpOutcome['mergein.prepare
   throw new MergeinStateError(intent.expect.worktree, `postcondition ${intent.post.type} not met: ${state.kind}${state.kind === 'foreign' ? ` (${state.detail})` : ''}`);
 }
 
-export function mergeinOp(repo: AbsPath): GitOp<'mergein.prepare', MergeinRequest> {
+export function mergeinSteps(repo: AbsPath): GitSteps<'mergein.prepare', MergeinRequest> {
   return {
     kind: 'mergein.prepare',
     prepare: async (request) => prepare(repo, request),
     act: async (intent) => act(intent),
     verify: async (intent) => verify(intent),
-    reconcile: reconcileMergein,
   };
 }
