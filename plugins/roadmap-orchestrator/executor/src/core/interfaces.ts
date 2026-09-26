@@ -56,6 +56,8 @@ export interface JournalView {
   unit(unit: UnitId): UnitState;
   /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
+  /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
+  dispatchesOf(unit: UnitId): readonly DispatchRecord[];
   /** Backends parked arc-wide by a `backend-park` fact and not since resumed, ascending. */
   parkedBackends(): readonly Backend[];
   /** Every needs-user item a done `needsuser.raise` recorded, ascending id, with its acknowledgement. */

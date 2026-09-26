@@ -228,7 +228,8 @@ export class Fold implements JournalView {
   readonly #open = new Map<OpId, IntentRecord>();
   readonly #openByKey = new Map<OpKey, OpId>();
   readonly #units = new Map<UnitId, UnitEntry>();
-  readonly #dispatch = new Map<UnitId, DispatchRecord>();
+  /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
+  readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
@@ -311,7 +312,7 @@ export class Fold implements JournalView {
   #unit(unit: UnitId, stage: Stage): UnitEntry {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
-    const pinned = this.#dispatch.get(unit);
+    const pinned = this.#dispatches.get(unit)?.at(-1);
     const u: UnitEntry = {
       starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, pinned?.riskFloor ?? null, specOf(pinned)),
       beforeDecided: { decided: null, interrupted: null },
@@ -389,13 +390,15 @@ export class Fold implements JournalView {
       }
       case 'dispatch': {
         const { unit, scope, riskFloor } = f.record;
-        const prev = this.#dispatch.get(unit);
+        const prev = this.#dispatches.get(unit)?.at(-1);
         // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2).
         if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) fail(`dispatch of ${unit} changes its pinned scope`);
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }
-        this.#dispatch.set(unit, f.record);
+        const all = this.#dispatches.get(unit) ?? [];
+        all.push(f.record);
+        this.#dispatches.set(unit, all);
         const u = this.#units.get(unit);
         if (u !== undefined) u.state = { ...u.state, risk: riskFloor, spec: specOf(f.record) };
         return;
@@ -578,12 +581,16 @@ export class Fold implements JournalView {
   }
 
   unit(unit: UnitId): UnitState {
-    const pinned = this.#dispatch.get(unit);
+    const pinned = this.#dispatches.get(unit)?.at(-1);
     return this.#units.get(unit)?.state ?? newUnitState(unit, 'plan-check', pinned?.riskFloor ?? null, specOf(pinned));
   }
 
   dispatchOf(unit: UnitId): DispatchRecord | null {
-    return this.#dispatch.get(unit) ?? null;
+    return this.#dispatches.get(unit)?.at(-1) ?? null;
+  }
+
+  dispatchesOf(unit: UnitId): readonly DispatchRecord[] {
+    return this.#dispatches.get(unit) ?? [];
   }
 
   parkedBackends(): readonly Backend[] {

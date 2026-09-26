@@ -23,10 +23,14 @@
 // also for an invocation killed mid-run. A fix, resume or resolve round resumes the latest build invocation
 // of the unit that has a session (`lastImplementerSession`); a continue resumes the interrupted one. When
 // there is none (the unit's builds were lost with tree effects, a fresh build was malformed without
-// reporting one, or a fresh Codex exec was interrupted before its thread started), the round starts a fresh
-// session instead, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's inputs, then
-// NO_SESSION_NOTE and CONTINUE_DIRECTIVE); the round keeps its kind, and its launch.json records the session
-// as fresh. The implementer keeps its seat for the whole unit (implementerDispatch).
+// reporting one, or a fresh Codex exec was interrupted before its thread started), or that session ran on
+// another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
+// model or backend: a session cannot move across them), the round starts a fresh session instead, on the
+// kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
+// inputs, then NO_SESSION_NOTE and CONTINUE_DIRECTIVE; a reopen's fresh round: RESPEC_DIRECTIVE, then
+// NO_SESSION_NOTE); the round keeps its kind, and its launch.json records the session as fresh. A session's
+// seat is the `implementerSeatRev` of the dispatch fact its spawn ran under (`spawnSeatRev`); a routing
+// change never moves the seat of a unit whose build started (implementerDispatch parks it instead).
 //
 // Deadlines. A fix round's window is the measured lane series plus an edit allowance; the allowance and the
 // fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds.
@@ -38,7 +42,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import { type ImplementerSessionId, type InvocationId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import type { IntentOf } from '../core/events.ts';
+import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
@@ -153,8 +158,29 @@ export function invocationSession(ctx: StageContext, inv: InvocationId): Impleme
   return result.session;
 }
 
-/** The session of the unit's latest build invocation that has one, from the log and `invocationSession`. */
-export function lastImplementerSession(ctx: StageContext, unit: UnitId): ImplementerSessionId | null {
+/** An implementer session and the implementer seat it ran on. */
+export type SeatedSession = Readonly<{ id: ImplementerSessionId; seatRev: SeatRev }>;
+
+/**
+ * The implementer seat a build spawn ran on: the `implementerSeatRev` of the unit's dispatch fact it was
+ * spawned under (the spawn names that fact's `routingRev` and floor as its own `routingRev` and `tier`).
+ */
+function spawnSeatRev(ctx: StageContext, intent: IntentOf<'proc.spawn'>): SeatRev {
+  const s = intent.expect.subject;
+  if (s.purpose !== 'backend' || s.role !== 'build') throw new Error(`${intent.op}: not a build spawn`);
+  const pinned = ctx.journal.view.dispatchesOf(s.unit).filter((d) => d.routingRev === s.routingRev && d.riskFloor === s.tier).at(-1);
+  if (pinned === undefined) throw new Error(`${intent.op}: a build spawn under routingRev ${s.routingRev} at ${s.tier} with no dispatch fact of ${s.unit} pinning it`);
+  return pinned.implementerSeatRev;
+}
+
+/** The session of build invocation `inv` with its seat, or null when it has no session. */
+function seatedSessionOf(ctx: StageContext, intent: IntentOf<'proc.spawn'>, inv: InvocationId): SeatedSession | null {
+  const id = invocationSession(ctx, inv);
+  return id === null ? null : { id, seatRev: spawnSeatRev(ctx, intent) };
+}
+
+/** The session of the unit's latest build invocation that has one, with its seat, from the log and `invocationSession`. */
+export function lastImplementerSession(ctx: StageContext, unit: UnitId): SeatedSession | null {
   const view = ctx.journal.view;
   const spawns = view.opsOf('proc.spawn');
   for (let i = spawns.length - 1; i >= 0; i--) {
@@ -162,10 +188,20 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): Impleme
     const s = intent.expect.subject;
     if (s.purpose !== 'backend' || s.role !== 'build' || s.unit !== unit) continue;
     if (view.doneOf(intent.op)?.outcome.kind !== 'result') continue;
-    const session = invocationSession(ctx, invocationId(intent.op, intent.ordinal));
+    const session = seatedSessionOf(ctx, intent, invocationId(intent.op, intent.ordinal));
     if (session !== null) return session;
   }
   return null;
+}
+
+/**
+ * The session a round on `dispatch` may resume: `earlier` when it ran on the same implementer seat, else null.
+ * A session cannot move across models or backends, so a build whose seat moved (a plan-check risk raise
+ * after a build) starts a fresh session on the kept branch and worktree, its round's inputs given with
+ * NO_SESSION_NOTE.
+ */
+function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): ImplementerSessionId | null {
+  return earlier !== null && earlier.seatRev === dispatch.seatRev ? earlier.id : null;
 }
 
 function freshSession(dispatch: ImplementerDispatch): ImplementerSession {
@@ -253,10 +289,11 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
   switch (input.kind) {
     case 'fresh': {
       const ready = await ensureWorktree(ctx, unit, parent);
-      // Only a reopen leads to a second fresh round, and the unit keeps its implementer session across it.
+      // Only a reopen leads to a second fresh round, and the unit keeps its implementer session across it
+      // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
       const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
       if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt };
-      return { ...ready, session: sessionOf(dispatch, earlier), fixRound: { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE] }, evidenceDirs: [], deadlineAt };
+      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE] }), evidenceDirs: [], deadlineAt };
     }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
@@ -264,14 +301,16 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       if (head !== input.salvage) throw new Error(`fix round of ${unit}: the unit worktree is at ${head}, not the salvage SHA ${input.salvage}`);
       const dirty = dirtyPaths(worktree);
       if (dirty.length > 0) throw new Error(`fix round of ${unit}: the unit worktree is not clean after salvage: ${dirty.join(', ')}`);
-      return { worktree, branch, ...resumed(dispatch, lastImplementerSession(ctx, unit), input.fix), evidenceDirs: input.fix.failingEvidenceDirs, deadlineAt };
+      return { worktree, branch, ...resumed(dispatch, onSeat(dispatch, lastImplementerSession(ctx, unit)), input.fix), evidenceDirs: input.fix.failingEvidenceDirs, deadlineAt };
     }
     case 'resume':
     case 'resolve':
-      return { worktree, branch, ...resumed(dispatch, lastImplementerSession(ctx, unit), roundInputs(input)!), evidenceDirs: [], deadlineAt };
+      return { worktree, branch, ...resumed(dispatch, onSeat(dispatch, lastImplementerSession(ctx, unit)), roundInputs(input)!), evidenceDirs: [], deadlineAt };
     case 'continue': {
       const own = roundInputs(input.of) ?? { failingEvidenceDirs: [], directives: [] };
-      const id = invocationSession(ctx, input.interrupted);
+      const interrupted = ctx.journal.view.latestIntent(parseInvocationId(input.interrupted).op);
+      if (interrupted.kind !== 'proc.spawn') throw new Error(`${input.interrupted}: the interrupted build is not a spawn`);
+      const id = onSeat(dispatch, seatedSessionOf(ctx, interrupted, input.interrupted));
       // A resumed session already holds the spec and its round's inputs; a fresh one is given them again.
       const fixRound: FixRound = id === null
         ? { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }

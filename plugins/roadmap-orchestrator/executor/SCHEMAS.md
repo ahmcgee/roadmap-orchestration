@@ -360,6 +360,11 @@ ruling, arc-1 feedback item 7): when the rev in force differs from the pinned on
 fact under the new rev, scope and floor unchanged) if no build has started for it or its implementer seat hashes
 the same; otherwise the dispatching stage records outcome `routing-changed` (at `plan-check`, `build` or `gate`),
 which parks the unit uncharged with needs-user reason `routing-changed` naming the seat, never a model.
+A risk raise re-pins under the rev in force and may move the implementer seat of a unit whose build already
+ran (a re-opened unit): a session cannot move across models or backends, so a build round whose
+`implementerSeatRev` differs from that of the dispatch fact its unit's latest session was spawned under (the
+spawn's `routingRev` and `tier`) starts a fresh session on the kept branch and worktree, its round's inputs
+(a fix round's directives, RESPEC_DIRECTIVE) followed by NO_SESSION_NOTE.
 `resume <unit>` of such a park re-pins the record under the rev in force by the same rule (no spec edit) and
 re-enters the unit at the stage it parked at (`rerouted`); while the seat is still moved it is rejected with
 "restore the routing of build.<tier> or re-enter the unit under a new id".
@@ -586,7 +591,7 @@ revision's table, re-resolved from `start.json`'s plan and repo config under eve
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13) |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, dispatchesOf(unit) → DispatchRecord[] (every dispatch fact, log order), parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |

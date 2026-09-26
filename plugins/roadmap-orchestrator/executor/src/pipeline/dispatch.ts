@@ -163,7 +163,8 @@ export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskT
 // Seats
 
 export type JudgmentDispatch = Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>;
-export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev }>;
+/** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on the seat it ran on. */
+export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev; seatRev: SeatRev }>;
 
 const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
 
@@ -183,8 +184,8 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
 export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<ImplementerDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
   if (pinned.kind !== 'pinned') return pinned;
-  const { riskFloor, routingRev } = pinned.dispatch;
-  return { kind: 'pinned', dispatch: { role: 'build', tier: riskFloor, triple: ctx.routing.table.build[riskFloor], routingRev } };
+  const { riskFloor, routingRev, implementerSeatRev: seatRev } = pinned.dispatch;
+  return { kind: 'pinned', dispatch: { role: 'build', tier: riskFloor, triple: ctx.routing.table.build[riskFloor], routingRev, seatRev } };
 }
 
 // ---------------------------------------------------------------------------------------------------

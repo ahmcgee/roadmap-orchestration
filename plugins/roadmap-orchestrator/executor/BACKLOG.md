@@ -116,7 +116,5 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
 - Routing (classes, escalation seat):
   - The DESIGN command table's `steer <unit> --model <m>` (M2+) predates model classes: when steer lands it
     should enter a class (or a unit-level class rebind), since routing layers never name a model.
-  - A plan-check risk raise on a reopened unit whose build already ran moves its implementer seat without the
-    routing-change check (`raiseRisk`).
   - One binding per class, and a Codex binding carries its effort: a second Codex effort would be a new class.
     None is needed yet.
