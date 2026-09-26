@@ -1,0 +1,78 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one, C-1 and C-2."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": ""
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "slug: add slugify",
+          "files": {
+            "src/slug.js": "/** The URL slug of `text` (.roadmap/contracts/one.md, slugify). */\nexport function slugify(text) {\n  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}\n",
+            "test/slug.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { slugify } from '../src/slug.js';\n\ntest('slugify lowercases and joins runs with one hyphen (A1)', () => {\n  assert.equal(slugify('Hello World'), 'hello-world');\n  assert.equal(slugify('a -- b__c'), 'a-b-c');\n});\n\ntest('slugify never starts or ends with a hyphen (A2)', () => {\n  assert.equal(slugify('  Hello, World!  '), 'hello-world', 'SLUG-TRIM: no leading or trailing hyphen');\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1, A2 and A3 hold; contract one slugify rules 1 to 3 are tested."
+        ]
+      }
+    },
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one, C-1 and C-2."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": ""
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "page-id: add pageId",
+          "files": {
+            "src/page-id.js": "import { slugify } from './slug.js';\n\n/** The page identifier of `title` and `n` (.roadmap/contracts/one.md, pageId). */\nexport function pageId(title, n) {\n  if (!Number.isInteger(n) || n < 1) throw new RangeError(`n must be a positive integer, got ${n}`);\n  return `${slugify(title) || 'page'}-${n}`;\n}\n",
+            "test/page-id.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { pageId } from '../src/page-id.js';\n\ntest('pageId joins the slug and n (B1)', () => {\n  assert.equal(pageId('Hello World', 2), 'hello-world-2');\n});\n\ntest('pageId refuses a bad n (B3)', () => {\n  assert.throws(() => pageId('x', 0), RangeError);\n  assert.throws(() => pageId('x', 1.5), RangeError);\n});\n\ntest('an empty slug becomes page (B2)', () => {\n  assert.equal(pageId('!!!', 3), 'page-3');\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "B1 to B4 hold; pageId imports slugify."
+        ]
+      }
+    }
+  ]
+}
