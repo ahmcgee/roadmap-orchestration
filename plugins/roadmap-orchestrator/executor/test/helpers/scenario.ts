@@ -66,8 +66,12 @@ export type WorldAct =
 
 /** Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable. */
 export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }>;
-/** `codex exec resume` onto a thread another live session holds: CODEX_RESUME_COLLISION on stderr, exit 1. */
-export type CodexOnlyAct = Readonly<{ type: 'resumeCollision' }>;
+/**
+ * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
+ * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a
+ * call killed later has reported its thread; an output act then does not print it again.
+ */
+export type CodexOnlyAct = Readonly<{ type: 'resumeCollision' }> | Readonly<{ type: 'threadStarted' }>;
 
 export type CodexAct = OutputAct | WorldAct | CodexOnlyAct;
 export type ClaudeAct = OutputAct | WorldAct | ClaudeOnlyAct;
