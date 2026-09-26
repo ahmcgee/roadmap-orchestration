@@ -33,12 +33,12 @@ import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
-import { raisedFor, reentryRecommendation, reopenRecommendation } from '../needsuser.ts';
+import { raisedFor, reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { stageRecipes } from '../resources/teardown.ts';
-import { type StageContext, type StageParent, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
+import { type StageContext, type StageParent, dispatchOf, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
@@ -132,8 +132,9 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, sp
 
 /**
  * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
- * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a park
- * at a judgment stage re-opens after a spec edit; any other is re-entered under a new unit id.
+ * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a
+ * `routing-changed` park re-enters once its implementer seat's routing is restored; any other park at a
+ * judgment stage re-opens after a spec edit; any other is re-entered under a new unit id.
  */
 function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
   const f = ctx.journal.view.unit(unit.id).decided;
@@ -141,9 +142,11 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
-    : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
-      ? reopenRecommendation(unit.id, path, spec.rev)
-      : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan.arc, unit.id));
+    : reason === 'routing-changed'
+      ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
+      : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
+        ? reopenRecommendation(unit.id, path, spec.rev)
+        : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan.arc, unit.id));
   return {
     blocking: true,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },

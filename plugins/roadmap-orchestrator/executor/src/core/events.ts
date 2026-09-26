@@ -313,6 +313,12 @@ export type Fact =
    */
   | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId; specRev: SpecRev; specSha256: Sha256Hex }>
   /**
+   * `resume <unit>` re-entered a unit parked `routing-changed` once the routing in force lets it keep its
+   * implementer seat (a `dispatch` fact re-pinned it first). The unit re-enters at the stage it parked at as
+   * a new, uncharged attempt: its decision and interruption return to what they were before the park.
+   */
+  | Readonly<{ kind: 'rerouted'; unit: UnitId; command: CommandId }>
+  /**
    * An executor started under host generation `generation` (step 13b), written at every start once the
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
    * persist until a `resume`.
@@ -629,6 +635,7 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', cmdR), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
+  rerouted: object((f): Fact => ({ kind: f.get('kind', literal('rerouted')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),

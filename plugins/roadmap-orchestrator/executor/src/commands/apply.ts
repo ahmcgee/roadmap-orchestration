@@ -19,8 +19,12 @@
 //            `resume <unit>` of a unit parked at a judgment stage (plan-check or gate) re-opens it once the
 //            architect has edited its spec (`reopen`): the file must be at the unit's recorded spec rev + 1
 //            (SCHEMAS.md "Architect spec edits"); the park's open needs-user is acknowledged by this
-//            command, then a `reopened` fact sends the unit back to plan-check as a new attempt. An
-//            unedited spec, or any other parked, stopped or merged unit, is rejected with the reason.
+//            command, then a `reopened` fact sends the unit back to plan-check as a new attempt. A unit
+//            parked `routing-changed` needs no spec edit (`reroute`): once the routing in force resolves
+//            its implementer seat to the pinned `implementerSeatRev` (or no build has started), it is
+//            re-pinned under that routing (a `dispatch` fact, when the rev differs), its needs-user is
+//            acknowledged, and a `rerouted` fact re-enters it at the stage it parked at; otherwise it is
+//            rejected. An unedited spec, or any other parked, stopped or merged unit, is rejected with the reason.
 //   sweep    re-drives resources an earlier sweep left reserved or cleaning, then, per undispositioned
 //            host residue (in recorded order): take the resource under the sweep holder (reserve when it is
 //            free here; reclaim when it is this arc's own cleanup-failed resource) → the recorded teardown →
@@ -31,7 +35,7 @@
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
 // wait for a safe point: no open stage-level intent.
-import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
+import type { IntentOf, OpOutcome, Parent, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusiveCreate } from '../core/fsx.ts';
@@ -43,6 +47,7 @@ import { type AbsPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
+import { dispatchOf, repin } from '../pipeline/dispatch.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { SpecFileError } from '../spec/spec.ts';
@@ -230,6 +235,34 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
   return { kind: 'applied', verified };
 }
 
+/**
+ * `resume <unit>` of a unit parked `routing-changed`: re-pinned under the routing in force and re-entered at
+ * the stage it parked at when that routing leaves its implementer seat as pinned (or no build has started);
+ * otherwise rejected, saying what would work.
+ */
+function reroute(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
+  const pinned = dispatchOf(ctx.journal.view, unitId);
+  const routing = ctx.routing.resolved;
+  const verified: string[] = [];
+  if (pinned.routingRev !== routing.rev) {
+    if (repin(ctx.journal, routing, pinned) === null) {
+      return {
+        kind: 'rejected',
+        reason: `unit ${unitId} is parked (routing-changed) at ${f.stage}: restore the routing of build.${pinned.riskFloor} or re-enter the unit under a new id`,
+      };
+    }
+    verified.push(`unit ${unitId} re-pinned under routingRev ${routing.rev}`);
+  }
+  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
+  if (item !== null) {
+    const by = ackedBy(ctx, item);
+    if (by === null || by === id) verified.push(...acknowledge(ctx, id, item, null));
+  }
+  ctx.journal.fact({ kind: 'rerouted', unit: unitId, command: id });
+  verified.push(`unit ${unitId} re-entered at ${f.stage}`);
+  return { kind: 'applied', verified };
+}
+
 async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
   const view = ctx.journal.view;
   switch (target.type) {
@@ -240,7 +273,9 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       // Run again after a crash past the reopen: its fact is the postcondition.
       if (u.reopened?.command === id) return { kind: 'applied', verified: [`unit ${target.unit} re-opened at plan-check on spec rev ${u.reopened.specRev}`] };
       const paused = view.control().pausedUnits.includes(target.unit);
-      if (!paused && u.status === 'park-pending') return reopen(ctx, id, target.unit);
+      if (!paused && u.status === 'park-pending') {
+        return u.decided?.outcome === 'routing-changed' ? reroute(ctx, id, target.unit, u.decided) : reopen(ctx, id, target.unit);
+      }
       if (!paused && u.status === 'stop-pending') return { kind: 'rejected', reason: `unit ${target.unit} stopped the arc; resume does not undo a stop` };
       if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
       if (paused || u.status === 'held') ctx.journal.fact({ kind: 'resumed', command: id, target });

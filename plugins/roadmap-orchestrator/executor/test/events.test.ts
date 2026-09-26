@@ -111,6 +111,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
+  { kind: 'rerouted', unit, command: commandId('cmd-0123456789abcdef') },
   { kind: 'executor-started', generation: 3 },
 ];
 

@@ -1,7 +1,9 @@
 // Unit lifecycle across parks (src/commands/apply.ts `resume`, src/pipeline/{unit,arc}.ts), integrated and
 // fake-backed: a unit parked at a judgment stage re-opens after an architect spec edit, the needs-user of a
-// park names what `resume` does and its evidence, and `after` holds a unit until the unit it names is
-// settled. Named tests: reopen.plan-check-park, reopen.gate-park-keeps-session, arc.after-waits-for-ack.
+// park names what `resume` does and its evidence, a unit parked `routing-changed` re-enters without a spec
+// edit once its implementer seat's routing is restored, and `after` holds a unit until the unit it names is
+// settled. Named tests: reopen.plan-check-park, reopen.gate-park-keeps-session, reroute.routing-changed-park,
+// arc.after-waits-for-ack.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,10 +16,13 @@ import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { runArc } from '../src/pipeline/arc.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
-import { heldAfter, runUnit } from '../src/pipeline/unit.ts';
+import type { StageContext } from '../src/pipeline/dispatch.ts';
+import { heldAfter, runUnit, step } from '../src/pipeline/unit.ts';
+import { arcStack, resolveRouting } from '../src/routing/layers.ts';
+import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, MUL, U1, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { type ArcRun, MUL, U1, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
@@ -31,14 +36,18 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
   return raiseNeedsUser(r.journal, r.ctx.runDir, content, { type: 'stage', unit, stage: f.stage, attempt: f.attempt });
 }
 
-/** Submits one command and applies it, as the executor's loop does at a safe point. */
-async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
-  const ctx: CommandContext = { ...r.ctx, hostEnv: {}, routing: { profile: 'default', resolved: r.ctx.routing } };
+/** Submits one command and applies it under `stage`'s routing, as the executor's loop does at a safe point. */
+async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
+  const ctx: CommandContext = { ...stage, hostEnv: {}, routing: { profile: 'default', resolved: stage.routing } };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan.arc, body);
   return { id: file.id, outcome: await applyCommand(ctx, file) };
 }
 
-const resume = (r: ArcRun, unit = U1) => command(r, { type: 'resume', target: { type: 'unit', unit } });
+const resume = (r: ArcRun, unit = U1, stage: StageContext = r.ctx) => command(r, { type: 'resume', target: { type: 'unit', unit } }, stage);
+
+/** The run's context under the default profile with `plan` as the plan's routing layer. */
+const rerouted = (r: ArcRun, plan: unknown): StageContext =>
+  ({ ...r.ctx, routing: resolveRouting(arcStack('default', null, routingLayer(plan, 'plan') as RoutingLayer)) });
 
 /** Rewrites the unit's spec.json as the architect would: `edit` changes the parsed file. */
 function editSpec(r: ArcRun, edit: (spec: Record<string, unknown>) => void, unit = 'u1'): string {
@@ -135,6 +144,48 @@ test('reopen.gate-park-keeps-session: a unit parked at the gate re-opens after a
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate', ...STRAIGHT]);
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null), 'the build after the reopen resumed the session');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('reroute.routing-changed-park: resume is rejected while the implementer seat stays moved; once its routing is restored, resume re-pins the unit and re-enters it at the stage it parked at, no spec edit', T, async () => {
+  const thread = '00000000-0000-4000-8000-00000000beef';
+  const d = setupArc({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { ...codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] }), threadId: thread } as Step,
+      gateStep({ decision: 'approve' }),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
+    const moved = rerouted(r, { build: { med: 'frontier' } });
+    const s = await step(moved, r.unit('u1'));
+    assert.ok(s.kind === 'parked' && s.needsUser.reason === 'routing-changed');
+    assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id\./);
+    const item = raiseParked(r, U1, s.needsUser);
+    const pinned = r.journal.view.dispatchOf(U1)!;
+
+    const rejected = await resume(r, U1, moved);
+    assert.deepEqual(rejected.outcome, { kind: 'rejected', reason: 'unit u1 is parked (routing-changed) at gate: restore the routing of build.med or re-enter the unit under a new id' });
+    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected resume changes nothing');
+
+    // The architect restores build.med; another seat keeps its new class, so the rev still differs.
+    const restored = rerouted(r, { gate: { med: 'summit' } });
+    assert.notEqual(restored.routing.rev, pinned.routingRev);
+    const resumed = await resume(r, U1, restored);
+    assert.equal(resumed.outcome.kind, 'applied');
+    const repinned = r.journal.view.dispatchOf(U1)!;
+    assert.deepEqual([repinned.routingRev, repinned.implementerSeatRev, repinned.riskFloor], [restored.routing.rev, pinned.implementerSeatRev, 'med']);
+    const u = r.journal.view.unit(U1);
+    assert.deepEqual([u.status, u.stage, u.decided?.stage, u.decided?.outcome, u.reopened], ['active', 'gate', 'lanes', 'green', null]);
+    assert.equal(r.journal.view.ackOf(item)?.command, resumed.id, 'the park\'s item is acknowledged by the resume');
+
+    assert.deepEqual(await runUnit(restored, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:routing-changed', ...STRAIGHT.slice(7)]);
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
     r.journal.close();
   }

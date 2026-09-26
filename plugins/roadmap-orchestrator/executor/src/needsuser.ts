@@ -20,6 +20,7 @@ import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type NeedsUserAck, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord, type NeedsUserContent } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
+import type { RiskTier } from './routing/types.ts';
 
 export const NEEDS_USER_DIR = 'needs-user';
 const STAGED_DIR = '.staged';
@@ -126,6 +127,17 @@ export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecR
   return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, then run `
     + `\`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
     + 'session. Or acknowledge this item to leave the unit parked.';
+}
+
+/**
+ * A unit parked `routing-changed`: `resume <unit>` re-enters it at the stage it parked at once the routing
+ * in force resolves its implementer seat as it was pinned (commands/apply.ts), so that is what the item
+ * recommends.
+ */
+export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): string {
+  return `Restore the routing of build.${floor} or re-enter the unit under a new id. Once build.${floor} resolves to the binding `
+    + `the unit was dispatched on, \`roadmap resume ${unit}\` re-pins it under the routing in force and re-enters it at the stage `
+    + 'it parked at, no spec edit needed. Or acknowledge this item to leave the unit parked.';
 }
 
 /**

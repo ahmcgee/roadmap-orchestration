@@ -207,7 +207,11 @@ export type DerivedState = Readonly<{
 type Closure = Readonly<{ type: 'done'; record: DoneRecord }> | Readonly<{ type: 'abort'; record: AbortRecord }>;
 type OpEntry = { latest: IntentRecord; closure: Closure | null };
 /** `starts` and `outcomes` hold `<stage>#<attempt>`; `state.counters.attempts` is `starts.size`. */
-type UnitEntry = { starts: Set<string>; outcomes: Set<string>; state: UnitState };
+/** `beforeDecided`: the unit's decision and interruption before its latest decided outcome (a reroute restores them). */
+type UnitEntry = {
+  starts: Set<string>; outcomes: Set<string>; state: UnitState;
+  beforeDecided: Readonly<{ decided: StageOutcomeFact | null; interrupted: StageOutcomeFact | null }>;
+};
 type MeterEntry = { -readonly [F in keyof MeterTotal]: MeterTotal[F] };
 
 /**
@@ -308,7 +312,10 @@ export class Fold implements JournalView {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
     const pinned = this.#dispatch.get(unit);
-    const u = { starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, pinned?.riskFloor ?? null, specOf(pinned)) };
+    const u: UnitEntry = {
+      starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, pinned?.riskFloor ?? null, specOf(pinned)),
+      beforeDecided: { decided: null, interrupted: null },
+    };
     this.#units.set(unit, u);
     return u;
   }
@@ -404,7 +411,11 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         u.state = afterStageOutcome(u.state, f);
-        u.state = f.class === 'hold' ? { ...u.state, interrupted: f } : { ...u.state, decided: f, interrupted: null };
+        if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
+        else {
+          u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
+          u.state = { ...u.state, decided: f, interrupted: null };
+        }
         this.#start(u, key);
         return;
       }
@@ -440,7 +451,25 @@ export class Fold implements JournalView {
       case 'reopened':
         this.#reopened(f, fail);
         return;
+      case 'rerouted':
+        this.#rerouted(f, fail);
+        return;
     }
+  }
+
+  /**
+   * A reroute: only of a unit parked `routing-changed` (the command re-pinned it under the routing in force
+   * first, when that routing's rev differs from the pinned one). The unit
+   * re-enters at the stage it parked at: its decision and interruption return to what they were before the
+   * park, so the driver re-runs that stage as a new attempt. Nothing else changes.
+   */
+  #rerouted(f: Extract<Fact, { kind: 'rerouted' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    const decided = u?.state.decided ?? null;
+    if (u === undefined || u.state.status !== 'park-pending' || decided === null || decided.outcome !== 'routing-changed') {
+      return fail(`reroute of unit ${f.unit}, which is not parked routing-changed`);
+    }
+    u.state = { ...u.state, stage: decided.stage, status: 'active', ...u.beforeDecided };
   }
 
   /**

@@ -290,6 +290,17 @@ describe('fold: command effects (step 13)', () => {
     refuses(chain([dispatch('med'), stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park' }), reopen(2)]), 3, /parked at lanes, not at a judgment stage/);
     refuses(chain([dispatch('med'), gatePark, reopen(3)]), 3, /spec rev 3; its recorded rev is 1/);
   });
+
+  it('state.reroute: a reroute of a unit parked routing-changed restores the decision and interruption before the park, at the parked stage; any other reroute is refused', () => {
+    const reroute = fact({ kind: 'rerouted', unit: U1, command: C });
+    const green = stageOutcome({ stage: 'lanes', attempt: 3, outcome: 'green', class: 'advance' });
+    const held = stageOutcome({ stage: 'gate', attempt: 4, outcome: 'interrupted', class: 'hold' });
+    const parked = stageOutcome({ stage: 'gate', attempt: 5, outcome: 'routing-changed', class: 'park' });
+    const u = fold(ARC, chain([dispatch('med'), green, held, parked, reroute])).units[0]!;
+    assert.deepEqual([u.status, u.stage, u.decided?.stage, u.decided?.outcome, u.interrupted?.attempt, u.counters.attempts], ['active', 'gate', 'lanes', 'green', 4, 3]);
+    refuses(chain([dispatch('med'), green, reroute]), 3, /not parked routing-changed/);
+    refuses(chain([dispatch('med'), stageOutcome({ stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park' }), reroute]), 3, /not parked routing-changed/);
+  });
 });
 
 describe('writeStateCache', () => {

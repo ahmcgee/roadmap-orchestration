@@ -50,7 +50,7 @@ unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 s
 | `status` | Agent-facing JSON snapshot of the run |
 | `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
 | `pause <unit>` / `pause --all` | Kill, tear down, keep commits and the worktree as left; the unit holds at its stage |
-| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have edited its spec (below); `--backend` clears a usage-limit park after a passing smoke |
+| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have edited its spec, or one parked `routing-changed` once its implementer seat's routing is restored (below); `--backend` clears a usage-limit park after a passing smoke |
 | `stop` | Park everything, tear down, release the host lock |
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |
@@ -87,7 +87,7 @@ Every key is optional. `seats` overrides the profile's class per seat. `classes`
 `{backend, model, effort}` triple, and it is the only place you name a model. `plan.json`'s `routing` names
 classes per seat the same way and cannot rebind a class. Routing is read at `start`. A judgment seat may
 change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
-(`routing-changed`); the needs-user names the seat.
+(`routing-changed`); the needs-user names the seat (below).
 
 ## The run dir
 
@@ -149,6 +149,11 @@ these applies:
   session: its next build resumes that session, told the spec was amended. The resume acknowledges the park's
   needs-user. The plan-check redirect bound (two redirects) counts again from your edit; the other counters
   carry on.
+- **Parked `routing-changed`** (a routing change moved the implementer seat after its build started): restore
+  the routing of the seat the item names (`build.<tier>`) or re-enter the unit under a new id. Once the seat
+  resolves to the binding the unit was dispatched on, `roadmap resume <unit>` re-pins it under the routing in
+  force and re-enters it at the stage it parked at; no spec edit. Other seats may keep their new classes. The
+  resume acknowledges the park's needs-user; while the seat is still moved it is rejected.
 - **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): `resume`
   does not re-open it. Re-enter the work: add a unit with a new id to `plan.json` (its fixed spec, the same
   scope), create its branch `roadmap/<arc>/<new id>` at the tip of the parked unit's branch, acknowledge the

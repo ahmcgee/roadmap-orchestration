@@ -41,6 +41,7 @@ import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import type { ResourceContext } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
+import { routingChangedRecommendation } from '../needsuser.ts';
 import { type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type SeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
@@ -86,7 +87,7 @@ function routingChanged(record: DispatchRecord): Pinned<never> {
       reason: 'routing-changed',
       summary: `Unit ${record.unit}: the routing changed since it was dispatched (routingRev ${record.routingRev}), and its implementer seat `
         + `${seat} now resolves to a different binding. Its build session resumes on its seat, so it cannot move mid-unit.`,
-      recommendation: `Restore the previous routing of ${seat} and resume, or re-enter the unit under a new id.`,
+      recommendation: routingChangedRecommendation(record.unit, record.riskFloor),
       options: [],
       evidence: [],
     },
@@ -99,16 +100,24 @@ function buildStarted(view: JournalView, unit: UnitId): boolean {
 }
 
 /**
- * `record` under the routing in force: itself when the rev is unchanged; re-pinned (a new dispatch fact,
- * same scope and floor) when no build has started or the implementer seat hashes the same; else the park.
+ * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
+ * change: no build has started for it, or its implementer seat hashes the same; null when it cannot. The
+ * stages call it when the rev in force differs from the pinned one, and so does `resume <unit>` of a unit
+ * parked `routing-changed` (commands/apply.ts).
  */
+export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord): DispatchRecord | null {
+  const seat = implementerSeatRev(routing, record.riskFloor);
+  if (seat !== record.implementerSeatRev && buildStarted(journal.view, record.unit)) return null;
+  const next: DispatchRecord = { ...record, routingRev: routing.rev, implementerSeatRev: seat, at: now() };
+  journal.fact({ kind: 'dispatch', record: next });
+  return next;
+}
+
+/** `record` under the routing in force: itself when the rev is unchanged; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
   if (record.routingRev === ctx.routing.rev) return { kind: 'pinned', dispatch: record };
-  const seat = implementerSeatRev(ctx.routing, record.riskFloor);
-  if (seat !== record.implementerSeatRev && buildStarted(ctx.journal.view, record.unit)) return routingChanged(record);
-  const next: DispatchRecord = { ...record, routingRev: ctx.routing.rev, implementerSeatRev: seat, at: now() };
-  ctx.journal.fact({ kind: 'dispatch', record: next });
-  return { kind: 'pinned', dispatch: next };
+  const next = repin(ctx.journal, ctx.routing, record);
+  return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
 
 /**

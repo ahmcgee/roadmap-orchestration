@@ -163,6 +163,7 @@ in the line belongs to `arc`.
 | `stop-requested` | `command`: the durable stop marker (step 13) |
 | `executor-started` | `generation`: written at every start once the journal is open; clears the stop marker (a stop ends one run, not the arc). Pause markers and holds persist until `resume` (lead ruling, 13b) |
 | `reopened` | `unit, command, specRev, specSha256`: `resume <unit>` re-opened a unit parked at `plan-check` or `gate` onto its architect-edited spec (the file at `specRev` = the unit's recorded spec rev + 1, hashing to `specSha256`). The unit starts over at plan-check as a new attempt: `decided` and `interrupted` null, `stage` plan-check, `status` active; counters, `routedUp`, `promotion`, `approval`, the branch, worktree and implementer session are kept; `redirectBase` = `counters.redirects` |
+| `rerouted` | `unit, command`: `resume <unit>` re-entered a unit parked `routing-changed` (its latest decided outcome) once the routing in force resolves its implementer seat to the pinned `implementerSeatRev`, or no build has started; the command re-pinned it first (a `dispatch` fact under the rev in force, when that differs from the pinned one). `decided` and `interrupted` return to what they were before the park, so the unit re-runs the stage it parked at as a new, uncharged attempt; `stage` is that stage, `status` active; nothing else changes |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 
@@ -210,7 +211,8 @@ match an open intent; ordinal strictly increasing per key; a retry (same op, nex
 `deadlineAt`, `key` and `parent`; counters `monotonic()`; one `stage-outcome` per `(unit, stage, attempt)`;
 the chargeable outcome that reaches `CHARGEABLE_BOUND` (3) has class `park`; a later `dispatch` of a unit keeps
 its `scope` and does not lower its `riskFloor`; a `reopened` fact names a unit that is `park-pending` with its
-`decided` stage `plan-check` or `gate`, at `specRev` = its recorded `spec.rev` + 1. `state.json` is a derived cache, never read for a
+`decided` stage `plan-check` or `gate`, at `specRev` = its recorded `spec.rev` + 1; a `rerouted` fact names a unit
+that is `park-pending` with its `decided` outcome `routing-changed`. `state.json` is a derived cache, never read for a
 decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
 facts keyed by op/inv, so they cannot be lost or double-counted.
 
@@ -358,6 +360,9 @@ ruling, arc-1 feedback item 7): when the rev in force differs from the pinned on
 fact under the new rev, scope and floor unchanged) if no build has started for it or its implementer seat hashes
 the same; otherwise the dispatching stage records outcome `routing-changed` (at `plan-check`, `build` or `gate`),
 which parks the unit uncharged with needs-user reason `routing-changed` naming the seat, never a model.
+`resume <unit>` of such a park re-pins the record under the rev in force by the same rule (no spec edit) and
+re-enters the unit at the stage it parked at (`rerouted`); while the seat is still moved it is rejected with
+"restore the routing of build.<tier> or re-enter the unit under a new id".
 
 ## `spec.json` M1 subset and `SpecPatch`
 
@@ -471,8 +476,10 @@ acknowledged by another command, a choice the item does not offer); `resume` →
 backend's smoke alone first; a failed smoke is `rejected{smoke-failed: …}`; `<unit>` under `pause --all` is
 rejected); `resume <unit>` of a unit neither paused nor held: parked at `plan-check` or `gate` with its spec
 edited to the next rev → the park's open needs-user acknowledged by this command, then `reopened` (see
-"Architect spec edits"); an unedited spec, any other park, a stopped or a merged unit → `rejected` with the
-reason; `sweep` → per undispositioned residue, reserve (or `reclaim` this arc's own cleanup-failed
+"Architect spec edits"); parked `routing-changed` (any stage) with the implementer seat as pinned under the
+rev in force, or no build started → re-pinned (`dispatch` fact, when the rev differs), the park's open
+needs-user acknowledged, then `rerouted`; an unedited spec, a still-moved implementer seat, any other park, a
+stopped or a merged unit → `rejected` with the reason; `sweep` → per undispositioned residue, reserve (or `reclaim` this arc's own cleanup-failed
 resource) under the sweep holder, the recorded teardown, release, `cleaned` disposition; a failed teardown
 leaves the resource cleaning under the sweep and the residue undisposed, the receipt's `verified` says so, and
 the next sweep re-drives it first.
