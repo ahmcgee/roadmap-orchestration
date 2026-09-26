@@ -13,6 +13,7 @@ import { absPath } from '../../src/core/values.ts';
 import type { ExitReason } from '../../src/executor.ts';
 import type { Status } from '../../src/status.ts';
 import { type Exit, fixture, runFixture } from '../helpers/proc.ts';
+import { type Owner, own } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { type ArcDescriptor, type ArcOptions, setupArc } from './unit-common.ts';
@@ -38,7 +39,12 @@ export type ExecOptions = ArcOptions & Readonly<{
 
 export type ExecRun = ArcDescriptor & Readonly<{ stateDir: string }>;
 
-export function setupExec(opts: ExecOptions): ExecRun {
+/**
+ * Lays out an arc that test `t` may start: `t` owns its processes (helpers/reap.ts), stopped when it ends.
+ * They are named by the host dir and the repo, so a test that runs this arc on another arc's host dir
+ * (`{ ...setupExec(t, o), hostDir }`) still owns what it starts.
+ */
+export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
   const d = setupArc(opts);
   const stateDir = tmpDir('exec-res');
   if (opts.resource === true) {
@@ -50,7 +56,9 @@ export function setupExec(opts: ExecOptions): ExecRun {
   }
   const common = git(d.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir');
   mkdirSync(d.hostDir, { recursive: true });
-  return { ...d, runDir: join(common, 'roadmap-runtime', d.arc), stateDir };
+  const r = { ...d, runDir: join(common, 'roadmap-runtime', d.arc), stateDir };
+  own(t, { paths: [r.hostDir, r.repo], stop: () => cli(r, ['stop']) });
+  return r;
 }
 
 /** The environment of every CLI child: the fakes' shims first on PATH. */

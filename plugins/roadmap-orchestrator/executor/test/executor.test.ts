@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import { arcId, sha, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -24,11 +24,15 @@ import { reached, release } from './helpers/barrier.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
+import { assertNoSurvivors } from './helpers/reap.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { MUL, U1, codexStep, gateStep, mulBuild, outcomes } from './fixtures/unit-common.ts';
 import {
   EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, execEnv, executorPid, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, statusOf, until,
 } from './fixtures/exec-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 const WAIT_MS = 60_000;
@@ -50,8 +54,8 @@ function blockedBuild(name: string, commit: boolean): Step {
   ], { argv: ['exec', '-C'] });
 }
 
-test('executor.start-to-complete: roadmap start runs one unit to complete; main is the ff merge, the snapshot ref verifies, exit.reason.json says complete', T, async () => {
-  const r = setupExec({ steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+test('executor.start-to-complete: roadmap start runs one unit to complete; main is the ff merge, the snapshot ref verifies, exit.reason.json says complete', T, async (t) => {
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   const base = git(r.repo, 'rev-parse', 'main');
   const exit = await startExec(r).exit;
   assert.equal(exit.code, 0, exit.stderr);
@@ -74,8 +78,8 @@ test('executor.start-to-complete: roadmap start runs one unit to complete; main 
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.refused-writes-rejection: a 0.x .roadmap/ layout is refused with exit 78, and status explains it', T, async () => {
-  const r = setupExec({ steps: [] });
+test('executor.refused-writes-rejection: a 0.x .roadmap/ layout is refused with exit 78, and status explains it', T, async (t) => {
+  const r = setupExec(t, { steps: [] });
   mkdirSync(join(r.repo, '.roadmap'), { recursive: true });
   writeFileSync(join(r.repo, '.roadmap', 'state.json'), '{}\n');
   const exit = await startExec(r).exit;
@@ -91,8 +95,8 @@ test('executor.refused-writes-rejection: a 0.x .roadmap/ layout is refused with 
   assert.equal(readCalls(r.scenarioPath).length, 0, 'no backend was called');
 });
 
-test('startup.resource-command-unrunnable: a probe or teardown command that cannot run refuses start (resource variant of spec-lane-unrunnable)', T, async () => {
-  const r = setupExec({ steps: [] });
+test('startup.resource-command-unrunnable: a probe or teardown command that cannot run refuses start (resource variant of spec-lane-unrunnable)', T, async (t) => {
+  const r = setupExec(t, { steps: [] });
   const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Record<string, unknown>;
   plan['resources'] = [{
     name: 'db',
@@ -111,8 +115,8 @@ test('startup.resource-command-unrunnable: a probe or teardown command that cann
   assert.deepEqual((await statusOf(r)).rejection?.rejections, reason.rejections, 'status reads the same rows back');
 });
 
-test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, uncharged); resume re-runs the build as a new attempt and the unit completes', T, async () => {
-  const r = setupExec({ steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', false), mulBuild(), gateStep({ decision: 'approve' })] });
+test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, uncharged); resume re-runs the build as a new attempt and the unit completes', T, async (t) => {
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', false), mulBuild(), gateStep({ decision: 'approve' })] });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
   await cli(r, ['pause', 'u1']);
@@ -141,8 +145,8 @@ test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, u
   assert.equal(journalOf(r).view.unit(U1).counters.chargeableFailures, 0, 'the interruption charged nothing');
 });
 
-test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resources, releases the host and exits stop', T, async () => {
-  const r = setupExec({ resource: true, steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', false)] });
+test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resources, releases the host and exits stop', T, async (t) => {
+  const r = setupExec(t, { resource: true, steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', false)] });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
   assert.equal(journalOf(r).view.unit(U1).stage, 'build');
@@ -164,9 +168,9 @@ test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resou
   assert.equal(s.run.state, 'no-owner');
 });
 
-test('executor.restart-clears-stop-not-pause: a restart after pause and stop clears the stop, keeps the pause (it waits), and resume lets it finish', T, async () => {
+test('executor.restart-clears-stop-not-pause: a restart after pause and stop clears the stop, keeps the pause (it waits), and resume lets it finish', T, async (t) => {
   const blockedCheck = planCheckStep({ decision: 'approve' });
-  const r = setupExec({
+  const r = setupExec(t, {
     steps: [
       ...SMOKE_DEFAULT, { ...blockedCheck, acts: [{ type: 'barrier', name: 'check1', timeoutMs: 120_000 }, ...blockedCheck.acts] } as Step,
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
@@ -202,8 +206,8 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   assert.deepEqual(started(r), [1, 2]);
 });
 
-test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user keeps the executor in its loop; ack lets it finish with the terminal summary', T, async () => {
-  const r = setupExec({ steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })] });
+test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user keeps the executor in its loop; ack lets it finish with the terminal summary', T, async (t) => {
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })] });
   const run = startExec(r);
   let id = '';
   await until(async () => {
@@ -226,8 +230,8 @@ test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user k
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the supervisor restarts it, which adopts or settles the build and consumes it (never re-run); the unit completes and publishes once', T, async () => {
-  const r = setupExec({
+test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the supervisor restarts it, which adopts or settles the build and consumes it (never re-run); the unit completes and publishes once', T, async (t) => {
+  const r = setupExec(t, {
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', true),
       ...SMOKE_DEFAULT, gateStep({ decision: 'approve' }),
@@ -273,9 +277,9 @@ test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the s
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
 });
 
-test('executor.park-raised-promptly: a unit that parks has its needs-user raised while the next unit runs, not when the arc returns; status says running', T, async () => {
+test('executor.park-raised-promptly: a unit that parks has its needs-user raised while the next unit runs, not when the arc returns; status says running', T, async (t) => {
   const check = planCheckStep({ decision: 'approve' });
-  const r = setupExec({
+  const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
@@ -305,13 +309,13 @@ test('executor.park-raised-promptly: a unit that parks has its needs-user raised
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item }, { unit: 'u2', result: 'merged' }] });
 });
 
-test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait overrides it, and a start that stops waiting leaves the run going', T, async () => {
+test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait overrides it, and a start that stops waiting leaves the run going', T, async (t) => {
   assert.equal(START_WAIT_MS, 240_000, 'past the smoke\'s 180 s deadline');
   assert.equal(parseStartArgs(['--repo', '.', '--plan', 'p', '--wait', '5000']).waitMs, 5000);
   assert.equal(parseStartArgs(['--repo', '.', '--plan', 'p']).waitMs, null);
   for (const bad of ['0', '-5', '1.5', 'soon', '']) assert.throws(() => parseStartArgs(['--repo', '.', '--plan', 'p', '--wait', bad]), CliError, bad);
 
-  const r = setupExec({ steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   const exit = await runFixture('exec-cli.ts', [r.hostDir, 'start', '--repo', r.repo, '--plan', r.planPath, '--wait', '1'], { env: execEnv(r), timeoutMs: 30_000 });
   assert.equal(exit.code, 70, exit.stdout + exit.stderr);
   const line = JSON.parse(exit.stdout.trim()) as { kind: string; waitedMs: number };
@@ -321,9 +325,9 @@ test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait ov
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking unit-scoped needs-user, the loop still dispatches u2 (resumed after a pause); the run completes once the item is acknowledged', T, async () => {
+test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking unit-scoped needs-user, the loop still dispatches u2 (resumed after a pause); the run completes once the item is acknowledged', T, async (t) => {
   const blockedU2 = planCheckStep({ decision: 'approve' });
-  const r = setupExec({
+  const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
@@ -354,8 +358,8 @@ test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking u
   assert.deepEqual(outcomes(r, 'u2'), ['plan-check:interrupted', ...STRAIGHT]);
 });
 
-test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-required, naming u2) holds u1 too; its ack lets both run', T, async () => {
-  const r = setupExec({
+test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-required, naming u2) holds u1 too; its ack lets both run', T, async (t) => {
+  const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),

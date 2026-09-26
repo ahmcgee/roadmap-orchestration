@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants, existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { IntentOf } from '../src/core/events.ts';
 import { arcId, invocationId } from '../src/core/ids.ts';
@@ -21,10 +21,14 @@ import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type Exit } from './helpers/proc.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { readCalls } from './helpers/scenario.ts';
+import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import { EXEC_TIMEOUT_MS, type ExecRun, execEnv, hostFile, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
 import {
   CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, claimOf, executorOf, kill, smokes, startCli, startLine, supervisorOf,
 } from './fixtures/sup-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 const { O_APPEND } = constants;
@@ -41,8 +45,8 @@ function run(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<Exit> {
   });
 }
 
-test('host.handshake-verifies-self: an owner record naming another pid → the executor refuses before any effect', T, async () => {
-  const r = setupExec({ steps: smokes(1) });
+test('host.handshake-verifies-self: an owner record naming another pid → the executor refuses before any effect', T, async (t) => {
+  const r = setupExec(t, { steps: smokes(1) });
   const hostDir = absPath(r.hostDir);
   const out = await claimHost(hostDir, { arc: arcId(r.arc), runDir: absPath(r.runDir), repo: absPath(r.repo), supervisor: selfIdentity() }, async () => ({ kind: 'reconciled' }));
   assert.equal(out.kind, 'claimed');
@@ -63,8 +67,8 @@ test('host.handshake-verifies-self: an owner record naming another pid → the e
 });
 
 /** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
-async function strandedArc(): Promise<Readonly<{ a: ExecRun; spawn: IntentOf<'proc.spawn'> }>> {
-  const a = setupExec({ steps: [...smokes(1), blockedCheck('check1')] });
+async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentOf<'proc.spawn'> }>> {
+  const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
   assert.equal(line.kind, 'ready', JSON.stringify(line));
   await reached(a.scenarioDir, 'check1', WAIT_MS);
@@ -109,11 +113,11 @@ function appendFdOn(pid: number, fd: string): string | null {
   }
 }
 
-test('host.takeover-cross-arc-live-runner: arc B takes over a dead claim of arc A whose runner lives; A\'s invocation is adopted first, with exactly one result, then B runs', T, async () => {
-  const { a, spawn: stranded } = await strandedArc();
+test('host.takeover-cross-arc-live-runner: arc B takes over a dead claim of arc A whose runner lives; A\'s invocation is adopted first, with exactly one result, then B runs', T, async (t) => {
+  const { a, spawn: stranded } = await strandedArc(t);
   const inv = invocationId(stranded.op, stranded.ordinal);
   const intentsBefore = journalOf(a).events.filter((e) => e.type === 'intent').length;
-  const b = { ...setupExec({ steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
+  const b = { ...setupExec(t, { steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
   const running = startExec(b, CLAUDE_ONLY);
 
   // B's supervisor holds the recovery lock while it waits on A's live runner; host.lock is still A's.
@@ -136,8 +140,8 @@ test('host.takeover-cross-arc-live-runner: arc B takes over a dead claim of arc 
   assert.equal(events.filter((e) => e.type === 'intent').length, intentsBefore, 'nothing was dispatched for A');
 });
 
-test('host.takeover-cross-arc-unreconcilable: a surviving invocation whose launch.json is not its intent\'s refuses the takeover with a durable needs-user', T, async () => {
-  const { a, spawn: stranded } = await strandedArc();
+test('host.takeover-cross-arc-unreconcilable: a surviving invocation whose launch.json is not its intent\'s refuses the takeover with a durable needs-user', T, async (t) => {
+  const { a, spawn: stranded } = await strandedArc(t);
   const inv = invocationId(stranded.op, stranded.ordinal);
   const launchPath = join(invocationDir(absPath(a.runDir), inv), 'launch.json');
   const launch = JSON.parse(readFileSync(launchPath, 'utf8')) as { graceMs: number };
@@ -145,7 +149,7 @@ test('host.takeover-cross-arc-unreconcilable: a surviving invocation whose launc
   const logBefore = readFileSync(join(a.runDir, 'events.jsonl'));
   const lockBefore = readFileSync(hostFile(a, 'host.lock'), 'utf8');
 
-  const b = { ...setupExec({ steps: smokes(1) }), hostDir: a.hostDir };
+  const b = { ...setupExec(t, { steps: smokes(1) }), hostDir: a.hostDir };
   const exit = await startCli(b);
   try {
     assert.equal(exit.code, 78, exit.stdout + exit.stderr);

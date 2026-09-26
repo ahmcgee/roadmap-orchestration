@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import { before, describe, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import { arcId, hostNeedsUserId, supervisorNeedsUserId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { writeFileNeedsUser } from '../src/executor.ts';
@@ -15,11 +15,15 @@ import { SESSION_GUARANTEE, type Status } from '../src/status.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
+import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import { BUILD_REPORT, planCheckStep } from './fixtures/stage-common.ts';
 import { MUL, gateStep, mulBuild } from './fixtures/unit-common.ts';
 import {
   EXEC_TIMEOUT_MS, type ExecRun, SMOKE_CLAUDE_ONLY, SMOKE_DEFAULT, cli, journalOf, reasonOf, setupExec, startExec, statusOf, until,
 } from './fixtures/exec-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 
@@ -30,8 +34,8 @@ const CLAUDE_ONLY_STEPS: readonly Step[] = [
   gateStep({ decision: 'approve' }),
 ];
 
-async function completeRun(steps: readonly Step[], extra: readonly string[] = []): Promise<ExecRun> {
-  const r = setupExec({ steps });
+async function completeRun(t: Owner, steps: readonly Step[], extra: readonly string[] = []): Promise<ExecRun> {
+  const r = setupExec(t, { steps });
   const exit = await startExec(r, extra).exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.equal(reasonOf(exit).kind, 'complete', exit.stdout);
@@ -42,8 +46,13 @@ describe('status.subset', () => {
   let before_: Status;
   let r: ExecRun;
   let after_: Status;
+  // A suite's before hook has no context to own the run: the suite's after hook tears it down.
+  const teardowns: (() => Promise<void>)[] = [];
+  after(async () => {
+    for (const teardown of teardowns) await teardown();
+  });
   before(async () => {
-    r = setupExec({ steps: DEFAULT_STEPS });
+    r = setupExec({ after: (fn) => void teardowns.push(fn) }, { steps: DEFAULT_STEPS });
     before_ = await statusOf(r);
     const exit = await startExec(r).exit;
     assert.equal(exit.code, 0, exit.stderr);
@@ -116,8 +125,8 @@ function assertNoModelIds(r: ExecRun): number {
   return checked;
 }
 
-test('state.no-model-ids: after full runs under the default and claude-only profiles, no executor-written file and no snapshot names a model', { timeout: 2 * EXEC_TIMEOUT_MS }, async () => {
-  const runs = [await completeRun(DEFAULT_STEPS), await completeRun(CLAUDE_ONLY_STEPS, ['--profile', 'claude-only'])];
+test('state.no-model-ids: after full runs under the default and claude-only profiles, no executor-written file and no snapshot names a model', { timeout: 2 * EXEC_TIMEOUT_MS }, async (t) => {
+  const runs = [await completeRun(t, DEFAULT_STEPS), await completeRun(t, CLAUDE_ONLY_STEPS, ['--profile', 'claude-only'])];
   for (const r of runs) {
     assert.ok(assertNoModelIds(r) > 20, 'the scope covers the log, state, receipts, evidence and the snapshot');
     const status = JSON.stringify({ ...(await statusOf(r)), spend: null });
@@ -130,9 +139,9 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
   assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => m.model), ['claude-opus-5-5'], 'claude-only: Opus in every seat this run used');
 });
 
-test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async () => {
+test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async (t) => {
   const check = planCheckStep({ decision: 'approve' });
-  const r = setupExec({
+  const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),

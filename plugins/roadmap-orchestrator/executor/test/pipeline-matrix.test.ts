@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { type TestContext, after, test } from 'node:test';
 import type { Event, IntentOf } from '../src/core/events.ts';
 import { arcId, invocationId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
@@ -21,6 +21,7 @@ import { EXIT_REASON_FILE } from '../src/executor.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
+import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import {
   ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH,
   PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
@@ -34,6 +35,9 @@ import {
 import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from './fixtures/sup-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { MUL, codexStep, gateStep } from './fixtures/unit-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 /** Supervised runs at once: each is a handful of short-lived processes, mostly waiting on 500 ms polls. */
 const CONCURRENCY = 10;
@@ -63,8 +67,8 @@ function expected(ref: Reference, r: ExecRun, trace: Trace): Expected {
   return { integration: 'main', baseline: baselineOf(r), tree: ref.tree, units: ref.units, outcomes: ref.outcomes, needsUser: ref.needsUser, trace };
 }
 
-async function reference(name: string, s: Scenario, outcomes: Readonly<Record<string, readonly string[]>>): Promise<Reference> {
-  const laid = layout(s);
+async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly<Record<string, readonly string[]>>): Promise<Reference> {
+  const laid = layout(t, s);
   const record = join(tmpDir('pm-record'), 'record');
   await supervisedRun(laid, { record });
   const { r } = laid;
@@ -177,8 +181,8 @@ function traceFor(ref: Reference, label: string, occurrence: number): Trace {
 // A crash cell
 
 /** `s` crashed at (label, occurrence): one crash, one restart, and the arc ends as `ref` did, with `trace`. */
-async function crashCell(ref: Reference, s: Scenario, label: string, occurrence: number, trace: Trace, whileDown?: (r: ExecRun) => void): Promise<void> {
-  const laid = layout(s);
+async function crashCell(t: Owner, ref: Reference, s: Scenario, label: string, occurrence: number, trace: Trace, whileDown?: (r: ExecRun) => void): Promise<void> {
+  const laid = layout(t, s);
   const { r } = laid;
   const trigger = writeTrigger(tmpDir('pm-trigger'), { label, occurrence });
   await supervisedRun(laid, { trigger, ...(whileDown === undefined ? {} : { whileDown }) });
@@ -202,7 +206,7 @@ const boundaryOf = (row: string, label: string): Boundary => {
 const invokeSpawns = (events: readonly Event[]): readonly IntentOf<'proc.spawn'>[] =>
   events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose !== 'smoke' ? [e] : []));
 
-type CellSpec = Readonly<{ name: string; run: () => Promise<void> }>;
+type CellSpec = Readonly<{ name: string; run: (t: TestContext) => Promise<void> }>;
 
 /** Every label of a whole-pipeline scenario at occurrence 1, and 2 where it repeats. */
 function pipelineCells(row: string, ref: Reference, s: Scenario): readonly CellSpec[] {
@@ -210,7 +214,7 @@ function pipelineCells(row: string, ref: Reference, s: Scenario): readonly CellS
     const count = ref.recorded.executor.get(label) ?? 0;
     return (count >= 2 ? [1, 2] : [1]).map((occurrence) => ({
       name: `${ref.name} ${boundaryOf(row, label)} ${label}#${occurrence}`,
-      run: () => crashCell(ref, s, label, occurrence, traceFor(ref, label, occurrence)),
+      run: (t) => crashCell(t, ref, s, label, occurrence, traceFor(ref, label, occurrence)),
     }));
   });
 }
@@ -236,8 +240,8 @@ const RUNNER_DEATH: Scenario = {
   ],
 };
 
-async function runnerDeath(ref: Reference): Promise<void> {
-  const laid = layout(RUNNER_DEATH);
+async function runnerDeath(t: Owner, ref: Reference): Promise<void> {
+  const laid = layout(t, RUNNER_DEATH);
   const { r } = laid;
   await supervisedRun(laid);
   const run = runOf(r);
@@ -261,13 +265,13 @@ async function runnerDeath(ref: Reference): Promise<void> {
 }
 
 /** The supervisor SIGKILLed mid-build: its executor runs on, alone, to the end; the next start takes over. */
-async function supervisorDeath(ref: Reference): Promise<void> {
+async function supervisorDeath(t: Owner, ref: Reference): Promise<void> {
   const s: Scenario = {
     arc: () => ({}),
     steps: () => [planCheckStep({ decision: 'approve' }), blockedAt([{ type: 'dirty', files: MUL }]), gateStep({ decision: 'approve' }), ...SMOKE_DEFAULT],
     hooks: (r) => [{ name: 'kill-supervisor', when: () => reachedBuild(r), act: () => kill(supervisorOf(r)) }],
   };
-  const laid = layout(s);
+  const laid = layout(t, s);
   const { r } = laid;
   const fired = new Set<string>();
   const first = await supervisedRun(laid, {}, fired);
@@ -292,7 +296,7 @@ async function supervisorDeath(ref: Reference): Promise<void> {
 }
 
 /** Supervisor and executor SIGKILLed mid-build, the runner alive: the next start takes over and adopts it. */
-async function hostDeath(ref: Reference): Promise<void> {
+async function hostDeath(t: Owner, ref: Reference): Promise<void> {
   const s: Scenario = {
     arc: () => ({}),
     steps: () => [planCheckStep({ decision: 'approve' }), blockedAt([{ type: 'dirty', files: MUL }]), ...SMOKE_DEFAULT, gateStep({ decision: 'approve' })],
@@ -309,7 +313,7 @@ async function hostDeath(ref: Reference): Promise<void> {
       { name: 'release', when: () => startedGenerations(r).length === 2, act: async () => release(r.scenarioDir, 'build1') },
     ],
   };
-  const laid = layout(s);
+  const laid = layout(t, s);
   const { r } = laid;
   const fired = new Set<string>();
   await supervisedRun(laid, {}, fired);
@@ -329,11 +333,11 @@ async function hostDeath(ref: Reference): Promise<void> {
 test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000 }, async (t) => {
   const started = Date.now();
   const [straight, bumpy, malformed, cancel, staleLane] = await Promise.all([
-    reference('straight', STRAIGHT, STRAIGHT_OUTCOMES),
-    reference('bumpy', BUMPY, BUMPY_OUTCOMES),
-    reference('malformed', MALFORMED, MALFORMED_OUTCOMES),
-    reference('cancel', CANCEL, CANCEL_OUTCOMES),
-    reference('stale', STALE_LANE, STALE_OUTCOMES),
+    reference(t, 'straight', STRAIGHT, STRAIGHT_OUTCOMES),
+    reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES),
+    reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
+    reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
+    reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),
   ]);
 
   // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that
@@ -361,7 +365,7 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
     ...crashCells(ADVERSARIAL_MALFORMED).map((c): CellSpec => {
       const occurrence = c.label === 'unit.after-stage' ? stageAt(malformed, 'gate:malformed') : gateAt;
       const trace = c.label === 'unit.after-stage' ? NONE : R('reconciled');
-      return { name: `malformed ${c.boundary} ${c.label}#${occurrence}`, run: () => crashCell(malformed, MALFORMED, c.label, occurrence, trace) };
+      return { name: `malformed ${c.boundary} ${c.label}#${occurrence}`, run: (t) => crashCell(t, malformed, MALFORMED, c.label, occurrence, trace) };
     }),
     ...crashCells(ADVERSARIAL_CANCEL).map((c): CellSpec => {
       const traces: Readonly<Record<string, Trace>> = {
@@ -370,19 +374,19 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
         'kill.after-quiesced': R('reconciled', 'redone'),
         'kill.after-done': { recoveredBy: ['redone'], required: false, tailDiscarded: false },
       };
-      return { name: `cancel ${c.boundary} ${c.label}#1`, run: () => crashCell(cancel, CANCEL, c.label, 1, traces[c.label]!) };
+      return { name: `cancel ${c.boundary} ${c.label}#1`, run: (t) => crashCell(t, cancel, CANCEL, c.label, 1, traces[c.label]!) };
     }),
     ...crashCells(ADVERSARIAL_STALE).map((c): CellSpec => (c.label === 'ff.act-start'
-      ? { name: `stale ${c.boundary} ff.act-start#1, integration moved while down`, run: () => crashCell(staleLane, STALE, 'ff.act-start', 1, R('reconciled'), moveIntegration) }
-      : { name: `stale ${c.boundary} ${c.label}#${stageAt(staleLane, 'ff:cas-stale')}`, run: () => crashCell(staleLane, STALE_LANE, c.label, stageAt(staleLane, 'ff:cas-stale'), NONE) })),
+      ? { name: `stale ${c.boundary} ff.act-start#1, integration moved while down`, run: (t) => crashCell(t, staleLane, STALE, 'ff.act-start', 1, R('reconciled'), moveIntegration) }
+      : { name: `stale ${c.boundary} ${c.label}#${stageAt(staleLane, 'ff:cas-stale')}`, run: (t) => crashCell(t, staleLane, STALE_LANE, c.label, stageAt(staleLane, 'ff:cas-stale'), NONE) })),
   ];
   assert.deepEqual(killCells(PIPELINE_RUNNER_DEATH).map((c) => c.boundary), ['B3']);
   assert.deepEqual(killCells(PIPELINE_SUPERVISOR_DEATH).map((c) => c.boundary), ['B3']);
   assert.deepEqual(killCells(PIPELINE_HOST_DEATH).map((c) => c.boundary), ['B3']);
   const kills: readonly CellSpec[] = [
-    { name: `${PIPELINE_RUNNER_DEATH}: B3 kill`, run: () => runnerDeath(straight) },
-    { name: `${PIPELINE_SUPERVISOR_DEATH}: B3 kill`, run: () => supervisorDeath(straight) },
-    { name: `${PIPELINE_HOST_DEATH}: B3 kill`, run: () => hostDeath(straight) },
+    { name: `${PIPELINE_RUNNER_DEATH}: B3 kill`, run: (t) => runnerDeath(t, straight) },
+    { name: `${PIPELINE_SUPERVISOR_DEATH}: B3 kill`, run: (t) => supervisorDeath(t, straight) },
+    { name: `${PIPELINE_HOST_DEATH}: B3 kill`, run: (t) => hostDeath(t, straight) },
   ];
 
   const cells = [...pipelineCells(PIPELINE_STRAIGHT, straight, STRAIGHT), ...pipelineCells(PIPELINE_BUMPY, bumpy, BUMPY), ...adversarial, ...kills];

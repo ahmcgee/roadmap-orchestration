@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isAlive } from '../src/contain/proc.ts';
 import type { IntentRecord } from '../src/core/events.ts';
@@ -29,6 +29,7 @@ import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
+import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import { ADVERSARIAL_LIVE_RUNNER, ADVERSARIAL_TAKEOVER, RECOVERY_CRASH, RECOVERY_EFFECT_LABELS, crashCells, killCells } from './matrix.ts';
 import { EXEC_TIMEOUT_MS, type ExecRun, cli, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
 import {
@@ -37,6 +38,9 @@ import {
 } from './fixtures/rec-common.ts';
 import { CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, executorOf, kill, smokes, startCli, startLine, supervisorOf } from './fixtures/sup-common.ts';
 import { type ArcDescriptor, U1, contextFor, isGateCall, outcomes, setupArc } from './fixtures/unit-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const T = { timeout: 120_000 };
 const LONG = { timeout: 600_000 };
@@ -413,8 +417,8 @@ describe(`matrix row ${ADVERSARIAL_LIVE_RUNNER}`, { concurrency: 3 }, () => {
 // Adversarial: a cross-arc takeover that dies mid-adoption
 
 /** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
-async function strandedArc(): Promise<Readonly<{ a: ExecRun; spawn: IntentRecord }>> {
-  const a = setupExec({ steps: [...smokes(1), blockedCheck('check1')] });
+async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentRecord }>> {
+  const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
   assert.equal(line.kind, 'ready', JSON.stringify(line));
   await reached(a.scenarioDir, 'check1', WAIT_MS);
@@ -466,9 +470,9 @@ describe(`matrix row ${ADVERSARIAL_TAKEOVER}`, { concurrency: 2 }, () => {
     assert.deepEqual(killCells(ADVERSARIAL_TAKEOVER).map((c) => c.boundary), ['B3']);
   });
 
-  test('B3 B\'s supervisor killed while it adopts A\'s live runner: B refuses recovery-holder-dead until the user clears it; then A\'s invocation is adopted once and B runs', { timeout: EXEC_TIMEOUT_MS }, async () => {
-    const { a, spawn } = await strandedArc();
-    const b = { ...setupExec({ steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
+  test('B3 B\'s supervisor killed while it adopts A\'s live runner: B refuses recovery-holder-dead until the user clears it; then A\'s invocation is adopted once and B runs', { timeout: EXEC_TIMEOUT_MS }, async (t) => {
+    const { a, spawn } = await strandedArc(t);
+    const b = { ...setupExec(t, { steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
     const starting = startCli(b);
     await until(() => existsSync(recoveryLock(b)), WAIT_MS, 'B to reconcile A under the recovery lock');
     await sleep(ADOPTION_SETTLE_MS);
@@ -490,9 +494,9 @@ describe(`matrix row ${ADVERSARIAL_TAKEOVER}`, { concurrency: 2 }, () => {
     assert.ok(existsSync(join(invocationDir(absPath(a.runDir), inv), 'result.json')), 'one result');
   });
 
-  test('B4 spawn.after-result: B\'s supervisor dies after A\'s result, before its done; B refuses until cleared; then nothing of A survives and A\'s own recovery closes it once', { timeout: EXEC_TIMEOUT_MS }, async () => {
-    const { a, spawn } = await strandedArc();
-    const b = { ...setupExec({ steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
+  test('B4 spawn.after-result: B\'s supervisor dies after A\'s result, before its done; B refuses until cleared; then nothing of A survives and A\'s own recovery closes it once', { timeout: EXEC_TIMEOUT_MS }, async (t) => {
+    const { a, spawn } = await strandedArc(t);
+    const b = { ...setupExec(t, { steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] }), hostDir: a.hostDir };
     const trigger = writeTrigger(tmpDir('rec-trigger'), { label: 'spawn.after-result', occurrence: 1 });
     const starting = startCli(b, CLAUDE_ONLY, { ROADMAP_TEST_CRASH: trigger });
     await until(() => existsSync(recoveryLock(b)), WAIT_MS, 'B to reconcile A under the recovery lock');

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 import { isAlive } from '../src/contain/proc.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { EXIT_REASON_FILE } from '../src/executor.ts';
@@ -18,6 +18,7 @@ import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { reached } from './helpers/barrier.ts';
+import { assertNoSurvivors } from './helpers/reap.ts';
 import { EXEC_TIMEOUT_MS, type ExecRun, cli, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
 import {
   CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, claimOf, cmdline, executorOf, executorsOf, gone, idle, kill, launchDirect, ownerOf, pausedFromTheStart, smokes,
@@ -25,6 +26,9 @@ import {
 } from './fixtures/sup-common.ts';
 import { SUPERVISOR_HOST, crashCells } from './matrix.ts';
 import { outcomes } from './fixtures/unit-common.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
@@ -42,8 +46,8 @@ async function startPaused(r: ExecRun): Promise<number> {
 }
 
 describe('supervisor.intentional-exit', () => {
-  test('complete is not a crash: the executor exits first, then the lock is released, then the supervisor exits', T, async () => {
-    const r = setupExec({ steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] });
+  test('complete is not a crash: the executor exits first, then the lock is released, then the supervisor exits', T, async (t) => {
+    const r = setupExec(t, { steps: [...smokes(1), ...UNIT_CLAUDE_ONLY] });
     const line = startLine(await startCli(r));
     assert.equal(line.kind, 'ready', JSON.stringify(line));
     const generation = line.generation as number;
@@ -60,8 +64,8 @@ describe('supervisor.intentional-exit', () => {
     assert.deepEqual(outcomes(r), STRAIGHT);
   });
 
-  test('stop is not a crash either: no restart, no crash, the lock released after the executor exits', T, async () => {
-    const r = setupExec({ steps: smokes(1) });
+  test('stop is not a crash either: no restart, no crash, the lock released after the executor exits', T, async (t) => {
+    const r = setupExec(t, { steps: smokes(1) });
     const generation = await startPaused(r);
     const supervisor = supervisorOf(r);
     const executor = await executorOf(r, generation);
@@ -74,8 +78,8 @@ describe('supervisor.intentional-exit', () => {
   });
 });
 
-test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and exits → the supervisor releases the lock → the supervisor exits', T, async () => {
-  const r = setupExec({ steps: [...smokes(1), blockedCheck('check1')] });
+test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and exits → the supervisor releases the lock → the supervisor exits', T, async (t) => {
+  const r = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(r));
   assert.equal(line.kind, 'ready');
   const generation = line.generation as number;
@@ -91,8 +95,8 @@ test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and 
   assert.deepEqual(stateOf(r).crashes, []);
 });
 
-test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervisor restart, crashes 2 and 3 under the next; the third writes sup-<gen>-3 and releases the lock', T, async () => {
-  const r = setupExec({ steps: smokes(5) });
+test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervisor restart, crashes 2 and 3 under the next; the third writes sup-<gen>-3 and releases the lock', T, async (t) => {
+  const r = setupExec(t, { steps: smokes(5) });
   const g1 = await startPaused(r);
   await kill(await executorOf(r, g1));
   const g2 = g1 + 1;
@@ -129,8 +133,8 @@ test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervi
   assert.deepEqual(startedGenerations(r), [g1, g2, g3, g4]);
 });
 
-test('supervisor.ready-generation: start waits for its own generation; older ready markers are ignored', T, async () => {
-  const r = setupExec({ steps: [] });
+test('supervisor.ready-generation: start waits for its own generation; older ready markers are ignored', T, async (t) => {
+  const r = setupExec(t, { steps: [] });
   mkdirSync(join(r.repo, '.roadmap'), { recursive: true });
   writeFileSync(join(r.repo, '.roadmap', 'state.json'), '{}\n');
   writeFileSync(hostFile(r, 'host.generation'), '5\n');
@@ -147,8 +151,8 @@ test('supervisor.ready-generation: start waits for its own generation; older rea
   await until(() => !hostLockHeld(r), WAIT_MS, 'the release');
 });
 
-test('supervisor.control-only-restart: after the crash limit, start runs the executor control-only; it dispatches nothing until the sup item is acknowledged', T, async () => {
-  const r = setupExec({ steps: [...smokes(4), ...UNIT_CLAUDE_ONLY] });
+test('supervisor.control-only-restart: after the crash limit, start runs the executor control-only; it dispatches nothing until the sup item is acknowledged', T, async (t) => {
+  const r = setupExec(t, { steps: [...smokes(4), ...UNIT_CLAUDE_ONLY] });
   const g1 = await startPaused(r);
   const supervisor = supervisorOf(r);
   await kill(await executorOf(r, g1));
@@ -179,9 +183,9 @@ test('supervisor.control-only-restart: after the crash limit, start runs the exe
   assert.deepEqual(journalOf(r).view.ackOf(id as never)?.choice, null);
 });
 
-test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once its heartbeat is stale and counted as a crash; the next generation runs', T, async () => {
+test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once its heartbeat is stale and counted as a crash; the next generation runs', T, async (t) => {
   const STALE_MS = 15_000;
-  const r = setupExec({ steps: smokes(2) });
+  const r = setupExec(t, { steps: smokes(2) });
   await pausedFromTheStart(r);
   const supervisor = launchDirect(r, STALE_MS);
   await until(() => claimOf(r) !== null, WAIT_MS, 'the claim');
@@ -201,9 +205,9 @@ test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once 
 
 describe(`crash matrix: ${SUPERVISOR_HOST}`, () => {
   for (const cell of crashCells(SUPERVISOR_HOST)) {
-    test(`${cell.boundary} ${cell.label}: ${cell.recovery}`, T, async () => {
+    test(`${cell.boundary} ${cell.label}: ${cell.recovery}`, T, async (t) => {
       const handshaken = cell.label === 'sup.after-handshake';
-      const r = setupExec({ steps: handshaken ? [...smokes(1), ...UNIT_CLAUDE_ONLY, ...smokes(1)] : [...smokes(1), ...UNIT_CLAUDE_ONLY] });
+      const r = setupExec(t, { steps: handshaken ? [...smokes(1), ...UNIT_CLAUDE_ONLY, ...smokes(1)] : [...smokes(1), ...UNIT_CLAUDE_ONLY] });
       const trigger = writeTrigger(tmpDir('trigger'), { label: cell.label, occurrence: 1 });
       const first = await startCli(r, CLAUDE_ONLY, { ROADMAP_TEST_CRASH: trigger });
       assert.equal(first.code, 70, first.stdout + first.stderr);

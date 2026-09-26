@@ -34,6 +34,7 @@ import { runnerFiles } from '../../src/runner/files.ts';
 import { BACKOFF_MS, executorLogs, lastLine } from '../../src/supervisor.ts';
 import { reached, release } from '../helpers/barrier.ts';
 import { type Exit, fixture, runUntilExit } from '../helpers/proc.ts';
+import type { Owner } from '../helpers/reap.ts';
 import { type FileSet, tmpDir } from '../helpers/repo.ts';
 import { type CodexAct, type Step, readCalls } from '../helpers/scenario.ts';
 import { type ExecOptions, type ExecRun, SMOKE_DEFAULT, cli, execEnv, journalOf, setupExec, until } from './exec-common.ts';
@@ -65,9 +66,10 @@ export type Scenario = Readonly<{
 
 export type Laid = Readonly<{ r: ExecRun; barriers: string; hooks: readonly Hook[] }>;
 
-export function layout(s: Scenario): Laid {
+/** Lays out `s` for test `t`, which owns its processes (exec-common's setupExec). */
+export function layout(t: Owner, s: Scenario): Laid {
   const barriers = tmpDir('pm-barriers');
-  const r = setupExec({ ...s.arc(barriers), steps: [] });
+  const r = setupExec(t, { ...s.arc(barriers), steps: [] });
   appendSteps(r, [...SMOKE_DEFAULT, ...s.steps(r)]);
   return { r, barriers, hooks: s.hooks(r, barriers) };
 }
@@ -365,15 +367,8 @@ export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Se
     watchFailure ??= e;
   });
   await Promise.all([watched(crashes), watched(hooks), start]);
-  if (watchFailure !== null) {
-    // A failed cell leaves nothing running behind it: its supervisor (SIGKILL ends a stopped one too) and executor.
-    const executor = ownerOf(r)?.executor ?? null;
-    for (const p of [supervisor, executor]) {
-      if (p === null || !isAlive(p)) continue;
-      process.kill(p.pid, 'SIGKILL');
-    }
-    throw watchFailure;
-  }
+  // A failed cell's processes are its test's teardown's to stop (layout's owner).
+  if (watchFailure !== null) throw watchFailure;
   if (failure !== null) throw failure;
   if (startExit === null) throw new Error('roadmap start did not settle');
   return { start: startExit, firstGeneration: generation };

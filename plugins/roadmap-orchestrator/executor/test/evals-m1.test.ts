@@ -10,16 +10,20 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { before, describe, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import { parsePlan } from '../src/input/plan.ts';
 import { absPath } from '../src/core/values.ts';
 import { loadSpec } from '../src/spec/spec.ts';
 import { BRANCHES, type Branch, type CheckResult } from '../evals/m1/check.ts';
 import type { Report } from '../evals/m1/driver.ts';
 import { ARC, INTEGRATION, MAIN, UNITS, layout } from '../evals/m1/layout.ts';
-import { type Exit, runUntilExit } from './helpers/proc.ts';
+import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type ScenarioFile, readCalls } from './helpers/scenario.ts';
+import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
+
+// Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
+after(assertNoSurvivors);
 
 const EVALS = fileURLToPath(new URL('../evals/m1/', import.meta.url));
 const SCENARIOS = join(EVALS, 'scenarios');
@@ -64,8 +68,18 @@ async function fakeRun(profile: 'default' | 'claude-only', scenario: string): Pr
   const dir = join(tmpDir('m1-fixture'), 'fx');
   const setup = await script('setup.ts', [dir]);
   assert.equal(setup.code, 0, setup.stderr);
-  const driver = await script('driver.ts', [dir, '--profile', profile, '--fake', scenario]);
-  const report = JSON.parse(readFileSync(layout(dir).report, 'utf8')) as Report;
+  // The driver ends its run itself; a driver that failed or timed out may leave it going, so it is torn down here.
+  const l = layout(dir);
+  const scope: RunScope = {
+    paths: [dir],
+    stop: async () => {
+      const stop = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), join(l.fake, 'host'), 'stop', '--repo', l.repo, '--arc', ARC], { env: process.env, timeoutMs: 30_000 });
+      assert.equal(stop.code, 0, `roadmap stop: ${stop.stderr}`);
+    },
+  };
+  track(scope);
+  const driver = await script('driver.ts', [dir, '--profile', profile, '--fake', scenario]).finally(() => teardown(scope));
+  const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   return { dir, driver, report, checked: await check(dir) };
 }
 
