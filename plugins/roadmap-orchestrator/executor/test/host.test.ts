@@ -432,7 +432,7 @@ describe('owner record and handshake', () => {
     const dir = hostDir();
     const claim = { nonce: nonce('5'.repeat(32)), generation: 1 };
     const self = selfIdentity();
-    const waiting = awaitHandshake(dir, claim, self, WAIT_MS);
+    const waiting = awaitHandshake(dir, claim, self, WAIT_MS, () => true);
     await sleep(150);
     publishOwner(dir, claim, self);
     createHandshake(dir, claim);
@@ -444,12 +444,12 @@ describe('owner record and handshake', () => {
     const dir = hostDir();
     const claim = { nonce: nonce('6'.repeat(32)), generation: 1 };
     const self = selfIdentity();
-    await assert.rejects(awaitHandshake(dir, claim, self, 200), HandshakeTimeoutError);
+    await assert.rejects(awaitHandshake(dir, claim, self, 200, () => true), HandshakeTimeoutError);
     const other = sleeper();
     try {
       publishOwner(dir, claim, other.identity);
       createHandshake(dir, claim);
-      await assert.rejects(awaitHandshake(dir, claim, self, WAIT_MS), /host\.owner\.json names/);
+      await assert.rejects(awaitHandshake(dir, claim, self, WAIT_MS, () => true), /host\.owner\.json names/);
     } finally {
       await other.kill();
     }

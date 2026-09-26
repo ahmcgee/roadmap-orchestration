@@ -64,6 +64,7 @@ export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
+export const SUPERVISOR_HOST = 'supervisor/host';
 
 export const MATRIX: readonly Row[] = [
   {
@@ -413,7 +414,32 @@ export const MATRIX: readonly Row[] = [
       B5: { status: 'excluded', why: 'after the recovery lock is released the host is simply claimed; host.live-owner-refused and the dead-owner tests cover that state' },
     },
   },
-  { row: 'supervisor/host', test: 'pending', cells: pending('14a') },
+  {
+    // The scenario (test/supervisor.test.ts): `roadmap start` of a one-unit claude-only arc whose supervisor
+    // dies at the label; then a second start. Oracle: at most one executor ever performs an effect, and the
+    // second start takes over cleanly and completes the arc.
+    row: SUPERVISOR_HOST,
+    test: 'test/supervisor.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the supervisor journals nothing: its state is host files, each created by one link, rename or write-once create' },
+      B2: {
+        status: 'crash',
+        labels: ['sup.after-claim'],
+        recovery: 'claimed with owner record{executor: null}, no executor spawned: the next start takes the dead claim over and runs the arc; one executor, one executor-started',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['sup.after-spawn', 'sup.after-owner-publish'],
+        recovery: 'the spawned executor waits for a handshake that never comes, sees its supervisor gone and exits 78 having written nothing; the next start (once it has exited, when the owner record names it) takes over and runs the arc; one executor-started',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['sup.after-handshake'],
+        recovery: 'the handshaken executor is the only owner: it runs the arc to its end unsupervised and exits; the next start takes the dead claim over (no second executor while it lived) and finds the arc complete',
+      },
+      B5: { status: 'excluded', why: 'after the handshake the supervisor only watches; its death then is the B4 state (the executor runs on), and after the executor exits it is a dead claim, the host takeover row' },
+    },
+  },
   { row: 'adversarial', test: 'pending', cells: pending('14c') },
 ];
 

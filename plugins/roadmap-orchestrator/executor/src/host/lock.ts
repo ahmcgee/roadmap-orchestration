@@ -1,23 +1,24 @@
 // The host lock (plan "Host lock and ownership", R17-R18): at most one supervisor, hence one executor, per
 // host.
 //
-// Claim: write the claim record to a temp file durably, `link` it to `host.lock` (atomic, never replaces:
-// EEXIST means someone holds it), unlink the temp. A held lock whose supervisor is alive refuses with
-// `host-busy` (exit 75). A dead one is taken over, and every takeover is serialised by a second lock,
-// `host.recovery.lock`, claimed the same way:
+// Every claim is serialised by a second lock, `host.recovery.lock`, claimed by `link` from a durable temp
+// file (atomic, never replaces: EEXIST means someone holds it). A held host.lock whose supervisor is alive
+// refuses with `host-busy` (exit 75) before that. Then, under the recovery lock:
 //
-//   claim recovery lock → re-read host.lock → supervisor dead (checked above) and, per host.owner.json,
-//   executor dead → previous arc reconciled if it differs from ours → `rename` our claim over host.lock →
-//   unlink the recovery lock.
+//   fresh      host.lock absent → issue the next generation → `link` our claim → owner record{executor: null}
+//   takeover   host.lock names a dead supervisor → per host.owner.json, executor dead → previous arc
+//              reconciled if it differs from ours → issue → `rename` our claim over it → owner record
+//   renew      the live supervisor's own claim → issue → `rename` → owner record (a new claim per executor)
 //
-// Generations are monotonic per host directory: `host.generation` holds the last one issued and is written
-// durably before any claim carrying a new generation is published, so a claim after a clean release
-// continues from it and a `handshake.<generation>` file is never reused.
+// and unlink the recovery lock. Generations are monotonic per host directory: `host.generation` holds the
+// last one issued and is written durably before any claim carrying it is published, so a claim after a
+// clean release continues from it and a `handshake.<generation>` file is never reused.
 //
 // A dead recovery holder is never broken automatically: a takeover died midway, and a user decides
 // (`recovery-holder-dead`, exit 78). Refusals are returned as StartupRejections, never thrown.
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { readBootId } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import {
@@ -31,11 +32,11 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { HOST_GENERATION, HOST_LOCK, RECOVERY_LOCK, hostPath } from './hostdir.ts';
 import { isAlive } from './liveness.ts';
-import { readOwner } from './owner.ts';
+import { publishOwner, readOwner } from './owner.ts';
 
 export type ClaimRequest = Readonly<{ arc: ArcId; runDir: AbsPath; repo: AbsPath; supervisor: ProcIdentity }>;
 
-/** What the caller's reconciliation of a previous claim's run dir found (R18; the engine is step 14b). */
+/** What reconciling a dead claim's run dir of another arc found (R18; `reconcilePreviousArc` in recover.ts). */
 export type PreviousArcVerdict =
   | Readonly<{ kind: 'reconciled' }>
   | Readonly<{ kind: 'unreconciled'; invocations: readonly InvocationId[] }>;
@@ -50,7 +51,7 @@ export type ClaimOutcome =
 
 export class HostLockMismatchError extends Error {
   constructor(file: string, detail: string) {
-    super(`refusing to release ${file}: ${detail}`);
+    super(`${file} is not this claim's: ${detail}`);
     this.name = 'HostLockMismatchError';
   }
 }
@@ -106,9 +107,16 @@ function releaseRecovery(dir: AbsPath, id: Nonce): void {
   durableUnlink(hostPath(dir, RECOVERY_LOCK));
 }
 
+/** How long a claim waits for another live claimer's short critical section before failing loudly. */
+const RECOVERY_WAIT_MS = 30_000;
+const RECOVERY_POLL_MS = 10;
+
 /**
- * Claims the host for `request`, taking over a dead claim if needed. `reconcilePrevious` runs only for a
- * dead claim of another arc, while the recovery lock is held.
+ * Claims the host for `request`, taking over a dead claim if needed. Every claim, fresh or takeover, runs
+ * under `host.recovery.lock` (the uniform claim path, lead ruling 14a), so issuing the generation, publishing
+ * the claim and publishing its owner record (`executor: null`) are one critical section: a crash inside it
+ * leaves a dead recovery holder (`recovery-holder-dead`), never a claim without its owner record.
+ * `reconcilePrevious` runs only for a dead claim of another arc, inside the same section.
  */
 export async function claimHost(dir: AbsPath, request: ClaimRequest, reconcilePrevious: ReconcilePrevious): Promise<ClaimOutcome> {
   const id = newNonce();
@@ -117,43 +125,50 @@ export async function claimHost(dir: AbsPath, request: ClaimRequest, reconcilePr
     v: SCHEMA_VERSION, nonce: id, generation, bootId: boot, supervisor: request.supervisor,
     arc: request.arc, runDir: request.runDir, repo: request.repo,
   });
+  const recovery: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: id, bootId: boot, holder: request.supervisor, at: isoTimeOf(new Date()) };
 
   // Each pass either claims, refuses, or observed the lock change hands under it (a claim or release
-  // between our read and link, or another takeover finishing while we waited on the recovery lock) and
-  // looks again. Only a start that saw the host free issues a fresh generation; racers that all saw it
-  // free issue the same one, and only one of them links it.
+  // between our read and the recovery lock, or another takeover finishing while we waited) and looks again.
+  const deadline = Date.now() + RECOVERY_WAIT_MS;
   for (;;) {
     const previous = readClaim(dir);
-    if (previous === null) {
-      const generation = lastGeneration(dir) + 1;
-      issueGeneration(dir, generation);
-      if (linkClaim(dir, HOST_LOCK, id, claimOf(generation))) return { kind: 'claimed', claim: claimOf(generation), previous: null };
-      continue;
-    }
-    if (isAlive(previous.supervisor, previous.bootId)) {
-      return { kind: 'refused', rejection: { kind: 'host-busy', holder: 'owner', arc: previous.arc, generation: previous.generation, pid: previous.supervisor.pid } };
-    }
+    if (previous !== null && isAlive(previous.supervisor, previous.bootId)) return busyOwner(previous, previous.supervisor);
 
-    const recovery: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: id, bootId: boot, holder: request.supervisor, at: isoTimeOf(new Date()) };
     if (!linkClaim(dir, RECOVERY_LOCK, id, recovery)) {
       const holder = readRecoveryClaim(dir);
       if (holder === null) continue;
-      if (isAlive(holder.holder, holder.bootId)) {
-        return { kind: 'refused', rejection: { kind: 'host-busy', holder: 'recovery', arc: previous.arc, generation: previous.generation, pid: holder.holder.pid } };
+      if (!isAlive(holder.holder, holder.bootId)) return { kind: 'refused', rejection: { kind: 'recovery-holder-dead', pid: holder.holder.pid } };
+      const now = readClaim(dir);
+      if (now !== null) {
+        return { kind: 'refused', rejection: { kind: 'host-busy', holder: 'recovery', arc: now.arc, generation: now.generation, pid: holder.holder.pid } };
       }
-      return { kind: 'refused', rejection: { kind: 'recovery-holder-dead', pid: holder.holder.pid } };
-    }
-    crashPoint('host.takeover.after-recovery-claim');
-
-    const outcome = await takeover(dir, previous, claimOf, request, reconcilePrevious);
-    if (outcome === 'changed') {
-      releaseRecovery(dir, id);
+      // The host is free and another start is inside its fresh claim, which takes milliseconds.
+      if (Date.now() >= deadline) throw new Error(`${RECOVERY_LOCK} stayed held by live pid ${holder.holder.pid} over a free host for ${RECOVERY_WAIT_MS} ms`);
+      await sleep(RECOVERY_POLL_MS);
       continue;
     }
-    if (outcome.kind === 'claimed') crashPoint('host.takeover.after-rename');
+    if (previous !== null) crashPoint('host.takeover.after-recovery-claim');
+
+    const outcome = previous === null ? fresh(dir, claimOf) : await takeover(dir, previous, claimOf, request, reconcilePrevious);
+    if (outcome !== 'changed' && outcome.kind === 'claimed' && previous !== null) crashPoint('host.takeover.after-rename');
     releaseRecovery(dir, id);
-    return outcome;
+    if (outcome !== 'changed') return outcome;
   }
+}
+
+function busyOwner(claim: HostLockClaim, live: ProcIdentity): ClaimOutcome {
+  return { kind: 'refused', rejection: { kind: 'host-busy', holder: 'owner', arc: claim.arc, generation: claim.generation, pid: live.pid } };
+}
+
+/** Runs under the recovery lock. 'changed': the host was claimed after we saw it free. */
+function fresh(dir: AbsPath, claimOf: (generation: number) => HostLockClaim): ClaimOutcome | 'changed' {
+  if (readClaim(dir) !== null) return 'changed';
+  const claim = claimOf(lastGeneration(dir) + 1);
+  issueGeneration(dir, claim.generation);
+  // Every claimer holds the recovery lock to link, so nobody can have linked since the read above.
+  if (!linkClaim(dir, HOST_LOCK, claim.nonce, claim)) throw new Error(`${HOST_LOCK} appeared while ${RECOVERY_LOCK} was held by nonce ${claim.nonce}`);
+  publishOwner(dir, claim, null);
+  return { kind: 'claimed', claim, previous: null };
 }
 
 /** Runs under the recovery lock. 'changed': host.lock is no longer `previous`, so the caller looks again. */
@@ -175,9 +190,7 @@ async function takeover(
     };
   }
   // The executor runs on the claim's boot; `executor: null` means the supervisor died before spawning one.
-  if (owner.executor !== null && isAlive(owner.executor, previous.bootId)) {
-    return { kind: 'refused', rejection: { kind: 'host-busy', holder: 'owner', arc: previous.arc, generation: previous.generation, pid: owner.executor.pid } };
-  }
+  if (owner.executor !== null && isAlive(owner.executor, previous.bootId)) return busyOwner(previous, owner.executor);
 
   if (previous.arc !== request.arc) {
     const verdict = await reconcilePrevious(previous);
@@ -188,11 +201,43 @@ async function takeover(
 
   // Strictly past the dead claim and past anything issued since (a takeover that died after issuing).
   const next = claimOf(Math.max(previous.generation, lastGeneration(dir)) + 1);
+  replaceClaim(dir, next);
+  return { kind: 'claimed', claim: next, previous };
+}
+
+/** Issues `next`'s generation, renames it over host.lock and publishes its owner record with no executor yet. */
+function replaceClaim(dir: AbsPath, next: HostLockClaim): void {
   issueGeneration(dir, next.generation);
   const temp = hostPath(dir, `${HOST_LOCK}.${next.nonce}.tmp`);
   exclusiveCreate(temp, canonicalJson(next));
   durableRename(temp, hostPath(dir, HOST_LOCK));
-  return { kind: 'claimed', claim: next, previous };
+  publishOwner(dir, next, null);
+}
+
+/**
+ * A live supervisor's next claim, for the next executor it spawns after one exited: same supervisor, arc
+ * and run dir, a new nonce and the next generation, so the new executor gets its own write-once
+ * `handshake.<generation>`. Under the recovery lock like every claim; the claim held must be `held`.
+ */
+export async function renewClaim(dir: AbsPath, held: HostLockClaim): Promise<HostLockClaim> {
+  const id = newNonce();
+  const recovery: RecoveryLockClaim = { v: SCHEMA_VERSION, nonce: id, bootId: held.bootId, holder: held.supervisor, at: isoTimeOf(new Date()) };
+  const deadline = Date.now() + RECOVERY_WAIT_MS;
+  while (!linkClaim(dir, RECOVERY_LOCK, id, recovery)) {
+    // Only a start that saw the host free before our claim can hold it now, briefly (it then sees our claim).
+    const holder = readRecoveryClaim(dir);
+    if (holder !== null && !isAlive(holder.holder, holder.bootId)) throw new Error(`cannot renew claim ${held.nonce}: ${RECOVERY_LOCK} is held by dead pid ${holder.holder.pid}`);
+    if (Date.now() >= deadline) throw new Error(`cannot renew claim ${held.nonce}: ${RECOVERY_LOCK} stayed held for ${RECOVERY_WAIT_MS} ms`);
+    await sleep(RECOVERY_POLL_MS);
+  }
+  const current = readClaim(dir);
+  if (current === null || current.nonce !== held.nonce) {
+    throw new HostLockMismatchError(HOST_LOCK, current === null ? 'the host is not claimed' : `it carries nonce ${current.nonce}, not ours (${held.nonce})`);
+  }
+  const next: HostLockClaim = { ...held, nonce: id, generation: Math.max(held.generation, lastGeneration(dir)) + 1 };
+  replaceClaim(dir, next);
+  releaseRecovery(dir, id);
+  return next;
 }
 
 /** Nonce-checked release. The handshake stays: generations never repeat, so no later claim needs its name. */

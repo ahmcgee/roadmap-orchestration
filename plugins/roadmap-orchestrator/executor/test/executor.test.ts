@@ -2,16 +2,19 @@
 // command loop, pause/stop/resume, needs-user waits, a crash and restart, and the startup refusals that
 // `status` explains. Named tests: executor.start-to-complete, executor.refused-writes-rejection,
 // executor.pause-holds-then-resume, executor.stop-releases-lock, executor.restart-clears-stop-not-pause,
-// executor.blocking-needs-user-waits, executor.crash-restart-continues, startup.resource-command-unrunnable.
+// executor.blocking-needs-user-waits, executor.crash-restart-continues, startup.resource-command-unrunnable,
+// executor.unit-park-does-not-hold-arc, executor.arc-wide-park-holds-arc.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
-import { sha } from '../src/core/ids.ts';
+import { arcId, sha, unitId } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { EXIT_REASON_FILE, REJECTION_FILE } from '../src/executor.ts';
+import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { reached, release } from './helpers/barrier.ts';
@@ -20,11 +23,12 @@ import { type Step, readCalls } from './helpers/scenario.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { MUL, U1, codexStep, gateStep, mulBuild, outcomes } from './fixtures/unit-common.ts';
 import {
-  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, statusOf, until,
+  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, executorPid, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, statusOf, until,
 } from './fixtures/exec-common.ts';
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 const WAIT_MS = 60_000;
+const U2 = unitId('u2');
 const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const AFTER_BUILD = STRAIGHT.slice(1);
 
@@ -216,7 +220,7 @@ test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user k
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.crash-restart-continues: SIGKILL mid-build; the restart adopts or reconciles the build, the unit completes and publishes once', T, async () => {
+test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the supervisor restarts it, which adopts or reconciles the build; the unit completes and publishes once', T, async () => {
   const r = setupExec({
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', true),
@@ -224,18 +228,14 @@ test('executor.crash-restart-continues: SIGKILL mid-build; the restart adopts or
     ],
   });
   const base = git(r.repo, 'rev-parse', 'main');
-  const first = startExec(r);
+  const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
-  first.child.kill('SIGKILL');
-  const killed = await first.exit;
-  assert.equal(killed.signal, 'SIGKILL');
-  assert.ok(hostLockHeld(r), 'a crash leaves the claim for takeover');
-  assert.ok(!existsSync(hostFile(r, EXIT_REASON_FILE)), 'a crash writes no exit reason');
-
-  const second = startExec(r);
-  await until(() => started(r).length === 2, WAIT_MS, 'the restart');
+  process.kill(executorPid(r), 'SIGKILL');
+  await until(() => started(r).length === 2, WAIT_MS, 'the supervisor\'s restart');
+  assert.ok(hostLockHeld(r), 'the supervisor keeps the claim across the crash');
+  assert.ok(!existsSync(hostFile(r, EXIT_REASON_FILE)), 'the crash wrote no exit reason');
   release(r.scenarioDir, 'build1');
-  const exit = await second.exit;
+  const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
 
@@ -260,4 +260,65 @@ test('executor.crash-restart-continues: SIGKILL mid-build; the restart adopts or
   assert.equal(usage.length, 2, 'one usage fact per build invocation, the adopted one included');
   assert.deepEqual(started(r), [1, 2]);
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
+});
+
+test('executor.unit-park-does-not-hold-arc: with u1 parked on an open blocking unit-scoped needs-user, the loop still dispatches u2 (resumed after a pause); the run completes once the item is acknowledged', T, async () => {
+  const blockedU2 = planCheckStep({ decision: 'approve' });
+  const r = setupExec({
+    units: [{ id: 'u1' }, { id: 'u2' }],
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
+      { ...blockedU2, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...blockedU2.acts] } as Step,
+      planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
+    ],
+  });
+  // u2 is paused from the start: the arc interrupts it once u1 has parked, and the loop then waits on the
+  // pause alone, with u1's item raised and open. Resuming u2 must dispatch it with that item still open.
+  mkdirSync(r.runDir, { recursive: true });
+  await cli(r, ['pause', 'u2']);
+  const run = startExec(r);
+  await until(() => existsSync(join(r.runDir, 'events.jsonl')) && outcomes(r, 'u2').includes('plan-check:interrupted') && openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 parked and u2 held');
+  const [item] = openBlocking(journalOf(r).view);
+  assert.ok(item !== undefined);
+  assert.equal(journalOf(r).view.unit(U1).status, 'park-pending');
+  await cli(r, ['resume', 'u2']);
+  await until(() => journalOf(r).view.unit(U2).status === 'retired', WAIT_MS, 'u2 to merge');
+  assert.equal(journalOf(r).view.ackOf(item), null, 'u2 ran and merged while u1\'s blocking item was open');
+  await sleep(1_500);
+  assert.equal(run.child.exitCode, null, 'the executor waits on u1\'s item');
+  assert.equal((await statusOf(r)).run.state, 'parked');
+
+  await cli(r, ['ack', item]);
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item }, { unit: 'u2', result: 'merged' }] });
+  assert.deepEqual(outcomes(r, 'u2'), ['plan-check:interrupted', ...STRAIGHT]);
+});
+
+test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-required, naming u2) holds u1 too; its ack lets both run', T, async () => {
+  const r = setupExec({
+    units: [{ id: 'u1' }, { id: 'u2' }],
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
+      planCheckStep({ decision: 'approve' }), mulBuild({ 'src/two.js': 'export const two = 2;\n' }), gateStep({ decision: 'approve' }),
+    ],
+  });
+  mkdirSync(r.runDir, { recursive: true });
+  const journal = openJournal(absPath(r.runDir), arcId(r.arc));
+  const item = raiseNeedsUser(journal, absPath(r.runDir), {
+    blocking: true, subject: { type: 'unit', unit: U2 }, reason: 'recovery-required', summary: 'seeded', recommendation: 'ack it', options: [], evidence: [],
+  }, { type: 'arc' });
+  journal.close();
+
+  const run = startExec(r);
+  await until(() => started(r).length === 1, WAIT_MS, 'the executor to start');
+  await sleep(3_000);
+  assert.equal(readCalls(r.scenarioPath).length, 2, 'only the smoke ran: u1 is held by the arc-wide item that names u2');
+  assert.equal(run.child.exitCode, null);
+  assert.deepEqual(outcomes(r, 'u1'), []);
+
+  await cli(r, ['ack', item]);
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
 });

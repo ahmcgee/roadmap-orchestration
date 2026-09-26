@@ -1,71 +1,96 @@
 // The executor process (plan "Runtime components"; DESIGN-1.0.md §2.3, §2.10): one run of an arc, from the
-// startup checks to an exit reason.
+// ownership handshake to an exit reason. The supervisor (src/supervisor.ts) spawns it as
 //
-//   runChecks (the startup table, frozen order) → refused: `status.rejection.json` in the run dir, exit 78/75
-//   → claimed host and open journal → `executor-started{generation}` (clears the stop marker) → recovery
-//   (recover.ts) → the command loop:
+//   node src/executor.ts <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]
+//
+// with the claim it holds for this executor in argv, never in the environment. Nothing here acts before the
+// handshake: the executor waits for `handshake.<generation>`, verifies that host.owner.json names this
+// process under that nonce and generation and that host.lock is that claim, and otherwise exits 78 having
+// written nothing at all (not even exit.reason.json). Then:
+//
+//   runChecks (the startup table, frozen order; the host claim is the handshaken one) → refused:
+//   `status.rejection.json` in the run dir for exit 78, exit.reason.json{refused}, exit 78/75
+//   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation}`
+//   (clears the stop marker) → control-only phase (below) → recovery (recover.ts) → the command loop:
 //
 //     control commands (pause, stop, ack) → mutations (resume, sweep) at this safe point → needs-user due
 //     → stop marker: stop · a unit stop-pending: stop · everything settled and no open blocking needs-user:
-//     complete · a blocking needs-user open, the arc or the next unit paused, the next unit held: wait (poll
-//     1 s) · otherwise run the arc.
+//     complete · a blocking needs-user that holds the arc, the arc or the next unit paused, the next unit
+//     held: wait (poll 1 s) · otherwise run the arc.
+//
+//   A blocking needs-user holds the arc only when it is arc-wide (a host or arc subject, or a reason in
+//   ARC_WIDE_REASONS) or concerns the next unit; a unit-scoped park lets later units run (lead ruling 14a).
+//   Blocking items include the file-only ones outside the journal: the supervisor's `sup-<gen>-<n>` and a
+//   refused claim's `host-<kind>-<n>`, both host-level (`fileNeedsUser`).
 //
 //   While the arc runs, control commands keep applying every poll. A pause or stop aborts the arc's signal
 //   and cancels the live backend or lane invocation of the running stage (`proc.kill{pause|stop}`); the
 //   stage records `interrupted` (a hold) and the arc returns. A stop then cleans whatever a stage still
-//   holds, releases the host and exits `stop`; a pause waits in the loop for `resume` or `stop`.
+//   holds and exits `stop`; a pause waits in the loop for `resume` or `stop`.
+//
+// Control-only (`--control-only`, after a supervisor crash-limit exit, R19): before recovery, the executor
+// applies control commands (ack, stop, pause) and mutations at the safe point (sweep, resume), and goes on to
+// recovery and dispatch only once no blocking needs-user remains; a stop ends the run there. So an `ack` of
+// the crash limit is applied by a fresh executor even when recovery is what kept crashing.
+//
+// The executor never releases the host: it writes exit.reason.json and exits, and its supervisor releases
+// the claim after it has exited. Any other end is a crash: a thrown error, no exit reason.
 //
 // Needs-user content the driver returns is written here with `raiseNeedsUser`, parented by the stage attempt
 // that decided it, so an item is raised once however often the arc is re-read (`raisedFor`).
-//
-// Supervision (14a) is not here: `roadmap start` runs this in the foreground, and the process claims the
-// host itself (`claimForeground`), acting as its own supervisor. Step 14a moves the claim to the supervisor
-// and adds, before any effect, the wait for `handshake.<generation>` and the owner verification
-// (`awaitHandshake` in host/owner.ts); nothing else here changes.
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommandContext } from './commands/apply.ts';
-import { applyAtSafePoint, applyControl } from './commands/apply.ts';
-import { POLL_MS, pollCommands } from './commands/queue.ts';
+import { applyAtSafePoint, applyCommand, applyControl } from './commands/apply.ts';
+import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import type { Parent, StageOutcomeFact } from './core/events.ts';
-import { atomicJson, durableMkdir, durableUnlink } from './core/fsx.ts';
+import { atomicJson, durableMkdir, durableUnlink, exclusiveCreate } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type NeedsUserId, type UnitId, invocationId } from './core/ids.ts';
+import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId, invocationId, needsUserId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import type { OpenJournal } from './core/log.ts';
-import type { ExecutorExitReason, Heartbeat, HostLockClaim, NeedsUserContent, RunStart } from './core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
+import {
+  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserReason, type NeedsUserRecord, type RunStart,
+} from './core/records.ts';
+import { type Read, arrayOf, literal, object } from './core/validate.ts';
+import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { hostPath, openHostDir } from './host/hostdir.ts';
-import { selfIdentity } from './host/liveness.ts';
-import { type ClaimOutcome, claimHost, releaseHost } from './host/lock.ts';
-import { publishOwner } from './host/owner.ts';
-import { runDir as runDirOf } from './input/cli.ts';
+import { isAlive, selfIdentity } from './host/liveness.ts';
+import { readClaim } from './host/lock.ts';
+import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
 import type { PlanUnit } from './input/plan.ts';
-import { openBlocking, raiseNeedsUser, raisedFor } from './needsuser.ts';
+import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from './needsuser.ts';
 import { type ArcResult, runArc } from './pipeline/arc.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from './pipeline/invoke.ts';
 import { step } from './pipeline/unit.ts';
-import { gitCommonDir, loadPlan, runChecks } from './preflight/checks.ts';
+import { runChecks } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor } from './preflight/startup.ts';
-import { previousArcVerdict, recover } from './recover/recover.ts';
+import {
+  EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupRejection, exitCodeFor, startupRejection,
+} from './preflight/startup.ts';
+import { recover } from './recover/recover.ts';
 import { recoverReservations } from './recover/resource.ts';
-import type { ProfileName } from './routing/types.ts';
+import { type ProfileName, profileName } from './routing/types.ts';
 import { runnerFiles } from './runner/files.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';
 /** Run dir: what the latest passed start runs (repo, plan, resolved profile), for `status`. */
 export const START_FILE = 'start.json';
-/** Run dir: the executor's heartbeat (14a's supervisor reads it; stale at 5 min). */
+/** Run dir: the executor's heartbeat; the supervisor reads it (readiness, staleness). */
 export const HEARTBEAT_FILE = 'heartbeat.json';
 /** Host dir: why the executor of a generation ended, when it ended on purpose. */
 export const EXIT_REASON_FILE = 'exit.reason.json';
 export const HEARTBEAT_MS = 10_000;
+/** How long an executor waits for its supervisor's handshake before refusing. */
+export const HANDSHAKE_TIMEOUT_MS = 30_000;
+
+/** Reasons whose blocking needs-user holds the whole arc, whatever unit it names (lead ruling 14a). */
+export const ARC_WIDE_REASONS = ['usage-limit', 'recovery-required', 'foreign-ref-move', 'residue'] as const satisfies readonly NeedsUserReason[];
 
 export type ExecutorArgs = Readonly<{
   repo: AbsPath;
@@ -75,11 +100,15 @@ export type ExecutorArgs = Readonly<{
   hostDir: AbsPath;
   /** The executor's environment: lanes resolve against it, backends get `backendEnv` of it. */
   env: Readonly<Record<string, string | undefined>>;
+  /** The claim the supervisor holds for this executor, handshaken and verified. */
+  claim: HostLockClaim;
+  /** After a supervisor crash-limit exit: commands before recovery, dispatch only once nothing blocks. */
+  controlOnly: boolean;
 }>;
 
 export type UnitSummary = Readonly<{ unit: UnitId; result: 'merged' } | { unit: UnitId; result: 'parked'; needsUser: NeedsUserId }>;
 
-/** Why a run ended on purpose. Anything else is a thrown error: a crash, which leaves the claim for takeover. */
+/** Why a run ended on purpose. Anything else is a thrown error: a crash, which the supervisor counts. */
 export type ExitReason =
   /** Every unit merged, or parked with its needs-user acknowledged. */
   | Readonly<{ kind: 'complete'; units: readonly UnitSummary[] }>
@@ -87,8 +116,28 @@ export type ExitReason =
   | Readonly<{ kind: 'stop'; cause: 'command' | 'unit'; needsUser: NeedsUserId | null }>
   | Readonly<{ kind: 'refused'; rejections: readonly StartupRejection[]; exitCode: typeof EXIT_REFUSED | typeof EXIT_HOST_BUSY }>;
 
+export type RefusedReason = Extract<ExitReason, { kind: 'refused' }>;
+
+/** A refused exit line (the executor's, or the supervisor's at its claim) read back, e.g. by `roadmap start`. */
+export const refusedReason: Read<RefusedReason> = object((f) => ({
+  kind: f.get('kind', literal('refused')),
+  rejections: f.get('rejections', arrayOf(startupRejection, { nonEmpty: true })),
+  exitCode: f.get('exitCode', (v, p) => (v === EXIT_HOST_BUSY ? EXIT_HOST_BUSY : literal(EXIT_REFUSED)(v, p))),
+}));
+
 export function exitCodeOf(reason: ExitReason): number {
   return reason.kind === 'refused' ? reason.exitCode : 0;
+}
+
+/** One line of agent-facing JSON describing how the run ended. */
+export function exitLine(reason: ExitReason): string {
+  return canonicalJson(reason);
+}
+
+export function refusedOf(rejections: readonly StartupRejection[]): RefusedReason {
+  const first = rejections[0];
+  if (first === undefined) throw new Error('a refusal needs at least one rejection');
+  return { kind: 'refused', rejections, exitCode: exitCodeFor(first) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -104,51 +153,86 @@ function writeHeartbeat(runDir: AbsPath, generation: number): void {
   atomicJson(join(runDir, HEARTBEAT_FILE), file);
 }
 
-/** The run dir a refused start can name: known once the plan parses (its arc), else none. */
-function refusedRunDir(args: ExecutorArgs): AbsPath | null {
-  const plan = loadPlan(args.planFile);
-  return 'kind' in plan ? null : runDirOf(gitCommonDir(args.repo), plan.arc);
-}
-
-function writeRejection(runDir: AbsPath, rejections: readonly StartupRejection[]): void {
+export function writeRejection(runDir: AbsPath, rejections: readonly StartupRejection[]): void {
   durableMkdir(runDir);
   const file: RejectionFile = { v: SCHEMA_VERSION, at: isoTimeOf(new Date()), rejections };
   atomicJson(join(runDir, REJECTION_FILE), file);
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Start
+// Needs-user items outside the journal (sup-<gen>-<n>, host-<slug>)
 
-/** 13b's claim: this process is its own supervisor, so it claims the host and publishes itself as the owner. */
-async function claimForeground(context: StartupContext): Promise<ClaimOutcome> {
-  const self = selfIdentity();
-  const out = await claimHost(context.hostDir, { arc: context.plan.arc, runDir: context.runDir, repo: context.repo, supervisor: self }, previousArcVerdict);
-  if (out.kind === 'claimed') publishOwner(context.hostDir, out.claim, self);
-  return out;
+const FILE_ITEM = /^(sup-[0-9]+-[0-9]+|host-[a-z0-9-]+)\.json$/;
+
+/**
+ * Writes a host-level blocking needs-user as a file (write-once), outside any journal: the supervisor's
+ * crash limit and a refused claim have no open journal to raise through. The executor reads them back with
+ * `fileNeedsUser`, and `ack` answers them like any item (the ack fact takes any id form).
+ */
+export function writeFileNeedsUser(runDir: AbsPath, arc: ArcId, id: NeedsUserId, content: NeedsUserContent): void {
+  durableMkdir(join(runDir, NEEDS_USER_DIR));
+  const record: NeedsUserRecord = { v: SCHEMA_VERSION, id, arc, raisedAt: isoTimeOf(new Date()), ...content };
+  exclusiveCreate(needsUserPath(runDir, id), canonicalJson(record));
 }
 
+/** The claim refusals that carry a durable needs-user (SCHEMAS.md startup table); host-busy is only "try later". */
+export type ClaimRefusal = Extract<StartupRejection, { kind: 'owner-mismatch' | 'recovery-holder-dead' | 'previous-arc-unreconciled' }>;
+
+/**
+ * The durable needs-user of a claim refused with exit 78 (R17-R18): `host-<kind>-<n>`. A still unacknowledged
+ * one of the same kind is the same question and is kept; after an ack, a new refusal asks again as n + 1.
+ */
+export function raiseClaimRefusal(runDir: AbsPath, arc: ArcId, rejection: ClaimRefusal, detail: string): NeedsUserId {
+  const dir = join(runDir, NEEDS_USER_DIR);
+  const prefix = `host-${rejection.kind}-`;
+  const taken = existsSync(dir)
+    ? readdirSync(dir).flatMap((n) => (n.startsWith(prefix) && n.endsWith('.json') && !n.endsWith('.ack.json') ? [Number(n.slice(prefix.length, -'.json'.length))] : []))
+    : [];
+  const last = Math.max(0, ...taken);
+  if (last > 0 && !existsSync(join(dir, `${prefix}${last}.ack.json`))) return hostNeedsUserId(`${rejection.kind}-${last}`);
+  const id = hostNeedsUserId(`${rejection.kind}-${last + 1}`);
+  writeFileNeedsUser(runDir, arc, id, {
+    blocking: true,
+    subject: { type: 'host' },
+    reason: rejection.kind,
+    summary: `roadmap start was refused at the host claim: ${detail}`,
+    recommendation: 'Resolve the host state the rejection names (see `roadmap status`), then acknowledge this item and start again.',
+    options: [],
+    evidence: [],
+  });
+  return id;
+}
+
+/** Blocking file-only items (sup-*, host-*) that no ack in the log answers. */
+function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
+  const dir = join(runDir, NEEDS_USER_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).sort().flatMap((name) => {
+    const m = FILE_ITEM.exec(name);
+    if (m === null) return [];
+    const id = needsUserId(m[1]);
+    const record = readNeedsUser(runDir, id);
+    if (record === null) throw new Error(`needs-user ${name} vanished while it was listed`);
+    return record.blocking && view.ackOf(id) === null ? [id] : [];
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Start
+
 export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
-  openHostDir(args.hostDir);
-  const checks = await runChecks({ ...args, claim: claimForeground });
+  const { claim } = args;
+  const checks = await runChecks({ ...args, claim: async () => ({ kind: 'claimed', claim, previous: null }) });
   if (checks.kind === 'refused') {
-    const { rejections } = checks;
-    const first = rejections[0];
-    if (first === undefined) throw new Error('runChecks refused with no rejection');
-    const exitCode = exitCodeFor(first);
+    const reason = refusedOf(checks.rejections);
     checks.journal?.close();
-    // A busy host is "try later", not a verdict on this arc: its run dir (possibly a live run's) is left alone.
-    if (exitCode === EXIT_REFUSED) {
-      const runDir = checks.claim?.runDir ?? refusedRunDir(args);
-      if (runDir !== null) writeRejection(runDir, rejections);
-    }
-    if (checks.claim !== null) {
-      writeExitReason(args.hostDir, checks.claim, 'refused');
-      releaseHost(args.hostDir, checks.claim);
-    }
-    return { kind: 'refused', rejections, exitCode };
+    // A busy host is "try later", not a verdict on this arc: its run dir is left alone.
+    if (reason.exitCode === EXIT_REFUSED) writeRejection(claim.runDir, reason.rejections);
+    writeExitReason(args.hostDir, claim, 'refused');
+    return reason;
   }
 
-  const { context, claim, journal, routing } = checks;
+  const { context, journal, routing } = checks;
   const heartbeat = setInterval(() => writeHeartbeat(context.runDir, claim.generation), HEARTBEAT_MS);
   try {
     const rejection = join(context.runDir, REJECTION_FILE);
@@ -163,10 +247,10 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
       hostDir: context.hostDir, routing: routing.resolved, hostEnv: args.env, planDir: absPath(dirname(context.planFile)),
     };
     const commands: CommandContext = { ...stage, hostEnv: backendEnv(args.env), routing };
-    await recover({ stage, commands });
-    const reason = await drive({ stage, commands, journal });
+    const x: Exec = { stage, commands, journal };
+    const stopped = args.controlOnly ? await controlOnly(x) : null;
+    const reason = stopped ?? (await recover({ stage, commands }), await drive(x));
     writeExitReason(args.hostDir, claim, reason.kind);
-    releaseHost(args.hostDir, claim);
     return reason;
   } finally {
     clearInterval(heartbeat);
@@ -184,6 +268,31 @@ async function applyCommands(x: Exec): Promise<void> {
   const arc = x.journal.view.arc;
   await applyControl(x.commands, pollCommands(x.stage.runDir, arc));
   await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc));
+}
+
+/** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
+function blockingOpen(x: Exec): readonly NeedsUserId[] {
+  return [...openBlocking(x.journal.view), ...fileNeedsUser(x.stage.runDir, x.journal.view)];
+}
+
+/**
+ * The control-only phase: before recovery, so nobody is inside an integration.ff and control commands apply
+ * directly. A command whose op the crashed executor left open is recovery's, and waits for it. Returns a stop,
+ * or null once no blocking needs-user remains.
+ */
+async function controlOnly(x: Exec): Promise<ExitReason | null> {
+  const arc = x.journal.view.arc;
+  for (;;) {
+    const view = x.journal.view;
+    const open = new Set(view.opsOf('command.apply').filter((i) => view.doneOf(i.op) === null).map((i) => i.expect.command));
+    for (const command of pollCommands(x.stage.runDir, arc)) {
+      if (isControl(command.body) && !open.has(command.id)) await applyCommand(x.commands, command);
+    }
+    await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc).filter((c) => !open.has(c.id)));
+    if (x.journal.view.control().stop !== null) return { kind: 'stop', cause: 'command', needsUser: null };
+    if (blockingOpen(x).length === 0) return null;
+    await sleep(POLL_MS);
+  }
 }
 
 const settledStatus = (view: JournalView, unit: PlanUnit): boolean => {
@@ -205,11 +314,20 @@ function interruption(x: Exec): 'pause' | 'stop' | null {
   return null;
 }
 
+/** An open blocking item holds the arc when it is arc-wide or names the unit that would run next. */
+function holdsArc(x: Exec, id: NeedsUserId, current: PlanUnit): boolean {
+  const record = readNeedsUser(x.stage.runDir, id);
+  if (record === null) throw new Error(`needs-user ${id} is raised but ${needsUserPath(x.stage.runDir, id)} does not exist`);
+  if (record.subject.type !== 'unit') return true;
+  if ((ARC_WIDE_REASONS as readonly NeedsUserReason[]).includes(record.reason)) return true;
+  return record.subject.unit === current.id;
+}
+
 /** Why the loop does not dispatch now, or null when it may. */
 function waitReason(x: Exec, current: PlanUnit): string | null {
   const view = x.journal.view;
-  const blocking = openBlocking(view);
-  if (blocking.length > 0) return `blocking needs-user ${blocking.join(', ')}`;
+  const holding = blockingOpen(x).filter((id) => holdsArc(x, id, current));
+  if (holding.length > 0) return `blocking needs-user ${holding.join(', ')}`;
   const c = view.control();
   if (c.pausedAll) return 'the arc is paused';
   if (c.pausedUnits.includes(current.id)) return `unit ${current.id} is paused`;
@@ -226,7 +344,7 @@ async function drive(x: Exec): Promise<ExitReason> {
     const stopped = x.stage.plan.units.find((u) => view.unit(u.id).status === 'stop-pending');
     if (stopped !== undefined) return stopRun(x, { kind: 'stop', cause: 'unit', needsUser: raisedFor(view, decidedParent(view, stopped.id)) });
     const current = currentUnit(x);
-    if (current === null && openBlocking(view).length === 0) return { kind: 'complete', units: summary(x) };
+    if (current === null && blockingOpen(x).length === 0) return { kind: 'complete', units: summary(x) };
     if (current === null || waitReason(x, current) !== null) {
       await sleep(POLL_MS);
       continue;
@@ -343,7 +461,89 @@ function summary(x: Exec): readonly UnitSummary[] {
   });
 }
 
-/** One line of agent-facing JSON describing how the run ended. */
-export function exitLine(reason: ExitReason): string {
-  return canonicalJson(reason);
+// ---------------------------------------------------------------------------------------------------
+// The process entry
+
+export type ExecutorArgv = Readonly<{
+  hostDir: AbsPath; generation: number; nonce: string; repo: AbsPath; planFile: AbsPath; profile: ProfileName | null; controlOnly: boolean;
+}>;
+
+/** The argv the supervisor builds (`executorArgv`) and this entry parses back. */
+export function executorArgv(a: ExecutorArgv): readonly string[] {
+  return [
+    a.hostDir, '--generation', String(a.generation), '--nonce', a.nonce, '--repo', a.repo, '--plan', a.planFile,
+    ...(a.profile === null ? [] : ['--profile', a.profile]), ...(a.controlOnly ? ['--control-only'] : []),
+  ];
 }
+
+function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
+  const [hostDir, ...rest] = argv;
+  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]');
+  const values = new Map<string, string>();
+  let controlOnly = false;
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i] as string;
+    if (flag === '--control-only') {
+      controlOnly = true;
+      continue;
+    }
+    const value = rest[i + 1];
+    if (!['--generation', '--nonce', '--repo', '--plan', '--profile'].includes(flag) || value === undefined || values.has(flag)) {
+      throw new Error(`executor: unexpected argument ${JSON.stringify(flag)} in ${JSON.stringify(argv)}`);
+    }
+    values.set(flag, value);
+    i++;
+  }
+  const need = (flag: string): string => {
+    const v = values.get(flag);
+    if (v === undefined) throw new Error(`executor: ${flag} is required`);
+    return v;
+  };
+  const generation = Number(need('--generation'));
+  if (!Number.isSafeInteger(generation) || generation < 1) throw new Error(`executor: --generation must be a positive integer, got ${need('--generation')}`);
+  const profile = values.get('--profile');
+  return {
+    hostDir: absPath(hostDir), generation, nonce: need('--nonce'), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
+    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly,
+  };
+}
+
+/** Why an executor refused before any effect, or its verified claim. */
+async function handshake(a: ExecutorArgv): Promise<HostLockClaim | string> {
+  const ref = { nonce: nonce(a.nonce), generation: a.generation };
+  // The claim is published before the spawn: while host.lock is still this claim, its supervisor is ours.
+  const supervisorAlive = (): boolean => {
+    const held = readClaim(a.hostDir);
+    return held !== null && held.nonce === ref.nonce && isAlive(held.supervisor, held.bootId);
+  };
+  try {
+    await awaitHandshake(a.hostDir, ref, selfIdentity(), HANDSHAKE_TIMEOUT_MS, supervisorAlive);
+  } catch (error) {
+    const refused = error instanceof HandshakeTimeoutError || error instanceof HandshakeAbandonedError || error instanceof HandshakeMismatchError || error instanceof OwnerMismatchError;
+    if (!refused) throw error;
+    return error.message;
+  }
+  const claim = readClaim(a.hostDir);
+  if (claim === null || claim.nonce !== ref.nonce || claim.generation !== ref.generation) {
+    return `host.lock is ${claim === null ? 'absent' : `the claim of nonce ${claim.nonce} generation ${claim.generation}`}, not this executor's (nonce ${ref.nonce} generation ${ref.generation})`;
+  }
+  return claim;
+}
+
+/** Runs one executor process; returns its exit code. A refused handshake writes nothing and exits 78. */
+export async function executorMain(argv: readonly string[]): Promise<number> {
+  const a = parseExecutorArgv(argv);
+  const claim = await handshake(a);
+  if (typeof claim === 'string') {
+    process.stderr.write(`roadmap executor: refused before any effect: ${claim}\n`);
+    return EXIT_REFUSED;
+  }
+  openHostDir(a.hostDir);
+  const reason = await runExecutor({
+    repo: a.repo, planFile: a.planFile, profile: a.profile, hostDir: a.hostDir, env: process.env, claim, controlOnly: a.controlOnly,
+  });
+  process.stdout.write(`${exitLine(reason)}\n`);
+  return exitCodeOf(reason);
+}
+
+if (import.meta.main) process.exitCode = await executorMain(process.argv.slice(2));

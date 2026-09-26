@@ -60,9 +60,13 @@ export function execEnv(r: ExecRun): NodeJS.ProcessEnv {
 
 export type Running = Readonly<{ child: ChildProcess; exit: Promise<Exit> }>;
 
-/** `roadmap start` in the background; `exit` settles when it ends (rejects if it outlives the child timeout). */
+/**
+ * `roadmap start` and the supervised run it launches, in the background (sup-run.ts): `exit` settles when
+ * the supervisor has exited, with the last executor's exit line as stdout, or with start's own line when
+ * it did not get ready (rejects if it outlives the child timeout).
+ */
 export function startExec(r: ExecRun, extra: readonly string[] = []): Running {
-  const child = spawn(process.execPath, [fixture('exec-cli.ts'), r.hostDir, 'start', '--repo', r.repo, '--plan', r.planPath, ...extra], {
+  const child = spawn(process.execPath, [fixture('sup-run.ts'), r.hostDir, 'start', '--repo', r.repo, '--plan', r.planPath, ...extra], {
     env: execEnv(r), stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -116,3 +120,10 @@ export async function until(check: () => boolean | Promise<boolean>, timeoutMs: 
 
 export const hostFile = (r: ExecRun, name: string): string => join(r.hostDir, name);
 export const hostLockHeld = (r: ExecRun): boolean => existsSync(hostFile(r, 'host.lock'));
+
+/** The executor host.owner.json names now (the supervisor publishes it before the handshake). */
+export function executorPid(r: ExecRun): number {
+  const owner = JSON.parse(readFileSync(hostFile(r, 'host.owner.json'), 'utf8')) as { executor: { pid: number } | null };
+  if (owner.executor === null) throw new Error('host.owner.json names no executor yet');
+  return owner.executor.pid;
+}

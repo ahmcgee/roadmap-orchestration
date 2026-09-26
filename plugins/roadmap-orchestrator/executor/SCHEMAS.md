@@ -337,14 +337,16 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 
 | File | Type / reader | Content |
 |---|---|---|
-| `host.lock` | `HostLockClaim` | `{v, nonce, generation, bootId, supervisor{pid,start}, arc, runDir, repo}`; claimed by `link(tmp, host.lock)` |
-| `host.generation` | `lastGeneration` (`src/host/lock.ts`) | the last generation issued, as `<positive integer>\n`; `durableWrite` before any claim carrying it is published. Monotonic per host dir: a fresh claim issues last + 1, a takeover max(dead claim, last) + 1, so a generation (and its write-once `handshake.<generation>`) never repeats |
-| `host.owner.json` | `HostOwner` | `{v, nonce, generation, executor{pid,start}\|null}`; atomic publish |
+| `host.lock` | `HostLockClaim` | `{v, nonce, generation, bootId, supervisor{pid,start}, arc, runDir, repo}`; claimed by `link(tmp, host.lock)` (fresh) or `rename` (takeover, renewal), always under `host.recovery.lock` (uniform claim path, lead ruling 14a). One claim per executor: a supervisor renews its claim (new nonce, next generation) before each restart |
+| `host.generation` | `lastGeneration` (`src/host/lock.ts`) | the last generation issued, as `<positive integer>\n`; `durableWrite` before any claim carrying it is published. Monotonic per host dir: a fresh claim issues last + 1, a takeover or renewal max(claim, last) + 1, so a generation (and its write-once `handshake.<generation>`) never repeats |
+| `host.owner.json` | `HostOwner` | `{v, nonce, generation, executor{pid,start}\|null}`; atomic publish: `executor: null` inside the claim's critical section, the spawned executor before the handshake |
 | `host.recovery.lock` | `RecoveryLockClaim` | `{v, nonce, bootId, holder{pid,start}, at}`; claimed by `link()` |
 | `handshake.<generation>` | `HandshakeFile` | `{v, nonce, generation}` |
-| `supervisor.ready.<generation>` / `supervisor.failed.<generation>` | `ReadinessFile` | `{v, generation, state: ready, at}` / `{…, state: failed, reason}` |
-| `supervisor.state.json` | `SupervisorState` | `{v, generation, crashes: IsoTime[] ascending}` |
+| `supervisor.ready.<generation>` / `supervisor.failed.<generation>` | `ReadinessFile` | `{v, generation, state: ready, at}` / `{…, state: failed, reason}`; write-once. Ready = the executor's first heartbeat of that generation (it passed its startup checks), or an intentional stop/complete before one. Failed = it ended before that: `reason` is its refused exit line (canonical `ExitReason` JSON, carrying `exitCode`) or prose for a crash (step 14a) |
+| `supervisor.state.json` | `SupervisorState` | `{v, generation, crashes: IsoTime[] ascending, heartbeatStaleMs}`: the rolling crash window (pruned to the last hour) and the stale threshold in force (300000 unless `--heartbeat-stale-ms`) |
 | `exit.reason.json` | `ExecutorExitReason` | `{v, generation, reason: stop\|complete\|refused}` |
+| `supervisor.<token>.out` / `.err` | JSON lines (`supervisorLine`, `src/supervisor.ts`) / text | the supervisor's stdio, named by `roadmap start`: `{kind: claimed, generation}` per claim, or the refused exit line |
+| `executor.<generation>.out` / `.err` | exit line / text | the executor's stdio: its `ExitReason` line at an intentional exit; stderr of a crash (the crash-limit needs-user cites these) |
 | `residues.jsonl` | `ResidueLine` = `ChainEnvelope & ResidueRecord` | envelope `{v, seq, prev, at}` (no `arc`), same chain and tail rules as the event log (`parseChainLine`) |
 
 `ResidueRecord = residue{key, teardown: {argv, cwd, env}, label} | disposition{key, cleaned, by{arc, inv}} |
@@ -387,18 +389,41 @@ unit's `decided` fact; a backend park's by the held attempt), the op a recovery 
 ## Executor, status, recovery (step 13b)
 
 `runExecutor(args) → ExitReason = complete{units} | stop{cause: command|unit, needsUser} | refused{rejections,
-exitCode: 78|75}`; any other end is a thrown error, a crash, which leaves the claim for takeover and writes no
-exit reason. `roadmap start` prints the reason as one canonical JSON line and exits 0 (complete, stop) or its
-code. Sequence: `runChecks` → (refused: `status.rejection.json` for exit 78; `exit.reason.json {refused}` and
-release when a claim was held) → `start.json`, heartbeat, `executor-started` → `recover` → the command loop:
+exitCode: 78|75}`; any other end is a thrown error, a crash, which the supervisor counts and which writes no
+exit reason. The executor prints the reason as one canonical JSON line on its stdout. Sequence: the handshake
+(step 14a) → `runChecks` → (refused: `status.rejection.json` for exit 78, `exit.reason.json {refused}`) →
+`start.json`, heartbeat, `executor-started` → the control-only phase when started `--control-only` → `recover` →
+the command loop:
 control commands, then mutations at the safe point, then due needs-user items; exit `stop` on the stop marker
 or a stop-pending unit (after cleaning what a stage still holds); exit `complete` when every unit is merged or
-parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user is open, the arc or the
-next unit is paused, or the next unit is held; otherwise `runArc`. While the arc runs, control commands apply
+parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user holds the arc (arc-wide:
+a host or arc subject, or reason `usage-limit`, `recovery-required`, `foreign-ref-move`, `residue`; or it names
+the next unit; lead ruling 14a: a unit-scoped park lets later units run), the arc or the next unit is paused,
+or the next unit is held; otherwise `runArc`. Blocking items include the file-only `sup-<gen>-<n>` and
+`host-<kind>-<n>` (host-level; `ack` answers them like any other, the ack fact taking any id form). While the arc runs, control commands apply
 every poll; a pause or stop aborts its signal and cancels the running stage's live backend or lane invocation
 by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), which the stage records as
-`interrupted` (hold). In 13b the process claims the host itself and publishes itself as owner
-(`claimForeground`); 14a moves the claim to the supervisor and adds the handshake wait and owner check.
+`interrupted` (hold). The executor never releases the host: its supervisor does, after it exited.
+
+## Supervisor and handshake (step 14a)
+
+`roadmap start` → `launchSupervisor` (`src/supervisor.ts`): spawns `node src/supervisor.ts <hostDir> --repo
+--plan [--profile] [--heartbeat-stale-ms]` detached (setsid) with `ROADMAP_ROLE=supervisor`, then waits at most
+30 s for the supervisor's first stdout line and for that generation's readiness marker only. It prints one line
+and exits: `{kind: ready, generation, supervisor}` 0; the refused exit line, with its code (78/75); `{kind:
+failed|timeout, …}` 70. The supervisor: claim (`claimHost`, `reconcilePreviousArc`; a 78 refusal writes
+`status.rejection.json` and a durable `host-<kind>-<n>` needs-user in its run dir) → per executor: spawn `node
+src/executor.ts <hostDir> --generation --nonce --repo --plan [--profile] [--control-only]` (the claim in argv;
+`ROADMAP_ROLE` removed) → `host.owner.json` names it → `handshake.<generation>` → watch (readiness; heartbeat
+checked every 10 s, stale after `heartbeatStaleMs` → SIGKILL, a crash). An exit with `exit.reason.json` of its
+generation is intentional: release, readiness marker, exit with the executor's code. Otherwise a crash: window
+in `supervisor.state.json`; backoff 2 s, 10 s, `renewClaim`, respawn; the third in an hour writes
+`needs-user/sup-<gen>-<n>.json` (blocking, host subject, reason `supervisor-crash-limit`, evidence the executors'
+stderr), releases and exits. A supervisor starting with the window at the limit runs its first executor
+`--control-only`. The executor waits for its handshake (`awaitHandshake`, 30 s, abandoned when host.lock is no
+longer its claim with a live supervisor) and verifies owner record and host.lock; on any mismatch it exits 78
+having written nothing. Crash points `sup.after-claim`, `sup.after-spawn`, `sup.after-owner-publish`,
+`sup.after-handshake`.
 
 `recover(ctx) → {recovered, parked}` (`src/recover/recover.ts`): passes in the order proc.kill, proc.spawn → git
 (`worktree.create`, `worktree.remove`, `evidence.snapshot`, `salvage.commit`, `mergein.prepare`, `candidate.merge`,
@@ -407,8 +432,11 @@ by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), whic
 `abort` → abort + needs-user; `recovery-required` (ff) → done `recovery-required{observed}` + needs-user; `park`
 → intent left open + needs-user. Each needs-user: blocking, reason `recovery-required`, parent `{op}`. A second
 pass must only re-park what the first parked (`RecoveryNotIdempotentError` otherwise). Crash points
-`recover.before-op` / `recover.after-op`. `previousArcVerdict(previous)` is the `reconcilePrevious` hook: the
-previous arc's log, read only, reconciled when no spawn is open.
+`recover.before-op` / `recover.after-op`. `reconcilePreviousArc(previous)` is the `reconcilePrevious` hook (step
+14a, R18): read only unless an open spawn of that arc has a live runner or workload; then, under the recovery lock,
+its journal is opened and open kills, then the surviving spawns, go through the existing reconcilers (adopt or
+settle, never dispatch). Unreconciled: a corrupt log, a survivor whose launch.json is not its intent's, or a
+survivor left after the pass.
 
 `status(runDir, arc, hostDir) → Status` (`src/status.ts`, `roadmap status [--repo --arc]`, JSON only): `arc`;
 `run{state: running|held|parked|complete|refused|no-owner, owner, heartbeatAt}`; `units[{unit, stage, status,
