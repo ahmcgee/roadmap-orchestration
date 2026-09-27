@@ -85,9 +85,10 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
   - A reopen resets only the redirect bound. The gate's revise bound, the red-candidate bound, per-stage retries
     and routed-up seats carry on, so a unit re-opened after a revise-bound park escalates at its next revise.
     Reset them too if re-opened units keep parking on a carried-over count.
-  - A spec edited while its unit is in flight (not parked) is not detected: later stages read the edited file
-    and the gate's fingerprint binds whatever rev is on disk. Only a reopen checks the architect's rev rule. A
-    per-stage check of the file against `UnitState.spec` would catch it.
+  - The spec-edit rule is enforced only at resume: an in-flight edit to anything but evidence plumbing
+    (`evidenceGlobs`, `evidenceExcludes`, which may change at the current rev) goes undetected; later stages read
+    the edited file and the gate's fingerprint binds whatever rev is on disk. Enforce it by recording a spec
+    content hash that excludes `evidenceGlobs` and `evidenceExcludes`, and checking it at each stage start.
   - A reopen does not re-pin routing: a unit re-opened under a changed routing table meets the pinned
     `routingRev` check at its plan-check like any other dispatched unit.
   - `resume <unit>` of a unit that is both paused and parked clears the pause only; a second `resume` re-opens.
@@ -129,7 +130,8 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
   release crashing mid-op (HEAD recovering its open intents), a backend parked on a usage limit across the
   update, the Claude-only profile. Add a variant when a record change touches one of them. Nor a lane the
   previous release launched being read back by HEAD (neither variant stops mid-lanes); the launch.json
-  `stallMs` default is covered by `records.test.ts` and `lanes.dev1-launch` instead.
+  `stallMs` default is covered by `records.test.ts` and `lanes.dev1-launch` instead, and a lane without
+  `ignored.json` (1.0.0-dev.2 and before) reading back as `ignored: null` by `lanes.ignored-census-pass`.
 - `src/core/upgrade.ts` is the read-time defaulting module (first entry: launch.json `stallMs`, and the
   1.0.0-dev.1 lane deadline `laneRecord` derives a lane's start from). Delete it, and the `stallMs === null`
   branch in `laneRecord`, once no arc started on 1.0.0-dev.1 is in flight. Its warning goes to the executor's

@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import type { LaneId, RulingId, Sha, SpecRev, UnitId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, LaneDef, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, IgnoredCensus, LaneDef, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
@@ -54,6 +54,8 @@ export type LaneLedgerEntry = Readonly<{
   exitCode: number | null;
   verdict: CommandVerdict;
   evidenceDir: AbsPath;
+  /** The gitignored files the lane wrote, and what evidence captured; null when not recorded. */
+  ignored: IgnoredCensus | null;
 }>;
 
 /** A checkout a plan-check reads: a detached tree at `at`. */
@@ -241,9 +243,25 @@ export function fastLanesText(worktree: AbsPath, lanes: readonly FastLane[]): st
 
 export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
   if (ledger.length === 0) return '(no lanes ran)';
-  return ledger.map((l) =>
-    `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}`,
-  ).join('\n');
+  return ledger.map((l) => {
+    const ignored = l.ignored === null ? null : ignoredText(l.ignored);
+    return `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}${ignored === null ? '' : `; ${ignored}`}`;
+  }).join('\n');
+}
+
+/** Bytes as a reader scans them: B, KiB or MiB. */
+export function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+/** A lane's ignored-output census as one clause, or null when it wrote no ignored file. */
+export function ignoredText(c: IgnoredCensus): string | null {
+  if (c.written.files === 0) return null;
+  const where = (dir: string): string => (dir === '(root)' ? 'at the top level' : dir === '(other)' ? 'in other dirs' : `under ${dir}`);
+  const gaps = c.uncaptured.map((g) => `${g.files} ${where(g.dir)} (${g.reason})`);
+  const files = c.written.files === 1 ? '1 file' : `${c.written.files} files`;
+  return `ignored writes: ${files} (${sizeText(c.written.bytes)}), ${c.captured.files} captured${gaps.length === 0 ? '' : `; uncaptured: ${gaps.join(', ')}`}`;
 }
 
 /** The architecture doc's entry in a documents block: the whole doc, or the digest naming the doc's path. */

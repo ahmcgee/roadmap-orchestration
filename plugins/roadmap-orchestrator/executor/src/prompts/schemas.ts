@@ -81,6 +81,7 @@ const S_LANE_ITEM = sObj({
   tier: sEnum(['fast', 'estate']),
   resources: sArr(S_STR),
   evidenceGlobs: sArr(S_STR),
+  evidenceExcludes: sArr(S_STR),
 });
 const S_ACCEPTANCE_ITEM = sObj({ id: S_STR, clause: S_STR, failLoudIfUndelivered: S_BOOL });
 const S_NOTE_ITEM = sObj({ id: S_STR, text: S_STR });

@@ -15,6 +15,10 @@
 // round reads its output. A deadline kill or a lost runner is `blocked`, no verdict. The checkout is created just before the first lane runs, so a series that
 // ends before any lane ran leaves no tree behind.
 //
+// After its snapshots, each lane's census of the gitignored files it wrote is recorded (`ignored.json`, write-
+// once, before the stage outcome), and a lane that did not pass also gets its undeclared ignored output
+// captured, within caps, into `ignored` (src/git/ignored.ts). The gate's ledger and a fix round show the census.
+//
 // After the series the checkout must still be clean: a lane that wrote a tracked or unignored file into
 // it is never certified under a SHA (`dirty`). The dirty paths are snapshotted before anything removes the
 // tree. The checkout is removed with `worktree.remove`, which cites a done evidence snapshot of this series.
@@ -22,15 +26,20 @@
 // Everything a later stage needs from a series (its ledger, its checkout, its dirty paths) is read back
 // from the journal and the invocation files (`seriesLedger`, `seriesTree`, `seriesDirty`), never kept in
 // memory, so a restarted executor sees the series exactly as it ran.
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
 import { type InvocationId, type OpId, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type CommandVerdict, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent } from '../core/records.ts';
+import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
+import {
+  type CommandVerdict, type IgnoredCensus, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
+} from '../core/records.ts';
 import { DEV1_LANE_DEADLINE_MS } from '../core/upgrade.ts';
-import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
+import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
+import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
+import { ignoredWrites, planIgnored } from '../git/ignored.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { LaneLedgerEntry } from '../prompts/inputs.ts';
@@ -50,8 +59,9 @@ const LANE_GRACE_MS = 5_000;
 
 /**
  * One lane the executor ran: what the gate reads (`LaneLedgerEntry`, whose `evidenceDir` holds every
- * snapshot of the lane), plus its invocation, its times, and `fixDirs`: the snapshot `files` dirs a fix
- * round reads, the lane's stdout and stderr first, then its declared outputs.
+ * snapshot of the lane, and its ignored-output census), plus its invocation, its times, and `fixDirs`: the
+ * snapshot `files` dirs a fix round reads, the lane's stdout and stderr first, then its declared outputs,
+ * then its captured ignored output when it has any.
  */
 export type LaneRecord = LaneLedgerEntry & Readonly<{ inv: InvocationId; at: IsoTime; endedAt: IsoTime; fixDirs: readonly AbsPath[] }>;
 
@@ -119,20 +129,40 @@ export function seriesDurationMs(ledger: readonly LaneRecord[]): number {
  */
 export const specSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => evidenceRoot(runDir, parent);
 
+const IGNORED_FILE = 'ignored.json';
+
 /** A lane's dir under its series' evidence root, and the snapshot dirs a fix round reads from it. */
 function laneDirs(root: AbsPath, lane: LaneDef): Readonly<{ dir: AbsPath; fixDirs: readonly AbsPath[] }> {
   const dir = absPath(join(root, lane.id));
   const fixDirs = [absPath(join(dir, 'output', FILES_DIR))];
   if (lane.evidenceGlobs.length > 0) fixDirs.push(absPath(join(dir, 'tree', FILES_DIR)));
+  // The ignored snapshot runs only with at least one file to capture, so its manifest means files.
+  if (existsSync(manifestPath(ignoredDir(dir)))) fixDirs.push(absPath(join(ignoredDir(dir), FILES_DIR)));
   return { dir, fixDirs };
+}
+
+const ignoredDir = (dir: AbsPath): AbsPath => absPath(join(dir, 'ignored'));
+
+/** The manifest of a lane's done `tree` snapshot. */
+function treeManifest(dir: AbsPath): EvidenceManifest {
+  const tree = absPath(join(dir, 'tree'));
+  const manifest = readManifest(tree);
+  if (manifest === null) throw new Error(`lane evidence ${tree}: the tree snapshot has no manifest`);
+  return manifest;
+}
+
+/** The lane's census, or null when none was recorded (a lane an older executor ran, or a crash before the write). */
+function readCensus(dir: AbsPath): IgnoredCensus | null {
+  const path = join(dir, IGNORED_FILE);
+  return existsSync(path) ? ignoredCensus(readJson(path), path) : null;
 }
 
 /**
  * A lane's record, read from its spawn and invocation files: what ran (the definition), how it ended
  * (result.json, or none when lost with its runner), when (a lane's deadline is its start plus
  * LANE_DEADLINE_MS, or 1.0.0-dev.1's fixed deadline for a lane it launched, so launch.json carries the start;
- * exit.json the end). The live series and every later
- * reader build records here, so they are the same record.
+ * exit.json the end), and its evidence dir's census. The live series and every later reader build records
+ * here, so they are the same record.
  */
 function laneRecord(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, root: AbsPath): LaneRecord {
   if (intent.parent.type !== 'stage') throw new Error(`lane spawn ${intent.op} has no stage parent`);
@@ -147,7 +177,7 @@ function laneRecord(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: Lan
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
     lane: lane.id, argv: lane.argv, expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,
-    inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs,
+    ignored: readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs,
   };
 }
 
@@ -182,7 +212,21 @@ async function runLane(ctx: StageContext, parent: StageParent, lane: LaneDef, se
     })).op;
   }
 
-  const record = laneRecord(ctx, spawnOf(ctx.journal.view, outcome.op), lane, root);
+  // The ignored-output census, from the lane's start and verdict as its files record them; a lane that did
+  // not pass also gets its undeclared ignored output captured.
+  const spawned = spawnOf(ctx.journal.view, outcome.op);
+  const ended = laneRecord(ctx, spawned, lane, root);
+  const declared = lane.evidenceGlobs.length === 0 ? [] : treeManifest(dir).files.map((f) => f.path);
+  const writes = ignoredWrites(tree, new Date(ended.at).getTime());
+  const plan = planIgnored(writes, { passed: ended.verdict === 'pass', declared: new Set(declared), excludes: lane.evidenceExcludes });
+  if (plan.capture.length > 0) {
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
+      source: tree, globs: plan.capture, dest: ignoredDir(dir),
+    })).op;
+  }
+  exclusivePublish(join(dir, IGNORED_FILE), fileJson(plan.census));
+
+  const record = laneRecord(ctx, spawned, lane, root);
   const exit = runnerFiles(invDir, outcome.inv).read('exit.json');
   const interrupted = cancelledFor(invDir, outcome.inv);
   const blocked = outcome.kind === 'lost' ? `${outcome.inv} was lost with its runner` : record.verdict === 'process-fault' ? `${outcome.inv} ended by ${exit?.cause ?? 'unknown'}` : null;
@@ -241,7 +285,7 @@ export async function runLaneSeries(
     // Preserve what the lanes wrote before any removal discards it. `_dirty` cannot collide with a lane
     // id, which starts with a letter.
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-      source: path, globs: dirty.map((p) => repoPattern(p)), dest: dirtyDir(root),
+      source: path, globs: dirty.map(pathPattern), dest: dirtyDir(root),
     })).op;
   }
   return { end, ledger, tree: { path, at, evidence }, dirty };
@@ -270,7 +314,7 @@ export async function removeCheckout(
   const series = created.parent;
   let evidence = view.opsOf('evidence.snapshot').filter((i) => sameParent(i.parent, series) && view.doneOf(i.op) !== null).at(-1)?.op;
   if (evidence === undefined) {
-    const globs = [...new Set<RepoPattern>([...dirtyPaths(path).map((p) => repoPattern(p)), ...laneGlobs])].sort();
+    const globs = [...new Set<RepoPattern>([...dirtyPaths(path).map(pathPattern), ...laneGlobs])].sort();
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
       source: path, globs, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
     })).op;
@@ -341,5 +385,5 @@ export function seriesTree(view: JournalView, parent: StageParent): Verification
 export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath[] {
   const dest = dirtyDir(root);
   const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
-  return snap === undefined ? [] : snap.expect.globs.map((g) => repoPath(g));
+  return snap === undefined ? [] : snap.expect.globs.map(patternPath);
 }

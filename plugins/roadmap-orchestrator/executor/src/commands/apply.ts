@@ -219,7 +219,11 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
     return { kind: 'rejected', reason: `unit ${unitId} is parked (${reason}); edit its spec ${path} (rev ${known.rev}), set rev ${known.rev + 1}, then resume` };
   }
   if (spec.rev === known.rev) {
-    return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} changed but is still at rev ${known.rev}; an architect edit sets rev ${known.rev + 1}` };
+    return {
+      kind: 'rejected',
+      reason: `unit ${unitId}: its spec ${path} changed but is still at rev ${known.rev}; an architect edit sets rev ${known.rev + 1} `
+        + '(lane evidenceGlobs and evidenceExcludes may change in flight at the current rev, but do not revise the spec)',
+    };
   }
   if (spec.rev !== known.rev + 1) {
     return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} is at rev ${spec.rev}, but the unit's recorded rev is ${known.rev}; an architect edit sets rev ${known.rev + 1}` };

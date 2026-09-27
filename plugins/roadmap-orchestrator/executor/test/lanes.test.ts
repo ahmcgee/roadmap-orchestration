@@ -2,15 +2,17 @@
 // verbatim in a clean detached checkout of the salvage SHA, each under its reservation, with one evidence
 // dir per lane. Named tests: verify.verbatim-serial, verify.dirty-tree.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { invocationId, laneId, opIdOf, resourceName, sha, sha256, specRev } from '../src/core/ids.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { pinDispatch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { fingerprintAt } from '../src/pipeline/gate.ts';
+import { laneLedgerText } from '../src/prompts/inputs.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { LANE_DEADLINE_MS, LANE_STALL_MS, type LaneRecord, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { LANE_DEADLINE_MS, LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { DEV1_LANE_DEADLINE_MS } from '../src/core/upgrade.ts';
@@ -18,7 +20,7 @@ import { invocationDir } from '../src/pipeline/invoke.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents } from './fixtures/stage-common.ts';
 
@@ -79,7 +81,8 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
 });
 
 test('verify.dirty-tree: a lane that writes into the checkout is not certified (chargeable), its writes preserved', T, async () => {
-  const writer: LaneJson = { id: 'writer', argv: ['sh', '-c', 'mkdir -p out && echo ignored > out/x && echo stray > src/stray.txt'] };
+  // A dirty path is snapshotted as itself even when its name is a glob.
+  const writer: LaneJson = { id: 'writer', argv: ['sh', '-c', "mkdir -p out && echo ignored > out/x && echo stray > src/stray.txt && echo odd > 'src/w[1]*.txt'"] };
   const run = laneRun([writer]);
   const done = await lanes(run.ctx, run.unit, run.base);
   assert.deepEqual(done.ledger.map((l) => l.verdict), ['pass'], 'the lane itself passed');
@@ -96,7 +99,9 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified (
   assert.ok(dirty !== undefined && dirty.kind === 'evidence.snapshot');
   const manifest = checkManifest(dirty.expect.dest);
   assert.ok(manifest.kind === 'verified');
-  assert.deepEqual(manifest.manifest.files.map((f) => f.path), ['src/stray.txt']);
+  assert.deepEqual(manifest.manifest.files.map((f) => f.path), ['src/stray.txt', 'src/w[1]*.txt']);
+  assert.ok(dirty.parent.type === 'stage');
+  assert.deepEqual(seriesDirty(run.journal.view, specSeriesRoot(run.runDir, dirty.parent)), ['src/stray.txt', 'src/w[1]*.txt'], 'read back as paths');
   assert.ok(intents(run.runDir, 'worktree.remove').length === 1);
   // The fix round names the dirt.
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
@@ -137,7 +142,7 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
 
 test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its output and is told it hung', () => {
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
-    lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`),
+    lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
   });
   const salvage = sha('a'.repeat(40));
@@ -166,4 +171,118 @@ test('lanes.dev1-launch: a lane 1.0.0-dev.1 launched (no stallMs, 30-min deadlin
   writeFileSync(path, JSON.stringify({ ...rest, deadlineAt: isoTimeOf(new Date(start + DEV1_LANE_DEADLINE_MS)) }));
   const [record] = seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, parent));
   assert.equal(record?.at, isoTimeOf(new Date(start)));
+});
+
+const IGNORES = 'out/\n.local/\nnode_modules/\n';
+const readJsonFile = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'));
+const capturedFiles = (dir: string): readonly string[] => {
+  const m = checkManifest(absPath(dir));
+  assert.ok(m.kind === 'verified', `${dir}: ${m.kind}`);
+  return m.manifest.files.map((f) => f.path);
+};
+
+test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is captured, filtered, and read by its fix round', T, async () => {
+  const script = [
+    'mkdir -p out .local/demo node_modules/dep',
+    'echo declared > out/d.log', 'echo run > .local/demo/run.log', "echo meta > '.local/demo/a[1]*.log'",
+    'echo key > .local/demo/tls.key', 'echo dep > node_modules/dep/i.js', 'echo "step 3: deploy failed" >&2', 'exit 1',
+  ].join(' && ');
+  const run = setupUnit({ steps: [], lanes: [{ id: 'deploy', argv: ['sh', '-c', script], evidenceGlobs: ['out/**'] }], gitignore: IGNORES });
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  const done = await lanes(run.ctx, run.unit, run.base);
+  assert.equal(done.outcome.kind, 'red');
+  const [record] = done.ledger;
+  assert.ok(record !== undefined && record.verdict === 'fail');
+  const dir = record.evidenceDir;
+  // Declared evidence stays in `tree`; the rest, minus build output and secrets, goes to `ignored`.
+  assert.deepEqual(capturedFiles(join(dir, 'tree')), ['out/d.log']);
+  assert.deepEqual(capturedFiles(join(dir, 'ignored')), ['.local/demo/a[1]*.log', '.local/demo/run.log']);
+  assert.deepEqual(record.fixDirs, ['output', 'tree', 'ignored'].map((d) => join(dir, d, 'files')));
+  const census = {
+    v: 1, written: { files: 5, bytes: 9 + 4 + 5 + 4 + 4 }, captured: { files: 3, bytes: 9 + 4 + 5 },
+    uncaptured: [{ dir: '.local/demo/', reason: 'excluded', files: 1, bytes: 4 }, { dir: 'node_modules/dep/', reason: 'build-output', files: 1, bytes: 4 }],
+  };
+  assert.deepEqual(record.ignored, census);
+  assert.deepEqual(readJsonFile(join(dir, 'ignored.json')), census, 'recorded durably, read back the same');
+  // The fix round reads the captured files and is told the census.
+  assert.ok(done.fix !== null && done.fix.kind === 'fix');
+  assert.deepEqual(done.fix.fix.failingEvidenceDirs, record.fixDirs);
+  assert.deepEqual(done.fix.fix.directives, [
+    'Lane deploy ignored writes: 5 files (26 B), 3 captured; uncaptured: 1 under .local/demo/ (excluded), 1 under node_modules/dep/ (build-output).',
+  ]);
+});
+
+test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, not captured; each lane counts only its own', T, async () => {
+  const run = setupUnit({
+    steps: [], gitignore: IGNORES,
+    lanes: [
+      { id: 'first', argv: ['sh', '-c', 'mkdir -p .local/demo && echo one > .local/demo/a.log'] },
+      { id: 'second', argv: ['sh', '-c', 'mkdir -p .local/b && echo two > .local/b/x.log && echo three > .local/b/y.log'] },
+      { id: 'quiet', argv: ['true'] },
+    ],
+  });
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  const done = await lanes(run.ctx, run.unit, run.base);
+  assert.equal(done.outcome.kind, 'green');
+  assert.deepEqual(done.ledger.map((l) => [l.lane, l.ignored?.written.files, l.ignored?.captured.files]), [['first', 1, 0], ['second', 2, 0], ['quiet', 0, 0]]);
+  for (const l of done.ledger) {
+    assert.ok(!existsSync(join(l.evidenceDir, 'ignored')), 'nothing is captured for a passing lane');
+    assert.deepEqual(l.fixDirs, [join(l.evidenceDir, 'output', 'files')]);
+  }
+  const text = laneLedgerText(done.ledger).split('\n');
+  assert.match(text[0]!, /; ignored writes: 1 file \(4 B\), 0 captured; uncaptured: 1 under \.local\/demo\/ \(not-declared\)$/);
+  assert.match(text[1]!, /; ignored writes: 2 files \(10 B\), 0 captured; uncaptured: 2 under \.local\/b\/ \(not-declared\)$/);
+  assert.doesNotMatch(text[2]!, /ignored writes/, 'a lane that wrote no ignored file has no clause');
+
+  // A lane an older executor ran has no census: it reads back as null, and the ledger says nothing of it.
+  const [spawn] = laneSpawns(run);
+  assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
+  rmSync(join(done.ledger[0]!.evidenceDir, 'ignored.json'));
+  const [first] = seriesLedger(run.ctx, spawn.parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, spawn.parent));
+  assert.equal(first?.ignored, null);
+  assert.doesNotMatch(laneLedgerText([first!]), /ignored writes/);
+});
+
+test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captured too', T, async () => {
+  const mark = join(tmpDir('lanes-mark'), 'running');
+  const run = setupUnit({
+    steps: [], gitignore: IGNORES,
+    lanes: [{ id: 'sleeper', argv: ['sh', '-c', `mkdir -p .local && echo partial > .local/k.log && touch "${mark}" && sleep 60`] }],
+  });
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  const going = lanes(run.ctx, run.unit, run.base);
+  await waitFor('the lane to start', 60_000, () => (existsSync(mark) ? true : null));
+  const spawn = run.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
+  assert.ok(spawn !== undefined);
+  await killWorkload(run.ctx, { inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause' });
+  const done = await going;
+  assert.equal(done.outcome.kind, 'interrupted');
+  const [record] = done.ledger;
+  assert.ok(record !== undefined && record.verdict === 'process-fault');
+  assert.deepEqual(capturedFiles(join(record.evidenceDir, 'ignored')), ['.local/k.log']);
+  assert.ok(record.fixDirs.includes(absPath(join(record.evidenceDir, 'ignored', 'files'))));
+  assert.deepEqual(record.ignored?.captured, { files: 1, bytes: 8 });
+});
+
+test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited at the same rev are read at the next lanes attempt and leave the approval fingerprint alone', T, async () => {
+  const run = setupUnit({
+    steps: [], gitignore: IGNORES,
+    lanes: [{ id: 'writer', argv: ['sh', '-c', 'mkdir -p out && echo a > out/a.log && echo b > out/b.log'], evidenceGlobs: ['out/a.log'] }],
+  });
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  git(run.repo, 'update-ref', unitBranch(run.ctx.plan.arc, U1), run.base);
+  const before = fingerprintAt(run.ctx, run.unit, run.base);
+  const first = await lanes(run.ctx, run.unit, run.base);
+  assert.deepEqual(capturedFiles(join(first.ledger[0]!.evidenceDir, 'tree')), ['out/a.log']);
+
+  const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; lanes: Record<string, unknown>[] };
+  writeFileSync(run.specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/b.log'], evidenceExcludes: ['out/secret/**'] })) }));
+  assert.equal(spec.rev, 1);
+  assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
+
+  const second = await lanes(run.ctx, run.unit, run.base);
+  const [lane] = second.ledger;
+  assert.ok(lane !== undefined && lane.evidenceDir !== first.ledger[0]!.evidenceDir);
+  assert.deepEqual(capturedFiles(join(lane.evidenceDir, 'tree')), ['out/b.log'], 'the edited globs were read');
+  assert.deepEqual(lane.ignored?.uncaptured, [{ dir: 'out/', reason: 'not-declared', files: 1, bytes: 2 }]);
 });

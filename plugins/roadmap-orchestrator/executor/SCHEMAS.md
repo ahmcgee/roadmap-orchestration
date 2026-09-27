@@ -255,7 +255,7 @@ stop | recovery | external-unknown`.
 | `resource.transition` | `holder, resources` (lock order), `edge` | `null` | `transitioned` |
 | `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
-| `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c) | `{manifest}` | `captured{manifestSha256, files}` |
+| `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
 | `salvage.commit` | see git table | `{new}` | `committed` |
 | `mergein.prepare` | see git table | `clean-merged{new}` \| `conflicted` | `clean-merged` \| `conflicted` \| `completed{head}` |
 | `spec.patch` | `path, oldSha256, expectRev, patch: SpecPatch` | `{newSha256, newRev = expectRev+1}` | `patched` |
@@ -401,7 +401,7 @@ name a plan contract and a ledger ruling (startup row `plan-invalid` `unknown-ci
 
 | Item | Fields |
 |---|---|
-| `LaneDef` | `id: LaneId, argv[], cwd: RepoPath, env: {set: {NAME: value}, pass: [NAME]}, expectedExit, tier: fast\|estate, resources[], evidenceGlobs[]` |
+| `LaneDef` | `id: LaneId, argv[], cwd: RepoPath, env: {set: {NAME: value}, pass: [NAME]}, expectedExit, tier: fast\|estate, resources[], evidenceGlobs[], evidenceExcludes[]` (`evidenceExcludes` optional, read as `[]` when absent) |
 | `AcceptanceDef` | `id: ClauseId, clause, failLoudIfUndelivered` |
 | `NoteDef` (decisions, facts) | `id: ClauseId, text` |
 
@@ -413,6 +413,30 @@ replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sec
 decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
 removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`. Scope and resources
 are not patchable in M1.
+
+**Lane evidence** (`src/pipeline/lanes.ts`, `src/git/ignored.ts`). Each lane of a series has a dir `<series
+root>/<lane id>/`: `output` (its stdout and stderr), `tree` (its declared `evidenceGlobs` in the checkout, when it
+declares any), `ignored` (below) and `ignored.json`. After the lane's snapshots the executor lists the checkout's
+untracked ignored files one by one (`git ls-files --others --ignored --exclude-standard`) and keeps those whose
+ctime is at or after the lane's start: the files the lane wrote. When the lane did not pass (`fail`, `stall`,
+`process-fault`, lost) the ones its `tree` did not capture are selected, in path order, skipping non-regular
+files, paths under a build-output dir at any depth (`bin obj dist build target node_modules .venv __pycache__`),
+paths matching the default secret excludes (`**/*.key **/*.pem **/*.p12 **/*.pfx **/*kubeconfig* **/.*kubeconfig*
+**/.kube/** **/id_rsa* **/id_ed25519* **/.env **/.env.*`, a leading `**` crossing dot dirs) or the lane's
+`evidenceExcludes`, names with no exact glob, and files over 2 MiB; files are then taken while the lane stays
+within 25 MiB and 1000 files (one that does not fit is skipped, later ones still tried) and snapshotted into
+`ignored`, which a fix round reads when it holds any file. Excludes never filter declared `evidenceGlobs`. Every
+lane that ran gets `ignored.json` (`IgnoredCensus` / `ignoredCensus`, `src/core/records.ts`), written once and
+durably before the stage outcome: `{v, written: {files, bytes}, captured: {files, bytes}, uncaptured: [{dir,
+files, bytes, reason}]}`; `captured` counts the declared and the default capture; `dir` is the directory at most
+two segments deep (`a/b/`), `(root)` for top-level files; `reason` is `not-declared` (the lane passed: nothing
+captures a passing lane's undeclared ignored output) \| `build-output` \| `excluded` \| `over-file-cap` \|
+`over-lane-cap` \| `not-regular` \| `unglobbable` (a backslash or a brace group in the name); the 20 largest
+groups by files are kept and the rest fold into one `(other)` group per reason. The ledger entry reads it as
+`ignored: IgnoredCensus | null`: null when the file is absent (a lane an older executor ran, or a crash before
+the write). Null is a lasting state, not an upgrade default, so it logs no warning. The gate's ledger and a fix
+round's directives render it as one clause, omitted for a lane that wrote no ignored file. The snapshot ref
+carries only the manifests, never the files.
 
 **Judgment outputs** (`src/prompts/schemas.ts`): plan-check `{decision, reasons, patch, risk, notes, premises}`,
 gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, evidence: [{path, line}]}]` (the
@@ -436,7 +460,10 @@ edits a unit's `spec.json` in place only while the unit is parked at `plan-check
 dispatch), keeps the schema and every id (items are struck or deferred, never deleted or reused; scope and
 resources unchanged), and sets `rev` to the unit's recorded rev + 1 (`UnitState.spec.rev`: the rev in the file
 when the unit parked). `resume <unit>` then re-opens the unit. It is rejected, naming the rule, when the file is
-unchanged, changed at the same rev, at any rev other than recorded + 1, or does not load. A park at any other
+unchanged, changed at the same rev, at any rev other than recorded + 1, or does not load. One exception: a lane's
+`evidenceGlobs` and `evidenceExcludes` may change at the unit's current rev while it is in flight. They are outside
+the approval fingerprint, and the next lanes attempt reads them; nothing else may change in flight. Such an edit is
+still no revision: a resume on it is rejected like any same-rev change, and the reason names the exception. A park at any other
 stage is not re-openable in M1; its needs-user names the re-entry instead (a new unit id whose branch the
 architect creates at the parked unit's tip).
 

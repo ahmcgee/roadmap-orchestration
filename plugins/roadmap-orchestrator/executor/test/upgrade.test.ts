@@ -47,10 +47,10 @@ after(assertNoSurvivors);
 /**
  * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
  * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.1, merged to main as
- * PR #101 (schema version 1). Arcs started before it (a95355e) are not adopted; they are adapted by hand.
+ * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.2, merged to main as
+ * PR #102 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
  */
-const PREVIOUS_RELEASE = '72a8485275efe90567dfb292683d1eacad8f5c10';
+const PREVIOUS_RELEASE = 'c4136158015f935368c0031907c5f91526f9439d';
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../', import.meta.url));

@@ -8,7 +8,7 @@
 // Copying is idempotent: a re-run compares hashes and fills only the gaps (a missing or half-copied
 // file), then rewrites the same manifest bytes.
 import { existsSync, globSync, lstatSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, matchesGlob } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
@@ -16,7 +16,7 @@ import { type OpId, type Sha256Hex, sha256 } from '../core/ids.ts';
 import type { IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type Brand, Fields, type Read, literal, nat, sortedBy, version } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, absPath, repoPath, repoPattern } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 
 export const MANIFEST_FILE = 'manifest.json';
@@ -83,6 +83,29 @@ export function copyIfChanged(from: string, to: string, expected: Sha256Hex): vo
   durableWrite(to, bytes);
 }
 
+// node's `fs.globSync` (minimatch with `windowsPathsNoEscape`, `nonegate`, `nocomment`) has no escape
+// character: a metacharacter is matched literally inside a one-character class. `!`, `+` and `@` are
+// special only before `(`, so escaping `(` covers them. Brace expansion runs before classes are parsed.
+const GLOB_META = /[*?[\]{}()]/g;
+const ESCAPED_META = /\[([*?[\]{}()])\]/g;
+
+/**
+ * A glob `listEvidence` matches to exactly `path`, or null when none exists: a backslash (read as a path
+ * separator) or a brace group brace expansion would split.
+ */
+export function literalPattern(path: RepoPath): RepoPattern | null {
+  if (path.includes('\\') || /\{.*(,|\.\.).*\}/.test(path)) return null;
+  const pattern = path.replace(GLOB_META, '[$&]');
+  if (!matchesGlob(path, pattern)) throw new Error(`the literal glob ${pattern} does not match ${path}`);
+  return repoPattern(pattern);
+}
+
+/** The glob a snapshot of a dirty path uses: its literal pattern, or the path itself when it has none. */
+export const pathPattern = (path: RepoPath): RepoPattern => literalPattern(path) ?? repoPattern(path);
+
+/** The path `pathPattern` made `pattern` from. */
+export const patternPath = (pattern: RepoPattern): RepoPath => repoPath(pattern.replace(ESCAPED_META, '$1'));
+
 /** Every regular file under `source` matching one of `globs`, sorted, with its hash and size. */
 export function listEvidence(source: AbsPath, globs: readonly RepoPattern[]): readonly ManifestEntry[] {
   const out = new Map<string, ManifestEntry>();
@@ -114,11 +137,16 @@ export function checkManifest(dir: AbsPath): SnapshotCheck {
   return { kind: 'verified', manifest: manifest as VerifiedManifest, manifestSha256: sha256(sha256Hex(bytes)) };
 }
 
+/** The snapshot's manifest, or null when it has none. Says nothing about the files; see verifyManifest. */
+export function readManifest(dir: AbsPath): EvidenceManifest | null {
+  const path = manifestPath(dir);
+  if (!existsSync(path)) return null;
+  return evidenceManifest(JSON.parse(readFileSync(path, 'utf8')), path);
+}
+
 /** True when the snapshot has its (complete) manifest. Says nothing about the files; see verifyManifest. */
 export function manifestComplete(dir: AbsPath): boolean {
-  const path = manifestPath(dir);
-  if (!existsSync(path)) return false;
-  return evidenceManifest(JSON.parse(readFileSync(path, 'utf8')), path).complete;
+  return readManifest(dir)?.complete ?? false;
 }
 
 /** The manifest, after re-hashing every file it lists. Throws ManifestMismatchError otherwise. */

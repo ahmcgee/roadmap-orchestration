@@ -212,9 +212,12 @@ export type BackendCallOutcome =
   /** Lost with its runner (no exit.json); `treeEffects`: its workload was started, so it may have changed the tree. */
   | Readonly<{ kind: 'lost'; inv: InvocationId; invDir: AbsPath; treeEffects: boolean }>;
 
+/** Where `inputFile` keeps the text hashing to `sha256`. */
+export const inputPath = (runDir: AbsPath, sha256: string, ext: string): AbsPath => absPath(join(runDir, 'inputs', `${sha256}.${ext}`));
+
 /** Writes `text` once under `<runDir>/inputs/<sha256>.<ext>`; the name certifies the content. */
 export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
-  const path = absPath(join(runDir, 'inputs', `${sha256Hex(text)}.${ext}`));
+  const path = inputPath(runDir, sha256Hex(text), ext);
   if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
     durableMkdir(join(runDir, 'inputs'));
     durableWrite(path, text);

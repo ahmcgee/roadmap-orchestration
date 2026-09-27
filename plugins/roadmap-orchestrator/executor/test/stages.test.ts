@@ -122,7 +122,7 @@ test('session.judgment-never-resumes: every judgment call is a new --session-id,
 test('redirect.no-widen: a redirect that widens the envelope or lowers the risk is refused and routes up', T, async () => {
   const widening = [{
     op: 'add', section: 'lanes',
-    item: { id: 'db-lane', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'estate', resources: [DB], evidenceGlobs: [] },
+    item: { id: 'db-lane', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'estate', resources: [DB], evidenceGlobs: [], evidenceExcludes: [] },
   }];
   const run = setupUnit({ steps: [planCheckStep({ decision: 'redirect', patch: widening }), planCheckStep({ decision: 'approve', risk: 'low' })] });
   const widened = await planCheck(run.ctx, run.unit);

@@ -31,6 +31,7 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     `  - env: ${env.length === 0 ? '(none)' : env.join(', ')}`,
     `  - resources: ${l.resources.length === 0 ? '(none)' : sorted(l.resources).map(code).join(', ')}`,
     `  - evidence: ${l.evidenceGlobs.length === 0 ? '(none)' : sorted(l.evidenceGlobs).map(code).join(', ')}`,
+    ...(l.evidenceExcludes.length === 0 ? [] : [`  - evidence excludes: ${sorted(l.evidenceExcludes).map(code).join(', ')}`]),
   ].join('\n');
 }
 
