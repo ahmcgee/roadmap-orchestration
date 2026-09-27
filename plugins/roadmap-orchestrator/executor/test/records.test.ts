@@ -176,7 +176,11 @@ describe('records', () => {
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
       scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
     };
-    assert.deepEqual(specM1(spec, 'spec'), spec);
+    // evidenceExcludes is optional input: absent reads as [], present is kept, malformed is refused.
+    assert.deepEqual(specM1(spec, 'spec'), { ...spec, lanes: [{ ...lane, evidenceExcludes: [] }] });
+    const excluding = { ...spec, lanes: [{ ...lane, evidenceExcludes: ['.local/secrets/**'] }] };
+    assert.deepEqual(specM1(excluding, 'spec'), excluding);
+    assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, evidenceExcludes: ['/abs'] }] }, 'spec'), /spec\.lanes\[0\]\.evidenceExcludes\[0\]/);
     assert.throws(() => specM1({ ...spec, facts: [{ id: 'A1', text: 'dup', state: 'active' }] }, 'spec'), /spec\.<item ids>/);
     assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, tier: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.tier/);
   });

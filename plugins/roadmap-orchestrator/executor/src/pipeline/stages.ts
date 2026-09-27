@@ -38,7 +38,7 @@ import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
+import { FILES_DIR, capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
@@ -236,7 +236,7 @@ async function removePlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent:
     const dest = absPath(join(evidenceRoot(ctx.runDir, created.parent), basename(path)));
     const view = ctx.journal.view;
     const snapped = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
-      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map((p) => repoPattern(p)), dest });
+      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map(pathPattern), dest });
     await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
   }
 }

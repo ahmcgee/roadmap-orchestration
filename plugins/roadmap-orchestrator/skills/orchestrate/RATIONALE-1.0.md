@@ -243,3 +243,15 @@ chooses where to crash. The paid run shows the parts meet real models and lists 
 What stays is the judgment that worked: frozen contracts, C-nn rulings, plan-checks that redirect,
 gates with rejection authority over scope and debt, and Phase 0 as the architect's highest-leverage act
 [M4 for the skill text].
+
+## 15. A failing lane keeps its ignored output [M1]
+
+**Evidence.** A lane runs in a checkout the executor deletes after the series. A script that writes its logs
+into a gitignored dir, with no `evidenceGlobs` for them, loses them there, and its fix round reads stdout and
+stderr alone. Nothing showed the gap: the ledger said nothing of files a lane wrote but no one kept.
+
+**Decision.** Every lane's gitignored writes are counted, and the gate's ledger names what was not kept and
+why. A lane that does not pass also gets its undeclared ignored output captured, since a failure is when the
+fix round needs it. The capture is capped, and it skips build output and key material by default, because
+the run dir must not fill with dependency trees or keep credentials. Declaring `evidenceGlobs` stays the
+contract.

@@ -41,6 +41,7 @@ export type LaneJson = Readonly<{
   tier?: 'fast' | 'estate';
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
+  evidenceExcludes?: readonly string[];
 }>;
 
 /** The fixture's own test lane: fails until `add` is fixed, printing ADD-MARKER. */
@@ -53,6 +54,8 @@ export type SetupOptions = Readonly<{
   /** The unit's declared resources (each is a res-tool resource). */
   resources?: readonly string[];
   profile?: ProfileName;
+  /** The repo's .gitignore; default `out/`. */
+  gitignore?: string;
 }>;
 
 export type StageRun = Readonly<{
@@ -73,7 +76,8 @@ export type StageRun = Readonly<{
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], state: 'active',
+    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), state: 'active',
   };
 }
 
@@ -86,7 +90,7 @@ export function seated<D>(p: Pinned<D>): D {
 export function setupUnit(opts: SetupOptions): StageRun {
   const repo = tmpDir('stage-repo');
   cpSync(REPO_FILES, repo, { recursive: true });
-  writeFileSync(join(repo, '.gitignore'), 'out/\n');
+  writeFileSync(join(repo, '.gitignore'), opts.gitignore ?? 'out/\n');
   makeRepo(repo, { files: {} });
   const base = sha(revParse(repo, 'HEAD'));
 

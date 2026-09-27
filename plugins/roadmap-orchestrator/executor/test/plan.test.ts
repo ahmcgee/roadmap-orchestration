@@ -51,9 +51,12 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing' | 'architect
 };
 
 describe('plan.json (M1)', () => {
-  it('a valid plan parses unchanged, with `after` defaulting to none', () => {
+  it('a valid plan parses unchanged, with `after` and suite lanes\' `evidenceExcludes` defaulting to none', () => {
     const plan = validPlan();
-    assert.deepEqual(parsePlan(plan), { ...plan, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [] })) });
+    const suite = plan['suite'] as { lanes: object[] };
+    assert.deepEqual(parsePlan(plan), {
+      ...plan, suite: { lanes: suite.lanes.map((l) => ({ ...l, evidenceExcludes: [] })) }, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [] })),
+    });
   });
 
   it('plan.after: a unit may run after units earlier in plan order; a later, unknown, own or repeated id is refused, naming it', () => {

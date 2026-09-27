@@ -63,7 +63,7 @@ function fixRound(i: BuildInputs): string {
   return `
 
 <fix_round>
-This is a fix round on work you already did in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr:
+This is a fix round on work you already did in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr, its declared outputs, or (in an ignored/ directory) gitignored files it wrote, at their repository paths, and a directive gives the lane's count of those:
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives to carry out:
 ${bullets(i.fixRound.directives, '(none)')}

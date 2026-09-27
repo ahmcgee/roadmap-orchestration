@@ -166,6 +166,21 @@ never reuse an id, and leave `scope` and `resources` alone. Set `rev` to the rev
 parked, plus one. `resume` is rejected, with the reason, for an unchanged file, a changed file at the same rev,
 or any other rev.
 
+## Writing lanes
+
+The executor grades a lane by its exit code and keeps what the lane leaves as evidence for the gate and the
+fix round. Two rules for every lane script:
+
+- Declare `evidenceGlobs` for anything a script writes as its own evidence (logs, reports, dumps). Undeclared
+  ignored output is captured only when the lane fails, capped, and the checkout is deleted after the series.
+  The gate's ledger shows each lane's uncaptured ignored writes as `not-declared`.
+- Assert a required failure inside the script (or state it by `expectedExit`), and before any non-zero exit
+  print the failing step and the reason on stderr. The fix round starts from stderr.
+
+The failing-lane capture never takes build output (`node_modules/`, `dist/`, `target/` and the like) or key
+material (`*.key`, `*.pem`, `id_rsa*`, `.env`, kubeconfigs and the like). Add the lane's own
+`evidenceExcludes` for anything else that must never leave the checkout.
+
 ## Shared resources: an owner lease
 
 An occupancy probe that only looks at the resource (are clusters running? is the port bound?) cannot tell a

@@ -467,6 +467,32 @@ export const STDOUT_FILE = 'stdout';
 export const STDERR_FILE = 'stderr';
 
 // ---------------------------------------------------------------------------------------------------
+// A lane's ignored-output census (`<laneDir>/ignored.json`, src/git/ignored.ts)
+
+/**
+ * Why a gitignored file a lane wrote was not captured. `not-declared`: the lane passed, and nothing
+ * captures a passing lane's undeclared ignored output. `unglobbable`: its name has no exact glob under
+ * node's `fs.globSync` (a backslash, or a brace group), so no snapshot can name it alone.
+ */
+export const IGNORED_REASONS = ['not-declared', 'build-output', 'excluded', 'over-file-cap', 'over-lane-cap', 'not-regular', 'unglobbable'] as const;
+export type IgnoredReason = (typeof IGNORED_REASONS)[number];
+export type FileCount = Readonly<{ files: number; bytes: number }>;
+/** `dir`: the files' directory, at most two segments deep (`a/b/`), `(root)` for top-level files, `(other)` for the folded tail. */
+export type IgnoredGroup = FileCount & Readonly<{ dir: string; reason: IgnoredReason }>;
+/** The gitignored files a lane created or changed; `captured` counts its declared evidence and the default capture. */
+export type IgnoredCensus = Readonly<{ v: SchemaVersion; written: FileCount; captured: FileCount; uncaptured: readonly IgnoredGroup[] }>;
+
+const fileCount: Read<FileCount> = object((f) => ({ files: f.get('files', nat), bytes: f.get('bytes', nat) }));
+export const ignoredCensus: Read<IgnoredCensus> = object((f) => ({
+  v: f.get('v', version),
+  written: f.get('written', fileCount),
+  captured: f.get('captured', fileCount),
+  uncaptured: f.get('uncaptured', arrayOf(object((g) => ({
+    dir: g.get('dir', str), files: g.get('files', positive), bytes: g.get('bytes', nat), reason: g.get('reason', oneOf(IGNORED_REASONS)),
+  })))),
+}));
+
+// ---------------------------------------------------------------------------------------------------
 // Approval fingerprint and dispatch record
 
 /** Approval binds to this; any field differing at the gated tip invalidates the gate. Lists are sorted. */
@@ -532,6 +558,11 @@ export type LaneDef = Readonly<{
   tier: LaneTier;
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
+  /**
+   * Kept out of the capture of a failing lane's undeclared ignored output, beside the default secret
+   * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
+   */
+  evidenceExcludes: readonly RepoPattern[];
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -553,6 +584,7 @@ function laneFields(f: Fields): LaneDef {
     tier: f.get('tier', oneOf(['fast', 'estate'] as const)),
     resources: f.get('resources', arrayOf(resource)),
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
+    evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;
