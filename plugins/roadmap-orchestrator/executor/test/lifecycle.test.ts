@@ -95,11 +95,14 @@ test('reopen.plan-check-park: resume is rejected until the spec is at the next r
     const evidenceOnly = await resume(r);
     assert.deepEqual(evidenceOnly.outcome, {
       kind: 'rejected',
-      reason: `unit u1: its spec ${specPath} changed only lane evidenceGlobs or evidenceExcludes, which may change at rev 1 in flight but do not revise the spec; an architect edit sets rev 2`,
+      reason: `unit u1: its spec ${specPath} changed but is still at rev 1; an architect edit sets rev 2 (lane evidenceGlobs and evidenceExcludes may change in flight at the current rev, but do not revise the spec)`,
     });
     editSpec(r, addClause);
     const sameRev = await resume(r);
-    assert.deepEqual(sameRev.outcome, { kind: 'rejected', reason: `unit u1: its spec ${specPath} changed but is still at rev 1; an architect edit sets rev 2` });
+    assert.deepEqual(sameRev.outcome, {
+      kind: 'rejected',
+      reason: `unit u1: its spec ${specPath} changed but is still at rev 1; an architect edit sets rev 2 (lane evidenceGlobs and evidenceExcludes may change in flight at the current rev, but do not revise the spec)`,
+    });
     editSpec(r, (s) => void (s['rev'] = 3));
     const skipped = await resume(r);
     assert.deepEqual(skipped.outcome, { kind: 'rejected', reason: `unit u1: its spec ${specPath} is at rev 3, but the unit's recorded rev is 1; an architect edit sets rev 2` });

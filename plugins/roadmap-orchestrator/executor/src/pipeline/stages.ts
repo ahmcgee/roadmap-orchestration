@@ -62,7 +62,7 @@ import { bytesSha256, parseSpec } from '../spec/spec.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
-  implementerDispatch, inputFile, inputPath, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf,
+  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf,
   verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
@@ -106,26 +106,13 @@ export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParen
 // ---------------------------------------------------------------------------------------------------
 // Inputs, snapshotted by revision
 
-const SPEC_INPUT = 'spec.json';
-
-/**
- * The unit's spec.json (relative to the plan dir), with the sha256 of the bytes it was read from. The bytes
- * are kept as an input file by that hash, so the spec a unit's record names stays readable after the
- * architect edits the file (`keptSpec`).
- */
-export function loadUnitSpec(ctx: Readonly<{ planDir: AbsPath; runDir: AbsPath }>, unit: PlanUnit): Readonly<{ path: AbsPath; spec: SpecM1; sha256: Sha256Hex }> {
+/** The unit's spec.json (relative to the plan dir), with the sha256 of the bytes it was read from. */
+export function loadUnitSpec(ctx: Readonly<{ planDir: AbsPath }>, unit: PlanUnit): Readonly<{ path: AbsPath; spec: SpecM1; sha256: Sha256Hex }> {
   const path = absPath(join(ctx.planDir, unit.spec));
   const bytes = readFileSync(path);
   const spec = parseSpec(bytes, path);
   if (spec.unit !== unit.id) throw new Error(`${path} is the spec of ${spec.unit}, not of ${unit.id}`);
-  inputFile(ctx.runDir, bytes.toString('utf8'), SPEC_INPUT);
   return { path, spec, sha256: bytesSha256(bytes) };
-}
-
-/** The spec whose bytes hash to `sha256`, as a stage loaded it, or null when no stage of this executor did. */
-export function keptSpec(runDir: AbsPath, sha256: Sha256Hex): SpecM1 | null {
-  const path = inputPath(runDir, sha256, SPEC_INPUT);
-  return existsSync(path) ? parseSpec(readFileSync(path), path) : null;
 }
 
 export function integrationTip(ctx: StageContext): Sha {
