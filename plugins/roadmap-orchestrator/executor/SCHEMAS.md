@@ -460,7 +460,12 @@ edits a unit's `spec.json` in place only while the unit is parked at `plan-check
 dispatch), keeps the schema and every id (items are struck or deferred, never deleted or reused; scope and
 resources unchanged), and sets `rev` to the unit's recorded rev + 1 (`UnitState.spec.rev`: the rev in the file
 when the unit parked). `resume <unit>` then re-opens the unit. It is rejected, naming the rule, when the file is
-unchanged, changed at the same rev, at any rev other than recorded + 1, or does not load. A park at any other
+unchanged, changed at the same rev, at any rev other than recorded + 1, or does not load. One exception: a lane's
+`evidenceGlobs` and `evidenceExcludes` may change at the unit's current rev while it is in flight. They are outside
+the approval fingerprint, and the next lanes attempt reads them; nothing else may change in flight. Such an edit is
+still no revision: a resume on it is rejected as changing only evidence plumbing, told apart by comparing the file
+with the spec the unit's record names, parsed, both fields blanked. Every stage keeps the spec bytes it loads as
+`<runDir>/inputs/<sha256>.spec.json` (`loadUnitSpec`, `keptSpec`), so that spec stays readable. A park at any other
 stage is not re-openable in M1; its needs-user names the re-entry instead (a new unit id whose branch the
 architect creates at the parked unit's tip).
 

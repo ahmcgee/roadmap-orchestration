@@ -254,4 +254,5 @@ stderr alone. Nothing showed the gap: the ledger said nothing of files a lane wr
 why. A lane that does not pass also gets its undeclared ignored output captured, since a failure is when the
 fix round needs it. The capture is capped, and it skips build output and key material by default, because
 the run dir must not fill with dependency trees or keep credentials. Declaring `evidenceGlobs` stays the
-contract.
+contract. Since the evidence globs grade nothing, the architect may correct them on a unit in flight without
+a spec revision.

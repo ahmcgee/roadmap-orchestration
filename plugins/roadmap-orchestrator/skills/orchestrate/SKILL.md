@@ -164,7 +164,9 @@ Spec edits follow one rule: edit `spec.json` in place only while its unit is par
 before its first dispatch). Keep the schema and every item id; strike or defer an item instead of deleting it,
 never reuse an id, and leave `scope` and `resources` alone. Set `rev` to the rev the file had when the unit
 parked, plus one. `resume` is rejected, with the reason, for an unchanged file, a changed file at the same rev,
-or any other rev.
+or any other rev. The one exception: a lane's `evidenceGlobs` and `evidenceExcludes` may change at the current
+rev while the unit is in flight. The next lanes attempt reads them and the approval stands. They are no revision,
+so `resume` still needs one.
 
 ## Writing lanes
 

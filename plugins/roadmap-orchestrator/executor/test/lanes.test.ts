@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import { invocationId, laneId, opIdOf, resourceName, sha, sha256, specRev } from '../src/core/ids.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { pinDispatch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { fingerprintAt } from '../src/pipeline/gate.ts';
 import { laneLedgerText } from '../src/prompts/inputs.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
 import { LANE_DEADLINE_MS, LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
@@ -19,7 +20,7 @@ import { invocationDir } from '../src/pipeline/invoke.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents } from './fixtures/stage-common.ts';
 
@@ -261,4 +262,27 @@ test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captur
   assert.deepEqual(capturedFiles(join(record.evidenceDir, 'ignored')), ['.local/k.log']);
   assert.ok(record.fixDirs.includes(absPath(join(record.evidenceDir, 'ignored', 'files'))));
   assert.deepEqual(record.ignored?.captured, { files: 1, bytes: 8 });
+});
+
+test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited at the same rev are read at the next lanes attempt and leave the approval fingerprint alone', T, async () => {
+  const run = setupUnit({
+    steps: [], gitignore: IGNORES,
+    lanes: [{ id: 'writer', argv: ['sh', '-c', 'mkdir -p out && echo a > out/a.log && echo b > out/b.log'], evidenceGlobs: ['out/a.log'] }],
+  });
+  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  git(run.repo, 'update-ref', unitBranch(run.ctx.plan.arc, U1), run.base);
+  const before = fingerprintAt(run.ctx, run.unit, run.base);
+  const first = await lanes(run.ctx, run.unit, run.base);
+  assert.deepEqual(capturedFiles(join(first.ledger[0]!.evidenceDir, 'tree')), ['out/a.log']);
+
+  const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; lanes: Record<string, unknown>[] };
+  writeFileSync(run.specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/b.log'], evidenceExcludes: ['out/secret/**'] })) }));
+  assert.equal(spec.rev, 1);
+  assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
+
+  const second = await lanes(run.ctx, run.unit, run.base);
+  const [lane] = second.ledger;
+  assert.ok(lane !== undefined && lane.evidenceDir !== first.ledger[0]!.evidenceDir);
+  assert.deepEqual(capturedFiles(join(lane.evidenceDir, 'tree')), ['out/b.log'], 'the edited globs were read');
+  assert.deepEqual(lane.ignored?.uncaptured, [{ dir: 'out/', reason: 'not-declared', files: 1, bytes: 2 }]);
 });

@@ -41,14 +41,14 @@ import { canonicalJson } from '../core/json.ts';
 import { exclusiveCreate } from '../core/fsx.ts';
 import { JUDGMENT_STAGES } from '../core/events.ts';
 import { type CommandId, type NeedsUserId, type ResourceName, type UnitId, invocationId, opKey } from '../core/ids.ts';
-import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, Stage } from '../core/records.ts';
+import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, SpecM1, Stage } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
-import { loadUnitSpec } from '../pipeline/stages.ts';
+import { keptSpec, loadUnitSpec } from '../pipeline/stages.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { SpecFileError } from '../spec/spec.ts';
 import { type SmokeRouting, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
@@ -186,6 +186,12 @@ function acknowledge(ctx: CommandContext, id: CommandId, item: NeedsUserId, choi
   return [`needs-user/${item}.ack.json written by ${id}`, `needs-user ${item} acknowledged in the log`];
 }
 
+/** Two specs equal but for their lanes' evidenceGlobs and evidenceExcludes. */
+function sameBesidesEvidence(a: SpecM1, b: SpecM1): boolean {
+  const blank = (s: SpecM1): string => canonicalJson({ ...s, lanes: s.lanes.map((l) => ({ ...l, evidenceGlobs: [], evidenceExcludes: [] })) });
+  return blank(a) === blank(b);
+}
+
 /**
  * `resume <unit>` of a parked unit: re-opened when it parked at a judgment stage and the architect has
  * edited its spec to the next revision; otherwise rejected, saying what would work.
@@ -219,7 +225,12 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
     return { kind: 'rejected', reason: `unit ${unitId} is parked (${reason}); edit its spec ${path} (rev ${known.rev}), set rev ${known.rev + 1}, then resume` };
   }
   if (spec.rev === known.rev) {
-    return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} changed but is still at rev ${known.rev}; an architect edit sets rev ${known.rev + 1}` };
+    // Evidence plumbing may change at the current rev in flight (SCHEMAS.md "Architect spec edits"); it is not a revision.
+    const recorded = keptSpec(ctx.runDir, known.sha256);
+    const reason = recorded !== null && sameBesidesEvidence(recorded, spec)
+      ? `unit ${unitId}: its spec ${path} changed only lane evidenceGlobs or evidenceExcludes, which may change at rev ${known.rev} in flight but do not revise the spec; an architect edit sets rev ${known.rev + 1}`
+      : `unit ${unitId}: its spec ${path} changed but is still at rev ${known.rev}; an architect edit sets rev ${known.rev + 1}`;
+    return { kind: 'rejected', reason };
   }
   if (spec.rev !== known.rev + 1) {
     return { kind: 'rejected', reason: `unit ${unitId}: its spec ${path} is at rev ${spec.rev}, but the unit's recorded rev is ${known.rev}; an architect edit sets rev ${known.rev + 1}` };

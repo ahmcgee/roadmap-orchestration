@@ -90,6 +90,13 @@ test('reopen.plan-check-park: resume is rejected until the spec is at the next r
 
     const unchanged = await resume(r);
     assert.deepEqual(unchanged.outcome, { kind: 'rejected', reason: `unit u1 is parked (escalation); edit its spec ${specPath} (rev 1), set rev 2, then resume` });
+    // Evidence plumbing may change in flight at the same rev; it is still not a revision resume can re-open on.
+    editSpec(r, (s) => void (s['lanes'] = (s['lanes'] as Record<string, unknown>[]).map((l) => ({ ...l, evidenceGlobs: ['out/**'], evidenceExcludes: ['out/secret/**'] }))));
+    const evidenceOnly = await resume(r);
+    assert.deepEqual(evidenceOnly.outcome, {
+      kind: 'rejected',
+      reason: `unit u1: its spec ${specPath} changed only lane evidenceGlobs or evidenceExcludes, which may change at rev 1 in flight but do not revise the spec; an architect edit sets rev 2`,
+    });
     editSpec(r, addClause);
     const sameRev = await resume(r);
     assert.deepEqual(sameRev.outcome, { kind: 'rejected', reason: `unit u1: its spec ${specPath} changed but is still at rev 1; an architect edit sets rev 2` });
