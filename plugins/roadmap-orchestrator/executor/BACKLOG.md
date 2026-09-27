@@ -130,7 +130,8 @@ SCHEMAS.md and RATIONALE-1.0.md, not here.
   release crashing mid-op (HEAD recovering its open intents), a backend parked on a usage limit across the
   update, the Claude-only profile. Add a variant when a record change touches one of them. Nor a lane the
   previous release launched being read back by HEAD (neither variant stops mid-lanes); the launch.json
-  `stallMs` default is covered by `records.test.ts` and `lanes.dev1-launch` instead.
+  `stallMs` default is covered by `records.test.ts` and `lanes.dev1-launch` instead, and a lane without
+  `ignored.json` (1.0.0-dev.2 and before) reading back as `ignored: null` by `lanes.ignored-census-pass`.
 - `src/core/upgrade.ts` is the read-time defaulting module (first entry: launch.json `stallMs`, and the
   1.0.0-dev.1 lane deadline `laneRecord` derives a lane's start from). Delete it, and the `stallMs === null`
   branch in `laneRecord`, once no arc started on 1.0.0-dev.1 is in flight. Its warning goes to the executor's
