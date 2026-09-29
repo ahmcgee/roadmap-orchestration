@@ -1,14 +1,16 @@
 // The executor process (plan "Runtime components"; DESIGN-1.0.md §2.3, §2.10): one run of an arc, from the
 // ownership handshake to an exit reason. The supervisor (src/supervisor.ts) spawns it as
 //
-//   node src/entry/executor.ts <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]
+//   node src/entry/executor.ts <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn]
 //
 // with the claim it holds for this executor in argv, never in the environment. Nothing here acts before the
 // handshake: the executor waits for `handshake.<generation>`, verifies that host.owner.json names this
 // process under that nonce and generation and that host.lock is that claim, and otherwise exits 78 having
 // written nothing at all (not even exit.reason.json). Then:
 //
-//   runChecks (the startup table but the smoke, frozen order; the host claim is the handshaken one) →
+//   runChecks (the startup table but the smoke, frozen order; the host claim is the handshaken one; last,
+//   the plan in force: a start puts changed files in force through the apply rules, a `--respawn` after a
+//   crash runs the plan in force and ignores unapplied edits) →
 //   refused: `status.rejection.json` in the run dir for exit 78, exit.reason.json{refused}, exit 78/75
 //   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation}`
 //   (clears the stop marker) → control-only phase (below) → recovery (recover.ts), which closes a smoke
@@ -16,7 +18,7 @@
 //   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
 //   refusal exits `refused` as above, after readiness) → the command loop:
 //
-//     control commands (pause, stop, ack) → mutations (resume, sweep) at this safe point → needs-user due
+//     control commands (pause, stop, ack) → mutations (resume, sweep, apply) at this safe point → needs-user due
 //     → stop marker: stop · a unit stop-pending: stop · everything settled and no open blocking needs-user:
 //     complete · a blocking needs-user that holds the arc, the next unit held, or the next unit blocked
 //     (`dispatchBlock`: the arc or the unit paused, or a unit it runs `after` unsettled): wait (poll 1 s)
@@ -27,7 +29,11 @@
 //   Blocking items include the file-only ones outside the journal: the supervisor's `sup-<gen>-<n>` and a
 //   refused claim's `host-<kind>-<n>`, both host-level (`fileNeedsUser`).
 //
-//   While the arc runs, control commands keep applying every poll. A pause or stop aborts the arc's signal
+//   While the arc runs, control commands keep applying every poll, and mutations apply at every stage
+//   boundary (the safe point after a stage's outcome), so an apply, resume or sweep never waits for the arc
+//   to return and nothing live is killed for one. The context's `plan` and `routing` are the plan in force
+//   and its routing, read from the log at each call (`plan()`, `routing()`), so an apply takes effect at the next one.
+//   A pause or stop aborts the arc's signal
 //   and cancels the live backend or lane invocation of the running stage (`proc.kill{pause|stop}`); the
 //   stage records `interrupted` (a hold) and the arc returns. A stop then cleans whatever a stage still
 //   holds and exits `stop`; a pause waits in the loop for `resume` or `stop`.
@@ -53,7 +59,7 @@ import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import type { Parent, StageOutcomeFact } from './core/events.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId, invocationId, needsUserId } from './core/ids.ts';
+import { type ArcId, type NeedsUserId, type Sha256Hex, type UnitId, hostNeedsUserId, invocationId, needsUserId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
@@ -66,19 +72,21 @@ import { hostPath, openHostDir } from './host/hostdir.ts';
 import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
-import type { PlanUnit } from './input/plan.ts';
+import { requirePlanInForce } from './input/inforce.ts';
+import type { PlanM1, PlanUnit } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from './needsuser.ts';
 import { type ArcResult, runArc } from './pipeline/arc.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from './pipeline/invoke.ts';
 import { consume, dispatchBlock, step } from './pipeline/unit.ts';
-import { runChecks, smokeCheck } from './preflight/checks.ts';
+import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
-  EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupRejection, exitCodeFor, startupRejection,
+  EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
 import { recoverReservations } from './recover/resource.ts';
+import { type ResolvedRouting, arcStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 import { runnerFiles } from './runner/files.ts';
 
@@ -109,6 +117,8 @@ export type ExecutorArgs = Readonly<{
   claim: HostLockClaim;
   /** After a supervisor crash-limit exit: commands before recovery, dispatch only once nothing blocks. */
   controlOnly: boolean;
+  /** A supervisor's respawn after a crash, once one of its generations was ready: runs the plan in force, never the files (`runChecks`). */
+  respawn: boolean;
 }>;
 
 export type UnitSummary = Readonly<{ unit: UnitId; result: 'merged' } | { unit: UnitId; result: 'parked'; needsUser: NeedsUserId }>;
@@ -251,7 +261,9 @@ export function holdsArc(record: NeedsUserRecord, next: UnitId | null): boolean 
 
 export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
   const { claim } = args;
-  const checks = await runChecks({ ...args, claim: async () => ({ kind: 'claimed', claim, previous: null }) });
+  const checks = await runChecks({
+    ...args, claim: async () => ({ kind: 'claimed', claim, previous: null }), respawn: args.respawn ? { runDir: claim.runDir, arc: claim.arc } : null,
+  });
   if (checks.kind === 'refused') {
     checks.journal?.close();
     return refuse(args, checks.rejections);
@@ -267,19 +279,14 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     writeHeartbeat(context.runDir, claim.generation);
     journal.fact({ kind: 'executor-started', generation: claim.generation });
 
-    const stage: StageContext = {
-      journal, containment: containmentFor(detectContainmentMode()), runDir: context.runDir, plan: context.plan, repo: context.repo,
-      hostDir: context.hostDir, routing: routing.resolved, hostEnv: args.env, planDir: absPath(dirname(context.planFile)),
-    };
-    const commands: CommandContext = { ...stage, hostEnv: backendEnv(args.env), routing };
-    const x: Exec = { stage, commands, journal };
+    const x = contexts(args, context, routing.profile, journal);
     const stopped = args.controlOnly ? await controlOnly(x) : null;
     if (stopped !== null) {
       writeExitReason(args.hostDir, claim, stopped.kind);
       return stopped;
     }
     // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
-    await recover({ stage, commands });
+    await recover({ stage: x.stage, commands: x.commands });
     await consumeRecovered(x);
     const smoked = await smokeCheck(checks, args.env);
     if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
@@ -307,7 +314,7 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
  * holds does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
  */
 async function consumeRecovered(x: Exec): Promise<void> {
-  for (const unit of x.stage.plan.units) {
+  for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
     if (s === null) continue;
     if (s.kind === 'parked' || s.kind === 'stopped') {
@@ -317,6 +324,50 @@ async function consumeRecovered(x: Exec): Promise<void> {
       await raiseDue(x, { kind: 'held', unit: unit.id, needsUser: s.needsUser, settled: [] });
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The contexts: the plan and routing in force are read from the log at each call
+
+/**
+ * The stage and command contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing()` its
+ * resolution under the start's profile and repo config, both read at each call, so an apply takes effect at
+ * the next one; each plan revision is parsed and resolved once (the one cache of the plan in force).
+ */
+function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
+  const config = readRepoConfig(context.repo);
+  const resolve = (plan: PlanM1): ResolvedRouting => resolveRouting(arcStack(profile, config, plan.routing ?? null));
+  const cache = new Map<Sha256Hex, Readonly<{ plan: PlanM1; routing: ResolvedRouting }>>();
+  const inForce = (): Readonly<{ plan: PlanM1; routing: ResolvedRouting }> => {
+    const fact = journal.view.planApplied();
+    const known = fact === null ? undefined : cache.get(fact.planSha256);
+    if (known !== undefined) return known;
+    const { plan, manifest } = requirePlanInForce(context.runDir, journal.view);
+    const entry = { plan, routing: resolve(plan) };
+    cache.set(manifest.planSha256, entry);
+    return entry;
+  };
+  const routing = (): ResolvedRouting => inForce().routing;
+  const base = {
+    journal, containment: containmentFor(detectContainmentMode()), runDir: context.runDir, repo: context.repo, hostDir: context.hostDir,
+    planDir: absPath(dirname(context.planFile)),
+  };
+  const stage: StageContext = {
+    ...base,
+    hostEnv: args.env,
+    plan: () => inForce().plan,
+    routing,
+  };
+  const commands: CommandContext = {
+    ...base,
+    hostEnv: backendEnv(args.env),
+    laneEnv: args.env,
+    planFile: context.planFile,
+    resolve,
+    plan: () => inForce().plan,
+    routing: () => ({ profile, resolved: routing() }),
+  };
+  return { stage, commands, journal };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -356,8 +407,8 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
 }
 
 function currentUnit(x: Exec): PlanUnit | null {
-  const next = nextUnit(x.stage.plan.units.map((u) => u.id), x.journal.view);
-  return x.stage.plan.units.find((u) => u.id === next) ?? null;
+  const next = nextUnit(x.stage.plan().units.map((u) => u.id), x.journal.view);
+  return x.stage.plan().units.find((u) => u.id === next) ?? null;
 }
 
 /** What a pause or stop asks of the running arc, per the durable markers. */
@@ -391,7 +442,7 @@ async function drive(x: Exec): Promise<ExitReason> {
     await raiseDue(x, null);
     const view = x.journal.view;
     if (view.control().stop !== null) return stopRun(x, { kind: 'stop', cause: 'command', needsUser: null });
-    const stopped = x.stage.plan.units.find((u) => view.unit(u.id).status === 'stop-pending');
+    const stopped = x.stage.plan().units.find((u) => view.unit(u.id).status === 'stop-pending');
     if (stopped !== undefined) return stopRun(x, { kind: 'stop', cause: 'unit', needsUser: raisedFor(view, decidedParent(view, stopped.id)) });
     const current = currentUnit(x);
     if (current === null && blockingOpen(x).length === 0) return { kind: 'complete', units: summary(x) };
@@ -407,7 +458,11 @@ async function drive(x: Exec): Promise<ExitReason> {
 async function runWithControl(x: Exec): Promise<ArcResult> {
   const abort = new AbortController();
   let finished = false;
-  const running = runArc(x.stage, abort.signal, (unit, content) => raiseParked(x, unit, content)).finally(() => {
+  // Mutations at each stage boundary; control commands meanwhile, below.
+  const atBoundary = async (): Promise<void> => {
+    await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, x.journal.view.arc));
+  };
+  const running = runArc(x.stage, abort.signal, (unit, content) => raiseParked(x, unit, content), atBoundary).finally(() => {
     finished = true;
   });
   // Settles when the arc does, without rethrowing here: `running` is returned and rethrows to the caller.
@@ -491,7 +546,7 @@ function raiseParked(x: Exec, unit: UnitId, content: NeedsUserContent): void {
  */
 async function raiseDue(x: Exec, result: ArcResult | null): Promise<void> {
   const { journal, runDir } = x.stage;
-  for (const unit of x.stage.plan.units) {
+  for (const unit of x.stage.plan().units) {
     const status = journal.view.unit(unit.id).status;
     if (status !== 'park-pending' && status !== 'stop-pending') continue;
     const parent = decidedParent(journal.view, unit.id);
@@ -513,7 +568,7 @@ async function raiseDue(x: Exec, result: ArcResult | null): Promise<void> {
 
 function summary(x: Exec): readonly UnitSummary[] {
   const view = x.journal.view;
-  return x.stage.plan.units.map((u): UnitSummary => {
+  return x.stage.plan().units.map((u): UnitSummary => {
     if (view.unit(u.id).status === 'retired') return { unit: u.id, result: 'merged' };
     const id = raisedFor(view, decidedParent(view, u.id));
     if (id === null) throw new Error(`unit ${u.id} is parked without its needs-user`);
@@ -525,26 +580,28 @@ function summary(x: Exec): readonly UnitSummary[] {
 // The process entry
 
 export type ExecutorArgv = Readonly<{
-  hostDir: AbsPath; generation: number; nonce: string; repo: AbsPath; planFile: AbsPath; profile: ProfileName | null; controlOnly: boolean;
+  hostDir: AbsPath; generation: number; nonce: string; repo: AbsPath; planFile: AbsPath; profile: ProfileName | null; controlOnly: boolean; respawn: boolean;
 }>;
 
 /** The argv the supervisor builds (`executorArgv`) and this entry parses back. */
 export function executorArgv(a: ExecutorArgv): readonly string[] {
   return [
     a.hostDir, '--generation', String(a.generation), '--nonce', a.nonce, '--repo', a.repo, '--plan', a.planFile,
-    ...(a.profile === null ? [] : ['--profile', a.profile]), ...(a.controlOnly ? ['--control-only'] : []),
+    ...(a.profile === null ? [] : ['--profile', a.profile]), ...(a.controlOnly ? ['--control-only'] : []), ...(a.respawn ? ['--respawn'] : []),
   ];
 }
 
 function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const [hostDir, ...rest] = argv;
-  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only]');
+  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn]');
   const values = new Map<string, string>();
   let controlOnly = false;
+  let respawn = false;
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i] as string;
-    if (flag === '--control-only') {
-      controlOnly = true;
+    if (flag === '--control-only' || flag === '--respawn') {
+      if (flag === '--control-only') controlOnly = true;
+      else respawn = true;
       continue;
     }
     const value = rest[i + 1];
@@ -564,7 +621,7 @@ function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const profile = values.get('--profile');
   return {
     hostDir: absPath(hostDir), generation, nonce: need('--nonce'), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
-    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly,
+    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly, respawn,
   };
 }
 
@@ -600,7 +657,7 @@ export async function executorMain(argv: readonly string[]): Promise<number> {
   }
   openHostDir(a.hostDir);
   const reason = await runExecutor({
-    repo: a.repo, planFile: a.planFile, profile: a.profile, hostDir: a.hostDir, env: process.env, claim, controlOnly: a.controlOnly,
+    repo: a.repo, planFile: a.planFile, profile: a.profile, hostDir: a.hostDir, env: process.env, claim, controlOnly: a.controlOnly, respawn: a.respawn,
   });
   process.stdout.write(`${exitLine(reason)}\n`);
   return exitCodeOf(reason);

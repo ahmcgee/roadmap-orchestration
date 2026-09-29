@@ -20,8 +20,10 @@
 // interrupted attempt's invocation, read from the fold's `interrupted` fact. A pause or stop signal, and
 // the durable pause markers and `after` edges (`dispatchBlock`), are checked before a unit's first stage and
 // between stages; the stage in flight is ended by the command layer's kills (step 13), which the stage
-// records as `interrupted`. A unit re-opened after a park (`reopened`: no decided outcome) starts over at
-// plan-check, like a unit never dispatched.
+// records as `interrupted`. A unit re-opened (`reopened`: no decided outcome) starts over at plan-check, like a
+// unit never dispatched: after a park by `resume <unit>`, or in flight by the driver itself, on a spec revision an
+// `apply` left pending, at the first boundary whose next stage starts from a clean worktree (`reentryAllowed`).
+// Mutations (apply, resume, sweep) run at every stage boundary through `atBoundary`.
 //
 // Needs-user content is produced here, never written: the writer is step 13's. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
@@ -31,6 +33,7 @@ import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
 import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import type { UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { raisedFor, reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
@@ -45,7 +48,7 @@ import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { type DecidedRound, type RoundInput, candidateFixRound, gateReviseRound, laneFixRound, failingLaneDirectives } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
+  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
   recordedCall, salvage, teardown,
 } from './stages.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
@@ -107,9 +110,9 @@ const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-
  * What a halt's recommendation refers to (arc-1 feedback item 23): the deciding stage's backend call
  * (result.json, which holds a judgment's reasons and patch, and stdout; stdout and stderr of a lost call),
  * for a plan-check the redirect whose patch the unit's spec last took, a lanes or candidate attempt's
- * evidence, a failed salvage's worktree, and the spec file.
+ * evidence, a failed salvage's worktree, and the spec in force (its kept file, not the live one).
  */
-function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, specPath: AbsPath): readonly AbsPath[] {
+function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): readonly AbsPath[] {
   const parent = stageParent(f);
   const out: AbsPath[] = [];
   const called = CALL_STAGES.includes(f.stage) ? recordedCall(ctx, parent) : null;
@@ -125,8 +128,8 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, sp
   }
   if (f.stage === 'lanes') out.push(specSeriesRoot(ctx.runDir, parent));
   if (f.stage === 'candidate') out.push(candidateSeriesRoot(ctx.runDir, parent));
-  if (f.stage === 'salvage') out.push(unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id));
-  out.push(specPath);
+  if (f.stage === 'salvage') out.push(unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id));
+  out.push(keptSpecPath(ctx, unit));
   return [...new Set(out)].filter((p) => existsSync(p));
 }
 
@@ -146,7 +149,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
       : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
         ? reopenRecommendation(unit.id, path, spec.rev)
-        : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan.arc, unit.id));
+        : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan().arc, unit.id));
   return {
     blocking: true,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
@@ -154,7 +157,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     summary: `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
     recommendation,
     options: [],
-    evidence: haltEvidence(ctx, unit, f, path),
+    evidence: haltEvidence(ctx, unit, f),
   };
 }
 
@@ -172,7 +175,7 @@ function heldBy(ctx: StageContext, holder: StageHolder): Reservation<'running', 
     .map(([r]) => r);
   if (resources.length === 0) return null;
   const ordered = lockOrder(resources);
-  return { state: 'running', holder, resources: ordered, recipes: stageRecipes(ctx.plan, ctx.repo, holder.unit, ordered) };
+  return { state: 'running', holder, resources: ordered, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, ordered) };
 }
 
 /** The unit's latest successful build: its invocation (the last of its attempt: a collided resume retries), dirs and held reservation. */
@@ -188,8 +191,8 @@ function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
   return {
     inv,
     invDir: invocationDir(ctx.runDir, inv),
-    worktree: unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id),
-    branch: unitBranch(ctx.plan.arc, unit.id),
+    worktree: unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id),
+    branch: unitBranch(ctx.plan().arc, unit.id),
     workDir: workDir(ctx.runDir, parent),
     reservation: heldBy(ctx, { type: 'stage', unit: unit.id, stage: 'build', attempt: parent.attempt }),
   };
@@ -225,7 +228,7 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       }
       // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
       const at = stageParent(f);
-      const suite = seriesLedger(ctx, at, ctx.plan.suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+      const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
       const failing = suite.filter((l) => l.verdict !== 'pass');
       return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap((l) => l.fixDirs), directives: failingLaneDirectives(failing) }, suite, verification, tip);
     }
@@ -402,20 +405,58 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   }
 }
 
+/** What runs at each stage boundary, after the stage's outcome: the executor applies pending mutations. */
+export type AtBoundary = () => Promise<void>;
+export const noBoundary: AtBoundary = async () => {};
+
+/**
+ * Whether a unit may re-open on a pending spec revision now: it is active, no attempt is open, an interrupted
+ * one (if any) was a judgment (a build's would be continued), and its next stage starts from a clean unit
+ * worktree (plan-check, lanes, gate, or a fresh or fix build), not inside the build → teardown chain, a resumed
+ * build or publication.
+ */
+export function reentryAllowed(u: UnitState): boolean {
+  if (u.status !== 'active' || u.open !== null) return false;
+  if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage)) return false;
+  if (u.decided === null) return true;
+  const d = decidedBy(u.decided);
+  if (d.kind !== 'stage') return false;
+  const t = d.target;
+  return t.stage === 'plan-check' || t.stage === 'lanes' || t.stage === 'gate' || (t.stage === 'build' && (t.round === 'fresh' || t.round === 'fix'));
+}
+
+/**
+ * Re-opens an in-flight unit on its pending revision (an applied rev + 1 of its spec) when it may:
+ * a `reopened` fact naming the apply that recorded it. The unit starts over at plan-check, keeping its
+ * branch, worktree, implementer session and counters, as a reopen after a park does.
+ */
+function reopenIfDue(ctx: StageContext, unit: UnitId): void {
+  const u = ctx.journal.view.unit(unit);
+  const p = u.pendingRevision;
+  if (p === null || !reentryAllowed(u)) return;
+  // The classifier refuses a revision while an attempt is open, and no executor patch runs while one is
+  // pending, so a pending revision is always the next rev.
+  if (u.spec === null || p.rev !== u.spec.rev + 1) throw new Error(`unit ${unit}: its pending revision is rev ${p.rev}, but its spec is at rev ${u.spec?.rev}`);
+  ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
+}
+
 /**
  * Runs `unit` stage by stage until it is merged, parked, held or stopped. `signal` (pause or stop) and the
  * unit's `dispatchBlock` (a pause marker, an unmet `after`) are honoured before its first stage and between
- * stages: the unit is left where the fold says, and the next call continues there.
+ * stages: the unit is left where the fold says, and the next call continues there. A pending spec revision
+ * re-opens the unit at the first boundary that allows it (`reopenIfDue`); `atBoundary` runs after each stage.
  */
-export async function runUnit(ctx: StageContext, unit: PlanUnit, signal: AbortSignal): Promise<UnitResult> {
+export async function runUnit(ctx: StageContext, unit: PlanUnit, signal: AbortSignal, atBoundary: AtBoundary = noBoundary): Promise<UnitResult> {
   for (;;) {
     // The durable markers too, not only the signal the command loop aborts on its next poll: a unit paused
     // (or waiting on `after`) is never dispatched, and no further stage of it starts (arc-1 feedback item 16).
     // A merged, parked or stopped unit starts no stage: its step only reads its result back.
     const ended = ['retired', 'park-pending', 'stop-pending'].includes(ctx.journal.view.unit(unit.id).status);
     if (signal.aborted || (!ended && dispatchBlock(ctx.journal.view, unit) !== null)) return { kind: 'held', needsUser: null };
+    reopenIfDue(ctx, unit.id);
     const s = await step(ctx, unit);
     if (s.kind !== 'continue') return s;
     crashPoint('unit.after-stage');
+    await atBoundary();
   }
 }

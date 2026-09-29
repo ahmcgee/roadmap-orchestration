@@ -6,17 +6,18 @@
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import {
-  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentOf, type IntentRecord, type JudgmentStage, type OpKind,
+  type AbortRecord, type DoneRecord, type Event, type Fact, type IntentOf, type IntentRecord, type JudgmentStage, type OpKind, type PlanAppliedFact,
   type RetryStage, type StageOutcomeFact, JUDGMENT_STAGES, RETRY_STAGES, prevHash, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type ArcId, type CommandId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type RoutingRev, type Sha256Hex,
+  type ArcId, type CommandId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type RoutingRev, type Sha256Hex,
   type SpecRev, type UnitId, parseInvocationId, parseOpId,
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import type { ApprovalFingerprint, ContainmentMode, DispatchRecord, Stage } from './records.ts';
+import { repinNamesSpec } from './upgrade.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
@@ -94,13 +95,19 @@ export type UnitState = Readonly<{
    */
   open: Readonly<{ stage: Stage; attempt: number }> | null;
   /**
-   * The unit's spec as the log last recorded it: the latest `dispatch` fact's, done `spec.patch`'s or
-   * `reopened` fact's revision and file hash; null before the first dispatch. A reopen requires the file to
-   * be at this rev + 1 (the architect's edit).
+   * The unit's spec in force as the log last recorded it: its first `dispatch` fact's, a done `spec.patch`'s,
+   * a `reopened` fact's or an evidence-only `plan-applied` edit's revision and hash; null before the first
+   * dispatch. Stages load the spec by this hash; a revision must be at this rev + 1.
    */
   spec: SpecState | null;
-  /** The latest `reopened` fact's command and spec rev; null before one. */
-  reopened: Readonly<{ command: CommandId; specRev: SpecRev }> | null;
+  /** The latest `reopened` fact's command (null: a revision a start applied) and spec rev; null before one. */
+  reopened: Readonly<{ command: CommandId | null; specRev: SpecRev }> | null;
+  /**
+   * A spec revision (the recorded rev + 1) a `plan-applied` fact holds for the unit until it re-opens on it:
+   * at its next stage boundary that allows it while in flight, or by `resume <unit>` while parked at a
+   * judgment stage. `command` is the apply that recorded it (null for a start). Null when none is pending.
+   */
+  pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
    * `counters.redirects` at the latest reopen (0 before one): the redirect bound counts only the redirects
    * since the architect's latest spec revision (`redirectsSinceEdit`).
@@ -113,15 +120,14 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
-    spec, reopened: null, redirectBase: 0,
+    spec, reopened: null, pendingRevision: null, redirectBase: 0,
   };
 }
 
 /** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
 export const redirectsSinceEdit = (u: UnitState): number => u.counters.redirects - u.redirectBase;
 
-const specOf = (record: DispatchRecord | undefined): SpecState | null =>
-  record === undefined ? null : { rev: record.specRev, sha256: record.specSha256 };
+const specOf = (record: DispatchRecord): SpecState => ({ rev: record.specRev, sha256: record.specSha256 });
 
 const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {
   hold: 'held', park: 'park-pending', stop: 'stop-pending', retire: 'retired',
@@ -180,6 +186,8 @@ export type MeterTotal = Readonly<{
 export type DerivedState = Readonly<{
   v: SchemaVersion;
   arc: ArcId;
+  /** The latest `plan-applied` fact's revision and plan hash (the plan in force); null before one. */
+  plan: Readonly<{ rev: PlanRev; planSha256: Sha256Hex }> | null;
   /** Seq of the last event folded; 0 for an empty log. */
   lastSeq: number;
   /** The highest event seq a published `snapshot.publish` carried to `refs/roadmap/<arc>`; 0 before the first. */
@@ -230,6 +238,8 @@ export class Fold implements JournalView {
   readonly #units = new Map<UnitId, UnitEntry>();
   /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
   readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
+  /** The spec the unit's dispatch facts name: its first pin's (a re-pin keeps it; see the `dispatch` case). */
+  readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
@@ -238,6 +248,9 @@ export class Fold implements JournalView {
   #pausedAll = false;
   readonly #pausedUnits = new Set<UnitId>();
   #containmentMode: ContainmentMode | null = null;
+  #planApplied: PlanAppliedFact | null = null;
+  readonly #plannedUnits = new Set<UnitId>();
+  readonly #appliedBy = new Map<CommandId, PlanAppliedFact>();
   readonly #tail: TailDiscarded[] = [];
   readonly #parkedBackends = new Set<Backend>();
 
@@ -312,13 +325,17 @@ export class Fold implements JournalView {
   #unit(unit: UnitId, stage: Stage): UnitEntry {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
-    const pinned = this.#dispatches.get(unit)?.at(-1);
     const u: UnitEntry = {
-      starts: new Set<string>(), outcomes: new Set<string>(), state: newUnitState(unit, stage, pinned?.riskFloor ?? null, specOf(pinned)),
+      starts: new Set<string>(), outcomes: new Set<string>(), state: this.#fresh(unit, stage),
       beforeDecided: { decided: null, interrupted: null },
     };
     this.#units.set(unit, u);
     return u;
+  }
+
+  /** A unit with no stage state yet: at `stage`, with its latest pin's risk floor and its pinned spec. */
+  #fresh(unit: UnitId, stage: Stage): UnitState {
+    return newUnitState(unit, stage, this.#dispatches.get(unit)?.at(-1)?.riskFloor ?? null, this.#pinnedSpec.get(unit) ?? null);
   }
 
   #start(u: UnitEntry, start: string): void {
@@ -399,8 +416,12 @@ export class Fold implements JournalView {
         const all = this.#dispatches.get(unit) ?? [];
         all.push(f.record);
         this.#dispatches.set(unit, all);
+        // Only the first pin names the spec in force: a re-pin carries the spec its record was first made at
+        // (an arc 1.0.0-dev.3 started took each re-pin's, until its first plan revision: src/core/upgrade.ts).
+        const spec = prev === undefined || repinNamesSpec(this.#planApplied !== null) ? specOf(f.record) : null;
+        if (spec !== null) this.#pinnedSpec.set(unit, spec);
         const u = this.#units.get(unit);
-        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, spec: specOf(f.record) };
+        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, spec: spec ?? u.state.spec };
         return;
       }
       case 'stage-outcome': {
@@ -457,7 +478,59 @@ export class Fold implements JournalView {
       case 'rerouted':
         this.#rerouted(f, fail);
         return;
+      case 'plan-applied':
+        this.#planAppliedFact(f, fail);
+        return;
     }
+  }
+
+  /**
+   * A new plan in force: the next revision. Its spec edits of dispatched units take effect here: an
+   * evidence-only edit is the unit's spec at once; a revision is held pending until the unit re-opens on it;
+   * a withdrawn revision clears that. An edit of an undispatched unit only changes the manifest. Every edit is
+   * checked before any is applied, so a refused fact leaves the fold as it was.
+   */
+  #planAppliedFact(f: PlanAppliedFact, fail: (detail: string) => never): void {
+    const expected = (this.#planApplied?.rev ?? 0) + 1;
+    if (f.rev !== expected) fail(`plan-applied rev ${f.rev}; the next plan revision is ${expected}`);
+    if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
+    const edits: { unit: UnitId; update: (u: UnitState) => UnitState }[] = [];
+    for (const c of f.changes) {
+      if (c.type !== 'spec') continue;
+      if (f.specs[c.unit] !== c.specSha256) fail(`plan-applied names spec ${c.specSha256} for ${c.unit}, but its manifest ${f.specs[c.unit] ?? 'nothing'}`);
+      const dispatched = this.#dispatches.has(c.unit);
+      if (c.edit === 'undispatched') {
+        if (dispatched) fail(`plan-applied edits the spec of ${c.unit} as undispatched, but it was dispatched`);
+        continue;
+      }
+      if (!dispatched) fail(`plan-applied makes a ${c.edit} edit of ${c.unit}, which was never dispatched`);
+      const u = this.unit(c.unit);
+      const spec = u.spec;
+      if (spec === null) return fail(`plan-applied edits ${c.unit}, which has no recorded spec`);
+      const next = { rev: c.specRev, sha256: c.specSha256 };
+      switch (c.edit) {
+        case 'evidence':
+          if (c.specRev !== spec.rev) fail(`an evidence-only edit of ${c.unit} at rev ${c.specRev}; its spec is at rev ${spec.rev}`);
+          edits.push({ unit: c.unit, update: (s) => ({ ...s, spec: next }) });
+          break;
+        case 'revision':
+          if (c.specRev !== spec.rev + 1) fail(`a revision of ${c.unit} at rev ${c.specRev}; its spec is at rev ${spec.rev}`);
+          edits.push({ unit: c.unit, update: (s) => ({ ...s, pendingRevision: { ...next, command: f.command } }) });
+          break;
+        case 'withdrawn':
+          if (u.pendingRevision === null) fail(`a withdrawn revision of ${c.unit}, which has none pending`);
+          if (c.specSha256 !== spec.sha256) fail(`a withdrawn revision of ${c.unit} names spec ${c.specSha256}, not its recorded ${spec.sha256}`);
+          edits.push({ unit: c.unit, update: (s) => ({ ...s, pendingRevision: null }) });
+          break;
+      }
+    }
+    for (const e of edits) {
+      const entry = this.#unit(e.unit, 'plan-check');
+      entry.state = e.update(entry.state);
+    }
+    this.#planApplied = f;
+    if (f.command !== null) this.#appliedBy.set(f.command, f);
+    for (const unit of Object.keys(f.specs) as UnitId[]) this.#plannedUnits.add(unit);
   }
 
   /**
@@ -476,20 +549,30 @@ export class Fold implements JournalView {
   }
 
   /**
-   * A reopen: only of a unit parked at a judgment stage, onto the spec rev after the one the log recorded.
-   * The unit starts over at plan-check (no decided outcome) with its counters, routed-up seats and branch
-   * kept; the redirect bound counts from here.
+   * A reopen: of a unit parked at a judgment stage, or of an active unit on its pending revision (the driver,
+   * at a stage boundary), onto the spec rev after the one the log recorded. A pending revision must be the
+   * one re-opened on (a reopen written before revisions were applied has none). The unit starts over at
+   * plan-check (no decided outcome) with its counters, routed-up seats and branch kept; the redirect bound
+   * counts from here.
    */
   #reopened(f: Extract<Fact, { kind: 'reopened' }>, fail: (detail: string) => never): void {
     const u = this.#units.get(f.unit);
-    const decided = u?.state.decided ?? null;
-    if (u === undefined || u.state.status !== 'park-pending' || decided === null) return fail(`reopen of unit ${f.unit}, which is not parked`);
-    if (!(JUDGMENT_STAGES as readonly Stage[]).includes(decided.stage)) fail(`reopen of unit ${f.unit}, parked at ${decided.stage}, not at a judgment stage`);
+    if (u === undefined) return fail(`reopen of unit ${f.unit}, which never started`);
+    const decided = u.state.decided;
+    const pending = u.state.pendingRevision;
+    if (u.state.status === 'park-pending') {
+      if (decided === null || !(JUDGMENT_STAGES as readonly Stage[]).includes(decided.stage)) fail(`reopen of unit ${f.unit}, parked at ${decided?.stage}, not at a judgment stage`);
+    } else if (u.state.status !== 'active' || pending === null) {
+      fail(`reopen of unit ${f.unit}, which is ${u.state.status} without a pending revision`);
+    }
+    if (pending !== null && (pending.rev !== f.specRev || pending.sha256 !== f.specSha256)) {
+      fail(`reopen of unit ${f.unit} on spec ${f.specSha256} at rev ${f.specRev}; its pending revision is ${pending.sha256} at rev ${pending.rev}`);
+    }
     const spec = u.state.spec;
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     u.state = {
       ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, spec: { rev: f.specRev, sha256: f.specSha256 },
-      reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects,
+      reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     };
   }
 
@@ -581,8 +664,11 @@ export class Fold implements JournalView {
   }
 
   unit(unit: UnitId): UnitState {
-    const pinned = this.#dispatches.get(unit)?.at(-1);
-    return this.#units.get(unit)?.state ?? newUnitState(unit, 'plan-check', pinned?.riskFloor ?? null, specOf(pinned));
+    return this.#units.get(unit)?.state ?? this.#fresh(unit, 'plan-check');
+  }
+
+  unitsWithState(): readonly UnitId[] {
+    return [...new Set([...this.#units.keys(), ...this.#dispatches.keys()])].sort(compare);
   }
 
   dispatchOf(unit: UnitId): DispatchRecord | null {
@@ -613,10 +699,23 @@ export class Fold implements JournalView {
     return this.#containmentMode;
   }
 
+  planApplied(): PlanAppliedFact | null {
+    return this.#planApplied;
+  }
+
+  planAppliedBy(command: CommandId): PlanAppliedFact | null {
+    return this.#appliedBy.get(command) ?? null;
+  }
+
+  plannedUnits(): readonly UnitId[] {
+    return [...this.#plannedUnits].sort(compare);
+  }
+
   derived(): DerivedState {
     return {
       v: SCHEMA_VERSION,
       arc: this.arc,
+      plan: this.#planApplied === null ? null : { rev: this.#planApplied.rev, planSha256: this.#planApplied.planSha256 },
       lastSeq: this.#lastSeq,
       snapshotHighWater: this.#snapshotHighWater,
       openIntents: this.openIntents(),

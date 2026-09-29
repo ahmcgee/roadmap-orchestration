@@ -2,9 +2,9 @@
 //
 //   builtin profile  <  .roadmap/config.json routing  <  plan.json routing  <  per-unit route
 //
-// Every layer names a model CLASS per seat, never a model. The profile is a full table; each layer above it
-// is a partial one, and a seat takes its class from the highest layer that names it. Each class then binds
-// to a triple: the class catalogue (classes.ts), unless the repo config rebinds it. The resolved table of
+// Every layer names a model CLASS per seat, never a model. The built-in seats (profiles.ts) are a full table; each layer
+// above them is a partial one, and a seat takes its class from the highest layer that names it. Each class
+// then binds to a triple: the profile's class catalogue (classes.ts), unless the repo config rebinds it. The resolved table of
 // triples is hashed into the RoutingRev that records carry instead of model ids, so a rebind changes the
 // rev exactly as a seat edit does.
 //
@@ -34,7 +34,7 @@ import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
 import { CLASS_CATALOGUE } from './classes.ts';
 import { effortSupported, modelInfo } from './models.ts';
-import { PROFILE_TABLES } from './profiles.ts';
+import { BUILTIN_SEATS } from './profiles.ts';
 import {
   type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
   type RoutingLayer, type RoutingLayerName, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, atSeat,
@@ -113,13 +113,13 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
 
 /** Resolves every seat through the stack to a class, and every class to its binding. */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  const bound = (c: ModelClass): Triple => stack.classes?.[c] ?? CLASS_CATALOGUE[c];
+  const bound = (c: ModelClass): Triple => stack.classes?.[c] ?? CLASS_CATALOGUE[stack.profile][c];
   const named = (seat: SeatRef): readonly [ModelClass, RoutingLayerName] => {
     for (const [name, key] of LAYERS) {
       const c = (stack[key]?.[seat.role] as Readonly<Partial<Record<string, ModelClass>>> | undefined)?.[seat.tier];
       if (c !== undefined) return [c, name];
     }
-    return [atSeat(PROFILE_TABLES[stack.profile], seat), 'builtin'];
+    return [atSeat(BUILTIN_SEATS, seat), 'builtin'];
   };
   const classes = seatTable((s) => named(s)[0]);
   const table = seatTable((s) => bound(atSeat(classes, s)));

@@ -36,7 +36,7 @@ test('merge.base-red: the suite is red on the candidate and on T alone; the unit
     assert.equal(suites.length, 2);
     assert.equal(suites[1], tip, 'the second suite run tested T alone');
     for (const suffix of ['candidate', 'base']) {
-      assert.ok(!existsSync(join(r.ctx.plan.worktreeRoot, r.ctx.plan.arc, `u1.${suffix}-9`)), `the ${suffix} checkout is removed`);
+      assert.ok(!existsSync(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, `u1.${suffix}-9`)), `the ${suffix} checkout is removed`);
     }
     assert.equal(resourceTable(r.journal.view).get(resourceName('integration-slot'))?.status.state, 'free', 'the slot is released');
   } finally {

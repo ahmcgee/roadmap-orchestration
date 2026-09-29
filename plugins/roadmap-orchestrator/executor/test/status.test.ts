@@ -7,6 +7,7 @@ import { basename, join, relative } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { arcId, hostNeedsUserId, supervisorNeedsUserId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
 import { writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
 import { openBlocking } from '../src/needsuser.ts';
@@ -69,6 +70,7 @@ describe('status.subset', () => {
       spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, bySmoke: [] },
       host: { containment: { mode: null, guarantee: SESSION_GUARANTEE } },
       parkedBackends: [],
+      plan: null,
       routing: null,
       rejection: null,
     });
@@ -76,7 +78,9 @@ describe('status.subset', () => {
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
-    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'rejection', 'routing', 'run', 'spend', 'units']);
+    assert.deepEqual(Object.keys(s).sort(), ['arc', 'commands', 'host', 'needsUser', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'spend', 'units']);
+    assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
+    assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
     assert.equal(s.run.state, 'complete');
     assert.equal(s.run.owner.state, 'none', 'the lock was released');
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
@@ -145,7 +149,7 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
     assert.ok(MODEL_IDS.some((m) => launches.includes(m)), 'launch.json argv names the models it launched');
   }
   const claudeOnly = await statusOf(runs[1]!);
-  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => m.model), ['claude-opus-5-5'], 'claude-only: Opus in every seat this run used');
+  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => m.model), ['claude-opus-5-5', 'claude-sonnet-5-5'], 'claude-only: Opus judges, Sonnet builds');
 });
 
 test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async (t) => {

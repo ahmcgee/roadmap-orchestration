@@ -45,7 +45,7 @@ function close(ctx: ResourceContext, intent: IntentOf<'resource.transition'>): R
   let disposition: ResourceDisposition = { kind: 'done', outcome: { kind: 'transitioned' } };
   if (edge.type === 'fail') {
     if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by sweep ${holder.command}`);
-    disposition = reconcileFailedCleanup(ctx.hostDir, intent, stageRecipes(ctx.plan, ctx.repo, holder.unit, resources));
+    disposition = reconcileFailedCleanup(ctx.hostDir, intent, stageRecipes(ctx.plan(), ctx.repo, holder.unit, resources));
   }
   ctx.journal.done(intent.op, 'resource.transition', disposition.outcome, 'reconciled');
   return disposition;
@@ -102,7 +102,7 @@ async function settleHolder(ctx: ResourceContext, holder: StageHolder): Promise<
     if (subject.purpose === 'teardown' && cleaning.includes(subject.resource)) await spawn(intent, ctx.journal.view);
   }
   const r: Reservation<'cleaning', StageHolder> = {
-    state: 'cleaning', holder, resources: cleaning, recipes: stageRecipes(ctx.plan, ctx.repo, holder.unit, cleaning),
+    state: 'cleaning', holder, resources: cleaning, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, cleaning),
   };
   await finishCleanup(ctx, r, RECOVERY);
 }

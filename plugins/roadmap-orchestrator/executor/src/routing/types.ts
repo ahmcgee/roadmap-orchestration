@@ -4,7 +4,7 @@
 // name a role, a seat and a RoutingRev instead.
 import { Fields, type Read, SchemaError, literal, object, oneOf } from '../core/validate.ts';
 
-export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
+export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 export const CODEX_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol'] as const;
 export const MODEL_IDS = [...CLAUDE_MODELS, ...CODEX_MODELS] as const;
 
@@ -67,7 +67,7 @@ export type ProfileName = (typeof PROFILES)[number];
 export type SeatTable<V> = { readonly [R in Role]: { readonly [S in SeatOf<R>]: V } };
 /** The resolved triples: the table `routingRev` hashes. */
 export type RoutingTable = SeatTable<Triple>;
-/** A built-in profile, or a resolved stack before binding: the class at every seat. */
+/** The built-in seats, or a resolved stack before binding: the class at every seat. */
 export type ClassTable = SeatTable<ModelClass>;
 /** One layer of the routing stack: a class at any subset of seats. */
 export type RoutingLayer = { readonly [R in Role]?: { readonly [S in SeatOf<R>]?: ModelClass } };

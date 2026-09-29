@@ -3,7 +3,7 @@
 // reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
 // Interfaces only; no behaviour here.
 import type {
-  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent,
+  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent, PlanAppliedFact,
   RecoveredBy,
 } from './events.ts';
 import type { ArcId, CommandId, InvocationId, NeedsUserId, OpId, OpKey, UnitId } from './ids.ts';
@@ -54,6 +54,8 @@ export interface JournalView {
    * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
+  /** Every unit the log has state for (a stage start or outcome, a dispatch, a spec edit), ascending. */
+  unitsWithState(): readonly UnitId[];
   /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
@@ -68,6 +70,12 @@ export interface JournalView {
   control(): ControlState;
   /** The latest `containment-mode` fact, or null before one. */
   containmentMode(): ContainmentMode | null;
+  /** The latest `plan-applied` fact: the plan in force (src/input/inforce.ts), or null before one. */
+  planApplied(): PlanAppliedFact | null;
+  /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
+  planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** Every unit id any `plan-applied` fact named, ascending: ids are never reused. */
+  plannedUnits(): readonly UnitId[];
 }
 
 export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;

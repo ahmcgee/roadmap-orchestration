@@ -12,11 +12,14 @@ import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
+/** Sonnet 5.5 is an implementer class only; write a Sonnet-native judgment module before a layer may seat it. */
+const SONNET_JUDGMENT = 'no judgment prompt written for Sonnet 5.5; no built-in seat uses it';
 
 export const PROMPTS: PromptTable<PromptModules> = {
   planCheck: {
     'claude-opus-5-5': { type: 'prompt', prompt: PLAN_CHECK_OPUS },
     'claude-fable-5-1': { type: 'prompt', prompt: PLAN_CHECK_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
@@ -24,6 +27,15 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-opus-5-5': { type: 'prompt', prompt: BUILD_OPUS },
     // No built-in seat routes Fable to build; write a Fable-native module before a layer may.
     'claude-fable-5-1': { type: 'unsupported', reason: 'no build prompt written for Fable; no built-in seat uses it' },
+    // The Claude implementer brief carries over. Anthropic's Sonnet 5.5 guidance: prompts written for the
+    // Claude 5 line perform well unchanged; the shifts it names are covered by the Opus brief as written
+    // (it mandates running the fast lanes after the last change, the check a low-effort Sonnet may skip,
+    // and has no tool-discouraging or anti-laziness text to remove). Seated at effort medium (classes.ts).
+    'claude-sonnet-5-5': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-09-29: Sonnet 5.5 migration guidance (Anthropic) checked against the Opus 5.5 build brief; no Sonnet-specific change needed',
+    },
     'gpt-5.6-luna': { type: 'prompt', prompt: BUILD_LUNA },
     // OpenAI's GPT-5.6 guidance gives Sol, Terra and Luna one prompt skeleton: the tiers differ in cost,
     // latency and reasoning depth, not in how a prompt is structured. Sol's build prompt is Luna's.
@@ -36,6 +48,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
   gate: {
     'claude-opus-5-5': { type: 'prompt', prompt: GATE_OPUS },
     'claude-fable-5-1': { type: 'prompt', prompt: GATE_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },

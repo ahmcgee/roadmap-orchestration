@@ -3,15 +3,15 @@
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import {
-  type ArcId, type CommandId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type ResourceName,
+  type ArcId, type CommandId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type ResourceName,
   type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, INTEGRATION_SLOT, arcId, commandId,
-  invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseOpId, resourceName, routingRev, sha, sha256, specRev, unitId,
+  invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseOpId, planRev, resourceName, routingRev, sha, sha256, specRev, unitId,
 } from './ids.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode, type DispatchRecord,
-  type KillReason, type PauseTarget, type ResidueRecord, type ResumeTarget, type SpecPatch, type Stage, type TokenUsage,
-  type UsageUnavailableReason, approvalFingerprint, containmentMode, dispatchRecord, killReason, optionId, pauseTarget,
+  type KillReason, type PauseTarget, type PlanManifest, type ResidueRecord, type ResumeTarget, type SpecPatch, type Stage, type TokenUsage,
+  type UsageUnavailableReason, approvalFingerprint, containmentMode, dispatchRecord, killReason, optionId, pauseTarget, manifestSpecs,
   resumeTarget, specPatch, stage, tokenUsage, usageUnavailableReason,
 } from './records.ts';
 import {
@@ -307,11 +307,20 @@ export type Fact =
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
   /**
-   * `resume <unit>` re-opened a unit parked at a judgment stage after the architect edited its spec: the
-   * file is at `specRev` (the unit's recorded spec rev + 1) with bytes hashing to `specSha256`. The unit
-   * re-enters at plan-check as a new attempt; its counters are kept, and the redirect bound counts from here.
+   * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
+   * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
+   * resume), or by the driver at an in-flight unit's next stage boundary that allows it (`command`: the apply
+   * that recorded the revision, null for a start). The unit re-enters at plan-check as a new attempt; its
+   * counters are kept, and the redirect bound counts from here.
    */
-  | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId; specRev: SpecRev; specSha256: Sha256Hex }>
+  | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId | null; specRev: SpecRev; specSha256: Sha256Hex }>
+  /**
+   * A new plan in force (`roadmap apply`, or a `start` whose plan.json differs): revision `rev` (1 for the first
+   * plan the arc ran, then one more each), the files' hashes (`PlanManifest`; the bytes are kept as
+   * `inputs/<sha256>.plan.json` and `.spec.json`), the command that applied it (null for a start) and what
+   * changed against the previous revision. The postcondition of an `apply`: written once, last.
+   */
+  | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[] }> & PlanManifest)
   /**
    * `resume <unit>` re-entered a unit parked `routing-changed` once the routing in force lets it keep its
    * implementer seat (a `dispatch` fact re-pinned it first). The unit re-enters at the stage it parked at as
@@ -331,6 +340,31 @@ export type Fact =
   | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
   | StageOutcomeFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
+export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
+
+/** The plan fields besides units, suite, resources and routing that an apply may change. */
+export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction'] as const;
+export type PlanField = (typeof PLAN_FIELDS)[number];
+
+/**
+ * How a unit's spec changed: before its first dispatch (`undispatched`); only lane evidenceGlobs or
+ * evidenceExcludes at its current rev (`evidence`: in force at once); the next rev of a dispatched unit
+ * (`revision`: pending until the unit re-opens on it, see `reopened`); or a pending revision taken back
+ * (`withdrawn`: the spec is the unit's recorded one again).
+ */
+export const SPEC_EDITS = ['undispatched', 'evidence', 'revision', 'withdrawn'] as const;
+export type SpecEdit = (typeof SPEC_EDITS)[number];
+
+/** One change of a `plan-applied` fact against the previous plan in force (SCHEMAS.md "Plan in force"). */
+export type PlanChange =
+  | Readonly<{ type: 'unit-added' | 'unit-removed' | 'unit-changed'; unit: UnitId }>
+  /** The undispatched units' order changed. */
+  | Readonly<{ type: 'order' }>
+  | Readonly<{ type: 'spec'; unit: UnitId; edit: SpecEdit; specRev: SpecRev; specSha256: Sha256Hex }>
+  | Readonly<{ type: 'routing'; routingRev: RoutingRev }>
+  | Readonly<{ type: 'resource'; resource: ResourceName; edit: 'added' | 'changed' | 'removed' }>
+  | Readonly<{ type: 'suite' }>
+  | Readonly<{ type: 'plan-field'; field: PlanField }>;
 
 /** The backend error classes that park a backend arc-wide (lead ruling, 11b). */
 export const BACKEND_PARK_CLASSES = ['usage-limit', 'capacity'] as const;
@@ -609,6 +643,23 @@ const meterSubject: Read<MeterSubject> = tagged('type', {
   smoke: object((f): MeterSubject => ({ type: f.get('type', literal('smoke')), backend: f.get('backend', backend) })),
 });
 
+const planChange: Read<PlanChange> = tagged('type', {
+  'unit-added': object((f): PlanChange => ({ type: f.get('type', literal('unit-added')), unit: f.get('unit', unitR) })),
+  'unit-removed': object((f): PlanChange => ({ type: f.get('type', literal('unit-removed')), unit: f.get('unit', unitR) })),
+  'unit-changed': object((f): PlanChange => ({ type: f.get('type', literal('unit-changed')), unit: f.get('unit', unitR) })),
+  order: object((f): PlanChange => ({ type: f.get('type', literal('order')) })),
+  spec: object((f): PlanChange => ({
+    type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', specRevR),
+    specSha256: f.get('specSha256', sha256R),
+  })),
+  routing: object((f): PlanChange => ({ type: f.get('type', literal('routing')), routingRev: f.get('routingRev', revR) })),
+  resource: object((f): PlanChange => ({
+    type: f.get('type', literal('resource')), resource: f.get('resource', resR), edit: f.get('edit', oneOf(['added', 'changed', 'removed'] as const)),
+  })),
+  suite: object((f): PlanChange => ({ type: f.get('type', literal('suite')) })),
+  'plan-field': object((f): PlanChange => ({ type: f.get('type', literal('plan-field')), field: f.get('field', oneOf(PLAN_FIELDS)) })),
+});
+
 export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
@@ -632,10 +683,14 @@ export const fact: Read<Fact> = tagged('kind', {
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
   reopened: object((f): Fact => ({
-    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', cmdR), specRev: f.get('specRev', specRevR),
+    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
   rerouted: object((f): Fact => ({ kind: f.get('kind', literal('rerouted')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
+  'plan-applied': object((f): Fact => ({
+    kind: f.get('kind', literal('plan-applied')), rev: f.get('rev', (v, p) => planRev(v, p)), command: f.get('command', nullable(cmdR)),
+    planSha256: f.get('planSha256', sha256R), specs: f.get('specs', manifestSpecs), changes: f.get('changes', arrayOf(planChange)),
+  })),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),

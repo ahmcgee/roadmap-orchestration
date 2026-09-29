@@ -107,14 +107,28 @@ describe('records', () => {
 
   describe('classifyCommand', () => {
     it('grades by expected exit, a stall kill as stall, and faults on any other runner kill or signal', () => {
-      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }), 0), { exitCode: 0, verdict: 'pass' });
-      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 1 }), 0), { exitCode: 1, verdict: 'fail' });
-      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 3 }), 3), { exitCode: 3, verdict: 'pass' });
-      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'deadline'), 0), { exitCode: 0, verdict: 'process-fault' });
-      assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }), 0), { exitCode: null, verdict: 'process-fault' });
-      assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'stall'), 0), { exitCode: null, verdict: 'stall' });
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }), null, 0), { exitCode: 0, verdict: 'pass' });
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 1 }), null, 0), { exitCode: 1, verdict: 'fail' });
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 3 }), null, 3), { exitCode: 3, verdict: 'pass' });
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'deadline'), null, 0), { exitCode: 0, verdict: 'process-fault' });
+      assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }), null, 0), { exitCode: null, verdict: 'process-fault' });
+      assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'stall'), null, 0), { exitCode: null, verdict: 'stall' });
       // A lingering descendant stalled after the child exited: still a stall, whatever the child's code.
-      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'stall'), 0), { exitCode: 0, verdict: 'stall' });
+      assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'stall'), null, 0), { exitCode: 0, verdict: 'stall' });
+    });
+    it('records.command-cancelled: cause cancel → cancelled{cancel.json\'s reason}, the backend shape; any other cancel.json is a loud error', () => {
+      for (const reason of ['pause', 'stop'] as const) {
+        const cancel = RUNNER_FILE_READERS['cancel.json']({ ...bind, reason, at: T0 }, 'cancel.json');
+        assert.deepEqual(classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), cancel, 0), { exitCode: null, verdict: 'cancelled', reason });
+        assert.deepEqual(classifyCommand(exit({ type: 'exited', code: 0 }, 'cancel'), cancel, 0), { exitCode: 0, verdict: 'cancelled', reason });
+      }
+      const recovery = RUNNER_FILE_READERS['cancel.json']({ ...bind, reason: 'recovery', at: T0 }, 'cancel.json');
+      assert.throws(() => classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), null, 0), /cancel\.json null/);
+      assert.throws(() => classifyCommand(exit({ type: 'signalled', signal: 'SIGTERM' }, 'cancel'), recovery, 0), /cancel\.json "recovery"/);
+      const result = { ...bind, type: 'command', purpose: 'lane', exitCode: null, expectedExit: 0 };
+      assert.deepEqual(RUNNER_FILE_READERS['result.json']({ ...result, verdict: 'cancelled', reason: 'stop' }, 'result.json'), { ...result, verdict: 'cancelled', reason: 'stop' });
+      assert.throws(() => RUNNER_FILE_READERS['result.json']({ ...result, verdict: 'cancelled' }, 'result.json'), /reason/);
+      assert.throws(() => RUNNER_FILE_READERS['result.json']({ ...result, verdict: 'process-fault', reason: 'stop' }, 'result.json'), /reason/);
     });
   });
 

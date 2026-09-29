@@ -15,6 +15,7 @@ const CLAUDE_5_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const MODELS: { readonly [M in ClaudeModelId]: ClaudeModel } & { readonly [M in CodexModelId]: CodexModel } = {
   'claude-opus-5-5': { backend: 'claude', displayName: 'Claude Opus 5.5', efforts: CLAUDE_5_EFFORTS },
   'claude-fable-5-1': { backend: 'claude', displayName: 'Claude Fable 5.1', efforts: CLAUDE_5_EFFORTS },
+  'claude-sonnet-5-5': { backend: 'claude', displayName: 'Claude Sonnet 5.5', efforts: CLAUDE_5_EFFORTS },
   'gpt-5.6-luna': { backend: 'codex', displayName: 'GPT-5.6 Luna', efforts: CODEX_SEAT_EFFORTS },
   'gpt-5.6-sol': { backend: 'codex', displayName: 'GPT-5.6 Sol', efforts: CODEX_SEAT_EFFORTS },
 };

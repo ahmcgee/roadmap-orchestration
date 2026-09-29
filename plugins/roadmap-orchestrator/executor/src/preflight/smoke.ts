@@ -279,6 +279,11 @@ function seatsOn(resolved: ResolvedRouting, backend: Backend): readonly Seat[] {
   return SEAT_REFS.filter((s) => atSeat(resolved.table, s).backend === backend);
 }
 
+/** The backends some seat of `resolved` runs on, in BACKENDS order. */
+export function backendsOf(resolved: ResolvedRouting): readonly Backend[] {
+  return BACKENDS.filter((b) => seatsOn(resolved, b).length > 0);
+}
+
 /**
  * The call a backend's smoke makes: the first seat in table order that resolves to it, so the smoke runs a
  * model the arc will actually use. Codex runs build seats only (a Codex judgment seat is refused by the

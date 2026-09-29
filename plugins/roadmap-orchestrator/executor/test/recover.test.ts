@@ -23,7 +23,9 @@ import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type RecoveryReport, recover } from '../src/recover/recover.ts';
 import { worktreeCreateOp } from '../src/recover/ops.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { specPatchFileOp } from '../src/spec/patch.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
+import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -74,9 +76,9 @@ async function recoverToFixedPoint(d: ArcDescriptor): Promise<RecoveryReport> {
 /** A redirect-shaped patch of u1's spec, prepared (so its intent records every input) but not acted. */
 async function openSpecPatch(r: ReturnType<typeof contextFor>) {
   const path = absPath(join(r.ctx.planDir, 'u1.json'));
-  const body = await specPatchFileOp.prepare({
-    path,
-    patch: { expectRev: specRev(1), by: { role: 'executor', inv: `${r.ctx.plan.arc}/1#1` as never }, ops: [{ op: 'add', section: 'facts', item: { id: 'F1' as never, text: 'mul is pure.' } }] },
+  const body = await specPatchOp(r.ctx.runDir).prepare({
+    path, oldSha256: fileSha256(path),
+    patch: { expectRev: specRev(1), by: { role: 'executor', inv: `${r.ctx.plan().arc}/1#1` as never }, ops: [{ op: 'add', section: 'facts', item: { id: 'F1' as never, text: 'mul is pure.' } }] },
   });
   const { op } = r.journal.begin({ kind: 'spec.patch', key: opKey('spec:u1'), parent: STAGE, deadlineAt: null, body: () => body });
   return { op, path };
@@ -97,12 +99,12 @@ async function mixedDeadRun(): Promise<ArcDescriptor> {
       kind: 'proc.spawn', key: opKey('lane:u1:unit'), parent: STAGE, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
       body: () => ({ expect: { subject: { purpose: 'lane', unit: U1, lane: 'mul' as never, set: 'spec', at: sha(git(d.repo, 'rev-parse', 'main')) }, launchSha256: sha256('0'.repeat(64)) }, post: null }),
     });
-    const path = absPath(join(r.ctx.plan.worktreeRoot, r.ctx.plan.arc, 'u1.verify-1'));
+    const path = absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, 'u1.verify-1'));
     const wtOp = worktreeCreateOp(r.ctx.repo);
     const wtBody = await wtOp.prepare({ path, checkout: { type: 'detached', at: sha(git(d.repo, 'rev-parse', 'main')) } });
     r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:verify'), parent: STAGE, deadlineAt: null, body: () => wtBody });
     const patch = await openSpecPatch(r);
-    await specPatchFileOp.act(r.journal.view.latestIntent(patch.op) as never);
+    await specPatchOp(r.ctx.runDir).act(r.journal.view.latestIntent(patch.op) as never);
   } finally {
     r.journal.close();
   }
@@ -132,7 +134,7 @@ test('recover.fixed-point: open spawn, worktree, spec and needs-user intents are
   assert.deepEqual(again, { recovered: [], parked: [] }, 'recovery at its fixed point changes nothing');
 });
 
-test('recover.park-raises-needs-user: a spec file changed by someone else parks its patch; one blocking recovery-required needs-user names the op', T, async () => {
+test('recover.park-raises-needs-user: a patch whose old spec is gone (not kept, the file changed by someone else) parks; one blocking recovery-required needs-user names the op', T, async () => {
   const d = setupArc({ steps: [] });
   const r = contextFor(d);
   let op: string;
@@ -141,6 +143,7 @@ test('recover.park-raises-needs-user: a spec file changed by someone else parks 
     op = opened.op;
     const spec = JSON.parse(readFileSync(opened.path, 'utf8')) as Record<string, unknown>;
     writeFileSync(opened.path, JSON.stringify({ ...spec, scope: [repoPattern('elsewhere/**')] }));
+    loseKeptOldSpec(r.journal.view.latestIntent(opened.op as never), d);
   } finally {
     r.journal.close();
   }
@@ -237,6 +240,12 @@ describe(`matrix row ${RECOVERY_CRASH}`, { concurrency: 3 }, () => {
 // ---------------------------------------------------------------------------------------------------
 // One needs-user per cause
 
+/** Removes the run dir's kept copy of the spec a patch applies to: with the file changed too, it is gone. */
+function loseKeptOldSpec(i: IntentRecord, d: ArcDescriptor): void {
+  if (i.kind !== 'spec.patch') throw new Error('not a spec.patch');
+  rmSync(inputPath(absPath(d.runDir), i.expect.oldSha256, SPEC_INPUT));
+}
+
 /** A root commit with main's tree: integration "rewritten", neither T, a descendant, nor the publication. */
 function rewindIntegration(repo: string): void {
   const root = git(repo, 'commit-tree', `${git(repo, 'rev-parse', 'main')}^{tree}`, '-m', 'someone rewrote main');
@@ -244,11 +253,11 @@ function rewindIntegration(repo: string): void {
 }
 
 const CAUSES = {
-  // A spec file changed by someone else: park (the op stays open).
+  // A spec patch whose old spec is gone (not kept, the file changed by someone else): park (the op stays open).
   park: { kind: 'spec.patch', disturb: (d: ArcDescriptor, i: IntentRecord) => {
     if (i.kind !== 'spec.patch') throw new Error('not a spec.patch');
     writeFileSync(i.expect.path, JSON.stringify({ ...JSON.parse(readFileSync(i.expect.path, 'utf8')) as object, scope: ['elsewhere/**'] }));
-    void d;
+    loseKeptOldSpec(i, d);
   }, closure: 'open' },
   // The executor-owned candidate ref moved by someone else: abort.
   abort: { kind: 'candidate.merge', disturb: (d: ArcDescriptor, i: IntentRecord) => {

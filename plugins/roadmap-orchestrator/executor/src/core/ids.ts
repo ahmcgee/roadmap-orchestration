@@ -83,6 +83,15 @@ export function specRev(value: unknown, path = 'SpecRev'): SpecRev {
   return value as SpecRev;
 }
 
+/** The plan in force's revision: 1 for the first plan an arc ran, one more per applied change (`plan-applied`). */
+export type PlanRev = Brand<number, 'PlanRev'>;
+export function planRev(value: unknown, path = 'PlanRev'): PlanRev {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new InvalidIdError('PlanRev', path, 'an integer >= 1', value);
+  }
+  return value as PlanRev;
+}
+
 // OpId = `<arc>/<seq>`: seq is the event-log seq of the op's first intent, so op ids are unique per arc
 // and allocated by the journal with no separate counter.
 export type OpId = Brand<string, 'OpId'>;

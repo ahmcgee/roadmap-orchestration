@@ -17,8 +17,10 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const SPEC_1 = { rev: specRev(1), sha256: sha256('1'.repeat(64)) };
 
 /** The run's context under the default profile with `plan` as the plan's routing layer. */
-const rerouted = (run: StageRun, plan: unknown): StageContext =>
-  ({ ...run.ctx, routing: resolveRouting(arcStack('default', null, routingLayer(plan, 'plan') as RoutingLayer)) });
+const rerouted = (run: StageRun, plan: unknown): StageContext => {
+  const routing = resolveRouting(arcStack('default', null, routingLayer(plan, 'plan') as RoutingLayer));
+  return { ...run.ctx, routing: () => routing };
+};
 const dispatches = (run: StageRun): readonly DispatchRecord[] => facts(run).flatMap((f) => (f.kind === 'dispatch' ? [f.record] : []));
 
 test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRev and the implementer seat', () => {
@@ -26,7 +28,7 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
   const first = seated(pinDispatch(run.ctx, run.unit, SPEC_1));
   assert.deepEqual(first.scope, ['src/**', 'test/**']);
   assert.equal(first.riskFloor, 'low');
-  assert.equal(first.routingRev, run.ctx.routing.rev);
+  assert.equal(first.routingRev, run.ctx.routing().rev);
   assert.match(first.implementerSeatRev, /^[0-9a-f]{16}$/);
   assert.deepEqual(seated(pinDispatch(run.ctx, run.unit, { rev: specRev(2), sha256: sha256('2'.repeat(64)) })), first, 'a later call returns the pinned record');
   assert.equal(dispatches(run).length, 1);
@@ -57,7 +59,7 @@ test('dispatch.repin-before-build: a routing change before any build re-pins the
   const done = await planCheck(changed, run.unit);
   assert.equal(done.outcome.kind, 'approve');
   const [first, repinned] = dispatches(run);
-  assert.equal(repinned?.routingRev, changed.routing.rev);
+  assert.equal(repinned?.routingRev, changed.routing().rev);
   assert.notEqual(repinned?.implementerSeatRev, first?.implementerSeatRev);
   assert.deepEqual([repinned?.scope, repinned?.riskFloor], [first?.scope, first?.riskFloor], 'scope and floor are unchanged');
   assert.equal(seated(implementerDispatch(changed, U1)).triple.backend, 'claude', 'the build will sit on the new binding');
@@ -75,11 +77,11 @@ async function builtOnce(extra: readonly Parameters<typeof setupUnit>[0]['steps'
 test('dispatch.repin-judgment-only: after a build, a change that leaves the implementer seat alone re-pins and the unit continues', T, async () => {
   const run = await builtOnce([{ as: 'codex', expect: {}, acts: [{ type: 'emit', value: BUILD_REPORT }] }]);
   const changed = rerouted(run, { gate: { med: 'summit' }, planCheck: { escalation: 'frontier' } });
-  assert.notEqual(changed.routing.rev, run.ctx.routing.rev);
+  assert.notEqual(changed.routing().rev, run.ctx.routing().rev);
   const s = await step(changed, run.unit);
   assert.equal(s.kind, 'continue', 'the resumed build ran');
   const [first, repinned] = dispatches(run);
-  assert.equal(repinned?.routingRev, changed.routing.rev);
+  assert.equal(repinned?.routingRev, changed.routing().rev);
   assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev);
   assert.equal(seated(judgmentDispatch(changed, U1, 'gate')).triple.model, 'claude-fable-5-1', 'the gate follows the new binding');
 });

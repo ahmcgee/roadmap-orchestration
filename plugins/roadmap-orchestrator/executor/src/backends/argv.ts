@@ -48,7 +48,10 @@
 //   preflight/smoke.ts). The implementer keeps `--setting-sources project` so the repo's CLAUDE.md
 //   conventions reach it (the unit policy in its prompt overrides their permissions), but gets no MCP, no
 //   skills and no memory the same way. What stays: the logged-in account's email in a user-context block,
-//   and the built-in plugins, neither of which a flag removes.
+//   and the built-in plugins, neither of which a flag removes. Calls keep the operator's CLAUDE_CONFIG_DIR on
+//   purpose: the CLI rewrites `.credentials.json` by temp file and rename, so an arc-private dir linking the
+//   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
+//   dir would need a `claude setup-token` token passed as CLAUDE_CODE_OAUTH_TOKEN, which the CLI never refreshes.
 import { randomUUID } from 'node:crypto';
 import { implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';

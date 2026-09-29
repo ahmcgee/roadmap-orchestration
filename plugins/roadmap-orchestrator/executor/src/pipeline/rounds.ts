@@ -2,9 +2,10 @@
 // five rounds: the four a decision asks for (`BuildRound`, transitions.ts) and `continue`:
 //
 //   fresh     a new session in the unit worktree (created on the unit branch at the integration tip the
-//             first time); after a reopen (the architect edited the spec of a parked unit), the unit's
-//             latest implementer session is resumed instead, told by RESPEC_DIRECTIVE that the spec it
-//             now reads was amended and that the worktree holds its earlier work;
+//             first time); after a reopen (a revision of the unit's spec, re-opened by `resume` of a
+//             parked unit or at a stage boundary of one in flight, unit.ts), the unit's latest implementer
+//             session is resumed instead, told by RESPEC_DIRECTIVE that the spec it now reads was amended
+//             and that the worktree holds its earlier work;
 //   fix       resume the implementer session with the failing lanes' evidence dirs and any directives (the
 //             gate's, or the executor's for a dirty checkout), in the unit worktree at the salvage SHA; the
 //             verification checkout of the failed series is removed first, citing its evidence snapshot;
@@ -33,7 +34,10 @@
 // change never moves the seat of a unit whose build started (implementerDispatch parks it instead).
 //
 // Deadlines. A fix round's window is the measured lane series plus an edit allowance; the allowance and the
-// fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds.
+// fresh build's deadline are defaults, unmeasured, to re-derive once arc 2 has measured rounds. A build call
+// lost with its runner without tree effects is retried under the deadline it had: live, as the op's next
+// invocation (dispatch.ts); after a crash, as the next attempt of the build, which inherits the lost call's
+// deadline (`crashLostDeadline`).
 //
 // Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
 // the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
@@ -283,23 +287,42 @@ export async function callImplementer(ctx: StageContext, spec: BackendCallSpec):
 
 /** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
 async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
-  const worktree = unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit);
-  const branch = unitBranch(ctx.plan.arc, unit);
+  const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
+  const branch = unitBranch(ctx.plan().arc, unit);
   if (existsSync(worktree)) return { worktree, branch };
   const existing = refTarget(ctx.repo, branch);
-  const at = existing ?? revParse(ctx.repo, branchRef(ctx.plan.integrationBranch));
+  const at = existing ?? revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
   await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit}:unit`, parent, {
     path: worktree, checkout: { type: 'branch', branch, at, createBranch: existing === null },
   });
   return { worktree, branch };
 }
 
+/**
+ * The deadline of the build call a crash left lost without tree effects: the unit's open build attempt (one
+ * with no stage outcome, cut short by the crash) whose latest backend spawn recovery closed `lost` without
+ * tree effects. The attempt that re-runs it inherits that deadline, as the live retry does; null otherwise.
+ * Read before the new attempt begins any op, while the crashed attempt is still the open one.
+ */
+function crashLostDeadline(ctx: StageContext, parent: StageParent): IsoTime | null {
+  const view = ctx.journal.view;
+  const open = view.unit(parent.unit).open;
+  if (open === null || open.stage !== 'build' || open.attempt === parent.attempt) return null;
+  const spawn = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.parent.type === 'stage'
+    && i.parent.unit === parent.unit && i.parent.stage === 'build' && i.parent.attempt === open.attempt).at(-1);
+  if (spawn === undefined) return null;
+  const done = view.doneOf(spawn.op);
+  if (done === null || done.kind !== 'proc.spawn' || done.outcome.kind !== 'lost' || done.outcome.treeEffects) return null;
+  if (spawn.deadlineAt === null) throw new Error(`proc.spawn ${spawn.op} has no deadlineAt`);
+  return spawn.deadlineAt;
+}
+
 /** Everything a build round needs before its invocation: the worktree ready, the session, the fix inputs, the deadline. */
 export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispatch, input: RoundInput, parent: StageParent): Promise<PreparedRound> {
   const unit = parent.unit;
-  const worktree = unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit);
-  const branch = unitBranch(ctx.plan.arc, unit);
-  const deadlineAt = inMs(windowMs(input.kind === 'continue' ? input.of : input));
+  const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
+  const branch = unitBranch(ctx.plan().arc, unit);
+  const deadlineAt = crashLostDeadline(ctx, parent) ?? inMs(windowMs(input.kind === 'continue' ? input.of : input));
   switch (input.kind) {
     case 'fresh': {
       const ready = await ensureWorktree(ctx, unit, parent);

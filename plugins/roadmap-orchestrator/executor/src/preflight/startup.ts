@@ -8,9 +8,9 @@ import {
 } from '../core/ids.ts';
 import { type ResidueKey, residueKey } from '../core/records.ts';
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged, version } from '../core/validate.ts';
-import { type AbsPath, type IsoTime, type PlanPath, absPath, isoTime, planPath } from '../core/values.ts';
+import { type AbsPath, type IsoTime, type PlanPath, type RefName, absPath, isoTime, planPath, refName } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
-import type { PlanM1 } from '../input/plan.ts';
+import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import {
   type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
 } from '../routing/types.ts';
@@ -46,13 +46,18 @@ export type StartupRejection =
   | Readonly<{ kind: 'previous-arc-unreconciled'; arc: ArcId; invocations: readonly InvocationId[] }>
   // Row: backend smoke missing or failed for the resolved profile.
   | Readonly<{ kind: 'backend-smoke'; profile: ProfileName; backend: Backend; problem: 'missing' | 'failed'; detail: string }>
-  // Row: plan schema invalid, unknown spec path, baseline not an ancestor, resource request unknown, a spec
-  // citing a contract the plan does not list or a ruling the ledger does not hold.
+  // Row: plan schema invalid, unknown spec path, integration branch not a local branch, a branch blocking the
+  // arc's unit branches, baseline not an ancestor, resource request unknown, a spec citing a contract the plan
+  // does not list or a ruling the ledger does not hold.
   | Readonly<{
     kind: 'plan-invalid';
     problem:
       | Readonly<{ type: 'schema'; field: string; detail: string }>
       | Readonly<{ type: 'unknown-spec-path'; unit: UnitId; path: PlanPath }>
+      // `ref`: the local branch ref looked for.
+      | Readonly<{ type: 'unknown-integration-branch'; ref: RefName; detail: string }>
+      // `ref`: the branch that makes `roadmap/<arc>/<unit>` uncreatable, or the integration branch inside that namespace.
+      | Readonly<{ type: 'unit-branch-conflict'; ref: RefName; detail: string }>
       | Readonly<{ type: 'baseline-not-ancestor'; baseline: Sha; tip: Sha }>
       | Readonly<{ type: 'unknown-resource'; unit: UnitId | null; lane: LaneId | null; resource: ResourceName }>
       | Readonly<{ type: 'unknown-cite'; unit: UnitId; cite: string }>;
@@ -61,7 +66,10 @@ export type StartupRejection =
   | Readonly<{ kind: 'recovery-holder-dead'; pid: number }>
   | Readonly<{ kind: 'owner-mismatch'; detail: string }>
   | Readonly<{ kind: 'log-corrupt'; file: AbsPath; offset: number; detail: string }>
-  | Readonly<{ kind: 'containment-mode-changed'; recorded: 'session' | 'cgroup'; detected: 'session' | 'cgroup' }>;
+  | Readonly<{ kind: 'containment-mode-changed'; recorded: 'session' | 'cgroup'; detected: 'session' | 'cgroup' }>
+  // Row: a start whose plan.json or specs differ from the plan in force, with a change the apply rules refuse
+  // (src/input/classify.ts); every reason is listed. A respawn runs the plan in force and never asks.
+  | Readonly<{ kind: 'plan-change-refused'; reasons: readonly string[] }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -85,6 +93,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'owner-mismatch':
     case 'log-corrupt':
     case 'containment-mode-changed':
+    case 'plan-change-refused':
       return EXIT_REFUSED;
   }
 }
@@ -93,7 +102,10 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
 export type StartupContext = Readonly<{
   repo: AbsPath;
   planFile: AbsPath;
+  /** The plan this start checks: the file's, or on a respawn the plan in force (src/input/inforce.ts). */
   plan: PlanM1;
+  /** The bytes of a unit's spec as this start reads it (the file, or the plan in force's kept spec), or null when absent. */
+  specOf: (unit: PlanUnit) => Buffer | null;
   profile: ProfileName;
   runDir: AbsPath;
   hostDir: AbsPath;
@@ -141,6 +153,12 @@ const specLaneUnrunnable: Read<Row<'spec-lane-unrunnable'>> = (value, path) => {
 const planProblem: Read<Row<'plan-invalid'>['problem']> = tagged('type', {
   schema: object((f): Row<'plan-invalid'>['problem'] => ({ type: f.get('type', literal('schema')), field: f.get('field', str), detail: f.get('detail', str) })),
   'unknown-spec-path': object((f): Row<'plan-invalid'>['problem'] => ({ type: f.get('type', literal('unknown-spec-path')), unit: f.get('unit', unitId), path: f.get('path', (v, p): PlanPath => planPath(v, p)) })),
+  'unknown-integration-branch': object((f): Row<'plan-invalid'>['problem'] => ({
+    type: f.get('type', literal('unknown-integration-branch')), ref: f.get('ref', (v, p): RefName => refName(v, p)), detail: f.get('detail', str),
+  })),
+  'unit-branch-conflict': object((f): Row<'plan-invalid'>['problem'] => ({
+    type: f.get('type', literal('unit-branch-conflict')), ref: f.get('ref', (v, p): RefName => refName(v, p)), detail: f.get('detail', str),
+  })),
   'baseline-not-ancestor': object((f): Row<'plan-invalid'>['problem'] => ({ type: f.get('type', literal('baseline-not-ancestor')), baseline: f.get('baseline', sha), tip: f.get('tip', sha) })),
   'unknown-resource': object((f): Row<'plan-invalid'>['problem'] => ({
     type: f.get('type', literal('unknown-resource')), unit: f.get('unit', nullable(unitId)), lane: f.get('lane', nullable(laneId)), resource: f.get('resource', resourceName),
@@ -176,6 +194,9 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   'log-corrupt': object((f): StartupRejection => ({ kind: f.get('kind', literal('log-corrupt')), file: f.get('file', abs), offset: f.get('offset', nat), detail: f.get('detail', str) })),
   'containment-mode-changed': object((f): StartupRejection => ({
     kind: f.get('kind', literal('containment-mode-changed')), recorded: f.get('recorded', containment), detected: f.get('detected', containment),
+  })),
+  'plan-change-refused': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('plan-change-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
   })),
 });
 

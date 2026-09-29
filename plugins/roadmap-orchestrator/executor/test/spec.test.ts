@@ -6,16 +6,17 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { opKey } from '../src/core/ids.ts';
+import { opKey, sha256 } from '../src/core/ids.ts';
 import { type SpecM1, type SpecPatch, specM1, specPatch } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import { openJournal } from '../src/core/log.ts';
+import { SPEC_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
 import { reconcileSpecPatch } from '../src/recover/spec.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../src/spec/patch.ts';
+import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { bytesSha256, fileSha256, loadSpec, specBytes, writeSpec } from '../src/spec/spec.ts';
+import { bytesSha256, fileSha256, loadSpec, parseSpec, specBytes, writeSpec } from '../src/spec/spec.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -174,7 +175,7 @@ describe('spec patch', () => {
     // The op refuses at prepare, before any intent or write.
     const path = authored(tmpDir('spec'));
     const before = readFileSync(path);
-    await assert.rejects(specPatchFileOp.prepare({ path, patch: patch([{ op: 'strike', id: 'A1' }], 2) }), SpecPatchStaleError);
+    await assert.rejects(specPatchOp(absPath(tmpDir('spec-run'))).prepare({ path, oldSha256: fileSha256(path), patch: patch([{ op: 'strike', id: 'A1' }], 2) }), SpecPatchStaleError);
     assert.ok(readFileSync(path).equals(before));
   });
 
@@ -281,7 +282,7 @@ describe('spec.patch op and reconciler', () => {
 
   it('prepare records old and new hashes and revs', async () => {
     const s = scenario();
-    const body = await specPatchFileOp.prepare({ path: s.path, patch: REDIRECT });
+    const body = await specPatchOp(absPath(s.runDir)).prepare({ path: s.path, oldSha256: sha256(s.oldSha), patch: REDIRECT });
     assert.deepEqual(body, { expect: { path: s.path, oldSha256: s.oldSha, expectRev: 1, patch: REDIRECT }, post: { newSha256: s.newSha, newRev: 2 } });
   });
 
@@ -305,11 +306,11 @@ describe('spec.patch op and reconciler', () => {
 
         const intent = openSpecIntent(s.runDir);
         const j = openJournal(absPath(s.runDir), ARC);
-        const disposition = await reconcileSpecPatch(intent, j.view);
+        const disposition = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
         assert.equal(disposition.kind, expected.disposition, JSON.stringify(disposition));
         if (disposition.kind === 'redo') {
-          await specPatchFileOp.act(intent);
-          j.done(intent.op, 'spec.patch', await specPatchFileOp.verify(intent), 'redone');
+          await specPatchOp(absPath(s.runDir)).act(intent);
+          j.done(intent.op, 'spec.patch', await specPatchOp(absPath(s.runDir)).verify(intent), 'redone');
         } else if (disposition.kind === 'done') {
           j.done(intent.op, 'spec.patch', disposition.outcome, 'reconciled');
         }
@@ -317,34 +318,56 @@ describe('spec.patch op and reconciler', () => {
         j.close();
         assert.equal(fileSha256(s.path), s.newSha);
         assert.deepEqual(loadSpec(s.path), applySpecPatch(SPEC, REDIRECT));
+        assert.ok(keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT) !== null, 'the patched spec is kept by its hash');
       });
     }
   });
 
-  it('parks when the file is neither old nor new, or missing', async () => {
+  it('parks when the old spec is not kept and the file is neither old nor new, or missing', async () => {
     const s = scenario();
     await runChild(s, writeTrigger(tmpDir('spec-trigger'), { label: 'spec.patch.before-write', occurrence: 1 }));
     const intent = openSpecIntent(s.runDir);
     const j = openJournal(absPath(s.runDir), ARC);
     writeFileSync(s.path, JSON.stringify({ ...RAW_SPEC, scope: ['elsewhere/**'] }));
-    const changed = await reconcileSpecPatch(intent, j.view);
+    const changed = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
     assert.equal(changed.kind, 'park');
     rmSync(s.path);
-    const missing = await reconcileSpecPatch(intent, j.view);
+    const missing = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
     assert.equal(missing.kind, 'park');
     j.close();
   });
 
-  it('act refuses a file that no longer hashes to old, and verify one that does not hash to new', async () => {
+  it('spec.patch-architect-edit-kept: with the old spec kept, an edit of the file is left alone; recovery redoes the patch into the run dir', async () => {
     const s = scenario();
-    const body = await specPatchFileOp.prepare({ path: s.path, patch: REDIRECT });
+    keepInput(absPath(s.runDir), readFileSync(s.path), SPEC_INPUT);
+    await runChild(s, writeTrigger(tmpDir('spec-trigger'), { label: 'spec.patch.before-write', occurrence: 1 }));
+    const intent = openSpecIntent(s.runDir);
+    const edit = JSON.stringify({ ...RAW_SPEC, rev: 2 });
+    writeFileSync(s.path, edit);
     const j = openJournal(absPath(s.runDir), ARC);
-    const { op } = j.begin({ kind: 'spec.patch', key: SPEC_KEY, parent: { type: 'arc' }, deadlineAt: null, body: () => body });
-    const intent = j.view.latestIntent(op) as IntentOf<'spec.patch'>;
+    const op = specPatchOp(absPath(s.runDir));
+    const disposition = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
+    assert.equal(disposition.kind, 'redo');
+    await op.act(intent);
+    j.done(intent.op, 'spec.patch', await op.verify(intent), 'redone');
     j.close();
-    await assert.rejects(specPatchFileOp.verify(intent), /expected/);
+    assert.equal(readFileSync(s.path, 'utf8'), edit, 'the architect\'s edit of the file is left alone');
+    const kept = keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT);
+    assert.ok(kept !== null);
+    assert.deepEqual(parseSpec(kept, s.path), applySpecPatch(SPEC, REDIRECT), 'the patched spec is kept by its hash');
+  });
+
+  it('act refuses when the old spec is gone (neither kept nor the file), and verify when the new one is not kept', async () => {
+    const s = scenario();
+    const op = specPatchOp(absPath(s.runDir));
+    const body = await op.prepare({ path: s.path, oldSha256: sha256(s.oldSha), patch: REDIRECT });
+    const j = openJournal(absPath(s.runDir), ARC);
+    const { op: id } = j.begin({ kind: 'spec.patch', key: SPEC_KEY, parent: { type: 'arc' }, deadlineAt: null, body: () => body });
+    const intent = j.view.latestIntent(id) as IntentOf<'spec.patch'>;
+    j.close();
+    await assert.rejects(op.verify(intent), /was not kept/);
     writeFileSync(s.path, JSON.stringify(RAW_SPEC));
-    await assert.rejects(specPatchFileOp.act(intent), /expected the old/);
+    await assert.rejects(op.act(intent), /neither kept/);
   });
 });
 

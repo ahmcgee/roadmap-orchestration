@@ -47,8 +47,8 @@ import {
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
 export function unitTip(ctx: StageContext, unit: UnitId): Sha {
-  const tip = refTarget(ctx.repo, unitBranch(ctx.plan.arc, unit));
-  if (tip === null) throw new Error(`unit ${unit} has no branch ${unitBranch(ctx.plan.arc, unit)}`);
+  const tip = refTarget(ctx.repo, unitBranch(ctx.plan().arc, unit));
+  if (tip === null) throw new Error(`unit ${unit} has no branch ${unitBranch(ctx.plan().arc, unit)}`);
   return tip;
 }
 
@@ -64,8 +64,8 @@ export function unitTip(ctx: StageContext, unit: UnitId): Sha {
  */
 export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): ApprovalFingerprint {
   const { spec } = loadUnitSpec(ctx, unit);
-  const digest = ctx.plan.architectureDigest;
-  const paths = [...new Set<RepoPath>([...spec.cites.contracts, ctx.plan.architectureDoc, ...(digest === undefined ? [] : [digest])])].sort();
+  const digest = ctx.plan().architectureDigest;
+  const paths = [...new Set<RepoPath>([...spec.cites.contracts, ctx.plan().architectureDoc, ...(digest === undefined ? [] : [digest])])].sort();
   const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
   return {
     unitCommit: unitTip(ctx, unit.id),
@@ -172,7 +172,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
   const session = freshJudgmentSession();
   const rendered = prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), architecture: architecture(ctx, tip),
-    direction: ctx.plan.direction, planCheckNotes: planCheckNotes(ctx, unit.id),
+    direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
     diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
     laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
   });

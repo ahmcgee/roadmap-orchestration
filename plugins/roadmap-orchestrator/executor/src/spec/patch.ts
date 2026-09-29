@@ -1,7 +1,8 @@
 // SpecPatch application and the `spec.patch` file op. Plan-check redirects are the only M1 source of
-// patches (§2.7), besides the executor appending the implementer's decisions. `applySpecPatch` is pure; the op records `{path, oldSha256, expectRev, patch}` and the
-// expected `{newSha256, newRev}` before it writes, so recovery decides by re-hashing the file alone.
-import { readFileSync } from 'node:fs';
+// patches (§2.7), besides the executor appending the implementer's decisions. `applySpecPatch` is pure; the
+// op records `{path, oldSha256, expectRev, patch}` and the expected `{newSha256, newRev}` before it writes,
+// so recovery decides by the kept spec bytes alone.
+import { existsSync, readFileSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import { type ClauseId, type LaneId, type Sha256Hex, specRev } from '../core/ids.ts';
@@ -9,6 +10,7 @@ import type { IntentBody, Reconciler } from '../core/interfaces.ts';
 import type { SpecM1, SpecPatch, SpecPatchOp, SpecSection } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { reconcileSpecPatch } from '../recover/spec.ts';
+import { SPEC_INPUT, keepInput, keptInput } from '../input/inforce.ts';
 import { bytesSha256, fileSha256, parseSpec, specBytes, writeSpec } from './spec.ts';
 
 export class SpecPatchStaleError extends Error {
@@ -121,7 +123,8 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
   };
 }
 
-export type SpecPatchRequest = Readonly<{ path: AbsPath; patch: SpecPatch }>;
+/** `path`: the unit's spec file; `oldSha256`: the spec in force the patch applies to (its kept bytes). */
+export type SpecPatchRequest = Readonly<{ path: AbsPath; oldSha256: Sha256Hex; patch: SpecPatch }>;
 
 export class SpecPatchPostconditionError extends Error {
   constructor(path: AbsPath, detail: string) {
@@ -130,56 +133,68 @@ export class SpecPatchPostconditionError extends Error {
   }
 }
 
-/** The patched spec, from the file's current bytes; throws unless they hash to `oldSha256`. */
-function patchedSpec(path: AbsPath, oldSha256: Sha256Hex, patch: SpecPatch): SpecM1 {
-  const bytes = readFileSync(path);
-  const actual = bytesSha256(bytes);
-  if (actual !== oldSha256) throw new SpecPatchPostconditionError(path, `file hash is ${actual}, expected the old ${oldSha256}`);
+/** The bytes of the spec a patch applies to: kept in the run dir, or the live file while it still hashes to them. */
+function oldBytes(runDir: AbsPath, path: AbsPath, oldSha256: Sha256Hex): Buffer | null {
+  const kept = keptInput(runDir, oldSha256, SPEC_INPUT);
+  if (kept !== null) return kept;
+  return existsSync(path) && fileSha256(path) === oldSha256 ? readFileSync(path) : null;
+}
+
+/** The patched spec, from the old spec's bytes; throws when they are gone. */
+function patchedSpec(runDir: AbsPath, path: AbsPath, oldSha256: Sha256Hex, patch: SpecPatch): SpecM1 {
+  const bytes = oldBytes(runDir, path, oldSha256);
+  if (bytes === null) throw new SpecPatchPostconditionError(path, `the old spec ${oldSha256} is neither kept in the run dir nor the file's content`);
   return applySpecPatch(parseSpec(bytes, path), patch);
 }
 
 /**
- * The `spec.patch` op, shaped like `GitOp` (which is typed to git kinds only). `prepare` reads the file
- * and computes every recorded value; `act` recomputes the same bytes from the intent (so a redo needs
- * nothing but the intent) and writes them durably; `verify` re-hashes the file.
+ * The `spec.patch` op of a run dir, shaped like `GitOp` (which is typed to git kinds only). The spec in force
+ * is kept content-addressed (`inputs/<sha256>.spec.json`), so the patch reads the old spec from there and
+ * keeps the new one there: that is the op's effect and its postcondition. The unit's spec file is rewritten
+ * too while it still holds the old spec, so the architect edits the patched revision; a file the architect
+ * has changed since (an edit not applied yet) is left alone. `prepare` computes every recorded value; `act`
+ * recomputes the same bytes from the intent (so a redo needs nothing but the intent) and writes them durably;
+ * `verify` re-hashes the kept bytes.
  */
-export const specPatchFileOp: Readonly<{
+export function specPatchOp(runDir: AbsPath): Readonly<{
   kind: 'spec.patch';
   prepare(request: SpecPatchRequest): Promise<IntentBody<'spec.patch'>>;
   act(intent: IntentOf<'spec.patch'>): Promise<void>;
   verify(intent: IntentOf<'spec.patch'>): Promise<OpOutcome['spec.patch']>;
   reconcile: Reconciler<'spec.patch'>;
-}> = {
-  kind: 'spec.patch',
+}> {
+  return {
+    kind: 'spec.patch',
 
-  async prepare({ path, patch }) {
-    const bytes = readFileSync(path);
-    const next = applySpecPatch(parseSpec(bytes, path), patch);
-    return {
-      expect: { path, oldSha256: bytesSha256(bytes), expectRev: patch.expectRev, patch },
-      post: { newSha256: bytesSha256(specBytes(next)), newRev: next.rev },
-    };
-  },
+    async prepare({ path, oldSha256, patch }) {
+      const next = patchedSpec(runDir, path, oldSha256, patch);
+      return {
+        expect: { path, oldSha256, expectRev: patch.expectRev, patch },
+        post: { newSha256: bytesSha256(specBytes(next)), newRev: next.rev },
+      };
+    },
 
-  async act(intent) {
-    const { path, oldSha256, patch } = intent.expect;
-    const next = patchedSpec(path, oldSha256, patch);
-    const actual = bytesSha256(specBytes(next));
-    if (actual !== intent.post.newSha256) {
-      throw new SpecPatchPostconditionError(path, `patched bytes hash to ${actual}, the intent expects ${intent.post.newSha256}`);
-    }
-    crashPoint('spec.patch.before-write');
-    writeSpec(path, next);
-    crashPoint('spec.patch.after-write');
-  },
+    async act(intent) {
+      const { path, oldSha256, patch } = intent.expect;
+      const next = patchedSpec(runDir, path, oldSha256, patch);
+      const bytes = specBytes(next);
+      const actual = bytesSha256(bytes);
+      if (actual !== intent.post.newSha256) {
+        throw new SpecPatchPostconditionError(path, `patched bytes hash to ${actual}, the intent expects ${intent.post.newSha256}`);
+      }
+      crashPoint('spec.patch.before-write');
+      if (existsSync(path) && fileSha256(path) === oldSha256) writeSpec(path, next);
+      keepInput(runDir, bytes, SPEC_INPUT);
+      crashPoint('spec.patch.after-write');
+    },
 
-  async verify(intent) {
-    const actual = fileSha256(intent.expect.path);
-    if (actual !== intent.post.newSha256) {
-      throw new SpecPatchPostconditionError(intent.expect.path, `file hash is ${actual} after the write, expected ${intent.post.newSha256}`);
-    }
-    return { kind: 'patched' };
-  },
+    async verify(intent) {
+      if (keptInput(runDir, intent.post.newSha256, SPEC_INPUT) === null) {
+        throw new SpecPatchPostconditionError(intent.expect.path, `the patched spec ${intent.post.newSha256} was not kept, as expected`);
+      }
+      return { kind: 'patched' };
+    },
 
-  reconcile: reconcileSpecPatch,
-};
+    reconcile: reconcileSpecPatch(runDir),
+  };
+}

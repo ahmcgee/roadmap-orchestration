@@ -3,9 +3,9 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type LaneId, type NeedsUserId, type OpId, type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha,
+  type LaneId, type NeedsUserId, type OpId, type PlanRev, type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha,
   type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf,
-  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, resourceName, routingRev, rulingId, seatRev, sha,
+  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, planRev, resourceName, routingRev, rulingId, seatRev, sha,
   sha256, specRev, unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
@@ -309,9 +309,18 @@ export type BackendOutcomeKind = BackendOutcome['kind'];
 /** What the precedence rule alone decides; refusal is the adapter's reading of a backend stop reason. */
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
 
-/** `stall`: the runner's stall watchdog killed the workload; a verdict on the command (it hung), not a process fault. */
-export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault'] as const;
+/**
+ * `stall`: the runner's stall watchdog killed the workload; a verdict on the command (it hung), not a process
+ * fault. `cancelled`: the executor cancelled it for a pause or stop, the reason beside it (`CommandEnd`), as a
+ * backend call's `cancelled{reason}` outcome.
+ */
+export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault', 'cancelled'] as const;
 export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
+/** How a command ended: its exit code (null when the child never exited with one) and verdict. */
+export type CommandEnd = Readonly<{ exitCode: number | null }> & (
+  | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
+  | Readonly<{ verdict: 'cancelled'; reason: InterruptReason }>
+);
 
 type BackendResultBase = InvocationBinding & Readonly<{
   type: 'backend';
@@ -327,11 +336,8 @@ export type BackendResult =
 export type CommandResult = InvocationBinding & Readonly<{
   type: 'command';
   purpose: CommandPurpose;
-  /** null when the child never exited with a code (signalled, spawn failure). */
-  exitCode: number | null;
   expectedExit: number;
-  verdict: CommandVerdict;
-}>;
+}> & CommandEnd;
 export type ResultFile = BackendResult | CommandResult;
 
 const backendOutcome: Read<BackendOutcome> = tagged('kind', {
@@ -368,15 +374,20 @@ export const resultFile: Read<ResultFile> = tagged('type', {
     })(value, path);
   },
   command: object((f): ResultFile => {
-    const out: CommandResult = {
+    const base = {
       ...binding(f),
       type: f.get('type', literal('command')),
       purpose: f.get('purpose', oneOf(COMMAND_PURPOSES)),
       exitCode: f.get('exitCode', nullable(exitCode)),
       expectedExit: f.get('expectedExit', exitCode),
-      verdict: f.get('verdict', oneOf(COMMAND_VERDICTS)),
     };
-    if (out.exitCode === null && out.verdict !== 'process-fault' && out.verdict !== 'stall') throw new SchemaError(`${f.path}.verdict`, '"process-fault" or "stall" when exitCode is null', out.verdict);
+    const verdict = f.get('verdict', oneOf(COMMAND_VERDICTS));
+    const out: CommandResult = verdict === 'cancelled'
+      ? { ...base, verdict, reason: f.get('reason', oneOf(INTERRUPT_REASONS)) }
+      : { ...base, verdict };
+    if (out.exitCode === null && (out.verdict === 'pass' || out.verdict === 'fail')) {
+      throw new SchemaError(`${f.path}.verdict`, '"stall", "process-fault" or "cancelled" when exitCode is null', out.verdict);
+    }
     return out;
   }),
 });
@@ -415,11 +426,15 @@ export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, outp
 }
 
 /**
- * The same precedence for commands: a stall kill is a stall; any other runner kill or a signal is a process
- * fault; otherwise the exit code decides.
+ * The same precedence for commands: a cancel is `cancelled{cancel.json's reason}`, as for a backend; a stall
+ * kill is a stall; any other runner kill or a signal is a process fault; otherwise the exit code decides.
  */
-export function classifyCommand(exit: ExitFile, expectedExit: number): Readonly<{ exitCode: number | null; verdict: CommandVerdict }> {
+export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expectedExit: number): CommandEnd {
   const exitCode = exit.child.type === 'exited' ? exit.child.code : null;
+  if (exit.cause === 'cancel') {
+    if (cancel === null || cancel.reason === 'recovery') throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
+    return { exitCode, verdict: 'cancelled', reason: cancel.reason };
+  }
   if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
@@ -878,12 +893,40 @@ export const residueRecord: Read<ResidueRecord> = tagged('type', {
 
 export type PauseTarget = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'all' }>;
 export type ResumeTarget = PauseTarget | Readonly<{ type: 'backend'; backend: Backend }>;
+
+/**
+ * What a plan revision is made of: the sha256 of plan.json's bytes and of each unit's spec.json bytes, keyed by
+ * unit id (every unit of that plan). `roadmap apply` hashes the files into one; the `plan-applied` fact
+ * records the one in force. The bytes are kept content-addressed in the run dir (`inputs/<sha256>.plan.json`,
+ * `inputs/<sha256>.spec.json`).
+ */
+export type PlanManifest = Readonly<{ planSha256: Sha256Hex; specs: Readonly<Record<UnitId, Sha256Hex>> }>;
+
+export const manifestSpecs: Read<Readonly<Record<UnitId, Sha256Hex>>> = (value, path) => {
+  const f = new Fields(value, path);
+  const out: Record<UnitId, Sha256Hex> = {};
+  for (const key of Object.keys(value as object)) out[unitId(key, `${path}.${key}`)] = f.get(key, (v, p) => sha256(v, p));
+  f.end();
+  if (Object.keys(out).length === 0) throw new SchemaError(path, 'at least one unit', value);
+  return out;
+};
+export const planManifest: Read<PlanManifest> = object((f) => ({
+  planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
+  specs: f.get('specs', manifestSpecs),
+}));
+
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
   | Readonly<{ type: 'stop' }>
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
-  | Readonly<{ type: 'sweep'; resource: ResourceName | null }>;
+  | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
+  /**
+   * `roadmap apply`: make the plan and specs the manifest hashes the plan in force (the executor re-reads the
+   * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
+   * or null to apply over whatever is in force. A mutation.
+   */
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: PlanManifest }>;
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
 export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
 
@@ -913,6 +956,11 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
+  apply: object((f): CommandBody => ({
+    type: f.get('type', literal('apply')),
+    expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
+    manifest: f.get('manifest', planManifest),
+  })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

@@ -5,9 +5,14 @@ import { describe, it } from 'node:test';
 import { adapt, schemaViolation, writeResult } from '../src/backends/adapter.ts';
 import { ResultConflictError, UnsupportedSchemaError } from '../src/backends/errors.ts';
 import type { BackendOutcomeKind, ExitFile, ResultFile } from '../src/core/records.ts';
+import { arcId, invocationId, opId } from '../src/core/ids.ts';
+import { canonicalJson } from '../src/core/json.ts';
+import { absPath } from '../src/core/values.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { CAPACITY_TEXT, editClaudeResult, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
 
+const BIND = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
 const EXIT0: ExitFile['child'] = { type: 'exited', code: 0 };
 const EXIT1: ExitFile['child'] = { type: 'exited', code: 1 };
 
@@ -162,6 +167,35 @@ describe('adapter', () => {
     });
     it('a failed spawn → process-fault', () => {
       assert.deepEqual(verdict(command({ type: 'spawn-failed', error: 'ENOENT' })), [null, 'process-fault']);
+    });
+
+    /** A lane the executor cancelled for a stop: launch.json, cancel.json, exit.json with cause cancel. */
+    function cancelledLane(): string {
+      const invDir = tmpDir('inv');
+      writeLaunch(invDir, { argv: ['npm', 'test'], cwd: invDir, terminal: { type: 'command', purpose: 'lane', expectedExit: 0 }, stdinPath: null });
+      writeFileSync(join(invDir, 'cancel.json'), JSON.stringify({ ...BIND, reason: 'stop', at: '2026-09-25T11:59:59.000Z' }));
+      writeExit(invDir, { type: 'signalled', signal: 'SIGTERM' }, 'cancel');
+      return invDir;
+    }
+
+    it('adapter.lane-cancelled: a cancel → cancelled{cancel.json\'s reason}, the shape a backend call records', () => {
+      const r = writeResult(cancelledLane());
+      assert.deepEqual(r.type === 'command' ? [r.exitCode, r.verdict, r.verdict === 'cancelled' ? r.reason : null] : r, [null, 'cancelled', 'stop']);
+    });
+
+    it('upgrade.lane-cancelled-dev3: a cancelled lane 1.0.0-dev.3 recorded as process-fault reads as cancelled{reason}, and a re-run adapter keeps its bytes', () => {
+      const invDir = cancelledLane();
+      const dev3 = `${canonicalJson({ ...BIND, type: 'command', purpose: 'lane', exitCode: null, expectedExit: 0, verdict: 'process-fault' })}\n`;
+      writeFileSync(join(invDir, 'result.json'), dev3);
+      const read = runnerFiles(absPath(invDir), invocationId(opId(arcId(BIND.arc), 7), 1)).read('result.json');
+      assert.ok(read?.type === 'command' && read.verdict === 'cancelled');
+      assert.equal(read.reason, 'stop');
+      const rederived = writeResult(invDir);
+      assert.ok(rederived.type === 'command' && rederived.verdict === 'cancelled' && rederived.reason === 'stop');
+      assert.equal(readFileSync(join(invDir, 'result.json'), 'utf8'), dev3, 'never rewritten');
+      // Any other difference is still a conflict.
+      writeFileSync(join(invDir, 'result.json'), dev3.replace('"expectedExit":0', '"expectedExit":3'));
+      assert.throws(() => writeResult(invDir), ResultConflictError);
     });
   });
 

@@ -22,6 +22,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'owner-mismatch': { kind: 'owner-mismatch', detail: 'nonce differs' },
   'log-corrupt': { kind: 'log-corrupt', file: absPath('/r/.git/roadmap-runtime/arc-1/events.jsonl'), offset: 4096, detail: 'bad line' },
   'containment-mode-changed': { kind: 'containment-mode-changed', recorded: 'session', detected: 'cgroup' },
+  'plan-change-refused': { kind: 'plan-change-refused', reasons: ['unit u1 has started; it cannot be removed'] },
 };
 
 describe('startup rejection table', () => {
