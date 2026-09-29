@@ -2,7 +2,7 @@
 // real journal, real invocations of res-tool.ts as the residue teardown, fake backends for the resume smoke,
 // and a child executor SIGKILLed at the op's crash points.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import { type CommandContext, applyAtSafePoint, applyCommand, applyControl } from '../src/commands/apply.ts';
@@ -103,6 +103,24 @@ describe('command queue', () => {
     // Accepted is not done: the next poll returns it again and rewrites nothing.
     assert.deepEqual(poll(ctx), [cmd]);
     assert.equal(readFileSync(join(ctx.runDir, 'commands', 'receipts', `${cmd.id}.accepted.json`), 'utf8'), accepted);
+    journal.close();
+  });
+
+  it('cmd.receipts-and-acks-atomic: commands, receipts and ack files are published whole (temp and link), leaving only their final names', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    const item = raise(ctx);
+    const cmd = submit(ctx, { type: 'ack', needsUser: item, choice: null });
+    assert.equal((await applyControl(ctx, poll(ctx))).kind, 'applied');
+    assert.deepEqual(readdirSync(join(ctx.runDir, 'commands')).sort(), ['incoming', 'receipts']);
+    assert.deepEqual(readdirSync(join(ctx.runDir, 'commands', 'incoming')), [`${cmd.id}.json`]);
+    assert.deepEqual(readdirSync(join(ctx.runDir, 'commands', 'receipts')).sort(), [`${cmd.id}.accepted.json`, `${cmd.id}.applied.json`]);
+    assert.deepEqual(readdirSync(join(ctx.runDir, 'needs-user')).filter((n) => n.startsWith(item)).sort(), [`${item}.ack.json`, `${item}.json`]);
+    // Linked from a temp file that is then removed: one link left.
+    for (const path of [incomingPath(ctx.runDir, cmd.id), join(ctx.runDir, 'commands', 'receipts', `${cmd.id}.applied.json`), needsUserAckPath(ctx.runDir, item)]) {
+      assert.equal(statSync(path).nlink, 1, path);
+    }
+    assert.equal(readNeedsUserAck(ctx.runDir, item)?.command, cmd.id);
     journal.close();
   });
 

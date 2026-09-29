@@ -18,6 +18,7 @@ import { durableWrite } from '../core/fsx.ts';
 import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
+import { commandCancelled } from '../core/upgrade.ts';
 import {
   type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type CancelFile, type ExitFile, type ReadsFile, type ToolRead,
   type ResultFile, type Usage, RUNNER_FILE_READERS, STDERR_FILE, STDOUT_FILE, classifyCommand, classifyTerminal,
@@ -196,11 +197,10 @@ function adapted(input: AdapterInput): Adapted {
   }
   const terminal = launch.terminal;
   if (terminal.type === 'backend') return backendAdapted(input, terminal);
-  const { exitCode, verdict } = classifyCommand(exit, terminal.expectedExit);
   return {
     result: {
       v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv, type: 'command',
-      purpose: terminal.purpose, exitCode, expectedExit: terminal.expectedExit, verdict,
+      purpose: terminal.purpose, expectedExit: terminal.expectedExit, ...classifyCommand(exit, input.cancel, terminal.expectedExit),
     },
     reads: null,
   };
@@ -211,7 +211,7 @@ export function adapter(input: AdapterInput): ResultFile {
   return adapted(input).result;
 }
 
-function readRunnerJson(invDir: string, name: 'launch.json' | 'exit.json' | 'cancel.json'): unknown {
+function readRunnerJson(invDir: string, name: 'launch.json' | 'exit.json' | 'cancel.json' | 'result.json'): unknown {
   return JSON.parse(readFileSync(join(invDir, name), 'utf8'));
 }
 
@@ -257,8 +257,18 @@ function writeOnce(path: string, bytes: string): void {
  * files is a no-op; result.json last, so its presence means both are written.
  */
 export function writeResult(invDir: string): ResultFile {
-  const { result, reads } = adapted(inputOf(invDir));
+  const input = inputOf(invDir);
+  const { result, reads } = adapted(input);
   if (reads !== null) writeOnce(join(invDir, 'reads.json'), recordBytes('reads.json', reads));
-  writeOnce(join(invDir, 'result.json'), resultBytes(result));
+  const path = join(invDir, 'result.json');
+  const bytes = resultBytes(result);
+  // A cancelled command's result.json written by 1.0.0-dev.3 differs from the re-derivation, and is its equal
+  // under the read-time default (core/upgrade.ts): kept as it is.
+  if (existsSync(path) && readFileSync(path, 'utf8') !== bytes) {
+    const kept = commandCancelled(RUNNER_FILE_READERS['result.json'](readRunnerJson(invDir, 'result.json'), 'result.json'), () => input, path);
+    if (resultBytes(kept) !== bytes) throw new ResultConflictError(path);
+    return result;
+  }
+  writeOnce(path, bytes);
   return result;
 }

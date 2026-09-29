@@ -148,6 +148,8 @@ const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'snapshot.act-end': R('reconciled'),
   'spec.patch.before-write': R('redone'),
   'spec.patch.after-write': R('reconciled'),
+  // The start kept plan.json's bytes but wrote no plan-applied fact: the respawn records revision 1.
+  'plan.apply.after-inputs': NONE,
   'unit.after-stage': NONE,
   'recover.before-op': NONE,
   'recover.after-op': NONE,

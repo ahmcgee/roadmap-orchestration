@@ -1,14 +1,16 @@
 // Typed access to one invocation's runner files. Every read validates the file and its {arc, op, inv}
 // binding; every write goes through a temp file and an atomic rename (fsx.durableWrite), so a concurrent
 // reader (the executor polling exit.json while the runner writes it) sees nothing or the whole file.
-// runner.json is rewritten once (child: null, then the child); every other file is write-once.
+// runner.json is rewritten once (child: null, then the child); every other file is write-once. A result.json
+// an earlier release wrote is read through its read-time default (core/upgrade.ts `commandCancelled`).
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { AlreadyExistsError, durableWrite, readJson } from '../core/fsx.ts';
 import { type InvocationId, parseInvocationId, parseOpId } from '../core/ids.ts';
 import type { RunnerFiles } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { RUNNER_FILE_READERS, type RunnerFileMap, type RunnerFileName } from '../core/records.ts';
+import { RUNNER_FILE_READERS, type ResultFile, type RunnerFileMap, type RunnerFileName } from '../core/records.ts';
+import { commandCancelled } from '../core/upgrade.ts';
 import type { AbsPath } from '../core/values.ts';
 
 export class BindingMismatchError extends Error {
@@ -28,7 +30,7 @@ export function runnerFiles(invDir: AbsPath, inv: InvocationId): RunnerFiles {
     if (file.op !== op) throw new BindingMismatchError(path, 'op', op, file.op);
     if (file.arc !== arc) throw new BindingMismatchError(path, 'arc', arc, file.arc);
   };
-  return {
+  const files: RunnerFiles = {
     invDir,
     inv,
     read<N extends RunnerFileName>(name: N): RunnerFileMap[N] | null {
@@ -36,7 +38,8 @@ export function runnerFiles(invDir: AbsPath, inv: InvocationId): RunnerFiles {
       if (!existsSync(path)) return null;
       const file = RUNNER_FILE_READERS[name](readJson(path), name);
       checkBinding(path, file);
-      return file;
+      if (name !== 'result.json') return file;
+      return commandCancelled(file as ResultFile, () => ({ exit: files.read('exit.json'), cancel: files.read('cancel.json') }), path) as RunnerFileMap[N];
     },
     write<N extends RunnerFileName>(name: N, content: RunnerFileMap[N]): void {
       const path = join(invDir, name);
@@ -47,4 +50,5 @@ export function runnerFiles(invDir: AbsPath, inv: InvocationId): RunnerFiles {
       durableWrite(path, bytes);
     },
   };
+  return files;
 }

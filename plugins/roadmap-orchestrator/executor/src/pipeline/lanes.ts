@@ -47,7 +47,7 @@ import { probe } from '../resources/probe.ts';
 import { type SpecLane, cleanup, reserve, run } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { type StageContext, type StageParent, cancelledFor, evidenceRoot, runOp } from './dispatch.ts';
+import { type StageContext, type StageParent, evidenceRoot, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
@@ -111,7 +111,7 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef): Readonl
     env[name] = value;
   }
   if (Object.hasOwn(env, OWNER_ENV)) throw new Error(`lane ${lane.id} declares ${OWNER_ENV}, which the executor sets`);
-  env[OWNER_ENV] = ownerLabel(ctx.plan.arc, unit);
+  env[OWNER_ENV] = ownerLabel(ctx.plan().arc, unit);
   return env;
 }
 
@@ -228,7 +228,7 @@ async function runLane(ctx: StageContext, parent: StageParent, lane: LaneDef, se
 
   const record = laneRecord(ctx, spawned, lane, root);
   const exit = runnerFiles(invDir, outcome.inv).read('exit.json');
-  const interrupted = cancelledFor(invDir, outcome.inv);
+  const interrupted = outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
   const blocked = outcome.kind === 'lost' ? `${outcome.inv} was lost with its runner` : record.verdict === 'process-fault' ? `${outcome.inv} ended by ${exit?.cause ?? 'unknown'}` : null;
   return { record, evidence, interrupted, blocked };
 }

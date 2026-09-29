@@ -4,8 +4,8 @@
 // `nu-<seq>` of the op, so the content depends on it) and staged durably under `needs-user/.staged/` before
 // the intent line is appended; the act renames the staged file to `needs-user/<id>.json`. So the intent never
 // names content that exists nowhere: recovery finds the final file (its hash must match: done) or the staged
-// one (redo the rename). The final file is write-once; an acknowledgement is a separate `<id>.ack.json`
-// written by the `ack` command (commands/apply.ts).
+// one (redo the rename). The final file is write-once; an acknowledgement is a separate `<id>.ack.json`,
+// written once and atomically (temp and link) by the `ack` command (commands/apply.ts).
 //
 // The fold records each raise with its `blocking` flag and each acknowledgement, so `openBlocking` (the
 // terminal predicate's input) is a pure function of the log.
@@ -120,12 +120,12 @@ export function readNeedsUserAck(runDir: AbsPath, id: NeedsUserId): NeedsUserAck
 // What a park's recommendation says: exactly what `resume` does for it
 
 /**
- * A unit parked at a judgment stage (plan-check or gate): `resume <unit>` re-opens it once its spec is at
- * the next revision (commands/apply.ts), so that is what the item recommends.
+ * A unit parked at a judgment stage (plan-check or gate): `resume <unit>` re-opens it once a revision of its
+ * spec is applied (commands/apply.ts), so that is what the item recommends.
  */
 export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecRev): string {
-  return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, then run `
-    + `\`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
+  return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, run \`roadmap apply\`, `
+    + `then \`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
     + 'session. Or acknowledge this item to leave the unit parked.';
 }
 
@@ -147,6 +147,6 @@ export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): str
 export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string): string {
   return `Read the evidence. A park at ${stage} is final in M1: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
     + `add a unit with a new id to the plan (its fixed spec, the same scope), create that unit's branch roadmap/<arc>/<new id> at the tip of `
-    + `${branch}, acknowledge this item, then \`roadmap stop\` and \`roadmap start\` with the revised plan. Or acknowledge this item to `
+    + `${branch}, acknowledge this item, then \`roadmap apply\` the revised plan. Or acknowledge this item to `
     + 'leave the unit parked.';
 }

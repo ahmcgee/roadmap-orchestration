@@ -7,7 +7,11 @@
 //                   `plan-invalid` (spec files, baseline ancestry, resource names)
 //   2. environment  worktree root, lanes, routing, host residues             (pure: no effect yet)
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
-//   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode
+//   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
+//                   plan in force (`settlePlan`): a first start records the files, a start whose files differ
+//                   applies them by the apply rules or refuses (plan-change-refused)
+//
+// A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
 //
 // `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
 // separate: its spawns are journaled, so the executor runs it only after `executor-started` and recovery,
@@ -19,23 +23,28 @@ import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync,
 import { dirname, join } from 'node:path';
 import { detectContainmentMode } from '../contain/detect.ts';
 import { durableMkdir, readJson } from '../core/fsx.ts';
-import { INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
-import { LogCorruptError, type OpenJournal, openJournal } from '../core/log.ts';
+import { type ArcId, INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
+import { earlierReleaseBaseline } from '../core/upgrade.ts';
 import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath, branchRef } from '../core/values.ts';
+import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
-import { undispositionedResidueCheck } from '../host/residues.ts';
+import { undispositioned, undispositionedResidueCheck } from '../host/residues.ts';
 import type { ClaimOutcome } from '../host/lock.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
+import { classify } from '../input/classify.ts';
+import { type InputFiles, planInForce, readInputFiles, recordPlan, specBytesOf, specFilePath, specShaInForce } from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
+import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
 import {
   type RepoConfig, type ResolvedRouting, arcStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
 } from '../routing/layers.ts';
 import type { ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings } from '../spec/rulings.ts';
-import { SpecFileError, loadSpec } from '../spec/spec.ts';
+import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import { resolveArgv0 } from './argv0.ts';
 import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from './smoke.ts';
 import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
@@ -67,6 +76,7 @@ export function legacyRoadmapDir(repo: AbsPath): readonly Rejection<'legacy-road
 
 /** The plan, or the schema rejection that stops everything else. */
 export function loadPlan(planFile: AbsPath): PlanM1 | Rejection<'plan-invalid'> {
+  if (!existsSync(planFile)) return { kind: 'plan-invalid', problem: { type: 'schema', field: 'plan', detail: `${planFile} does not exist` } };
   let raw: unknown;
   try {
     raw = readJson(planFile);
@@ -85,10 +95,11 @@ type SpecOrRejection = SpecM1 | Rejection<'plan-invalid'>;
 
 function loadUnitSpec(context: StartupContext, unit: PlanUnit): SpecOrRejection {
   const path = specPath(context, unit);
-  if (!existsSync(path)) return { kind: 'plan-invalid', problem: { type: 'unknown-spec-path', unit: unit.id, path: unit.spec } };
+  const bytes = context.specOf(unit);
+  if (bytes === null) return { kind: 'plan-invalid', problem: { type: 'unknown-spec-path', unit: unit.id, path: unit.spec } };
   let spec: SpecM1;
   try {
-    spec = loadSpec(path);
+    spec = parseSpec(bytes, path);
   } catch (error) {
     if (error instanceof SpecFileError) return { kind: 'plan-invalid', problem: { type: 'schema', field: 'spec', detail: error.message } };
     return schemaRejection(error);
@@ -126,7 +137,47 @@ function unknownCites(plan: PlanM1, rulings: readonly Ruling[], unit: UnitId, sp
   return cites.map((cite) => ({ kind: 'plan-invalid', problem: { type: 'unknown-cite', unit, cite } }));
 }
 
-/** Spec files, the rulings ledger, spec cites, baseline ancestry and resource names (the plan's schema row is `loadPlan`). */
+/** `integrationBranch` names no local branch; a full ref or a remote-tracking name is told to use the short local name. */
+function unknownIntegrationBranch({ repo, plan }: StartupContext): Rejection<'plan-invalid'> {
+  const name = plan.integrationBranch;
+  const ref = branchRef(name);
+  const short = 'integrationBranch takes the short name of a local branch (e.g. main)';
+  const detail = name.startsWith('refs/')
+    ? `${ref} does not exist: ${short}, not a full ref`
+    : refTarget(repo, refName(`refs/remotes/${name}`)) !== null
+      ? `${ref} does not exist: ${name} is a remote-tracking branch; ${short}`
+      : `${ref} does not exist in ${repo}`;
+  return { kind: 'plan-invalid', problem: { type: 'unknown-integration-branch', ref, detail } };
+}
+
+/**
+ * Branches that keep git from creating the arc's unit branches `roadmap/<arc>/<unit>`: a branch at `roadmap` or
+ * `roadmap/<arc>` itself, and an integration branch inside `roadmap/<arc>/`. The unit branches a recovered arc
+ * already has are not conflicts.
+ */
+function unitBranchConflicts({ repo, plan }: StartupContext): Rejection<'plan-invalid'>[] {
+  const prefix = unitBranchPrefix(plan.arc);
+  const segments = prefix.split('/');
+  const out: Rejection<'plan-invalid'>[] = [];
+  for (let i = 1; i <= segments.length; i++) {
+    const ref = branchRef(branchName(segments.slice(0, i).join('/')));
+    if (refTarget(repo, ref) !== null) {
+      out.push({ kind: 'plan-invalid', problem: { type: 'unit-branch-conflict', ref, detail: `branch ${ref} exists, so git cannot create the unit branches ${prefix}/<unit>; rename or delete it` } });
+    }
+  }
+  if (plan.integrationBranch.startsWith(`${prefix}/`)) {
+    out.push({
+      kind: 'plan-invalid',
+      problem: { type: 'unit-branch-conflict', ref: branchRef(plan.integrationBranch), detail: `integrationBranch ${plan.integrationBranch} is inside ${prefix}/, the executor's unit branch namespace` },
+    });
+  }
+  return out;
+}
+
+/**
+ * Spec files, the rulings ledger, spec cites, unit branch conflicts, the integration branch, baseline ancestry and
+ * resource names (the plan's schema row is `loadPlan`).
+ */
 export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
   kind: 'plan-invalid',
   check: async (context) => {
@@ -141,11 +192,14 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
       if (spec !== undefined && isSpec(spec)) out.push(...unknownCites(plan, rulings, unit.id, spec));
     }
 
+    out.push(...unitBranchConflicts(context));
     const tip = refTarget(repo, branchRef(plan.integrationBranch));
-    if (tip === null) throw new Error(`integration branch ${plan.integrationBranch} does not exist in ${repo}`);
-    const known = gitRun(repo, ['cat-file', '-e', `${plan.baseline}^{commit}`], { okCodes: [0, 128] }).code === 0;
-    const ancestor = known && gitRun(repo, ['merge-base', '--is-ancestor', plan.baseline, tip], { okCodes: [0, 1] }).code === 0;
-    if (!ancestor) out.push({ kind: 'plan-invalid', problem: { type: 'baseline-not-ancestor', baseline: plan.baseline, tip: sha(tip) } });
+    if (tip === null) out.push(unknownIntegrationBranch(context));
+    else {
+      const known = gitRun(repo, ['cat-file', '-e', `${plan.baseline}^{commit}`], { okCodes: [0, 128] }).code === 0;
+      const ancestor = known && gitRun(repo, ['merge-base', '--is-ancestor', plan.baseline, tip], { okCodes: [0, 1] }).code === 0;
+      if (!ancestor) out.push({ kind: 'plan-invalid', problem: { type: 'baseline-not-ancestor', baseline: plan.baseline, tip: sha(tip) } });
+    }
 
     const declared = new Set<ResourceName>([INTEGRATION_SLOT, ...plan.resources.map((r) => r.name)]);
     const unknown = (unit: UnitId | null, lane: LaneDef | null, resources: readonly ResourceName[]): void => {
@@ -213,7 +267,9 @@ export function specLaneCheck(env: Readonly<Record<string, string | undefined>>)
     check: async (context) => {
       const out = context.plan.suite.lanes.flatMap((lane) => laneProblems(null, lane, env));
       for (const unit of context.plan.units) {
-        const spec = loadSpec(specPath(context, unit));
+        const bytes = context.specOf(unit);
+        if (bytes === null) throw new Error(`spec-lane-unrunnable: the spec of ${unit.id} is absent, which plan-invalid refuses first`);
+        const spec = parseSpec(bytes, specPath(context, unit));
         for (const lane of spec.lanes) if (lane.state === 'active') out.push(...laneProblems(unit.id, lane, env));
         out.push(...checkLaneTiers(spec, unit));
       }
@@ -231,7 +287,7 @@ export function readRepoConfig(repo: AbsPath): RepoConfig | null {
 
 /** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return resolveRouting(arcStack(context.profile, readRepoConfig(context.repo), context.plan.routing ?? null));
+  return routingOf(context.profile, context.repo, context.plan);
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {
@@ -280,6 +336,12 @@ export type StartInput = Readonly<{
    * that claim and touches no host file (step 14a). Group 3 still refuses whatever it reports.
    */
   claim: (context: StartupContext) => Promise<ClaimOutcome>;
+  /**
+   * A supervisor's respawn after a crash: the run whose plan in force it runs (the claim's run dir and arc),
+   * ignoring plan.json edits nobody applied. Null for `roadmap start`, which puts changed files in force
+   * through the apply rules.
+   */
+  respawn: Readonly<{ runDir: AbsPath; arc: ArcId }> | null;
 }>;
 
 export type StartChecks =
@@ -288,7 +350,7 @@ export type StartChecks =
     rejections: readonly StartupRejection[];
     /** Held when a later group refused. The executor never releases it: its supervisor does, after it exits. */
     claim: HostLockClaim | null;
-    /** Open when the containment mode refused: the caller closes it. */
+    /** Open when the containment mode or the plan in force refused: the caller closes it. */
     journal: OpenJournal | null;
   }>
   | Readonly<{ kind: 'passed'; context: StartupContext; routing: SmokeRouting; claim: HostLockClaim; journal: OpenJournal }>;
@@ -298,13 +360,79 @@ export function gitCommonDir(repo: AbsPath): AbsPath {
   return absPath(gitRun(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim());
 }
 
+/** What a start checks: the plan and a reader of each unit's spec bytes, and the files when they are the source. */
+type Source = Readonly<{ plan: PlanM1; specOf: (unit: PlanUnit) => Buffer | null; files: InputFiles | null }>;
+
+/** plan.json and its specs as the files hold them, or the schema rejection of the plan. */
+function fileSource(planFile: AbsPath): Source | Rejection<'plan-invalid'> {
+  const plan = loadPlan(planFile);
+  if ('kind' in plan) return plan;
+  const files = readInputFiles(planFile);
+  return { plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, files };
+}
+
+/** On a respawn, the plan in force and its kept specs; null when the log records none (or does not read). */
+function inForceSource(runDir: AbsPath, arc: ArcId, planFile: AbsPath): Source | null {
+  let view: JournalView;
+  try {
+    view = readJournal(runDir, arc).view;
+  } catch (error) {
+    if (error instanceof LogCorruptError) return null;
+    throw error;
+  }
+  const inForce = planInForce(runDir, view);
+  if (inForce === null) return null;
+  const specOf = (unit: PlanUnit): Buffer => specBytesOf(runDir, specShaInForce(view, unit.id), specFilePath(planFile, unit)).bytes;
+  return { plan: inForce.plan, specOf, files: null };
+}
+
+/** The arc's routing for `plan` under the start's profile and the repo config. */
+export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): ResolvedRouting {
+  return resolveRouting(arcStack(profile, readRepoConfig(repo), plan.routing ?? null));
+}
+
+/**
+ * Group 4, last: the plan in force. With none recorded (a first start, or an arc started before plan
+ * revisions: `earlierReleaseBaseline`, which warns and may refuse), the files' become revision 1. A start whose files differ from the plan in force
+ * classifies them like `roadmap apply` (no command) and refuses what the rules refuse. A respawn runs the plan
+ * in force and asks nothing.
+ */
+function settlePlan(journal: OpenJournal, context: StartupContext, files: InputFiles | null): readonly Rejection<'plan-change-refused'>[] {
+  const inForce = planInForce(context.runDir, journal.view);
+  if (files === null) {
+    if (inForce === null) throw new Error('a respawn with no plan in force reads the files');
+    return [];
+  }
+  if (inForce === null) {
+    // A fresh arc records the files as they are; one a release without plan revisions ran, as that release ran them.
+    const baseline = earlierReleaseBaseline(journal.view, files, context.planFile);
+    if ('reasons' in baseline) return [{ kind: 'plan-change-refused', reasons: baseline.reasons }];
+    recordPlan(journal, context.runDir, files, null, baseline.changes);
+    return [];
+  }
+  const verdict = classify({
+    runDir: context.runDir, view: journal.view, inForce, next: files, residues: undispositioned(context.hostDir),
+    resolve: (plan) => routingOf(context.profile, context.repo, plan),
+  });
+  switch (verdict.kind) {
+    case 'unchanged':
+      return [];
+    case 'accepted':
+      recordPlan(journal, context.runDir, files, null, verdict.changes);
+      return [];
+    case 'rejected':
+      return [{ kind: 'plan-change-refused', reasons: verdict.reasons }];
+  }
+}
+
 export async function runChecks(input: StartInput): Promise<StartChecks> {
   const refused = (rejections: readonly StartupRejection[], claim: HostLockClaim | null = null, journal: OpenJournal | null = null): StartChecks =>
     ({ kind: 'refused', rejections, claim, journal });
 
   // 1. input
-  const plan = loadPlan(input.planFile);
-  if ('kind' in plan) return refused([...legacyRoadmapDir(input.repo), plan]);
+  const source = (input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc, input.planFile)) ?? fileSource(input.planFile);
+  if ('kind' in source) return refused([...legacyRoadmapDir(input.repo), source]);
+  const { plan } = source;
   let profile: ProfileName;
   try {
     profile = selectProfile(input.profile, readRepoConfig(input.repo));
@@ -312,7 +440,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     return refused([...legacyRoadmapDir(input.repo), schemaRejection(error)]);
   }
   const context: StartupContext = {
-    repo: input.repo, planFile: input.planFile, plan, profile, runDir: runDirOf(gitCommonDir(input.repo), plan.arc), hostDir: input.hostDir,
+    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, runDir: runDirOf(gitCommonDir(input.repo), plan.arc), hostDir: input.hostDir,
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context))];
   if (inputRows.length > 0) return refused(inputRows);
@@ -344,8 +472,25 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
+  const planRows = settlePlan(journal, context, source.files);
+  if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal };
+}
+
+/**
+ * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force"): the input and lane rows
+ * for the units whose entry or spec changed (`scoped`), and the routing row when the routing changed.
+ */
+export async function applyRows(
+  context: StartupContext, scoped: readonly UnitId[], routingChanged: boolean, env: Readonly<Record<string, string | undefined>>,
+): Promise<readonly StartupRejection[]> {
+  const narrowed: StartupContext = { ...context, plan: { ...context.plan, units: context.plan.units.filter((u) => scoped.includes(u.id)) } };
+  return [
+    ...(await planInvalidCheck.check(narrowed)),
+    ...(await specLaneCheck(env).check(narrowed)),
+    ...(routingChanged ? await routingCheck.check(context) : []),
+  ];
 }
 
 /** Group 5: the backend smoke for the resolved profile, over the passed checks' journal. */

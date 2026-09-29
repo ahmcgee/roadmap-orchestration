@@ -7,7 +7,6 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { CommandContext } from '../../src/commands/apply.ts';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { Event, IntentRecord, OpKind } from '../../src/core/events.ts';
 import { arcId, invocationId } from '../../src/core/ids.ts';
@@ -17,7 +16,6 @@ import { checkManifest } from '../../src/git/evidence.ts';
 import { refTarget, revParse } from '../../src/git/git.ts';
 import { readResidues } from '../../src/host/residues.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
-import { backendEnv } from '../../src/preflight/smoke.ts';
 import type { RecoveryContext } from '../../src/recover/recover.ts';
 import { resourceTable } from '../../src/resources/reserve.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
@@ -30,7 +28,7 @@ import { type Step, readCalls } from '../helpers/scenario.ts';
 import { backend, run as procRun, scenario as procScenario } from './invoke-specs.ts';
 import { planCheckStep } from './stage-common.ts';
 import {
-  type ArcDescriptor, type ArcOptions, type ArcRun, MUL, appendSteps, codexStep, contextFor, gateStep, mulBuild, setupArc, stepUntil, workDirPattern,
+  type ArcDescriptor, type ArcOptions, type ArcRun, MUL, appendSteps, codexStep, commandContextFor, contextFor, gateStep, mulBuild, setupArc, stepUntil, workDirPattern,
 } from './unit-common.ts';
 
 /** Every op kind a reconciler recovers: one scenario each. */
@@ -44,8 +42,7 @@ const CHILD_TIMEOUT_MS = 90_000;
 
 /** The recovery context of an arc, as the executor builds it (default profile). */
 export function recoveryContext(r: ArcRun): RecoveryContext {
-  const commands: CommandContext = { ...r.ctx, hostEnv: backendEnv(r.ctx.hostEnv), routing: { profile: 'default', resolved: r.ctx.routing } };
-  return { stage: r.ctx, commands };
+  return { stage: r.ctx, commands: commandContextFor(r) };
 }
 
 /** Declares resource `db` (res-tool.ts over `stateDir`) and gives it to every unit, as exec-common does. */

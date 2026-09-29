@@ -1,7 +1,7 @@
 // The CLI surface, parsed into a closed Command union so step 13 wires a fixed set of commands. Pure:
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
-import { type ArcId, type NeedsUserId, type ResourceName, arcId, needsUserId, resourceName, unitId } from '../core/ids.ts';
+import { type ArcId, type NeedsUserId, type PlanRev, type ResourceName, arcId, needsUserId, planRev, resourceName, unitId } from '../core/ids.ts';
 import type { PauseTarget, ResumeTarget } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { type ProfileName, backend, profileName } from '../routing/types.ts';
@@ -35,7 +35,9 @@ export type Command =
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
-  | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>;
+  | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
+  /** Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. */
+  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; run: RunLocator }>;
 
 type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true> }>;
 
@@ -163,8 +165,15 @@ export function parseCommand(argv: readonly string[]): Command {
       const r = value(p, 'resource');
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
+    case 'apply': {
+      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch' }, command);
+      positionals(p, command, 0);
+      const rev = value(p, 'expect-rev');
+      if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
+      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), run: locator(p, command) };
+    }
     default:
-      throw new CliError(`unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep`);
+      throw new CliError(`unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply`);
   }
 }
 

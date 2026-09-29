@@ -14,6 +14,8 @@
 //   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
+//   sonnet.build        claude-sonnet-5-5 (effort medium, claude-only's efficient class) implementer argv:
+//                       writes a file (bypassPermissions) and returns {ok: true}
 //   claude.build.killed-resume  claude-opus-5-5 implementer told to write a random token to a file then
 //                       sleep; killed once the file exists through the production kill path (killWorkload,
 //                       reason pause, as the executor's interruptLive runs it); the file is deleted and the
@@ -46,6 +48,7 @@ import { runnerFiles } from '../src/runner/files.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
+const SONNET = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' } as const;
 const SOL = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
 const SYSTEM = 'You are a probe of an unattended build orchestrator. Do exactly what the message asks, then answer in the structured format requested.';
 
@@ -235,6 +238,15 @@ async function main(): Promise<void> {
     check: 'fable-pin', routingRev: rev, tier: 'escalation', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
+
+  // Sonnet implementer (claude-only's efficient class): the id resolves at its effort and writes in its cwd.
+  const sonnetDir = dir(join(root, 'sonnet-build'));
+  const sonnet = await backend(ctx, 'sonnet.build', {
+    check: 'sonnet-build', routingRev: rev, tier: 'med', system: SYSTEM, schema: okSchema, cwd: sonnetDir,
+    rendered: 'Create the file probe.txt in the current directory containing the word probe, then reply with {"ok": true}.',
+    request: { kind: 'claude-build', triple: SONNET, session: freshClaudeImplementerSession(), evidenceDirs: [] },
+  }, isOk);
+  if (sonnet.result.outcome.kind === 'success' && !existsSync(join(sonnetDir, 'probe.txt'))) report(false, 'sonnet.build.write', `no ${sonnetDir}/probe.txt`);
 
   // Killed mid-run, then resumed: the token is in the killed conversation only (its file is deleted first).
   // The resume message is CONTINUE_DIRECTIVE's opening (rounds.ts); its evidence-dir sentence has no referent here.

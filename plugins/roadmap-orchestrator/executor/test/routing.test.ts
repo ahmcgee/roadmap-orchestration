@@ -8,7 +8,7 @@ import { support } from '../src/prompts/index.ts';
 import { CLASS_CATALOGUE } from '../src/routing/classes.ts';
 import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, routingRevOf, selectProfile, unsupportedSeats } from '../src/routing/layers.ts';
 import { MODELS } from '../src/routing/models.ts';
-import { PROFILE_TABLES } from '../src/routing/profiles.ts';
+import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import {
   MODEL_IDS, PROFILES, type RoutingLayer, type RoutingTable, SEAT_REFS, type Seat, type Triple, atSeat, routingLayer,
 } from '../src/routing/types.ts';
@@ -19,12 +19,13 @@ const layer = (v: unknown): RoutingLayer => routingLayer(v, 'layer');
 
 const OPUS: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
 const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
+const SONNET: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
 const LUNA: Triple = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' };
 const SOL_HIGH: Triple = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' };
 const base: RoutingStack = arcStack('default', null, null);
 
 describe('routing', () => {
-  it('catalogue: four pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {
+  it('catalogue: five pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {
     assert.deepEqual(Object.keys(MODELS).sort(), [...MODEL_IDS].sort());
     for (const m of MODEL_IDS) {
       const info = MODELS[m];
@@ -32,22 +33,24 @@ describe('routing', () => {
     }
   });
 
-  it('routing.classes: the class catalogue is the one binding; profiles name classes, never models', () => {
-    assert.deepEqual(CLASS_CATALOGUE, { efficient: LUNA, frontier: OPUS, summit: FABLE });
-    for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(PROFILE_TABLES), new RegExp(m.replace('.', '\\.')));
+  it('routing.classes: the class catalogue is the one binding, per profile; seats name classes, never models', () => {
+    assert.deepEqual(CLASS_CATALOGUE, {
+      default: { efficient: LUNA, frontier: OPUS, summit: FABLE },
+      'claude-only': { efficient: SONNET, frontier: OPUS, summit: FABLE },
+    });
+    for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(BUILTIN_SEATS), new RegExp(m.replace('.', '\\.')));
     const judgment = { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' };
-    for (const p of PROFILES) {
-      assert.deepEqual(PROFILE_TABLES[p].planCheck, judgment, p);
-      assert.deepEqual(PROFILE_TABLES[p].gate, judgment, p);
-    }
-    assert.deepEqual(PROFILE_TABLES.default.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
-    assert.deepEqual(PROFILE_TABLES['claude-only'].build, { low: 'frontier', med: 'frontier', high: 'frontier' });
+    assert.deepEqual(BUILTIN_SEATS.planCheck, judgment);
+    assert.deepEqual(BUILTIN_SEATS.gate, judgment);
+    assert.deepEqual(BUILTIN_SEATS.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
   });
 
-  it('built-in profiles resolve: Luna builds low/med, Opus builds high and judges every tier, Fable holds escalation', () => {
+  it('built-in profiles resolve: efficient (Luna; Sonnet under claude-only) builds low/med, Opus builds high and judges every tier, Fable holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: OPUS });
-    for (const r of ['planCheck', 'gate'] as const) assert.deepEqual(d[r], { low: OPUS, med: OPUS, high: OPUS, escalation: FABLE }, r);
+    const c = resolveRouting(arcStack('claude-only', null, null)).table;
+    assert.deepEqual(c.build, { low: SONNET, med: SONNET, high: OPUS });
+    for (const t of [d, c]) for (const r of ['planCheck', 'gate'] as const) assert.deepEqual(t[r], { low: OPUS, med: OPUS, high: OPUS, escalation: FABLE }, r);
     for (const p of PROFILES) assert.deepEqual(unsupportedSeats(resolveRouting(arcStack(p, null, null)), null), [], p);
   });
 

@@ -1,15 +1,18 @@
-// Recovery of an open `spec.patch` intent (plan "Recovery"): the file's hash alone decides. The write is a
-// durable temp-and-rename, so a crash leaves the old bytes or the new ones; anything else means someone
-// else changed the file, and recovery parks rather than guess.
+// Recovery of an open `spec.patch` intent (plan "Recovery"): the kept spec bytes decide. The patched spec
+// kept means the op is done; the old spec still kept (or still the file's content) means it is redone; with
+// neither, recovery parks rather than guess. An architect's edit of the spec file is not the op's business.
 import { existsSync } from 'node:fs';
 import type { Reconciler } from '../core/interfaces.ts';
+import type { AbsPath } from '../core/values.ts';
+import { SPEC_INPUT, keptInput } from '../input/inforce.ts';
 import { fileSha256 } from '../spec/spec.ts';
 
-export const reconcileSpecPatch: Reconciler<'spec.patch'> = async (intent) => {
-  const { path, oldSha256 } = intent.expect;
-  if (!existsSync(path)) return { kind: 'park', detail: `spec file ${path} is missing` };
-  const actual = fileSha256(path);
-  if (actual === intent.post.newSha256) return { kind: 'done', outcome: { kind: 'patched' } };
-  if (actual === oldSha256) return { kind: 'redo' };
-  return { kind: 'park', detail: `spec file ${path} hashes to ${actual}, neither the old ${oldSha256} nor the new ${intent.post.newSha256}` };
-};
+export function reconcileSpecPatch(runDir: AbsPath): Reconciler<'spec.patch'> {
+  return async (intent) => {
+    const { path, oldSha256 } = intent.expect;
+    if (keptInput(runDir, intent.post.newSha256, SPEC_INPUT) !== null) return { kind: 'done', outcome: { kind: 'patched' } };
+    if (keptInput(runDir, oldSha256, SPEC_INPUT) !== null) return { kind: 'redo' };
+    if (existsSync(path) && fileSha256(path) === oldSha256) return { kind: 'redo' };
+    return { kind: 'park', detail: `neither the patched spec ${intent.post.newSha256} nor the old ${oldSha256} is kept in the run dir, and ${path} holds neither` };
+  };
+}

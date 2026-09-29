@@ -3,10 +3,12 @@
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
 // lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read.
 // Nothing here names a model except `spend.byModel`, which looks each seat's model up in its revision's
-// routing table at render time: the tables are re-resolved from the latest start's plan and repo config
-// (`start.json`) under every built-in profile, and a revision none of them yields is listed as unresolved.
-// `routing` is the routing the latest start's profile resolves to under the current repo config and plan,
-// as classes per seat with the layer that named each and where each class's binding came from: no model.
+// routing table at render time: the tables are re-resolved from every plan revision the log applied and the
+// repo config under every built-in profile, and a revision none of them yields is listed as unresolved.
+// `plan` is the plan in force (its revision and hash, src/input/inforce.ts), and `units` are its units, not
+// the live plan.json: an edit nobody applied does not show. `routing` is the routing the latest start's
+// profile resolves the plan in force to under the current repo config, as classes per seat with the layer
+// that named each and where each class's binding came from: no model.
 //
 // `run.state` (§2.10, M1 subset):
 //   running    a live executor owns the run and nothing below holds it: a stage is in flight (an open
@@ -27,11 +29,13 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { terminalReceipt, readCommand } from './commands/queue.ts';
-import { JUDGMENT_STAGES, type JudgmentStage } from './core/events.ts';
+import { type Event, JUDGMENT_STAGES, type JudgmentStage } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId, type CommandId, type NeedsUserId, type RoutingRev, type UnitId, commandId } from './core/ids.ts';
+import { type ArcId, type CommandId, type NeedsUserId, type PlanRev, type RoutingRev, type Sha256Hex, type UnitId, commandId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { readJournal } from './core/log.ts';
+import { warnPlanFromFile } from './core/upgrade.ts';
+import { PLAN_INPUT, keptInput, planInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
@@ -105,6 +109,8 @@ export type Status = Readonly<{
   }>;
   host: Readonly<{ containment: Readonly<{ mode: ContainmentMode | null; guarantee: string }> }>;
   parkedBackends: readonly Backend[];
+  /** The plan in force: its revision and plan.json hash; null before a start recorded one. */
+  plan: Readonly<{ rev: PlanRev; planSha256: Sha256Hex }> | null;
   /** Null before any start. */
   routing: RoutingView | null;
   rejection: RejectionFile | null;
@@ -138,15 +144,24 @@ function commandsOf(runDir: AbsPath, arc: ArcId): Status['commands'] {
   return { pending, receipts: receipts.slice(-RECEIPTS_SHOWN) };
 }
 
-/** Every built-in profile's table over the latest start's plan and repo config, by revision. */
-function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null): ReadonlyMap<RoutingRev, RoutingTable> {
+/** Every built-in profile's table over each plan revision (`plans`) and the repo config, by revision. */
+function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null, plans: readonly PlanM1[]): ReadonlyMap<RoutingRev, RoutingTable> {
   if (start === null) return new Map();
-  const { record, plan } = start;
-  const config = readRepoConfig(record.repo);
-  return new Map(PROFILES.map((profile) => {
+  const config = readRepoConfig(start.record.repo);
+  return new Map([start.plan, ...plans].flatMap((plan) => PROFILES.map((profile) => {
     const r = resolveRouting(arcStack(profile, config, plan.routing ?? null));
     return [r.rev, r.table] as const;
-  }));
+  })));
+}
+
+/** Every plan revision the log applied, from the kept bytes, in log order. */
+function appliedPlans(runDir: AbsPath, events: readonly Event[]): readonly PlanM1[] {
+  return events.flatMap((e) => {
+    if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') return [];
+    const bytes = keptInput(runDir, e.fact.planSha256, PLAN_INPUT);
+    if (bytes === null) throw new Error(`plan revision ${e.fact.rev} is ${e.fact.planSha256}, which the run dir does not keep`);
+    return [parsePlan(JSON.parse(bytes.toString('utf8')))];
+  });
 }
 
 function routingView(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null): RoutingView | null {
@@ -172,16 +187,23 @@ function stateOf(runDir: AbsPath, view: JournalView, planUnits: readonly PlanUni
   return settled && !blocking ? 'complete' : 'no-owner';
 }
 
+/** An arc with no plan in force (started before plan revisions): its plan file, as that release read it. */
+function planFile(arc: ArcId, path: AbsPath): PlanM1 {
+  warnPlanFromFile(arc, path);
+  return parsePlan(JSON.parse(readFileSync(path, 'utf8')));
+}
+
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const { view, events } = readJournal(runDir, arc);
   const record = readIf(join(runDir, START_FILE), runStart);
-  const start = record === null ? null : { record, plan: parsePlan(JSON.parse(readFileSync(record.planFile, 'utf8'))) };
+  const inForce = planInForce(runDir, view);
+  const start = record === null ? null : { record, plan: inForce?.plan ?? planFile(arc, record.planFile) };
   const planUnits = start?.plan.units ?? [];
   const rejection = readIf(join(runDir, REJECTION_FILE), rejectionFile);
   const owner = ownerState(runDir, hostDir);
 
   const meter = meterOf(events);
-  const tables = routingTables(start);
+  const tables = routingTables(start, appliedPlans(runDir, events));
   const resolvable = meter.bySeat.filter((t) => tables.has(t.routingRev));
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
 
@@ -204,6 +226,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs }, bySmoke: meter.bySmoke },
     host: { containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE } },
     parkedBackends: view.parkedBackends(),
+    plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
     routing: routingView(start),
     rejection,
   };

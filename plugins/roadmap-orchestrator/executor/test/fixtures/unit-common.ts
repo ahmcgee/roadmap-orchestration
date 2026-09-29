@@ -8,11 +8,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
-import { type UnitId, arcId, unitId } from '../../src/core/ids.ts';
+import type { CommandContext } from '../../src/commands/apply.ts';
+import { type PlanRev, type UnitId, arcId, unitId } from '../../src/core/ids.ts';
+import type { CommandBody } from '../../src/core/records.ts';
+import { backendEnv } from '../../src/preflight/smoke.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
+import { manifestOf, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
 import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
@@ -111,10 +115,13 @@ export type ArcRun = Readonly<{ ctx: StageContext; journal: OpenJournal; d: ArcD
 export function contextFor(d: ArcDescriptor): ArcRun {
   const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
+  // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
+  if (journal.view.planApplied() === null) recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, []);
+  const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const ctx: StageContext = {
-    journal, containment: sessionContainment, runDir: absPath(d.runDir), plan, repo: absPath(d.repo),
+    journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
-    routing: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }),
+    routing: () => routing,
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
   };
@@ -126,8 +133,26 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   return { ctx, journal, d, unit };
 }
 
+/**
+ * The command context over an arc, as the executor builds it (default profile, routing `stage`'s). `plan()`
+ * is the context's own: in these tests it does not follow an apply, which only the log records.
+ */
+export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): CommandContext {
+  return {
+    ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
+    resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+  };
+}
+
+/** An `apply` of the plan and specs as the files hold them now (what `roadmap apply` submits). */
+export function applyBody(d: ArcDescriptor, expectRev: PlanRev | null = null): CommandBody {
+  const manifest = manifestOf(readInputFiles(absPath(d.planPath)));
+  if ('missing' in manifest) throw new Error(`no spec file for ${manifest.missing.join(', ')}`);
+  return { type: 'apply', expectRev, manifest };
+}
+
 export const U1: UnitId = unitId('u1');
-export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan.worktreeRoot, r.ctx.plan.arc, unit));
+export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unit));
 
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps

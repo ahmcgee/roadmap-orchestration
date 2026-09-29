@@ -21,13 +21,11 @@
 //   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`) and holds the
 //   stage (lead ruling: outcome != success AND class in {usage-limit, capacity}); platform or backend
 //   error entries on a success are informational.
-import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes } from '../backends/argv.ts';
 import {
   BACKEND_PARK_CLASSES, type BackendParkClass, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
-import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type ArcId, type InvocationId, type RoutingRev, type SeatRev, type UnitId, opKey, seatRev } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
 import type { SpecState } from '../core/state.ts';
@@ -35,7 +33,8 @@ import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
 import {
   type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RefName, absPath, isoTimeOf, refName } from '../core/values.ts';
+import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
+import { inputPath, keepInput } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import type { ResourceContext } from '../resources/reserve.ts';
@@ -47,9 +46,13 @@ import { runnerFiles } from '../runner/files.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
 import { judgmentSeat } from './transitions.ts';
 
-/** Everything a unit's stages need: processes, resources, the resolved routing and the host environment. */
+/**
+ * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
+ * executor `plan()` and `routing()` are the plan in force and its routing, read from the log at each call
+ * (src/executor.ts `contexts`).
+ */
 export type StageContext = ResourceContext & Readonly<{
-  routing: ResolvedRouting;
+  routing: () => ResolvedRouting;
   /** The executor's own environment; backends get `backendEnv(hostEnv)`, lanes their declared `pass` names. */
   hostEnv: Readonly<Record<string, string | undefined>>;
   /** The plan file's directory: unit spec paths and the rulings ledger are relative to it. */
@@ -115,8 +118,8 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
 
 /** `record` under the routing in force: itself when the rev is unchanged; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
-  if (record.routingRev === ctx.routing.rev) return { kind: 'pinned', dispatch: record };
-  const next = repin(ctx.journal, ctx.routing, record);
+  if (record.routingRev === ctx.routing().rev) return { kind: 'pinned', dispatch: record };
+  const next = repin(ctx.journal, ctx.routing(), record);
   return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
 
@@ -129,8 +132,8 @@ export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState):
   const current = ctx.journal.view.dispatchOf(unit.id);
   if (current !== null) return inForce(ctx, current);
   const record: DispatchRecord = {
-    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor: unit.risk, routingRev: ctx.routing.rev,
-    implementerSeatRev: implementerSeatRev(ctx.routing, unit.risk), at: now(),
+    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor: unit.risk, routingRev: ctx.routing().rev,
+    implementerSeatRev: implementerSeatRev(ctx.routing(), unit.risk), at: now(),
   };
   ctx.journal.fact({ kind: 'dispatch', record });
   return { kind: 'pinned', dispatch: record };
@@ -152,8 +155,8 @@ export const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.index
 export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskTier, spec: SpecState): DispatchRecord {
   if (!riskAbove(risk, record.riskFloor)) throw new Error(`raiseRisk: ${risk} is not above the floor ${record.riskFloor} of ${record.unit}`);
   const next: DispatchRecord = {
-    ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, routingRev: ctx.routing.rev,
-    implementerSeatRev: implementerSeatRev(ctx.routing, risk), at: now(),
+    ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, routingRev: ctx.routing().rev,
+    implementerSeatRev: implementerSeatRev(ctx.routing(), risk), at: now(),
   };
   ctx.journal.fact({ kind: 'dispatch', record: next });
   return next;
@@ -174,7 +177,7 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   if (pinned.kind !== 'pinned') return pinned;
   const role = ROLE_OF[stage];
   const tier = judgmentSeat(ctx.journal.view.unit(unit), stage);
-  const triple = ctx.routing.table[role][tier];
+  const triple = ctx.routing().table[role][tier];
   // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
   if (triple.backend !== 'claude') throw new Error(`the ${role} seat ${tier} resolves to ${triple.backend}; judgment is Claude only in M1`);
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
@@ -185,7 +188,7 @@ export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<Imp
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
   if (pinned.kind !== 'pinned') return pinned;
   const { riskFloor, routingRev, implementerSeatRev: seatRev } = pinned.dispatch;
-  return { kind: 'pinned', dispatch: { role: 'build', tier: riskFloor, triple: ctx.routing.table.build[riskFloor], routingRev, seatRev } };
+  return { kind: 'pinned', dispatch: { role: 'build', tier: riskFloor, triple: ctx.routing().table.build[riskFloor], routingRev, seatRev } };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -212,17 +215,9 @@ export type BackendCallOutcome =
   /** Lost with its runner (no exit.json); `treeEffects`: its workload was started, so it may have changed the tree. */
   | Readonly<{ kind: 'lost'; inv: InvocationId; invDir: AbsPath; treeEffects: boolean }>;
 
-/** Where `inputFile` keeps the text hashing to `sha256`. */
-export const inputPath = (runDir: AbsPath, sha256: string, ext: string): AbsPath => absPath(join(runDir, 'inputs', `${sha256}.${ext}`));
-
-/** Writes `text` once under `<runDir>/inputs/<sha256>.<ext>`; the name certifies the content. */
+/** Keeps `text` once under `<runDir>/inputs/<sha256>.<ext>` (`keepInput`) and returns its path. */
 export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
-  const path = inputPath(runDir, sha256Hex(text), ext);
-  if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
-    durableMkdir(join(runDir, 'inputs'));
-    durableWrite(path, text);
-  }
-  return path;
+  return inputPath(runDir, keepInput(runDir, Buffer.from(text, 'utf8'), ext), ext);
 }
 
 function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath): BackendCall {
@@ -268,7 +263,7 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
   // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none.
-  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan.arc, spec.unit) } : backendEnv(ctx.hostEnv);
+  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit) } : backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
@@ -315,19 +310,6 @@ function backendParkNeedsUser(parent: StageParent, backend: Backend, park: Backe
 }
 
 /**
- * The pause or stop that cancelled a command invocation (a lane), if its runner ended it for one. A backend
- * call's result.json records the same as outcome `cancelled`, which `verdictOf` reads instead.
- */
-export function cancelledFor(invDir: AbsPath, inv: InvocationId): 'pause' | 'stop' | null {
-  const files = runnerFiles(invDir, inv);
-  const exit = files.read('exit.json');
-  if (exit === null || exit.cause !== 'cancel') return null;
-  const reason = files.read('cancel.json')?.reason;
-  if (reason === undefined) throw new Error(`${invDir}: exit cause cancel without cancel.json`);
-  return reason === 'recovery' ? null : reason;
-}
-
-/**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
  * usage-limit/capacity park (outcome != success with such an error: `backend-park` fact, arc-wide), then the
  * outcome itself.
@@ -359,8 +341,10 @@ export function verdictOf(ctx: StageContext, parent: StageParent, called: Backen
 // ---------------------------------------------------------------------------------------------------
 // Where a unit's work lives, and the journaled ops its stages run
 
+/** The branch path every unit branch of the arc sits under; no branch may exist at it or at `roadmap`. */
+export const unitBranchPrefix = (arc: ArcId): BranchName => branchName(`roadmap/${arc}`);
 /** The unit's branch: every build round commits here, and the candidate merges it. */
-export const unitBranch = (arc: ArcId, unit: UnitId): RefName => refName(`refs/heads/roadmap/${arc}/${unit}`);
+export const unitBranch = (arc: ArcId, unit: UnitId): RefName => refName(`refs/heads/${unitBranchPrefix(arc)}/${unit}`);
 export const unitWorktree = (root: AbsPath, arc: ArcId, unit: UnitId): AbsPath => absPath(join(root, arc, unit));
 /** A lanes attempt's clean detached checkout of the salvage SHA. */
 export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>

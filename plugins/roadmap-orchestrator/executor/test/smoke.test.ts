@@ -10,15 +10,15 @@ import { EVENTS_FILE, openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from '../src/preflight/smoke.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
-import { MODEL_IDS, type ProfileName, type RoutingLayer } from '../src/routing/types.ts';
+import { MODEL_IDS, type ProfileName, type ClassBindings } from '../src/routing/types.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls, writeScenario } from './helpers/scenario.ts';
 
 const T = { timeout: 60_000 };
 const OK = { ok: true } as const;
 
-function routing(profile: ProfileName, plan: RoutingLayer | null = null): SmokeRouting {
-  return { profile, resolved: resolveRouting({ profile, classes: null, repoConfig: null, plan, unit: null }) };
+function routing(profile: ProfileName, classes: ClassBindings | null = null): SmokeRouting {
+  return { profile, resolved: resolveRouting({ profile, classes, repoConfig: null, plan: null, unit: null }) };
 }
 
 type Run = Readonly<{ report: SmokeReport; runDir: string; events: readonly Event[] }>;
@@ -97,10 +97,10 @@ describe('smoke', () => {
     assert.equal(smokeIntents(events).length, 1);
   });
 
-  it('claude-only with a seat that resolves to Codex is a missing Codex smoke', T, async () => {
+  it('claude-only with a class rebound to Codex is a missing Codex smoke', T, async () => {
     const s = writeScenario(tmpDir('scenario'), [claudeStep([{ type: 'emit', value: OK }])]);
-    const plan: RoutingLayer = { build: { low: 'efficient' } };
-    const { report } = await runSmoke(routing('claude-only', plan), s.binDir);
+    const classes: ClassBindings = { efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } };
+    const { report } = await runSmoke(routing('claude-only', classes), s.binDir);
     assert.deepEqual(readCalls(s.path).map((c) => c.as), ['claude']);
     const [rejection, ...rest] = smokeRejections(report);
     assert.deepEqual(rest, []);

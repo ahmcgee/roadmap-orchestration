@@ -41,7 +41,7 @@ import { type Reservation, type StageHolder, cleanup, reserve, run } from '../re
 import { type StageContext, type StageParent, evidenceRoot, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';
 import { type Series, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
-import { type StageDone, at, executorIdentity, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone, at, executorIdentity, keptSpecPath, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
@@ -85,11 +85,11 @@ type CandidateEnd = Readonly<{
 function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): CandidateRequest {
   const { spec } = loadUnitSpec(ctx, unit);
   return {
-    arc: ctx.plan.arc, unit: unit.id, integration: branchRef(ctx.plan.integrationBranch), unitCommit: unitTip(ctx, unit.id),
-    worktree: candidateWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id, attempt),
+    arc: ctx.plan().arc, unit: unit.id, integration: branchRef(ctx.plan().integrationBranch), unitCommit: unitTip(ctx, unit.id),
+    worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
     rules: { evidenceGlobs: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort() },
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan.arc}: candidate of unit ${unit.id}\n`,
+    message: `roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}\n`,
   };
 }
 
@@ -114,7 +114,7 @@ const baseSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPat
 
 /** A suite series on `checkout`, its checkout removed afterwards (citing the series' evidence). */
 async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeCreateRequest, root: AbsPath): Promise<Series> {
-  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan.suite.lanes), 'suite', checkout, root);
+  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -134,9 +134,9 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const prepared = latestMergein(ctx, unit.id);
       if (prepared !== null && ctx.journal.view.doneOf(prepared.op) !== null && classifyMergein(prepared).kind === 'conflicted') return { kind: 'conflict', needsUser: null };
       await runOp(ctx.journal, mergeinOp(ctx.repo), `mergein:${unit.id}`, parent, {
-        worktree: unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id), branch: unitBranch(ctx.plan.arc, unit.id),
-        integration: branchRef(ctx.plan.integrationBranch), identity: executorIdentity(),
-        message: `roadmap ${ctx.plan.arc}: merge ${ctx.plan.integrationBranch} into unit ${unit.id}\n`,
+        worktree: unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id), branch: unitBranch(ctx.plan().arc, unit.id),
+        integration: branchRef(ctx.plan().integrationBranch), identity: executorIdentity(),
+        message: `roadmap ${ctx.plan().arc}: merge ${ctx.plan().integrationBranch} into unit ${unit.id}\n`,
       });
       return { kind: 'conflict', needsUser: null };
     }
@@ -149,7 +149,7 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       if (!failed(onCandidate)) return { kind: 'green', needsUser: null };
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
-      const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent));
+      const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent));
       const baseFault = seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return { kind: 'red', needsUser: null };
@@ -164,8 +164,8 @@ function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha, evidence: r
     blocking: true,
     subject: { type: 'arc' },
     reason: 'base-red',
-    summary: `The suite is red on ${ctx.plan.integrationBranch} at ${tip} alone, without unit ${unit}: the base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
-    recommendation: `Repair ${ctx.plan.integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', unitBranch(ctx.plan.arc, unit))}`,
+    summary: `The suite is red on ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: the base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
+    recommendation: `Repair ${ctx.plan().integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', unitBranch(ctx.plan().arc, unit))}`,
     options: [],
     evidence,
   };
@@ -182,7 +182,7 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
 
 /** The unit's latest done candidate.merge: the commit its suite tested. */
 export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'candidate.merge'> {
-  const ref = candidateRef(ctx.plan.arc, unit);
+  const ref = candidateRef(ctx.plan().arc, unit);
   const intent = ctx.journal.view.opsOf('candidate.merge').filter((i) => i.expect.ref === ref && ctx.journal.view.doneOf(i.op) !== null).at(-1);
   if (intent === undefined) throw new Error(`unit ${unit} has no done candidate`);
   return intent;
@@ -215,7 +215,7 @@ function foreignMoveNeedsUser(ctx: StageContext, unit: UnitId, detail: string): 
     subject: { type: 'arc' },
     reason: 'foreign-ref-move',
     summary: `Publication of unit ${unit} stopped: ${detail}. Integration only moves forward, and only the executor moves its refs.`,
-    recommendation: `Find out who moved it; restore ${ctx.plan.integrationBranch} (or the ref) to a descendant of what the executor published, then acknowledge.`,
+    recommendation: `Find out who moved it; restore ${ctx.plan().integrationBranch} (or the ref) to a descendant of what the executor published, then acknowledge.`,
     options: [],
     evidence: [],
   };
@@ -225,7 +225,7 @@ export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'
   const parent = at(start(ctx, unit.id, 'ff'), 'ff');
   const fingerprint = approvalOf(ctx, unit.id);
   const cand = latestCandidate(ctx, unit.id);
-  const integration = branchRef(ctx.plan.integrationBranch);
+  const integration = branchRef(ctx.plan().integrationBranch);
   const holds = (tip: Sha): boolean => fingerprintHolds(ctx, unit, fingerprint, tip);
   const stale = (tip: Sha): StageDone<'ff'> => record(ctx, parent, holds(tip) ? 'cas-stale' : 'fingerprint-invalid');
   const closed = (outcome: OpOutcome['integration.ff']): StageDone<'ff'> => {
@@ -253,7 +253,7 @@ export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'
     case 'ff': {
       if (!holds(cand.expect.integrationTip)) return record(ctx, parent, 'fingerprint-invalid');
       const op = integrationFfOp(ctx.repo, fingerprintValid(ctx, unit));
-      const intent = await inSlot(ctx, parent, () => runPrepared(ctx.journal, op, `integration:${ctx.plan.arc}`, parent, decision.body));
+      const intent = await inSlot(ctx, parent, () => runPrepared(ctx.journal, op, `integration:${ctx.plan().arc}`, parent, decision.body));
       const done = ctx.journal.view.doneOf(intent.op);
       if (done === null || done.kind !== 'integration.ff') throw new Error(`integration.ff ${intent.op} has no done record`);
       return closed(done.outcome);
@@ -266,14 +266,15 @@ export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'
 
 export async function snapshot(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'snapshot'>> {
   const parent = at(start(ctx, unit.id, 'snapshot'), 'snapshot');
-  await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan.arc}`, parent, {
-    arc: ctx.plan.arc,
+  await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, {
+    arc: ctx.plan().arc,
     runDir: ctx.runDir,
     // Everything durable so far, the ff's done included.
     highWater: ctx.journal.view.highWater(),
-    specs: ctx.plan.units.map((u) => ({ unit: u.id, path: absPath(join(ctx.planDir, u.spec)) })),
+    // The specs in force (kept by hash), never the live files, which may hold edits nobody applied.
+    specs: ctx.plan().units.map((u) => ({ unit: u.id, path: keptSpecPath(ctx, u) })),
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan.arc}: snapshot after publishing unit ${unit.id}\n`,
+    message: `roadmap ${ctx.plan().arc}: snapshot after publishing unit ${unit.id}\n`,
   });
   return record(ctx, parent, 'published');
 }

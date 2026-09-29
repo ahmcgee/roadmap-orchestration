@@ -18,8 +18,8 @@ if (mode === 'recover') {
   if (started !== undefined) writeFileSync(started, `${process.pid}\n`);
   process.stdout.write(`${JSON.stringify(await recover(ctx))}\n`);
 } else {
-  submitCommand(r.ctx.runDir, r.ctx.plan.arc, { type: 'pause', target: { type: 'all' } });
-  const [file] = pollCommands(r.ctx.runDir, r.ctx.plan.arc);
+  submitCommand(r.ctx.runDir, r.ctx.plan().arc, { type: 'pause', target: { type: 'all' } });
+  const [file] = pollCommands(r.ctx.runDir, r.ctx.plan().arc);
   if (file === undefined) throw new Error('rec-child: the submitted command is not pending');
   process.stdout.write(`${JSON.stringify(await applyCommand(ctx.commands, file))}\n`);
 }

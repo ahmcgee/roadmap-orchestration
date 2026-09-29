@@ -38,8 +38,11 @@ import { type TeardownRun, stageRecipes, teardown } from './teardown.ts';
 export type StageHolder = Extract<Holder, { type: 'stage' }>;
 export type SweepHolder = Extract<Holder, { type: 'sweep' }>;
 
-/** What the reservation cycle needs beyond processes: the plan's declarations, the repo root, the host dir. */
-export type ResourceContext = ProcContext & Readonly<{ plan: PlanM1; repo: AbsPath; hostDir: AbsPath }>;
+/**
+ * What the reservation cycle needs beyond processes: the plan's declarations, the repo root, the host dir.
+ * `plan()` is read at each call: in the executor it is the plan in force, which an apply may move.
+ */
+export type ResourceContext = ProcContext & Readonly<{ plan: () => PlanM1; repo: AbsPath; hostDir: AbsPath }>;
 
 export type HeldState = 'reserved' | 'running' | 'cleaning';
 
@@ -248,7 +251,7 @@ export function reserve(
   parent: Parent,
 ): Reservation<'reserved', StageHolder> | Refused {
   const ordered = lockOrder(resources);
-  return reserveWith(ctx, holder, ordered, stageRecipes(ctx.plan, ctx.repo, holder.unit, ordered), parent);
+  return reserveWith(ctx, holder, ordered, stageRecipes(ctx.plan(), ctx.repo, holder.unit, ordered), parent);
 }
 
 /** A sweep reserves exactly the resources it has recipes for (the residues it sweeps). */

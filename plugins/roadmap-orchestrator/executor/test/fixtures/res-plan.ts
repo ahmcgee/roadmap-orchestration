@@ -57,9 +57,10 @@ export type Opened = Readonly<{ ctx: ResourceContext; journal: OpenJournal }>;
 export function openRun(run: ResRun): Opened {
   mkdirSync(run.stateDir, { recursive: true });
   const journal = openJournal(absPath(run.runDir), arcId(run.arc));
+  const plan = planFor(run);
   const ctx: ResourceContext = {
     journal, containment: sessionContainment, runDir: absPath(run.runDir),
-    plan: planFor(run), repo: absPath(run.repo), hostDir: openHostDir(absPath(run.hostDir)),
+    plan: () => plan, repo: absPath(run.repo), hostDir: openHostDir(absPath(run.hostDir)),
   };
   return { ctx, journal };
 }

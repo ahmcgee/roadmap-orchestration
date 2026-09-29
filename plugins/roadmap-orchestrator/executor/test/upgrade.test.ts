@@ -14,7 +14,9 @@
 //                              unit `slug` merged; `page-id` parked at plan-check on a blocking needs-user
 //                              (escalated on its seat and on the escalation seat), its spec edited to rev 2,
 //                              re-opened by `resume page-id` (the needs-user acknowledged), and stopped
-//                              mid-plan-check, so held. HEAD re-runs the plan-check and merges it on rev 2.
+//                              mid-plan-check, so held. HEAD re-runs the plan-check and merges it on rev 2;
+//                              its first start recorded the plan in force (rev 1), and the finished arc
+//                              then classifies an apply adding a unit as accepted.
 //
 // Not covered: a crash mid-op (recovery of the previous release's open intents; the crash matrix covers
 // recovery within one release), a backend parked on a usage limit, the Claude-only profile.
@@ -47,10 +49,10 @@ after(assertNoSurvivors);
 /**
  * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
  * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.2, merged to main as
- * PR #102 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
+ * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.3, merged to main as
+ * PR #103 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
  */
-const PREVIOUS_RELEASE = 'c4136158015f935368c0031907c5f91526f9439d';
+const PREVIOUS_RELEASE = 'a54c59021974a3525123ed1a4fb7b88aa3779184';
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../', import.meta.url));
@@ -312,4 +314,23 @@ test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-open
   assertFinished(f);
   const u = f.view.unit(unitId('page-id'));
   assert.deepEqual([u.reopened?.specRev, u.spec?.rev], [2, 2], 'page-id merged on the spec rev the previous release re-opened it on');
+  await assertAcceptsApply(p, f);
 });
+
+/**
+ * The previous release kept no plan revisions: HEAD's first start records the files as revision 1 (the
+ * upgrade default), and the arc then takes `roadmap apply` like any other: a unit added to its plan
+ * classifies as accepted (a dry run: the arc is complete, and no executor runs to apply it).
+ */
+async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
+  const revisions = f.after.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.rev, e.fact.command]] : []));
+  assert.deepEqual(revisions, [[1, null]], 'HEAD\'s first start recorded the plan in force as revision 1');
+  const plan = JSON.parse(readFileSync(p.l.plan, 'utf8')) as { units: { id: string; spec: string }[] };
+  const last = plan.units.at(-1)!;
+  const spec = JSON.parse(readFileSync(join(p.l.input, last.spec), 'utf8')) as object;
+  writeFileSync(join(p.l.input, 'extra.json'), JSON.stringify({ ...spec, unit: 'extra', rev: 1 }));
+  writeFileSync(p.l.plan, JSON.stringify({ ...plan, units: [...plan.units, { ...last, id: 'extra', spec: 'extra.json', after: [] }] }));
+  const dry = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'apply', '--dry-run', ...p.run], { env: process.env, timeoutMs: CLI_MS });
+  assert.equal(dry.code, 0, dry.stderr);
+  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 1, nextRev: 2, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [] });
+}

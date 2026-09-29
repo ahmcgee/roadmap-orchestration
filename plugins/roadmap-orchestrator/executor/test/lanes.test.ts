@@ -18,6 +18,7 @@ import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { DEV1_LANE_DEADLINE_MS } from '../src/core/upgrade.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
 import { git, tmpDir } from './helpers/repo.ts';
@@ -59,7 +60,7 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
     const launch = launchOf(run, s);
     assert.deepEqual(launch.argv, spec.argv, `${order[i]} argv`);
     assert.equal(launch.cwd, done.verification?.path);
-    assert.deepEqual(launch.env, { LOG: log, PATH: run.ctx.hostEnv['PATH'], RESOURCE_OWNER: `${run.ctx.plan.arc}/${U1}` });
+    assert.deepEqual(launch.env, { LOG: log, PATH: run.ctx.hostEnv['PATH'], RESOURCE_OWNER: `${run.ctx.plan().arc}/${U1}` });
     assert.equal(s.expect.subject.purpose === 'lane' && s.expect.subject.at, run.base);
     // The stall watchdog, not a short deadline, ends a hung lane.
     assert.equal(launch.stallMs, LANE_STALL_MS);
@@ -72,7 +73,7 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
   }
   assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), order.flatMap((id) => [`start ${id}`, `end ${id}`]));
   // The estate lane ran under its reservation: probe, run, teardown, released.
-  assert.deepEqual(readFileSync(join(run.stateDir, 'calls.log'), 'utf8').trim().split('\n'), [`probe db ${run.ctx.plan.arc}/${U1}`, `teardown db ${run.ctx.plan.arc}/${U1}`]);
+  assert.deepEqual(readFileSync(join(run.stateDir, 'calls.log'), 'utf8').trim().split('\n'), [`probe db ${run.ctx.plan().arc}/${U1}`, `teardown db ${run.ctx.plan().arc}/${U1}`]);
   assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
   // One evidence dir per lane, and the checkout the gate reads: clean, detached at the salvage SHA.
   for (const l of done.ledger) assert.equal(checkManifest(absPath(join(l.evidenceDir, 'output'))).kind, 'verified');
@@ -121,7 +122,7 @@ test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane run
   assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
 });
 
-test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the checkout and charges nothing', T, async () => {
+test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the checkout and charges nothing; its result.json records cancelled{pause}', T, async () => {
   const mark = join(tmpDir('lanes-mark'), 'running');
   const sleeper: LaneJson = { id: 'sleeper', argv: ['sh', '-c', `touch "${mark}"; sleep 60`] };
   const held = laneRun([sleeper]);
@@ -134,6 +135,11 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
   assert.equal(done.outcome.kind, 'interrupted');
   assert.equal(done.next.kind, 'hold');
   assert.equal(done.verification, null);
+  const inv = invocationId(spawn.op, spawn.ordinal);
+  const result = runnerFiles(invocationDir(held.runDir, inv), inv).read('result.json');
+  assert.ok(result?.type === 'command' && result.verdict === 'cancelled', `one shape with a backend call's cancel: ${JSON.stringify(result)}`);
+  assert.equal(result.reason, 'pause');
+  assert.deepEqual(done.ledger.map((l) => l.verdict), ['cancelled']);
   const u = held.journal.view.unit(U1);
   assert.equal(u.status, 'held');
   assert.equal(u.counters.chargeableFailures, 0);
@@ -258,7 +264,7 @@ test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captur
   const done = await going;
   assert.equal(done.outcome.kind, 'interrupted');
   const [record] = done.ledger;
-  assert.ok(record !== undefined && record.verdict === 'process-fault');
+  assert.ok(record !== undefined && record.verdict === 'cancelled');
   assert.deepEqual(capturedFiles(join(record.evidenceDir, 'ignored')), ['.local/k.log']);
   assert.ok(record.fixDirs.includes(absPath(join(record.evidenceDir, 'ignored', 'files'))));
   assert.deepEqual(record.ignored?.captured, { files: 1, bytes: 8 });
@@ -270,7 +276,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
     lanes: [{ id: 'writer', argv: ['sh', '-c', 'mkdir -p out && echo a > out/a.log && echo b > out/b.log'], evidenceGlobs: ['out/a.log'] }],
   });
   pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
-  git(run.repo, 'update-ref', unitBranch(run.ctx.plan.arc, U1), run.base);
+  git(run.repo, 'update-ref', unitBranch(run.ctx.plan().arc, U1), run.base);
   const before = fingerprintAt(run.ctx, run.unit, run.base);
   const first = await lanes(run.ctx, run.unit, run.base);
   assert.deepEqual(capturedFiles(join(first.ledger[0]!.evidenceDir, 'tree')), ['out/a.log']);

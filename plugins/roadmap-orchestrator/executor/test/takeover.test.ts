@@ -54,7 +54,7 @@ test('host.handshake-verifies-self: an owner record naming another pid → the e
   // A live stranger as the published executor: this process, the test (its pid is not the executor's).
   publishOwner(hostDir, claim, selfIdentity());
   createHandshake(hostDir, claim);
-  const argv = executorArgv({ hostDir, generation: claim.generation, nonce: claim.nonce, repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', controlOnly: false });
+  const argv = executorArgv({ hostDir, generation: claim.generation, nonce: claim.nonce, repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', controlOnly: false, respawn: false });
   const exit = await run([EXECUTOR, ...argv], execEnv(r));
   assert.equal(exit.code, 78, exit.stderr);
   assert.match(exit.stderr, /refused before any effect: handshake .* arrived but host\.owner\.json names/);

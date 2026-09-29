@@ -32,6 +32,7 @@ import { durableMkdir } from '../core/fsx.ts';
 import {
   type InvocationId, type JudgmentSessionId, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId, rulingId,
 } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -43,6 +44,7 @@ import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../gi
 import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
+import { type LoadedSpec, SPEC_INPUT, inputPath, parseUnitSpec, specBytesOf, specShaInForce } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
@@ -57,8 +59,7 @@ import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling, loadRulings } from '../spec/rulings.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchFileOp } from '../spec/patch.ts';
-import { bytesSha256, parseSpec } from '../spec/spec.ts';
+import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../spec/patch.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
@@ -106,17 +107,24 @@ export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParen
 // ---------------------------------------------------------------------------------------------------
 // Inputs, snapshotted by revision
 
-/** The unit's spec.json (relative to the plan dir), with the sha256 of the bytes it was read from. */
-export function loadUnitSpec(ctx: Readonly<{ planDir: AbsPath }>, unit: PlanUnit): Readonly<{ path: AbsPath; spec: SpecM1; sha256: Sha256Hex }> {
+/**
+ * The unit's spec in force (src/input/inforce.ts): the bytes its record names once dispatched, else the plan
+ * in force's, read from the run dir and never from the live file. `path` is the spec file the architect
+ * edits (relative to the plan dir), for what a needs-user tells them.
+ */
+export function loadUnitSpec(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): LoadedSpec {
   const path = absPath(join(ctx.planDir, unit.spec));
-  const bytes = readFileSync(path);
-  const spec = parseSpec(bytes, path);
-  if (spec.unit !== unit.id) throw new Error(`${path} is the spec of ${spec.unit}, not of ${unit.id}`);
-  return { path, spec, sha256: bytesSha256(bytes) };
+  const { bytes, sha256 } = specBytesOf(ctx.runDir, specShaInForce(ctx.journal.view, unit.id), path);
+  return { path, spec: parseUnitSpec(bytes, path, unit.id), sha256 };
+}
+
+/** The kept file of the unit's spec in force: what a snapshot publishes and a park's evidence cites. */
+export function keptSpecPath(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): AbsPath {
+  return inputPath(ctx.runDir, loadUnitSpec(ctx, unit).sha256, SPEC_INPUT);
 }
 
 export function integrationTip(ctx: StageContext): Sha {
-  return revParse(ctx.repo, branchRef(ctx.plan.integrationBranch));
+  return revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
 }
 
 /** A product document as committed at `tip`. */
@@ -125,7 +133,7 @@ export function docAt(ctx: StageContext, tip: Sha, path: RepoPath): DocText {
 }
 
 /** The rulings ledger's path (plan `rulings`, relative to the plan dir); judgments read it through `--add-dir`. */
-export const ledgerPath = (ctx: StageContext): AbsPath => absPath(join(ctx.planDir, ctx.plan.rulings));
+export const ledgerPath = (ctx: StageContext): AbsPath => absPath(join(ctx.planDir, ctx.plan().rulings));
 /** The directory a session is given to read the ledger from. */
 export const ledgerDir = (ctx: StageContext): AbsPath => absPath(dirname(ledgerPath(ctx)));
 
@@ -158,7 +166,7 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
     contracts: spec.cites.contracts.map((c) => docAt(ctx, tip, c)),
     rulings: rulings.flatMap((r) => (r.status === 'active' && cited(r) ? [{ id: r.id, text: r.text }] : [])),
     index: {
-      contracts: ctx.plan.contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({ path, heading: firstHeading(docAt(ctx, tip, path).text) })),
+      contracts: ctx.plan().contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({ path, heading: firstHeading(docAt(ctx, tip, path).text) })),
       rulings: rulings.filter((r) => !cited(r)).map((r) => ({ id: r.id, line: r.status === 'active' ? firstSentence(r.text) : `withdrawn by ${r.by}` })),
       ledger: ledgerPath(ctx),
     },
@@ -167,16 +175,16 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
 
 /** The architecture doc a judgment embeds at `tip`: the plan's digest when it names one, else the whole doc. */
 export function architecture(ctx: StageContext, tip: Sha): ArchitectureInput {
-  const digest = ctx.plan.architectureDigest;
+  const digest = ctx.plan().architectureDigest;
   return digest === undefined
-    ? { kind: 'full', doc: docAt(ctx, tip, ctx.plan.architectureDoc) }
-    : { kind: 'digest', digest: docAt(ctx, tip, digest), doc: ctx.plan.architectureDoc };
+    ? { kind: 'full', doc: docAt(ctx, tip, ctx.plan().architectureDoc) }
+    : { kind: 'digest', digest: docAt(ctx, tip, digest), doc: ctx.plan().architectureDoc };
 }
 
 /** The product documents whose change touches the unit's authority: every plan contract, the architecture doc and its digest. */
 export function authorityPaths(ctx: StageContext): ReadonlySet<RepoPath> {
-  const digest = ctx.plan.architectureDigest;
-  return new Set<RepoPath>([...ctx.plan.contracts, ctx.plan.architectureDoc, ...(digest === undefined ? [] : [digest])]);
+  const digest = ctx.plan().architectureDigest;
+  return new Set<RepoPath>([...ctx.plan().contracts, ctx.plan().architectureDoc, ...(digest === undefined ? [] : [digest])]);
 }
 
 export const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));
@@ -206,7 +214,7 @@ function widenedResources(unit: PlanUnit, patch: PlanCheckOutput['patch']): read
 
 /** A plan-check attempt's checkout of the integration tip (`tip`) or of the unit branch (`branch`). */
 export const planCheckWorktree = (ctx: StageContext, parent: StageParent, tree: 'tip' | 'branch'): AbsPath =>
-  absPath(join(ctx.plan.worktreeRoot, ctx.plan.arc, `${parent.unit}.plan-check-${parent.attempt}${tree === 'branch' ? '-branch' : ''}`));
+  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${parent.unit}.plan-check-${parent.attempt}${tree === 'branch' ? '-branch' : ''}`));
 
 /** The checkouts a plan-check attempt created, read back from its `worktree.create` intents. */
 function planCheckCheckoutsOf(ctx: StageContext, parent: StageParent): PlanCheckCheckouts {
@@ -249,7 +257,7 @@ async function createPlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent:
     return { path, at };
   };
   const tip = integrationTip(ctx);
-  const branchTip = refTarget(ctx.repo, unitBranch(ctx.plan.arc, unit));
+  const branchTip = refTarget(ctx.repo, unitBranch(ctx.plan().arc, unit));
   return { tip: await create('tip', tip), branch: branchTip === null || branchTip === tip ? null : await create('branch', branchTip) };
 }
 
@@ -353,7 +361,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const lib = library(ctx, spec, checkouts.tip.at);
   const rendered = prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...lib, architecture: architecture(ctx, checkouts.tip.at),
-    direction: ctx.plan.direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
+    direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
     lanePrograms: laneOrder(spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
     priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
   });
@@ -369,7 +377,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
 function unknownCites(ctx: StageContext, patch: PlanCheckOutput['patch']): boolean {
   const rulings = ledger(ctx).map((r) => r.id);
   return (patch ?? []).some((op) => op.op === 'cite'
-    && (op.contracts.some((c) => !ctx.plan.contracts.includes(c)) || op.rulings.some((r) => !rulings.includes(r))));
+    && (op.contracts.some((c) => !ctx.plan().contracts.includes(c)) || op.rulings.some((r) => !rulings.includes(r))));
 }
 
 /**
@@ -417,7 +425,7 @@ export async function planCheckRead(
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
   if (patch !== null && applied === null && redirects) {
-    await runOp(ctx.journal, specPatchFileOp, `spec:${unit.id}`, parent, { path, patch });
+    await runOp(ctx.journal, specPatchOp(ctx.runDir), `spec:${unit.id}`, parent, { path, oldSha256: sha256, patch });
   }
   return done(record(ctx, parent, out.decision));
 }
@@ -516,8 +524,8 @@ export async function buildRead(
   held: Reservation<'running', StageHolder> | null,
 ): Promise<BuildDone> {
   const failed = (d: StageDone<'build'>): BuildDone => ({ ...d, run: null });
-  const worktree = unitWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id);
-  const branch = unitBranch(ctx.plan.arc, unit.id);
+  const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id);
+  const branch = unitBranch(ctx.plan().arc, unit.id);
   if (called.kind === 'lost' && called.treeEffects) {
     // What the workload left is salvaged and verified like a report's (the plan's recovery table), uncharged.
     const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
@@ -603,7 +611,9 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
  * and the new revision is part of the approval fingerprint. A new id is added, a decision restated with new
  * text replaces the active one, a decision restated verbatim is already there. A file that does not
  * validate, or an entry naming an item that is not an active decision, is not appended: it stays in the
- * build's evidence dir, which the gate reads.
+ * build's evidence dir, which the gate reads. Nor is anything appended while the architect's revision of the
+ * spec is pending (`UnitState.pendingRevision`): the unit re-opens on that revision at its next boundary that
+ * allows it, and its next build writes its decisions again.
  */
 async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun, file: AbsPath, parent: StageParent): Promise<void> {
   if (!existsSync(file)) return;
@@ -614,7 +624,8 @@ async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun,
     if (error instanceof SyntaxError || error instanceof SchemaError) return;
     throw error;
   }
-  const { path, spec } = loadUnitSpec(ctx, unit);
+  if (ctx.journal.view.unit(unit.id).pendingRevision !== null) return;
+  const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
   const ops = decisions.decisions.flatMap((d): SpecPatchOp[] => {
     const other = [...spec.lanes, ...spec.acceptance, ...spec.facts].some((i) => i.id === d.id);
     const decided = spec.decisions.find((i) => i.id === d.id);
@@ -623,7 +634,7 @@ async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun,
     return decided.text === d.text ? [] : [{ op: 'replace', section: 'decisions', item: d }];
   });
   if (ops.length === 0) return;
-  await runOp(ctx.journal, specPatchFileOp, `spec:${unit.id}`, parent, { path, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });
+  await runOp(ctx.journal, specPatchOp(ctx.runDir), `spec:${unit.id}`, parent, { path, oldSha256: sha256, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });
 }
 
 export type SalvageDone = StageDone<'salvage'> & Readonly<{ sha: Sha | null }>;
@@ -648,7 +659,7 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   const request = {
     worktree: run.worktree, branch: run.branch,
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan.arc}: salvage of unit ${unit.id} (build ${run.inv})\n`,
+    message: `roadmap ${ctx.plan().arc}: salvage of unit ${unit.id} (build ${run.inv})\n`,
   };
   const op = salvageCommitOp(rules);
   let prepared;
@@ -699,7 +710,7 @@ export type LanesDone = StageDone<'lanes'> & Readonly<{
 
 /** Every lane's declared evidence, the unit's and the suite's: what a leftover checkout's removal captures. */
 export function laneGlobs(ctx: StageContext, spec: SpecM1): readonly RepoPattern[] {
-  return unique([...spec.lanes, ...ctx.plan.suite.lanes].flatMap((l) => l.evidenceGlobs));
+  return unique([...spec.lanes, ...ctx.plan().suite.lanes].flatMap((l) => l.evidenceGlobs));
 }
 
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone> {
@@ -707,7 +718,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const parent = at(start(ctx, unit.id, 'lanes'), 'lanes');
   // A checkout an earlier attempt left (a crash cut its stage short) goes first: this series makes its own.
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
-  const checkout = { path: verificationWorktree(ctx.plan.worktreeRoot, ctx.plan.arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
+  const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const series = await runLaneSeries(ctx, parent, laneOrder(spec), 'spec', checkout, specSeriesRoot(ctx.runDir, parent));
   const { end } = series;
   const kind: StageOutcomeKind<'lanes'> = end.kind === 'green' ? (series.dirty.length > 0 ? 'not-certified' : 'green') : end.kind;

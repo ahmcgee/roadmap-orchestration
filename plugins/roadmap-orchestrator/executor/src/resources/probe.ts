@@ -29,7 +29,7 @@ export async function probe(
   for (const resource of r.resources) {
     const recipe = r.recipes.get(resource);
     if (recipe === undefined) continue; // the integration slot declares no probe
-    const command = resolveCommand(ctx.repo, resourceDecl(ctx.plan, resource).probe, ownerLabel(ctx.plan.arc, unit));
+    const command = resolveCommand(ctx.repo, resourceDecl(ctx.plan(), resource).probe, ownerLabel(ctx.plan().arc, unit));
     const first = await runResourceCommand(ctx, 'probe', unit, resource, command, parent);
     if (first.exitCode === PROBE_EXIT.free) continue;
     if (first.exitCode !== PROBE_EXIT.ownLabel) return parked(r, resource, first, 'at the first probe');

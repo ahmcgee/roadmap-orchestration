@@ -16,6 +16,32 @@ branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands in M3 and M4. In M1 you 
 unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 subset" sections of
 `executor/SCHEMAS.md`. For a worked plan, run the M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
+## Branches and refs
+
+You create one branch before `start`. The executor creates every other ref.
+
+- `integrationBranch`: the short name of an existing local branch. Use `integration`, not
+  `refs/heads/integration` or `origin/main`. Cut it from the branch the arc builds on and leave it checked out
+  in no worktree, because only the executor moves it. Don't name it `roadmap` or put it under `roadmap/<arc>`,
+  where the unit branches go. `start` refuses a missing integration branch, and a branch at `roadmap` or
+  `roadmap/<arc>`, as `plan-invalid` (78).
+- `baseline`: a full 40-hex SHA from `git rev-parse`, never a branch name, and an ancestor of the
+  integration tip.
+- `arc` and unit ids are lowercase slugs: `[a-z0-9]` with inner `-`, 64 characters at most, no `/`.
+- The executor creates the unit branch `roadmap/<arc>/<unit>` at the integration tip on the unit's first
+  build. It also creates `refs/roadmap-run/<arc>/*` and `refs/roadmap/<arc>`. Don't create any of them.
+  The only exception is a re-entry branch (see "Parked units").
+
+```sh
+git -C <repo> branch integration main   # once, before the first start
+git -C <repo> rev-parse main            # baseline
+```
+
+```json
+{ "schema": "roadmap/plan-m1", "arc": "page-ids", "integrationBranch": "integration",
+  "baseline": "<40-hex from rev-parse>", "worktreeRoot": "/abs/worktree-root", ... }
+```
+
 ## What judgments read
 
 - **Cites.** Each `spec.json` carries `cites: {contracts, rulings}`: the plan contracts and C-nn rulings the
@@ -50,7 +76,8 @@ unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 s
 | `status` | Agent-facing JSON snapshot of the run |
 | `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
 | `pause <unit>` / `pause --all` | Kill, tear down, keep commits and the worktree as left; the unit holds at its stage |
-| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have edited its spec, or one parked `routing-changed` once its implementer seat's routing is restored (below); `--backend` clears a usage-limit park after a passing smoke |
+| `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have applied a revision of its spec, or one parked `routing-changed` once its implementer seat's routing is restored (below); `--backend` clears a usage-limit park after a passing smoke |
+| `apply [--expect-rev <n>] [--dry-run]` | Put your edits to `plan.json` and specs in force (below). `--dry-run` prints the verdict and queues nothing |
 | `stop` | Park everything, tear down, release the host lock |
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |
@@ -72,9 +99,9 @@ The unit's risk picks the tier. A refusal or escalation at a judgment stage, or 
 judgment to its role's `escalation` seat in a fresh session; escalating again there parks the unit with a
 needs-user for you.
 
-Seats name a model class, never a model: `efficient`, `frontier` or `summit`. `default`: efficient builds
-low and med, frontier builds high and judges every tier, summit takes escalations. `claude-only`: frontier
-builds every tier, judgment as in `default`. `.roadmap/config.json` (committed, set once per repo):
+Seats name a model class, never a model: `efficient`, `frontier` or `summit`. Both profiles seat them the same way:
+efficient builds low and med, frontier builds high and judges every tier, summit takes escalations. They
+differ in the efficient class: GPT-5.6 Luna (Codex) under `default`, Claude Sonnet 5.5 under `claude-only`. `.roadmap/config.json` (committed, set once per repo):
 
 ```json
 { "routing": {
@@ -85,9 +112,9 @@ builds every tier, judgment as in `default`. `.roadmap/config.json` (committed, 
 
 Every key is optional. `seats` overrides the profile's class per seat. `classes` rebinds a class to a
 `{backend, model, effort}` triple, and it is the only place you name a model. A Claude effort is
-`low|medium|high|xhigh|max` (the built-in `frontier` and `summit` run at `high`); a Codex effort `low|medium|high`. `plan.json`'s `routing` names
-classes per seat the same way and cannot rebind a class. Routing is read at `start`. A judgment seat may
-change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
+`low|medium|high|xhigh|max` (the built-in `frontier` and `summit` run at `high`, `claude-only`'s `efficient` at `medium`); a Codex effort `low|medium|high`. `plan.json`'s `routing` names
+classes per seat the same way and cannot rebind a class. `.roadmap/config.json` is read at `start`; the
+plan's `routing` changes with `roadmap apply`. A judgment seat may change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
 (`routing-changed`); the needs-user names the seat (below).
 
 ## The run dir
@@ -111,10 +138,11 @@ One JSON object. Start with `run`: `state` is `running` (a stage is in flight, o
   `sup-*` and `host-*` items. The summary, recommendation, options and evidence are in `needs-user/<id>.json`.
   `run.state` is `parked` only when an item holds the whole arc; a parked unit with later units running
   shows `running`.
-- `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per plan unit; `seat` is the
+- `plan`: the plan in force, `{rev, planSha256}` (null before the first start).
+- `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per unit of the plan in force; `seat` is the
   `{role, tier}` the current stage dispatches on (`tier` may be `escalation` for a judgment), or null. `status`
   is `held-after:<ids>` while units the unit runs `after` hold it.
-- `routing`: the latest start's routing under the current config and plan: `profile`, `rev`, the class per
+- `routing`: the latest start's routing under the current config and the plan in force: `profile`, `rev`, the class per
   seat (`seats`), the layer that chose each (`sources`), and where each class is bound (`bindings`:
   `builtin|repo-config`). No model ids.
 - `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
@@ -145,7 +173,8 @@ Read the item's `evidence` first: the deciding call's `result.json` (a judgment'
 these applies:
 
 - **Parked at plan-check or gate** (an escalation or refusal at the escalation seat, a redirect or revise round past
-  its bound, a malformed or failed judgment): edit the unit's spec, then `roadmap resume <unit>`. The unit
+  its bound, a malformed or failed judgment): edit the unit's spec to the next rev, `roadmap apply`, then
+  `roadmap resume <unit>`. The unit
   re-enters at plan-check on the new revision as a new attempt and keeps its branch, worktree and implementer
   session: its next build resumes that session, told the spec was amended. The resume acknowledges the park's
   needs-user. The plan-check redirect bound (two redirects) counts again from your edit; the other counters
@@ -157,16 +186,37 @@ these applies:
   resume acknowledges the park's needs-user; while the seat is still moved it is rejected.
 - **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): `resume`
   does not re-open it. Re-enter the work: add a unit with a new id to `plan.json` (its fixed spec, the same
-  scope), create its branch `roadmap/<arc>/<new id>` at the tip of the parked unit's branch, acknowledge the
-  old item, then `stop` and `start` with the revised plan.
+  scope), create its branch at the tip of the parked unit's branch (`git branch roadmap/<arc>/<new id>
+  roadmap/<arc>/<old id>`), acknowledge the old item, then `roadmap apply` the revised plan.
 
-Spec edits follow one rule: edit `spec.json` in place only while its unit is parked at plan-check or gate (or
-before its first dispatch). Keep the schema and every item id; strike or defer an item instead of deleting it,
-never reuse an id, and leave `scope` and `resources` alone. Set `rev` to the rev the file had when the unit
-parked, plus one. `resume` is rejected, with the reason, for an unchanged file, a changed file at the same rev,
-or any other rev. The one exception: a lane's `evidenceGlobs` and `evidenceExcludes` may change at the current
-rev while the unit is in flight. The next lanes attempt reads them and the approval stands. They are no revision,
-so `resume` still needs one.
+## Changing the plan: edit, then `roadmap apply`
+
+The executor runs the plan in force, not the files: edit `plan.json` or a `spec.json` in place, then run
+`roadmap apply`. It hashes the plan file the arc started with (`start.json`; `apply` takes no `--plan`) and
+every spec, and queues the change; the executor applies it at the next stage boundary, or at once when no stage
+is running, and kills nothing. The receipt says applied (`plan rev <n> in force`) or rejected with every reason;
+nothing of a rejected apply is in force. `status` shows the plan in force (`plan.rev`). An edit you never apply is
+ignored, also after a crash restart; a `start` applies changed files by the same rules and refuses what they refuse
+(`plan-change-refused`). Use `--dry-run` first, and `--expect-rev <n>` to refuse the apply if the plan moved.
+`--dry-run` always exits 0: read `kind` (`rejected` with `reasons`, `unchanged` with `rev`, or `accepted` with
+`rev`, `nextRev`, `changes`, `smoke`).
+
+- **Add a unit** at the end (or among units not yet started); a unit id is never reused. **Remove** only a unit
+  that never started. Units that have started keep their order at the front.
+- **A unit not yet dispatched**: change anything.
+- **A dispatched unit**: its `scope`, `risk`, `resources` and spec path are fixed, and it may not gain an `after`.
+  Its spec: keep the schema and every item id (strike or defer, never delete or reuse), leave `scope` and
+  `resources` alone, and set `rev` to its recorded rev plus one. An active unit (not held) re-enters plan-check
+  on the revision at its next stage boundary before plan-check, lanes, gate or a fresh or fix build round (not a
+  continue), keeping its branch and session; a unit parked at plan-check or gate waits for
+  `roadmap resume <unit>`. A lane's `evidenceGlobs` and `evidenceExcludes` may change at the current rev (refused
+  while a revision is pending): the next lanes attempt reads them, the approval stands. A merged, approved or
+  publishing unit's spec is fixed.
+- **Routing**: a newly needed backend is smoked first. A seat change that moves the implementer of a unit whose
+  build started parks that unit `routing-changed` (above).
+- **Resources**: add any time; change or remove one only while nothing holds it and no residue names it.
+  **Suite lanes**: not while a unit is past a candidate attempt.
+- `arc`, `integrationBranch`, `baseline` and `worktreeRoot` never change.
 
 ## Writing lanes
 
@@ -201,6 +251,7 @@ startup row refused. The reason is in `status`; fix the input or dispose the blo
 
 - `legacy-roadmap-dir`: 0.x files in the in-tree `.roadmap/`; move them out, 1.0 never converts.
 - `worktree-root-unusable`, `plan-invalid`, `spec-lane-unrunnable`, `unsupported-routing`: fix the plan or spec.
+- `plan-change-refused`: the files differ from the plan in force in a way `apply` refuses; undo that edit.
 - `backend-smoke`: fix that backend's auth or sandbox.
 - `undispositioned-residue`: run `sweep`, or answer its needs-user.
 - `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`,

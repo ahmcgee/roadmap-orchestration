@@ -70,7 +70,7 @@ describe('unit: one unit merged first time', () => {
     const approval = r.journal.view.unit(U1).approval;
     assert.ok(approval !== null);
     assert.deepEqual(parentsOf(r.d.repo, head), [cand.expect.integrationTip, approval.fingerprint.unitCommit]);
-    assert.equal(approval.fingerprint.unitCommit, git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan.arc, U1)), 'the unit branch is kept at the approved commit');
+    assert.equal(approval.fingerprint.unitCommit, git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)), 'the unit branch is kept at the approved commit');
     const ff = intents(r.d.runDir, 'integration.ff');
     assert.equal(ff.length, 1);
     assert.ok(ff[0]!.kind === 'integration.ff');
@@ -81,7 +81,7 @@ describe('unit: one unit merged first time', () => {
   });
 
   test('snapshot.after-publish: the ref moved, the tree verifies against its manifest, the high-water mark covers the ff', () => {
-    const ref = snapshotRef(r.ctx.plan.arc);
+    const ref = snapshotRef(r.ctx.plan().arc);
     const at = git(r.d.repo, 'rev-parse', ref);
     const check = verifySnapshot(r.ctx.repo, at as never);
     assert.equal(check.kind, 'verified', JSON.stringify(check));
@@ -109,12 +109,12 @@ describe('unit: one unit merged first time', () => {
   test('retire: every worktree of the unit is removed, citing its evidence; the branch and candidate ref stay', () => {
     assert.ok(!existsSync(unitWorktreePath(r)), 'the unit worktree is gone');
     const listed = git(r.d.repo, 'worktree', 'list', '--porcelain');
-    assert.ok(!listed.includes(r.ctx.plan.worktreeRoot), `no worktree of the arc is left: ${listed}`);
+    assert.ok(!listed.includes(r.ctx.plan().worktreeRoot), `no worktree of the arc is left: ${listed}`);
     const removals = intents(r.d.runDir, 'worktree.remove');
     const retire = removals.filter((i) => i.parent.type === 'stage' && i.parent.stage === 'retire');
     assert.equal(retire.length, 2, 'the verification checkout and the unit worktree');
-    git(r.d.repo, 'rev-parse', '--verify', unitBranch(r.ctx.plan.arc, U1));
-    git(r.d.repo, 'rev-parse', '--verify', `refs/roadmap-run/${r.ctx.plan.arc}/candidate/u1`);
+    git(r.d.repo, 'rev-parse', '--verify', unitBranch(r.ctx.plan().arc, U1));
+    git(r.d.repo, 'rev-parse', '--verify', `refs/roadmap-run/${r.ctx.plan().arc}/candidate/u1`);
   });
 
   test('the gate read the verification checkout and every evidence dir, and nothing written names a model', () => {
@@ -166,7 +166,7 @@ test('fixture conflict → merge-in → resolve: T moves under the approved unit
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
       'candidate:green', 'ff:published', 'snapshot:published',
     ]);
-    const unitCommit = git(d.repo, 'rev-parse', unitBranch(r.ctx.plan.arc, U1));
+    const unitCommit = git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1));
     assert.deepEqual(parentsOf(d.repo, unitCommit), [approved, tip], 'the implementer committed the merge [old, T]');
     const head = git(d.repo, 'rev-parse', 'main');
     assert.deepEqual(parentsOf(d.repo, head), [tip, unitCommit], 'published onto T, second parent the resolved unit');

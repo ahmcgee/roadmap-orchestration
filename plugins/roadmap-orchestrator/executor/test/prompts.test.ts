@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { clauseId, laneId, rulingId, sha, specRev, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
@@ -278,17 +276,7 @@ describe('prompts', () => {
     assert.equal(p.match(/<\/pasted_content/g)?.length, 1);
   });
 
-  it('no Sonnet anywhere in src, and no em-dashes in prompt text', () => {
-    const files: string[] = [];
-    const walk = (dir: string): void => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name);
-        if (e.isDirectory()) walk(p);
-        else files.push(p);
-      }
-    };
-    walk(new URL('../src', import.meta.url).pathname);
-    for (const f of files) assert.doesNotMatch(readFileSync(f, 'utf8'), /sonnet/i, f);
+  it('no em-dashes in prompt text', () => {
     for (const role of ROLES) for (const [r, m] of builtinSeats()) {
       if (r !== role) continue;
       const mod = promptFor(r, m) as { system: string; render: (i: unknown) => string };

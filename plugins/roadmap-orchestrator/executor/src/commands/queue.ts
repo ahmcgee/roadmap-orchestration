@@ -1,7 +1,7 @@
 // The durable command queue (DESIGN §2.3, plan "Commands"): files in the run dir, never state.
 //
 //   commands/incoming/<id>.json             written once by the CLI (`submitCommand`), atomically (temp + link)
-//   commands/receipts/<id>.<state>.json     written once each by the executor: `accepted` at pickup, then
+//   commands/receipts/<id>.<state>.json     written once each by the executor, atomically too: `accepted` at pickup, then
 //                                           exactly one of `applied` (naming the `command.apply` op and the
 //                                           postconditions it verified) or `rejected{reason}`
 //
@@ -11,7 +11,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { durableLink, durableMkdir, durableUnlink, exclusiveCreate } from '../core/fsx.ts';
+import { durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import { type ArcId, type CommandId, type Sha256Hex, commandId, sha256 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import {
@@ -51,14 +51,7 @@ export function submitCommand(runDir: AbsPath, arc: ArcId, body: CommandBody): C
   const file: CommandFile = { v: SCHEMA_VERSION, id: newCommandId(), arc, at: isoTimeOf(new Date()), body };
   const bytes = canonicalJson(commandFile(JSON.parse(canonicalJson(file)), 'command'));
   durableMkdir(incomingDir(runDir));
-  // Written beside incoming/ and linked in, so a poll never reads a half-written command.
-  const temp = absPath(join(runDir, COMMANDS_DIR, `${file.id}.json.tmp`));
-  exclusiveCreate(temp, bytes);
-  try {
-    durableLink(temp, incomingPath(runDir, file.id));
-  } finally {
-    durableUnlink(temp);
-  }
+  exclusivePublish(incomingPath(runDir, file.id), bytes);
   return file;
 }
 
@@ -90,11 +83,14 @@ export function terminalReceipt(runDir: AbsPath, id: CommandId): Receipt | null 
   return applied ?? rejected;
 }
 
-/** Writes a receipt once and returns the sha256 of its bytes. A second write of any state is a bug. */
+/**
+ * Writes a receipt once, atomically (a `status` read never sees it empty), and returns the sha256 of its
+ * bytes. A second write of any state is a bug.
+ */
 export function writeReceipt(runDir: AbsPath, r: Receipt): Sha256Hex {
   const bytes = canonicalJson(receipt(JSON.parse(canonicalJson(r)), 'receipt'));
   durableMkdir(receiptsDir(runDir));
-  exclusiveCreate(receiptPath(runDir, r.command, r.state), bytes);
+  exclusivePublish(receiptPath(runDir, r.command, r.state), bytes);
   return sha256(sha256Hex(bytes));
 }
 

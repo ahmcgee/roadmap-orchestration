@@ -163,7 +163,7 @@ test('res.estate-refused-for-implementer', () => {
   const r = newRun();
   const { ctx, journal } = openRun(r);
   journal.close();
-  const unit = ctx.plan.units[0]!;
+  const unit = ctx.plan().units[0]!;
 
   // Fast lanes within the build's own resources, estate lanes needing anything: accepted.
   const ok = spec([lane('unit', 'fast', ['db']), lane('e2e', 'estate', ['cache', 'db']), lane('old', 'fast', ['cache'], 'struck')]);
@@ -198,7 +198,7 @@ test('res.cancel-kills-then-cleans', T, async () => {
   assert.deepEqual(result, { kind: 'released', released: [DB] });
   assert.equal(sessionContainment.empty({ inv, child }), true, 'the holder\'s workload is gone');
   const outcome = await work;
-  assert.ok(outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'process-fault', JSON.stringify(outcome));
+  assert.ok(outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' && outcome.result.reason === 'pause', JSON.stringify(outcome));
   journal.close();
 
   // Order in the log: the kill is done (quiescent) before the reservation starts cleaning.
@@ -233,7 +233,7 @@ test('res.sweep-cannot-fail', T, async () => {
 
   // A sweep whose teardown fails leaves the resource cleaning under the sweep: no fail, no residue, no release.
   writeFileSync(join(r.stateDir, `${QUEUE}.teardown-fails`), '');
-  const got = reserveForSweep(ctx, sweep, stageRecipes(ctx.plan, ctx.repo, UNIT, [QUEUE]), parent);
+  const got = reserveForSweep(ctx, sweep, stageRecipes(ctx.plan(), ctx.repo, UNIT, [QUEUE]), parent);
   assert.ok(got.state === 'reserved');
   // @ts-expect-error a sweep reservation cannot run
   assert.throws(() => run(ctx, got, parent), /cannot run a workload/);

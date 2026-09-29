@@ -43,7 +43,7 @@ import { type ProcContext, invocationDir, liveRunner, quiescent } from '../pipel
 import { loadUnitSpec } from '../pipeline/stages.ts';
 import { launchSha256 } from '../runner/launch.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { specPatchFileOp } from '../spec/patch.ts';
+import { specPatchOp } from '../spec/patch.ts';
 import { commandReconciler } from './command.ts';
 import { killReconciler } from './kill.ts';
 import { recoverReservations } from './resource.ts';
@@ -85,7 +85,7 @@ type Redoable<K extends StepKind> = Readonly<{
 function unitOf(ctx: StageContext, intent: IntentRecord): PlanUnit {
   if (intent.parent.type !== 'stage') throw new Error(`${intent.kind} ${intent.op} is not parented by a stage; its unit cannot be known`);
   const id = intent.parent.unit;
-  const unit = ctx.plan.units.find((u) => u.id === id);
+  const unit = ctx.plan().units.find((u) => u.id === id);
   if (unit === undefined) throw new Error(`${intent.op} names unit ${id}, which the plan does not have`);
   return unit;
 }
@@ -198,7 +198,7 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
     case 'snapshot.publish':
       return apply(ctx, intent, snapshotPublishOp(s.repo));
     case 'spec.patch':
-      return apply(ctx, intent, specPatchFileOp);
+      return apply(ctx, intent, specPatchOp(s.runDir));
     case 'needsuser.raise':
       return apply(ctx, intent, needsUserOp(s.runDir));
     case 'command.apply':

@@ -9,7 +9,10 @@
 //
 //   claim (claimHost, under the recovery lock; a takeover of another arc reconciles that arc's surviving
 //   invocations first, recover.ts) → per executor:
-//     spawn `node src/entry/executor.ts` (claim in argv; stdio to `executor.<generation>.out|.err`)
+//     spawn `node src/entry/executor.ts` (claim in argv; stdio to `executor.<generation>.out|.err`; every
+//     executor after one of this supervisor's generations was ready is a `--respawn`: it runs the plan in
+//     force and ignores unapplied plan edits; before that, a respawn is a start that reads the files, since
+//     a generation that crashed before readiness may not have put them in force yet)
 //     → publish host.owner.json naming it → write `handshake.<generation>`
 //     → watch: its first heartbeat of this generation is readiness (`supervisor.ready.<generation>`: the
 //       executor passed its startup checks); every 10 s the heartbeat is checked, and one older than the
@@ -179,7 +182,7 @@ type End =
 
 type Exited = Readonly<{ code: number | null; signal: NodeJS.Signals | null }>;
 
-async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlOnly: boolean, staleMs: number): Promise<End> {
+async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlOnly: boolean, respawn: boolean, staleMs: number): Promise<End> {
   const dir = args.hostDir;
   const logs = executorLogs(dir, claim.generation);
   const out = openSync(logs.out, 'a');
@@ -187,7 +190,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const env = { ...process.env };
   delete env[ROLE_ENV];
   const argv = executorArgv({
-    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly,
+    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn,
   });
   const child = spawn(process.execPath, [EXECUTOR_ENTRY, ...argv], { stdio: ['ignore', out, err], env });
   closeSync(out);
@@ -290,15 +293,19 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
   const controlOnly = crashes.length >= CRASH_LIMIT;
   const evidence: AbsPath[] = [];
   saveState(dir, claim.generation, crashes, staleMs);
+  // Whether a generation of this supervisor was ready, so past settling the plan in force (`runChecks`).
+  let wasReady = false;
   for (let first = true; ; first = false) {
     emit({ kind: 'claimed', generation: claim.generation });
     crashPoint('sup.after-claim');
-    const end = await superviseOne(args, claim, first && controlOnly, staleMs);
+    const end = await superviseOne(args, claim, first && controlOnly, wasReady, staleMs);
     if (end.kind === 'intentional') {
       releaseHost(dir, claim);
       settleReadiness(dir, claim.generation, end.owed);
       return end.code;
     }
+    // A generation owes no readiness marker exactly when it wrote `ready` itself.
+    wasReady ||= end.owed.kind === 'none';
     crashes = [...recentCrashes(dir, Date.now()), isoTimeOf(new Date())];
     evidence.push(executorLogs(dir, claim.generation).err);
     saveState(dir, claim.generation, crashes, staleMs);

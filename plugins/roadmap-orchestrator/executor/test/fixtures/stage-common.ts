@@ -13,6 +13,7 @@ import { type OpenJournal, openJournal } from '../../src/core/log.ts';
 import { type LaunchFile, RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
+import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { Pinned, StageContext } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
@@ -108,21 +109,26 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const stateDir = tmpDir('stage-res');
   const tool = (cmd: 'probe' | 'teardown') => ({ argv: [process.execPath, fixture('res-tool.ts'), cmd, stateDir, DB], cwd: '.', env: { set: {}, pass: ['PATH'] } });
   const arc = arcFor();
-  const plan: PlanM1 = parsePlan({
+  const planPath = absPath(join(planDir, 'plan.json'));
+  writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: [] }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
-  });
+  }));
+  const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
   const unit = plan.units[0]!;
 
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
+  // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
+  recordPlan(journal, absPath(runDir), readInputFiles(planPath), null, []);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
+  const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const ctx: StageContext = {
-    journal, containment: sessionContainment, runDir: absPath(runDir), plan, repo: absPath(repo),
+    journal, containment: sessionContainment, runDir: absPath(runDir), plan: () => plan, repo: absPath(repo),
     hostDir: openHostDir(absPath(join(tmpDir('stage-host'), 'roadmap'))),
-    routing: resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null }),
+    routing: () => routing,
     hostEnv: { ...process.env, PATH: `${scenario.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(planDir),
   };
@@ -163,7 +169,7 @@ export function laneEvidencePattern(run: StageRun, lane: string): string {
 // ---------------------------------------------------------------------------------------------------
 // Readers
 
-export const worktreeOf = (run: StageRun): AbsPath => absPath(join(run.ctx.plan.worktreeRoot, run.ctx.plan.arc, U1));
+export const worktreeOf = (run: StageRun): AbsPath => absPath(join(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1));
 
 export function facts(run: StageRun): readonly Fact[] {
   return events(run.runDir).flatMap((e) => (e.type === 'fact' ? [e.fact] : []));

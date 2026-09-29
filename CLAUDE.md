@@ -43,5 +43,4 @@ fake-backend scripts behind PATH shims. Add no other test hooks to production co
 - Hard cutover applies to 0.x layouts only: a 0.x `.roadmap/` layout is refused at startup, never converted.
 - Actors are roles, never models, in every state file and record. Model ids appear only in routing
   configuration, which is revisioned; records carry `{role, routingRev}`.
-- Sonnet 5 is never a supported model.
 - No spend cap. A usage-limit error parks that backend arc-wide and waits for a manual `resume --backend`.

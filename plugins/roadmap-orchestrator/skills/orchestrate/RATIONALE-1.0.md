@@ -255,4 +255,19 @@ why. A lane that does not pass also gets its undeclared ignored output captured,
 fix round needs it. The capture is capped, and it skips build output and key material by default, because
 the run dir must not fill with dependency trees or keep credentials. Declaring `evidenceGlobs` stays the
 contract. Since the evidence globs grade nothing, the architect may correct them on a unit in flight without
-a spec revision.
+a spec revision (`roadmap apply`).
+
+## 16. Plan edits go in through `apply` [M1]
+
+**Evidence.** Before 1.0.0-dev.4 the plan and specs were read from the files: once per start for the plan, at
+every stage for a spec. Changing the plan meant `stop` and `start`, and a stop kills live backends and lanes. A
+crash restart loaded whatever the files held by then, and a removed unit that still had an open intent threw in
+recovery, which crash-looped the supervisor. Nothing stopped an in-flight spec edit; a stage read it mid-unit.
+
+**Decision.** The plan in force is a fold of the log: `roadmap apply` hashes the files, and the executor, at the
+next stage boundary, re-checks them, classifies every change against what each unit has done, keeps the bytes
+by hash and records a new revision. A refused change refuses the whole apply with every reason. Stages load the
+spec bytes the log names, so an unapplied edit has no effect, also after a restart. A spec revision of an
+in-flight unit waits for a boundary where the unit can re-enter plan-check with its work intact. Nothing live
+is killed for an edit. DESIGN's `admit` and `patch-spec` are edit classes of `apply`, so there is one way to
+change what the executor runs (owner ruling 2026-09-29).

@@ -5,15 +5,18 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { arcId, invocationId, opId } from '../src/core/ids.ts';
+import { arcId, invocationId, opId, routingRev, seatRev, specRev, unitId } from '../src/core/ids.ts';
+import { unkeptSpecReason } from '../src/core/upgrade.ts';
+import { evaluateApply } from '../src/commands/apply.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
 import { openJournal } from '../src/core/log.ts';
 import type { ProcIdentity, RecoveryLockClaim } from '../src/core/records.ts';
-import { type AbsPath, absPath, isoTimeOf, nonce } from '../src/core/values.ts';
+import { type AbsPath, absPath, isoTimeOf, nonce, repoPattern } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, RECOVERY_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
@@ -21,11 +24,11 @@ import { type PreviousArcVerdict, claimHost, releaseHost } from '../src/host/loc
 import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
-import { type StartChecks, type StartInput, gitCommonDir, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import { type StartChecks, type StartInput, gitCommonDir, routingOf, runChecks, smokeCheck } from '../src/preflight/checks.ts';
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
-import { type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
-import { makeRepo, revParse, tmpDir } from './helpers/repo.ts';
+import { type StartupRejection, type StartupRejectionKind, exitCodeFor, startupRejection } from '../src/preflight/startup.ts';
+import { git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
 import { type Step, writeScenario } from './helpers/scenario.ts';
 import { FAILED, claimRecord, residueEntry } from './fixtures/host-records.ts';
 
@@ -81,6 +84,7 @@ function input(s: Setup, reconcile: () => Promise<PreviousArcVerdict> = async ()
   return {
     repo: s.repo, planFile: s.planFile, profile: null, hostDir: s.hostDir,
     env: { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` },
+    respawn: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, reconcile),
   };
 }
@@ -187,6 +191,62 @@ describe('startup.rejections', () => {
     writeFileSync(join(t.planDir, 'rulings.md'), 'C-1 — One.\nC-1 — Two.\n');
     const [r] = refusedWith(await allChecks(input(t)), 'plan-invalid', 78);
     assert.equal(r?.kind === 'plan-invalid' ? r.problem.type : null, 'schema');
+  });
+
+  it('plan-invalid: a --plan file that does not exist (78)', T, async () => {
+    const s = setup();
+    const missing = absPath(join(s.planDir, 'nope.json'));
+    const [r] = refusedWith(await allChecks({ ...input(s), planFile: missing }), 'plan-invalid', 78);
+    assert.deepEqual(r?.kind === 'plan-invalid' ? r.problem : null, { type: 'schema', field: 'plan', detail: `${missing} does not exist` });
+  });
+
+  it('plan-invalid: an integrationBranch naming no local branch; a full ref or remote-tracking name is told to use the short name (78)', T, async () => {
+    const problemFor = async (integrationBranch: string, prepare: (s: Setup) => void = () => {}) => {
+      const s = setup();
+      prepare(s);
+      write({ ...s, plan: { ...s.plan, integrationBranch } });
+      const [r, ...rest] = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
+      assert.deepEqual(rest, []);
+      assert.ok(r?.kind === 'plan-invalid' && r.problem.type === 'unknown-integration-branch', JSON.stringify(r));
+      assert.deepEqual(startupRejection(JSON.parse(JSON.stringify(r)), 'r'), r, 'the persisted form reads back');
+      return r.problem;
+    };
+    const typo = await problemFor('mian');
+    assert.equal(typo.ref, 'refs/heads/mian');
+    assert.doesNotMatch(typo.detail, /short name/);
+    const full = await problemFor('refs/heads/main');
+    assert.equal(full.ref, 'refs/heads/refs/heads/main');
+    assert.match(full.detail, /short name of a local branch/);
+    const remote = await problemFor('origin/main', (s) => git(s.repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD'));
+    assert.equal(remote.ref, 'refs/heads/origin/main');
+    assert.match(remote.detail, /remote-tracking branch.*short name of a local branch/);
+  });
+
+  it('plan-invalid: a branch at roadmap or roadmap/<arc>, or an integrationBranch inside roadmap/<arc>/, blocks the unit branches (78)', T, async () => {
+    const conflicts = async (s: Setup) => refusedWith(await allChecks(input(s)), 'plan-invalid', 78)
+      .map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'unit-branch-conflict' ? r.problem.ref : JSON.stringify(r)));
+    const a = setup();
+    git(a.repo, 'branch', 'roadmap');
+    assert.deepEqual(await conflicts(a), ['refs/heads/roadmap']);
+    const b = setup();
+    git(b.repo, 'branch', `roadmap/${b.arc}`);
+    assert.deepEqual(await conflicts(b), [`refs/heads/roadmap/${b.arc}`]);
+    const c = setup();
+    git(c.repo, 'branch', `roadmap/${c.arc}/integration`);
+    write({ ...c, plan: { ...c.plan, integrationBranch: `roadmap/${c.arc}/integration` } });
+    const [r] = refusedWith(await allChecks(input(c)), 'plan-invalid', 78);
+    assert.equal(r?.kind === 'plan-invalid' && r.problem.type === 'unit-branch-conflict' ? r.problem.ref : null, `refs/heads/roadmap/${c.arc}/integration`);
+    assert.deepEqual(startupRejection(JSON.parse(JSON.stringify(r)), 'r'), r, 'the persisted form reads back');
+  });
+
+  it('a recovered arc\'s own unit branch roadmap/<arc>/<unit> is not a conflict', T, async () => {
+    const s = setup();
+    git(s.repo, 'branch', `roadmap/${s.arc}/u1`);
+    const result = await runChecks(input(s));
+    assert.equal(result.kind, 'passed', JSON.stringify(result));
+    if (result.kind !== 'passed') return;
+    result.journal.close();
+    releaseHost(s.hostDir, result.claim);
   });
 
   it('worktree-root-unusable: tmpfs, and not writable (78)', T, async () => {
@@ -327,3 +387,160 @@ describe('startup.rejections', () => {
   });
 
 });
+
+describe('startup.plan-in-force', () => {
+  /** Groups 1 to 4 only (no smoke), then the journal closed and the claim released: one start. */
+  async function start(i: StartInput): Promise<StartChecks> {
+    const result = await runChecks(i);
+    result.journal?.close();
+    if (result.claim !== null) releaseHost(i.hostDir, result.claim);
+    return result;
+  }
+  const appliedFacts = (s: Setup) => {
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    try {
+      const f = j.view.planApplied();
+      return { rev: f?.rev ?? null, command: f?.command ?? null, changes: f?.changes ?? [], units: j.view.plannedUnits() };
+    } finally {
+      j.close();
+    }
+  };
+  const addU2 = (s: Setup): void => {
+    writeFileSync(join(s.planDir, 'u2.json'), JSON.stringify({ ...s.spec, unit: 'u2' }));
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+  };
+
+  it('a first start puts the files in force as revision 1; a start whose files add a unit applies it (no command); a respawn runs the plan in force, ignoring an edit nobody applied', T, async () => {
+    const s = setup();
+    assert.equal((await start(input(s))).kind, 'passed');
+    assert.deepEqual(appliedFacts(s), { rev: 1, command: null, changes: [], units: ['u1'] });
+
+    addU2(s);
+    assert.equal((await start(input(s))).kind, 'passed');
+    assert.deepEqual(appliedFacts(s), { rev: 2, command: null, changes: [{ type: 'unit-added', unit: 'u2' }], units: ['u1', 'u2'] });
+
+    // An edit the respawn must not take: u3 added, nothing applied.
+    writeFileSync(join(s.planDir, 'u3.json'), JSON.stringify({ ...s.spec, unit: 'u3' }));
+    const plan = JSON.parse(JSON.stringify(s.plan)) as Raw;
+    writeFileSync(s.planFile, JSON.stringify({ ...plan, units: [...(plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }, { id: 'u3', spec: 'u3.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const respawn = await start({ ...input(s), respawn: { runDir: runDirOf(s), arc: arcId(s.arc) } });
+    assert.ok(respawn.kind === 'passed', JSON.stringify(respawn));
+    assert.deepEqual(respawn.context.plan.units.map((u) => u.id), ['u1', 'u2'], 'the respawn checked the plan in force');
+    assert.equal(appliedFacts(s).rev, 2, 'and applied nothing');
+  });
+
+  /**
+   * The log a release before plan revisions (1.0.0-dev.3) leaves: u1 dispatched on its spec file as it is now
+   * and parked at its gate, no plan-applied fact. It ran the live files.
+   */
+  function dev3Parked(s: Setup): void {
+    const dir = runDirOf(s);
+    mkdirSync(dir, { recursive: true });
+    const j = openJournal(dir, arcId(s.arc));
+    j.fact({
+      kind: 'dispatch',
+      record: {
+        unit: unitId('u1'), specRev: specRev(1), specSha256: fileSha256(absPath(join(s.planDir, 'u1.json'))), scope: [repoPattern('src/**')], riskFloor: 'low',
+        routingRev: routingRev('0123456789abcdef'), implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()),
+      },
+    });
+    j.fact({ kind: 'stage-outcome', unit: unitId('u1'), stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false });
+    j.close();
+  }
+  const u1Of = (s: Setup) => {
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    try {
+      return j.view.unit(unitId('u1'));
+    } finally {
+      j.close();
+    }
+  };
+  const editU1 = (s: Setup, over: Raw): void => writeFileSync(join(s.planDir, 'u1.json'), JSON.stringify({ ...s.spec, ...over }));
+
+  it('startup.upgrade-baseline: the first start of an arc 1.0.0-dev.3 ran records revision 1 as that release ran the files: a spec edited at its rev is the unit\'s spec, at rev + 1 a pending revision; another rev, or a unit with state missing from plan.json, refuses the start', T, async () => {
+    const evidence = setup();
+    dev3Parked(evidence);
+    editU1(evidence, { lanes: [{ ...lane(), evidenceGlobs: ['out/**'], state: 'active' }] });
+    const evidenceSha = fileSha256(absPath(join(evidence.planDir, 'u1.json')));
+    assert.equal((await start(input(evidence))).kind, 'passed');
+    assert.deepEqual(appliedFacts(evidence), { rev: 1, command: null, changes: [{ type: 'spec', unit: 'u1', edit: 'evidence', specRev: 1, specSha256: evidenceSha }], units: ['u1'] });
+    assert.deepEqual([u1Of(evidence).spec, u1Of(evidence).pendingRevision], [{ rev: 1, sha256: evidenceSha }, null]);
+
+    const revision = setup();
+    dev3Parked(revision);
+    editU1(revision, { rev: 2, facts: [{ id: 'F1', text: 'A fact.', state: 'active' }] });
+    const revisionSha = fileSha256(absPath(join(revision.planDir, 'u1.json')));
+    assert.equal((await start(input(revision))).kind, 'passed');
+    assert.deepEqual(appliedFacts(revision).changes, [{ type: 'spec', unit: 'u1', edit: 'revision', specRev: 2, specSha256: revisionSha }]);
+    assert.deepEqual([u1Of(revision).spec?.rev, u1Of(revision).pendingRevision], [1, { rev: 2, sha256: revisionSha, command: null }]);
+
+    const skipped = setup();
+    dev3Parked(skipped);
+    editU1(skipped, { rev: 3 });
+    const refused = await start(input(skipped));
+    assert.deepEqual(refused.kind === 'refused' ? refused.rejections : refused.kind, [{
+      kind: 'plan-change-refused', reasons: [`unit u1: its spec ${join(skipped.planDir, 'u1.json')} is at rev 3, but the unit's recorded rev is 1; set rev 1 or 2`],
+    }]);
+    assert.equal(appliedFacts(skipped).rev, null, 'no revision recorded');
+
+    const dropped = setup();
+    dev3Parked(dropped);
+    writeFileSync(join(dropped.planDir, 'u2.json'), JSON.stringify({ ...dropped.spec, unit: 'u2' }));
+    writeFileSync(dropped.planFile, JSON.stringify({ ...dropped.plan, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const gone = await start(input(dropped));
+    assert.ok(gone.kind === 'refused' && gone.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(gone));
+    assert.match(gone.rejections[0].reasons.join('\n'), /^unit u1 has run in this arc but .*plan\.json no longer lists it/);
+  });
+
+  it('startup.upgrade-unkept-spec: an edit of a unit whose dispatched spec was never kept is refused with the reason, not compared with itself; the dry run of it writes nothing', T, async () => {
+    const s = setup();
+    dev3Parked(s);
+    editU1(s, { rev: 2, facts: [{ id: 'F1', text: 'A fact.', state: 'active' }] });
+    assert.equal((await start(input(s))).kind, 'passed');
+    // Another rev 2 than the pending one: the recorded rev 1 spec was never kept, so nothing to compare it to.
+    editU1(s, { rev: 2, facts: [{ id: 'F1', text: 'Another fact.', state: 'active' }] });
+    const inputs = join(runDirOf(s), 'inputs');
+    const before = readdirSync(inputs).sort();
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    let verdict: Awaited<ReturnType<typeof evaluateApply>>;
+    try {
+      verdict = await evaluateApply({
+        runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, repo: s.repo, planFile: s.planFile, profile: 'default',
+        resolve: (plan) => routingOf('default', s.repo, plan), laneEnv: process.env, manifest: null, expectRev: null,
+      });
+    } finally {
+      j.close();
+    }
+    assert.deepEqual(verdict, { kind: 'rejected', reasons: [unkeptSpecReason('u1', join(s.planDir, 'u1.json'))] });
+    assert.deepEqual(readdirSync(inputs).sort(), before, 'the dry run kept nothing');
+    const refused = await start(input(s));
+    assert.deepEqual(refused.kind === 'refused' ? refused.rejections : refused.kind, [{ kind: 'plan-change-refused', reasons: [unkeptSpecReason('u1', join(s.planDir, 'u1.json'))] }]);
+  });
+
+  it('plan-change-refused: a start whose files drop a started unit and move the worktree root is refused with every reason (78); the plan in force stays', T, async () => {
+    const s = setup();
+    assert.equal((await start(input(s))).kind, 'passed');
+    addU2(s);
+    assert.equal((await start(input(s))).kind, 'passed');
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    j.fact({ kind: 'stage-outcome', unit: 'u1' as never, stage: 'plan-check', attempt: 1, outcome: 'approve', class: 'advance', chargeable: false });
+    j.close();
+    const moved = tmpDir('st-wt2');
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, worktreeRoot: moved, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const result = await runChecks(input(s));
+    const rejections = refusedWith(result as Checked, 'plan-change-refused', 78);
+    assert.ok(result.kind === 'refused' && result.claim !== null);
+    releaseHost(s.hostDir, result.claim);
+    assert.deepEqual(rejections, [{
+      kind: 'plan-change-refused',
+      reasons: [
+        `worktreeRoot may never change (in force: ${String(s.plan['worktreeRoot'])}; plan.json: ${moved})`,
+        'unit u1 has started; it cannot be removed',
+        'the units that have started (u1) must stay first in plan order, in their order',
+      ],
+    }]);
+    assert.equal(startupRejection(JSON.parse(JSON.stringify(rejections[0])), 'r').kind, 'plan-change-refused', 'the row round-trips');
+    assert.equal(appliedFacts(s).rev, 2);
+  });
+});
+

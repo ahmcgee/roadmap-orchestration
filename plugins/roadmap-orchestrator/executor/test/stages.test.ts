@@ -3,13 +3,14 @@
 // deterministic fixtures of this step (redirect then approve; red lane → fix round reading the evidence
 // dir) and the named tests session.judgment-never-resumes, redirect.no-widen, backend.usage-limit,
 // stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids,
-// rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh; and the arc-1 feedback
-// behaviour: plan-check.checkouts, plan-check.prior-round, plan-check.cites, library.withdrawn-not-embedded.
+// rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh,
+// rounds.crash-lost-inherits-deadline; and the arc-1 feedback behaviour: plan-check.checkouts, plan-check.prior-round, plan-check.cites, library.withdrawn-not-embedded.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, resourceName } from '../src/core/ids.ts';
+import { invocationId, opKey, resourceName, sha256 } from '../src/core/ids.ts';
+import { isoTimeOf } from '../src/core/values.ts';
 import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
@@ -258,6 +259,32 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
   assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
 });
 
+test('rounds.crash-lost-inherits-deadline: a build a crash left lost without tree effects re-runs as the next attempt under the deadline the lost call had, as the live retry does', T, async () => {
+  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] })] });
+  await planCheck(run.ctx, run.unit);
+  const dispatch = seated(implementerDispatch(run.ctx, U1));
+  const crashed = { type: 'stage', unit: U1, stage: 'build', attempt: run.journal.view.unit(U1).counters.attempts + 1 } as const;
+  const deadlineAt = isoTimeOf(new Date(Date.now() + 20 * 60_000));
+  // What recovery leaves of a build whose runner died before its workload started: the spawn closed lost
+  // without tree effects, and no stage outcome for its attempt.
+  const { op } = run.journal.begin({
+    kind: 'proc.spawn', key: opKey(`backend:${U1}:build`), parent: crashed, deadlineAt,
+    body: () => ({
+      expect: { subject: { purpose: 'backend', role: 'build', tier: dispatch.tier, routingRev: dispatch.routingRev, unit: U1, attempt: crashed.attempt }, launchSha256: sha256('0'.repeat(64)) },
+      post: null,
+    }),
+  });
+  run.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
+
+  const b = await build(run.ctx, run.unit, { kind: 'fresh' });
+  assert.equal(b.outcome.kind, 'success');
+  assert.equal(b.attempt, crashed.attempt + 1, 'a new attempt');
+  const rerun = spawnIntents(run).at(-1)!;
+  assert.notEqual(rerun.op, op);
+  assert.equal(rerun.deadlineAt, deadlineAt, 'the lost call\'s deadline, not a fresh build\'s');
+  assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
+});
+
 test('rounds.gate-revise: the verification checkout is removed first, then the session resumes with the directives', T, async () => {
   const fixed = { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' };
   const directive = 'Name the parameters augend and addend.';
@@ -406,7 +433,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   assert.equal(live.counters.retries['plan-check'], 1);
   assert.deepEqual(outcomeFacts(run).map((f) => f.kind === 'stage-outcome' && `${f.stage}#${f.attempt}`), ['plan-check#1', 'plan-check#2', 'build#3']);
   run.journal.close();
-  const reopened = openJournal(run.runDir, run.ctx.plan.arc);
+  const reopened = openJournal(run.runDir, run.ctx.plan().arc);
   try {
     assert.deepEqual(reopened.view.unit(U1), live, 'a restarted executor derives the same unit state');
   } finally {
@@ -449,7 +476,7 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
     assert.ok(!MODEL_IDS.some((m) => JSON.stringify({ ...l, argv: [] }).includes(m)), 'only inside argv');
     // Only the implementer gets the owner label: a judgment holds no resource.
     const build = i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build';
-    assert.equal(l.env['RESOURCE_OWNER'], build ? `${run.ctx.plan.arc}/${U1}` : undefined);
+    assert.equal(l.env['RESOURCE_OWNER'], build ? `${run.ctx.plan().arc}/${U1}` : undefined);
     const base = ['HOME', 'PATH', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined));
     assert.deepEqual(Object.keys(l.env).sort(), (build ? [...base, 'RESOURCE_OWNER'] : base).sort());
   }
@@ -461,12 +488,12 @@ function setSteps(run: StageRun, steps: readonly Step[]): void {
 }
 
 const planCheckTree = (run: StageRun, attempt: number, branch = false): string =>
-  join(run.ctx.plan.worktreeRoot, run.ctx.plan.arc, `${U1}.plan-check-${attempt}${branch ? '-branch' : ''}`);
+  join(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, `${U1}.plan-check-${attempt}${branch ? '-branch' : ''}`);
 
 test('plan-check.checkouts: the judge reads a detached checkout of the tip and one of the unit branch, both removed once read; its approving notes reach the build', T, async () => {
   const run = setupUnit({ steps: [] });
   // The unit already has a branch, one commit past the tip (an adopted branch).
-  const branch = unitBranch(run.ctx.plan.arc, U1).slice('refs/heads/'.length);
+  const branch = unitBranch(run.ctx.plan().arc, U1).slice('refs/heads/'.length);
   git(run.repo, 'checkout', '--quiet', '-b', branch);
   writeFileSync(join(run.repo, 'src', 'extra.js'), 'export const extra = 1;\n');
   git(run.repo, 'add', '--all');

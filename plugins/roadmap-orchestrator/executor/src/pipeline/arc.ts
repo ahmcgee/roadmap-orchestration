@@ -1,4 +1,5 @@
-// The serial arc (M1): the plan's units in plan order, one at a time, each through the unit driver.
+// The serial arc (M1): the plan's units in plan order, one at a time, each through the unit driver. The plan
+// is the plan in force, read again for each next unit, so a unit an apply adds runs in its turn.
 //
 // Terminal predicate (plan "Salvage", DESIGN-1.0.md §2.10): every unit merged, or parked with an open
 // blocking needs-user. M1 has no DAG, so a parked unit does not stop the ones after it, unless one names it
@@ -12,7 +13,7 @@
 // rather than when the arc returns.
 import type { UnitId } from '../core/ids.ts';
 import type { StageContext } from './dispatch.ts';
-import { type UnitResult, runUnit } from './unit.ts';
+import { type AtBoundary, type UnitResult, noBoundary, runUnit } from './unit.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 
 export type Settled = Readonly<{ unit: UnitId; result: Extract<UnitResult, Readonly<{ kind: 'merged' | 'parked' }>> }>;
@@ -27,10 +28,18 @@ export type ArcResult =
 /** Called for each unit the arc finds parked, before the next unit runs; the writer raises each item once. */
 export type OnParked = (unit: UnitId, needsUser: NeedsUserContent) => void;
 
-export async function runArc(ctx: StageContext, signal: AbortSignal, onParked: OnParked): Promise<ArcResult> {
+/**
+ * `atBoundary` runs at every stage boundary of every unit (the executor applies pending mutations there).
+ * The next unit is the first in the plan in force this pass has not run to a result yet.
+ */
+export async function runArc(ctx: StageContext, signal: AbortSignal, onParked: OnParked, atBoundary: AtBoundary = noBoundary): Promise<ArcResult> {
   const settled: Settled[] = [];
-  for (const unit of ctx.plan.units) {
-    const result = await runUnit(ctx, unit, signal);
+  const ran = new Set<UnitId>();
+  for (;;) {
+    const unit = ctx.plan().units.find((u) => !ran.has(u.id));
+    if (unit === undefined) return { kind: 'terminal', units: settled };
+    ran.add(unit.id);
+    const result = await runUnit(ctx, unit, signal, atBoundary);
     switch (result.kind) {
       case 'held':
         return { kind: 'held', unit: unit.id, needsUser: result.needsUser, settled };
@@ -44,5 +53,4 @@ export async function runArc(ctx: StageContext, signal: AbortSignal, onParked: O
         settled.push({ unit: unit.id, result });
     }
   }
-  return { kind: 'terminal', units: settled };
 }

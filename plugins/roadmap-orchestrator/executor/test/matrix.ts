@@ -67,6 +67,8 @@ export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
+export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
+export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -103,6 +105,7 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'salvage.after-copy-out',
     'salvage.after-commit-tree', 'salvage.after-cas', 'salvage.after-read-tree', 'candidate.after-commit-tree', 'snapshot.after-commit-tree',
+    'plan.apply.after-inputs',
   ],
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'salvage.act-end', 'candidate.act-end', 'ff.act-end',
@@ -122,7 +125,7 @@ function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[
 const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the torn or unwritten record is absent after the restart (a torn line is discarded with one tail-discarded fact); a lost done leaves its op open for its reconciler, a lost intent never began; the arc ends as uncrashed',
   B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
-  B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; the arc ends as uncrashed',
+  B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; a start cut short between keeping the plan\'s bytes and its plan-applied fact records revision 1 on the respawn; the arc ends as uncrashed',
   B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the arc ends as uncrashed',
   B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
 };
@@ -487,6 +490,47 @@ export const MATRIX: readonly Row[] = [
         recovery: 'effect complete: every postcondition already holds, so nothing is applied twice (one ack file, one ack fact, one disposition, one teardown); the applied receipt is written if missing, or, present and naming the op, decides alone; done reconciled',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // An `apply` adding a unit, applied by a child (test/fixtures/apply-child.ts); recovery finishes it.
+    row: PLAN_APPLY,
+    test: 'test/apply.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler evaluates the files again and puts them in force once (one plan-applied fact, one applied receipt)',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['plan.apply.after-inputs'],
+        recovery: 'the bytes are kept, the fact is not written: the reconciler evaluates again to the same verdict, keeps the same bytes and writes the one fact, then the receipt',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'the fact is written: the reconciler finds it (the postcondition) and writes the applied receipt if missing, or reads it; no second fact',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // A finished one-unit arc, then a unit added and `roadmap start`: its first executor crashes before its
+    // plan revision's fact, so no generation of the supervisor was ready yet.
+    row: PLAN_START,
+    test: 'test/apply-exec.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'a start records its plan revision with no op: keeping the bytes (B3) and the plan-applied fact (journal.append) are its only steps' },
+      B3: {
+        status: 'crash',
+        labels: ['plan.apply.after-inputs'],
+        recovery: 'the bytes are kept, the fact is not written, and no generation was ready: the supervisor\'s next executor is a start, not a --respawn, so it classifies the files again and records the revision once; the added unit runs and the arc ends complete with both units merged',
+      },
+      B4: { status: 'excluded', why: 'the plan-applied fact is one journal append (journal.append); once it is written the plan in force is the new one, so a respawn runs it' },
+      B5: { status: 'excluded', why: 'after the fact the start goes on to its smoke and readiness: the whole-pipeline rows crash what follows' },
     },
   },
   {
