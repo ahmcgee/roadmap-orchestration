@@ -22,9 +22,9 @@ import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync 
 import { tmpdir } from 'node:os';
 import { join, matchesGlob } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
+import { type CommitInputs, type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type Sha, type Sha256Hex, sha256 } from '../core/ids.ts';
+import { type Sha, type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, bool, literal, nat, nullable, object, oneOf, sortedBy, version } from '../core/validate.ts';
@@ -234,11 +234,12 @@ function buildTree(worktree: AbsPath, classification: SalvageClassification): Sh
 /**
  * Brings the real index and the worktree to the new commit: read-tree it into the index, restore rejected
  * tracked paths from it and remove rejected untracked ones (their content is already copied out).
- * Idempotent, so recovery finishes an interrupted run by calling it again.
+ * Idempotent, so recovery finishes an interrupted run by calling it again. `unit`: the salvaging unit, for crash
+ * attribution (G8).
  */
-export function finishIndexReconcile(worktree: AbsPath, next: Sha, rejected: RejectedManifest): void {
+export function finishIndexReconcile(worktree: AbsPath, next: Sha, rejected: RejectedManifest, unit: UnitId | undefined): void {
   readTree(worktree, next);
-  crashPoint('salvage.after-read-tree');
+  crashPoint('salvage.after-read-tree', unit);
   const tracked = rejected.entries.filter((e) => e.tracked).map((e) => `${e.path}\0`);
   if (tracked.length > 0) {
     git(worktree, ['--literal-pathspecs', 'checkout', next, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: tracked.join('') });
@@ -306,20 +307,20 @@ export function rederiveInputs(rules: SalvageRules, intent: IntentOf<'salvage.co
 function act(rules: SalvageRules, intent: IntentOf<'salvage.commit'>): void {
   const { worktree, branch, old, commit } = intent.expect;
   const next = intent.post.new;
-  crashPoint('salvage.act-start');
+  crashPoint('salvage.act-start', parentUnit(intent.parent));
   const at = refTarget(worktree, branch);
   if (at !== old) throw new SalvageStateError(worktree, `${branch} at ${at ?? 'nothing'}, recorded old ${old}`);
   const c = rederiveInputs(rules, intent);
   if (typeof c === 'string') throw new SalvageStateError(worktree, c);
   copyOut(rejectedDir(rules, intent.expect.rejectedManifestSha256), worktree, c.rejected);
-  crashPoint('salvage.after-copy-out');
+  crashPoint('salvage.after-copy-out', parentUnit(intent.parent));
   const made = commitTree(worktree, commit);
   if (made !== next) throw new SalvageStateError(worktree, `commit ${made}, recorded ${next}`);
-  crashPoint('salvage.after-commit-tree');
+  crashPoint('salvage.after-commit-tree', parentUnit(intent.parent));
   updateRefCas(worktree, branch, next, old);
-  crashPoint('salvage.after-cas');
-  finishIndexReconcile(worktree, next, c.rejected);
-  crashPoint('salvage.act-end');
+  crashPoint('salvage.after-cas', parentUnit(intent.parent));
+  finishIndexReconcile(worktree, next, c.rejected, parentUnit(intent.parent));
+  crashPoint('salvage.act-end', parentUnit(intent.parent));
 }
 
 function verify(intent: IntentOf<'salvage.commit'>): OpOutcome['salvage.commit'] {

@@ -10,7 +10,7 @@
 import { existsSync, globSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, matchesGlob } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpOutcome } from '../core/events.ts';
+import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type OpId, type Sha256Hex, sha256 } from '../core/ids.ts';
 import type { IntentBody, JournalView } from '../core/interfaces.ts';
@@ -189,16 +189,16 @@ function prepare(request: SnapshotRequest): Promise<IntentBody<'evidence.snapsho
 
 function act(intent: IntentOf<'evidence.snapshot'>): Promise<void> {
   const { source, globs, dest } = intent.expect;
-  crashPoint('evidence.act-start');
+  crashPoint('evidence.act-start', parentUnit(intent.parent));
   const files = listEvidence(source, globs);
   durableMkdir(join(dest, FILES_DIR));
   for (const entry of files) {
     copyIfChanged(join(source, entry.path), filePath(dest, entry.path), entry.sha256);
-    crashPoint('evidence.after-partial-copy');
+    crashPoint('evidence.after-partial-copy', parentUnit(intent.parent));
   }
   const manifest: EvidenceManifest = { v: SCHEMA_VERSION, complete: true, files };
   durableWrite(manifestPath(dest), canonicalJson(manifest));
-  crashPoint('evidence.act-end');
+  crashPoint('evidence.act-end', parentUnit(intent.parent));
   return Promise.resolve();
 }
 

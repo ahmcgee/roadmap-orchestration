@@ -995,4 +995,10 @@ breaker{target} | base-red | blocking-item{id, reason}`. `CommandScope = arc | u
 
 **Crash selector (G8).** The seam stays `crashPoint(label, unit?)`. A trigger file is `{label, occurrence, unit?}`;
 with `unit` only the calls passing that unit count (the plan's `<label>@<unit>:<n>`), without it every call of
-the label counts, as in M1.
+the label counts, as in M1. A call site passes the unit whose op reaches it (`parentUnit`, `recordUnit` in
+`src/core/events.ts`): a journal append its record's (an intent's stage parent, followed through op parents; a
+done's or abort's op's; a fact's own `unit`, a usage fact's invocation's op's); a spawn, launch or kill its spawn's; a
+resource transition, retry or residue its holder's; a git, spec or needs-user op its intent's stage parent;
+`unit.after-stage` its unit. Process- and arc-level labels (runner, supervisor, host, recovery, probe, command,
+plan apply, log open, `kill.after-cancel`) pass none. The concurrent crash matrix crashes by unit
+(`test/concurrent-matrix.test.ts`).

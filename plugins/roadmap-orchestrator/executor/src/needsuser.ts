@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
-import type { IntentOf, Parent } from './core/events.ts';
+import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
 import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
 import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
@@ -74,9 +74,9 @@ export function publishNeedsUser(runDir: AbsPath, intent: IntentOf<'needsuser.ra
   const staged = stagedPath(runDir, id);
   if (existsSync(path)) throw new Error(`needs-user ${path} already exists; it is write-once`);
   if (fileSha(staged) !== intent.post.sha256) throw new Error(`staged needs-user ${staged} does not hash to the intent's ${intent.post.sha256}`);
-  crashPoint('needsuser.raise.before-publish');
+  crashPoint('needsuser.raise.before-publish', parentUnit(intent.parent));
   durableRename(staged, path);
-  crashPoint('needsuser.raise.after-publish');
+  crashPoint('needsuser.raise.after-publish', parentUnit(intent.parent));
 }
 
 /**

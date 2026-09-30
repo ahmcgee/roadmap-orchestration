@@ -5,7 +5,7 @@ import type { Buffer } from 'node:buffer';
 import {
   type ArcId, type CommandId, type EdgeId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type PlanRev,
   type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, edgeId, invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseOpId,
+  INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, edgeId, invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseInvocationId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
 } from './ids.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
@@ -482,6 +482,38 @@ export type BackendParkClass = (typeof BACKEND_PARK_CLASSES)[number];
 export const RETRYABLE_BACKEND_PARKS = ['capacity', 'outage'] as const satisfies readonly BackendParkClass[];
 
 export type LogRecord = IntentRecord | DoneRecord | AbortRecord | FactRecord;
+
+/**
+ * The unit an op works for, for crash attribution (G8: `crashPoint(label, unit)`): a stage parent's unit,
+ * followed through op parents (a kill's spawn) when `latestIntent` is given; undefined for an arc or command op.
+ */
+export function parentUnit(parent: Parent, latestIntent?: (op: OpId) => IntentRecord): UnitId | undefined {
+  if (parent.type === 'stage') return parent.unit;
+  if (parent.type === 'op' && latestIntent !== undefined) return parentUnit(latestIntent(parent.op).parent, latestIntent);
+  return undefined;
+}
+
+/**
+ * A log record's unit, for crash attribution (G8): an intent's parent's, a done's or abort's op's, a fact's own
+ * `unit`, a usage fact's invocation's op's; undefined for arc-level records. `latestIntent` reads the fold the record
+ * is appended to (a done's intent is already in it).
+ */
+export function recordUnit(record: LogRecord, latestIntent: (op: OpId) => IntentRecord): UnitId | undefined {
+  switch (record.type) {
+    case 'intent':
+      return parentUnit(record.parent, latestIntent);
+    case 'done':
+    case 'abort':
+      return parentUnit(latestIntent(record.op).parent, latestIntent);
+    case 'fact': {
+      const f = record.fact;
+      if ('unit' in f && typeof f.unit === 'string') return f.unit;
+      // A usage fact always follows its spawn's intent; a backend park's `inv` is only a pointer, never followed.
+      if (f.kind === 'meter' || f.kind === 'usage-unavailable') return parentUnit(latestIntent(parseInvocationId(f.inv).op).parent, latestIntent);
+      return undefined;
+    }
+  }
+}
 
 /** `prev` is null exactly on seq 1. */
 export type Envelope = Readonly<{ v: SchemaVersion; seq: number; prev: Sha256Hex | null; at: IsoTime; arc: ArcId }>;

@@ -20,7 +20,10 @@ import { writeResult } from '../backends/adapter.ts';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { Fact, IntentOf, MeterSubject, OpExpect, OpOutcome, Parent, RecoveredBy, ResultSummary, SpawnSubject } from '../core/events.ts';
+import {
+  type Fact, type IntentOf, type MeterSubject, type OpExpect, type OpOutcome, type Parent, type RecoveredBy, type ResultSummary, type SpawnSubject,
+  parentUnit,
+} from '../core/events.ts';
 import {
   type InvocationId, type OpId, type OpKey, type RoutingRev, type Sha256Hex, invocationDirName, invocationId, opKey,
   parseInvocationId, parseOpId, sha256,
@@ -93,11 +96,12 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
     ? journal.begin({ kind: 'proc.spawn', key: origin.key, parent: origin.parent, deadlineAt: origin.deadlineAt, body: (op, inv) => body(op, inv, origin.deadlineAt) })
     : journal.retry(origin.op, 'proc.spawn', (inv) => body(origin.op, inv, spawnDeadline(journal.view, origin.op)));
   if (launch === undefined) throw new Error(`the journal opened ${durable.inv} without asking for its body`);
-  crashPoint('spawn.after-intent');
+  const unit = parentUnit(spawnIntent(journal.view, durable.op).parent, (op) => journal.view.latestIntent(op));
+  crashPoint('spawn.after-intent', unit);
 
-  const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch);
+  const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit);
   await awaitRunner(handle);
-  crashPoint('spawn.after-runner-exit');
+  crashPoint('spawn.after-runner-exit', unit);
   const settled = await settle({ journal, containment, runDir: spec.runDir }, spawnIntent(journal.view, durable.op), 'live');
   return settled.outcome;
 }
@@ -127,6 +131,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   const inv = invocationId(intent.op, intent.ordinal);
   const dir = invocationDir(ctx.runDir, inv);
   const files = runnerFiles(dir, inv);
+  const unit = parentUnit(intent.parent, (op) => ctx.journal.view.latestIntent(op));
   // Recovery kills by op, which also reaches stray workloads of earlier ordinals; the runner of every
   // ordinal is dead by then (the latest was just checked, earlier ones were closed lost or aborted).
   const target: KillTarget = { inv, scope: mode === 'recovered' ? 'op' : 'invocation', reason: 'recovery' };
@@ -143,7 +148,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     if (launch === null) throw new Error(`${dir}: exit.json without launch.json`);
     if (launchSha256(launch) !== intent.expect.launchSha256) throw new Error(`${dir}/launch.json does not hash to the intent's launchSha256 ${intent.expect.launchSha256}`);
     const result = writeResult(dir);
-    crashPoint('spawn.after-result');
+    crashPoint('spawn.after-result', unit);
     outcome = { kind: 'result', op: intent.op, inv, result, resultSha256: sha256(sha256Hex(readFileSync(resultPath))) };
     usage = result.type === 'backend' ? result.usage : null;
     recoveredBy = mode === 'live' ? null : mode === 'adopted' ? 'adopted' : hadResult ? 'reconciled' : 'redone';
@@ -159,9 +164,9 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     if (usage === null) throw new Error(`${inv}: a backend spawn produced a command result`);
     ctx.journal.fact(usageFact(charge, inv, usage));
   }
-  crashPoint('spawn.after-usage');
+  crashPoint('spawn.after-usage', unit);
   ctx.journal.done(intent.op, 'proc.spawn', doneOutcome(outcome), recoveredBy);
-  crashPoint('spawn.after-done');
+  crashPoint('spawn.after-done', unit);
   return { outcome, recoveredBy };
 }
 
@@ -301,11 +306,12 @@ export async function killWorkload(ctx: ProcContext, target: KillTarget): Promis
     deadlineAt: null,
     body: () => ({ expect: target, post: null }),
   });
-  crashPoint('kill.after-intent');
+  const unit = parentUnit({ type: 'op', op: spawnOp }, (o) => ctx.journal.view.latestIntent(o));
+  crashPoint('kill.after-intent', unit);
   await quiesce(ctx, target);
-  crashPoint('kill.after-quiesced');
+  crashPoint('kill.after-quiesced', unit);
   ctx.journal.done(op, 'proc.kill', { kind: 'quiesced' }, null);
-  crashPoint('kill.after-done');
+  crashPoint('kill.after-done', unit);
 }
 
 /** Kills of one invocation for one reason must not overlap; a pause and a recovery kill of it may. */

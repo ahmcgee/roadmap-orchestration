@@ -484,6 +484,6 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
     }
     const s = await step(ctx, unit);
     if (s.kind !== 'continue') return s;
-    crashPoint('unit.after-stage');
+    crashPoint('unit.after-stage', unit.id);
   }
 }

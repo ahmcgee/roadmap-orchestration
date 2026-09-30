@@ -19,7 +19,7 @@ import { TextDecoder } from 'node:util';
 import { crashPoint } from './crash.ts';
 import {
   type AbortCode, type Event, type Fact, type IntentOf, type IntentRecord, type LogRecord, type OpKind, type OpOutcome,
-  type RecoveredBy, parseEventLine, prevHash, serializeEvent,
+  type RecoveredBy, parseEventLine, prevHash, recordUnit, serializeEvent,
 } from './events.ts';
 import { CounterRegressionError, appendSync, durableWrite, exclusiveCreate } from './fsx.ts';
 import { type ArcId, type InvocationId, type OpId, type Sha256Hex, invocationId, opId, sha256 } from './ids.ts';
@@ -302,16 +302,17 @@ class FileJournal implements OpenJournal {
     const event = parseEventLine(line.slice(0, -1));
     const bytes = Buffer.from(line, 'utf8');
     this.#fold.apply(event, prevHash(bytes));
+    const unit = recordUnit(event, (op) => this.#fold.latestIntent(op));
     this.#broken = true;
-    crashPoint('log.append.before-write');
+    crashPoint('log.append.before-write', unit);
     // Two writes so a crash test can stop between them and leave a torn line. The first half's fsync is
     // one extra fsync per append; appends are rare enough that this costs nothing that matters.
     const half = bytes.length >> 1;
     appendSync(this.#fd, bytes.subarray(0, half));
-    crashPoint('log.append.after-partial-write');
+    crashPoint('log.append.after-partial-write', unit);
     appendSync(this.#fd, bytes.subarray(half));
     this.#broken = false;
-    crashPoint('log.append.after-fsync');
+    crashPoint('log.append.after-fsync', unit);
     this.refreshStateCache();
     return seq;
   }

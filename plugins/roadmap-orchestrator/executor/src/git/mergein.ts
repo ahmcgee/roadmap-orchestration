@@ -11,7 +11,7 @@
 // Every state is classified by HEAD and MERGE_HEAD (`classifyMergein`), which verify and the reconciler
 // share. The diff base after a merge-in is `diffBase(T, branch)` (transient.ts), which is then T.
 import { crashPoint } from '../core/crash.ts';
-import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
+import { type CommitInputs, type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import { type Sha, sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { type AbsPath, type RefName, type RepoPath, gitDate, repoPath } from '../core/values.ts';
@@ -174,7 +174,7 @@ const MERGE_IDENTITY: Identity = { author: MERGE_SIGNATURE, committer: MERGE_SIG
 
 function act(intent: IntentOf<'mergein.prepare'>): void {
   const { worktree, branch, old, integrationTip, merge } = intent.expect;
-  crashPoint('mergein.act-start');
+  crashPoint('mergein.act-start', parentUnit(intent.parent));
   const state = classifyMergein(intent);
   if (state.kind !== 'untouched') throw new MergeinStateError(worktree, `act on a worktree that is ${state.kind}${state.kind === 'foreign' ? ` (${state.detail})` : ''}`);
   if (merge.type === 'clean') {
@@ -182,16 +182,16 @@ function act(intent: IntentOf<'mergein.prepare'>): void {
     const next = intent.post.new;
     const made = commitTree(worktree, merge.commit);
     if (made !== next) throw new MergeinStateError(worktree, `commit ${made}, recorded ${next}`);
-    crashPoint('mergein.after-commit-tree');
+    crashPoint('mergein.after-commit-tree', parentUnit(intent.parent));
     updateRefCas(worktree, branch, next, old);
-    crashPoint('mergein.after-cas');
+    crashPoint('mergein.after-cas', parentUnit(intent.parent));
     finishCleanMerge(worktree, old, next);
   } else {
     // Exit 1 is the expected conflict; the recorded conflict set is checked by verify.
     gitRun(worktree, ['merge', '--no-commit', '--no-ff', integrationTip], { okCodes: [0, 1], identity: MERGE_IDENTITY });
-    crashPoint('mergein.after-merge');
+    crashPoint('mergein.after-merge', parentUnit(intent.parent));
   }
-  crashPoint('mergein.act-end');
+  crashPoint('mergein.act-end', parentUnit(intent.parent));
 }
 
 function verify(intent: IntentOf<'mergein.prepare'>): OpOutcome['mergein.prepare'] {

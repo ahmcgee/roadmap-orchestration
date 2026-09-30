@@ -292,6 +292,12 @@ export type RunOptions = Readonly<{
   whileDown?: (r: ExecRun) => void;
   /** Extra arguments to `roadmap start`. */
   startArgs?: readonly string[];
+  /**
+   * Every step but the startup smoke is keyed to a unit (concurrent units, helpers/scenario.ts): the consumed
+   * steps are then not a prefix of the file, so the restarted executor's smoke steps are appended instead of
+   * inserted after the calls made so far (the fakes take unkeyed steps in file order, keyed ones per unit).
+   */
+  keyed?: true;
 }>;
 
 export type Supervised = Readonly<{ start: Exit; firstGeneration: number | null }>;
@@ -349,7 +355,7 @@ export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Se
       if (opts.trigger !== undefined && !crashHandled && existsSync(`${opts.trigger}.fired`)) {
         crashHandled = true;
         if (supervisor === null || generation === null) throw new Error('the crash trigger fired before the watcher saw the supervisor\'s claim');
-        await restartAdjusted(r, supervisor, generation, opts.whileDown);
+        await restartAdjusted(r, supervisor, generation, opts.whileDown, opts.keyed === true);
       }
       await sleep(POLL_MS);
     }
@@ -380,7 +386,7 @@ export async function supervisedRun(laid: Laid, opts: RunOptions = {}, fired: Se
  * restart (pm-stop.ts), let every backend call the dead executor started reach the fake, adjust the
  * scenario for the restarted executor's smoke, do `whileDown`, then let the supervisor go on.
  */
-async function restartAdjusted(r: ExecRun, supervisor: ProcIdentity, generation: number, whileDown: RunOptions['whileDown']): Promise<void> {
+async function restartAdjusted(r: ExecRun, supervisor: ProcIdentity, generation: number, whileDown: RunOptions['whileDown'], keyed: boolean): Promise<void> {
   try {
     await until(() => statOf(supervisor.pid)?.state === 'T', CRASH_WAIT_MS, `supervisor ${supervisor.pid} to stop itself after generation ${generation}'s crash`);
     const claim = claimOf(r);
@@ -398,7 +404,8 @@ async function restartAdjusted(r: ExecRun, supervisor: ProcIdentity, generation:
     const executor = dead as unknown as ProcIdentity;
     await until(() => !isAlive(executor), CRASH_WAIT_MS, `executor ${executor.pid} of generation ${generation} to die at its crash point`);
     await settleDeadCalls(r);
-    insertSmoke(r);
+    if (keyed) appendSmoke(r);
+    else insertSmoke(r);
     whileDown?.(r);
   } finally {
     process.kill(supervisor.pid, 'SIGCONT');
@@ -433,6 +440,17 @@ function insertSmoke(r: ExecRun): void {
   const steps = [...file.steps.slice(0, k), ...SMOKE_DEFAULT, ...file.steps.slice(Math.max(k, SMOKE_DEFAULT.length))];
   const temp = `${r.scenarioPath}.tmp`;
   writeFileSync(temp, `${JSON.stringify({ steps }, null, 2)}\n`);
+  renameSync(temp, r.scenarioPath);
+}
+
+/** The restarted executor smokes again: in a keyed scenario its steps go last (see RunOptions.keyed). */
+function appendSmoke(r: ExecRun): void {
+  const unmatched = readCalls(r.scenarioPath).filter((c) => c.step === null);
+  if (unmatched.length > 0) throw new Error(`a backend call matched no step before the restart: ${JSON.stringify(unmatched.map((c) => c.argv))}`);
+  const file = JSON.parse(readFileSync(r.scenarioPath, 'utf8')) as { steps: Step[] };
+  if (file.steps.slice(SMOKE_DEFAULT.length).some((s) => s.unit === undefined)) throw new Error('a keyed scenario has an unkeyed step after its smoke');
+  const temp = `${r.scenarioPath}.tmp`;
+  writeFileSync(temp, `${JSON.stringify({ steps: [...file.steps, ...SMOKE_DEFAULT] }, null, 2)}\n`);
   renameSync(temp, r.scenarioPath);
 }
 
