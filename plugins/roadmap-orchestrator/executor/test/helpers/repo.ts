@@ -91,3 +91,24 @@ export function makeRepo(dir: string, spec: RepoSpec): string {
   }
   return dir;
 }
+
+/**
+ * The tree id of `dir`'s working tree as it stands (tracked and untracked, not ignored): what a lane run there
+ * would be witnessed on. Built in a scratch index, so neither the index nor the worktree is touched.
+ */
+export function worktreeTree(dir: string): string {
+  const scratch = mkdtempSync(join(tmpdir(), 'roadmap-tree-'));
+  try {
+    const env = { ...gitEnv, GIT_INDEX_FILE: join(scratch, 'index') };
+    const run = (...args: string[]): string => {
+      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env });
+      if (r.error) throw r.error;
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} in ${dir} exited ${r.status}: ${r.stderr.trim()}`);
+      return r.stdout.trim();
+    };
+    run('add', '--all');
+    return run('write-tree');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
