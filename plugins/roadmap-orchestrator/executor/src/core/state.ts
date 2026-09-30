@@ -362,6 +362,10 @@ export class Fold implements JournalView {
   readonly #resolvedEdges = new Map<EdgeId, EdgeResolvedState>();
   #runOnly: readonly UnitId[] | null = null;
   #scheduling: Scheduling | null = null;
+  /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
+  readonly #outcomeSeqs = new Map<string, number>();
+  readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
+  readonly #addedSeqs = new Map<UnitId, number>();
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -386,7 +390,7 @@ export class Fold implements JournalView {
         this.#intent(event, fail);
         break;
       case 'done':
-        this.#done(event, fail);
+        this.#done(event, event.seq, fail);
         break;
       case 'abort':
         this.#abort(event, fail);
@@ -474,7 +478,7 @@ export class Fold implements JournalView {
     this.#openByKey.delete(entry.latest.key);
   }
 
-  #done(r: DoneRecord, fail: (detail: string) => never): void {
+  #done(r: DoneRecord, seq: number, fail: (detail: string) => never): void {
     const entry = this.#openEntry(r.op, 'done', fail);
     const intent = entry.latest;
     if (r.kind !== intent.kind) fail(`done of kind ${r.kind} for ${r.op}, an intent of kind ${intent.kind}`);
@@ -490,6 +494,10 @@ export class Fold implements JournalView {
     this.#close(entry, { type: 'done', record: r });
     for (const [res, status] of moved) this.#resources.set(res, { status, pending: null });
     if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
+    // A unit's publication is its ff stage's; an ff under another parent (the git primitives' own tests) publishes no unit.
+    if (intent.kind === 'integration.ff' && r.kind === 'integration.ff' && r.outcome.kind === 'published' && intent.parent.type === 'stage') {
+      this.#publications.push({ unit: intent.parent.unit, seq });
+    }
     if (intent.kind === 'snapshot.publish') this.#snapshotHighWater = Math.max(this.#snapshotHighWater, intent.expect.highWater);
     if (intent.kind === 'spec.patch' && intent.parent.type === 'stage') {
       const u = this.#unit(intent.parent.unit, intent.parent.stage);
@@ -580,6 +588,7 @@ export class Fold implements JournalView {
         }
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
+        this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
         u.state = afterStageOutcome(u.state, f);
         if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
@@ -665,7 +674,7 @@ export class Fold implements JournalView {
         this.#rerouted(f, fail);
         return;
       case 'plan-applied':
-        this.#planAppliedFact(f, fail);
+        this.#planAppliedFact(f, at.seq, fail);
         return;
     }
   }
@@ -676,7 +685,7 @@ export class Fold implements JournalView {
    * a withdrawn revision clears that. An edit of an undispatched unit only changes the manifest. Every edit is
    * checked before any is applied, so a refused fact leaves the fold as it was.
    */
-  #planAppliedFact(f: PlanAppliedFact, fail: (detail: string) => never): void {
+  #planAppliedFact(f: PlanAppliedFact, seq: number, fail: (detail: string) => never): void {
     const expected = (this.#planApplied?.rev ?? 0) + 1;
     if (f.rev !== expected) fail(`plan-applied rev ${f.rev}; the next plan revision is ${expected}`);
     if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
@@ -731,7 +740,10 @@ export class Fold implements JournalView {
     if (f.rev === 1) this.#scheduling = f.scheduling === 'dag' ? 'dag' : 'legacy';
     this.#planApplied = f;
     if (f.command !== null) this.#appliedBy.set(f.command, f);
-    for (const unit of Object.keys(f.specs) as UnitId[]) this.#plannedUnits.add(unit);
+    for (const unit of Object.keys(f.specs) as UnitId[]) {
+      this.#plannedUnits.add(unit);
+      if (!this.#addedSeqs.has(unit)) this.#addedSeqs.set(unit, seq);
+    }
   }
 
   /**
@@ -1037,6 +1049,22 @@ export class Fold implements JournalView {
 
   planAppliedBy(command: CommandId): PlanAppliedFact | null {
     return this.#appliedBy.get(command) ?? null;
+  }
+
+  decidedSeq(unit: UnitId): number | null {
+    const d = this.unit(unit).decided;
+    if (d === null) return null;
+    const seq = this.#outcomeSeqs.get(`${unit}/${d.stage}#${d.attempt}`);
+    if (seq === undefined) throw new Error(`unit ${unit}'s decided outcome ${d.stage}#${d.attempt} has no seq`);
+    return seq;
+  }
+
+  publications(): readonly Readonly<{ unit: UnitId; seq: number }>[] {
+    return this.#publications;
+  }
+
+  addedSeq(unit: UnitId): number | null {
+    return this.#addedSeqs.get(unit) ?? null;
   }
 
   plannedUnits(): readonly UnitId[] {

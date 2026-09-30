@@ -8,7 +8,7 @@
 // every contingent edge is resolved, and its next stage is an admission stage that `admit` lets in. A legacy
 // arc's readiness is 1.0.0-dev.4's serial frontier (`legacyNext`, G4), still subject to admission.
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { OpId, UnitId } from '../core/ids.ts';
+import type { UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import type { UnitState } from '../core/state.ts';
@@ -111,36 +111,16 @@ export function admitter(routing: RoutingTable): Admit {
 // Rank (F17)
 
 /**
- * The event seqs rank needs that `JournalView` does not carry: the stage-outcome fact of a (unit, stage,
- * attempt), a done record's, and the `plan-applied` fact that first named a unit. Each throws for a record
- * the log does not hold.
- */
-export type SeqIndex = Readonly<{
-  outcomeSeq(unit: UnitId, stage: OutcomeStage, attempt: number): number;
-  doneSeq(op: OpId): number;
-  addedSeq(unit: UnitId): number;
-}>;
-
-/** Every published `integration.ff`: its unit and the seq of its done record, in the order the ops began. */
-function publications(view: JournalView, seqs: SeqIndex): readonly Readonly<{ unit: UnitId; seq: number }>[] {
-  return view.opsOf('integration.ff').flatMap((i) => {
-    const done = view.doneOf(i.op);
-    if (done === null || done.kind !== 'integration.ff' || done.outcome.kind !== 'published') return [];
-    if (i.parent.type !== 'stage') throw new Error(`integration.ff ${i.op} has a ${i.parent.type} parent, not a unit's stage`);
-    return [{ unit: i.parent.unit, seq: seqs.doneSeq(i.op) }];
-  });
-}
-
-/**
  * The seq of the fact that put the unit into its current wait: its decided stage-outcome; before one, the
  * latest of its addition to the plan, its dependencies' publications and its resolved contingent edges.
  */
-function waitStartSeq(view: JournalView, unit: PlanUnit, seqs: SeqIndex, published: readonly Readonly<{ unit: UnitId; seq: number }>[]): number {
-  const decided = view.unit(unit.id).decided;
-  if (decided !== null) return seqs.outcomeSeq(unit.id, decided.stage, decided.attempt);
-  let start = seqs.addedSeq(unit.id);
+function waitStartSeq(view: JournalView, unit: PlanUnit): number {
+  const decided = view.decidedSeq(unit.id);
+  if (decided !== null) return decided;
+  let start = view.addedSeq(unit.id);
+  if (start === null) throw new Error(`unit ${unit.id} is in the plan in force, but no plan-applied fact named it`);
   const deps = new Set(unit.after.map((d) => effectiveDependency(view, d)));
-  for (const p of published) if (deps.has(p.unit)) start = Math.max(start, p.seq);
+  for (const p of view.publications()) if (deps.has(p.unit)) start = Math.max(start, p.seq);
   for (const e of unit.contingent) start = Math.max(start, view.edgeResolved(e.id)?.seq ?? 0);
   return start;
 }
@@ -149,21 +129,20 @@ function waitStartSeq(view: JournalView, unit: PlanUnit, seqs: SeqIndex, publish
  * A waiter's rank: its origin and plan index, `waitStartSeq`, and `bypassMerges`, the publications by other
  * units after it (inside its waiting interval, which ends at its grant); promoted at `PROMOTION_BYPASS`.
  */
-export function rankOf(view: JournalView, plan: PlanM1, id: UnitId, seqs: SeqIndex): Rank {
+export function rankOf(view: JournalView, plan: PlanM1, id: UnitId): Rank {
   const planIndex = plan.units.findIndex((u) => u.id === id);
   if (planIndex < 0) throw new Error(`rank of unit ${id}, which the plan in force does not list`);
   const unit = plan.units[planIndex] as PlanUnit;
-  const published = publications(view, seqs);
-  const start = waitStartSeq(view, unit, seqs, published);
-  const bypassMerges = published.filter((p) => p.unit !== id && p.seq > start).length;
+  const start = waitStartSeq(view, unit);
+  const bypassMerges = view.publications().filter((p) => p.unit !== id && p.seq > start).length;
   return { unit: id, origin: unit.origin ?? 'planned', waitStartSeq: start, bypassMerges, promoted: bypassMerges >= PROMOTION_BYPASS, planIndex };
 }
 
 // ---------------------------------------------------------------------------------------------------
 // Readiness
 
-/** What `ready` reads: admission's inputs for the arc, the routing in force, and the seqs rank needs. */
-export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: RoutingTable; seqs: SeqIndex }>;
+/** What `ready` reads: admission's inputs for the arc and the routing in force. */
+export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: RoutingTable }>;
 
 export type ReadyUnit = Readonly<{ unit: PlanUnit; stage: AdmissionStage; rank: Rank }>;
 
@@ -195,7 +174,7 @@ export function ready(input: ReadyInput): readonly ReadyUnit[] {
     const next = nextStage(u);
     if (next?.kind !== 'admission') continue;
     if (admit({ ...input, unit, stage: next.stage }).kind !== 'admit') continue;
-    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id, input.seqs) });
+    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id) });
   }
   return out.sort((a, b) => compareRank(a.rank, b.rank));
 }

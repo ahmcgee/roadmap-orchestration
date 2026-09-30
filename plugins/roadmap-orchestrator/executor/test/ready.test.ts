@@ -1,9 +1,9 @@
 // Readiness, admission and rank (src/schedule/ready.ts): pure over folded logs built here record by record.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Event, type Fact, type LogRecord, type OutcomeStage, type ProbeTarget, prevHash, serializeEvent } from '../src/core/events.ts';
+import { type Event, type Fact, type LogRecord, type ProbeTarget, prevHash, serializeEvent } from '../src/core/events.ts';
 import {
-  type CommandId, type NeedsUserId, type OpId, type UnitId, commandId, edgeId, invocationId, needsUserId, opId, opKey, planRev, seatRev, sha, sha256,
+  type CommandId, type NeedsUserId, type UnitId, commandId, edgeId, invocationId, needsUserId, opId, opKey, planRev, seatRev, sha, sha256,
   specRev, unitId,
 } from '../src/core/ids.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
@@ -13,7 +13,7 @@ import { absPath, branchName, isoTime, planPath, refName, repoPath, repoPattern 
 import { PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { RiskTier } from '../src/routing/types.ts';
-import { type ReadyInput, type SeqIndex, admitter, rankOf, ready } from '../src/schedule/ready.ts';
+import { type ReadyInput, admitter, rankOf, ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
 import { ARC, H, REV, chain } from './fixtures/log-records.ts';
 
@@ -105,37 +105,42 @@ class Log {
     for (const e of this.events()) f.apply(e, prevHash(Buffer.from(serializeEvent(e))));
     return f;
   }
-
-  /** The seqs rank reads, straight from the events (the fold does not carry them). */
-  seqs(): SeqIndex {
-    const events = this.events();
-    const find = (what: string, p: (e: Event) => boolean): number => {
-      const e = events.findLast(p);
-      if (e === undefined) throw new Error(`no ${what} in the log`);
-      return e.seq;
-    };
-    return {
-      outcomeSeq: (u: UnitId, stage: OutcomeStage, attempt: number) => find(`outcome ${u} ${stage}#${attempt}`, (e) => e.type === 'fact' && e.fact.kind === 'stage-outcome'
-        && e.fact.unit === u && e.fact.stage === stage && e.fact.attempt === attempt && e.fact.class !== 'hold'),
-      doneSeq: (op: OpId) => find(`done of ${op}`, (e) => e.type === 'done' && e.op === op),
-      addedSeq: (u: UnitId) => {
-        const e = events.find((x) => x.type === 'fact' && x.fact.kind === 'plan-applied' && u in x.fact.specs);
-        if (e === undefined) throw new Error(`no plan-applied names ${u}`);
-        return e.seq;
-      },
-    };
-  }
 }
 
 type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
-  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: ROUTING, seqs: log.seqs(), ...extras,
+  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: ROUTING, ...extras,
 });
 const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonly [UnitId, AdmissionStage])[] =>
   ready(inputOf(log, plan, extras)).map((r) => [r.unit.id, r.stage] as const);
 
 // ---------------------------------------------------------------------------------------------------
+
+describe('fold: rank lookups (JournalView.decidedSeq, publications, addedSeq)', () => {
+  it('tracks the decided outcome\'s seq through holds, park and recovery; publications in log order; each unit\'s first naming', () => {
+    const log = new Log('dag', [A, B]);
+    assert.deepEqual([log.view().decidedSeq(A), log.view().addedSeq(A), log.view().addedSeq(C)], [null, 1, null]);
+    log.add(dispatch(A));
+    const advanced = log.add(outcome(A, 'teardown', 1, 'released', 'advance'));
+    log.add(outcome(A, 'lanes', 2, 'interrupted', 'hold'));
+    assert.equal(log.view().decidedSeq(A), advanced, 'a hold decides nothing');
+    const parked = log.add(outcome(A, 'lanes', 3, 'cleanup-failed', 'park', { park: { class: 'retryable', targets: [{ type: 'host' }] } }));
+    assert.equal(log.view().decidedSeq(A), parked);
+    log.add(fact({ kind: 'probe', target: { type: 'host' }, covers: [parked], result: 'pass', nextProbeAt: null }));
+    assert.equal(log.view().decidedSeq(A), advanced, 'a recovery restores the pre-park decision and its seq');
+    const added = log.plan([A, B, C], [{ type: 'unit-added', unit: C }]);
+    log.plan([A, B, C], []);
+    log.add(dispatch(B));
+    const ffB = log.merge(B, 1);
+    log.add(dispatch(C));
+    const ffC = log.merge(C, 1);
+    const view = log.view();
+    assert.equal(view.addedSeq(C), added);
+    assert.equal(view.addedSeq(B), 1);
+    assert.deepEqual(view.publications(), [{ unit: B, seq: ffB }, { unit: C, seq: ffC }]);
+  });
+});
 
 describe('ready: DAG arcs', () => {
   it('ready.merged-only: a dependent waits until its dependency merged, not when it parks (acknowledged or not); through a lineage once the head prepared', () => {
@@ -349,7 +354,7 @@ describe('priority and aging (F17)', () => {
       { unit: K, origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
     ], 'both promoted: the older planned unit first');
     const view = log.view();
-    assert.ok(compareRank(rankOf(view, plan, P, log.seqs()), rankOf(view, plan, K, log.seqs())) < 0);
+    assert.ok(compareRank(rankOf(view, plan, P), rankOf(view, plan, K)) < 0);
   });
 
   it('prio.bypass-promotion: an endless stream of checkpoint units starves a planned waiter only until it is promoted', () => {
