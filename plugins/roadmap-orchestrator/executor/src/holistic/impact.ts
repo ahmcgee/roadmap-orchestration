@@ -10,8 +10,7 @@
 // children. An id the obligations file does not hold is a caller bug and throws.
 import { posix } from 'node:path';
 import type { ObligationId } from '../core/ids.ts';
-import type { RepoPath } from '../core/values.ts';
-import { matchesPattern } from '../git/salvage.ts';
+import { type RepoPath, matchesPattern } from '../core/values.ts';
 import type { ArcLaneDef, ImpactInput, ObligationDef, SelectObligations } from './types.ts';
 
 /** Whether `path` is a file `lane` runs: one of its argv entries, resolved against its cwd. */

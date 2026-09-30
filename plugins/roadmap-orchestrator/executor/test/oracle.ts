@@ -9,11 +9,11 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import { type Event, type Fact, type IntentOf, type RecoveredBy, unitFfFingerprint } from '../src/core/events.ts';
+import type { Event, Fact, IntegrationFfExpect, IntentOf, RecoveredBy } from '../src/core/events.ts';
 import { type ArcId, type UnitId, invocationId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import { readJournal } from '../src/core/log.ts';
-import { needsUserRecord } from '../src/core/records.ts';
+import { type ApprovalFingerprint, needsUserRecord } from '../src/core/records.ts';
 import type { AbsPath } from '../src/core/values.ts';
 import { git, refTarget, revParse } from '../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
@@ -43,6 +43,12 @@ const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: p
 export function productTree(run: OracleRun, integration: string, tree: string): Verdict {
   const actual = revParse(run.repo, `refs/heads/${integration}^{tree}`);
   return { pass: actual === tree, detail: `${integration}^{tree} is ${actual}, expected ${tree}` };
+}
+
+/** A unit `ff`'s fingerprint; a docs or batch `ff` has none, and asking for one is a bug. */
+export function unitFfFingerprint(expect: IntegrationFfExpect): ApprovalFingerprint {
+  if (expect.fingerprint === undefined) throw new Error(`integration.ff of ${JSON.stringify(expect.subject)} carries no unit fingerprint`);
+  return expect.fingerprint;
 }
 
 /** The published integration.ff dones, in log order, with their intents. */

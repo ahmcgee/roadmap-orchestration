@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
-import { type IntentOf, unitFfFingerprint } from '../src/core/events.ts';
+import type { IntentOf } from '../src/core/events.ts';
+import { unitFfFingerprint } from './oracle.ts';
 import { type Sha, opKey, sha } from '../src/core/ids.ts';
 import type { ApprovalFingerprint } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';

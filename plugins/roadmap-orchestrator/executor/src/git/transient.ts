@@ -13,13 +13,11 @@
 //   contract ops' paths.
 // - The prefix-collision guard refuses a candidate whose new paths would collide on a case-insensitive
 //   filesystem. Collisions already present at T are grandfathered.
-import { matchesGlob } from 'node:path';
 import type { Sha } from '../core/ids.ts';
 import type { DispatchRecord } from '../core/records.ts';
 import { transientRulesOf } from '../core/upgrade.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
 import { git, lsTree, mergeBase } from './git.ts';
-import { matchesPattern } from './salvage.ts';
 
 export class DiffBaseError extends Error {
   constructor(tip: Sha, branch: Sha) {
@@ -95,7 +93,7 @@ function transientRule(rules: TransientRules, path: RepoPath): TransientRule | n
   if (segments[0] === '.roadmap') return rules.kind === 'dev5' && roadmapAllowed(segments.slice(1).join('/')) ? null : 'roadmap-dir';
   if (segments.some((s) => RUN_STATE_SEGMENTS.has(s))) return 'run-state';
   if (segments[0] === 'evidence') return 'evidence';
-  if (rules.evidenceGlobs.some((g) => matchesGlob(path, g) || matchesGlob(path, `${g.replace(/\/+$/, '')}/**`))) return 'evidence';
+  if (rules.evidenceGlobs.some((g) => matchesPattern(path, g))) return 'evidence';
   const name = segments[segments.length - 1]!;
   if (name === 'events.jsonl' || name.startsWith('events.torn.')) return 'executor-file';
   const parent = segments[segments.length - 2];
