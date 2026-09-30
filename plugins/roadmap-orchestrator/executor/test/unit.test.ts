@@ -209,7 +209,11 @@ test('fixture red candidate → fix → fresh gate → green: the suite is red o
     assert.equal(u.counters.chargeableFailures, 1);
     // The red candidate tested T alone: two suite series in that attempt, the second at T.
     const suites = intents(d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite');
-    assert.equal(suites.length, 3, 'candidate, T alone, the second candidate');
+    // The red suite lane on the candidate is rerun once there (the red-lane protocol's diagnostic rerun, M2 A10).
+    assert.equal(suites.length, 4, 'candidate, its rerun, T alone, the second candidate');
+    const ats = suites.map((i) => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' ? i.expect.subject.at : null));
+    assert.equal(ats[1], ats[0], 'the rerun ran at the candidate');
+    assert.equal(new Set(ats).size, 3);
     assert.equal(intents(d.runDir, 'candidate.merge').length, 2, 'a new candidate after the fix');
     const gates = gateCalls(r);
     assert.equal(gates.length, 2, 'a fresh gate after the fix round');

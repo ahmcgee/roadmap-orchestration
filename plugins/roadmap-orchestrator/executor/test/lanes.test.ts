@@ -150,6 +150,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
     lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false,
   });
   const salvage = sha('a'.repeat(40));
   const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
