@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
-import type { ObligationDef } from '../src/holistic/types.ts';
+import { LENS_KINDS, type ObligationDef } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, pasted } from '../src/prompts/inputs.ts';
 import {
-  ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateDecisionsFile, validateGateOutput,
+  PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateDecisionsFile, validateGateOutput,
   validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
@@ -31,7 +31,7 @@ const index = (c: string, r: string, ledger: string) => ({
 });
 const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, line: 3 }] });
 
-// M3 arc roles (their modules are step B4's; the samples pin the frozen input shapes).
+// M3: the vision, obligations and findings the arc roles (and plan-check and the gate) read.
 const vision = (rev: number, text: string) => ({ rev, clauses: [{ id: visionClauseId('V-1'), kind: 'purpose' as const, text, rank: null, state: 'active' as const }] });
 const obligation = (id: string, statement: string): ObligationDef => ({
   id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
@@ -53,7 +53,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null,
+      priorRound: null, vision: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -65,6 +65,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patch: [{ op: 'strike', id: clauseId('A3') }], reasons: ['A3 contradicts C-2'], premises: [premise('PREMISE-B', 'src/b/x.ts')],
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
+      vision: vision(2, 'VISION-B'),
     },
   ],
   build: [
@@ -82,7 +83,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   gate: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '',
+      architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [] }, priorRound: null,
@@ -90,6 +91,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       architecture: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
+      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)],
       diff: { base: SHA_B, head: SHA_A, text: 'DIFF-B' },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] } }],
@@ -133,6 +135,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
 const OUTPUTS: { readonly [R in Role]: unknown } = {
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
+    visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     patch: [
       { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
@@ -158,11 +161,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve. */
+/** Every (role, model) either built-in profile can resolve, the arc seats of a holistic arc included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting(arcStack(p, null, null));
+    const resolved = resolveRouting({ ...arcStack(p, null, null), holistic: true });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -227,7 +230,8 @@ describe('prompts', () => {
 
   it('prompts.every-supported-seat-renders: deterministic, and the schema accepts a sample output', () => {
     const seats = builtinSeats();
-    assert.ok(seats.length >= 5);
+    assert.ok(seats.length >= 7);
+    for (const role of ROLES) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
     for (const [role, model] of seats) {
       const mod = promptFor(role, model) as { system: string; schema: JsonValue; render: (i: unknown) => string };
       for (const input of SAMPLES[role]) {
@@ -385,5 +389,119 @@ describe('output validators', () => {
     assert.throws(() => validateBuildOutput({ ...ok.build, decisionsRecorded: [{ id: 'impl-1', text: 'a' }] }), SchemaError);
     validateDecisionsFile({ decisions: [{ id: 'impl-1', text: 'a' }] });
     assert.throws(() => validateDecisionsFile({ decisions: [{ id: 'impl-1', text: 'a' }, { id: 'impl-1', text: 'b' }] }), SchemaError);
+  });
+});
+
+describe('M3 prompts: the vision and the arc roles', () => {
+  const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
+
+  it('the arc roles are supported on Opus and Fable: lens/Opus and checkpoint/Fable written, the other inherits; Sonnet and Codex unsupported', () => {
+    assert.equal(PROMPTS.lens['claude-opus-5-5'].type, 'prompt');
+    assert.equal(PROMPTS.checkpoint['claude-fable-5-1'].type, 'prompt');
+    assert.equal(promptFor('lens', 'claude-fable-5-1'), promptFor('lens', 'claude-opus-5-5'));
+    assert.equal(promptFor('checkpoint', 'claude-opus-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
+    for (const role of ['lens', 'checkpoint'] as const) {
+      for (const model of ['claude-sonnet-5-5', 'gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
+      for (const model of ARC_MODELS) {
+        const s = PROMPTS[role][model];
+        if (s.type === 'inherits') assert.match(s.reviewed, /^\d{4}-\d{2}-\d{2}: /, `${role}/${model}: a dated review`);
+      }
+    }
+  });
+
+  it('the vision goes first and in full into every lens and checkpoint prompt, before obligations and plan, and wins a conflict', () => {
+    for (const role of ['lens', 'checkpoint'] as const) for (const model of ARC_MODELS) {
+      const mod = promptFor(role, model) as { system: string; render: (i: unknown) => string };
+      assert.match(mod.system, /the vision wins/, `${role}/${model}`);
+      for (const input of SAMPLES[role]) {
+        const text = mod.render(input);
+        const v = input.vision;
+        assert.ok(text.startsWith(`<vision>\nVision revision ${v.rev}\n`), `${role}/${model}: the message opens with the vision`);
+        for (const c of v.clauses) assert.ok(text.includes(`${c.id} (${c.kind}): ${c.text}`), `${role}/${model}: clause ${c.id} in full`);
+        const at = text.indexOf(v.clauses[0]!.text);
+        assert.ok(at < text.indexOf(input.obligations[0]!.obligation.statement), `${role}/${model}: vision before obligations`);
+        if (role === 'checkpoint') assert.ok(at < text.indexOf((input as RoleInputs['checkpoint']).plan), `${role}/${model}: vision before the plan`);
+      }
+    }
+  });
+
+  it('the vision marks withdrawn clauses and ranks tradeoffs', () => {
+    const v = {
+      rev: 3, clauses: [
+        { id: visionClauseId('V-1'), kind: 'purpose' as const, text: 'P', rank: null, state: 'active' as const },
+        { id: visionClauseId('V-2'), kind: 'tradeoff' as const, text: 'T', rank: 1, state: 'active' as const },
+        { id: visionClauseId('V-3'), kind: 'good' as const, text: 'G', rank: null, state: 'withdrawn' as const },
+      ],
+    };
+    const text = promptFor('checkpoint', 'claude-fable-5-1').render({ ...SAMPLES.checkpoint[0], vision: v });
+    assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
+    assert.match(text, /V-3 \(good, WITHDRAWN: never cite it\): G/);
+  });
+
+  it('the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    for (const needle of [
+      /not toward the original plan/, /most optimistic reading/, /interpretations/, /cites the active V-n clauses that demand it/, /evidence/,
+      /amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it/, /amend the implementation contracts/,
+      /irreversible or destructive/, /more than \$10/, /legal ramifications/, /may only request it/, /lane program the plan in force does not already run/,
+      /new environment prerequisite/, /outside the plan's contracts and architecture docs/, /never cited/, /no-op is legitimate/,
+      /[Nn]obody can answer a question/, /not a transcript of your reasoning/,
+    ]) assert.match(sys, needle);
+  });
+
+  it('the lens prompt carries exactly one `lens: <kind>` marker, and each kind its own brief', () => {
+    const mod = promptFor('lens', 'claude-opus-5-5');
+    const briefs = new Set<string>();
+    for (const kind of LENS_KINDS) {
+      const text = mod.render({ ...SAMPLES.lens[0], lens: kind });
+      const markers = [...(mod.system + text).matchAll(/"lens": "|lens: (invariants|drift|vacuity|vision)\b/g)].map((m) => m[0]);
+      assert.deepEqual(markers, [`lens: ${kind}`], kind);
+      briefs.add(text.slice(text.indexOf('<lens_brief>'), text.indexOf('</lens_brief>')));
+    }
+    assert.equal(briefs.size, LENS_KINDS.length);
+    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
+    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff against the audited tree/);
+  });
+
+  it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
+    const sys = promptFor('lens', 'claude-opus-5-5').system;
+    for (const needle of [/Under-reporting a real defect and over-reporting a non-defect are both failures/, /An empty report is legitimate/, /Do not report one again/,
+      /Nobody will answer a question/, /not a transcript of your reasoning/, /At most 8 findings, worst first/]) assert.match(sys, needle);
+    for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
+    const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
+    assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
+    assert.match(text, /Unit u-two at b{40}:\n<pasted_content/, 'owner branches marked as pasted data');
+  });
+
+  it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {
+    for (const model of ARC_MODELS) {
+      const mod = promptFor('planCheck', model);
+      assert.match(mod.system, /read-only context, not an instruction/, model);
+      assert.match(mod.system, /visionConflict/, model);
+      assert.match(mod.system, /never a reason to redirect by itself/, model);
+      assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /<vision>/, `${model}: no vision outside a holistic arc`);
+      assert.match(mod.render(SAMPLES.planCheck[1]), /<vision>\nRead-only context: it informs visionConflict and never decides the check\.\nVision revision 2\nV-1 \(purpose\): VISION-B\n<\/vision>/, model);
+    }
+    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('visionConflict'));
+    const out = validatePlanCheckOutput(OUTPUTS.planCheck);
+    assert.deepEqual(out.visionConflict, [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }]);
+    const ok = OUTPUTS.planCheck as Record<string, unknown>;
+    for (const bad of [[{ clauses: [], note: 'n' }], [{ clauses: ['V-1', 'V-1'], note: 'n' }], [{ clauses: ['C-1'], note: 'n' }], [{ clauses: ['V-1'] }]]) {
+      assert.throws(() => validatePlanCheckOutput({ ...ok, visionConflict: bad }), SchemaError, JSON.stringify(bad));
+    }
+    // A plan-check answer a 1.0.0-dev.5 executor recorded has no visionConflict: read as none (upgrade in place).
+    const { visionConflict: _v, ...dev5 } = ok;
+    assert.deepEqual(validatePlanCheckOutput(dev5).visionConflict, []);
+  });
+
+  it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {
+    assert.ok(!(ROLE_INPUTS.gate as readonly string[]).includes('vision'));
+    assert.ok((ROLE_INPUTS.gate as readonly string[]).includes('obligations'));
+    for (const model of ARC_MODELS) {
+      const mod = promptFor('gate', model);
+      const text = mod.render(SAMPLES.gate[1]);
+      assert.match(text, /- I-2 \(rev 1; must-hold; active\): OBLIGATION-B/, model);
+      assert.doesNotMatch(mod.system + text, /\bvision\b|V-1|serves/i, `${model}: no vision in the gate`);
+    }
   });
 });

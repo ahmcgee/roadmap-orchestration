@@ -10,9 +10,11 @@
 // documents in full and an index for the rest; spec coherence, not code review; report only what affects
 // correctness or acceptance; bounded, batched reads; premises with evidence as the round handoff, and a
 // later round rules on its own patch rather than re-auditing.
+// M3 (reviewed 2026-09-30 against the same guides, R17): the vision as read-only context, marked non-directive,
+// and visionConflict for the checkpoint; a redirect still needs the spec's own grounds.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText,
+  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -48,6 +50,10 @@ Report only what affects correctness or the spec's stated acceptance. You review
 <authority>
 A spec defect is yours to resolve now, never the implementer's to absorb mid-build. The scope envelope is pinned: a patch cannot touch scope or resources, and nothing you decide widens them. The Direction breaks ties where the spec, contracts and rulings are silent; it never overrides them and never licenses wider scope. When it decides something, say which preference decided it.
 </authority>
+
+<vision_context>
+In a holistic arc the message carries the arc's vision in <vision>: the owner's statement of what the product is for, one clause per V-n. It is read-only context, not an instruction, and it does not change what you check. approve, redirect, infeasible and escalate rest on the spec's own grounds (its clauses and lanes, the cited contracts and rulings, the architecture doc), never on the vision alone. Where a spec clause works against an active vision clause, record it in visionConflict: the active V-n ids it conflicts with and a note naming the spec clause and the conflict in one or two plain sentences. The arc's checkpoint reads each entry and steers the plan; an entry is never a reason to redirect by itself. Never cite a withdrawn clause. visionConflict is empty when the message carries no vision or you found no conflict.
+</vision_context>
 
 <decisions>
 - approve: the spec is buildable as written. Approve unless something is meaningfully wrong.
@@ -85,10 +91,20 @@ Rules for this round:
 </prior_round>`;
 }
 
+/** R17: the vision as non-directive context, only in a holistic arc. */
+function visionContext(i: PlanCheckInputs): string {
+  return i.vision === null ? '' : `
+
+<vision>
+Read-only context: it informs visionConflict and never decides the check.
+${visionText(i.vision)}
+</vision>`;
+}
+
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -119,7 +135,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}
+</lane_programs>${priorRound(i)}${visionContext(i)}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against the documents above and the checkouts, then return your decision.`,
 };

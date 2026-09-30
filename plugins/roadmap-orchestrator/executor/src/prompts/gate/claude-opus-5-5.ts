@@ -10,9 +10,11 @@
 // (feedback items 6, 12, 14, 15, 26, 28c, 29): cited documents in full and an index for the rest; the
 // plan-check's notes as facts; correctness-or-acceptance only; bounded, batched reads; premises with
 // evidence as the round handoff, and a later round rules on its prior round's conclusions and the delta.
+// M3 (reviewed 2026-09-30 against the same guides): the candidate's selected obligations with their
+// observations, never their vision clauses (R17: the gate grades spec and contracts, not the vision).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, findingsText, laneLedgerText, pasted, premisesText, referenceIndexText, rulingsText,
+  architectureDocument, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, pasted, premisesText, referenceIndexText, rulingsText,
 } from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
@@ -41,6 +43,10 @@ Report a finding only when all three hold: this diff introduced the problem, or 
 
 A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause. Everything else is a note, recorded and never a fix round. Report only what affects correctness or the spec's stated acceptance.
 </finding_bar>
+
+<obligations>
+<obligations> lists the obligations this change selects: owner-approved claims about the product, each with the witness tests that prove it and its latest observation. The executor runs the witness lanes on the integration candidate and holds the merge on any selected obligation that does not hold, so you do not re-run them. Judge whether the diff breaks or weakens one: a change that makes an obligation's statement false, or that edits its witness test so the test would pass with the statement false, is a blocking finding that names the obligation id.
+</obligations>
 
 <scope>
 The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking finding with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope.
@@ -86,7 +92,7 @@ export const PROMPT: PromptModule<'gate'> = {
   system,
   schema: GATE_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -109,6 +115,10 @@ ${i.direction}
 <plan_check_notes>
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 </plan_check_notes>
+
+<obligations>
+${obligationsText(i.obligations, { serves: false })}
+</obligations>
 
 <diff base="${i.diff.base}" head="${i.diff.head}">
 ${pasted('diff', i.diff.text)}

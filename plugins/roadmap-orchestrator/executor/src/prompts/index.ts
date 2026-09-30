@@ -4,9 +4,11 @@
 import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types.ts';
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
+import { PROMPT as CHECKPOINT_FABLE } from './checkpoint/claude-fable-5-1.ts';
 import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
+import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_FABLE } from './planCheck/claude-fable-5-1.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
@@ -14,19 +16,6 @@ import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
 /** Sonnet 5.5 is an implementer class only; write a Sonnet-native judgment module before a layer may seat it. */
 const SONNET_JUDGMENT = 'no judgment prompt written for Sonnet 5.5; no built-in seat uses it';
-/**
- * Interim (M3 0a): the lens and checkpoint modules are step B4's (lens/Opus new, lens/Fable inherits Opus;
- * checkpoint/Fable new, checkpoint/Opus inherits Fable; Sonnet and Codex unsupported). Until then every arc seat is
- * unsupported, so a holistic plan is refused at startup (`unsupported-routing`) and a non-holistic one never seats them.
- */
-const ARC_ROLE_PENDING = 'the lens and checkpoint prompt modules are written in step B4';
-const ARC_ROLE_UNSUPPORTED = {
-  'claude-opus-5-5': { type: 'unsupported', reason: ARC_ROLE_PENDING },
-  'claude-fable-5-1': { type: 'unsupported', reason: ARC_ROLE_PENDING },
-  'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
-  'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
-  'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
-} as const;
 
 export const PROMPTS: PromptTable<PromptModules> = {
   planCheck: {
@@ -65,8 +54,36 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
-  lens: ARC_ROLE_UNSUPPORTED,
-  checkpoint: ARC_ROLE_UNSUPPORTED,
+  // The arc roles (M3). The built-in seats put the lenses on frontier (Opus) and the checkpoint on summit (Fable)
+  // under both profiles; a plan's `route` or a class rebind can seat either role on the other model.
+  lens: {
+    'claude-opus-5-5': { type: 'prompt', prompt: LENS_OPUS },
+    // Fable reads the Opus lens brief unchanged: the rules a Fable-native judgment adds (finish the whole task,
+    // open what you recognise, plain literal prose, no scope widening) are already in it as the audit's own rules
+    // (every obligation checked, file:line evidence, one-sentence claims, the lens brief as the only scope).
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-09-30: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 lens prompt; no Fable-specific change needed',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  checkpoint: {
+    // Opus reads the Fable checkpoint prompt unchanged: its structure (role and authority up front, the inputs
+    // before the ask, no reasoning field) is what the Opus 5.5 guide asks for, and its Fable-specific lines
+    // (finish the whole weighing, plain prose, ops held to what the clauses demand) cost Opus nothing.
+    'claude-opus-5-5': {
+      type: 'inherits',
+      from: 'claude-fable-5-1',
+      reviewed: '2026-09-30: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt; no Opus-specific change needed',
+    },
+    'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
 };
 
 export class UnsupportedPromptError extends Error {

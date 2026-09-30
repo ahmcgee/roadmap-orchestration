@@ -24,6 +24,7 @@ import {
   OWNER_ONLY_CLASSES, type DocRef, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type WitnessRef, observationKey,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
+import { planCheckVisionConflict } from '../core/upgrade.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
@@ -76,7 +77,13 @@ type PlanCheckCommon = Readonly<{
    */
   notes: string;
   premises: readonly Premise[];
+  /**
+   * R17: where the spec conflicts with the vision (read-only context), the clauses and a note. Each opens a P3
+   * `plan-check` finding for the next checkpoint and is never a redirect by itself. Empty outside a holistic arc.
+   */
+  visionConflict: readonly VisionConflict[];
 }>;
+export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
 export type PlanCheckOutput =
   | (PlanCheckCommon & Readonly<{ decision: 'approve' | 'infeasible' | 'escalate'; patch: null }>)
   | (PlanCheckCommon & Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>);
@@ -116,6 +123,7 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   risk: sEnum(RISK_TIERS),
   notes: S_STR,
   premises: S_PREMISES,
+  visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
 });
 
 /** The wire form of one op: a lane item's env.set arrives as [{name, value}]. */
@@ -133,6 +141,9 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
   return specPatchOp({ ...v, item: { ...v.item, env: { ...v.item.env, set } } }, path);
 };
 
+// Reads at validation time, after the M3 helpers below are initialised.
+const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', uniqueIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
+
 export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
   const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
   const common = {
@@ -140,6 +151,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     risk: f.get('risk', oneOf(RISK_TIERS)),
     notes: f.get('notes', text),
     premises: f.get('premises', arrayOf(premise)),
+    visionConflict: planCheckVisionConflict(f.optional('visionConflict', arrayOf(visionConflict)), f.path),
   };
   if (decision === 'redirect') {
     return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
@@ -296,6 +308,8 @@ export type LensFinding = Readonly<{
   mutant: Readonly<{ patch: string; lane: LaneId }> | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
+/** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
+export const MAX_LENS_FINDINGS = 8;
 
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
