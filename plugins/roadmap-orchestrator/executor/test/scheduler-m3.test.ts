@@ -3,7 +3,7 @@
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), complete.m2-arc, sched.no-verdict-backoff and
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
 // sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type NeedsUserId, type Sha, jobId, sha, unitId } from '../src/core/ids.ts';
+import { type NeedsUserId, type Sha, envId, jobId, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
@@ -26,7 +26,10 @@ import { runBaseline } from '../src/pipeline/baseline.ts';
 import { publishCloseOut } from '../src/pipeline/publish.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { completionBlockers, escalateNoVerdict, noVerdictDelayMs, settleBatch } from '../src/schedule/scheduler.ts';
+import { completionBlockers, escalateNoVerdict, noVerdictDelayMs, obligationsOn, recordedLaneEnv, settleBatch } from '../src/schedule/scheduler.ts';
+import { status } from '../src/status.ts';
+import { laneEnvId } from '../src/pipeline/lanes.ts';
+import { holisticInForce } from '../src/pipeline/stages.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -195,6 +198,33 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(blockers(), []);
     } finally {
       clearInterval(tick);
+      r.journal.close();
+    }
+  });
+});
+
+describe('discharged on the head: the strict reuse rule (B7 follow-up, lead ruling; DESIGN §2.8)', () => {
+  test('complete.strict-env: only an observation in the executor\'s environment discharges; status reads the executor\'s recorded environment and agrees with the scheduler', T, async () => {
+    const d = completingArc();
+    const r = contextFor(d);
+    const statusUnmet = () => status(r.ctx.runDir, r.journal.view.arc, absPath(d.hostDir)).completion.unmet;
+    try {
+      const fresh = completionBlockers(contextsOf(r), { blocking: 0, pending: 0 });
+      assert.deepEqual(statusUnmet(), fresh, 'a fresh arc: status and the scheduler agree');
+      await runToComplete(r);
+      const h = contextsOf(r);
+      const obligations = holisticInForce(r.ctx).obligations!;
+      const journey = obligations.lanes.find((l) => l.id === 'journey')!;
+      assert.equal(recordedLaneEnv(r.journal.view, journey), laneEnvId(r.ctx, journey), 'the recorded environment is the executor\'s');
+      assert.deepEqual([completionBlockers(h, { blocking: 0, pending: 0 }), statusUnmet()], [[], []], 'complete: both read discharged');
+      assert.equal(obligationsOn(r.ctx, head(d), h.laneEnv), 'discharged');
+      // Another environment identity: the same observation on the same tree and lane revision does not count.
+      const other = envId('0'.repeat(16));
+      assert.notEqual(other, laneEnvId(r.ctx, journey));
+      assert.equal(obligationsOn(r.ctx, head(d), () => other), 'unobserved');
+      assert.deepEqual(completionBlockers({ ...h, laneEnv: () => other }, { blocking: 0, pending: 0 }), ['obligations-not-discharged']);
+      assert.equal(obligationsOn(r.ctx, head(d), () => null), 'unobserved', 'no recorded environment: nothing discharges');
+    } finally {
       r.journal.close();
     }
   });
