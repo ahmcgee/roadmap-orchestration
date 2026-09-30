@@ -207,8 +207,11 @@ export type OpExpect = {
   'docs.commit': Readonly<{ ref: RefName; old: Sha | null; pub: JobId; integrationTip: Sha; worktree: AbsPath; commit: CommitInputs<readonly [Sha]> }>;
   /** M3 (B3): a finding's mutant (`inputs/<patchSha256>.patch`) applied in a detached worktree at `at`. */
   'mutant.apply': Readonly<{ worktree: AbsPath; at: Sha; finding: FindingId; patchSha256: Sha256Hex }>;
-  /** M3 (G1, A19): a revision's kept payload (`inputs/<payloadSha256>.revision.json`), its base and the rev it writes. */
-  'revision.commit': Readonly<{ source: RevisionSource; base: PlanRev; rev: PlanRev; payloadSha256: Sha256Hex; docs: boolean }>;
+  /**
+   * M3 (G1, A19): a revision's kept payload (`inputs/<payloadSha256>.revision.json`), its base and the rev it writes;
+   * `base` 0 for an arc's first revision (its first start records rev 1, M3 step A2).
+   */
+  'revision.commit': Readonly<{ source: RevisionSource; base: RevisionBase; rev: PlanRev; payloadSha256: Sha256Hex; docs: boolean }>;
 };
 
 /** The members of a repair batch candidate and the merges chaining them. */
@@ -234,6 +237,9 @@ export function unitFfFingerprint(expect: IntegrationFfExpect): ApprovalFingerpr
   if (expect.fingerprint === undefined) throw new Error(`integration.ff of ${JSON.stringify(expect.subject)} carries no unit fingerprint`);
   return expect.fingerprint;
 }
+
+/** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
+export type RevisionBase = PlanRev | 0;
 
 /** Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, or the executor's own patch. */
 export type RevisionSource =
@@ -674,7 +680,11 @@ export type PlanChange =
   /** M3 (A5): the plan gained `holistic`. */
   | Readonly<{ type: 'holistic' }>;
 
-export const OBLIGATION_EDITS = ['added', 'split', 'witness', 'disposed'] as const;
+/**
+ * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
+ * future → must-hold (strengthening, no ruling needed).
+ */
+export const OBLIGATION_EDITS = ['added', 'split', 'witness', 'disposed', 'restored', 'edited'] as const;
 export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
 
 /**
@@ -686,7 +696,7 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
 export type RevisionPayload = Readonly<{
   v: SchemaVersion;
   source: RevisionSource;
-  base: PlanRev;
+  base: RevisionBase;
   rev: PlanRev;
   manifest: RevisionManifest;
   changes: readonly PlanChange[];
@@ -801,6 +811,7 @@ const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
 const laneR: Read<LaneId> = (v, p) => laneId(v, p);
 const laneRevR: Read<LaneRev> = (v, p) => laneRev(v, p);
 const planRevR: Read<PlanRev> = (v, p) => planRev(v, p);
+const revisionBaseR: Read<RevisionBase> = (v, p) => (v === 0 ? 0 : planRev(v, p));
 
 const holder: Read<Holder> = tagged('type', {
   stage: object((f): Holder => ({ type: f.get('type', literal('stage')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
@@ -1079,7 +1090,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
   },
   'revision.commit': {
     expect: object((f) => ({
-      source: f.get('source', revisionSource), base: f.get('base', planRevR), rev: f.get('rev', planRevR), payloadSha256: f.get('payloadSha256', sha256R),
+      source: f.get('source', revisionSource), base: f.get('base', revisionBaseR), rev: f.get('rev', planRevR), payloadSha256: f.get('payloadSha256', sha256R),
       docs: f.get('docs', bool),
     })),
     post: nothing,
@@ -1165,7 +1176,7 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
   const out: RevisionPayload = {
     v: f.get('v', version),
     source: f.get('source', revisionSource),
-    base: f.get('base', planRevR),
+    base: f.get('base', revisionBaseR),
     rev: f.get('rev', planRevR),
     manifest: f.get('manifest', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) }))),
     changes: f.get('changes', arrayOf(planChange)),

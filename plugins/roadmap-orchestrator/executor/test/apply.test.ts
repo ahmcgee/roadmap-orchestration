@@ -21,7 +21,7 @@ import { earlierReleaseBaseline } from '../src/core/upgrade.ts';
 import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
 import { type Classified, classify, commandScope } from '../src/input/classify.ts';
 import {
-  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, specShaInForce,
+  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
 } from '../src/input/inforce.ts';
 import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -95,12 +95,14 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
   r.journal.fact({ kind: 'stage-outcome', unit: id, stage, attempt, outcome, class: cls, chargeable: false } as Fact);
 }
 
-const resolve = (r: ArcRun) => commandContextFor(r).resolve;
+const routingBase = { profile: 'default', config: null } as const;
 
 function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
   const { runDir } = r.ctx;
+  const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
-    runDir, view: r.journal.view, inForce: requirePlanInForce(runDir, r.journal.view), next: readInputFiles(absPath(r.d.planPath)), residues, resolve: resolve(r),
+    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce, absPath(r.d.planPath)), next: readInputFiles(absPath(r.d.planPath)), residues,
+    routing: routingBase, proposer: { type: 'apply' },
   });
 }
 
@@ -108,7 +110,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classifie
 function accept(r: ArcRun): void {
   const v = classifyNow(r);
   if (v.kind !== 'accepted') assert.fail(`expected an accepted change, got ${JSON.stringify(v)}`);
-  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath)), null, v.changes);
+  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath)), v.changes, routingBase);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -821,7 +823,7 @@ test('cmd.scope: each mutation\'s scope (A12); an apply\'s follows from its clas
   const d = setupArc({ steps: [], units: THREE });
   const r = contextFor(d);
   try {
-    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), resolve: resolve(r) });
+    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase });
     const of = (body: CommandBody) => scope(body as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan());
     assert.deepEqual(of({ type: 'resume', target: { type: 'all' } }), { type: 'arc' });
     assert.deepEqual(of({ type: 'resume', target: { type: 'unit', unit: unitId('u2') } }), { type: 'units', units: ['u2'] });
@@ -875,7 +877,7 @@ test('apply.upgrade-queued-resume: a `resume <unit>` queued under 1.0.0-dev.3 af
   const files = readInputFiles(absPath(d.planPath));
   const baseline = earlierReleaseBaseline(first.view, files, d.planPath);
   assert.ok('changes' in baseline, JSON.stringify(baseline));
-  recordPlan(first, runDir, files, null, baseline.changes);
+  recordPlan(first, runDir, files, baseline.changes, routingBase);
   first.close();
 
   const r = contextFor(d);

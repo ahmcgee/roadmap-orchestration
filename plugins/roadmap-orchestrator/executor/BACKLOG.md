@@ -134,10 +134,10 @@ None.
   dev.5 transient rules it selects (the five `.roadmap/` entries, no scope check; step A4's branch), `applyInputsOf`
   and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
   without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4), `reverse` (A2),
+- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4),
   `steer` and `merge-in` (A3), `audit` and `close-admissions` (B7) in `src/commands/apply.ts`; `gc` failing in
   `src/cli/main.ts` (A5b); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
-  B4); the recovery throws for `docs.commit` (A4), `mutant.apply` (B3) and `revision.commit` (A2) in
+  B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
   `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`
   (`src/recover/resource.ts`); the `reproduce` stage throw in `runStage` (`src/pipeline/unit.ts`, B3); the preempted
   lane throw in `src/pipeline/lanes.ts` (A4); the job-usage throw in `meterOf` (`src/meter.ts`, B9);

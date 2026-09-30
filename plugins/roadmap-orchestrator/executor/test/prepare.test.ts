@@ -75,9 +75,9 @@ function reenteredArc(s: Setup): Arc {
     reenters: { unit: 'u1', ...(s.enterAt === undefined ? {} : { enterAt: s.enterAt }) },
   });
   writeFileSync(d.planPath, JSON.stringify(plan));
-  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, [
+  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [
     { type: 'unit-added', unit: U2 }, { type: 'unit-reentered', unit: U2, reenters: U1, reset: false },
-  ]);
+  ], { profile: 'default', config: null });
   assert.equal(r.journal.view.unit(U1).status, 'superseded');
   r.journal.close();
   return { d, oldTip, tip: revParse(d.repo, 'main') };

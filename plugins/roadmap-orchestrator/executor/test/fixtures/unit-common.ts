@@ -16,10 +16,11 @@ import type { JsonValue } from '../../src/core/json.ts';
 import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { manifestOf, readInputFiles } from '../../src/input/inforce.ts';
+import { readInputFiles, revisionManifestOf } from '../../src/input/inforce.ts';
 import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
+import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
@@ -151,15 +152,15 @@ export function contextFor(d: ArcDescriptor): ArcRun {
 export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): CommandContext {
   return {
     ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
-    resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+    routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
 }
 
 /** An `apply` of the plan and specs as the files hold them now (what `roadmap apply` submits). */
 export function applyBody(d: ArcDescriptor, expectRev: PlanRev | null = null): CommandBody {
-  const manifest = manifestOf(readInputFiles(absPath(d.planPath)));
-  if ('missing' in manifest) throw new Error(`no spec file for ${manifest.missing.join(', ')}`);
+  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath)));
+  if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
   return { type: 'apply', expectRev, manifest };
 }
 

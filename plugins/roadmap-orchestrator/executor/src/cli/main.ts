@@ -4,7 +4,8 @@
 // `rule`, `reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) only write a file into its durable queue
 // and print the command id; the executor applies it and writes the receipts. `rule` and `steer` hash the file
 // they name into the command (its absolute path and sha256). `gc` is a host action (step A5b). `apply` first hashes the
-// plan file the arc started with (start.json) and every unit's spec into the command's manifest; `apply
+// plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
+// and the vision into the command's manifest (`RevisionManifest`); `apply
 // --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
 // no smoke: a backend the new routing needs is listed under `smoke`). Output is agent-facing JSON.
 // `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
@@ -27,13 +28,12 @@ import { sha256 } from '../core/ids.ts';
 import { type CommandBody, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
-import { manifestOf, readInputFiles } from '../input/inforce.ts';
+import { readInputFiles, revisionManifestOf } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
-import { planStack, resolveRouting } from '../routing/layers.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { watch } from '../watch.ts';
@@ -87,14 +87,14 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
         process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev))}\n`);
         return;
       }
-      let manifest: ReturnType<typeof manifestOf>;
+      let manifest: ReturnType<typeof revisionManifestOf>;
       try {
-        manifest = manifestOf(readInputFiles(start.planFile));
+        manifest = revisionManifestOf(readInputFiles(start.planFile));
       } catch (error) {
         if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
-      if ('missing' in manifest) throw new CliError(`apply: no spec file for ${manifest.missing.join(', ')}`);
+      if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
       return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest });
     }
     case 'watch': {
@@ -154,10 +154,9 @@ function startOf(run: Run): RunStart {
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
 async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
-  const config = readRepoConfig(start.repo);
   const verdict = await evaluateApply({
-    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile,
-    resolve: (plan) => resolveRouting(planStack(start.profile, config, plan)), laneEnv: process.env, manifest: null, expectRev,
+    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo) },
+    laneEnv: process.env, manifest: null, expectRev,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -165,7 +164,7 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: Pl
     case 'unchanged':
       return { dryRun: true, kind: 'unchanged', rev: verdict.rev };
     case 'accepted':
-      return { dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.rev + 1, changes: verdict.changes, smoke: verdict.smoke };
+      return { dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke };
   }
 }
 

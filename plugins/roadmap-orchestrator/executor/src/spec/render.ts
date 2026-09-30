@@ -5,6 +5,7 @@
 // resources, a lane's env names, resources and evidence globs, the cites) are sorted. Struck and deferred items are
 // always shown with their state: ids are never reused, and a reader must see what was withdrawn.
 // `fastLanesOnly` is the implementer's view: estate lanes are left out entirely, without even a mention.
+// M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 import type { ItemState, LaneDef, NoteDef, SpecM1 } from '../core/records.ts';
 import { fastLanes } from '../resources/reserve.ts';
 
@@ -54,6 +55,9 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
     notes('Decisions', spec.decisions),
     notes('Facts', spec.facts),
     `## Cites\n\n${cites.length === 0 ? '(none)' : cites.join('\n')}`,
+    // M3 (A13): shown only when declared, so a spec without them renders as before.
+    ...(spec.obligations === undefined ? [] : [`## Obligations\n\n${sorted(spec.obligations).map((o) => `- ${o}`).join('\n')}`]),
+    ...(spec.repairs === undefined ? [] : [`## Repairs\n\n${sorted(spec.repairs).map((r) => `- ${r}`).join('\n')}`]),
   ];
   return `${sections.join('\n\n')}\n`;
 }

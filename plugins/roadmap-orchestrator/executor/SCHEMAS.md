@@ -1160,15 +1160,17 @@ payloadSha256, docs}` intent (key `revision`, `REVISION_FENCE_KEY`: at most one 
 `applied`. Recovery: the docs `ff` done or no docs step → append from the payload; else abort (and re-evaluate the
 source). `RevisionSource = start | command{command} | bundle{job: ckpt-n} | executor{inv}`. The fence (A19) is that
 key: `judgment-inputs`, `audit-started`, `checkpoint-inputs` and a bundle's staleness check are captured only while
-no `revision.commit` is open.
+no `revision.commit` is open. `base` is 0 for an arc's first revision (its first start records rev 1 through the
+same activation record; step A2).
 
 **`plan-applied` (M3 fields, all optional)**: `source` (with `command`: a `command` source names the fact's command,
 any other source has `command: null`), `payloadSha256`, `rulingsSha256`, `obligationsSha256` (only with a vision),
 `visionSha256` (present exactly while the arc is holistic, A5), `publication{pub: docs-n, head}`, `routingProvenance
 = {profile, repoConfig: {seats, classes}, planLayer, unitLayers: {unit: layer} (ascending)}` (H7; every M3 revision
-records it). New `PlanChange`s: `obligation{id, edit: added|split|witness|disposed}`, `mapping`, `vision{rev}`,
-`limits{unit|null}`, `holistic`; `routing{routingRev, unit?}` (with `unit`: that unit's layer changed, and the rev is
-its routing's).
+records it). New `PlanChange`s: `obligation{id, edit: added|split|witness|disposed|restored|edited}` (`restored`:
+an exempt obligation active again; `edited`: its serves, contracts or deliveredBy changed, or future → must-hold; both
+added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`; `routing{routingRev, unit?}` (with
+`unit`: that unit's layer changed, and the rev is its routing's).
 
 **Facts** (`HolisticFact`, `src/core/events.ts`; one of each round-trips in `test/m3-schemas.test.ts`):
 
@@ -1225,7 +1227,7 @@ constants in the table (`Bounded.bound` names the field) and in the fold's charg
 **Commands** (M3 bodies; scopes per the plan's table, `commandScope` in `src/input/classify.ts`): `rule{path,
 sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
 `merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
-its effect is rejected `<type>: not implemented (step X)`: `rule` A4, `reverse` A2, `steer` and `merge-in` A3, `audit`
+its effect is rejected `<type>: not implemented (step X)`: `rule` A4 (`reverse` since A2), `steer` and `merge-in` A3, `audit`
 and `close-admissions` B7 (`NOT_YET`, `src/commands/apply.ts`); `gc` (A5b) fails in the CLI.
 
 **Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
@@ -1302,3 +1304,42 @@ work, whose queue is empty, whose head is in integration history and whose ref v
 11. **`gc` takes `--repo`**: run dirs live under a repo's git common dir.
 12. **The checkpoint output carries sidecars and a new unit's spec as JSON text** (`rulings`, `admit.spec`),
     validated by their own readers at activation, so the strict output schema stays finite.
+
+**Choices made in M3 A2** (the revisioned-input core):
+
+1. **Two frozen shapes extended additively**: `OBLIGATION_EDITS += restored, edited` (A1's classifier reports them);
+   `revision.commit.base` and `RevisionPayload.base` admit 0 (`RevisionBase = PlanRev | 0`), so an arc's first
+   revision (a start's rev 1) has a payload and an activation record like every other.
+2. **Sidecars live beside the ledger** in `<ledger>.d/C-<n>.json` (`sidecarDir`); `InputFiles` carries the ledger,
+   the sidecars, and the obligations and vision files `plan.holistic` names. The inputs in force beyond plan and
+   specs are the latest `plan-applied`'s payload manifest's (`revisionInForce`); a dev.5 revision (no payload) has
+   the live ledger and nothing else.
+3. **The apply core** (`src/commands/apply.ts`): `evaluateRevision(ctx, proposal, proposer)` → `RevisionDraft`
+   (the payload without its source) or reasons, synchronous; `commitUnderFence` holds the fence
+   (`src/core/fence.ts` `holdFence`), evaluates again and requires the same draft, keeps the bytes and commits
+   (`src/recover/revision.ts` `commitRevision`: payload, `revision.commit`, the docs publication through a
+   `DocsPublisher`, `plan-applied`, divergences). `Proposer = apply | rule | reverse | start | executor |
+   bundle{cites}` decides what may change: the ledger and sidecars only by `rule` or a bundle; the vision only by
+   `apply`. `captureUnderFence(journal, capture)` is the brief synchronous capture for readers (H2).
+4. **The publication plan**: `.roadmap/constraints.md` rendered when the ledger or sidecars change,
+   `.roadmap/invariants.md` when the obligations do, each only when its rendering changes (bytes kept as
+   `inputs/<sha>.render`), plus the contract ops of sidecars new in the revision. A start's changed files that need
+   a publication are refused (apply them); an arc's first start publishes nothing. Until A4 wires
+   `src/pipeline/publish.ts`, the executor's `DocsPublisher` refuses (`DOCS_NOT_YET`), so an obligation edit applies
+   only once A4 lands.
+5. **Which publication carried a revision** is read from the log: the docs `integration.ff` begun after its
+   `revision.commit` (`docsStateOf`). Recovery runs `revision.commit` after the git ops and before the command ops;
+   an abort raises no needs-user (its source re-evaluates).
+6. **Stale base (A4)** is the in-force revision's source: without `--expect-rev`, an apply is refused when it is a
+   bundle's or the executor's (a `rule` or `reverse` is an architect command).
+7. **Edit-class readings**: `route` sets any class at any seat (DESIGN §4), unsupported unit-role seats refused;
+   `limits` refuses only a bound the edit changes to below what a unit spent; scope growth needs the unit's spec to
+   cite an active ruling with a sidecar applying to the unit whose statement names exactly the added patterns (in
+   backticks); a spec's `obligations` must cover every non-exempt obligation a mapping pattern that may overlap its
+   scope names (literal prefixes), and a `repair` unit's spec names its repairs; `holistic.audit` is fixed once in
+   force; a changed arc lane re-witnesses the obligations it witnesses (`witness`).
+8. **`reverse <D-n>`** restores the plan, the specs its preimage names and the obligations where the act changed
+   them; a ledger or contract preimage is refused (supersede by `rule`); a later revision that changed a touched
+   artifact again refuses it. A dispatched unit's restored spec is the next rev of its recorded one.
+9. **`obligation-dropped`** is reported as `plan-change-refused` (one `obligation-dropped: …` reason per id) at an
+   arc's first start (`obligationDropped`).

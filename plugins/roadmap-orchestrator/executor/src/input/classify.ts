@@ -36,48 +36,112 @@
 //   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate
 //   arc, integrationBranch, baseline, worktreeRoot: always refused
 //
+// M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
+// it may touch:
+//   rulings ledger + sidecars   executor-owned after start (A3): only `rule` and a checkpoint bundle change them; a
+//                               differing ledger or sidecar from an apply, a start or a reverse is refused
+//   vision                      owner-only (A14): only an architect `apply` changes it (`visionEditReasons`)
+//   holistic                    may be added (`holistic`, with the vision), never removed; its audit settings and
+//                               its obligations file stay once in force
+//   obligations                 `classifyObligations` (src/holistic/obligations.ts): added, split, witness (also
+//                               every obligation witnessed by a changed arc lane), disposed by a ruling in force
+//                               (a split parent stays split: never disposed), restored, edited; `mapping`. A
+//                               checkpoint split's dropped text is returned for its `split-dropped` divergence
+//   route                       a unit's routing layer: any class at any seat (DESIGN §4 "Routing profiles"); the
+//                               unit's routing re-resolved (`routing{routingRev, unit}`) and its unsupported seats
+//                               refused; a moved implementer seat parks it `routing-changed` at dispatch (A3)
+//   limits                      the plan's (`limits{null}`) or a unit's (`limits{unit}`); a bound below what a unit
+//                               has spent is refused
+//   scope growth                a dispatched unit's plan and spec scope may grow when its spec cites an active
+//                               ruling that applies to the unit and names exactly the added patterns (in
+//                               backticks); the unit is re-pinned (A3) and the transient check allows them (A4)
+//   spec obligations, repairs   declared obligations exist and cover every non-exempt obligation a mapping pattern
+//                               that may overlap the unit's scope names (prefix-conservative); a `repair` unit
+//                               declares repairs, each an obligation or a finding of the arc
+//
 // `commandScope` (A12) is the units a mutation must find idle or awaiting admission: an apply's follow from
 // its classification.
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import type { IntentOf, PlanChange, PlanField } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
-import { type ResourceName, type ResourceUnit, type RulingId, type UnitId, parseResourceUnit } from '../core/ids.ts';
+import {
+  type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type UnitId, type VisionClauseId,
+  parseResourceUnit,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { ResidueKey, SpecM1 } from '../core/records.ts';
+import {
+  type ApplyManifest, type Bounds, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, isRevisionManifest, specObligations, specRepairs,
+} from '../core/records.ts';
 import { type UnitState, maxTier } from '../core/state.ts';
-import { isLegacy, unkeptSpecReason } from '../core/upgrade.ts';
+import { applyInputsOf, isLegacy, unkeptSpecReason } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
-import type { AbsPath } from '../core/values.ts';
+import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
+import { classifyObligations } from '../holistic/obligations.ts';
+import { type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { visionEditReasons } from '../holistic/vision.ts';
 import { withinEnvelope } from '../pipeline/prepare.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
-import type { ResolvedRouting } from '../routing/layers.ts';
+import { type ResolvedRouting, unsupportedSeats } from '../routing/layers.ts';
+import { UNIT_ROLES } from '../routing/types.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
-import { loadRulings } from '../spec/rulings.ts';
+import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
-import { type InForce, type InputFiles, SPEC_INPUT, inputPath, keptInput, manifestOf, planInForce, readInputFiles } from './inforce.ts';
-import type { PlanM1, PlanUnit } from './plan.ts';
+import {
+  type InForce, type InputFiles, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
+  readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
+} from './inforce.ts';
+import { type PlanM1, type PlanUnit, boundsOf } from './plan.ts';
+
+/**
+ * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
+ * start whose files differ, a checkpoint bundle (its cites back a split that drops text), or the executor's own
+ * machine revision. Its source (`RevisionSource`) is the payload's.
+ */
+export type Proposer =
+  | Readonly<{ type: 'apply' | 'rule' | 'reverse' | 'start' | 'executor' }>
+  | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
+
+/** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
+export type NextInputs = Readonly<{
+  ledger: readonly Ruling[];
+  sidecars: readonly RulingSidecar[];
+  obligations: Obligations | null;
+  vision: Vision | null;
+  /** What changed against the inputs in force. */
+  changed: Readonly<{ rulings: boolean; obligations: boolean; vision: boolean }>;
+}>;
 
 export type Classified =
   | Readonly<{ kind: 'unchanged' }>
-  /** `scoped`: the units whose plan entry or spec changed, for the startup rows an apply re-runs. */
-  | Readonly<{ kind: 'accepted'; changes: readonly PlanChange[]; scoped: readonly UnitId[]; routing: ResolvedRouting | null }>
+  /**
+   * `scoped`: the units whose plan entry or spec changed, for the startup rows an apply re-runs. `routings`: every
+   * routing the revision changed (the plan's, and each re-routed unit's), for the smoke of newly seated backends.
+   * `dispositions`: the weakenings and the rulings that allow them; `dropped`: a checkpoint split's dropped text.
+   */
+  | Readonly<{
+    kind: 'accepted'; changes: readonly PlanChange[]; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[];
+    dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+    dropped: readonly Readonly<{ obligation: ObligationId; sentences: readonly string[] }>[];
+    inputs: NextInputs;
+  }>
   | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>;
 
 export type ClassifyInput = Readonly<{
   runDir: AbsPath;
   view: JournalView;
   inForce: InForce;
+  /** The inputs in force beyond plan and specs (src/input/inforce.ts `revisionInForce`). */
+  revision: RevisionInForce;
   next: InputFiles;
   /** Residues on this host not yet disposed of: a resource they name keeps its declaration. */
   residues: readonly ResidueKey[];
-  /** Resolves a plan's routing under the arc's profile and repo config. */
-  resolve: (plan: PlanM1) => ResolvedRouting;
+  /** The arc's profile and repo config: a plan's and a unit's routing resolve under them. */
+  routing: RoutingBase;
+  proposer: Proposer;
 }>;
 
 const FIXED = ['arc', 'integrationBranch', 'baseline', 'worktreeRoot'] as const;
@@ -125,7 +189,7 @@ function staleAfterMachineRevision(runDir: AbsPath, unit: UnitId, path: AbsPath,
 
 /** The spec change of a dispatched unit, or why it is refused; null when the file is the unit's spec. */
 function dispatchedSpec(
-  input: ClassifyInput, unit: PlanUnit, u: UnitState, path: AbsPath, bytes: Buffer, spec: SpecM1,
+  input: ClassifyInput, unit: PlanUnit, u: UnitState, path: AbsPath, bytes: Buffer, spec: SpecM1, inputs: NextInputs,
 ): PlanChange | string | null {
   const recorded = u.spec;
   if (recorded === null) throw new Error(`unit ${unit.id} is dispatched without a recorded spec`);
@@ -146,9 +210,9 @@ function dispatchedSpec(
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
   if (kept === null) return unkeptSpecReason(unit.id, path);
   const was = parseSpec(kept, path);
-  if (!same(was.scope, spec.scope) || !same(was.resources, spec.resources)) {
-    return `unit ${unit.id} is dispatched: its spec's scope and resources may not change`;
-  }
+  if (!same(was.resources, spec.resources)) return `unit ${unit.id} is dispatched: its spec's scope and resources may not change`;
+  const growth = scopeGrowthReason(unit.id, 'spec\'s scope', 'its spec\'s scope and resources may not change', was.scope, spec.scope, spec, inputs);
+  if (growth !== null) return growth;
   const machine = spec.rev <= recorded.rev && !(spec.rev === recorded.rev && sameBesidesEvidence(was, spec)) ? machineRevision(input.view, unit.id, recorded) : null;
   if (machine !== null) return staleAfterMachineRevision(input.runDir, unit.id, path, spec.rev, machine);
   if (spec.rev === recorded.rev) {
@@ -165,25 +229,20 @@ function dispatchedSpec(
   return change('revision');
 }
 
-/** A plan unit without its M2 lifecycle fields, for comparing the rest of its entry. */
-function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters'> {
-  const { cut: _cut, reenters: _reenters, ...rest } = u;
+/** A plan unit without its M2 lifecycle fields and its M3 routing layer and limits (their own edit classes), for comparing the rest of its entry. */
+function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'routing' | 'limits'> {
+  const { cut: _cut, reenters: _reenters, routing: _routing, limits: _limits, ...rest } = u;
   return rest;
 }
 
-/** Why `ruling` may not back `what`: not in the next plan's ledger, withdrawn, or the ledger does not load; null when it may. */
-function rulingReason(next: InputFiles, ruling: RulingId, what: string): string | null {
-  const file = join(dirname(next.planFile), next.plan.rulings);
-  if (!existsSync(file)) return `${what} cites ruling ${ruling}, but the rulings ledger ${file} does not exist`;
-  let rulings;
-  try {
-    rulings = loadRulings(file);
-  } catch (error) {
-    if (!(error instanceof SchemaError)) throw error;
-    return `${what} cites ruling ${ruling}, but the rulings ledger does not load: ${error.message}`;
-  }
-  const r = rulings.find((x) => x.id === ruling);
-  if (r === undefined) return `${what} cites ruling ${ruling}, which the ledger ${file} does not hold`;
+/** The revision's ledger: its rulings, or why it does not load. */
+type Ledger = Readonly<{ path: AbsPath; rulings: readonly Ruling[] }> | Readonly<{ path: AbsPath; error: string }>;
+
+/** Why `ruling` may not back `what`: not in the revision's ledger, withdrawn, or the ledger does not load; null when it may. */
+function rulingReason(ledger: Ledger, ruling: RulingId, what: string): string | null {
+  if ('error' in ledger) return `${what} cites ruling ${ruling}, but the rulings ledger does not load: ${ledger.error}`;
+  const r = ledger.rulings.find((x) => x.id === ruling);
+  if (r === undefined) return `${what} cites ruling ${ruling}, which the ledger ${ledger.path} does not hold`;
   return r.status === 'withdrawn' ? `${what} cites ruling ${ruling}, which ${r.by} withdrew` : null;
 }
 
@@ -212,7 +271,7 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
  * lineage's envelope, the risk at least its floor, a `reset` backed by an active ruling. Its change, or reasons.
  */
 function reentryRow(
-  view: JournalView, next: InputFiles, unit: PlanUnit, cutNow: ReadonlySet<UnitId>,
+  view: JournalView, ledger: Ledger, unit: PlanUnit, cutNow: ReadonlySet<UnitId>,
 ): Extract<PlanChange, { type: 'unit-reentered' }> | readonly string[] {
   const re = unit.reenters;
   if (re === undefined) throw new Error(`reentryRow of ${unit.id}, which re-enters nothing`);
@@ -238,7 +297,7 @@ function reentryRow(
   }
   if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
   if (re.reset !== undefined) {
-    const r = rulingReason(next, re.reset.ruling, `unit ${unit.id}'s reset`);
+    const r = rulingReason(ledger, re.reset.ruling, `unit ${unit.id}'s reset`);
     if (r !== null) reasons.push(r);
   }
   return reasons.length > 0 ? reasons : { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined };
@@ -250,15 +309,120 @@ function unitOf(u: ResourceUnit, name: ResourceName): boolean {
   return (p.type === 'named' && p.name === name) || (p.type === 'instance' && p.pool === name);
 }
 
+/** Parses a revisioned JSON input for the classifier: its value, or the reason it does not load. */
+function parsedInput<T>(what: string, path: AbsPath, bytes: Buffer | null, parse: (v: unknown) => T, reasons: string[]): T | null {
+  if (bytes === null) {
+    reasons.push(`the ${what} ${path} does not exist`);
+    return null;
+  }
+  try {
+    return parse(JSON.parse(bytes.toString('utf8')));
+  } catch (error) {
+    if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
+    reasons.push(`the ${what} ${path} does not load: ${error.message}`);
+    return null;
+  }
+}
+
+/** The revision's ledger, sidecars, obligations and vision, parsed, and what changed against the inputs in force. */
+function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledger: Ledger; inputs: NextInputs }> {
+  const { next, revision } = input;
+  let ledger: Ledger;
+  if (next.ledger.bytes === null) ledger = { path: next.ledger.path, error: `${next.ledger.path} does not exist` };
+  else {
+    try {
+      ledger = { path: next.ledger.path, rulings: parseRulings(next.ledger.bytes.toString('utf8'), next.ledger.path) };
+    } catch (error) {
+      if (!(error instanceof SchemaError)) throw error;
+      ledger = { path: next.ledger.path, error: error.message };
+    }
+  }
+  const sidecars: RulingSidecar[] = [];
+  for (const [id, file] of next.sidecars) {
+    const s = parsedInput('ruling sidecar', file.path, file.bytes, parseRulingSidecar, reasons);
+    if (s === null) continue;
+    if (s.id !== id) reasons.push(`the ruling sidecar ${file.path} holds ${s.id}`);
+    else if ('rulings' in ledger && !ledger.rulings.some((r) => r.id === id)) reasons.push(`the ruling sidecar ${file.path} names ${id}, which the ledger does not hold`);
+    else sidecars.push(s);
+  }
+  const obligations = next.obligations === null ? null : parsedInput('obligations file', next.obligations.path, next.obligations.bytes, parseObligations, reasons);
+  const vision = next.vision === null ? null : parsedInput('vision file', next.vision.path, next.vision.bytes, parseVision, reasons);
+  const sha = (bytes: Buffer | null | undefined): string | null => (bytes === null || bytes === undefined ? null : bytesSha256(bytes));
+  const sidecarShas = Object.fromEntries([...next.sidecars].map(([id, f]) => [id, bytesSha256(f.bytes)]));
+  return {
+    ledger,
+    inputs: {
+      ledger: 'rulings' in ledger ? ledger.rulings : [],
+      sidecars,
+      obligations,
+      vision,
+      changed: {
+        rulings: sha(next.ledger.bytes) !== revision.ledger.sha256 || !same(sidecarShas, revision.manifest.rulings.sidecars),
+        obligations: sha(next.obligations?.bytes) !== (revision.obligations?.sha256 ?? null),
+        vision: sha(next.vision?.bytes) !== (revision.vision?.sha256 ?? null),
+      },
+    },
+  };
+}
+
+/** The literal prefix of a pattern (before its first glob character): two patterns may overlap when one's prefixes the other's. */
+const literalPrefix = (p: string): string => {
+  const i = p.search(/[*?[{]/);
+  return i === -1 ? p : p.slice(0, i);
+};
+/** Prefix-conservative overlap of two repo patterns: false only when no path can match both. */
+export function mayOverlap(a: string, b: string): boolean {
+  const x = literalPrefix(a);
+  const y = literalPrefix(b);
+  return x.startsWith(y) || y.startsWith(x);
+}
+
+/** What a unit has spent of each counted bound (the time bounds count nothing). */
+function spentOf(u: UnitState): Readonly<Partial<Record<keyof Bounds, number>>> {
+  return {
+    chargeable: u.counters.chargeableFailures,
+    redirects: u.counters.redirects - u.redirectBase,
+    reviseRounds: u.counters.reviseRounds,
+    candidateReds: u.counters.candidateReds,
+    retries: Math.max(0, ...Object.values(u.counters.retries)),
+  };
+}
+
+/** Backticked tokens of a ruling statement: the patterns it names. */
+const namedPatterns = (statement: string): readonly string[] => [...statement.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+
+/**
+ * Why a dispatched unit's scope may not become `now` (was `was`): it may only grow, and only when its spec in the
+ * revision cites an active ruling applying to the unit whose statement names exactly the added patterns. Null when allowed.
+ */
+function scopeGrowthReason(
+  unit: UnitId, what: string, fixed: string, was: readonly RepoPattern[], now: readonly RepoPattern[], spec: SpecM1 | null, inputs: NextInputs,
+): string | null {
+  if (same([...was].sort(), [...now].sort())) return null;
+  const added = now.filter((p) => !was.includes(p)).sort();
+  if (was.some((p) => !now.includes(p))) return `unit ${unit} is dispatched: ${fixed} (a scope may only grow, backed by a ruling)`;
+  const backing = (spec?.cites.rulings ?? []).find((id) => {
+    const r = inputs.ledger.find((x) => x.id === id);
+    const s = inputs.sidecars.find((x) => x.id === id);
+    if (r?.status !== 'active' || s === undefined || s.status !== 'active') return false;
+    if (s.appliesTo.type !== 'units' || !s.appliesTo.units.includes(unit)) return false;
+    return same([...new Set(namedPatterns(s.statement).filter((p) => !was.includes(p as RepoPattern)))].sort(), added);
+  });
+  return backing === undefined
+    ? `unit ${unit} is dispatched: its ${what} grows by ${added.join(', ')} without its spec citing an active ruling for ${unit} that names exactly those patterns`
+    : null;
+}
+
 /** Classifies the files against the plan in force. */
 export function classify(input: ClassifyInput): Classified {
-  const { view, inForce, next } = input;
+  const { view, inForce, next, proposer } = input;
   const cur = inForce.plan;
   const plan = next.plan;
   const legacy = isLegacy(view);
   const reasons: string[] = [];
   const changes: PlanChange[] = [];
   const scoped = new Set<UnitId>();
+  const { ledger, inputs } = nextInputsOf(input, reasons);
 
   for (const field of FIXED) {
     if (!same(cur[field], plan[field])) reasons.push(`${field} may never change (in force: ${String(cur[field])}; plan.json: ${String(plan[field])})`);
@@ -326,7 +490,7 @@ export function classify(input: ClassifyInput): Classified {
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
       const refusal = cutRefusal(view, unit.id);
-      const ruling = unit.cut.ruling === undefined ? null : rulingReason(next, unit.cut.ruling, `unit ${unit.id}'s cut`);
+      const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
       if (refusal !== null) reasons.push(refusal);
       if (ruling !== null) reasons.push(ruling);
       if (refusal === null && ruling === null) {
@@ -340,11 +504,13 @@ export function classify(input: ClassifyInput): Classified {
         changes.push({ type: 'unit-changed', unit: unit.id });
         scoped.add(unit.id);
       } else {
-        const fixed = (['spec', 'risk', 'scope', 'resources'] as const).filter((k) => !same(was[k], unit[k]));
+        const fixed = (['spec', 'risk', 'resources'] as const).filter((k) => !same(was[k], unit[k]));
         const added = unit.after.filter((a) => !was.after.includes(a));
+        const growth = same(was.scope, unit.scope) ? null : scopeGrowthReason(unit.id, 'scope', 'its scope may not change', was.scope, unit.scope, spec, inputs);
         for (const k of fixed) reasons.push(`unit ${unit.id} is dispatched: its ${k} may not change`);
+        if (growth !== null) reasons.push(growth);
         if (added.length > 0) reasons.push(`unit ${unit.id} is dispatched: it may not run after ${added.join(', ')} as well`);
-        if (fixed.length === 0 && added.length === 0) {
+        if (fixed.length === 0 && added.length === 0 && growth === null) {
           changes.push({ type: 'unit-changed', unit: unit.id });
           scoped.add(unit.id);
         }
@@ -358,7 +524,7 @@ export function classify(input: ClassifyInput): Classified {
       }
       continue;
     }
-    const c = dispatchedSpec(input, unit, view.unit(unit.id), file.path, file.bytes, spec);
+    const c = dispatchedSpec(input, unit, view.unit(unit.id), file.path, file.bytes, spec, inputs);
     if (typeof c === 'string') reasons.push(c);
     else if (c !== null) {
       changes.push(c);
@@ -381,7 +547,7 @@ export function classify(input: ClassifyInput): Classified {
   for (const [old, units] of chains) reasons.push(`units ${units.join(', ')} each re-enter ${old}; a lineage is a chain: re-enter its head`);
   for (const unit of reentering) {
     if (chains.some(([old]) => old === unit.reenters?.unit)) continue;
-    const row = reentryRow(view, next, unit, cutNow);
+    const row = reentryRow(view, ledger, unit, cutNow);
     if ('type' in row) {
       changes.push(row);
       scoped.add(row.reenters);
@@ -392,14 +558,51 @@ export function classify(input: ClassifyInput): Classified {
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);
   }
 
-  // Routing.
-  let routing: ResolvedRouting | null = null;
+  // Routing: the plan's layer, then each unit's (`route`, M3).
+  const routings: ResolvedRouting[] = [];
   if (!same(cur.routing, plan.routing)) {
-    const resolved = input.resolve(plan);
-    if (resolved.rev !== input.resolve(cur).rev) {
-      routing = resolved;
+    const resolved = planRouting(input.routing, plan);
+    if (resolved.rev !== planRouting(input.routing, cur).rev) {
+      routings.push(resolved);
       changes.push({ type: 'routing', routingRev: resolved.rev });
     }
+  }
+  for (const unit of plan.units) {
+    const was = cur.units.find((u) => u.id === unit.id);
+    if (same(was?.routing, unit.routing)) continue;
+    const resolved = unitRouting(input.routing, plan, unit);
+    const unsupported = unsupportedSeats(resolved, unit.id).filter((r) => r.kind === 'unsupported-routing' && (UNIT_ROLES as readonly string[]).includes(r.role));
+    reasons.push(...unsupported.map((r) => canonicalJson(r)));
+    if (was === undefined || unsupported.length > 0 || resolved.rev === unitRouting(input.routing, cur, was).rev) continue;
+    routings.push(resolved);
+    changes.push({ type: 'routing', routingRev: resolved.rev, unit: unit.id });
+    scoped.add(unit.id);
+  }
+
+  // Limits (M3): never below what a unit has spent.
+  const limitsChecked = new Set<UnitId>();
+  const checkLimits = (unit: PlanUnit): void => {
+    const was = cur.units.find((u) => u.id === unit.id);
+    if (limitsChecked.has(unit.id) || was === undefined) return;
+    limitsChecked.add(unit.id);
+    const before = boundsOf(cur, was);
+    const bounds = boundsOf(plan, unit);
+    const spent = spentOf(view.unit(unit.id));
+    for (const k of BOUND_FIELDS) {
+      const s = spent[k];
+      if (s !== undefined && bounds[k] !== before[k] && bounds[k] < s) reasons.push(`unit ${unit.id}: its ${k} bound ${bounds[k]} is below what it has spent (${s})`);
+    }
+  };
+  if (!same(cur.limits, plan.limits)) {
+    changes.push({ type: 'limits', unit: null });
+    for (const unit of plan.units) checkLimits(unit);
+  }
+  for (const unit of plan.units) {
+    const was = cur.units.find((u) => u.id === unit.id);
+    if (was === undefined || same(was.limits, unit.limits)) continue;
+    changes.push({ type: 'limits', unit: unit.id });
+    scoped.add(unit.id);
+    checkLimits(unit);
   }
 
   // Resources and pools: a declaration's units are its name, or every instance of the pool.
@@ -447,10 +650,116 @@ export function classify(input: ClassifyInput): Classified {
   }
   if (changes.some((c) => c.type === 'plan-field' && (c.field === 'contracts' || c.field === 'rulings'))) for (const u of plan.units) scoped.add(u.id);
 
+  // M3: the rulings ledger and its sidecars (A3), holistic (A5), the vision (A14), the obligations.
+  if (inputs.changed.rulings && proposer.type !== 'rule' && proposer.type !== 'bundle') {
+    reasons.push(`the rulings ledger ${next.ledger.path} or its sidecars differ from the ledger in force: it is executor-owned after start (A3); a ruling lands through \`roadmap rule\``);
+  }
+  if (cur.holistic !== undefined && plan.holistic === undefined) reasons.push('holistic may be added, never removed (A5)');
+  if (cur.holistic === undefined && plan.holistic !== undefined) changes.push({ type: 'holistic' });
+  if (cur.holistic !== undefined && plan.holistic !== undefined && !same(cur.holistic.audit, plan.holistic.audit)) {
+    reasons.push('holistic.audit may not change once holistic is in force');
+  }
+  const prevVision = input.revision.vision?.value ?? null;
+  if (inputs.changed.vision && inputs.vision !== null && !same(prevVision, inputs.vision)) {
+    if (proposer.type !== 'apply') reasons.push(`the vision is owner-only (A14): only an architect \`apply\` changes it, not a ${proposer.type}`);
+    else {
+      const why = visionEditReasons(prevVision, inputs.vision);
+      reasons.push(...why);
+      if (why.length === 0) changes.push({ type: 'vision', rev: inputs.vision.rev });
+    }
+  }
+  const obligations = obligationRows(input, inputs, reasons);
+  changes.push(...obligations.changes);
+  specRows(input, inputs, specs, changes, reasons);
+
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
-  if (changes.length === 0 && bytesSha256(next.planBytes) === inForce.manifest.planSha256 && sameSpecs(input)) return { kind: 'unchanged' };
-  return { kind: 'accepted', changes, scoped: plan.units.map((u) => u.id).filter((id) => scoped.has(id)), routing };
+  const sameInputs = !inputs.changed.rulings && !inputs.changed.obligations && !inputs.changed.vision;
+  if (changes.length === 0 && bytesSha256(next.planBytes) === inForce.manifest.planSha256 && sameSpecs(input) && sameInputs) return { kind: 'unchanged' };
+  return {
+    kind: 'accepted', changes, scoped: plan.units.map((u) => u.id).filter((id) => scoped.has(id)), routings,
+    dispositions: obligations.dispositions, dropped: obligations.dropped, inputs,
+  };
+}
+
+type ObligationRows = Readonly<{
+  changes: readonly PlanChange[];
+  dispositions: Extract<Classified, { kind: 'accepted' }>['dispositions'];
+  dropped: Extract<Classified, { kind: 'accepted' }>['dropped'];
+}>;
+
+/** The obligation edit classes (src/holistic/obligations.ts), mapped to plan changes; a split parent is never disposed. */
+function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: string[]): ObligationRows {
+  const prev = input.revision.obligations?.value ?? null;
+  const next = inputs.obligations;
+  const none = { changes: [], dispositions: [], dropped: [] };
+  if (prev !== null && input.next.obligations === null) {
+    if (input.next.plan.holistic !== undefined) reasons.push('the obligations file may not be dropped once in force; retire each obligation by a ruling instead');
+    return none;
+  }
+  if (next === null || !inputs.changed.obligations) return none;
+  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const };
+  const v = classifyObligations(prev, next, { vision: inputs.vision, rulings: inputs.sidecars, author });
+  reasons.push(...v.reasons);
+  const changes: PlanChange[] = [];
+  const dispositions: ObligationRows['dispositions'][number][] = [];
+  const dropped: ObligationRows['dropped'][number][] = [];
+  const edited = new Set<string>();
+  for (const c of v.changes) {
+    if (c.type === 'disposed') {
+      const was = prev?.obligations.find((o) => o.id === c.id);
+      if (was?.state.type === 'split') {
+        reasons.push(`${c.id} is split into ${was.state.children.join(', ')} and stays split: disposition its children instead (H14)`);
+        continue;
+      }
+      dispositions.push({ obligation: c.id, disposition: c.disposition, ruling: c.ruling });
+    }
+    if (c.type === 'split' && c.dropped.length > 0) dropped.push({ obligation: c.id, sentences: c.dropped });
+    changes.push({ type: 'obligation', id: c.id, edit: c.type });
+    edited.add(`${c.id}\u0000${c.type}`);
+  }
+  // A changed arc lane re-witnesses every obligation it witnesses (their proof judgments bind its laneRev).
+  for (const o of next.obligations) {
+    if (o.witness === null || !v.lanes.includes(o.witness.lane) || edited.has(`${o.id}\u0000witness`) || edited.has(`${o.id}\u0000added`)) continue;
+    if (prev?.obligations.some((p) => p.id === o.id) !== true) continue;
+    changes.push({ type: 'obligation', id: o.id, edit: 'witness' });
+  }
+  if (v.mapping) changes.push({ type: 'mapping' });
+  const units = new Set(input.next.plan.units.map((u) => u.id));
+  for (const o of next.obligations) {
+    const unknown = isExempt(o) ? [] : o.deliveredBy.filter((u) => !units.has(u));
+    if (unknown.length > 0) reasons.push(`${o.id} is delivered by ${unknown.join(', ')}, which the plan does not list`);
+  }
+  return { changes, dispositions, dropped };
+}
+
+/**
+ * The spec rows of every unit the revision adds or whose spec or entry it changes: its declared obligations exist and
+ * cover every non-exempt obligation of a mapping pattern that may overlap its scope (prefix-conservative); a `repair`
+ * unit declares repairs, each an obligation or a finding of the arc.
+ */
+function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<UnitId, SpecM1>, changes: readonly PlanChange[], reasons: string[]): void {
+  const touched = new Set<UnitId>(changes.flatMap((c) => (c.type === 'spec' || c.type === 'unit-added' || c.type === 'unit-changed' ? [c.unit] : [])));
+  const obligations = inputs.obligations;
+  const findings = new Set<string>(input.view.holistic().findings.map((f) => f.id));
+  for (const unit of input.next.plan.units) {
+    const spec = specs.get(unit.id);
+    if (!touched.has(unit.id) || spec === undefined) continue;
+    const declared = specObligations(spec);
+    const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
+    const unknown = declared.filter((id) => !byId.has(id));
+    if (unknown.length > 0) reasons.push(`unit ${unit.id} declares obligations ${unknown.join(', ')}, which are not in force`);
+    if (obligations !== null) {
+      const scope = [...new Set([...unit.scope, ...spec.scope])];
+      const owed = [...new Set(obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations))]
+        .filter((id) => !isExempt(byId.get(id)!) && !declared.includes(id)).sort();
+      if (owed.length > 0) reasons.push(`unit ${unit.id}'s scope may touch paths mapped to ${owed.join(', ')}; its spec declares them in \`obligations\``);
+    }
+    const repairs = specRepairs(spec);
+    if (unit.origin === 'repair' && repairs.length === 0) reasons.push(`unit ${unit.id} is a repair unit: its spec names what it repairs in \`repairs\``);
+    const bad = repairs.filter((r) => (r.startsWith('F-') ? !findings.has(r) : !byId.has(r as ObligationId)));
+    if (bad.length > 0) reasons.push(`unit ${unit.id} repairs ${bad.join(', ')}, which the arc does not hold`);
+  }
 }
 
 /** Whether every unit's spec file is its spec in force (by hash). */
@@ -483,9 +792,17 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
   for (const c of changes) {
     switch (c.type) {
       case 'routing':
+      case 'limits':
+        if (c.unit === undefined || c.unit === null) return ARC;
+        units.add(c.unit);
+        break;
       case 'resource':
       case 'suite':
       case 'plan-field':
+      case 'obligation':
+      case 'mapping':
+      case 'vision':
+      case 'holistic':
         return ARC;
       case 'unit-added':
       case 'unit-removed':
@@ -511,12 +828,51 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
   return unitsScope(units);
 }
 
+// ---------------------------------------------------------------------------------------------------
+// An apply's proposal (G15)
+
+/**
+ * The proposal an `apply` command makes: the files as they are, when they still hash to its manifest. A 1.0.0-dev.5
+ * command's plan manifest (G15, `applyInputsOf`) is read as the ledger live (the files' own), no obligations and no
+ * vision; its bytes are never rewritten. Otherwise why it no longer holds: files missing, or changed since hashed.
+ */
+export function applyProposal(files: InputFiles, manifest: ApplyManifest): Readonly<{ next: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
+  const actual = revisionManifestOf(files);
+  if ('missing' in actual) return { reasons: actual.missing };
+  if (isRevisionManifest(manifest)) {
+    return same(actual, manifest) ? { next: files } : { reasons: [manifestMismatch(files, manifest, actual)] };
+  }
+  const inputs = applyInputsOf(manifest);
+  if (inputs.rulings !== 'live') throw new Error('a plan manifest reads the ledger live');
+  const proposal: InputFiles = { ...files, obligations: inputs.obligations, vision: inputs.vision };
+  return same(planManifestOf(actual), planManifestOf(manifest)) ? { next: proposal } : { reasons: [manifestMismatch(files, manifest, actual)] };
+}
+
+/** Which files no longer hash to what the command's manifest recorded. */
+function manifestMismatch(files: InputFiles, expected: ApplyManifest, actual: RevisionManifest): string {
+  const differ: string[] = [];
+  if (expected.planSha256 !== actual.planSha256) differ.push(files.planFile);
+  const units = new Set([...Object.keys(expected.specs), ...Object.keys(actual.specs)] as UnitId[]);
+  for (const u of [...units].sort()) {
+    if (expected.specs[u] !== actual.specs[u]) differ.push(files.specs.get(u)?.path ?? `the spec of ${u} (no longer in the plan)`);
+  }
+  if (isRevisionManifest(expected)) {
+    if (!same(expected.rulings, actual.rulings)) differ.push(files.ledger.path);
+    if (expected.obligations !== actual.obligations) differ.push(files.obligations?.path ?? 'the obligations file (no longer in the plan)');
+    if (expected.vision !== actual.vision) differ.push(files.vision?.path ?? 'the vision file (no longer in the plan)');
+  }
+  return `the files changed since \`roadmap apply\` hashed them: ${differ.join(', ')}; run it again`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Command scopes, continued
+
 /** What an apply's scope reads: its classification's inputs. */
 export type ScopeContext = Readonly<{
   runDir: AbsPath;
   hostDir: AbsPath;
   planFile: AbsPath;
-  resolve: (plan: PlanM1) => ResolvedRouting;
+  routingBase: RoutingBase;
 }>;
 
 /**
@@ -547,16 +903,20 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);
         if (inForce === null) return NONE;
-        let next: InputFiles;
+        let files: InputFiles;
         try {
-          next = readInputFiles(sc.planFile);
+          files = readInputFiles(sc.planFile);
         } catch (error) {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;
         }
-        if (canonicalJson(manifestOf(next)) !== canonicalJson(body.manifest)) return ARC;
-        const verdict = classify({ runDir: sc.runDir, view, inForce, next, residues: undispositioned(sc.hostDir), resolve: sc.resolve });
-        return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, next.plan) : NONE;
+        const proposal = applyProposal(files, body.manifest);
+        if ('reasons' in proposal) return ARC;
+        const verdict = classify({
+          runDir: sc.runDir, view, inForce, revision: revisionInForce(sc.runDir, inForce, sc.planFile), next: proposal.next,
+          residues: undispositioned(sc.hostDir), routing: sc.routingBase, proposer: { type: 'apply' },
+        });
+        return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;
       }
     }
   };
