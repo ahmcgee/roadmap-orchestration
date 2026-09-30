@@ -69,7 +69,7 @@ test('rounds.d4-decide: a fix round after a stalled one escalates to build.high 
   assert.equal(log.view.unit(U1).counters.chargeableFailures, 2, 'inside the bound');
 
   // Pure: only a fix round escalates, only when build.<tier> is not build.high's triple.
-  const routing = run.ctx.routing();
+  const routing = run.ctx.routing(null);
   assert.deepEqual(escalation(log, routing, U1, FIX), { kind: 'escalate', from: 'med', stalled: fix });
   assert.deepEqual(escalation(log, routing, U1, { kind: 'resume' }), { kind: 'none', why: 'not-a-fix-round' });
   const sameHigh = { ...routing, table: { ...routing.table, build: { ...routing.table.build, med: routing.table.build.high } } };

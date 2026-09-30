@@ -61,7 +61,7 @@ test('cmd.resolve-edge: records the edge resolved on the architect\'s evidence, 
 test('cmd.run-only: limits admission to the units named, checked at admission, then clears; ids outside the plan are rejected', T, async () => {
   const r = arc();
   try {
-    const admit = admitter(r.ctx.routing().table);
+    const admit = admitter((u) => r.ctx.routing(u).table);
     const constraints = (unit: typeof U1) =>
       admit({ view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'plan-check', blocking: [], drains: [], tripped: [] });
 

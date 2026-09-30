@@ -56,7 +56,7 @@ export type ProberHandle = Prober & Readonly<{
 const invocationContext = (ctx: ProberContext): InvocationContext => ({ journal: ctx.journal, runDir: ctx.runDir, hostEnv: backendEnv(ctx.hostEnv) });
 
 async function backendCheck(ctx: ProberContext, backend: Backend): Promise<Readonly<{ pass: boolean; detail: string }>> {
-  const report = await probeSmoke({ profile: ctx.profile, resolved: ctx.routing() }, invocationContext(ctx), backend);
+  const report = await probeSmoke({ profile: ctx.profile, resolved: ctx.routing(null) }, invocationContext(ctx), backend);
   const pass = report.backends.every(smokePassed);
   return { pass, detail: pass ? 'passed' : smokeRejections(report).map((r) => `${r.problem}: ${r.detail}`).join('; ') || 'failed' };
 }

@@ -151,7 +151,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
  */
 export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): CommandContext {
   return {
-    ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
+    ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
     routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };

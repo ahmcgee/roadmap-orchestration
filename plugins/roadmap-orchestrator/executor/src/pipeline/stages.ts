@@ -12,6 +12,13 @@
 // attempt, no counter, no `interrupted`. The chain stages (quiesce → evidence → salvage → teardown) take none
 // and ignore the signal. A judgment's inputs are durable before its spawn (`judgment-inputs`, F1).
 //
+// M3 (A19, H2): a judgment's revision-sensitive inputs (the integration tip, the spec, plan, ledger, vision and
+// obligations in force, the prompt rendered from them) are read and its `judgment-inputs` written in one synchronous
+// capture under the revision fence (src/core/fence.ts `captureUnderFence`), so no judgment reads the window between a
+// docs `ff` and its `plan-applied`. The executor's own spec patches (a plan-check redirect, the implementer's
+// decisions) are machine revisions of a spec: each holds the fence (`holdFence`) so it serialises with every other
+// revision. Plan-check reads the vision in force as non-directive context (R17); the gate never does.
+//
 // Outcomes are written through the park table (`record`, src/park/table.ts `stageOutcomeFact`): a retryable
 // park carries its targets (the call's backend, the host, each instance a cleanup failed), a repeat park is
 // operator with an `env-blocked` item, and a hold carries its backend-park cause (G5).
@@ -43,6 +50,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { HoldCause, IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
+import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
   type InvocationId, type JudgmentSessionId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
@@ -50,7 +58,7 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
-import { isLegacy } from '../core/upgrade.ts';
+import { isLegacy, rulingsFromLiveFile } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
@@ -60,11 +68,14 @@ import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../gi
 import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
-import { type LoadedSpec, SPEC_INPUT, inputPath, parseUnitSpec, specBytesOf, specShaInForce } from '../input/inforce.ts';
+import {
+  type LoadedSpec, OBLIGATIONS_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
+} from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
+import { type Obligations, type Vision, parseObligations, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText,
+  ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText, VisionInput,
 } from '../prompts/inputs.ts';
 import {
   DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
@@ -77,13 +88,13 @@ import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
-import { type Ruling, loadRulings } from '../spec/rulings.ts';
+import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../spec/patch.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent,
-  backendOf, callBackend, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDispatch, nonEmpty, pinDispatch, raiseRisk,
-  riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
+  type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent,
+  backendOf, callBackend, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
+  raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
@@ -242,8 +253,47 @@ export const ledgerPath = (ctx: StageContext): AbsPath => absPath(join(ctx.planD
 /** The directory a session is given to read the ledger from. */
 export const ledgerDir = (ctx: StageContext): AbsPath => absPath(dirname(ledgerPath(ctx)));
 
+/**
+ * The rulings ledger in force (A3: executor-owned after start): the bytes the latest revision's payload kept; the
+ * live file for a revision a 1.0.0-dev.5 executor wrote, which kept none (`rulingsFromLiveFile`, scaffolding).
+ */
 export function ledger(ctx: StageContext): readonly Ruling[] {
-  return loadRulings(ledgerPath(ctx));
+  const payload = payloadInForce(ctx);
+  if (payload === null) return parseRulings(rulingsFromLiveFile(ledgerPath(ctx)).toString('utf8'), ledgerPath(ctx));
+  return parseRulings(kept(ctx, payload.manifest.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), ledgerPath(ctx));
+}
+
+/** The latest revision's payload, or null for one a 1.0.0-dev.5 executor wrote (no payload). */
+function payloadInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ReturnType<typeof keptPayload> | null {
+  const fact = ctx.journal.view.planApplied();
+  if (fact === null) throw new Error('a stage before any plan revision');
+  return fact.payloadSha256 === undefined ? null : keptPayload(ctx.runDir, fact.payloadSha256);
+}
+
+function kept(ctx: Readonly<{ runDir: AbsPath }>, sha: Sha256Hex, ext: string): Buffer {
+  const bytes = keptInput(ctx.runDir, sha, ext);
+  if (bytes === null) throw new Error(`the revision in force names ${ext} ${sha}, which is not kept`);
+  return bytes;
+}
+
+/**
+ * The vision and obligations in force (M3): the latest revision's kept bytes; null where it names none (a
+ * non-holistic arc, a holistic one without obligations, a revision a 1.0.0-dev.5 executor wrote).
+ */
+export function holisticInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): Readonly<{ vision: Vision | null; obligations: Obligations | null }> {
+  const payload = payloadInForce(ctx);
+  const read = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): T | null =>
+    (sha === null ? null : parse(JSON.parse(kept(ctx, sha, ext).toString('utf8'))));
+  return {
+    vision: read(payload?.manifest.vision ?? null, VISION_INPUT, parseVision),
+    obligations: read(payload?.manifest.obligations ?? null, OBLIGATIONS_INPUT, parseObligations),
+  };
+}
+
+/** The vision in force as a prompt reads it (every clause, withdrawn ones marked), or null outside a holistic arc. */
+export function visionInput(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): VisionInput | null {
+  const { vision } = holisticInForce(ctx);
+  return vision === null ? null : { rev: vision.rev, clauses: vision.clauses };
 }
 
 /** A document's first Markdown heading, for the reference index. */
@@ -358,16 +408,20 @@ async function removePlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent:
   }
 }
 
-/** Creates the attempt's checkouts: the integration tip, and the unit branch when it exists and differs. */
-async function createPlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<PlanCheckCheckouts> {
-  const create = async (tree: 'tip' | 'branch', at: Sha): Promise<Checkout> => {
-    const path = planCheckWorktree(ctx, parent, tree);
-    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path, checkout: { type: 'detached', at } });
-    return { path, at };
-  };
-  const tip = integrationTip(ctx);
+/** The attempt's checkouts, not yet made: the integration tip `tip`, and the unit branch when it exists and differs. */
+function planCheckCheckoutsAt(ctx: StageContext, unit: UnitId, parent: StageParent, tip: Sha): PlanCheckCheckouts {
   const branchTip = refTarget(ctx.repo, unitBranch(ctx.plan().arc, unit));
-  return { tip: await create('tip', tip), branch: branchTip === null || branchTip === tip ? null : await create('branch', branchTip) };
+  return {
+    tip: { path: planCheckWorktree(ctx, parent, 'tip'), at: tip },
+    branch: branchTip === null || branchTip === tip ? null : { path: planCheckWorktree(ctx, parent, 'branch'), at: branchTip },
+  };
+}
+
+/** Makes the attempt's checkouts at the commits its capture read. */
+async function createPlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent, checkouts: PlanCheckCheckouts): Promise<void> {
+  for (const c of [checkouts.tip, ...(checkouts.branch === null ? [] : [checkouts.branch])]) {
+    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path: c.path, checkout: { type: 'detached', at: c.at } });
+  }
 }
 
 /** A path a premise cites, as a repository path, or null when it names nothing in a tree (absolute, or outside). */
@@ -469,21 +523,28 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const seat = judged.dispatch;
   const prompt = promptFor('planCheck', seat.triple.model);
   const session = freshJudgmentSession();
-  const checkouts = await createPlanCheckCheckouts(ctx, unit.id, parent);
-  const lib = library(ctx, spec, checkouts.tip.at);
-  const rendered = prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...lib, architecture: architecture(ctx, checkouts.tip.at),
-    direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
-    lanePrograms: laneOrder(spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
-    priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
-    // B4 froze the input; the stage passes the vision in force here once the holistic layer is wired (R17).
-    vision: null,
+  // H2: the tip, the inputs in force and the prompt rendered from them, captured with `judgment-inputs` under the
+  // fence; the checkouts are then made at the captured commits.
+  const captured = await captureUnderFence(ctx.journal, () => {
+    const now = loadUnitSpec(ctx, unit);
+    const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
+    const rendered = prompt.render({
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), architecture: architecture(ctx, checkouts.tip.at),
+      direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
+      lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
+      priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
+      // R17: the vision in force, read-only context (the module marks it non-directive).
+      vision: visionInput(ctx),
+    });
+    writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
+    return { checkouts, rendered };
   });
+  const { checkouts, rendered } = captured;
+  await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
-  writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev });
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: dirs },
-    system: prompt.system, rendered, schema: prompt.schema, cwd: checkouts.tip.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
+    system: prompt.system, rendered, schema: prompt.schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),
   });
   return planCheckRead(ctx, unit, parent, called, session.id);
 }
@@ -540,10 +601,21 @@ export async function planCheckRead(
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
-  if (patch !== null && applied === null && redirects) {
-    await runOp(ctx.journal, specPatchOp(ctx.runDir), `spec:${unit.id}`, parent, { path, oldSha256: sha256, patch });
-  }
+  if (patch !== null && applied === null && redirects) await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch });
   return done(record(ctx, parent, out.decision));
+}
+
+/**
+ * An executor's spec patch (a plan-check redirect, the implementer's decisions): a machine revision of the unit's spec,
+ * so it holds the revision fence (A19, G2) and serialises with every other revision.
+ */
+async function machinePatch(ctx: StageContext, unit: UnitId, parent: StageParent, request: Parameters<ReturnType<typeof specPatchOp>['prepare']>[0]): Promise<void> {
+  const hold = await holdFence(ctx.journal);
+  try {
+    await runOp(ctx.journal, specPatchOp(ctx.runDir), `spec:${unit}`, parent, request);
+  } finally {
+    hold.release();
+  }
 }
 
 /** The ops of `kind` a stage attempt began, in log order. */
@@ -599,7 +671,8 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   if (held.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(held.failed)));
   // G1: a stalled fix round moves the seat to build.high before the seat is chosen.
   escalateImplementer(ctx, unit.id, parent.attempt, input);
-  const seated = implementerDispatch(ctx, unit.id);
+  // A steer round's session is fresh, so its seat re-pins whatever moved (R11, `steer --class`).
+  const seated: Pinned<ImplementerDispatch> = input.kind === 'steer' ? { kind: 'pinned', dispatch: steerDispatch(ctx, unit.id) } : implementerDispatch(ctx, unit.id);
   if (seated.kind !== 'pinned') {
     const cleaned = held.reservation === null ? null : await cleanup(ctx, held.reservation, parent);
     if (cleaned?.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)));
@@ -751,7 +824,7 @@ async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun,
     return decided.text === d.text ? [] : [{ op: 'replace', section: 'decisions', item: d }];
   });
   if (ops.length === 0) return;
-  await runOp(ctx.journal, specPatchOp(ctx.runDir), `spec:${unit.id}`, parent, { path, oldSha256: sha256, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });
+  await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });
 }
 
 export type SalvageDone = StageDone<'salvage'> & Readonly<{ sha: Sha | null }>;

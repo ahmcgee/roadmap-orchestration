@@ -2,6 +2,10 @@
 //
 //   builtin profile  <  .roadmap/config.json routing  <  plan.json routing  <  per-unit route
 //
+// The per-unit layer (M3: `route`, `steer --class`) is a plan unit's `routing`; a unit resolves through the arc's stack
+// with its own layer on top, so each unit has its own routingRev (the arc's when it has no layer). The routing in force
+// is resolved from the `routingProvenance` its plan revision recorded (`provenanceStack`, H7), never a live config.
+//
 // Every layer names a model CLASS per seat, never a model. The built-in seats (profiles.ts) are a full table; each layer
 // above them is a partial one, and a seat takes its class from the highest layer that names it. Each class
 // then binds to a triple: the profile's class catalogue (classes.ts), unless the repo config rebinds it. The resolved table of
@@ -40,7 +44,7 @@ import { CLASS_CATALOGUE } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
   ARC_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
-  type RoutingLayer, type RoutingLayerName, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
+  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
@@ -90,6 +94,19 @@ export function arcStack(profile: ProfileName, config: RepoConfig | null, plan: 
 export function planStack(profile: ProfileName, config: RepoConfig | null, plan: Pick<PlanM1, 'routing' | 'holistic'>): RoutingStack {
   const stack = arcStack(profile, config, plan.routing ?? null);
   return plan.holistic === undefined ? stack : { ...stack, holistic: true };
+}
+
+/**
+ * The stack a plan revision's routing provenance records (H7), for the arc (`unit` null) or for one unit: the arc's
+ * stack with that unit's own layer on top (`route`, `steer --class`), when it has one. Every routing in force is
+ * resolved from this, so a live repo config is never re-read once a revision recorded what it resolved from; a unit
+ * without a layer resolves exactly as the arc, so its routingRev is the arc's.
+ */
+export function provenanceStack(p: RoutingProvenance, holistic: boolean, unit: UnitId | null): RoutingStack {
+  const stack: RoutingStack = {
+    profile: p.profile, classes: p.repoConfig.classes, repoConfig: p.repoConfig.seats, plan: p.planLayer, unit: unit === null ? null : p.unitLayers[unit] ?? null,
+  };
+  return holistic ? { ...stack, holistic: true } : stack;
 }
 
 export type SeatSources = SeatTable<RoutingLayerName>;

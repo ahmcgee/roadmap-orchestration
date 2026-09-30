@@ -110,7 +110,7 @@ class Log {
 type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
-  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: ROUTING, ...extras,
+  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: () => ROUTING, ...extras,
 });
 const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonly [UnitId, AdmissionStage])[] =>
   ready(inputOf(log, plan, extras)).map((r) => [r.unit.id, r.stage] as const);
@@ -187,7 +187,7 @@ describe('ready: DAG arcs', () => {
     log.add(fact({ kind: 'run-only', command: CMD, units: [B, C] }));
     assert.deepEqual(readyOf(log, plan), [[B, 'plan-check']], 'C is allowed but still waits on A');
     const view = log.view();
-    assert.deepEqual(admitter(ROUTING)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [] }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
+    assert.deepEqual(admitter(() => ROUTING)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [] }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
     log.add(fact({ kind: 'run-only', command: CMD, units: null }));
     assert.deepEqual(readyOf(log, plan), [[A, 'plan-check'], [B, 'plan-check']]);
   });
@@ -264,7 +264,7 @@ describe('admit (A12, A17)', () => {
     ({ id: needsUserId(`nu-${100 + reason.length}`), reason, subject, unit: u });
 
   function admits(log: Log, u: PlanUnit, extras: Extras = {}): Readonly<Record<AdmissionStage, unknown>> {
-    const admit = admitter(ROUTING);
+    const admit = admitter(() => ROUTING);
     const view = log.view();
     return Object.fromEntries(STAGES.map((stage) => {
       const a = admit({ view, plan, unit: u, stage, blocking: [], drains: [], tripped: [], ...extras });
