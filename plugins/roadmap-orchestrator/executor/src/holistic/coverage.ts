@@ -1,10 +1,12 @@
 // Audit coverage (M3 step B5; DESIGN-1.0.md §2.5 "Coverage"; A17, H3, H8, H9): per lens, a contiguous watermark over
 // the integration history, derived from the log and the kept revision payloads (pure: no git, no clock).
 //
-// - The base (H3): the integration head at the revision that set the vision in force (the arc turning holistic, or its
-//   latest vision revision): that revision's own docs publication's head when it published, else the head its
-//   `revision.commit` found. Coverage an audit recorded under an older vision does not count: every lens's watermark
-//   restarts at the base, and the next audit of each lens covers from there.
+// - The base (H3, lead ruling 2026-09-30): the arc's base is the integration head at the revision that turned the arc
+//   holistic (its own docs publication's head when it published, else the head its `revision.commit` found). The latest
+//   vision revision (`seq`, `visionSha256`) clears every coverage recorded before it: audits started under an older
+//   vision and docs edges recorded before it no longer count, so every lens's watermark restarts at the arc's base and
+//   the next audit of each lens at X covers everything up to X, exactly as a first audit would. No merged range can
+//   survive a vision change unaudited, and it costs no extra call.
 // - A lens's watermark starts at the base and follows, from wherever it stands, each range an audit under the current
 //   vision covered for that lens (`audit-ended.covered`: from the lens's watermark at the audit's capture to the audited
 //   SHA, never beyond it) and each docs-only edge (`docs-covered{U→D}`, A17, H8). An edge extends the watermark only
@@ -85,7 +87,10 @@ export function revisionPublication(heads: readonly PublishedHead[], revisions: 
   return heads.find((h) => h.subject === 'docs' && h.seq > r.seq && h.seq < nextSeq) ?? null;
 }
 
-/** Where coverage restarts (H3): the revision that set the vision in force, its seq, the vision's hash, and the head then. */
+/**
+ * Where coverage starts (H3): `head` the arc's base (the head when it turned holistic); `seq` and `visionSha256` the
+ * revision that set the vision in force, before which nothing recorded counts.
+ */
 export type CoverageBase = Readonly<{ seq: number; visionSha256: Sha256Hex; head: Sha }>;
 
 /**
@@ -97,15 +102,17 @@ export function coverageBase(
 ): CoverageBase | null {
   const revisions = appliedRevisions(ctx).filter((r) => r.seq < before);
   let previous: Sha256Hex | null = null;
+  let on: AppliedRevision | null = null;
   let set: AppliedRevision | null = null;
   for (const r of revisions) {
     const vision = r.payload.manifest.vision;
+    if (vision !== null && previous === null) on = r;
     if (vision !== null && vision !== previous) set = r;
     previous = vision;
   }
-  if (set === null) return null;
+  if (set === null || on === null) return null;
   const heads = publishedHeads(ctx.journal.view);
-  const head = revisionPublication(heads, revisions, set)?.head ?? headBefore(heads, set.seq, tip);
+  const head = revisionPublication(heads, revisions, on)?.head ?? headBefore(heads, on.seq, tip);
   const visionSha256 = set.payload.manifest.vision;
   if (visionSha256 === null) throw new Error('unreachable: the base revision names a vision');
   return { seq: set.seq, visionSha256, head };

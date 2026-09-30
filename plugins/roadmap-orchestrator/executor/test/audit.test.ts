@@ -431,7 +431,7 @@ describe('coverage', () => {
     }
   });
 
-  test('coverage.vision-reset (H3): a vision revision restarts every lens\'s watermark at its head; coverage recorded under the old vision no longer counts; it triggers a drift-only audit', T, async () => {
+  test('coverage.vision-reset (H3): a vision revision clears every lens\'s coverage recorded under the old vision; the next audit of a lens covers from the arc\'s base, so the range uncovered at the change is covered; it triggers a drift-only audit', T, async () => {
     const { d } = auditArc({
       steps: [
         ...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')),
@@ -444,26 +444,30 @@ describe('coverage', () => {
     const { ctx, w } = auditContext(r);
     const stop = ticking(w);
     try {
+      const S = head(d.repo);
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       const S1 = head(d.repo);
       requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S1, true]]);
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S1, true]], 'S1→S2 is uncovered when the vision changes');
       const visionFile = join(d.planPath, '..', 'vision.json');
       const vision = JSON.parse(readFileSync(visionFile, 'utf8')) as typeof VISION;
       writeFileSync(visionFile, JSON.stringify({ ...vision, rev: 2, clauses: [...vision.clauses, { id: 'V-2', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }] }));
       const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       const base = coverageBase(ctx, S2)!;
-      assert.deepEqual([base.head, base.visionSha256], [S2, r.journal.view.planApplied()!.visionSha256]);
+      assert.deepEqual([base.head, base.visionSha256], [S, r.journal.view.planApplied()!.visionSha256], 'the arc\'s base, and the vision now in force');
       assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'invariants').followed, [], 'audit-1\'s range was recorded under the old vision');
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false], ['vision', S2, false]], 'every watermark restarts at the change\'s head');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true], ['vision', S, true]], 'every lens\'s coverage is cleared back to the arc\'s base');
       const rev = r.journal.view.planApplied()!.rev;
       assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'drift', planRev: rev }], lenses: ['vision'], generation: 2 });
-      assert.equal((await runAudit(ctx)).kind, 'ended');
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.equal(started(r)[1]!.visionSha256, base.visionSha256);
+      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S, to: S2 }], 'the vision lens covers everything up to S2, S1→S2 included');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true], ['vision', S2, false]], 'invariants stays owed until its own next audit');
     } finally {
       stop();
       r.journal.close();
