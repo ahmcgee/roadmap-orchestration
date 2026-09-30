@@ -333,7 +333,8 @@ const running = (ctx: StageContext): Started | null => ctx.journal.view.holistic
 /** Every must-hold obligation (a latched future one included) not held on the audited tree: a P1 each (code). */
 function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: ReadonlyMap<LaneId, WitnessRecord>, gateHadPassed: boolean): readonly FindingDraft[] {
   if (r.obligations === null) return [];
-  const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
+  // Latched as of the audit's capture: a latch landing while the audit runs belongs to a later head.
+  const latched = new Set(ctx.journal.view.holistic().latched.filter((l) => l.seq <= s.highWater).map((l) => l.obligation));
   return r.obligations.obligations.flatMap((o): FindingDraft[] => {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
     if (o.activation !== 'must-hold' && !latched.has(o.id)) return [];
