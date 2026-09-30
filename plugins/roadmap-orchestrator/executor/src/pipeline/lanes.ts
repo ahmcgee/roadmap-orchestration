@@ -81,7 +81,7 @@ import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recov
 export const LANE_STALL_MS = 10 * 60_000;
 /** A lane's deadline: only the backstop for a busy loop, which the stall watchdog cannot see. */
 export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
-const LANE_GRACE_MS = 5_000;
+export const LANE_GRACE_MS = 5_000;
 
 /**
  * One run of a lane: what the gate reads (`LaneLedgerEntry`, whose `evidenceDir` holds every snapshot of the

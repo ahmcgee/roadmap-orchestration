@@ -223,6 +223,8 @@ export type PlanCheckAnswer = Readonly<{
   patch?: readonly JsonValue[];
   notes?: string;
   premises?: readonly JsonValue[];
+  /** M3 (R17): vision conflicts the check reports (default none). */
+  visionConflict?: readonly Readonly<{ clauses: readonly string[]; note: string }>[];
 }>;
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
@@ -233,7 +235,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
     acts: [{
       type: 'emit',
-      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [] },
+      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])] },
     }],
   };
 }

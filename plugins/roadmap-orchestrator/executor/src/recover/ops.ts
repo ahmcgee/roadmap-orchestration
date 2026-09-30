@@ -10,6 +10,7 @@ import { type DocsPlan, docsCommitSteps } from '../git/docs.ts';
 import { type SnapshotRequest, evidenceSnapshotSteps } from '../git/evidence.ts';
 import { type FfPlan, integrationFfSteps } from '../git/ff.ts';
 import { type MergeinRequest, mergeinSteps } from '../git/mergein.ts';
+import { type MutantRequest, mutantApplySteps } from '../git/mutant.ts';
 import { type SalvagePlan, type SalvageRules, salvageCommitSteps } from '../git/salvage.ts';
 import { type SnapshotPublishRequest, snapshotPublishSteps } from '../git/snapshot.ts';
 import { type WorktreeCreateRequest, type WorktreeRemoveRequest, worktreeCreateSteps, worktreeRemoveSteps } from '../git/worktree.ts';
@@ -18,6 +19,7 @@ import { reconcileDocsCommit } from './docs.ts';
 import { reconcileEvidenceSnapshot } from './evidence.ts';
 import { type UnitRedo, reconcileIntegrationFf } from './ff.ts';
 import { reconcileMergein } from './mergein.ts';
+import { reconcileMutantApply } from './mutant.ts';
 import { reconcileSalvageCommit } from './salvage.ts';
 import { reconcileSnapshot } from './snapshot.ts';
 import { reconcileWorktreeCreate, reconcileWorktreeRemove } from './worktree.ts';
@@ -57,6 +59,11 @@ export function candidateMergeOp(repo: AbsPath): GitOp<'candidate.merge', Candid
 /** M3 (A4): a docs publication's commit of its rendered files and contract ops on the tip. */
 export function docsCommitOp(repo: AbsPath): GitOp<'docs.commit', DocsPlan> {
   return { ...docsCommitSteps(repo), reconcile: reconcileDocsCommit(repo) };
+}
+
+/** M3 (B3): a vacuity finding's mutant applied in a detached worktree (the patch kept in `runDir`). */
+export function mutantApplyOp(repo: AbsPath, runDir: AbsPath): GitOp<'mutant.apply', MutantRequest> {
+  return { ...mutantApplySteps(repo, runDir), reconcile: reconcileMutantApply(repo, runDir) };
 }
 
 /**

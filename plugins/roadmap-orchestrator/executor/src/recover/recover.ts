@@ -3,7 +3,7 @@
 //
 //   processes   proc.kill, then proc.spawn (a spawn's own recovery kill must not collide with a kill left
 //               open before the crash; lead note, 14b). Both reconcilers write their own done.
-//   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge, docs.commit,
+//   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge, docs.commit, mutant.apply,
 //               integration.ff, snapshot.publish: the reconciler reads the postcondition and returns a
 //               disposition this module applies (done, redo through the op's own act and verify, abort).
 //   revisions   revision.commit (M3, G1): after the git ops, so its docs `ff` is closed; before the command ops, so
@@ -53,7 +53,7 @@ import { recoverReservations } from './resource.ts';
 import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
 import {
-  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
+  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
 } from './ops.ts';
 
 /** The stage context the git and resource reconcilers need, and the command context command.apply needs. */
@@ -70,7 +70,7 @@ export type RecoveryReport = Readonly<{
 }>;
 
 const GIT_KINDS = [
-  'worktree.create', 'worktree.remove', 'evidence.snapshot', 'salvage.commit', 'mergein.prepare', 'candidate.merge', 'docs.commit', 'integration.ff',
+  'worktree.create', 'worktree.remove', 'evidence.snapshot', 'salvage.commit', 'mergein.prepare', 'candidate.merge', 'docs.commit', 'mutant.apply', 'integration.ff',
   'snapshot.publish',
 ] as const satisfies readonly OpKind[];
 const FILE_KINDS = ['spec.patch', 'needsuser.raise', 'command.apply'] as const satisfies readonly OpKind[];
@@ -215,9 +215,8 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
       return apply(ctx, intent, needsUserOp(s.runDir));
     case 'command.apply':
       return apply(ctx, intent, commandOp(ctx.commands));
-    // Interim (M3 0a): no release before this step writes these intents.
     case 'mutant.apply':
-      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step B3)`);
+      return apply(ctx, intent, mutantApplyOp(s.repo, s.runDir));
     case 'revision.commit':
     case 'proc.spawn':
     case 'proc.kill':

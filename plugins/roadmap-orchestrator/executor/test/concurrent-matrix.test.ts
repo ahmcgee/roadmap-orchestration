@@ -299,7 +299,7 @@ function peerAtCrash(peer: Peer, crash: AtCrash): IntentOf<'proc.spawn'> | null 
       if (approvedIn(snap, A)) return null;
       const slot = resourceTable(snap.view).get(INTEGRATION_SLOT)?.status;
       assert.ok(slot !== undefined && slot.state !== 'free' && slot.holder.type === 'publication' && slot.holder.unit === C, `C holds the slot: ${JSON.stringify(slot)}`);
-      assert.deepEqual(nextStage(snap.view.unit(unitId(B))), { kind: 'admission', stage: 'candidate' }, 'B waits for its candidate\'s slot');
+      assert.deepEqual(nextStage(snap.view.unit(unitId(B)), false), { kind: 'admission', stage: 'candidate' }, 'B waits for its candidate\'s slot');
       return openSpawns(snap, C)[0] ?? null;
     }
     case 'residue': {
@@ -421,7 +421,7 @@ function assertPublicationSafe(r: ExecRun, snap: LogSnapshot): number {
     }
   }
   const waitsForSlot = (view: JournalView, plan: Parameters<typeof rankOf>[1], u: string, before: number): boolean => {
-    const next = nextStage(view.unit(unitId(u)));
+    const next = nextStage(view.unit(unitId(u)), false);
     return next?.kind === 'admission' && next.stage === 'candidate' && rankOf(view, plan, unitId(u)).waitStartSeq < before;
   };
   let compared = 0;

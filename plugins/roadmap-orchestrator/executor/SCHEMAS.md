@@ -1542,7 +1542,7 @@ supersede the A4 items they name):
    `<series root>/_dirty-<checkout>`), and each execution's own dir: a job's `jobLaneDir`, a candidate's
    `candidateLaneDir` = `<runDir>/evidence/<unit>/<attempt>-candidate/journey/<kind>-<lane>-<seq>-<ordinal>/` (its runs
    on the candidate and on the tip alone share the parent). `witness.lines` and `witness.json` live there; `witnessDir`
-   (src/git/snapshot.ts) finds a record from its `witnessed` fact, and a mutant's (B3) has no location yet. Only the
+   (src/git/snapshot.ts) finds a record from its `witnessed` fact (a mutant's since B3: `mutantLaneDir`). Only the
    run whose verdict counts is `witnessed` (a diagnostic or voided rerun is kept, never named). `publish.ts`'s
    `runJobLanes` is gone.
 2. **Lane reuse (§9)**: a witness lane whose observation on the tree exists (all four keys, the record's hash) is not
@@ -1581,3 +1581,68 @@ supersede the A4 items they name):
    snapshot, release), any other is abandoned (`abandonBatch`). Crash label `batch.after-candidate` (matrix row
    BATCH_PUBLICATION). The scheduler (B7) decides when to batch, finishes a held published batch at start, and records
    the members' outcomes of a red batch.
+
+**Choices made in M3 B3** (the findings store, P1 blocking, repair and vacuity reproduction):
+
+1. **The store** is the log (`finding-opened`, `finding-transition`); src/holistic/findings.ts decides what is written.
+   `openFinding(draft)`: a key matching an active finding merges (nothing written); one matching a finding ruled
+   `dismissed` is suppressed unless the draft cites, with a different non-null blob, a path the dismissal cited
+   (`evidenceChanged`); a resolved, deferred or accepted key opens anew. A dismissal lasts the arc's lifetime: it is read
+   from the arc's own log only, never carried into the next arc. A vacuity finding's patch is kept first as
+   `inputs/<patchSha256>.patch` (`MUTANT_PATCH_INPUT`, src/git/mutant.ts), which the snapshot closure carries (named by
+   the `finding-opened`). Code's witness P1 has one stable cause per obligation (`witnessFindingDraft`); plan-check's
+   vision conflict is `visionConflictDraft` (cause `<unit>: <note>`).
+2. **Ownership (R5)** is derived and written by `syncRepairs` (src/pipeline/reproduce.ts, over `ownershipMoves`): the
+   first unit in plan order whose spec names the finding (`repairs` F-n) and is neither published nor cut or superseded
+   owns it (a planned repair owns it before it starts); its standing approval (its latest decision leads to candidate,
+   ff or snapshot) makes it `fixed-on-branch`, a voided one takes it back to `owned`; its publication after the finding
+   opened resolves it. A `witness` P1 is also resolved by any unit publishing after it opened whose repairs name its
+   obligation (`I-n`, or a finding over it): the brake proved it held with integrated evidence. No live repairer: `open`.
+   Moves always follow `FINDING_MOVES` (a resolution from `open` writes owned → fixed-on-branch → resolved). The unit
+   driver calls it before and after every stage, `finishBatch` before the batch snapshot; the executor should call it
+   after recovery (B7).
+3. **Ruling**: `ruleFinding` refuses a non-active finding and a P1 deferred or accepted by anything but a ruling
+   ("P1s never bank"); a checkpoint may dismiss a P1. Code dismisses (`by: code{not-reproduced}`) a finding whose mutant
+   a unit's latest `reproduce` killed (derived from the decided outcome and the attempt's last mutant spawn, so a crash
+   between the outcome and the dismissal loses nothing).
+4. **Blocking (G10)**: `p1Blocking(findings, selected, repaired)` is the one rule; admission (`admitter`, candidate
+   stage, constraint `finding-blocked`), the candidate before green and the ff before its intent (integrate.ts
+   `findingBlocking`) and recovery's ff redo all read it at that moment, so a P1 opened mid-candidate blocks the ff.
+5. **What admission reads from a spec** (`SpecFacts{reproduces, repairs}`, src/schedule/ready.ts; `specFacts(ctx)` reads
+   the specs in force, only while some finding is active): `nextStage(u, reproduces)`, `upcoming(u, reproduces)`,
+   `admitter(routing, specOf)` and `ReadyInput.spec`. `reproduces`: the spec repairs an active vacuity finding with a
+   mutant; such a unit's first stage (and its first stage after a re-open) is `reproduce`, which pins the dispatch record
+   as plan-check does. The host breaker holds `reproduce` as it holds lanes.
+6. **`mutant.apply`** (src/git/mutant.ts, src/recover/mutant.ts): the outcome is a pure function of `at` and the patch
+   (`patchedTree`, a private index: `applied{tree}` or `inapplicable{detail}`); the act makes the detached worktree and
+   applies the patch to its index and files; verify requires exactly that state. Recovery: exactly the state → done; a
+   listed worktree in any other state is removed and the act redone; content git does not list → abort. The worktree
+   (`<unit>.mutant-<attempt>-<finding>`) is removed by the stage citing the lane's output snapshot (or a snapshot of
+   nothing when no lane ran); a later attempt removes a leftover first. Crash labels `mutant.act-start`,
+   `mutant.after-worktree`, `mutant.act-end`, `mutant.after-done` (matrix row MUTANT_APPLY).
+7. **A mutant run** is one run of the finding's lane (no red-lane rerun: its verdict comes from the witness records, not
+   the exit) spawned `mutant{finding, lane, laneRev, tree}` under the attempt's stage holder with the lane's own
+   reservation; its record (`purpose: mutant`, `treeSha` the patched tree) and evidence are in
+   `<runDir>/evidence/mutants/<finding>/<lane>-<inv>/` (`mutantLaneDir`, `witnessDir`), named by `witnessed{for:
+   mutant{finding, of: <the unpatched commit>}}`. The verdict reads the finding's obligation's witness when it is on that
+   lane, else every test the run reports.
+8. **`reproduce` outcomes**: every target's witness `held` on the patched tip → `reproduced`; `not-held` →
+   `not-reproduced` (the finding dismissed by code); `partial`, `unwitnessed`, a patch that does not apply or a lane no
+   longer in force → `inapplicable`; a lost runner or process fault → `blocked`; an occupied lane resource → `blocked`
+   (the frozen outcome set has no `occupied`). Both parks carry a specific needs-user naming the finding.
+9. **Acceptance** (`mutantAcceptance`, from integrate.ts `candidate` after a green brake): each mutant the unit repairs
+   runs on the candidate commit; `not-held` kills it; anything else is a survivor → `red` (charged), and the fix round
+   (`mutantFix`) names the finding, the lane and the patch text. A patch that does not apply to the candidate is not a
+   survivor (the repair rewrote what it mutated; the next vacuity audit re-evaluates).
+10. **Needs-user items** are derived (`findingItemsDue`) and raised once each by `raiseFindingItems` (the scheduler's
+    tick, B7): `finding-p1-escalated` (blocking, subject arc) per park of an owner of an active P1, PARK_ESCALATE_MS
+    after the park, parented by the park's stage attempt; `new-finding-draining` (blocking, subject arc) per job that
+    opened a P1 or P2 after `admissions-closed`, once that audit ended, parented by the job.
+11. **Instrumentation**: `findingMetrics(events, findings)` → `{id, lens, severity, gateHadPassed, disposition (the
+    ruling's, else null), merged (resolved), timeToResolveMs (opening to resolution or ruling; null while active)}`.
+12. **Batches**: `batchable(findings, repairUnits(ctx))` lists each active finding two or more approved units repair
+    directly: what B7 hands to `publishBatch`.
+13. **Plan-check** reads its answer against the spec rev its `judgment-inputs` captured (an evidence-only edit in the
+    capture → `@cpu` window keeps the rev, and a redirect patches the spec in force at it; any other mismatch fails
+    loud); each `visionConflict` opens a P3 `plan-check` finding (a re-read merges); a conflict citing a clause that is
+    not an active clause of the vision in force (or with no vision) is `malformed`.

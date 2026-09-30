@@ -46,6 +46,8 @@ export type HolisticOptions = Readonly<{
   trees: Readonly<Record<string, TreePlan>>;
   /** Plan fields added verbatim (resources). */
   planExtra?: Json;
+  /** Runs on the laid-out arc before revision 1 is recorded (M3 B3: a finding a repair unit's spec names must exist first). */
+  beforeStart?: (d: ArcDescriptor) => void;
 }>;
 
 export type HolisticArc = Readonly<{ d: ArcDescriptor; control: string }>;
@@ -100,6 +102,7 @@ export function holisticArc(opts: HolisticOptions): HolisticArc {
         ...(extra.obligations === undefined ? {} : { obligations: extra.obligations }), ...(extra.repairs === undefined ? {} : { repairs: extra.repairs }),
       }));
     }
+    opts.beforeStart?.(x);
   });
   return { d, control };
 }
