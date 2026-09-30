@@ -189,6 +189,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
   const rendered = prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), architecture: architecture(ctx, tip),
     direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
+    // B4 froze the input; A3 fills the candidate's selected obligations (none outside a holistic arc).
+    obligations: [],
     diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
     laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
   });

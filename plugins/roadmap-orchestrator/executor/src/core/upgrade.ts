@@ -272,3 +272,13 @@ export function routingProvenanceOf(f: PlanAppliedFact, rebuild: () => RoutingPr
   warnDefaulted('plan-applied.routingProvenance', `plan-applied rev ${f.rev} records no routing provenance (1.0.0-dev.5); rebuilt from the plan, start.json and the repo config`);
   return rebuild();
 }
+
+/**
+ * A plan-check answer's `visionConflict` (R17, B4): a backend result written by 1.0.0-dev.5 or earlier, whose
+ * schema had no such key, reads as none. The live schema requires the key, so a fresh answer always carries it.
+ */
+export function planCheckVisionConflict<T>(read: readonly T[] | undefined, path: string): readonly T[] {
+  if (read !== undefined) return read;
+  warnDefaulted('planCheck.visionConflict', `${path} has no visionConflict (a plan-check answer written by 1.0.0-dev.5 or earlier); read as none`);
+  return [];
+}

@@ -198,16 +198,18 @@ describe('routing: the arc seats (M3)', () => {
     const base = resolveRouting(arcStack('default', null, null));
     assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['frontier', 'summit']);
     assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [OPUS, FABLE]);
-    // A plan naming a vision puts them in force: every seat is checked (the modules are step B4's, so until then
-    // they are refused as no-prompt), and the rev hashes them too.
+    // A plan naming a vision puts them in force: every seat is checked (the built-in arc seats have prompt modules
+    // since B4), and the rev hashes them too.
     const plan = { holistic: { vision: planPath('vision.json') } };
     const h = resolveRouting(planStack('default', null, plan));
     assert.equal(h.holistic, true);
     assert.equal(seatsInForce(h).length, SEAT_REFS.length);
     assert.notEqual(h.rev, base.rev);
-    assert.deepEqual(unsupportedSeats(h, null), [
-      { kind: 'unsupported-routing', role: 'lens', tier: 'arc', layer: 'builtin', class: 'frontier', unit: null, why: 'no-prompt' },
-      { kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'builtin', class: 'summit', unit: null, why: 'no-prompt' },
+    assert.deepEqual(unsupportedSeats(h, null), []);
+    // A Claude model with no module for an arc role is still refused as no-prompt (Sonnet, efficient under claude-only).
+    const sonnet = resolveRouting(planStack('claude-only', null, { routing: layer({ lens: { arc: 'efficient' } }), holistic: plan.holistic }));
+    assert.deepEqual(unsupportedSeats(sonnet, null), [
+      { kind: 'unsupported-routing', role: 'lens', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'no-prompt' },
     ]);
     assert.equal(resolveRouting(planStack('default', null, {})).rev, base.rev, 'no vision: the M2 stack');
     // A plan layer may seat the arc roles; a Codex class there is a Codex judgment.

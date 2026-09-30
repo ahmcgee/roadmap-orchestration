@@ -9,10 +9,11 @@
 // lessons as in the Opus module: per-clause grading, FINDING_BAR, scope growth per path, sf16 re-checks.
 // Shared arc-1 lessons as in the Opus module (feedback items 6, 12, 14, 15, 26, 28c, 29): cited documents
 // plus an index, plan-check notes as facts, correctness-or-acceptance only, batched reads, premises and
-// the delta as the round handoff.
+// the delta as the round handoff. M3 (reviewed 2026-09-30 against the same guides): the candidate's selected
+// obligations with their observations, never their vision clauses (R17: the gate grades spec and contracts only).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, findingsText, laneLedgerText, premisesText, referenceIndexText, rulingsText,
+  architectureDocument, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText,
 } from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
@@ -37,6 +38,8 @@ The executor ran every spec lane verbatim at the diff head. The ledger's exit co
 Report a finding only when all three hold: this diff introduced the problem, or the spec requires something the diff omits; the evidence fits in one sentence; and it is (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested, or a test that would pass if the behaviour were wrong, or (4) scope creep: behaviour or files the spec did not ask for. Style, naming, formatting, anything a linter or type checker enforces, and preferences without a defect do not count, and no defect is reported twice. Missing a real defect and reporting a non-defect are both failures: every blocking finding becomes a fix round, and each fix widens the diff that must be read again.
 
 blocking means the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause. Everything else is a note, recorded, never a fix round. Report only what affects correctness or the spec's stated acceptance.
+
+The obligations block lists the obligations this change selects: owner-approved claims about the product, each with the witness tests that prove it and its latest observation. The executor runs the witness lanes on the integration candidate and holds the merge on any selected obligation that does not hold; you do not re-run them. Judge whether the diff breaks or weakens one. A change that makes an obligation's statement false, or that edits its witness test so the test would pass with the statement false, is a blocking finding that names the obligation id.
 
 Scope was pinned at dispatch. Each path listed as scope growth gets its own finding: a note when it was necessary for the spec (say why), a blocking finding whose directive reverts it when it is creep. Growth never licenses reviewing those files as if they were in scope.
 
@@ -78,7 +81,7 @@ export const PROMPT: PromptModule<'gate'> = {
   system,
   schema: GATE_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -102,6 +105,10 @@ ${i.direction}
 <plan_check_notes>
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 </plan_check_notes>
+
+<obligations>
+${obligationsText(i.obligations, { serves: false })}
+</obligations>
 
 <lane_ledger>
 ${laneLedgerText(i.laneLedger)}

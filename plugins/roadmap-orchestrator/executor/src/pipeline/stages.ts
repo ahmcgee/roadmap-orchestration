@@ -476,6 +476,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
     lanePrograms: laneOrder(spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
     priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
+    // B4 froze the input; the stage passes the vision in force here once the holistic layer is wired (R17).
+    vision: null,
   });
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
   writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev });

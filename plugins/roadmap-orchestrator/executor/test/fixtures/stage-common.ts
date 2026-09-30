@@ -205,7 +205,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
     acts: [{
       type: 'emit',
-      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])] },
+      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [] },
     }],
   };
 }

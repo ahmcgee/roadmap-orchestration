@@ -115,6 +115,8 @@ export type PlanCheckInputs = Readonly<{
   lanePrograms: readonly LaneProgram[];
   /** Null on the unit's first plan-check, and after any round whose patch was not applied. */
   priorRound: PlanCheckPriorRound | null;
+  /** R17: the vision as read-only context, marked non-directive; null outside a holistic arc. */
+  vision: VisionInput | null;
 }>;
 
 export type BuildInputs = Readonly<{
@@ -140,6 +142,8 @@ export type GateInputs = Readonly<{
   architecture: ArchitectureInput;
   direction: string;
   planCheckNotes: string;
+  /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
+  obligations: readonly ObligationView[];
   /** `merge-base(T, branch)..head`, recomputed after any merge-in. */
   diff: Readonly<{ base: Sha; head: Sha; text: string }>;
   laneLedger: readonly LaneLedgerEntry[];
@@ -152,8 +156,8 @@ export type GateInputs = Readonly<{
 }>;
 
 // ---------------------------------------------------------------------------------------------------
-// M3: the arc roles' inputs (frozen in step 0a; the lens and checkpoint modules are step B4's). The vision
-// comes first and in full in both (A14); on a conflict the vision wins.
+// M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
+// conflict the vision wins. Plan-check reads it as non-directive context; the gate never does (R17).
 
 /** The vision as a prompt gets it: every clause, withdrawn ones marked (H16). */
 export type VisionInput = Readonly<{ rev: number; clauses: readonly VisionClause[] }>;
@@ -220,10 +224,11 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound'],
+  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   gate: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope',
+    'priorRound',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
   checkpoint: [
@@ -382,4 +387,73 @@ export function patchText(ops: readonly SpecPatchOp[]): string {
 export function findingsText(findings: readonly GateFinding[]): string {
   if (findings.length === 0) return '(none)';
   return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`).join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M3 text helpers: the vision, obligations, findings, coverage and divergences as the judgments read them.
+
+/** Every clause, one per line; a tradeoff with its rank, a withdrawn clause marked so it is never cited (H16). */
+export function visionText(v: VisionInput): string {
+  const lines = v.clauses.map((c) => {
+    const kind = c.rank === null ? c.kind : `${c.kind}, rank ${c.rank}`;
+    return `${c.id} (${kind}${c.state === 'withdrawn' ? ', WITHDRAWN: never cite it' : ''}): ${c.text}`;
+  });
+  return `Vision revision ${v.rev}\n${lines.join('\n')}`;
+}
+
+function obligationState(o: ObligationDef): string {
+  const s = o.state;
+  switch (s.type) {
+    case 'active':
+      return 'active';
+    case 'split':
+      return `split into ${s.children.join(', ')}`;
+    case 'waived':
+    case 'deferred':
+    case 'retired':
+      return `${s.type} by ${s.ruling}`;
+  }
+}
+
+/**
+ * One obligation per entry: statement, anchor, witness and its observation on the tree under review. `serves`
+ * names the vision clauses it serves; the gate renders without them (R17: the gate never reads the vision).
+ */
+export function obligationsText(views: readonly ObligationView[], opts: Readonly<{ serves: boolean }>): string {
+  if (views.length === 0) return '(none)';
+  return views.map((v) => {
+    const o = v.obligation;
+    const head = [
+      `rev ${o.rev}`, o.activation, obligationState(o), ...(v.exempt ? ['exempt'] : []), ...(opts.serves ? [`serves ${o.serves.join(', ') || 'none'}`] : []),
+    ];
+    const witness = o.witness === null ? 'none' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
+    const delivered = o.deliveredBy.length === 0 ? '' : `\n  Delivered by: ${o.deliveredBy.join(', ')}`;
+    const obs = v.observation === null ? 'none (not covered, which never counts as passed)' : `${v.observation.verdict} at ${JSON.stringify(v.observation.key)}`;
+    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${o.docRef.path}${o.docRef.anchor}: "${o.docRef.quotedText}"\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
+  }).join('\n');
+}
+
+export function findingViewsText(findings: readonly FindingView[]): string {
+  if (findings.length === 0) return '(none)';
+  return findings.map((f) => {
+    const tags = [f.severity, f.lens, f.state, ...(f.owner === null ? [] : [`owned by ${f.owner}`])];
+    return `- ${f.id} [${tags.join(', ')}]${f.obligation === null ? '' : ` ${f.obligation}`}: ${f.claim}`;
+  }).join('\n');
+}
+
+export function coverageText(c: VisionCoverage): string {
+  const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
+  return [
+    `Active clauses no active obligation serves: ${c.unservedClauses.join(', ') || 'none'}`,
+    `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
+    `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
+  ].join('\n');
+}
+
+export function divergencesText(divergences: CheckpointInputs['divergences']): string {
+  return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
+}
+
+export function triggerText(t: CheckpointTrigger): string {
+  return t.type === 'audit' ? `the audit ${t.job} completed` : `unit ${t.unit} parked on a design question (log seq ${t.seq})`;
 }
