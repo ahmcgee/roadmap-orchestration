@@ -120,6 +120,13 @@ const ESCALATE: M1Step = {
   answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] },
 };
 
+/** The scenario file is HEAD's format; dev.5's strict plan-check schema rejects `visionConflict` (added after it). */
+function forPrevious(step: M1Step): M1Step {
+  if (step.role !== 'planCheck') return step;
+  const { visionConflict: _, ...answer } = step.answer as Record<string, unknown>;
+  return { ...step, answer } as M1Step;
+}
+
 /** Where the previous release is stopped: a fake call parked at a barrier in its scenario dir. */
 const MID_CALL = 'mid-call';
 const MID_BUILD_THREAD = '11111111-1111-4111-8111-111111111111';
@@ -162,7 +169,7 @@ async function preparePrevious(m1: readonly M1Step[], extra: readonly Step[], ed
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: m1 }));
+  writeFileSync(m1File, JSON.stringify({ steps: m1.map(forPrevious) }));
   const { fakeSteps, readScenario, writeShims } = previous.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));

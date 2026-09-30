@@ -158,7 +158,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
   let parked: Fixture;
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
-    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] } };
+    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [] } };
     // slug escalates on its seat and again on the escalation seat it routes up to: it parks, and page-id, which
     // runs after it (merged-only, D1), never starts.
     writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate] }));
