@@ -670,7 +670,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // `merge-in u1` of a unit parked after its lanes, the integration tip advanced cleanly beside it, applied by a
-    // child (test/fixtures/steer-child.ts); recovery finishes the open mergein.prepare, then the command's reconciler.
+    // child (test/fixtures/mergein-child.ts); recovery finishes the open mergein.prepare, then the command's reconciler.
     row: MERGE_IN,
     test: 'test/mergein.test.ts',
     cells: {

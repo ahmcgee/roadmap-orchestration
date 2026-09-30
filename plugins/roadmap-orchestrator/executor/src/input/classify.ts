@@ -12,7 +12,7 @@
 //   an undispatched unit        any plan field and its spec, now
 //   a dispatched unit's plan    scope, a lower risk, resources, spec path and a new `after`: refused (dropping an
 //                               `after` is allowed; M3: a higher risk is re-pinned at dispatch, step A3)
-//   risk floor (M3, A3)         any unit's risk below its Phase-0 floor (its risk in the first revision that
+//   risk floor (M3, A3)         an undispatched unit's risk below its Phase-0 floor (its risk in the first revision that
 //                               planned it): refused unless its spec cites an active ruling that applies to it
 //   a dispatched unit's spec    lane evidenceGlobs/evidenceExcludes at its rev: in force at once (`evidence`);
 //                               the next rev (`revision`), scope and resources unchanged: pending until the
@@ -538,7 +538,8 @@ export function classify(input: ClassifyInput): Classified {
       // M3 (DESIGN §2.3 `route`, step A3): a unit's risk may rise at any time (a dispatched unit is re-pinned at the
       // higher floor, and one whose implementer seat that moves after its build started parks `routing-changed`); it
       // never goes below its Phase-0 floor (its risk when it was planned) without a ruling for it.
-      const lowered = riskFloorReason(input, unit, spec, inputs, ledger);
+      // (A dispatched unit's lower risk is refused below as a fixed field.)
+      const lowered = pinned ? null : riskFloorReason(input, unit, spec, inputs, ledger);
       if (lowered !== null) reasons.push(lowered);
       if (!pinned) {
         if (lowered === null) {
