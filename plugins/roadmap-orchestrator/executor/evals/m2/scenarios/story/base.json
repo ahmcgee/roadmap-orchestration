@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one and C-1 to C-3."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": "",
+        "premises": []
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "base: add base",
+          "files": {
+            "src/base.js": "/** The base part (.roadmap/contracts/one.md, parts). */\nexport function base() {\n  return 'base';\n}\n",
+            "test/base.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { base } from '../src/base.js';\n\ntest('base is base (A1)', () => {\n  assert.equal(base(), 'base');\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1 and A2 hold."
+        ],
+        "premises": []
+      }
+    }
+  ]
+}
