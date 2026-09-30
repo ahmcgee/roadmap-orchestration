@@ -1826,8 +1826,11 @@ src/needsuser.ts, src/commands/{audit,admissions}.ts):
    `residues`, `baseline-owed`, `audit-pending` (running or due), `coverage-outstanding` (a lens of L, `coverageOf` at the
    head), `audit-owed` (the cadence owes a trigger), `checkpoint-pending`, `generation-not-quiescent` (the latest
    generation any audit or checkpoint recorded, under the vision in force; none recorded: vacuous), `close-out` (item 2),
-   `obligations-not-discharged` (a non-exempt obligation, split parents through their children, whose latest observation
-   on the head's tree, in whichever environment ran it, is missing or not held). Without the layer the holistic clauses
+   `obligations-not-discharged` (a non-exempt obligation, split parents through their children, not observed held on
+   the head: §2.8's strict reuse rule, its lane's observation on the head's tree at the lane's revision in the executor's
+   environment; another environment's does not discharge). The executor reads its own environment (`laneEnvId`);
+   `status` reads the one the executor recorded (`recordedLaneEnv`: the lane's latest `witnessed` fact at its current
+   revision), never its own process's. Without the layer the holistic clauses
    and the close-out are vacuous. The scheduler evaluates it only with nothing running and no mutation pending; `status`'s
    `completion.unmet` is the same function over a read-only view of the arc (`readOnlyContexts`: every writing or
    process-running member throws), so there is one rule.
