@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one and C-1 to C-3."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": "",
+        "premises": []
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "urgent: register urgent",
+          "files": {
+            "src/registry.js": "export const NAMES = ['core', 'urgent'];\n",
+            "test/registry.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { NAMES } from '../src/registry.js';\n\ntest('the registry starts with core', () => {\n  assert.equal(NAMES[0], 'core');\n});\n\ntest('urgent is registered (A2)', () => {\n  assert.ok(NAMES.includes('urgent'));\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1 and A2 hold; the registry stays one line."
+        ],
+        "premises": []
+      }
+    }
+  ]
+}

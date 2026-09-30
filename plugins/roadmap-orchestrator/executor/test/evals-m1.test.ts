@@ -159,8 +159,9 @@ describe('evals-m1: fake-backed fixture runs', () => {
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
     const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] } };
-    // Each unit escalates on its seat and again on the escalation seat it routes up to: both park.
-    writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate, escalate, escalate] }));
+    // slug escalates on its seat and again on the escalation seat it routes up to: it parks, and page-id, which
+    // runs after it (merged-only, D1), never starts.
+    writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate] }));
     // Independent fixture dirs, host dirs and arcs: the four runs go in parallel.
     [clean, claudeOnly, bumpy, parked] = await Promise.all([
       fakeRun('default', join(SCENARIOS, 'clean.json')),
@@ -196,14 +197,14 @@ describe('evals-m1: fake-backed fixture runs', () => {
     assert.equal(listed.length, clean.checked.result.notExercised.length - BUMPY_BRANCHES.length);
   });
 
-  test('evals-m1.parked-stop: units parked on blocking needs-user items make the driver stop the run; check grades them coherent', () => {
+  test('evals-m1.parked-stop: a unit parked on a blocking needs-user, and the unit after it held, make the driver stop the run; check grades them coherent', () => {
     assert.equal(parked.driver.code, 0, parked.driver.stderr);
     assert.equal(parked.report.endedBy, 'parked-stop');
     assert.equal(parked.report.generation, parked.report.start.ready?.generation, `the executor was restarted:\n${executorErrs(parked)}`);
     assert.deepEqual(parked.report.exit, { kind: 'stop', cause: 'command', needsUser: null });
     assert.deepEqual(failing(parked.checked), [], JSON.stringify(parked.checked.result.criteria));
     playedThrough(parked);
-    assert.match(criterion(parked.checked, 'units-settled').detail, /^slug parked nu-[0-9]+ escalation; page-id parked nu-[0-9]+ escalation$/);
+    assert.match(criterion(parked.checked, 'units-settled').detail, /^slug parked nu-[0-9]+ escalation; page-id waits after slug$/);
     assert.match(criterion(parked.checked, 'head-is-candidate').detail, /nothing published/);
   });
 

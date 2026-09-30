@@ -8,9 +8,10 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sessionContainment } from '../src/contain/session.ts';
 import type { Holder } from '../src/core/events.ts';
-import { type ResourceName, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
+import { type ResourceName, type ResourceUnit, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
 import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
+import { requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
   type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, checkLaneTiers, cleanup, entryOf, fastLanes,
@@ -27,7 +28,7 @@ import {
 
 const T = { timeout: 60_000 };
 
-function reserved<S extends Reservation<'reserved', StageHolder>>(r: S | { state: 'refused'; busy: readonly ResourceName[] }): S {
+function reserved<S extends Reservation<'reserved', StageHolder>>(r: S | { state: 'refused'; busy: readonly ResourceUnit[] }): S {
   if (r.state === 'refused') throw new Error(`refused: ${r.busy.join(', ')}`);
   return r;
 }
@@ -37,7 +38,7 @@ function states(ctx: ResourceContext): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [r, e] of resourceTable(ctx.journal.view)) {
     const s = e.status;
-    out[r] = s.state === 'free' ? 'free' : `${s.state}@${s.holder.type === 'stage' ? `${s.holder.unit}/${s.holder.stage}/${s.holder.attempt}` : s.holder.command}`;
+    out[r] = s.state === 'free' ? 'free' : `${s.state}@${s.holder.type === 'stage' ? `${s.holder.unit}/${s.holder.stage}/${s.holder.attempt}` : s.holder.type === 'sweep' ? s.holder.command : JSON.stringify(s.holder)}`;
   }
   return out;
 }
@@ -54,7 +55,7 @@ test('res.cycle-per-stage', T, async () => {
   for (const { holder, resources, work } of stages) {
     const key = `${holder.unit}/${holder.stage}/${holder.attempt}`;
     const ordered = lockOrder(resources);
-    const res = reserved(reserve(ctx, holder, resources, stageParent(holder)));
+    const res = reserved(reserve(ctx, holder, requestOf(ctx.plan(), resources, 0), stageParent(holder)));
     assert.deepEqual(res.resources, ordered);
     assert.deepEqual(Object.fromEntries(ordered.map((x) => [x, states(ctx)[x]])), Object.fromEntries(ordered.map((x) => [x, `reserved@${key}`])));
     assert.deepEqual(await probe(ctx, res, stageParent(holder)), { kind: 'clear' });
@@ -87,16 +88,16 @@ test('res.cycle-per-stage', T, async () => {
 test('res.all-or-none', T, async () => {
   const r = newRun();
   const { ctx, journal } = openRun(r);
-  const a = reserved(reserve(ctx, stageHolder('build'), [DB], stageParent(stageHolder('build'))));
+  const a = reserved(reserve(ctx, stageHolder('build'), requestOf(ctx.plan(), [DB], 0), stageParent(stageHolder('build'))));
   const seq = journal.view.highWater();
   const other = stageHolder('build', 1, unitId('u2'));
-  assert.deepEqual(reserve(ctx, other, [CACHE, DB, INTEGRATION_SLOT], stageParent(other)), { state: 'refused', busy: [DB] });
+  assert.deepEqual(reserve(ctx, other, requestOf(ctx.plan(), [CACHE, DB, INTEGRATION_SLOT], 0), stageParent(other)), { state: 'refused', busy: [DB] });
   assert.equal(journal.view.highWater(), seq, 'a refusal journals nothing');
   assert.equal(entryOf(resourceTable(journal.view), CACHE).status.state, 'free', 'the free part of a refused set stays free');
   assert.equal(entryOf(resourceTable(journal.view), INTEGRATION_SLOT).status.state, 'free');
   // Once the holder releases, the same request succeeds as one transition of the whole set.
   await cleanup(ctx, a, stageParent(stageHolder('build')));
-  const b = reserved(reserve(ctx, other, [CACHE, DB, INTEGRATION_SLOT], stageParent(other)));
+  const b = reserved(reserve(ctx, other, requestOf(ctx.plan(), [CACHE, DB, INTEGRATION_SLOT], 0), stageParent(other)));
   assert.deepEqual(b.resources, [CACHE, DB, INTEGRATION_SLOT]);
   assert.equal(transitions(r).filter((t) => t.edge === 'reserve').length, 2);
   await cleanup(ctx, b, stageParent(other));
@@ -119,7 +120,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
       await sleep(Math.random() * 20);
       for (;;) {
         const before = journal.view.highWater();
-        const got = reserve(ctx, holder, resources, stageParent(holder));
+        const got = reserve(ctx, holder, requestOf(ctx.plan(), resources, 0), stageParent(holder));
         if (got.state === 'reserved') {
           assert.deepEqual(await probe(ctx, got, stageParent(holder)), { kind: 'clear' });
           const running = run(ctx, got, stageParent(holder));
@@ -129,7 +130,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
         }
         refusals += 1;
         assert.equal(journal.view.highWater(), before, 'a refused reserve journals nothing');
-        assert.ok(got.busy.length > 0 && got.busy.every((x) => resources.includes(x)));
+        assert.ok(got.busy.length > 0 && got.busy.every((x) => (resources as readonly ResourceUnit[]).includes(x)));
         await sleep(Math.random() * 20);
       }
     };
@@ -138,8 +139,8 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
     const ts = transitions(r);
     // Every transition names its set in lock order, integration-slot last.
     for (const t of ts) assert.deepEqual(t.resources, lockOrder(t.resources), JSON.stringify(t));
-    // Never two holders at once: replaying the log never reserves a held resource (resourceTable throws
-    // on that), and each reservation is contiguous: its reserve is followed by its own run, clean, release
+    // Never two holders at once: replaying the log never reserves a held resource (the fold refuses
+    // that), and each reservation is contiguous: its reserve is followed by its own run, clean, release
     // before the other holder's reserve of a shared resource.
     const table = tableOf(r);
     assert.ok([...table.values()].every((s) => s.state === 'free'));
@@ -186,7 +187,7 @@ test('res.cancel-kills-then-cleans', T, async () => {
   const r = newRun();
   const { ctx, journal } = openRun(r);
   const holder = stageHolder('build');
-  const res = reserved(reserve(ctx, holder, [DB], stageParent(holder)));
+  const res = reserved(reserve(ctx, holder, requestOf(ctx.plan(), [DB], 0), stageParent(holder)));
   assert.deepEqual(await probe(ctx, res, stageParent(holder)), { kind: 'clear' });
   const running = run(ctx, res, stageParent(holder));
   const inv = invocationId(opId(journal.view.arc, journal.view.highWater() + 1), 1);

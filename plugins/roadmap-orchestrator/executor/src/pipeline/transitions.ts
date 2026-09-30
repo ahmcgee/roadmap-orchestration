@@ -26,9 +26,15 @@
 //   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
+// - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
+//   and re-runs the stage once they pass), or operator `env` (`resume <unit>` re-runs it) or `design` (a spec
+//   revision or a re-entry). A retry, route-up or bounded round that runs out parks with its own class; the
+//   chargeable bound is always `design`. The class is written into the parking `stage-outcome` fact (`park`).
+// - `prepare` (M2) is a re-entered unit's first stage; each of its outcomes enters the pipeline where the
+//   prepared worktree allows.
 import {
-  type JudgmentStage, type OutcomeClass, type OutcomeStage, type RetryStage, type StageOutcomeFact, type StageOutcomeKind,
-  JUDGMENT_STAGES,
+  type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
+  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
 } from '../core/events.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import { CHARGEABLE_BOUND, type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
@@ -71,19 +77,22 @@ export const MAX_REVISE_ROUNDS = 2;
 export const MAX_CANDIDATE_REDS = 1;
 export const MAX_RETRIES = 1;
 
-/** Where a decision sends the unit: a build round, or another stage. */
-export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build'> }>;
+/** Where a decision sends the unit: a build round, or another stage. Never `prepare`: only a re-entry starts there. */
+export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build' | 'prepare'> }>;
+
+/** A park's class as the table fixes it: probed and re-run, or the architect's (`env` or `design`). */
+export type ParkClass = 'retryable' | OperatorParkKind;
 
 /** On to `to`; `chargeable` on the plan's C rows; `trigger` raises a risk trigger. */
 type Go = Readonly<{ do: 'go'; to: Target; chargeable: boolean; trigger: boolean }>;
-type Park = Readonly<{ do: 'park'; reason: NeedsUserReason }>;
+type Park = Readonly<{ do: 'park'; reason: NeedsUserReason; park: ParkClass }>;
 type Stop = Readonly<{ do: 'stop'; reason: NeedsUserReason }>;
 type Retire = Readonly<{ do: 'retire' }>;
 type Hold = Readonly<{ do: 'hold' }>;
-/** A refusal or escalation: the role's escalation seat, then park with `reason`. */
+/** A refusal or escalation: the role's escalation seat, then park with `reason` (a design park). */
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
-/** The stage's one uncharged retry, then park with `reason`. */
-type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason }>;
+/** The stage's one uncharged retry, then park with `reason` and class `park`. */
+type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
 type BoundedRound = 'redirect' | 'revise' | 'candidate-red';
 /** A round the unit may take `max` times; the next one takes `then`, uncharged. */
 type Bounded<S extends OutcomeStage> = Readonly<{
@@ -101,17 +110,25 @@ type Rule<S extends OutcomeStage> =
 
 type Table = { readonly [S in OutcomeStage]: { readonly [K in StageOutcomeKind<S>]: Rule<S> } };
 
-const at = (stage: Exclude<OutcomeStage, 'build'>): Target => ({ stage });
+const at = (stage: Exclude<OutcomeStage, 'build' | 'prepare'>): Target => ({ stage });
 const build = (round: BuildRound): Target => ({ stage: 'build', round });
 const go = (to: Target): Go => ({ do: 'go', to, chargeable: false, trigger: false });
 const charge = (to: Target): Go => ({ do: 'go', to, chargeable: true, trigger: false });
-const park = (reason: NeedsUserReason): Park => ({ do: 'park', reason });
-const retry = (reason: NeedsUserReason): Retry => ({ do: 'retry', reason });
+const park = (reason: NeedsUserReason, cls: ParkClass): Park => ({ do: 'park', reason, park: cls });
+const retry = (reason: NeedsUserReason, cls: ParkClass): Retry => ({ do: 'retry', reason, park: cls });
 const routeUp = (reason: RouteUp['reason']): RouteUp => ({ do: 'route-up', reason });
 const hold: Hold = { do: 'hold' };
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
+  prepare: {
+    'clean-plan-check': go(at('plan-check')),
+    'clean-build': go(build('fresh')),
+    // Merged cleanly and the tree already verifies the unit's work: straight to its lanes.
+    'clean-verify': go(at('lanes')),
+    // MERGE_HEAD kept (the M1 conflict precedent): a resolve round, in a fresh session (no session inherits).
+    conflicted: go(build('resolve')),
+  },
   'plan-check': {
     approve: go(build('fresh')),
     redirect: { do: 'bounded', round: 'redirect', max: MAX_REDIRECTS, to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
@@ -121,59 +138,59 @@ export const TABLE: Table = {
     'risk-lowered': routeUp('escalation'),
     'scope-widened': routeUp('escalation'),
     refusal: routeUp('refusal'),
-    malformed: retry('malformed'),
-    'process-fault': park('process-fault'),
+    malformed: retry('malformed', 'design'),
+    'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
-    'routing-changed': park('routing-changed'),
+    'routing-changed': park('routing-changed', 'env'),
   },
   build: {
     success: go(at('quiesce')),
-    refusal: park('refusal'),
-    malformed: retry('malformed'),
-    'process-fault': park('process-fault'),
+    refusal: park('refusal', 'design'),
+    malformed: retry('malformed', 'design'),
+    'process-fault': park('process-fault', 'retryable'),
     // The implementer's runner died without exit.json (lost{treeEffects}; the plan's recovery table). No
     // tree effects: the call was already retried once as a new invocation with the same deadline, and was
     // lost again. Tree effects: what the workload left is salvaged and verified like a report, uncharged.
-    lost: park('build-lost'),
+    lost: park('build-lost', 'retryable'),
     'lost-tree-effects': go(at('quiesce')),
     // The reservation cycle's occupancy probe found unlabelled or undeclared occupancy (decided before any charge).
-    occupied: park('occupancy-unlabelled'),
+    occupied: park('occupancy-unlabelled', 'env'),
     // The build's resources could not be cleaned after a failed build: a residue, never released.
-    'cleanup-failed': park('residue'),
+    'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
-    'routing-changed': park('routing-changed'),
+    'routing-changed': park('routing-changed', 'env'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
   salvage: {
     committed: go(at('teardown')),
     'committed-contract-touched': { do: 'go', to: at('teardown'), chargeable: false, trigger: true },
-    unmerged: park('salvage-failed'),
-    'commit-failed': park('salvage-failed'),
+    unmerged: park('salvage-failed', 'env'),
+    'commit-failed': park('salvage-failed', 'retryable'),
   },
   // Failed cleanup leaves a residue and never releases its resources.
-  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue') },
+  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable') },
   lanes: {
     green: go(at('gate')),
     red: charge(build('fix')),
     'not-certified': charge(build('fix')),
     // A lane the runner ended (deadline) or lost: not a product verdict.
-    blocked: retry('lane-blocked'),
+    blocked: retry('lane-blocked', 'retryable'),
     interrupted: hold,
-    occupied: park('occupancy-unlabelled'),
+    occupied: park('occupancy-unlabelled', 'env'),
     // A lane's resources could not be cleaned: a residue, never released.
-    'cleanup-failed': park('residue'),
+    'cleanup-failed': park('residue', 'retryable'),
   },
   gate: {
     approve: go(at('candidate')),
     revise: { do: 'bounded', round: 'revise', max: MAX_REVISE_ROUNDS, to: build('fix'), chargeable: true, then: routeUp('escalation') },
     escalate: routeUp('escalation'),
-    'empty-diff': park('empty-diff'),
+    'empty-diff': park('empty-diff', 'design'),
     refusal: routeUp('refusal'),
-    malformed: retry('malformed'),
-    'process-fault': park('process-fault'),
+    malformed: retry('malformed', 'design'),
+    'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
-    'routing-changed': park('routing-changed'),
+    'routing-changed': park('routing-changed', 'env'),
   },
   candidate: {
     green: go(at('ff')),
@@ -182,14 +199,14 @@ export const TABLE: Table = {
     // mergein.prepare, then resume "resolve and commit"; uncharged, the diff base is recomputed.
     conflict: go(build('resolve')),
     // Red with T alone green: a fix round, fresh gate, new candidate. Red again parks.
-    red: { do: 'bounded', round: 'candidate-red', max: MAX_CANDIDATE_REDS, to: build('fix'), chargeable: true, then: park('candidate-red') },
+    red: { do: 'bounded', round: 'candidate-red', max: MAX_CANDIDATE_REDS, to: build('fix'), chargeable: true, then: park('candidate-red', 'design') },
     // Red with T alone red too: the base is broken, not the unit; uncharged.
-    'base-red': park('base-red'),
+    'base-red': park('base-red', 'env'),
     // A suite lane its runner ended (deadline) or lost: no product verdict, and no retry at this stage.
-    blocked: park('lane-blocked'),
-    occupied: park('occupancy-unlabelled'),
+    blocked: park('lane-blocked', 'retryable'),
+    occupied: park('occupancy-unlabelled', 'env'),
     // A suite lane's resources could not be cleaned: a residue, never released.
-    'cleanup-failed': park('residue'),
+    'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
   },
   ff: {
@@ -208,7 +225,8 @@ export const TABLE: Table = {
 
 type Step =
   | Readonly<{ to: 'stage'; target: Target }>
-  | Readonly<{ to: 'park' | 'stop'; needsUser: NeedsUserContent }>
+  | Readonly<{ to: 'park'; needsUser: NeedsUserContent; park: ParkClass }>
+  | Readonly<{ to: 'stop'; needsUser: NeedsUserContent }>
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
@@ -218,6 +236,7 @@ const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candida
 
 function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
   switch (o.stage) {
+    case 'prepare': return TABLE.prepare[o.kind];
     case 'plan-check': return TABLE['plan-check'][o.kind];
     case 'build': return TABLE.build[o.kind];
     case 'quiesce': return TABLE.quiesce[o.kind];
@@ -251,8 +270,13 @@ function isJudgment(stage: OutcomeStage): stage is JudgmentStage {
   return (JUDGMENT_STAGES as readonly OutcomeStage[]).includes(stage);
 }
 
-function halt(to: 'park' | 'stop', reason: NeedsUserReason, o: StageOutcome, why: string, chargeable = false): Decision {
-  return { class: to, chargeable, step: { to, needsUser: { reason, summary: `${o.stage} ${o.kind}${why}` } } };
+function halt(to: 'park', reason: NeedsUserReason, o: StageOutcome, why: string, park: ParkClass, chargeable?: boolean): Decision;
+function halt(to: 'stop', reason: NeedsUserReason, o: StageOutcome, why: string): Decision;
+function halt(to: 'park' | 'stop', reason: NeedsUserReason, o: StageOutcome, why: string, park?: ParkClass, chargeable = false): Decision {
+  const needsUser = { reason, summary: `${o.stage} ${o.kind}${why}` };
+  if (to === 'stop') return { class: 'stop', chargeable, step: { to: 'stop', needsUser } };
+  if (park === undefined) throw new Error(`halt: a park of ${o.stage} ${o.kind} needs its class`);
+  return { class: 'park', chargeable, step: { to: 'park', needsUser, park } };
 }
 
 function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: string): Decision {
@@ -266,17 +290,17 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
     }
     case 'retry': {
       // The rule type admits `retry` only at a retry stage.
-      if (u.counters.retries[o.stage as RetryStage] >= MAX_RETRIES) return halt('park', rule.reason, o, `${why} after its uncharged retry`);
-      return { class: 'retry', chargeable: false, step: { to: 'stage', target: o.stage === 'build' ? build('resume') : at(o.stage) } };
+      if (u.counters.retries[o.stage as RetryStage] >= MAX_RETRIES) return halt('park', rule.reason, o, `${why} after its uncharged retry`, rule.park);
+      return { class: 'retry', chargeable: false, step: { to: 'stage', target: o.stage === 'build' ? build('resume') : at(o.stage as Exclude<RetryStage, 'build'>) } };
     }
     case 'route-up': {
       // The rule type admits `route-up` only at a judgment stage.
       const stage = o.stage as JudgmentStage;
-      if (judgmentSeat(u, stage) === 'escalation') return halt('park', rule.reason, o, `${why} at the escalation seat`);
+      if (judgmentSeat(u, stage) === 'escalation') return halt('park', rule.reason, o, `${why} at the escalation seat`, 'design');
       return { class: 'route-up', chargeable: false, step: { to: 'stage', target: at(stage) } };
     }
     case 'park':
-      return halt('park', rule.reason, o, why);
+      return halt('park', rule.reason, o, why, rule.park);
     case 'stop':
       return halt('stop', rule.reason, o, why);
     case 'retire':
@@ -289,7 +313,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
 function decide(u: UnitState, o: StageOutcome): Decision {
   const d = apply(u, o, ruleOf(o), '');
   if (d.chargeable && u.counters.chargeableFailures + 1 >= CHARGEABLE_BOUND) {
-    return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${CHARGEABLE_BOUND}`, true);
+    return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${CHARGEABLE_BOUND}`, 'design', true);
   }
   return d;
 }
@@ -316,11 +340,35 @@ export function transition(u: UnitState, outcome: StageOutcome): Next {
   }
 }
 
-/** The `stage-outcome` fact that records `outcome` of stage attempt `attempt`, as `transition` decides it. */
-export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number): StageOutcomeFact {
+/** The class of the park `transition` decides for `outcome` in state `u`, or null when it decides no park. */
+export function parkClassOf(u: UnitState, outcome: StageOutcome): ParkClass | null {
   const d = decide(u, outcome);
+  return d.step.to === 'park' ? d.step.park : null;
+}
+
+/**
+ * What only the stage knows about its outcome. `targets`: a retryable park's probe targets (non-empty; a
+ * stage that states none leaves the fact without `park`, read as the pre-M2 operator default until the
+ * stages name their targets, M2 step 7a). `cause`: why a hold is not an operator pause or stop (G5).
+ */
+export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause }>;
+
+/** The `stage-outcome` fact that records `outcome` of stage attempt `attempt`, as `transition` decides it. */
+export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number, context: OutcomeContext = {}): StageOutcomeFact {
+  const d = decide(u, outcome);
+  const parkClass = d.step.to === 'park' ? d.step.park : null;
+  if (context.targets !== undefined && parkClass !== 'retryable') throw new Error(`outcomeFact: targets for ${outcome.stage} ${outcome.kind}, which decides no retryable park`);
+  if (context.cause !== undefined && d.class !== 'hold') throw new Error(`outcomeFact: a hold cause for ${outcome.stage} ${outcome.kind}, which decides ${d.class}`);
+  let park: ParkRecord | null = null;
+  if (parkClass === 'env' || parkClass === 'design') park = { class: 'operator', kind: parkClass };
+  if (parkClass === 'retryable' && context.targets !== undefined) {
+    if (context.targets.length === 0) throw new Error(`outcomeFact: a retryable park of ${outcome.stage} ${outcome.kind} with no targets`);
+    const targets = [...new Map(context.targets.map((t) => [probeTargetKey(t), t])).entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, t]) => t);
+    park = { class: 'retryable', targets };
+  }
   return {
     kind: 'stage-outcome', unit: u.unit, stage: outcome.stage, attempt, outcome: outcome.kind, class: d.class, chargeable: d.chargeable,
+    ...(park === null ? {} : { park }), ...(context.cause === undefined ? {} : { cause: context.cause }),
   } as StageOutcomeFact;
 }
 
@@ -369,9 +417,9 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
       if (rule.do !== 'bounded') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
       return { kind: 'stage', target: rule.to };
     case 'retry':
-      return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build'>) };
+      return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build' | 'prepare'>) };
     case 'route-up':
-      return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build'>) };
+      return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build' | 'prepare'>) };
     case 'park':
     case 'stop':
       // A chargeable park is only ever the bound (decide); every other halt carries its rule's reason.

@@ -11,11 +11,13 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
 import { U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
 
 test('merge.base-red: the suite is red on the candidate and on T alone; the unit parks with an uncharged base-red needs-user', T, async () => {
@@ -33,8 +35,11 @@ test('merge.base-red: the suite is red on the candidate and on T alone; the unit
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'base-red is uncharged');
     assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'integration never moved');
     const suites = intents(d.runDir, 'proc.spawn').flatMap((i) => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite' ? [i.expect.subject.at] : []));
-    assert.equal(suites.length, 2);
-    assert.equal(suites[1], tip, 'the second suite run tested T alone');
+    // Each red suite lane is rerun once at its SHA (the red-lane protocol's diagnostic rerun, M2 A10).
+    assert.equal(suites.length, 4);
+    assert.notEqual(suites[0], tip);
+    assert.equal(suites[1], suites[0], 'the candidate\'s red lane was rerun on the candidate');
+    assert.deepEqual(suites.slice(2), [tip, tip], 'the second suite series tested T alone, its red lane rerun');
     for (const suffix of ['candidate', 'base']) {
       assert.ok(!existsSync(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, `u1.${suffix}-9`)), `the ${suffix} checkout is removed`);
     }

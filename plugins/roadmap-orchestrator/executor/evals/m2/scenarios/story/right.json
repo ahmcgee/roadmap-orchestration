@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one and C-1 to C-3."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": "",
+        "premises": []
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "right: add right and register it",
+          "files": {
+            "src/right.js": "import { base } from './base.js';\n\n/** The right part (.roadmap/contracts/one.md, parts). */\nexport function right() {\n  return `${base()}-right`;\n}\n",
+            "test/right.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { NAMES } from '../src/registry.js';\nimport { right } from '../src/right.js';\n\ntest('right builds on base (A1)', () => {\n  assert.equal(right(), 'base-right');\n});\n\ntest('right is registered (A3)', () => {\n  assert.ok(NAMES.includes('right'));\n});\n",
+            "src/registry.js": "export const NAMES = ['core', 'right'];\n"
+          }
+        }
+      ]
+    }
+  ]
+}

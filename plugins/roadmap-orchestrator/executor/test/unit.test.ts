@@ -1,4 +1,4 @@
-// The serial unit driver (src/pipeline/unit.ts) and arc (src/pipeline/arc.ts), integrated and fake-backed:
+// The unit driver (src/pipeline/unit.ts), and a legacy arc under the scheduler, integrated and fake-backed:
 // real processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the
 // deterministic fixtures of this step (conflict → merge-in → resolve; red candidate → fix → fresh gate →
 // green) and the named tests ff.exact-head, snapshot.after-publish, unit.decisions-appended,
@@ -8,15 +8,15 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { invocationId } from '../src/core/ids.ts';
+import { invocationId, unitId } from '../src/core/ids.ts';
 import { EVENTS_FILE, STATE_FILE } from '../src/core/log.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
-import { runArc } from '../src/pipeline/arc.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
 import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
-import { type UnitResult, runUnit } from '../src/pipeline/unit.ts';
+import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
+import { recordOf } from '../src/needsuser.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
@@ -24,14 +24,16 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
   ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
+import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 
 /** Every stage of a unit that merges first time, in order. */
 const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
@@ -209,7 +211,11 @@ test('fixture red candidate → fix → fresh gate → green: the suite is red o
     assert.equal(u.counters.chargeableFailures, 1);
     // The red candidate tested T alone: two suite series in that attempt, the second at T.
     const suites = intents(d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite');
-    assert.equal(suites.length, 3, 'candidate, T alone, the second candidate');
+    // The red suite lane on the candidate is rerun once there (the red-lane protocol's diagnostic rerun, M2 A10).
+    assert.equal(suites.length, 4, 'candidate, its rerun, T alone, the second candidate');
+    const ats = suites.map((i) => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' ? i.expect.subject.at : null));
+    assert.equal(ats[1], ats[0], 'the rerun ran at the candidate');
+    assert.equal(new Set(ats).size, 3);
     assert.equal(intents(d.runDir, 'candidate.merge').length, 2, 'a new candidate after the fix');
     const gates = gateCalls(r);
     assert.equal(gates.length, 2, 'a fresh gate after the fix round');
@@ -266,19 +272,22 @@ test('unit.reentrant: a driver killed between two stages is restarted on the sam
   assert.ok(calls.every((c) => c.step !== null));
 });
 
-test('unit.reentrant-mid-stage: a driver killed inside ff after the publication closed reads it back on restart and publishes once', T, async () => {
+test('unit.reentrant-mid-stage: a driver killed inside ff once the publication acted; recovery closes it, and the restart reads it back and publishes once', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
-  // resource.after-done: the slot's reserve, run, clean, release in the candidate stage (1-4), then in ff (5-8).
-  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'resource.after-done', occurrence: 8 });
+  // The publication moved integration; the executor dies before its done (M2: nothing of the slot is journaled
+  // inside ff any more, the candidate's publication holds it through ff and snapshot).
+  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'ff.act-end', occurrence: 1 });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(first.signal, 'SIGKILL', first.stderr);
   assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 9), 'killed inside ff, before its outcome');
-  const second = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  // The restart recovers first (the integration.ff op is closed, the publication keeps the slot), then drives.
+  const second = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
   assert.deepEqual(outcomes(d), STRAIGHT);
   assert.equal(intents(d.runDir, 'integration.ff').length, 1, 'published once');
+  assert.equal(outcomes(d).filter((o) => o === 'ff:published').length, 1, 'ff attempted once more, reading the closed op back');
 });
 
 test('unit.reentrant-after-mergein: a driver killed after the merge-in, before the conflict was recorded, does not merge in again', T, async () => {
@@ -291,8 +300,9 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
       gateStep({ decision: 'approve' }),
     ],
   });
-  // resource.after-done 4: the candidate stage's slot released after the merge-in, before its outcome.
-  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'resource.after-done', occurrence: 4 });
+  // mergein.act-end: the merge-in done in the tree, before its done and the candidate's outcome (M2: the
+  // candidate's publication releases the slot only after the outcome, so no slot transition sits in between).
+  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'mergein.act-end', occurrence: 1 });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const running = runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   await reached(d.scenarioDir, 'gate', 60_000);
@@ -303,7 +313,8 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
   assert.equal(first.signal, 'SIGKILL', first.stderr);
   assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 8), 'killed inside the candidate stage');
   assert.equal(intents(d.runDir, 'mergein.prepare').length, 1);
-  const second = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  // The restart recovers first (the merge-in op closed, the abandoned candidate's slot released), then drives.
+  const second = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
   assert.equal(outcomes(d)[8], 'candidate:conflict');
@@ -311,7 +322,7 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
   assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
 });
 
-test('arc.serial-terminal: units run in plan order; one merges, one parks with a blocking needs-user, and the arc is terminal', T, async () => {
+test('arc.serial-terminal: a legacy arc under the scheduler runs its units in plan order; one merges, one parks with a blocking needs-user raised as it parks, and once it is acknowledged the arc is complete', T, async () => {
   const d = setupArc({
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
@@ -321,23 +332,21 @@ test('arc.serial-terminal: units run in plan order; one merges, one parks with a
   });
   const r = contextFor(d);
   try {
-    const parkedUnits: string[] = [];
-    const result = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
-    assert.deepEqual(parkedUnits, ['u2'], 'the park was handed over as it happened');
-    assert.equal(result.kind, 'terminal');
-    assert.ok(result.kind === 'terminal');
-    assert.deepEqual(result.units.map((s) => [s.unit, s.result.kind]), [['u1', 'merged'], ['u2', 'parked']]);
-    const parked = result.units[1]!.result;
-    assert.ok(parked.kind === 'parked');
-    assert.equal(parked.needsUser.blocking, true);
-    assert.equal(parked.needsUser.reason, 'escalation');
-    assert.deepEqual(parked.needsUser.subject, { type: 'unit', unit: 'u2' });
+    const s = startScheduler(r);
+    // The park's item is raised as it happens, while the run goes on (it waits on that item).
+    const item = await haltItem(r, unitId('u2'));
+    assert.deepEqual(outcomes(d), STRAIGHT, 'u1 ran first, to its merge');
+    const content = recordOf(r.ctx.runDir, item);
+    assert.equal(content.blocking, true);
+    assert.equal(content.reason, 'escalation');
+    assert.deepEqual(content.subject, { type: 'unit', unit: 'u2' });
     assert.deepEqual(outcomes(d, 'u2'), ['plan-check:escalate', 'plan-check:escalate']);
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
+    const result = await s.end;
+    assert.deepEqual(result, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'parked', needsUser: item }] });
     // A second run finds the arc where the log left it: nothing runs again.
     const calls = readCalls(d.scenarioPath).length;
-    const again = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
-    assert.ok(again.kind === 'terminal');
-    assert.deepEqual(again.units.map((s) => [s.unit, s.result.kind, s.result.kind === 'parked' && s.result.needsUser.reason]), [['u1', 'merged', false], ['u2', 'parked', 'escalation']]);
+    assert.deepEqual(await startScheduler(r).end, result);
     assert.equal(readCalls(d.scenarioPath).length, calls);
   } finally {
     r.journal.close();

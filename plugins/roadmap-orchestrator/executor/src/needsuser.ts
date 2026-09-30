@@ -8,16 +8,19 @@
 // written once and atomically (temp and link) by the `ack` command (commands/apply.ts).
 //
 // The fold records each raise with its `blocking` flag and each acknowledgement, so `openBlocking` (the
-// terminal predicate's input) is a pure function of the log.
-import { existsSync, readFileSync } from 'node:fs';
+// terminal predicate's input) is a pure function of the log. Items outside the journal (the supervisor's and a
+// refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
-import type { IntentOf, Parent } from './core/events.ts';
+import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
-import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
+import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
 import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
-import { type NeedsUserAck, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord, type NeedsUserContent } from './core/records.ts';
+import {
+  type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord, type NeedsUserContent,
+} from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import type { RiskTier } from './routing/types.ts';
@@ -71,9 +74,9 @@ export function publishNeedsUser(runDir: AbsPath, intent: IntentOf<'needsuser.ra
   const staged = stagedPath(runDir, id);
   if (existsSync(path)) throw new Error(`needs-user ${path} already exists; it is write-once`);
   if (fileSha(staged) !== intent.post.sha256) throw new Error(`staged needs-user ${staged} does not hash to the intent's ${intent.post.sha256}`);
-  crashPoint('needsuser.raise.before-publish');
+  crashPoint('needsuser.raise.before-publish', parentUnit(intent.parent));
   durableRename(staged, path);
-  crashPoint('needsuser.raise.after-publish');
+  crashPoint('needsuser.raise.after-publish', parentUnit(intent.parent));
 }
 
 /**
@@ -150,3 +153,56 @@ export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string
     + `${branch}, acknowledge this item, then \`roadmap apply\` the revised plan. Or acknowledge this item to `
     + 'leave the unit parked.';
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Open items, the journal's and the file-only ones
+
+const FILE_ITEM = /^(sup-[0-9]+-[0-9]+|host-[a-z0-9-]+)\.json$/;
+
+/** The needs-user record of a raised id; its file must exist. */
+export function recordOf(runDir: AbsPath, id: NeedsUserId): NeedsUserRecord {
+  const record = readNeedsUser(runDir, id);
+  if (record === null) throw new Error(`needs-user ${id} is raised but ${needsUserPath(runDir, id)} does not exist`);
+  return record;
+}
+
+/**
+ * The file-only items outside the journal (the supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`,
+ * written by src/executor.ts `writeFileNeedsUser`) that no ack in the log answers, ascending id.
+ */
+export function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserRecord[] {
+  const dir = join(runDir, NEEDS_USER_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).sort().flatMap((name) => {
+    const m = FILE_ITEM.exec(name);
+    if (m === null) return [];
+    const id = needsUserId(m[1]);
+    const record = readNeedsUser(runDir, id);
+    if (record === null) throw new Error(`needs-user ${name} vanished while it was listed`);
+    return view.ackOf(id) === null ? [record] : [];
+  });
+}
+
+/** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
+export function openBlockingItems(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
+  return [...openBlocking(view), ...fileNeedsUser(runDir, view).filter((r) => r.blocking).map((r) => r.id)];
+}
+
+/** An open blocking item as admission reads it (`AdmitInput.blocking`). */
+export type BlockingItem = Readonly<{ id: NeedsUserId; reason: NeedsUserReason; subject: 'unit' | 'arc' | 'host'; unit: UnitId | null }>;
+
+/** Every open blocking item with its reason and subject: the journal's, then the file-only ones. */
+export function blockingItems(runDir: AbsPath, view: JournalView): readonly BlockingItem[] {
+  return openBlockingItems(runDir, view).map((id) => {
+    const { reason, subject } = recordOf(runDir, id);
+    return { id, reason, subject: subject.type, unit: subject.type === 'unit' ? subject.unit : null };
+  });
+}
+
+/**
+ * Whether an open blocking item holds `unit` back from starting a stage: an item about that unit holds only
+ * that unit (A9: no reason is arc-wide by itself, `residue` included). What holds the admission of every unit
+ * (a host item, recovery-required, log-corrupt, the supervisor's crash limit; `base-red` for candidates) is
+ * admission's (src/schedule/ready.ts `admitter`).
+ */
+export const holdsUnit = (item: BlockingItem, unit: UnitId): boolean => item.subject === 'unit' && item.unit === unit;

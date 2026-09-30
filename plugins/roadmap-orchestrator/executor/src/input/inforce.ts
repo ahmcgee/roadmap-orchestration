@@ -55,6 +55,8 @@ export function keptInput(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer 
 
 /** plan.json and the spec.json of each of its units, read from disk: what an apply or a start would put in force. */
 export type InputFiles = Readonly<{
+  /** The plan file read: its directory is where unit spec paths and the rulings ledger resolve. */
+  planFile: AbsPath;
   plan: PlanM1;
   planBytes: Buffer;
   /** Per unit of `plan`: the spec file's path and bytes, or null when the file does not exist. */
@@ -71,7 +73,7 @@ export function readInputFiles(planFile: AbsPath): InputFiles {
     const path = specFilePath(planFile, u);
     return [u.id, { path, bytes: existsSync(path) ? readFileSync(path) : null }] as const;
   }));
-  return { plan, planBytes, specs };
+  return { planFile, plan, planBytes, specs };
 }
 
 /** The manifest of the files, or the units whose spec file is missing. */
@@ -97,12 +99,17 @@ export function keepInputFiles(runDir: AbsPath, files: InputFiles): PlanManifest
 
 /**
  * Puts `files` in force as the next plan revision: their bytes kept, then the `plan-applied` fact (the
- * postcondition, last). `command`: the apply, or null for a start.
+ * postcondition, last). `command`: the apply, or null for a start. Revision 1 of a log with no `dispatch`
+ * fact schedules a DAG (`scheduling: 'dag'`, M2); revision 1 of a log an earlier release dispatched in (a
+ * 1.0.0-dev.3 arc's baseline) leaves it out, so that arc stays legacy (src/core/upgrade.ts).
  */
 export function recordPlan(journal: Journal, runDir: AbsPath, files: InputFiles, command: CommandId | null, changes: readonly PlanChange[]): PlanAppliedFact {
   const manifest = keepInputFiles(runDir, files);
   crashPoint('plan.apply.after-inputs');
-  const fact: PlanAppliedFact = { kind: 'plan-applied', rev: planRev((journal.view.planApplied()?.rev ?? 0) + 1), command, ...manifest, changes };
+  const view = journal.view;
+  const rev = planRev((view.planApplied()?.rev ?? 0) + 1);
+  const dag = rev === 1 && !view.unitsWithState().some((u) => view.dispatchOf(u) !== null);
+  const fact: PlanAppliedFact = { kind: 'plan-applied', rev, command, ...manifest, changes, ...(dag ? { scheduling: 'dag' as const } : {}) };
   journal.fact(fact);
   return fact;
 }

@@ -70,6 +70,24 @@ describe('cli', () => {
     assert.deepEqual(parseCommand(['sweep', '--resource', 'db', ...EXPLICIT]), { command: 'sweep', resource: 'db', run: EXPLICIT_RUN });
   });
 
+  it('resolve-edge <edge> --evidence', () => {
+    assert.deepEqual(parseCommand(['resolve-edge', 'e-top', '--evidence', 'the vendor shipped v2']), {
+      command: 'resolve-edge', edge: 'e-top', evidence: 'the vendor shipped v2', run: HOST,
+    });
+    assert.throws(() => parseCommand(['resolve-edge', '--evidence', 'x']), /<edge> is required/);
+    assert.throws(() => parseCommand(['resolve-edge', 'e-top']), /--evidence <text> is required/);
+    assert.throws(() => parseCommand(['resolve-edge', 'e-top', '--evidence', ' ']), /--evidence <text> is required/);
+    assert.throws(() => parseCommand(['resolve-edge', 'E_TOP', '--evidence', 'x']), CliError);
+  });
+
+  it('run-only <unit>... | --clear: the units ascending and unique', () => {
+    assert.deepEqual(parseCommand(['run-only', 'u3', 'u1', 'u3', ...EXPLICIT]), { command: 'run-only', units: ['u1', 'u3'], run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['run-only', '--clear']), { command: 'run-only', units: null, run: HOST });
+    assert.throws(() => parseCommand(['run-only']), /either <unit>\.\.\. or --clear/);
+    assert.throws(() => parseCommand(['run-only', 'u1', '--clear']), /either <unit>\.\.\. or --clear/);
+    assert.throws(() => parseCommand(['run-only', 'U1']), CliError);
+  });
+
   it('unknown commands are rejected', () => {
     for (const argv of [[], ['version'], ['run'], ['gc'], ['--help'], ['--version', 'x']]) {
       assert.throws(() => parseCommand(argv), CliError, JSON.stringify(argv));
@@ -96,6 +114,9 @@ describe('bin/roadmap', () => {
       [['ack', 'nu-7', '--choice', 'retry'], { type: 'ack', needsUser: 'nu-7', choice: 'retry' }],
       [['resume', '--backend', 'codex'], { type: 'resume', target: { type: 'backend', backend: 'codex' } }],
       [['sweep', '--resource', 'db'], { type: 'sweep', resource: 'db' }],
+      [['resolve-edge', 'e-top', '--evidence', 'shipped'], { type: 'resolve-edge', edge: 'e-top', evidence: 'shipped' }],
+      [['run-only', 'u2', 'u1'], { type: 'run-only', units: ['u1', 'u2'] }],
+      [['run-only', '--clear'], { type: 'run-only', units: null }],
     ];
     const ids: string[] = [];
     for (const [args, body] of cases) {

@@ -4,12 +4,12 @@
 //   repo/     a small Node project (pure ES modules, `node --test` tests, `npm test`), branch `main` and an
 //             `integration` branch cut from it; in-tree `.roadmap/` holds only contracts/one.md,
 //             constraints.md (the C-nn ledger), invariants.md and config.json (empty routing)
-//   input/    plan.json (two serial units, one declared resource, suite lane `npm test`), each unit's
+//   input/    plan.json (two units, `page-id` after `slug`, one declared resource, suite lane `npm test`), each unit's
 //             spec.json, and rulings.md
 //
 // Unit `slug` adds a pure `slugify`. Unit `page-id` adds `pageId`, which imports `slugify`, so it can only
-// pass its lane on an integration tip that already holds `slug`: the arc must merge `slug` first and cut
-// `page-id` from the advanced tip. Its clause B2 (the empty slug) is the one a careless implementation
+// pass its lane on an integration tip that already holds `slug`: the plan says `page-id` runs after `slug`, so
+// the arc merges `slug` first and cuts `page-id` from the advanced tip. Its clause B2 (the empty slug) is the one a careless implementation
 // misses, which gives the gate something to grade.
 //
 // The plan's `rulings` must lie under the plan's directory (SCHEMAS.md choice 12), so input/rulings.md is
@@ -184,7 +184,8 @@ export function setup(dir: string): void {
       }],
     },
     resources: [resourceDecl(l.resource)],
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPE, resources: [RESOURCE] })),
+    // `page-id` builds on `slug` (it imports slugify): an explicit edge, since an M2 arc schedules a DAG.
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPE, resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
   }));
 }
 

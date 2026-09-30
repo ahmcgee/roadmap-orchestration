@@ -189,7 +189,10 @@ describe('residue.chain-and-tail', () => {
   });
 });
 
-/** The fail transition's journal: one intent, closed by one done with `recoveredBy`; no release intent. */
+/**
+ * The fail transition's journal: after the holder's reserve and clean (the fold admits only legal edges), the
+ * fail intent, closed by one done with `recoveredBy`; no release intent.
+ */
 function assertJournal(runDir: string, recoveredBy: 'reconciled' | null): void {
   const j = openJournal(absPath(runDir), ARC);
   assert.deepEqual(j.view.openIntents(), []);
@@ -197,12 +200,10 @@ function assertJournal(runDir: string, recoveredBy: 'reconciled' | null): void {
   const text = readFileSync(join(runDir, 'events.jsonl'), 'utf8');
   const events = text.split('\n').filter((l) => l !== '').map(parseEventLine);
   const intents = events.filter((e) => e.type === 'intent');
-  assert.equal(intents.length, 1, `exactly the fail intent: ${text}`);
-  const intent = intents[0]!;
-  assert.ok(intent.kind === 'resource.transition' && intent.expect.edge.type === 'fail', 'never released');
+  assert.deepEqual(intents.map((i) => i.kind === 'resource.transition' ? i.expect.edge.type : i.kind), ['reserve', 'clean', 'fail'], `exactly the reserve, clean and fail intents, never a release: ${text}`);
   const dones = events.filter((e) => e.type === 'done');
-  assert.equal(dones.length, 1);
-  assert.equal(dones[0]!.recoveredBy, recoveredBy);
+  assert.equal(dones.length, 3);
+  assert.deepEqual(dones.map((d) => d.recoveredBy), [null, null, recoveredBy]);
 }
 
 describe('crash matrix: resource.transition fail + residue', () => {

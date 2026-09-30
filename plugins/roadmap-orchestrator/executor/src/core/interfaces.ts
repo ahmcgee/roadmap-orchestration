@@ -3,15 +3,15 @@
 // reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
 // Interfaces only; no behaviour here.
 import type {
-  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, OpExpect, OpKind, OpOutcome, OpPost, Parent, PlanAppliedFact,
-  RecoveredBy,
+  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
+  PlanAppliedFact, RecoveredBy,
 } from './events.ts';
-import type { ArcId, CommandId, InvocationId, NeedsUserId, OpId, OpKey, UnitId } from './ids.ts';
+import type { ArcId, CommandId, EdgeId, InvocationId, NeedsUserId, OpId, OpKey, ResourceUnit, UnitId } from './ids.ts';
 import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -60,8 +60,30 @@ export interface JournalView {
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
   dispatchesOf(unit: UnitId): readonly DispatchRecord[];
-  /** Backends parked arc-wide by a `backend-park` fact and not since resumed, ascending. */
+  /** Backends parked arc-wide by a `backend-park` fact and not since resumed or recovered, ascending. */
   parkedBackends(): readonly Backend[];
+  /** M2: each parked backend's current park epoch (the latest park fact's seq) and class, ascending by backend. */
+  backendParks(): readonly BackendParkState[];
+  /**
+   * M2: the resource table, kept incrementally by the fold: every resource unit a transition named, with its
+   * state after its last done transition and the transition open on it. Absent units are free.
+   */
+  resources(): ReadonlyMap<ResourceUnit, ResourceEntry>;
+  /**
+   * M2: this arc's residues the log proves (`ResidueState`): each fail transition's residue whose instance no release
+   * has followed, in lock order of the instance. Undisposed own-arc residues are among them.
+   */
+  residues(): readonly ResidueState[];
+  /** M2: the latest `probe` fact per target, ascending by `probeTargetKey`. */
+  probes(): readonly ProbeState[];
+  /** M2: what a judgment stage attempt was admitted with (`judgment-inputs`), or null before its fact. */
+  judgmentInputs(unit: UnitId, stage: JudgmentStage, attempt: number): JudgmentInputs | null;
+  /** M2: a contingent edge's `edge-resolved` fact, or null while unresolved. */
+  edgeResolved(edge: EdgeId): EdgeResolvedState | null;
+  /** M2: the `run-only` allowlist in force (sorted), or null when admission is unlimited. */
+  runOnly(): readonly UnitId[] | null;
+  /** M2: `dag`, or `legacy` for an arc started before M2 (its rev-1 `plan-applied` has no `scheduling`); null before rev 1. */
+  scheduling(): Scheduling | null;
   /** Every needs-user item a done `needsuser.raise` recorded, ascending id, with its acknowledgement. */
   needsUser(): readonly NeedsUserState[];
   /** The `needs-user-acked` fact of any id (journal-raised or not), or null while unacknowledged. */
@@ -74,6 +96,12 @@ export interface JournalView {
   planApplied(): PlanAppliedFact | null;
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */
+  decidedSeq(unit: UnitId): number | null;
+  /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
+  publications(): readonly Readonly<{ unit: UnitId; seq: number }>[];
+  /** M2 (rank, F17): the seq of the first `plan-applied` fact that named the unit, or null if none did. */
+  addedSeq(unit: UnitId): number | null;
   /** Every unit id any `plan-applied` fact named, ascending: ids are never reused. */
   plannedUnits(): readonly UnitId[];
 }

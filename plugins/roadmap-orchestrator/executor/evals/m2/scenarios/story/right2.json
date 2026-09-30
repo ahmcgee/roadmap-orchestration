@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "right2: resolve the registry line: keep urgent, append right",
+          "files": {
+            "src/registry.js": "export const NAMES = ['core', 'urgent', 'right'];\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1 to A3 hold; the registry keeps urgent and appends right."
+        ],
+        "premises": []
+      }
+    }
+  ]
+}

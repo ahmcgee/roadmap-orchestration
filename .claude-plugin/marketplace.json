@@ -1,7 +1,7 @@
 {
   "name": "roadmap-orchestration",
   "description": "Unattended, long-horizon roadmap execution: converge a codebase on a documented target state through a Node executor driving Codex and Claude.",
-  "version": "1.0.0-dev.4",
+  "version": "1.0.0-dev.5",
   "owner": {
     "name": "Aaron McGee",
     "url": "https://github.com/ahmcgee"
@@ -10,7 +10,7 @@
     {
       "name": "roadmap-orchestrator",
       "description": "A plain Node executor that runs a documented target state to convergence, unattended and long-horizon: `codex exec` and `claude -p` as peer backends, a unit DAG with resource locks, candidate-first merges (the tested head is the published head), and write-ahead recovery. The `claude-only` profile needs no `codex` CLI. Invoke as /roadmap-orchestrator:orchestrate.",
-      "version": "1.0.0-dev.4",
+      "version": "1.0.0-dev.5",
       "source": "./plugins/roadmap-orchestrator",
       "homepage": "https://github.com/ahmcgee/roadmap-orchestration#readme"
     }

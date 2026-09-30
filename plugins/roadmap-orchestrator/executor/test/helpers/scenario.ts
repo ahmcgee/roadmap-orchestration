@@ -50,8 +50,12 @@ export type WorldAct =
   | Readonly<{ type: 'hang'; ms: number }>
   /** A detached (setsid) child that outlives the fake for `lifeMs`; its pid goes to `pidFile`. */
   | Readonly<{ type: 'forkSetsid'; env: 'keepEnv' | 'envClear'; lifeMs: number; pidFile: string }>
-  /** Park at a file barrier in the scenario's directory (test/helpers/barrier.ts). */
-  | Readonly<{ type: 'barrier'; name: string; timeoutMs: number }>
+  /**
+   * Park at a file barrier in the scenario's directory (test/helpers/barrier.ts). `perUnit` names the
+   * barrier `<unit>.<name>` (unitBarrierName) so concurrent units park at their own; `progressMs` prints a
+   * progress line to stdout that often while parked (a lane that is quiet but alive is not a stall).
+   */
+  | Readonly<{ type: 'barrier'; name: string; timeoutMs: number; perUnit?: true; progressMs?: number }>
   /**
    * Read a file the prompt points at: `pattern` (a regex source with one capture group) finds a directory
    * in stdin, and `<dir>/<file>` must contain `contains`; otherwise the call fails (exit 99). How a fake
@@ -77,9 +81,16 @@ export type CodexAct = OutputAct | WorldAct | CodexOnlyAct;
 export type ClaudeAct = OutputAct | WorldAct | ClaudeOnlyAct;
 export type Act = CodexAct | ClaudeAct;
 
+/**
+ * A step with `unit` is consumed only by calls of that unit, in the order the unit's steps appear: the unit
+ * comes from the owner label `<arc>/<unit>` in RESOURCE_OWNER, else the basename of the call's cwd (a
+ * unit worktree is `<root>/<arc>/<unit>`). A step without `unit` is consumed in file order by calls whose
+ * unit owns no keyed step, so a scenario without units behaves as it always did.
+ */
+export type StepBase = Readonly<{ unit?: string }>;
 export type Step =
-  | Readonly<{ as: 'codex'; expect: Expect; acts: readonly CodexAct[]; /** fresh thread id; default derived from the step index */ threadId?: string }>
-  | Readonly<{ as: 'claude'; expect: Expect; acts: readonly ClaudeAct[] }>;
+  | (StepBase & Readonly<{ as: 'codex'; expect: Expect; acts: readonly CodexAct[]; /** fresh thread id; default derived from the step index */ threadId?: string }>)
+  | (StepBase & Readonly<{ as: 'claude'; expect: Expect; acts: readonly ClaudeAct[] }>);
 
 export type ScenarioFile = Readonly<{ steps: readonly Step[] }>;
 
@@ -91,11 +102,15 @@ export type CallRecord = Readonly<{
   env: Readonly<Record<string, string>>;
   /** The step this call matched, or null when it matched none. */
   step: number | null;
+  /** The unit the call was attributed to (see Step), or null when neither the owner label nor the cwd gave one. */
+  unit: string | null;
 }>;
 
 export type Scenario = Readonly<{ path: string; dir: string; binDir: string }>;
 
 export const CALLS_FILE = 'calls.jsonl';
+/** Beside the scenario: one file per consumed step, created exclusively, so concurrent calls never share a step. */
+export const CLAIMS_DIR = 'claims';
 
 /** Error texts the fakes emit. Codex's is hand-written from the CLI's usage-limit message (never captured). */
 export const CODEX_USAGE_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:05 PM.";

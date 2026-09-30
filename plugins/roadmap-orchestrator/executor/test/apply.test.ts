@@ -3,7 +3,9 @@
 // the log, with and without a fact; an apply's rejections (a stale expectRev, files changed since they were
 // hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
-// apply.upgrade-queued-resume, apply.crash-cells, apply.recovered-after-start.
+// apply.upgrade-queued-resume, apply.crash-cells, apply.recovered-after-start; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
+// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
+// apply.stale-after-evidence-revision.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,21 +13,26 @@ import { describe, test } from 'node:test';
 import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
 import { pollCommands, readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, PlanChange } from '../src/core/events.ts';
-import { type UnitId, arcId, invocationIdOf, opKey, planRev, resourceName, routingRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, routingRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
 import type { CommandBody, ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { earlierReleaseBaseline } from '../src/core/upgrade.ts';
 import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
-import { type Classified, classify } from '../src/input/classify.ts';
-import { PLAN_INPUT, SPEC_INPUT, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, specShaInForce } from '../src/input/inforce.ts';
-import { pinDispatch, repin } from '../src/pipeline/dispatch.ts';
+import { type Classified, classify, commandScope } from '../src/input/classify.ts';
+import {
+  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, specShaInForce,
+} from '../src/input/inforce.ts';
+import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
+import { requestOf } from '../src/resources/pool.ts';
 import { commandReconciler } from '../src/recover/command.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
+import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -115,6 +122,8 @@ type Row = Readonly<{
   setup?: (r: ArcRun) => void;
   edit: (d: ArcDescriptor, r: ArcRun) => void;
   residues?: readonly ResidueKey[];
+  /** Revision 1 records `scheduling: 'dag'` (an arc started on M2); otherwise the arc is legacy. */
+  dag?: boolean;
   expect: 'unchanged' | ((r: ArcRun) => readonly PlanChange[]) | readonly RegExp[];
 }>;
 
@@ -323,35 +332,262 @@ const ROWS: readonly Row[] = [
 /** Reserves `db` for u1's build, as its reservation does. */
 function reserveDb(r: ArcRun): void {
   const holder: StageHolder = { type: 'stage', unit: U1, stage: 'build', attempt: 1 };
-  assert.equal(reserve(r.ctx, holder, [resourceName('db')], { ...holder }).state, 'reserved');
+  assert.equal(reserve(r.ctx, holder, requestOf(r.ctx.plan(), [resourceName('db')], 0), { ...holder }).state, 'reserved');
+}
+
+/**
+ * Records the files as revision 1 of an arc started on M2 (`scheduling: 'dag'`), before `contextFor` would
+ * record them as a legacy arc's. Its `@cpu` pool is sized 8, so no row depends on the host's parallelism.
+ */
+function dagArc(d: ArcDescriptor): void {
+  editPlan(d, (p) => void (p['capacity'] = { cpu: 8 }));
+  const journal = openJournal(absPath(d.runDir), arcId(d.arc));
+  try {
+    const manifest = keepInputFiles(absPath(d.runDir), readInputFiles(absPath(d.planPath)));
+    journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
+  } finally {
+    journal.close();
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M2 rows: cut, re-entry, the effective graph, pools, capacity, started order (G3)
+
+const unitJson = (p: PlanJson, id: string): UnitJson => p.units.find((u) => u.id === id) ?? assert.fail(`no unit ${id}`);
+const cutUnits = (...ids: string[]) => (d: ArcDescriptor): void => editPlan(d, (p) => {
+  for (const id of ids) unitJson(p, id)['cut'] = { reason: 'out of scope' };
+});
+/** Adds unit `id` re-entering `old` (a copy of u1's entry and spec), with `extra` over its entry. */
+const reenter = (id: string, old: string, extra: Json = {}, reentry: Json = {}) => (d: ArcDescriptor): void => {
+  addUnit(d, id);
+  editPlan(d, (p) => Object.assign(unitJson(p, id), { reenters: { unit: old, ...reentry }, ...extra }));
+};
+const parkAtGate = (r: ArcRun, unit = 'u1'): void => {
+  pin(r, unit);
+  decide(r, unit, 'gate', 'escalate', 'park');
+};
+const cutChange = (unit: string): PlanChange => ({ type: 'unit-cut', unit: unitId(unit) });
+const reentered = (unit: string, old: string, reset = false): readonly PlanChange[] =>
+  [{ type: 'unit-added', unit: unitId(unit) }, { type: 'unit-reentered', unit: unitId(unit), reenters: unitId(old), reset }];
+const CHAIN: readonly UnitSpecJson[] = [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3', after: ['u2'] }];
+const EST = { name: 'est', probe: tool, teardown: tool, pool: { size: 2 } };
+const withEst = (d: ArcDescriptor): void => editPlan(d, (p) => void p.resources.push(EST));
+const resizeEst = (size: number) => (d: ArcDescriptor): void => editPlan(d, (p) => void (p.resources.find((x) => x['name'] === 'est')!['pool'] = { size }));
+
+const M2_ROWS: readonly Row[] = [
+  // cut
+  { name: 'apply.cut-unstarted: a unit that never started: now', edit: cutUnits('u3'), expect: () => [cutChange('u3')] },
+  { name: 'apply.cut-parked: a parked unit: now', setup: parkAtGate, edit: cutUnits('u1'), expect: () => [cutChange('u1')] },
+  { name: 'apply.cut-in-task: a unit active past its dispatch: refused', setup: inFlight, edit: cutUnits('u1'), expect: [/^unit u1 is in a task \(past plan-check\); pause it, or let it park, before cutting it$/] },
+  {
+    name: 'apply.cut-paused: a paused unit is in no task: now',
+    setup: (r) => {
+      inFlight(r);
+      r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: U1 } });
+    },
+    edit: cutUnits('u1'),
+    expect: () => [cutChange('u1')],
+  },
+  {
+    name: 'apply.cut-merged: refused',
+    setup: (r) => {
+      pin(r, 'u1');
+      decide(r, 'u1', 'snapshot', 'published', 'retire');
+    },
+    edit: cutUnits('u1'),
+    expect: [/^unit u1 is merged; it cannot be cut$/],
+  },
+  {
+    name: 'apply.cut-dependents: a direct dependent neither cut nor dropping its `after`: refused',
+    units: CHAIN,
+    edit: cutUnits('u1'),
+    expect: [/^unit u2 runs after u1, which is cut: cut u2 too, or drop its `after`$/],
+  },
+  {
+    name: 'apply.cut-dependents-resolved: the dependents cut in the same apply, or dropping the edge: now',
+    units: CHAIN,
+    edit: (d) => {
+      cutUnits('u1', 'u2')(d);
+      editPlan(d, (p) => void (unitJson(p, 'u3').after = []));
+    },
+    expect: () => [cutChange('u1'), cutChange('u2'), { type: 'unit-changed', unit: unitId('u3') }],
+  },
+  {
+    name: 'apply.cut-final: a cut is never taken back',
+    setup: (r) => {
+      cutUnits('u3')(r.d);
+      accept(r);
+    },
+    edit: (d) => editPlan(d, (p) => void delete unitJson(p, 'u3')['cut']),
+    expect: [/^unit u3 is cut; a cut is final$/],
+  },
+  { name: 'apply.cut-added: a unit added cut: refused', edit: (d) => { addUnit(d, 'u4'); cutUnits('u4')(d); }, expect: [/^unit u4 is added cut/] },
+  {
+    name: 'apply.cut-ruling: a cut citing a ruling the ledger does not hold: refused',
+    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u3')['cut'] = { reason: 'superseded by the v2 API', ruling: 'C-99' })),
+    expect: [/^unit u3's cut cites ruling C-99, which the ledger .*rulings\.md does not hold$/],
+  },
+  // re-entry
+  { name: 'apply.reenter-parked: a parked unit re-entered under a new id: now', setup: parkAtGate, edit: reenter('u4', 'u1'), expect: () => reentered('u4', 'u1') },
+  {
+    name: 'apply.reenter-held: a held unit: now',
+    setup: (r) => {
+      pin(r, 'u1');
+      decide(r, 'u1', 'build', 'interrupted', 'hold');
+    },
+    edit: reenter('u4', 'u1', { scope: ['src/**'] }),
+    expect: () => reentered('u4', 'u1'),
+  },
+  { name: 'apply.reenter-active: a unit neither parked nor held: refused', setup: inFlight, edit: reenter('u4', 'u1'), expect: [/^unit u4 re-enters u1, which is active; only a parked or held unit is re-entered$/] },
+  {
+    name: 'apply.reenter-merged: refused',
+    setup: (r) => {
+      pin(r, 'u1');
+      decide(r, 'u1', 'snapshot', 'published', 'retire');
+    },
+    edit: reenter('u4', 'u1'),
+    expect: [/^unit u4 re-enters u1, which is merged$/],
+  },
+  {
+    name: 'apply.reenter-superseded: a second successor of one unit: refused (a lineage is a chain)',
+    setup: (r) => {
+      parkAtGate(r);
+      reenter('u4', 'u1')(r.d);
+      accept(r);
+    },
+    edit: reenter('u5', 'u1'),
+    expect: [/^units u4, u5 each re-enter u1; a lineage is a chain: re-enter its head$/],
+  },
+  {
+    name: 'apply.reenter-cut: a unit this apply cuts: refused',
+    setup: parkAtGate,
+    edit: (d) => {
+      reenter('u4', 'u1')(d);
+      cutUnits('u1')(d);
+    },
+    expect: [/^unit u4 re-enters u1, which this apply cuts$/],
+  },
+  {
+    name: 'apply.reenter-envelope: a scope beyond the lineage\'s first pin: refused',
+    setup: parkAtGate,
+    edit: reenter('u4', 'u1', { scope: ['src/lib/**', 'docs/**'] }),
+    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope contracts\/\*\*, src\/\*\*, test\/\*\* \(u1's first pin\)$/],
+  },
+  { name: 'apply.reenter-risk-floor: a risk below the lineage\'s floor: refused', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
+  {
+    name: 'apply.reenter-reset: a reset needs an active ruling of the ledger',
+    setup: parkAtGate,
+    edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-7' } }),
+    expect: [/^unit u4's reset cites ruling C-7, which the ledger .* does not hold$/],
+  },
+  { name: 'apply.reenter-reset-ruled: a reset backed by C-1: now', setup: parkAtGate, edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-1' } }), expect: () => reentered('u4', 'u1', true) },
+  {
+    name: 'apply.reenter-later: `reenters` set on a unit already planned: refused',
+    setup: parkAtGate,
+    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u2')['reenters'] = { unit: 'u1' })),
+    expect: [/^unit u2: `reenters` is set when a unit is added, never after$/],
+  },
+  {
+    name: 'apply.reenter-effective-cycle: `top after old` and `new after top, reenters old`: refused as a cycle',
+    units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }],
+    setup: parkAtGate,
+    edit: reenter('u4', 'u1', { after: ['u2'] }),
+    expect: [/^the unit graph has a cycle once each re-entered unit stands for its lineage's head: u2 → u4 → u2$/],
+  },
+  // pools and capacity
+  { name: 'apply.pool-added: a pool declared: now', edit: withEst, expect: () => [{ type: 'resource', resource: resourceName('est'), edit: 'added' }] },
+  { name: 'apply.pool-resize-free: every instance free: now', before: withEst, edit: resizeEst(3), expect: () => [{ type: 'resource', resource: resourceName('est'), edit: 'changed' }] },
+  {
+    name: 'apply.pool-resize-held: an instance held: refused',
+    before: withEst,
+    setup: (r) => {
+      const holder: StageHolder = { type: 'stage', unit: U1, stage: 'build', attempt: 1 };
+      assert.equal(reserve(r.ctx, holder, requestOf(r.ctx.plan(), [resourceName('est')], 0), { ...holder }).state, 'reserved');
+    },
+    edit: resizeEst(1),
+    expect: [/^resource est is held \(est#1 reserved\); its declaration may not change until it is free and swept$/],
+  },
+  {
+    name: 'apply.pool-remove-residue: an instance a residue names: refused',
+    before: withEst,
+    edit: (d) => editPlan(d, (p) => void p.resources.pop()),
+    residues: [{ arc: arcId('other-arc'), unit: U1, inv: invocationIdOf('other-arc/4#1'), resource: poolInstance(resourceName('est'), 2) }],
+    expect: [/^resource est is named by an undisposed residue/],
+  },
+  {
+    name: 'apply.capacity-over: builds above the @cpu pool\'s size: refused (a DAG arc)',
+    dag: true,
+    edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 3 })),
+    expect: ['u1', 'u2', 'u3'].map((u) => new RegExp(`^\\{"kind":"plan-invalid","problem":\\{"lane":null,"requested":4,"resource":"@cpu","total":3,"type":"over-capacity","unit":"${u}"\\}\\}$`)),
+  },
+  { name: 'apply.capacity-within: now', dag: true, edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 4 })), expect: () => [{ type: 'plan-field', field: 'capacity' }] },
+  { name: 'apply.capacity-legacy: a legacy arc requests no @cpu: now', edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 1 })), expect: () => [{ type: 'plan-field', field: 'capacity' }] },
+  // G3: started units keep their relative order
+  {
+    name: 'apply.after-non-prefix-dispatch: a DAG arc started u2 and u3 before u1: an unrelated edit applies',
+    dag: true,
+    setup: (r) => {
+      pin(r, 'u2');
+      pin(r, 'u3');
+    },
+    edit: (d) => addUnit(d, 'u4'),
+    expect: () => [{ type: 'unit-added', unit: unitId('u4') }],
+  },
+  {
+    name: 'apply.after-non-prefix-order: an unstarted unit moves past started ones: now; started ones swapped: refused',
+    dag: true,
+    setup: (r) => {
+      pin(r, 'u2');
+      pin(r, 'u3');
+    },
+    edit: (d) => editPlan(d, (p) => void p.units.push(p.units.shift()!)),
+    expect: () => [{ type: 'order' }],
+  },
+  {
+    name: 'apply.after-non-prefix-swap: started units swapped: refused',
+    dag: true,
+    setup: (r) => {
+      pin(r, 'u2');
+      pin(r, 'u3');
+    },
+    edit: (d) => editPlan(d, (p) => void p.units.reverse()),
+    expect: [/^the units that have started must keep their relative order \(u2, u3\)$/],
+  },
+];
+
+function runRow(row: Row): void {
+  test(row.name, T, () => {
+    const d = setupArc({ steps: [], units: row.units ?? THREE });
+    row.before?.(d);
+    if (row.dag === true) dagArc(d);
+    const r = contextFor(d);
+    try {
+      row.setup?.(r);
+      row.edit(d, r);
+      const v = classifyNow(r, row.residues);
+      if (row.expect === 'unchanged') assert.deepEqual(v, { kind: 'unchanged' });
+      else if (typeof row.expect === 'function') {
+        assert.equal(v.kind, 'accepted', JSON.stringify(v));
+        if (v.kind === 'accepted') assert.deepEqual(v.changes, row.expect(r));
+      } else {
+        assert.equal(v.kind, 'rejected', JSON.stringify(v));
+        if (v.kind === 'rejected') {
+          assert.equal(v.reasons.length, row.expect.length, `every reason, once: ${JSON.stringify(v.reasons)}`);
+          row.expect.forEach((re, i) => assert.match(v.reasons[i]!, re));
+        }
+      }
+    } finally {
+      r.journal.close();
+    }
+  });
 }
 
 describe('apply.classifier-table: one row per edit class of an apply against the plan in force', () => {
-  for (const row of ROWS) {
-    test(row.name, T, () => {
-      const d = setupArc({ steps: [], units: row.units ?? THREE });
-      row.before?.(d);
-      const r = contextFor(d);
-      try {
-        row.setup?.(r);
-        row.edit(d, r);
-        const v = classifyNow(r, row.residues);
-        if (row.expect === 'unchanged') assert.deepEqual(v, { kind: 'unchanged' });
-        else if (typeof row.expect === 'function') {
-          assert.equal(v.kind, 'accepted', JSON.stringify(v));
-          if (v.kind === 'accepted') assert.deepEqual(v.changes, row.expect(r));
-        } else {
-          assert.equal(v.kind, 'rejected', JSON.stringify(v));
-          if (v.kind === 'rejected') {
-            assert.equal(v.reasons.length, row.expect.length, `every reason, once: ${JSON.stringify(v.reasons)}`);
-            row.expect.forEach((re, i) => assert.match(v.reasons[i]!, re));
-          }
-        }
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
+  for (const row of ROWS) runRow(row);
+});
+
+describe('apply.classifier-table M2: cut, re-entry, the effective graph, pools, capacity, started order', () => {
+  for (const row of M2_ROWS) runRow(row);
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -443,6 +679,50 @@ async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: str
   return { id: file.id, outcome: await applyCommand(commandContextFor(r), file) };
 }
 
+test('apply.stale-after-evidence-revision: an architect\'s revision written while the build ran, applied after its evidence stage appended the implementer\'s decisions (the executor\'s rev 2), is refused naming that revision; re-applied on top of it, it is pending', T, async () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
+  const r = contextFor(d);
+  try {
+    inFlight(r);
+    const onRev1 = readFileSync(specPath(d, 'u1'), 'utf8');
+    // The build's evidence stage appends the implementer's decisions: the executor's revision, rev 2.
+    const { path, spec, sha256 } = loadUnitSpec(r.ctx, r.unit('u1'));
+    const attempt = r.journal.view.unit(U1).counters.attempts + 1;
+    await runOp(r.journal, specPatchOp(r.ctx.runDir), 'spec:u1', { type: 'stage', unit: U1, stage: 'evidence', attempt }, {
+      path, oldSha256: sha256,
+      patch: { expectRev: spec.rev, by: { role: 'executor', inv: invocationIdOf(`${d.arc}/9#1`) }, ops: [{ op: 'add', section: 'decisions', item: { id: clauseId('D1'), text: 'mul is exported from src/mul.js' } }] },
+    });
+    r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'evidence', attempt, outcome: 'captured', class: 'advance', chargeable: false } as Fact);
+    const recorded = r.journal.view.unit(U1).spec;
+    assert.equal(recorded?.rev, 2, 'the machine revision is the unit\'s spec in force');
+
+    // The architect wrote rev 2 on rev 1 while the build ran; applied now, it is stale.
+    writeFileSync(specPath(d, 'u1'), onRev1);
+    revise(d);
+    const kept = join(r.ctx.runDir, 'inputs', `${recorded!.sha256}.${SPEC_INPUT}`);
+    assert.deepEqual(classifyNow(r), {
+      kind: 'rejected',
+      reasons: [
+        `unit u1: its spec ${specPath(d, 'u1')} is at rev 2, but the unit's spec is now rev 2, a revision the executor wrote from the build's evidence `
+        + `(the implementer's recorded decisions, appended at evidence attempt ${attempt}) before your edit was applied; `
+        + `re-apply your edit on top of rev 2 (kept at ${kept}) and set rev 3`,
+      ],
+    });
+
+    // Re-applied on top of rev 2, as the refusal says: a pending revision.
+    writeFileSync(specPath(d, 'u1'), readFileSync(kept));
+    editSpec(d, 'u1', (s) => {
+      addClause(s);
+      s['rev'] = 3;
+    });
+    const v = classifyNow(r);
+    assert.equal(v.kind, 'accepted', JSON.stringify(v));
+    if (v.kind === 'accepted') assert.deepEqual(v.changes, [specChange(d, 'u1', 'revision', 3)]);
+  } finally {
+    r.journal.close();
+  }
+});
+
 test('apply.rejections: a stale expectRev, files changed since they were hashed, and a startup row over the changed units each reject the whole apply; then it applies, and a re-run is a no-op', T, async () => {
   const d = setupArc({ steps: [] });
   const r = contextFor(d);
@@ -505,6 +785,68 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
     const last = applied(d).at(-1);
     assert.deepEqual(last?.changes.map((c) => c.type), ['routing']);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.revalidate-after-smoke: the log moving while the smoke runs is caught by the classification run again just before the commit; nothing is applied', T, async () => {
+  const d = setupArc({
+    steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
+    units: [{ id: 'u1' }, { id: 'u2' }],
+  });
+  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier' } }));
+  const r = contextFor(d);
+  try {
+    // Seats Codex again (smoked first) and edits u2's spec while u2 is undispatched.
+    pin(r, 'u1');
+    editPlan(d, (p) => void delete p['routing']);
+    editSpec(d, 'u2', addClause);
+    const pending = command(r, applyBody(d));
+    await reached(d.scenarioDir, 'smoke', 30_000);
+    // Meanwhile u2 is dispatched on its spec in force: the same edit is now a same-rev edit of a dispatched spec.
+    pin(r, 'u2');
+    release(d.scenarioDir, 'smoke');
+    const { outcome } = await pending;
+    assert.equal(outcome.kind, 'rejected');
+    assert.match(outcome.kind === 'rejected' ? outcome.reason : '', /^apply rejected \(1 reason\): \(1\) unit u2: its spec .*u2\.json changed but is still at rev 1; a revision sets rev 2/);
+    assert.equal(applied(d).length, 1, 'nothing applied');
+    assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'smoke').length, 1, 'the smoke ran, and passed');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('cmd.scope: each mutation\'s scope (A12); an apply\'s follows from its classification of the files as they are', T, async () => {
+  const d = setupArc({ steps: [], units: THREE });
+  const r = contextFor(d);
+  try {
+    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), resolve: resolve(r) });
+    const of = (body: CommandBody) => scope(body as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan());
+    assert.deepEqual(of({ type: 'resume', target: { type: 'all' } }), { type: 'arc' });
+    assert.deepEqual(of({ type: 'resume', target: { type: 'unit', unit: unitId('u2') } }), { type: 'units', units: ['u2'] });
+    assert.deepEqual(of({ type: 'resume', target: { type: 'backend', backend: 'codex' } }), { type: 'none' });
+    assert.deepEqual(of({ type: 'sweep', resource: null }), { type: 'none' });
+    assert.deepEqual(of({ type: 'resolve-edge', edge: edgeId('e1'), evidence: 'met' }), { type: 'none' });
+    assert.deepEqual(of({ type: 'run-only', units: [U1] }), { type: 'none' });
+
+    assert.deepEqual(of(applyBody(d)), { type: 'none' }, 'nothing to apply');
+    editSpec(d, 'u2', addClause);
+    addUnit(d, 'u4');
+    assert.deepEqual(of(applyBody(d)), { type: 'units', units: ['u2', 'u4'] }, 'spec and unit edits: those units');
+    const hashed = applyBody(d);
+    editPlan(d, (p) => void p.units.splice(1, 2, p.units[2]!, p.units[1]!));
+    assert.deepEqual(of(hashed), { type: 'arc' }, 'the files moved past the manifest: the whole arc');
+    assert.deepEqual(of(applyBody(d)), { type: 'units', units: ['u2', 'u3', 'u4'] }, 'an order change: the units it moved');
+    editPlan(d, (p) => void (p['direction'] = 'Smaller still.'));
+    assert.deepEqual(of(applyBody(d)), { type: 'arc' }, 'a plan-wide field: the arc');
+    editPlan(d, (p) => {
+      p['direction'] = 'Keep it small.';
+      p.resources.push(DB);
+    });
+    assert.deepEqual(of(applyBody(d)), { type: 'arc' }, 'a resource edit: the arc');
+    editPlan(d, (p) => void (p['integrationBranch'] = 'other'));
+    assert.deepEqual(of(applyBody(d)), { type: 'none' }, 'rejected: it touches nothing');
   } finally {
     r.journal.close();
   }

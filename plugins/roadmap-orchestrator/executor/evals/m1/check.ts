@@ -7,7 +7,8 @@
 //   run-ended            start exited 0 (ready), and the run's final executor left an exit reason other than
 //                        refused, not by the driver's hard timeout
 //   units-settled        every unit merged, or parked with a coherent needs-user (the file exists, its reason is
-//                        one of the frozen reasons, and status lists it open and blocking)
+//                        one of the frozen reasons, and status lists it open and blocking), or never started
+//                        because a unit it runs `after` is parked so (D1: merged-only edges)
 //   head-is-candidate    integration head = the last published ff's candidate; head^1 = its T; head^2 = the
 //                        unit commit the latest approval fact names; head's tree = the candidate ref's tree
 //   diff-product-only    `git diff main...integration` passes the transient check (src/git/transient.ts)
@@ -100,6 +101,11 @@ function unitsSettled(run: Run): Verdict {
         if (listed === undefined || listed.reason !== r.reason || !listed.blocking) problems.push(`${unit.id}: needs-user ${r.id} (${r.reason}) is not listed open and blocking in status`);
         lines.push(`${unit.id} parked ${r.id} ${r.reason}`);
       }
+      continue;
+    }
+    const parkedAfter = unit.after.filter((d) => run.report.status.units.find((u) => u.unit === d)?.status === 'park-pending');
+    if (line.attempts === 0 && parkedAfter.length > 0) {
+      lines.push(`${unit.id} waits after ${parkedAfter.join(', ')}`);
       continue;
     }
     problems.push(`${unit.id}: ${line.status} at ${line.stage}, neither merged nor parked`);

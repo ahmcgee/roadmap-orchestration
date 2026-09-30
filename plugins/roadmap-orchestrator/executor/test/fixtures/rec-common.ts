@@ -16,6 +16,7 @@ import { checkManifest } from '../../src/git/evidence.ts';
 import { refTarget, revParse } from '../../src/git/git.ts';
 import { readResidues } from '../../src/host/residues.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
+import { decidedBy } from '../../src/pipeline/transitions.ts';
 import type { RecoveryContext } from '../../src/recover/recover.ts';
 import { resourceTable } from '../../src/resources/reserve.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
@@ -263,12 +264,19 @@ export function assertNoDuplicateEffect(d: ArcDescriptor, callsBefore: number): 
   const files = existsSync(dir) ? readdirSync(dir).filter((n) => /^nu-[0-9]+\.json$/.test(n)) : [];
   assert.equal(files.length, raises.length, 'one needs-user file per raise');
 
-  // One residue per resource; a failed resource is never released.
+  // One residue per resource; a failed resource is never released. Every resource is settled, but the slot a
+  // green candidate's publication keeps while the unit's ff or snapshot is next (A2).
+  const publishing = (e: ReturnType<typeof resourceTable> extends ReadonlyMap<unknown, infer E> ? E : never): boolean => {
+    if (e.pending !== null || e.status.state !== 'running' || e.status.holder.type !== 'publication') return false;
+    const decided = view.unit(e.status.holder.unit).decided;
+    const next = decided === null ? null : decidedBy(decided);
+    return next !== null && next.kind === 'stage' && (next.target.stage === 'ff' || next.target.stage === 'snapshot');
+  };
   if (existsSync(join(d.hostDir, 'residues.jsonl'))) {
     const keys = readResidues(absPath(d.hostDir)).flatMap((r) => (r.type === 'residue' ? [JSON.stringify(r.key)] : []));
     assert.equal(new Set(keys).size, keys.length, 'one residue per key');
   }
-  for (const [name, e] of resourceTable(view)) assert.ok(e.pending === null && (e.status.state === 'free' || e.status.state === 'cleanup-failed'), `resource ${name} settled`);
+  for (const [name, e] of resourceTable(view)) assert.ok(e.pending === null && (e.status.state === 'free' || e.status.state === 'cleanup-failed' || publishing(e)), `resource ${name} settled`);
 
   // One applied receipt per command op.
   const applied = view.opsOf('command.apply').filter((i) => view.doneOf(i.op) !== null);

@@ -10,6 +10,10 @@
 // `claude-only` never runs the Codex smoke; instead it requires that no seat resolves to Codex. A backend
 // whose binary is not on the host PATH fails to spawn: that is `missing`; any other non-success is `failed`.
 // The report and the rejections never name a model; only the recorded argv does.
+//
+// M2: a backend target's probe and `resume --backend` smoke one backend (`probeSmoke`, src/park/probe.ts). On a
+// supervisor respawn of an established arc, a failed smoke parks its backend instead of refusing (A18,
+// `smokeOutages`, src/preflight/checks.ts `smokeCheck`).
 import { join } from 'node:path';
 import { resultBytes, writeResult } from '../backends/adapter.ts';
 import {
@@ -17,7 +21,7 @@ import {
   backendArgv, freshClaudeImplementerSession, freshJudgmentSession, promptBytes,
 } from '../backends/argv.ts';
 import { detectContainmentMode } from '../contain/detect.ts';
-import type { SpawnSubject } from '../core/events.ts';
+import type { BackendParkClass, SpawnSubject } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type InvocationId, type RoutingRev, invocationDirName, opKey, sha256 } from '../core/ids.ts';
 import type { Journal } from '../core/interfaces.ts';
@@ -163,8 +167,7 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
       return { expect: { subject, launchSha256: launchSha256(launch) }, post: null };
     },
   });
-  if (planned === null) throw new Error(`journal.begin returned ${inv} without calling the intent body`);
-  const { invDir, prepared, launch } = planned as { invDir: AbsPath; prepared: Prepared; launch: LaunchFile };
+  if (planned === null) throw new Error(`journal.begin returned ${inv} without calling the intent body`);  const { invDir, prepared, launch } = planned as { invDir: AbsPath; prepared: Prepared; launch: LaunchFile };
   durableMkdir(invDir);
   for (const [name, text] of Object.entries(prepared.inputs)) durableWrite(join(invDir, name), text);
   const end = await awaitRunner(startRunner(invDir, launch));
@@ -302,21 +305,21 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   return { seat, request: { kind: 'codex-build', triple, session: { backend: 'codex', mode: 'fresh' } } };
 }
 
-async function smokeBackend(routing: SmokeRouting, ctx: InvocationContext, backend: Backend, cwd: AbsPath): Promise<BackendSmoke> {
+async function smokeBackend(routing: SmokeRouting, ctx: InvocationContext, backend: Backend, check: string): Promise<BackendSmoke> {
   if (routing.profile === 'claude-only' && backend === 'codex') {
     return { backend, ran: false, reason: 'profile-excludes', seats: seatsOn(routing.resolved, backend) };
   }
   const planned = smokeRequest(routing.resolved, backend);
   if (planned === null) return { backend, ran: false, reason: 'unused' };
   const done = await invokeBackend(ctx, {
-    check: `backend-${backend}`,
+    check,
     routingRev: routing.resolved.rev,
     tier: planned.seat.tier,
     request: planned.request,
     system: SMOKE_SYSTEM,
     rendered: SMOKE_PROMPT,
     schema: SMOKE_SCHEMA,
-    cwd,
+    cwd: smokeDir(ctx),
   });
   if (done.exit.child.type === 'spawn-failed') return { backend, ran: false, reason: 'missing', inv: done.inv, detail: done.exit.child.error };
   const r = done.result;
@@ -331,14 +334,50 @@ export function smoke(routing: SmokeRouting, ctx: InvocationContext): Promise<Sm
   return smokeBackends(routing, ctx, BACKENDS);
 }
 
-/** Smoke the listed backends only, in the order given: `resume --backend` re-runs its backend's smoke alone. */
+/** Smoke the listed backends only, in the order given: an apply's routing change smokes the backends it adds. */
 export async function smokeBackends(routing: SmokeRouting, ctx: InvocationContext, only: readonly Backend[]): Promise<SmokeReport> {
-  // The smoke's calls run in their own empty dir: a smoke touches no tree.
+  const backends: BackendSmoke[] = [];
+  for (const backend of only) backends.push(await smokeBackend(routing, ctx, backend, `backend-${backend}`));
+  return { profile: routing.profile, routingRev: routing.resolved.rev, backends };
+}
+
+/**
+ * One backend's smoke as a probe runs it (src/park/probe.ts: a backend target's probe and `resume --backend`),
+ * under its own check name, so it never shares an op key with a start's or an apply's smoke of the backend.
+ */
+export async function probeSmoke(routing: SmokeRouting, ctx: InvocationContext, backend: Backend): Promise<SmokeReport> {
+  const smoked = await smokeBackend(routing, ctx, backend, `probe-backend-${backend}`);
+  return { profile: routing.profile, routingRev: routing.resolved.rev, backends: [smoked] };
+}
+
+/** The smoke's calls run in their own empty dir: a smoke touches no tree. */
+export function smokeDir(ctx: Pick<InvocationContext, 'runDir'>): AbsPath {
   const cwd = absPath(join(ctx.runDir, 'smoke'));
   durableMkdir(cwd);
-  const backends: BackendSmoke[] = [];
-  for (const backend of only) backends.push(await smokeBackend(routing, ctx, backend, cwd));
-  return { profile: routing.profile, routingRev: routing.resolved.rev, backends };
+  return cwd;
+}
+
+/** Whether a backend's smoke passed: it answered, or no seat routes to it (so nothing waits on it). */
+export function smokePassed(b: BackendSmoke): boolean {
+  return b.ran ? b.outcome.kind === 'success' : b.reason === 'unused';
+}
+
+/** A backend park a failed smoke calls for (A18). */
+export type SmokePark = Readonly<{ backend: Backend; class: BackendParkClass; inv: InvocationId | null }>;
+
+/**
+ * The backends whose smoke ran into the backend itself: missing (the CLI did not spawn) or failed. A profile
+ * that excludes a backend some seat still resolves to is a configuration error, not an outage, and is not
+ * listed. The class is the backend's own usage-limit or capacity error when it reported one (with the smoke's
+ * invocation: a usage limit is never probed away, D4), else `outage` (no invocation).
+ */
+export function smokeOutages(report: SmokeReport): readonly SmokePark[] {
+  return report.backends.flatMap((b): SmokePark[] => {
+    if (!b.ran) return b.reason === 'missing' ? [{ backend: b.backend, class: 'outage', inv: null }] : [];
+    if (b.outcome.kind === 'success') return [];
+    const reported = b.errorClasses.find((c): c is 'usage-limit' | 'capacity' => c === 'usage-limit' || c === 'capacity');
+    return [reported === undefined ? { backend: b.backend, class: 'outage', inv: null } : { backend: b.backend, class: reported, inv: b.inv }];
+  });
 }
 
 /** The `backend-smoke` startup row over a report: one rejection per backend the profile needs that is missing or failed. */

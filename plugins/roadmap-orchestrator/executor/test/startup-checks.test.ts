@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { arcId, invocationId, opId, routingRev, seatRev, specRev, unitId } from '../src/core/ids.ts';
+import { arcId, invocationId, opId, opKey, resourceName, routingRev, seatRev, specRev, unitId } from '../src/core/ids.ts';
 import { unkeptSpecReason } from '../src/core/upgrade.ts';
 import { evaluateApply } from '../src/commands/apply.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
@@ -531,16 +531,95 @@ describe('startup.plan-in-force', () => {
     const rejections = refusedWith(result as Checked, 'plan-change-refused', 78);
     assert.ok(result.kind === 'refused' && result.claim !== null);
     releaseHost(s.hostDir, result.claim);
+    // A first start on M2 schedules a DAG, whose started units keep only their relative order (G3): no prefix reason.
     assert.deepEqual(rejections, [{
       kind: 'plan-change-refused',
       reasons: [
         `worktreeRoot may never change (in force: ${String(s.plan['worktreeRoot'])}; plan.json: ${moved})`,
         'unit u1 has started; it cannot be removed',
-        'the units that have started (u1) must stay first in plan order, in their order',
       ],
     }]);
     assert.equal(startupRejection(JSON.parse(JSON.stringify(rejections[0])), 'r').kind, 'plan-change-refused', 'the row round-trips');
     assert.equal(appliedFacts(s).rev, 2);
+  });
+});
+
+describe('startup.m2: over capacity, own-arc residues, the respawn smoke', () => {
+  /** runChecks, the smoke when they passed, then the journal closed and the claim released. */
+  async function once(i: StartInput) {
+    const checks = await runChecks(i);
+    if (checks.kind === 'refused') {
+      checks.journal?.close();
+      if (checks.claim !== null) releaseHost(i.hostDir, checks.claim);
+      return { checks, smoked: null, parks: [] };
+    }
+    const smoked = await smokeCheck(checks, i.env);
+    const parks = checks.journal.view.backendParks();
+    checks.journal.close();
+    releaseHost(i.hostDir, checks.claim);
+    return { checks, smoked, parks };
+  }
+  const respawnOf = (s: Setup): StartInput => ({ ...input(s), respawn: { runDir: runDirOf(s), arc: arcId(s.arc) } });
+
+  it('plan-invalid{over-capacity}: a build asking for more @cpu than the pool has (78), and the row round-trips', T, async () => {
+    const s = setup();
+    write({ ...s, plan: { ...s.plan, capacity: { cpu: 2 } } });
+    const rejections = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
+    assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' ? r.problem : null)), [
+      { type: 'over-capacity', unit: unitId('u1'), lane: null, resource: '@cpu', requested: 4, total: 2 },
+    ]);
+    assert.deepEqual(startupRejection(JSON.parse(JSON.stringify(rejections[0])), 'r'), rejections[0], 'the persisted form reads back');
+    write({ ...s, plan: { ...s.plan, capacity: { cpu: 2 }, units: [{ ...(s.plan['units'] as Raw[])[0], cpu: 2 }] } });
+    const { checks } = await once(input(s));
+    assert.equal(checks.kind, 'passed', JSON.stringify(checks));
+  });
+
+  it('residue.own-arc-start: a residue the arc\'s own log proves it owns never refuses its start or respawn; another arc\'s still does (A9)', T, async () => {
+    const s = setup([...SMOKE_OK, ...SMOKE_OK, ...SMOKE_OK]);
+    assert.equal((await once(input(s))).checks.kind, 'passed');
+    // The arc's cleanup of db failed: its fail intent (left open, as a crash leaves it) names the residue it appended.
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    const inv = invocationId(opId(arcId(s.arc), j.view.highWater() + 50), 1);
+    const u1 = unitId('u1');
+    j.begin({
+      kind: 'resource.transition', key: opKey('resources:db'), parent: { type: 'stage', unit: u1, stage: 'build', attempt: 1 }, deadlineAt: null,
+      body: () => ({
+        expect: { holder: { type: 'stage', unit: u1, stage: 'build', attempt: 1 }, resources: [resourceName('db')], edge: { type: 'fail', residues: [{ resource: resourceName('db'), teardown: inv }] } },
+        post: null,
+      }),
+    });
+    j.close();
+    const own = residueEntry(resourceName('db'), arcId(s.arc));
+    recordResidue(s.hostDir, { ...own, key: { ...own.key, unit: u1, inv } });
+    const start = await once(input(s));
+    assert.equal(start.checks.kind, 'passed', JSON.stringify(start.checks));
+    assert.equal((await once(respawnOf(s))).checks.kind, 'passed');
+
+    recordResidue(s.hostDir, residueEntry(FAILED[0]!));
+    const refused = await once(input(s));
+    assert.equal(refused.checks.kind, 'refused');
+    if (refused.checks.kind !== 'refused') return;
+    assert.deepEqual(refused.checks.rejections, [{ kind: 'undispositioned-residue', residues: [residueEntry(FAILED[0]!).key] }], 'only the other arc\'s residue refuses');
+  });
+
+  it('smoke.respawn-parks: a respawn of an established arc parks a backend whose smoke fails (outage) and runs on; a start still refuses (A18)', T, async () => {
+    const failing = { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'exit', code: 1 }] } as const;
+    const codexOk = SMOKE_OK[1]!;
+    const s = setup([...SMOKE_OK, failing, codexOk, failing, codexOk]);
+    const first = await once(input(s));
+    assert.deepEqual([first.checks.kind, first.smoked?.kind], ['passed', 'passed']);
+    assert.equal(first.checks.kind === 'passed' && first.checks.respawn, false);
+
+    const respawn = await once(respawnOf(s));
+    assert.equal(respawn.checks.kind === 'passed' && respawn.checks.respawn, true);
+    assert.equal(respawn.smoked?.kind, 'passed', JSON.stringify(respawn.smoked));
+    assert.deepEqual(respawn.smoked?.kind === 'passed' ? respawn.smoked.parked : null, [{ backend: 'claude', class: 'outage', inv: null }]);
+    assert.deepEqual(respawn.parks.map((p) => [p.backend, p.class]), [['claude', 'outage']], 'a retryable backend-park, recorded');
+
+    const start = await once(input(s));
+    assert.equal(start.checks.kind === 'passed' && start.checks.respawn, false);
+    assert.equal(start.smoked?.kind, 'refused', 'a start with the architect present refuses');
+    assert.deepEqual(start.smoked?.kind === 'refused' ? start.smoked.rejections.map((r) => r.kind) : null, ['backend-smoke']);
   });
 });
 

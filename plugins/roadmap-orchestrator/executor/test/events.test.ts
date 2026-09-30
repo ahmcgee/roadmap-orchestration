@@ -163,9 +163,10 @@ describe('events', () => {
     for (const v of variants) roundTrip(event(v));
   });
 
-  it('a reclaim is a sweep holder\'s edge only', () => {
-    const stageReclaim = { ...INTENTS['resource.transition'], expect: { holder: { type: 'stage', unit, stage: 'build', attempt: 1 }, resources: [resourceName('db')], edge: { type: 'reclaim' } } };
-    assert.throws(() => parseEventLine(serializeEvent(event(stageReclaim as LogRecord)).slice(0, -1)), /only a sweep reclaims/);
+  it('a reclaim is a sweep or retry holder\'s edge only', () => {
+    const reclaimBy = (holder: object) => ({ ...INTENTS['resource.transition'], expect: { holder, resources: [resourceName('db')], edge: { type: 'reclaim' } } });
+    assert.throws(() => parseEventLine(serializeEvent(event(reclaimBy({ type: 'stage', unit, stage: 'build', attempt: 1 }) as LogRecord)).slice(0, -1)), /only these reclaim/);
+    roundTrip(event(reclaimBy({ type: 'retry', unit, stage: 'build', attempt: 1 }) as LogRecord));
   });
 
   it('round-trips abort records and every fact', () => {

@@ -11,11 +11,13 @@ import { runUnit, step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
 import { type CallRecord, readCalls } from './helpers/scenario.ts';
 import { events } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
 import { MUL, U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 const sessionOf = (c: CallRecord): string => c.argv[c.argv.indexOf('--session-id') + 1]!;
 
 test('gate.fingerprint-invalidated: a contract changes on T between approve and ff; the unit is re-gated in a fresh session and published', T, async () => {

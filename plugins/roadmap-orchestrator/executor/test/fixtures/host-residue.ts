@@ -1,7 +1,8 @@
 // argv: <mode> <runDir> <hostDir>. Drives the failed-cleanup ordering in a child process so crash tests
 // can SIGKILL it at the residue crashPoints.
-//   fail:    journals a `fail` transition of two resources (FAILED), appends their residues to the host
-//            index, then writes the local done: the reservation cycle's normal path.
+//   fail:    journals the holder's reserve and clean of two resources (FAILED), so the fail is a legal
+//            edge (the fold refuses an illegal one), then a `fail` transition of both, appends their
+//            residues to the host index, then writes the local done: the reservation cycle's normal path.
 //   recover: for every open `fail` transition, runs the residue reconciler and writes its done
 //            (`recoveredBy: reconciled`): the recovery path.
 import { arcId } from '../../src/core/ids.ts';
@@ -16,6 +17,11 @@ const host = absPath(hostDir);
 const journal = openJournal(absPath(runDir), arcId(ARC_NAME));
 
 if (mode === 'fail') {
+  for (const edge of [{ type: 'reserve' }, { type: 'clean', from: 'reserved' }] as const) {
+    const fail = failIntent();
+    const before = journal.begin({ ...fail, body: (op, inv) => ({ ...fail.body(op, inv), expect: { ...fail.body(op, inv).expect, edge } }) });
+    journal.done(before.op, 'resource.transition', { kind: 'transitioned' }, null);
+  }
   const { op } = journal.begin(failIntent());
   const intent = journal.view.latestIntent(op);
   if (intent.kind !== 'resource.transition') throw new Error(`host-residue: ${op} is a ${intent.kind}`);

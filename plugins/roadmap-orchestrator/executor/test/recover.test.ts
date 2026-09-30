@@ -14,7 +14,7 @@ import { after, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isAlive } from '../src/contain/proc.ts';
 import type { IntentRecord } from '../src/core/events.ts';
-import { invocationId, opKey, sha, sha256, specRev } from '../src/core/ids.ts';
+import { INTEGRATION_SLOT, arcId, invocationId, opKey, sha, sha256, specRev } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
@@ -22,6 +22,7 @@ import { readNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type RecoveryReport, recover } from '../src/recover/recover.ts';
 import { worktreeCreateOp } from '../src/recover/ops.ts';
+import { resourceTable } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
@@ -219,6 +220,11 @@ describe(`matrix row ${RECOVERY_CRASH}`, { concurrency: 3 }, () => {
       assert.equal(expected.stillOpen, 0, 'the scenario recovers without a park');
       const expectedBy = recoveredBy(ref.d, refOpen);
       assertNoDuplicateEffect(ref.d, refCalls);
+      if (kind === 'integration.ff' || kind === 'snapshot.publish') {
+        // A2: a crash inside a green candidate's publication leaves the slot to its publication, kept by recovery.
+        const slot = resourceTable(readJournal(absPath(ref.d.runDir), arcId(ref.d.arc)).view).get(INTEGRATION_SLOT)?.status;
+        assert.ok(slot !== undefined && slot.state === 'running' && slot.holder.type === 'publication' && slot.holder.unit === U1, `the publication keeps the slot: ${JSON.stringify(slot)}`);
+      }
 
       for (const cell of cellsOf(kind)) {
         await t.test(`${cell.boundary} ${cell.label}#${cell.occurrence}`, async () => {

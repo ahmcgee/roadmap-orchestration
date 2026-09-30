@@ -6,17 +6,30 @@ at triage stay in git history.
 
 ## Milestones (DESIGN-1.0.md §10)
 
-### M2
+### M2 (in progress: plan `/claude-state/plans/m2-dag-resources.md`, rev 2.1; step 0a done in 1.0.0-dev.5)
 
 - Flake reruns, host signatures, retryable parks, cross-model cold start for fix rounds. In M1 a red lane is
   red and fix rounds resume the same model. Retryable parks cover every park that has no re-entry today but
-  a new unit id: lost build, residue, red candidate, red base, failed salvage, blocked lane, and a Claude build
-  killed before the CLI persisted its session (its `--resume` then fails as a process fault and parks; nothing
-  in the invocation's files tells that case apart yet).
-- DAG scheduling and parallel units (M1 is serial). `arc.ts` already lets a unit-scoped park release later
-  units. One arc per host stays the design (owner ruling 2026-09-29).
-- `steer <unit>` (DESIGN command table) predates model classes: it should enter a class or a unit-level class
-  rebind, never a model.
+  a new unit id: lost build, residue, failed salvage, blocked lane, and a Claude build killed before the CLI
+  persisted its session (re-run once, uncharged, as a fresh session). Red candidate and red base stay operator
+  parks (A7).
+- DAG scheduling and parallel units, capacity pools and `@cpu`, aging, `reenter` and `cut` (edit classes of
+  `apply`), `resolve-edge`, `run-only`. One arc per host stays the design (owner ruling 2026-09-29).
+
+### Deferred from M2 (the plan's "Deferred" list)
+
+- `merge-in`, `route`, `limits`, and `steer` (with `--class <efficient|frontier|summit>` as a per-unit routing
+  layer, A13): M3. The `repair` origin: M3.
+- Preview's own estate slot: specified with preview in M4 (F23).
+- A memory capacity class.
+- Handing adopted runners to unit tasks.
+- Async git (git runs through `spawnSync` and blocks the event loop).
+- cgroup CPU enforcement of `@cpu`.
+- Token-cost calibration (`CPU_COST` is unmeasured).
+- Event-log compaction (M3).
+- Per-lane `stallMin`.
+- Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
+- Persisted arbiter tickets, if exact post-recovery grant order is ever required (F20).
 
 ### M3
 
@@ -62,6 +75,12 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
+  same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
+  outlasts a working day with nobody noticing.
+- **The paid M2 fixture's aging criterion is vacuous** (no waiter reaches promotion in its story; the free
+  `prio.bypass-promotion` test covers the rule). Trigger: a real arc where a planned unit waits behind more than
+  3 merges, or a change to rank.
 - Codex resume collision is matched on `thread already` from arc 1, with no captured sample. Trigger: a sample.
 - Adopting a live runner across arcs holds the recovery lock until that runner exits, which can outlast
   `start`'s wait. Trigger: a `start` timeout from it.
@@ -86,8 +105,23 @@ None.
   spec at the recorded rev is taken as `evidence` and one at rev + 1 as a revision, with scope and resources
   unchecked; a log whose last re-pin set a re-opened unit back to its first rev records a spurious pending revision,
   so that unit re-opens once more. Trigger: either seen on a real upgraded arc.
+- A `sweep` whose teardown fails leaves the instance cleaning under the sweep with its residue undisposed. That
+  residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
+  `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the
+  fix would let the prober take a sweep-held residue or have the sweep hand it back as cleanup-failed.
 
 ## Scaffolding to delete
+
+- The 1.0.0-dev.4 → M2 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.4 (or a dev.3 arc
+  baselined after dispatch) is in flight: `legacyParkRecord` (a park without `park`) and its call in the fold's
+  stage-outcome case; `rerouteAsUnpark` and the `rerouted` fact kind (reader, fold case, `Fact` member);
+  `isLegacy`, `legacyNext` and `legacySettled`, with the legacy branches of readiness and resources; the
+  cause-less-hold release in the fold's `resumed{backend}` (`#releaseBackendHolds(..., legacy)`); and the
+  `scheduling` field's absent case (every arc then writes `dag`).
+- Interim M2 shims, deleted by the step named: `namedResource` calls in `src/commands/apply.ts`,
+  `src/pipeline/unit.ts`, `src/recover/{residue,resource}.ts` and `test/reserve.test.ts` (step 1, once
+  reservations take pool instances and `@cpu`); the executor's rejection of `resolve-edge` and `run-only`
+  commands (step 5); `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a).
 
 - `src/core/upgrade.ts` 1.0.0-dev.1 defaults (launch.json `stallMs`, the lane deadline `laneRecord` derives a
   start from) and the `stallMs === null` branch in `laneRecord`: once no arc started on 1.0.0-dev.1 is in flight.

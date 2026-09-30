@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Drives the roadmap-orchestrator 1.0 executor, which converges a repo on a documented target state unattended; the M1 build runs one serial unit through plan-check, build, lanes, gate and candidate merge.
+description: Drives the roadmap-orchestrator 1.0 executor, which converges a repo on a documented target state unattended; it runs every unit whose dependencies are merged in parallel, each through plan-check, build, lanes, gate and candidate merge.
 ---
 
 # Roadmap Orchestrator 1.0, M1
@@ -11,8 +11,10 @@ and the files it points to. The reasons are in `RATIONALE-1.0.md`.
 
 ## What M1 covers
 
-One unit, serially: plan-check, build, salvage, lanes, gate, candidate merge, fast-forward of the integration
-branch, snapshot to `refs/roadmap/<arc>`. Phase 0 lands in M3 and M4. In M1 you write `plan.json` and each
+Each unit: plan-check, build, salvage, lanes, gate, candidate merge, fast-forward of the integration branch,
+snapshot to `refs/roadmap/<arc>`. Units run in parallel as far as their `after` edges and the host's capacity
+(the `@cpu` pool and declared resources) allow; an arc started before 1.0.0-dev.5 keeps running one unit at a
+time, in plan order. Phase 0 lands in M3 and M4. In M1 you write `plan.json` and each
 unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 subset" sections of
 `executor/SCHEMAS.md`. For a worked plan, run the M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
 
@@ -74,7 +76,7 @@ git -C <repo> rev-parse main            # baseline
 |---|---|
 | `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>]` | Launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. Waits up to 240 s (or `--wait`) for readiness |
 | `status` | Agent-facing JSON snapshot of the run |
-| `watch` | JSON line stream: `needs-user`, `ack`, `owner` events. Run it under Monitor with a timeout |
+| `watch` | JSON line stream: `needs-user`, `ack`, `owner` events, and `units` (`{run, units: {<unit>: <state>}}`, e.g. `running:build#3`, `waiting:deps=u1`) on every change. Run it under Monitor with a timeout |
 | `pause <unit>` / `pause --all` | Kill, tear down, keep commits and the worktree as left; the unit holds at its stage |
 | `resume` / `resume <unit>` / `resume --backend claude\|codex` | Clear pauses and holds; a held build continues its interrupted session in the worktree as left; `resume <unit>` also re-opens a unit parked at plan-check or gate once you have applied a revision of its spec, or one parked `routing-changed` once its implementer seat's routing is restored (below); `--backend` clears a usage-limit park after a passing smoke |
 | `apply [--expect-rev <n>] [--dry-run]` | Put your edits to `plan.json` and specs in force (below). `--dry-run` prints the verdict and queues nothing |
@@ -128,28 +130,41 @@ plan's `routing` changes with `roadmap apply`. A judgment seat may change mid-un
 
 ## Reading `status`
 
-One JSON object. Start with `run`: `state` is `running` (a stage is in flight, or the next unit may start),
-`held` (nothing can start: the next unit is paused, held by an interrupted stage or a parked backend, or waits on
-`after`),
-`parked` (a blocking needs-user waits on you), `complete`, `refused` or `no-owner`; `owner` is
-`{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
+One JSON object. Start with `run`: `state` is `running` (some unit runs, may start, or waits for resources),
+`held` (nothing moves and a unit is paused, or held by an interrupted stage or a parked backend), `parked`
+(nothing moves and a blocking needs-user waits on you), `blocked` (nothing moves and work remains: parks being
+probed, `run-only`, an unresolved contingent edge, a dependency that parked), `complete`, `refused` or `no-owner`;
+`owner` is `{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
 
 - `needsUser`: the unacknowledged items, `{id, reason, blocking}`, ascending id, including the host-level
   `sup-*` and `host-*` items. The summary, recommendation, options and evidence are in `needs-user/<id>.json`.
-  `run.state` is `parked` only when an item holds the whole arc; a parked unit with later units running
-  shows `running`.
+  A parked unit with other units running shows `running`.
 - `plan`: the plan in force, `{rev, planSha256}` (null before the first start).
-- `units`: `{unit, stage, status, attempts, chargeableFailures, risk, seat}` per unit of the plan in force; `seat` is the
-  `{role, tier}` the current stage dispatches on (`tier` may be `escalation` for a judgment), or null. `status`
-  is `held-after:<ids>` while units the unit runs `after` hold it.
+- `units`: one line per unit of the plan in force: `{unit, stage, status, attempts, chargeableFailures, risk, seat}`
+  (`seat` is the `{role, tier}` the current stage dispatches on, or null; `status` is `held-after:<ids>` while
+  units it runs `after` are not merged), and:
+  - `state`: `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`, `parked`,
+    `merged`, `cut` or `superseded`;
+  - `waitingFor`: `{deps, edges, resources, envBlocked, admission, drainFor}` or null: the dependencies not merged,
+    the unresolved contingent edges, the reservation it queues for (`envBlocked`: a residue keeps it out), and
+    what keeps its next stage from starting (a pause, a draining command, `run-only`, a parked backend, a breaker);
+  - `running`: `{stage, attempt, elapsed, deadline, resources}` while it runs;
+  - `park`: `{class: retryable|operator, kind?, targets, outstanding, nextProbeAt, escalateAt}` while parked. A
+    retryable park recovers by itself once its probes pass; an operator park waits for you (below);
+  - `holds`, `priority` (`{origin, waitStartSeq, bypassMerges, promoted}`), `lineage`, `supersededBy`, `buildTier`.
+- `edges`: each `after` edge (`met` once its dependency merged) and contingent edge (`resolved`); `runOnly`; `legacy`
+  (true for an arc started before parallel scheduling).
 - `routing`: the latest start's routing under the current config and the plan in force: `profile`, `rev`, the class per
   seat (`seats`), the layer that chose each (`sources`), and where each class is bound (`bindings`:
   `builtin|repo-config`). No model ids.
 - `commands`: `pending` (`{id, type}`, no terminal receipt yet) and the last 10 terminal `receipts`.
 - `spend`: `byRole` token totals per role and routing revision; `byModel` derives the models from those
   seats at render time, the only place `status` names a model.
-- `host.containment`: the containment `mode` and its stated `guarantee`.
-- `parkedBackends`: backends parked on a usage limit or capacity error until `resume --backend`.
+- `host`: `containment` (`mode` and its stated `guarantee`), `resources` (every resource unit in use and its holder),
+  `pools` (`{size, used, dirty}` for `@cpu` and each declared pool), `queue` (who waits for which reservation, in
+  the order they are served), `probes` (each probed target: the parks it covers, `nextProbeAt`, `lastResult`,
+  `tripped`), `backends` (parked backends with their class).
+- `parkedBackends`: backends parked on a usage limit, capacity or outage error.
 - `rejection`: the latest refused start's rows, or null.
 
 An undispositioned residue blocks every future `start` (the `undispositioned-residue` rejection) until
@@ -157,14 +172,12 @@ swept or dispositioned.
 
 ## Ordering units: pause and `after`
 
-M1 runs the plan's units one at a time, in plan order. A paused unit is never dispatched, and the arc waits at
-it: every unit after it waits too until you `resume` it. Pausing a later unit is a gate you can hold; it is not
-a way to skip one.
-
-A parked unit does not hold the units after it: the next one runs while its needs-user is open. When a unit
-must not start until another is done, give it `after: [<unit id>, ...]` in `plan.json` (units earlier in plan
-order only). It is held, and the arc waits at it, until each named unit is merged or parked with its needs-user
-acknowledged. Use `after` rather than pausing everything behind a unit you expect to park.
+Units run in parallel. When a unit must not start until another is merged, give it `after: [<unit id>, ...]` in
+`plan.json` (units earlier in plan order only). It waits until each named unit is merged; if one parks, it
+stays `blocked` until you re-enter or cut that unit. A paused unit is never dispatched and holds nothing; other
+units keep running. An arc started before parallel scheduling (`legacy: true`) keeps its old order: one unit
+at a time, in plan order; a parked unit lets the next one run, and a unit with `after` waits until each named
+unit is merged or parked with its needs-user acknowledged.
 
 ## Parked units: re-open or re-enter
 

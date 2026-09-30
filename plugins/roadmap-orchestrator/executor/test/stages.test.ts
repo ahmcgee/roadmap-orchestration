@@ -27,7 +27,7 @@ import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
-  planCheckStep, seated, setupUnit, spawnIntents, worktreeOf,
+  planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 
@@ -50,7 +50,7 @@ function show(n: Next): string {
 
 /** build → quiesce → evidence → salvage → teardown, each advancing; returns the salvage SHA. */
 async function buildToLanes(run: StageRun, input: RoundInput): Promise<Readonly<{ run: BuildRun; sha: string }>> {
-  return afterBuild(run, await build(run.ctx, run.unit, input));
+  return afterBuild(run, started(await build(run.ctx, run.unit, input)));
 }
 
 /** quiesce → evidence → salvage → teardown after build `b`, each advancing; returns the salvage SHA. */
@@ -72,7 +72,7 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
   const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'add returns the sum a + b.' } }];
   const run = setupUnit({ steps: [planCheckStep({ decision: 'redirect', patch }), planCheckStep({ decision: 'approve' })] });
 
-  const first = await planCheck(run.ctx, run.unit);
+  const first = started(await planCheck(run.ctx, run.unit));
   assert.equal(first.outcome.kind, 'redirect');
   assert.equal(show(first.next), 'plan-check@med');
   const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; decisions: readonly { id: string; state: string }[] };
@@ -82,7 +82,7 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
   assert.equal(patches.length, 1);
   assert.equal(patches[0]!.kind === 'spec.patch' && patches[0]!.post.newRev, 2);
 
-  const second = await planCheck(run.ctx, run.unit);
+  const second = started(await planCheck(run.ctx, run.unit));
   assert.equal(second.outcome.kind, 'approve');
   assert.equal(second.specRev, 2, 'only the patched spec is graded');
   assert.equal(show(second.next), 'build/fresh@med');
@@ -104,10 +104,10 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
 test('session.judgment-never-resumes: every judgment call is a new --session-id, a retry included', T, async () => {
   const malformed = { ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
   const run = setupUnit({ steps: [malformed, planCheckStep({ decision: 'approve' })] });
-  const first = await planCheck(run.ctx, run.unit);
+  const first = started(await planCheck(run.ctx, run.unit));
   assert.equal(first.outcome.kind, 'malformed');
   assert.equal(show(first.next), 'plan-check@med', 'the uncharged retry');
-  const second = await planCheck(run.ctx, run.unit);
+  const second = started(await planCheck(run.ctx, run.unit));
   assert.equal(second.outcome.kind, 'approve');
   assert.notEqual(first.session, second.session);
   for (const call of readCalls(run.scenario.path)) {
@@ -126,14 +126,14 @@ test('redirect.no-widen: a redirect that widens the envelope or lowers the risk 
     item: { id: 'db-lane', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'estate', resources: [DB], evidenceGlobs: [], evidenceExcludes: [] },
   }];
   const run = setupUnit({ steps: [planCheckStep({ decision: 'redirect', patch: widening }), planCheckStep({ decision: 'approve', risk: 'low' })] });
-  const widened = await planCheck(run.ctx, run.unit);
+  const widened = started(await planCheck(run.ctx, run.unit));
   assert.equal(widened.outcome.kind, 'scope-widened');
   assert.equal(show(widened.next), 'plan-check@escalation', 'refused → escalate: the role\'s escalation seat');
   assert.equal(JSON.parse(readFileSync(run.specPath, 'utf8')).rev, 1, 'the spec is not patched');
   assert.deepEqual(intents(run.runDir, 'spec.patch'), []);
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'plan-check')).tier, 'escalation');
 
-  const lowered = await planCheck(run.ctx, run.unit);
+  const lowered = started(await planCheck(run.ctx, run.unit));
   assert.equal(lowered.outcome.kind, 'risk-lowered');
   assert.equal(show(lowered.next), 'park:escalation', 'refused again at the escalation seat: park');
   const dispatches = facts(run).filter((f) => f.kind === 'dispatch');
@@ -155,9 +155,9 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
       { type: 'emit', value: BUILD_REPORT },
     ],
   });
-  assert.equal(show((await planCheck(run.ctx, run.unit)).next), 'build/fresh@med');
+  assert.equal(show((started(await planCheck(run.ctx, run.unit))).next), 'build/fresh@med');
   const first = await buildToLanes(run, { kind: 'fresh' });
-  const red = await lanes(run.ctx, run.unit, first.sha as LanesDone['at']);
+  const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
   assert.equal(show(red.next), 'build/fix@med');
   assert.equal(red.verification, null, 'the failed series\' checkout is removed');
@@ -169,7 +169,7 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
 
   const second = await buildToLanes(run, red.fix);
   assert.notEqual(second.sha, first.sha, 'the fix is a new commit on the unit branch');
-  const green = await lanes(run.ctx, run.unit, second.sha as LanesDone['at']);
+  const green = started(await lanes(run.ctx, run.unit, second.sha as LanesDone['at']));
   assert.equal(green.outcome.kind, 'green');
   assert.equal(show(green.next), 'gate@med');
   assert.ok(green.verification !== null, 'the green checkout is kept for the gate');
@@ -213,7 +213,7 @@ test('rounds.fix-without-session-starts-fresh: after a build lost with tree effe
       { type: 'emit', value: BUILD_REPORT },
     ],
   });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const building = build(run.ctx, run.unit, { kind: 'fresh' });
   await reached(run.scenario.dir, 'lost', 60_000);
   // The runner dies mid-call, after the implementer changed the tree: no session was ever reported.
@@ -223,14 +223,14 @@ test('rounds.fix-without-session-starts-fresh: after a build lost with tree effe
   const runner = runnerFiles(invocationDir(run.runDir, inv), inv).read('runner.json');
   assert.ok(runner !== null);
   process.kill(runner.runner.pid, 'SIGKILL');
-  const lost = await building;
+  const lost = started(await building);
   assert.equal(lost.outcome.kind, 'lost-tree-effects');
   const first = await afterBuild(run, lost);
-  const red = await lanes(run.ctx, run.unit, first.sha as LanesDone['at']);
+  const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
   assert.ok(red.fix !== null && red.fix.kind === 'fix');
 
-  const fixed = await build(run.ctx, run.unit, red.fix);
+  const fixed = started(await build(run.ctx, run.unit, red.fix));
   assert.equal(fixed.outcome.kind, 'success');
   assert.ok(launchedFresh(run), 'the fix round\'s launch.json records a fresh session');
   const calls = readCalls(run.scenario.path);
@@ -247,11 +247,11 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
       codexBuild([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [RESUME_DIRECTIVE, NO_SESSION_NOTE] }),
     ],
   });
-  await planCheck(run.ctx, run.unit);
-  const malformed = await build(run.ctx, run.unit, { kind: 'fresh' });
+  started(await planCheck(run.ctx, run.unit));
+  const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   assert.equal(show(malformed.next), 'build/resume@med');
-  const b = await build(run.ctx, run.unit, { kind: 'resume' });
+  const b = started(await build(run.ctx, run.unit, { kind: 'resume' }));
   assert.equal(b.outcome.kind, 'success');
   assert.ok(launchedFresh(run), 'the resume round\'s launch.json records a fresh session');
   const calls = readCalls(run.scenario.path);
@@ -261,7 +261,7 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
 
 test('rounds.crash-lost-inherits-deadline: a build a crash left lost without tree effects re-runs as the next attempt under the deadline the lost call had, as the live retry does', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] })] });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const dispatch = seated(implementerDispatch(run.ctx, U1));
   const crashed = { type: 'stage', unit: U1, stage: 'build', attempt: run.journal.view.unit(U1).counters.attempts + 1 } as const;
   const deadlineAt = isoTimeOf(new Date(Date.now() + 20 * 60_000));
@@ -276,7 +276,7 @@ test('rounds.crash-lost-inherits-deadline: a build a crash left lost without tre
   });
   run.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
 
-  const b = await build(run.ctx, run.unit, { kind: 'fresh' });
+  const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(b.outcome.kind, 'success');
   assert.equal(b.attempt, crashed.attempt + 1, 'a new attempt');
   const rerun = spawnIntents(run).at(-1)!;
@@ -295,14 +295,14 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
       codexBuild([], { argv: ['exec', 'resume', '00000000-0000-4000-8000-000000000001'], stdinContains: [directive] }),
     ],
   });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const first = await buildToLanes(run, { kind: 'fresh' });
-  const green = await lanes(run.ctx, run.unit, first.sha as LanesDone['at']);
+  const green = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(green.outcome.kind, 'green');
   assert.ok(green.verification !== null);
   // The gate (step 12) revised: its directives go to a fix round over the green series.
   const revise = gateReviseRound([directive], green.ledger, green.verification, green.at);
-  const b = await build(run.ctx, run.unit, revise);
+  const b = started(await build(run.ctx, run.unit, revise));
   assert.equal(b.outcome.kind, 'success');
   assert.ok(!existsSync(green.verification.path), 'the verification checkout is gone');
   // The plan-check removed its own checkout of the tip; the verification checkout is removed once, here.
@@ -316,8 +316,8 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
 
 test('stages.salvage-unmerged-parks: an unmerged index parks the unit with the tree preserved and the build\'s resources released', T, async () => {
   const run = setupUnit({ resources: [DB], steps: [planCheckStep({ decision: 'approve' }), codexBuild([])] });
-  await planCheck(run.ctx, run.unit);
-  const b = await build(run.ctx, run.unit, { kind: 'fresh' });
+  started(await planCheck(run.ctx, run.unit));
+  const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
   // What an implementer could leave behind: a merge stopped on a conflict.
   const wt = worktreeOf(run);
@@ -352,9 +352,9 @@ function appendStep(run: StageRun, step: Step): void {
 
 test('backend.usage-limit: a usage-limit error parks the backend arc-wide and holds the unit, uncharged', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'usageLimit' }] }] });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const before = run.journal.view.unit(U1).counters;
-  const b = await build(run.ctx, run.unit, { kind: 'fresh' });
+  const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(b.outcome.kind, 'interrupted');
   assert.equal(show(b.next), 'hold');
   assert.equal(b.run, null);
@@ -378,7 +378,7 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
     resources: [DB],
     steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'barrier', name: 'mid-build', timeoutMs: 120_000 }] }],
   });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const before = run.journal.view.unit(U1).counters;
   const building = build(run.ctx, run.unit, { kind: 'fresh' });
   await reached(run.scenario.dir, 'mid-build', 60_000);
@@ -386,7 +386,7 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
   assert.ok(spawn !== undefined, 'the build invocation is open');
   // The pause command's control action: kill the live invocation for `pause`.
   await killWorkload(run.ctx, { inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause' });
-  const b = await building;
+  const b = started(await building);
   assert.equal(b.outcome.kind, 'interrupted');
   assert.equal(show(b.next), 'hold');
   assert.equal(b.needsUser, null, 'a pause raises nothing');
@@ -405,8 +405,8 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
       codexBuild([{ type: 'commit', message: 'touch the contract', files: { 'contracts/api.md': '# API contract\n\nChanged.\n', 'src/add.js': 'export const add = (a, b) => a + b;\n' } }]),
     ],
   });
-  await planCheck(run.ctx, run.unit);
-  const b = await build(run.ctx, run.unit, { kind: 'fresh' });
+  started(await planCheck(run.ctx, run.unit));
+  const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
   quiesce(run.ctx, U1, b.run);
   await evidence(run.ctx, run.unit, b.run);
@@ -424,9 +424,9 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
 test('stages.counters-from-fold: attempts and counters are the log\'s, identical after a reopen', T, async () => {
   const malformed = { ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
   const run = setupUnit({ steps: [malformed, planCheckStep({ decision: 'approve' }), codexBuild([])] });
-  const a = await planCheck(run.ctx, run.unit);
-  const b = await planCheck(run.ctx, run.unit);
-  const c = await build(run.ctx, run.unit, { kind: 'fresh' });
+  const a = started(await planCheck(run.ctx, run.unit));
+  const b = started(await planCheck(run.ctx, run.unit));
+  const c = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.deepEqual([a.attempt, b.attempt, c.attempt], [1, 2, 3], 'each stage start is the next attempt of the unit');
   const live = run.journal.view.unit(U1);
   assert.equal(live.counters.attempts, 3);
@@ -450,12 +450,12 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
       { as: 'claude', expect: { argv: ['--resume'] }, acts: [{ type: 'usageLimit' }] },
     ],
   });
-  await planCheck(run.ctx, run.unit);
+  started(await planCheck(run.ctx, run.unit));
   const first = await buildToLanes(run, { kind: 'fresh' });
-  const red = await lanes(run.ctx, run.unit, first.sha as LanesDone['at']);
+  const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
   assert.ok(red.fix !== null);
-  const held = await build(run.ctx, run.unit, red.fix);
+  const held = started(await build(run.ctx, run.unit, red.fix));
   assert.equal(held.outcome.kind, 'interrupted');
   assert.ok(held.needsUser !== null);
 
@@ -511,7 +511,7 @@ test('plan-check.checkouts: the judge reads a detached checkout of the tip and o
     codexBuild([], { stdinContains: ['NOTE-X: src/extra.js', 'Unit policy, set by the executor'] }),
   ]);
 
-  const checked = await planCheck(run.ctx, run.unit);
+  const checked = started(await planCheck(run.ctx, run.unit));
   assert.equal(checked.outcome.kind, 'approve');
   for (const path of [tip, side]) assert.ok(!existsSync(path), `${path} is removed once the call is read`);
   const created = intents(run.runDir, 'worktree.create').flatMap((i) => (i.kind === 'worktree.create' ? [i.expect] : []));
@@ -519,7 +519,7 @@ test('plan-check.checkouts: the judge reads a detached checkout of the tip and o
   const removed = intents(run.runDir, 'worktree.remove').flatMap((i) => (i.kind === 'worktree.remove' ? [i.expect.path] : []));
   assert.deepEqual(removed, [tip, side]);
 
-  const built = await build(run.ctx, run.unit, { kind: 'fresh' });
+  const built = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(built.outcome.kind, 'success');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'both calls matched: cwd, dirs, checkouts, notes and the unit policy');
 });
@@ -538,12 +538,12 @@ test('plan-check.prior-round: after its applied redirect, the next check gets th
       }),
     ],
   });
-  const first = await planCheck(run.ctx, run.unit);
+  const first = started(await planCheck(run.ctx, run.unit));
   assert.equal(first.outcome.kind, 'redirect');
   // The integration tip moves under one premise's file between the rounds; the other file is unchanged.
   writeFileSync(join(run.repo, 'src', 'add.js'), `${readFileSync(join(run.repo, 'src', 'add.js'), 'utf8')}// touched\n`);
   git(run.repo, 'commit', '--quiet', '-am', 'the tip moves');
-  const second = await planCheck(run.ctx, run.unit);
+  const second = started(await planCheck(run.ctx, run.unit));
   assert.equal(second.outcome.kind, 'approve');
   const calls = readCalls(run.scenario.path);
   assert.ok(calls.every((c) => c.step !== null), 'the second check saw the handoff');
@@ -563,14 +563,14 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
     }),
     planCheckStep({ decision: 'approve' }, { stdinContains: ['C-2: Second rule here. More text follows.'] }),
   ]);
-  const unknown = await planCheck(run.ctx, run.unit);
+  const unknown = started(await planCheck(run.ctx, run.unit));
   assert.equal(unknown.outcome.kind, 'malformed', 'a cite naming no plan contract');
-  const cited = await planCheck(run.ctx, run.unit);
+  const cited = started(await planCheck(run.ctx, run.unit));
   assert.equal(cited.outcome.kind, 'redirect');
   const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; cites: unknown };
   assert.equal(spec.rev, 2);
   assert.deepEqual(spec.cites, { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] });
-  assert.equal((await planCheck(run.ctx, run.unit)).outcome.kind, 'approve');
+  assert.equal((started(await planCheck(run.ctx, run.unit))).outcome.kind, 'approve');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'the index, then the full text');
 });
 

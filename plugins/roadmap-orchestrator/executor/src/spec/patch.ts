@@ -4,7 +4,7 @@
 // so recovery decides by the kept spec bytes alone.
 import { existsSync, readFileSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpOutcome } from '../core/events.ts';
+import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import { type ClauseId, type LaneId, type Sha256Hex, specRev } from '../core/ids.ts';
 import type { IntentBody, Reconciler } from '../core/interfaces.ts';
 import type { SpecM1, SpecPatch, SpecPatchOp, SpecSection } from '../core/records.ts';
@@ -182,10 +182,10 @@ export function specPatchOp(runDir: AbsPath): Readonly<{
       if (actual !== intent.post.newSha256) {
         throw new SpecPatchPostconditionError(path, `patched bytes hash to ${actual}, the intent expects ${intent.post.newSha256}`);
       }
-      crashPoint('spec.patch.before-write');
+      crashPoint('spec.patch.before-write', parentUnit(intent.parent));
       if (existsSync(path) && fileSha256(path) === oldSha256) writeSpec(path, next);
       keepInput(runDir, bytes, SPEC_INPUT);
-      crashPoint('spec.patch.after-write');
+      crashPoint('spec.patch.after-write', parentUnit(intent.parent));
     },
 
     async verify(intent) {

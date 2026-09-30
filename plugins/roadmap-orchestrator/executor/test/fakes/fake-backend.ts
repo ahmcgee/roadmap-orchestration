@@ -7,18 +7,30 @@
 // Codex's event stream follows the captured event vocabulary, so what the fake emits is what the adapter
 // was pinned against.
 import { spawn } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { waitAtBarrier } from '../helpers/barrier.ts';
+import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAUDE_USAGE_LIMIT, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
 
 type Call = Readonly<{ as: FakeName; argv: readonly string[]; cwd: string; stdin: string; env: Record<string, string> }>;
+
+/**
+ * The unit a call belongs to: the owner label `<arc>/<unit>`, else the cwd's basename up to its first dot
+ * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.plan-check-<n>` or `<unit>.verify-<n>`,
+ * and unit ids are slugs, which have no dot.
+ */
+export function callUnit(env: Readonly<Record<string, string>>, cwd: string): string | null {
+  const owner = env['RESOURCE_OWNER'];
+  if (owner !== undefined) return owner.slice(owner.lastIndexOf('/') + 1);
+  const name = basename(cwd).split('.')[0] ?? '';
+  return name === '' ? null : name;
+}
 
 function parseArgs(raw: readonly string[]): { scenario: string; as: FakeName; argv: readonly string[] } {
   if (raw[0] !== '--scenario' || raw[2] !== '--as' || (raw[3] !== 'codex' && raw[3] !== 'claude') || raw[1] === undefined) {
@@ -146,7 +158,7 @@ function paths(files: FileSet): string[] {
   return Object.keys(files);
 }
 
-function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: string): void {
+function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: string, unit: string | null): void {
   const codex = step.as === 'codex';
   const thread = (): string => (step.as === 'codex' ? codexThread(call.argv, step, index) : '');
   const session = (): string => claudeSession(call.argv);
@@ -210,7 +222,8 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       return;
     }
     case 'barrier':
-      waitAtBarrier(scenarioDir, act.name, act.timeoutMs);
+      if (act.perUnit !== undefined && unit === null) throw new Error('fake: a perUnit barrier needs a unit');
+      waitAtBarrier(scenarioDir, act.perUnit === undefined ? act.name : unitBarrierName(unit as string, act.name), act.timeoutMs, act.progressMs);
       return;
     case 'threadStarted':
       out(threadStarted(thread()).map((e) => `${JSON.stringify(e)}\n`).join(''));
@@ -246,24 +259,48 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
   }
 }
 
+const claimed = (dir: string, index: number): boolean => existsSync(join(dir, CLAIMS_DIR, String(index)));
+
+/** The steps this call may take, in order: its unit's keyed steps, or else the unkeyed ones. */
+function candidates(steps: readonly Step[], unit: string | null): readonly number[] {
+  const all = steps.map((_, i) => i);
+  const keyed = all.filter((i) => steps[i]?.unit !== undefined && steps[i]?.unit === unit);
+  return keyed.length > 0 ? keyed : all.filter((i) => steps[i]?.unit === undefined);
+}
+
+/** Take the first unconsumed candidate step when it matches the call; otherwise say why not. */
+function claimStep(dir: string, steps: readonly Step[], call: Call, unit: string | null): { index: number } | { problem: string } {
+  mkdirSync(join(dir, CLAIMS_DIR), { recursive: true });
+  for (;;) {
+    const index = candidates(steps, unit).find((i) => !claimed(dir, i));
+    const problem = mismatch(index === undefined ? undefined : steps[index], call);
+    if (index === undefined || problem !== null) return { problem: problem ?? 'no step left in the scenario' };
+    try {
+      writeFileSync(join(dir, CLAIMS_DIR, String(index)), `${process.pid}\n`, { flag: 'wx' });
+      return { index };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+}
+
 /** The fake's main (test/fakes/fake-entry.ts, which the shims exec). */
 export function main(): void {
   const { scenario, as, argv } = parseArgs(process.argv.slice(2));
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (k.startsWith('ROADMAP_') && v !== undefined) env[k] = v;
+  for (const [k, v] of Object.entries(process.env)) if ((k.startsWith('ROADMAP_') || k.startsWith('RESOURCE_')) && v !== undefined) env[k] = v;
   const call: Call = { as, argv, cwd: process.cwd(), stdin: readFileSync(0, 'utf8'), env };
   const file = JSON.parse(readFileSync(scenario, 'utf8')) as ScenarioFile;
-  const index = readCalls(scenario).filter((c) => c.step !== null).length;
-  const step = file.steps[index];
-  const problem = mismatch(step, call);
-  const record: CallRecord = { ...call, step: problem === null ? index : null };
   const dir = dirname(scenario);
+  const unit = callUnit(env, call.cwd);
+  const claim = claimStep(dir, file.steps, call, unit);
+  const record: CallRecord = { ...call, step: 'index' in claim ? claim.index : null, unit };
   appendFileSync(join(dir, CALLS_FILE), `${JSON.stringify(record)}\n`);
-  if (problem !== null || step === undefined) {
-    process.stderr.write(`fake ${as}: call ${JSON.stringify(argv)} in ${call.cwd} does not match step ${index}: ${problem}\n`);
+  if (!('index' in claim)) {
+    process.stderr.write(`fake ${as}: call ${JSON.stringify(argv)} in ${call.cwd} (unit ${unit}) does not match its next step: ${claim.problem}\n`);
     process.exit(99);
   }
-  for (const act of step.acts) perform(act, call, step, index, dir);
+  const step = file.steps[claim.index] as Step;
+  for (const act of step.acts) perform(act, call, step, claim.index, dir, unit);
   process.exit(0);
 }
-

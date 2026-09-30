@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one and C-1 to C-3."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": "",
+        "premises": []
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "left: add left",
+          "files": {
+            "src/left.js": "import { base } from './base.js';\n\n/** The left part (.roadmap/contracts/one.md, parts). */\nexport function left() {\n  return `${base()}-left`;\n}\n",
+            "test/left.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { left } from '../src/left.js';\n\ntest('left builds on base (A1)', () => {\n  assert.equal(left(), 'base-left');\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1 and A2 hold; left imports base."
+        ],
+        "premises": []
+      }
+    }
+  ]
+}

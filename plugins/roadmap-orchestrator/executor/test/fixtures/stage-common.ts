@@ -7,22 +7,29 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type Sha, type UnitId, arcId, invocationId, sha, unitId } from '../../src/core/ids.ts';
+import { type Sha, type UnitId, arcId, invocationId, planRev, sha, unitId } from '../../src/core/ids.ts';
+import type { Journal } from '../../src/core/interfaces.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { type OpenJournal, openJournal } from '../../src/core/log.ts';
 import { type LaunchFile, RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { keepInputFiles, readInputFiles } from '../../src/input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
-import type { Pinned, StageContext } from '../../src/pipeline/dispatch.ts';
+import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
+import { reserveNow } from '../../src/pipeline/lanes.ts';
+import { rankOf } from '../../src/schedule/ready.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor, events } from './invoke-specs.ts';
+import type { CommandContext } from '../../src/commands/apply.ts';
+import { readHostSample } from '../../src/host/sample.ts';
+import { createProber } from '../../src/park/probe.ts';
+import type { Gate } from '../../src/pipeline/unit.ts';
 
 export const U1: UnitId = unitId('u1');
 export const DB = 'db';
@@ -57,6 +64,8 @@ export type SetupOptions = Readonly<{
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
+  /** An arc started on M2 (`scheduling: 'dag'`: `@cpu` entry reservations); default a legacy arc's first revision. */
+  dag?: true;
 }>;
 
 export type StageRun = Readonly<{
@@ -80,6 +89,43 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), state: 'active',
   };
+}
+
+/**
+ * Records the plan file as revision 1 of a legacy arc (no `scheduling`), as 1.0.0-dev.4 did: the serial
+ * frontier and no `@cpu` requests. Tests of one serial unit keep this default; a first start on M2 records a DAG.
+ */
+export function recordLegacyPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath): void {
+  const manifest = keepInputFiles(runDir, readInputFiles(planPath));
+  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [] });
+}
+
+/** Records the plan file as revision 1 of an arc started on M2 (`scheduling: 'dag'`), as an M2 first start does. */
+export function recordDagPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath): void {
+  const manifest = keepInputFiles(runDir, readInputFiles(planPath));
+  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
+}
+
+/** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */
+export const admitAll: Gate = () => Promise.resolve(true);
+
+/** A command context's prober and stop signal, as the executor wires them: the real prober over `ctx`, a signal nothing aborts. */
+export function testProbes(ctx: StageContext, profile: ProfileName = 'default'): CommandContext['probes'] {
+  return { prober: createProber({ ...ctx, profile, sample: readHostSample }), signal: new AbortController().signal };
+}
+
+/**
+ * A test context's reservation runtime: one unit in flight, so `reserveNow` (a busy resource fails the test), the
+ * log's rank, and a signal nothing aborts (a test that cancels passes its own).
+ */
+export function serialRuntime(ctx: Parameters<typeof reserveNow>[0]): Pick<StageContext, 'acquire' | 'rank' | 'signal'> {
+  return { acquire: reserveNow(ctx), rank: (unit) => rankOf(ctx.journal.view, ctx.plan(), unit), signal: new AbortController().signal };
+}
+
+/** A stage that ran: under a signal nothing aborted, it never returns `cancelled`. */
+export function started<T extends object>(done: T | Cancelled): T {
+  if (isCancelled(done)) throw new Error(`the stage was cancelled (${done.reason}) under a signal the test never aborted`);
+  return done;
 }
 
 /** The dispatch of a seat the routing in force allows; a routing-changed park fails the test. */
@@ -122,15 +168,20 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
-  recordPlan(journal, absPath(runDir), readInputFiles(planPath), null, []);
+  if (opts.dag === true) recordDagPlan(journal, absPath(runDir), planPath);
+  else recordLegacyPlan(journal, absPath(runDir), planPath);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null });
-  const ctx: StageContext = {
+  const resources = {
     journal, containment: sessionContainment, runDir: absPath(runDir), plan: () => plan, repo: absPath(repo),
     hostDir: openHostDir(absPath(join(tmpDir('stage-host'), 'roadmap'))),
+  };
+  const ctx: StageContext = {
+    ...resources,
     routing: () => routing,
     hostEnv: { ...process.env, PATH: `${scenario.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(planDir),
+    ...serialRuntime(resources),
   };
   return { ctx, journal, unit, repo: absPath(repo), runDir: absPath(runDir), planDir: absPath(planDir), specPath: absPath(specPath), base, scenario, stateDir, scratch: tmpDir('stage-scratch') };
 }

@@ -7,7 +7,7 @@
 // - anything else → park.
 //
 // Uses src/git/salvage.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
-import type { IntentOf } from '../core/events.ts';
+import { type IntentOf, parentUnit } from '../core/events.ts';
 import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts';
 import { refTarget } from '../git/git.ts';
 import {
@@ -28,7 +28,7 @@ export function reconcileSalvageCommit(rules: SalvageRules): Reconciler<'salvage
     if (at === next) {
       const copied = checkRejected(rejectedDir(rules, rejectedManifestSha256), rejectedManifestSha256);
       if (copied.kind !== 'complete') return park(`rejected copy-out ${copied.detail}`);
-      finishIndexReconcile(worktree, next, copied.manifest);
+      finishIndexReconcile(worktree, next, copied.manifest, parentUnit(intent.parent));
       const problem = salvagePostcondition(intent);
       return problem === null ? { kind: 'done', outcome: { kind: 'committed' } } : park(problem);
     }

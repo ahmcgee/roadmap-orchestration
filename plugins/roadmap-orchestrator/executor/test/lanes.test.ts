@@ -23,7 +23,7 @@ import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents } from './fixtures/stage-common.ts';
+import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -46,7 +46,7 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
   const specLanes = [lane('estate1', 'estate', [DB]), lane('fast1', 'fast'), lane('fast2', 'fast')];
   const run = laneRun(specLanes, [DB]);
 
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'green');
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'gate');
   assert.deepEqual(done.ledger.map((l) => [l.lane, l.verdict, l.exitCode]), [['fast1', 'pass', 0], ['fast2', 'pass', 0], ['estate1', 'pass', 0]]);
@@ -85,7 +85,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified (
   // A dirty path is snapshotted as itself even when its name is a glob.
   const writer: LaneJson = { id: 'writer', argv: ['sh', '-c', "mkdir -p out && echo ignored > out/x && echo stray > src/stray.txt && echo odd > 'src/w[1]*.txt'"] };
   const run = laneRun([writer]);
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.deepEqual(done.ledger.map((l) => l.verdict), ['pass'], 'the lane itself passed');
   assert.equal(done.outcome.kind, 'not-certified');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.round === 'fix');
@@ -112,7 +112,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified (
 test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane runs or any checkout exists', T, async () => {
   const run = laneRun([{ id: 'needs-db', argv: ['true'], tier: 'estate', resources: [DB] }], [DB]);
   writeFileSync(join(run.stateDir, `${DB}.occupant`), 'someone-else');
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'occupied');
   assert.equal(done.next.kind === 'park' && done.next.needsUser.reason, 'occupancy-unlabelled');
   assert.equal(done.needsUser?.reason, 'occupancy-unlabelled');
@@ -131,7 +131,7 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
   const spawn = held.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
   assert.ok(spawn !== undefined);
   await killWorkload(held.ctx, { inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause' });
-  const done = await going;
+  const done = started(await going);
   assert.equal(done.outcome.kind, 'interrupted');
   assert.equal(done.next.kind, 'hold');
   assert.equal(done.verification, null);
@@ -150,6 +150,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
     lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false,
   });
   const salvage = sha('a'.repeat(40));
   const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
@@ -164,7 +165,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
 
 test('lanes.dev1-launch: a lane 1.0.0-dev.1 launched (no stallMs, 30-min deadline) reads back with its true start', T, async () => {
   const run = laneRun([{ id: 'fast1', tier: 'fast', resources: [], argv: ['true'], env: { set: {}, pass: ['PATH'] } }]);
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'green');
   const [spawn] = laneSpawns(run);
   assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
@@ -195,7 +196,7 @@ test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is capt
   ].join(' && ');
   const run = setupUnit({ steps: [], lanes: [{ id: 'deploy', argv: ['sh', '-c', script], evidenceGlobs: ['out/**'] }], gitignore: IGNORES });
   pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'red');
   const [record] = done.ledger;
   assert.ok(record !== undefined && record.verdict === 'fail');
@@ -228,7 +229,7 @@ test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, n
     ],
   });
   pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'green');
   assert.deepEqual(done.ledger.map((l) => [l.lane, l.ignored?.written.files, l.ignored?.captured.files]), [['first', 1, 0], ['second', 2, 0], ['quiet', 0, 0]]);
   for (const l of done.ledger) {
@@ -261,7 +262,7 @@ test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captur
   const spawn = run.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
   assert.ok(spawn !== undefined);
   await killWorkload(run.ctx, { inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause' });
-  const done = await going;
+  const done = started(await going);
   assert.equal(done.outcome.kind, 'interrupted');
   const [record] = done.ledger;
   assert.ok(record !== undefined && record.verdict === 'cancelled');
@@ -278,7 +279,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
   git(run.repo, 'update-ref', unitBranch(run.ctx.plan().arc, U1), run.base);
   const before = fingerprintAt(run.ctx, run.unit, run.base);
-  const first = await lanes(run.ctx, run.unit, run.base);
+  const first = started(await lanes(run.ctx, run.unit, run.base));
   assert.deepEqual(capturedFiles(join(first.ledger[0]!.evidenceDir, 'tree')), ['out/a.log']);
 
   const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; lanes: Record<string, unknown>[] };
@@ -286,7 +287,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   assert.equal(spec.rev, 1);
   assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
 
-  const second = await lanes(run.ctx, run.unit, run.base);
+  const second = started(await lanes(run.ctx, run.unit, run.base));
   const [lane] = second.ledger;
   assert.ok(lane !== undefined && lane.evidenceDir !== first.ledger[0]!.evidenceDir);
   assert.deepEqual(capturedFiles(join(lane.evidenceDir, 'tree')), ['out/b.log'], 'the edited globs were read');

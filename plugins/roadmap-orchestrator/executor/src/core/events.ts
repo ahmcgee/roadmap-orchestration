@@ -3,9 +3,10 @@
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import {
-  type ArcId, type CommandId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type ResourceName,
-  type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, INTEGRATION_SLOT, arcId, commandId,
-  invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseOpId, planRev, resourceName, routingRev, sha, sha256, specRev, unitId,
+  type ArcId, type CommandId, type EdgeId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type PlanRev,
+  type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
+  INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, edgeId, invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseInvocationId, parseOpId,
+  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
 } from './ids.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
@@ -15,7 +16,7 @@ import {
   resumeTarget, specPatch, stage, tokenUsage, usageUnavailableReason,
 } from './records.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, str, tagged, text,
+  type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
   version,
 } from './validate.ts';
 import {
@@ -23,7 +24,7 @@ import {
   refName, repoPath, repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import { type Backend, type SeatRef, backend, seatFields } from '../routing/types.ts';
+import { type Backend, type RiskTier, type SeatRef, backend, riskTier, seatFields } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -54,16 +55,25 @@ export type CommitInputs<P extends readonly Sha[]> = Readonly<{
   gpgsign: false;
 }>;
 
-/** Who holds a reservation: a unit's stage attempt, or a sweep command. */
+/**
+ * Who holds a reservation: a unit's stage attempt, or a sweep command; since M2 also `retry` (a probe
+ * reclaiming the unit's own residue, keyed by the stage attempt whose cleanup failed) and `publication` (the unit's
+ * candidate attempt, holding `integration-slot` from candidate start through `ff` and `snapshot`; A2).
+ */
 export type Holder =
   | Readonly<{ type: 'stage'; unit: UnitId; stage: Stage; attempt: number }>
-  | Readonly<{ type: 'sweep'; command: CommandId }>;
+  | Readonly<{ type: 'sweep'; command: CommandId }>
+  | Readonly<{ type: 'retry'; unit: UnitId; stage: Stage; attempt: number }>
+  | Readonly<{ type: 'publication'; unit: UnitId; attempt: number }>;
+/** The holders that may take `reclaim`: a sweep, or a probe reclaiming the arc's own residue. */
+export const RECLAIM_HOLDERS = ['sweep', 'retry'] as const satisfies readonly Holder['type'][];
 
 /**
  * The legal reservation edges: free→reserved, reserved→running, reserved|running→cleaning, cleaning→free,
- * cleaning→cleanup-failed, and `reclaim`: cleanup-failed→cleaning, taken only by a sweep holder sweeping
- * that resource's residue (the stage holder is gone; the sweep re-runs the recorded teardown). A `fail`
- * lists one residue per failed resource (exactly the transitioned set).
+ * cleaning→cleanup-failed, and `reclaim`: cleanup-failed→cleaning, taken only by a sweep or retry holder
+ * reclaiming that resource's residue (the stage holder is gone; the reclaim re-runs the recorded teardown).
+ * A `fail` lists one residue per failed resource instance (exactly the transitioned set; an `@cpu` token has
+ * no teardown and never fails).
  */
 export type ResourceEdge =
   | Readonly<{ type: 'reserve' }>
@@ -71,13 +81,13 @@ export type ResourceEdge =
   | Readonly<{ type: 'run' }>
   | Readonly<{ type: 'clean'; from: 'reserved' | 'running' }>
   | Readonly<{ type: 'release' }>
-  | Readonly<{ type: 'fail'; residues: readonly Readonly<{ resource: ResourceName; teardown: InvocationId }>[] }>;
+  | Readonly<{ type: 'fail'; residues: readonly Readonly<{ resource: ResourceInstance; teardown: InvocationId }>[] }>;
 
 /** What a spawn runs. Model ids never appear: a backend is named by role and routingRev. */
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & SeatRef)
   | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha }>
-  | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceName }>
+  | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
@@ -93,8 +103,8 @@ export type OpExpect = {
   'worktree.create': Readonly<{ path: AbsPath; checkout: WorktreeCheckout }>;
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
-  /** `resources` in lock order: ascending, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceName[]; edge: ResourceEdge }>;
+  /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
   'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
@@ -233,6 +243,9 @@ export type MeterSubject =
 
 /** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
 export const STAGE_OUTCOME_KINDS = {
+  // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
+  // enters a `resolve` round (A6).
+  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted'],
   'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
   build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed'],
   quiesce: ['empty'],
@@ -270,8 +283,46 @@ export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red'
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
+ * What a retryable park's probe checks (M2, parks): a backend (its smoke), the host (a clear host sample and
+ * the smoke's shell command, plus each covered park's local check), or one resource instance (reclaim,
+ * teardown and the residue's `cleaned` disposition, then release).
+ */
+export type ProbeTarget =
+  | Readonly<{ type: 'backend'; backend: Backend }>
+  | Readonly<{ type: 'host' }>
+  | Readonly<{ type: 'resource'; instance: ResourceInstance }>;
+
+/** A total order key over probe targets: target sets are written sorted and unique by it. */
+export function probeTargetKey(t: ProbeTarget): string {
+  switch (t.type) {
+    case 'backend': return `backend:${t.backend}`;
+    case 'host': return 'host';
+    case 'resource': return `resource:${t.instance}`;
+  }
+}
+
+export const OPERATOR_PARK_KINDS = ['env', 'design'] as const;
+export type OperatorParkKind = (typeof OPERATOR_PARK_KINDS)[number];
+/**
+ * A park's class (A7), written inside the `stage-outcome` fact that parks (F9). `retryable`: the executor
+ * probes `targets` and the park recovers once each has a covering passing probe. `operator`: `env` re-runs
+ * the stage on `resume <unit>` (an `unparked` fact); `design` needs an applied spec revision (a reopen) or a
+ * re-entry. Absent on a park 1.0.0-dev.4 wrote: read as operator, its kind by outcome (src/core/upgrade.ts).
+ */
+export type ParkRecord =
+  | Readonly<{ class: 'retryable'; targets: readonly ProbeTarget[] }>
+  | Readonly<{ class: 'operator'; kind: OperatorParkKind }>;
+
+/**
+ * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
+ * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay.
+ */
+export type HoldCause = Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>;
+
+/**
  * One per (unit, stage, attempt). `chargeable` marks a design-class failure (the table's C rows); the
- * third one bounds the unit, so its class must be `park`.
+ * third one bounds the unit, so its class must be `park`. `park` (M2) only with class `park`; `cause` (M2)
+ * only with class `hold`, absent for a pause or stop.
  */
 export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   kind: 'stage-outcome';
@@ -281,7 +332,27 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   outcome: StageOutcomeKind<S>;
   class: OutcomeClass;
   chargeable: boolean;
+  park?: ParkRecord;
+  cause?: HoldCause;
 }> }[OutcomeStage];
+
+/**
+ * What a judgment stage attempt was admitted with (F1), written after its entry reservation and before its
+ * backend spawn. A recovered call is consumed against these, never the current tip or plan.
+ */
+export type JudgmentInputs = Readonly<{
+  unit: UnitId;
+  stage: JudgmentStage;
+  attempt: number;
+  /** The integration tip the judgment read. */
+  tip: Sha;
+  /** The unit commit it read (the gate); null for a plan-check. */
+  head: Sha | null;
+  specRev: SpecRev;
+  specSha256: Sha256Hex;
+  planRev: PlanRev;
+  routingRev: RoutingRev;
+}>;
 
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
@@ -291,11 +362,12 @@ export type Fact =
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
-   * A backend reported a usage-limit or capacity error on a failed invocation: it is parked arc-wide until
-   * the architect resumes it (`resume --backend`, which re-runs its smoke first). `inv` is the invocation
-   * whose result carried the error.
+   * A backend is parked arc-wide: a failed invocation reported a usage-limit or capacity error (`inv`, the
+   * invocation whose result carried it), or its smoke failed on a supervisor respawn (`outage`, `inv` null;
+   * A18). The fact's seq is the park's epoch (F12): a usage-limit park dominates until `resume --backend`; a
+   * retryable one (capacity, outage) clears on a passing probe covering exactly the current epoch.
    */
-  | Readonly<{ kind: 'backend-park'; backend: Backend; class: BackendParkClass; inv: InvocationId }>
+  | Readonly<{ kind: 'backend-park'; backend: Backend; class: BackendParkClass; inv: InvocationId | null }>
   /**
    * Command effects (step 13), each written once by the `command.apply` op of `command`. `needs-user-acked`:
    * the item is acknowledged (at most once per id; its `.ack.json` is the file twin). `paused` and
@@ -320,13 +392,42 @@ export type Fact =
    * `inputs/<sha256>.plan.json` and `.spec.json`), the command that applied it (null for a start) and what
    * changed against the previous revision. The postcondition of an `apply`: written once, last.
    */
-  | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[] }> & PlanManifest)
+  /**
+   * `scheduling: 'dag'` (M2) only on rev 1, and only in a log with no `dispatch` fact: the arc runs DAG
+   * scheduling. Absent on rev 1, the arc is legacy (started on 1.0.0-dev.4 or earlier): it keeps that release's
+   * serial frontier (`legacyNext`, src/core/upgrade.ts).
+   */
+  | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[]; scheduling?: 'dag' }> & PlanManifest)
   /**
    * `resume <unit>` re-entered a unit parked `routing-changed` once the routing in force lets it keep its
    * implementer seat (a `dispatch` fact re-pinned it first). The unit re-enters at the stage it parked at as
-   * a new, uncharged attempt: its decision and interruption return to what they were before the park.
+   * a new, uncharged attempt: its decision and interruption return to what they were before the park. Written
+   * through 1.0.0-dev.4; since M2 read as `unparked` (src/core/upgrade.ts).
    */
   | Readonly<{ kind: 'rerouted'; unit: UnitId; command: CommandId }>
+  /**
+   * `resume <unit>` re-entered a unit parked operator-env (M2): the unit re-runs the stage it parked at as a new,
+   * uncharged attempt; its decision and interruption return to what they were before the park.
+   */
+  | Readonly<{ kind: 'unparked'; unit: UnitId; command: CommandId }>
+  /**
+   * A probe (M2): `target` checked for the seqs `covers` (sorted, non-empty): unit parks' stage-outcome seqs, a
+   * backend park's seq, and for a resource target the seq of the `resource.transition{fail}` that left an own-arc
+   * residue on it (residue probing, which needs no park). A pass recovers the parks it covers once every target
+   * of each has passed; `nextProbeAt` is when a failed target is probed again (null exactly on a pass).
+   */
+  | Readonly<{ kind: 'probe'; target: ProbeTarget; covers: readonly number[]; result: 'pass' | 'fail'; nextProbeAt: IsoTime | null }>
+  | (Readonly<{ kind: 'judgment-inputs' }> & JudgmentInputs)
+  /** `resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence; once per edge. */
+  | Readonly<{ kind: 'edge-resolved'; edge: EdgeId; command: CommandId; evidence: string }>
+  /** `run-only` (M2): admission is limited to `units` (sorted), or unlimited again (null). */
+  | Readonly<{ kind: 'run-only'; command: CommandId; units: readonly UnitId[] | null }>
+  /**
+   * A fix round after a stalled one runs cold on the `build.high` seat (A11, G1): written before that round's
+   * implementer seat is chosen. `attempt` is the escalated build attempt, `stalled` the build attempt whose
+   * round stalled, `from` the unit's build tier until now.
+   */
+  | Readonly<{ kind: 'implementer-escalated'; unit: UnitId; attempt: number; from: RiskTier; to: 'high'; stalled: number }>
   /**
    * An executor started under host generation `generation` (step 13b), written at every start once the
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
@@ -342,8 +443,8 @@ export type Fact =
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
-/** The plan fields besides units, suite, resources and routing that an apply may change. */
-export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction'] as const;
+/** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2. */
+export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity'] as const;
 export type PlanField = (typeof PLAN_FIELDS)[number];
 
 /**
@@ -364,13 +465,56 @@ export type PlanChange =
   | Readonly<{ type: 'routing'; routingRev: RoutingRev }>
   | Readonly<{ type: 'resource'; resource: ResourceName; edit: 'added' | 'changed' | 'removed' }>
   | Readonly<{ type: 'suite' }>
-  | Readonly<{ type: 'plan-field'; field: PlanField }>;
+  | Readonly<{ type: 'plan-field'; field: PlanField }>
+  /** M2: a unit cut (`cut{reason, ruling?}`): out of scope, never dispatched again; its dependents dropped the edge or were cut too. */
+  | Readonly<{ type: 'unit-cut'; unit: UnitId }>
+  /**
+   * M2: `unit` (added in the same change set) re-enters `reenters`, which is superseded: the new unit inherits its
+   * counters (`chargeableFailures` reset only with a ruling: `reset`), risk floor and lineage.
+   */
+  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean }>;
 
-/** The backend error classes that park a backend arc-wide (lead ruling, 11b). */
-export const BACKEND_PARK_CLASSES = ['usage-limit', 'capacity'] as const;
+/**
+ * The backend park classes (lead ruling, 11b; F12). `usage-limit` is an operator park (`resume --backend`,
+ * owner ruling D4); `capacity` and `outage` are retryable (probed).
+ */
+export const BACKEND_PARK_CLASSES = ['usage-limit', 'capacity', 'outage'] as const;
 export type BackendParkClass = (typeof BACKEND_PARK_CLASSES)[number];
+export const RETRYABLE_BACKEND_PARKS = ['capacity', 'outage'] as const satisfies readonly BackendParkClass[];
 
 export type LogRecord = IntentRecord | DoneRecord | AbortRecord | FactRecord;
+
+/**
+ * The unit an op works for, for crash attribution (G8: `crashPoint(label, unit)`): a stage parent's unit,
+ * followed through op parents (a kill's spawn) when `latestIntent` is given; undefined for an arc or command op.
+ */
+export function parentUnit(parent: Parent, latestIntent?: (op: OpId) => IntentRecord): UnitId | undefined {
+  if (parent.type === 'stage') return parent.unit;
+  if (parent.type === 'op' && latestIntent !== undefined) return parentUnit(latestIntent(parent.op).parent, latestIntent);
+  return undefined;
+}
+
+/**
+ * A log record's unit, for crash attribution (G8): an intent's parent's, a done's or abort's op's, a fact's own
+ * `unit`, a usage fact's invocation's op's; undefined for arc-level records. `latestIntent` reads the fold the record
+ * is appended to (a done's intent is already in it).
+ */
+export function recordUnit(record: LogRecord, latestIntent: (op: OpId) => IntentRecord): UnitId | undefined {
+  switch (record.type) {
+    case 'intent':
+      return parentUnit(record.parent, latestIntent);
+    case 'done':
+    case 'abort':
+      return parentUnit(latestIntent(record.op).parent, latestIntent);
+    case 'fact': {
+      const f = record.fact;
+      if ('unit' in f && typeof f.unit === 'string') return f.unit;
+      // A usage fact always follows its spawn's intent; a backend park's `inv` is only a pointer, never followed.
+      if (f.kind === 'meter' || f.kind === 'usage-unavailable') return parentUnit(latestIntent(parseInvocationId(f.inv).op).parent, latestIntent);
+      return undefined;
+    }
+  }
+}
 
 /** `prev` is null exactly on seq 1. */
 export type Envelope = Readonly<{ v: SchemaVersion; seq: number; prev: Sha256Hex | null; at: IsoTime; arc: ArcId }>;
@@ -388,6 +532,8 @@ const opR: Read<OpId> = (v, p) => opIdOf(v, p);
 const invR: Read<InvocationId> = (v, p) => invocationIdOf(v, p);
 const revR: Read<RoutingRev> = (v, p) => routingRev(v, p);
 const resR: Read<ResourceName> = (v, p) => resourceName(v, p);
+const instR: Read<ResourceInstance> = (v, p) => resourceInstance(v, p);
+const unitResR: Read<ResourceUnit> = (v, p) => resourceUnit(v, p);
 const cmdR: Read<CommandId> = (v, p) => commandId(v, p);
 const specRevR: Read<SpecRev> = (v, p) => specRev(v, p);
 
@@ -414,14 +560,13 @@ function sameList(actual: readonly string[], expected: readonly string[], path: 
   }
 }
 
-/** Lock order: strictly ascending, except `integration-slot`, which, when present, is last. */
-const lockOrder: Read<readonly ResourceName[]> = (value, path) => {
-  const list = arrayOf(resR, { nonEmpty: true })(value, path);
-  const slot = list.indexOf(INTEGRATION_SLOT);
-  if (slot !== -1 && slot !== list.length - 1) throw new SchemaError(path, 'integration-slot last', value);
-  const rest = slot === -1 ? list : list.slice(0, -1);
-  for (let i = 1; i < rest.length; i++) {
-    if (!((rest[i - 1] as string) < (rest[i] as string))) throw new SchemaError(`${path}[${i}]`, 'ascending names, no duplicates', value);
+/** Lock order (`compareResourceUnits`): strictly ascending, so `integration-slot`, when present, is last. */
+const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
+  const list = arrayOf(unitResR, { nonEmpty: true })(value, path);
+  for (let i = 1; i < list.length; i++) {
+    if (!(compareResourceUnits(list[i - 1] as ResourceUnit, list[i] as ResourceUnit) < 0)) {
+      throw new SchemaError(`${path}[${i}]`, 'lock order (names and pool instances ascending, then @cpu tokens, integration-slot last), no duplicates', value);
+    }
   }
   return list;
 };
@@ -429,6 +574,8 @@ const lockOrder: Read<readonly ResourceName[]> = (value, path) => {
 const holder: Read<Holder> = tagged('type', {
   stage: object((f): Holder => ({ type: f.get('type', literal('stage')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
   sweep: object((f): Holder => ({ type: f.get('type', literal('sweep')), command: f.get('command', cmdR) })),
+  retry: object((f): Holder => ({ type: f.get('type', literal('retry')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
+  publication: object((f): Holder => ({ type: f.get('type', literal('publication')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -439,7 +586,7 @@ const resourceEdge: Read<ResourceEdge> = tagged('type', {
   release: object((f): ResourceEdge => ({ type: f.get('type', literal('release')) })),
   fail: object((f): ResourceEdge => ({
     type: f.get('type', literal('fail')),
-    residues: f.get('residues', arrayOf(object((g) => ({ resource: g.get('resource', resR), teardown: g.get('teardown', invR) })), { nonEmpty: true })),
+    residues: f.get('residues', arrayOf(object((g) => ({ resource: g.get('resource', instR), teardown: g.get('teardown', invR) })), { nonEmpty: true })),
   })),
 });
 
@@ -452,8 +599,8 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
     set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
   })),
-  teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', resR) })),
-  probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', resR) })),
+  teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
+  probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   smoke: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('smoke')),
     check: f.get('check', str),
@@ -504,7 +651,9 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
-      if (e.edge.type === 'reclaim' && e.holder.type !== 'sweep') throw new SchemaError(`${path}.expect.holder.type`, 'sweep (only a sweep reclaims a cleanup-failed resource)', e.holder.type);
+      if (e.edge.type === 'reclaim' && !(RECLAIM_HOLDERS as readonly string[]).includes(e.holder.type)) {
+        throw new SchemaError(`${path}.expect.holder.type`, `${RECLAIM_HOLDERS.join(' or ')} (only these reclaim a cleanup-failed resource)`, e.holder.type);
+      }
       if (e.edge.type !== 'fail') return;
       sameList(e.edge.residues.map((r) => r.resource), e.resources, `${path}.expect.edge.residues`);
     },
@@ -658,7 +807,37 @@ const planChange: Read<PlanChange> = tagged('type', {
   })),
   suite: object((f): PlanChange => ({ type: f.get('type', literal('suite')) })),
   'plan-field': object((f): PlanChange => ({ type: f.get('type', literal('plan-field')), field: f.get('field', oneOf(PLAN_FIELDS)) })),
+  'unit-cut': object((f): PlanChange => ({ type: f.get('type', literal('unit-cut')), unit: f.get('unit', unitR) })),
+  'unit-reentered': object((f): PlanChange => {
+    const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
+    if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
+    return out;
+  }),
 });
+
+const probeTarget: Read<ProbeTarget> = tagged('type', {
+  backend: object((f): ProbeTarget => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend) })),
+  host: object((f): ProbeTarget => ({ type: f.get('type', literal('host')) })),
+  resource: object((f): ProbeTarget => ({ type: f.get('type', literal('resource')), instance: f.get('instance', instR) })),
+});
+
+const parkRecord: Read<ParkRecord> = tagged('class', {
+  retryable: object((f): ParkRecord => ({
+    class: f.get('class', literal('retryable')), targets: f.get('targets', sortedBy(probeTarget, probeTargetKey, { nonEmpty: true })),
+  })),
+  operator: object((f): ParkRecord => ({ class: f.get('class', literal('operator')), kind: f.get('kind', oneOf(OPERATOR_PARK_KINDS)) })),
+});
+
+const holdCause: Read<HoldCause> = object((f) => ({
+  type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive),
+}));
+
+/** Strictly ascending seqs, non-empty. */
+const seqSet: Read<readonly number[]> = (value, path) => {
+  const list = arrayOf(positive, { nonEmpty: true })(value, path);
+  for (let i = 1; i < list.length; i++) if (!((list[i - 1] as number) < (list[i] as number))) throw new SchemaError(`${path}[${i}]`, 'ascending seqs, no duplicates', value);
+  return list;
+};
 
 export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
@@ -672,9 +851,15 @@ export const fact: Read<Fact> = tagged('kind', {
     reason: f.get('reason', usageUnavailableReason),
   })),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
-  'backend-park': object((f): Fact => ({
-    kind: f.get('kind', literal('backend-park')), backend: f.get('backend', backend), class: f.get('class', oneOf(BACKEND_PARK_CLASSES)), inv: f.get('inv', invR),
-  })),
+  'backend-park': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('backend-park')), backend: f.get('backend', backend), class: f.get('class', oneOf(BACKEND_PARK_CLASSES)),
+      inv: f.get('inv', nullable(invR)),
+    };
+    // A failed call names its invocation; a respawn smoke's outage names none.
+    if ((out.class === 'outage') !== (out.inv === null)) throw new SchemaError(`${f.path}.inv`, out.class === 'outage' ? 'null for an outage' : 'the failed invocation', out.inv);
+    return out;
+  }),
   'needs-user-acked': object((f): Fact => ({
     kind: f.get('kind', literal('needs-user-acked')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), command: f.get('command', cmdR),
     choice: f.get('choice', nullable(optionId)),
@@ -687,10 +872,49 @@ export const fact: Read<Fact> = tagged('kind', {
     specSha256: f.get('specSha256', sha256R),
   })),
   rerouted: object((f): Fact => ({ kind: f.get('kind', literal('rerouted')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
-  'plan-applied': object((f): Fact => ({
-    kind: f.get('kind', literal('plan-applied')), rev: f.get('rev', (v, p) => planRev(v, p)), command: f.get('command', nullable(cmdR)),
-    planSha256: f.get('planSha256', sha256R), specs: f.get('specs', manifestSpecs), changes: f.get('changes', arrayOf(planChange)),
+  unparked: object((f): Fact => ({ kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
+  probe: object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('probe')), target: f.get('target', probeTarget), covers: f.get('covers', seqSet),
+      result: f.get('result', oneOf(['pass', 'fail'] as const)), nextProbeAt: f.get('nextProbeAt', nullable((v, p): IsoTime => isoTime(v, p))),
+    };
+    if ((out.result === 'pass') !== (out.nextProbeAt === null)) throw new SchemaError(`${f.path}.nextProbeAt`, out.result === 'pass' ? 'null on a pass' : 'the next probe time on a fail', out.nextProbeAt);
+    return out;
+  }),
+  'judgment-inputs': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('judgment-inputs')), unit: f.get('unit', unitR), stage: f.get('stage', oneOf(JUDGMENT_STAGES)), attempt: f.get('attempt', positive),
+      tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', specRevR), specSha256: f.get('specSha256', sha256R),
+      planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
+    };
+    if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
+    return out;
+  }),
+  'edge-resolved': object((f): Fact => ({
+    kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),
   })),
+  'run-only': object((f): Fact => ({
+    kind: f.get('kind', literal('run-only')), command: f.get('command', cmdR), units: f.get('units', nullable(sortedBy(unitR, (u) => u, { nonEmpty: true }))),
+  })),
+  'implementer-escalated': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('implementer-escalated')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), from: f.get('from', riskTier),
+      to: f.get('to', literal('high')), stalled: f.get('stalled', positive),
+    };
+    if (out.from === 'high') throw new SchemaError(`${f.path}.from`, 'a build tier below high', out.from);
+    if (!(out.stalled < out.attempt)) throw new SchemaError(`${f.path}.stalled`, `a build attempt before ${out.attempt}`, out.stalled);
+    return out;
+  }),
+  'plan-applied': object((f): Fact => {
+    const scheduling = f.optional('scheduling', literal('dag'));
+    const out = {
+      kind: f.get('kind', literal('plan-applied')), rev: f.get('rev', (v, p) => planRev(v, p)), command: f.get('command', nullable(cmdR)),
+      planSha256: f.get('planSha256', sha256R), specs: f.get('specs', manifestSpecs), changes: f.get('changes', arrayOf(planChange)),
+      ...(scheduling === undefined ? {} : { scheduling }),
+    };
+    if (scheduling !== undefined && out.rev !== 1) throw new SchemaError(`${f.path}.scheduling`, 'absent after rev 1 (the arc\'s scheduling is fixed at its first plan)', scheduling);
+    return out;
+  }),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
@@ -706,13 +930,19 @@ export const fact: Read<Fact> = tagged('kind', {
       class: f.get('class', oneOf(OUTCOME_CLASSES)),
       chargeable: f.get('chargeable', bool),
     } as StageOutcomeFact;
+    const park = f.optional('park', parkRecord);
+    const cause = f.optional('cause', holdCause);
+    if (park !== undefined && out.class !== 'park') throw new SchemaError(`${f.path}.park`, 'absent unless the class is park', park);
+    if (cause !== undefined && out.class !== 'hold') throw new SchemaError(`${f.path}.cause`, 'absent unless the class is hold', cause);
+    // The chargeable bound is a design park: the unit needs a spec revision or a re-entry.
+    if (park !== undefined && out.chargeable && !(park.class === 'operator' && park.kind === 'design')) throw new SchemaError(`${f.path}.park`, 'operator design for the chargeable bound', park);
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
     // An interruption holds the unit, and nothing else does; a hold never charges.
     if ((out.outcome === 'interrupted') !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
-    return out;
+    return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }) } as StageOutcomeFact;
   }),
 });
 

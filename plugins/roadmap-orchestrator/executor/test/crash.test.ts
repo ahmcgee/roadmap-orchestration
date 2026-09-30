@@ -43,6 +43,19 @@ test('crash.wrong-occurrence-passes', async () => {
   }
 });
 
+test('crash.per-unit: a trigger naming a unit counts only that unit\'s calls; one without counts every call', async () => {
+  const trigger = writeTrigger(tmpDir('crash'), { label: 'a', unit: 'u2', occurrence: 2 });
+  const run = await runFixture('crash-child.ts', ['units'], { env: envWith(trigger), timeoutMs: TIMEOUT_MS });
+  assert.equal(run.signal, 'SIGKILL', run.stderr);
+  assert.equal(run.stdout, 'passed a u1 1\npassed a u2 1\npassed a u1 2\n', 'the second u2 call fires, u1\'s calls do not count');
+  assertFired(trigger);
+
+  const any = writeTrigger(tmpDir('crash'), { label: 'a', occurrence: 2 });
+  const all = await runFixture('crash-child.ts', ['units'], { env: envWith(any), timeoutMs: TIMEOUT_MS });
+  assert.equal(all.signal, 'SIGKILL', all.stderr);
+  assert.equal(all.stdout, 'passed a u1 1\n', 'without a unit the second call of the label fires, whichever unit');
+});
+
 test('crash.missing-trigger-file-loud', async () => {
   const missing = join(tmpDir('crash'), 'nope.json');
   const run = await runFixture('crash-child.ts', [], { env: envWith(missing), timeoutMs: TIMEOUT_MS });

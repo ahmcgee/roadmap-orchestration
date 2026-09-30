@@ -161,7 +161,10 @@ test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resou
   assert.deepEqual(killsOf(r), ['stop']);
   const { view } = journalOf(r);
   assert.deepEqual(view.openIntents(), [], 'nothing left open');
-  assert.deepEqual([...resourceTable(view)].map(([name, e]) => [name, e.status.state]), [['db', 'free']], 'the build\'s resource is released');
+  // An M2 arc's build also holds `@cpu` tokens (A3), released with it.
+  const table = [...resourceTable(view)].map(([name, e]) => [name, e.status.state]);
+  assert.deepEqual(table.filter(([name]) => !name!.startsWith('@cpu#')), [['db', 'free']], 'the build\'s resource is released');
+  assert.ok(table.every(([, state]) => state === 'free'), JSON.stringify(table));
   const toolCalls = readFileSync(join(r.stateDir, 'calls.log'), 'utf8').trim().split('\n');
   assert.deepEqual(toolCalls.map((l) => l.split(' ').slice(0, 2).join(' ')), ['probe db', 'teardown db'], 'probed before the build, torn down after the cancel');
   const s = await statusOf(r);
@@ -278,18 +281,20 @@ test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the s
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
 });
 
-test('executor.park-raised-promptly: a unit that parks has its needs-user raised while the next unit runs, not when the arc returns; status says running', T, async (t) => {
+test('executor.park-raised-promptly: a unit that parks has its needs-user raised while another unit runs, not when the arc returns; status says running', T, async (t) => {
   const check = planCheckStep({ decision: 'approve' });
+  // u1 and u2 are independent, so they run at once (an M2 arc schedules a DAG): each unit's calls take its own steps.
+  const of = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
-      { ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step,
-      mulBuild(), gateStep({ decision: 'approve' }),
+      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })]),
+      ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step, mulBuild(), gateStep({ decision: 'approve' })]),
     ],
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'u2check', WAIT_MS);
+  await until(() => openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 to park, u2 still at its plan-check');
   const view = journalOf(r).view;
   const [item] = openBlocking(view);
   assert.ok(item !== undefined, 'u1\'s needs-user is raised while u2\'s plan-check is in flight');
@@ -372,7 +377,7 @@ test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatche
 
 test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-required, naming u2) holds u1 too; its ack lets both run', T, async (t) => {
   const r = setupExec(t, {
-    units: [{ id: 'u1' }, { id: 'u2' }],
+    units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
       planCheckStep({ decision: 'approve' }), mulBuild({ 'src/two.js': 'export const two = 2;\n' }), gateStep({ decision: 'approve' }),

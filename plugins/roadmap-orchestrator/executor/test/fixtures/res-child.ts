@@ -7,6 +7,7 @@
 //            spawns it depends on. Prints nothing.
 import { recoverReservations } from '../../src/recover/resource.ts';
 import { cleanup, reserve, run } from '../../src/resources/reserve.ts';
+import { requestOf } from '../../src/resources/pool.ts';
 import { probe } from '../../src/resources/probe.ts';
 import { DB, QUEUE, type ResRun, laneInvocation, openRun, stageHolder, stageParent } from './res-plan.ts';
 
@@ -16,7 +17,7 @@ const { ctx, journal } = openRun(JSON.parse(json) as ResRun);
 
 if (mode === 'cycle') {
   const holder = stageHolder('build');
-  const reserved = reserve(ctx, holder, [QUEUE, DB], stageParent(holder));
+  const reserved = reserve(ctx, holder, requestOf(ctx.plan(), [QUEUE, DB], 0), stageParent(holder));
   if (reserved.state === 'refused') throw new Error(`refused: ${reserved.busy.join(', ')}`);
   const occupancy = await probe(ctx, reserved, stageParent(holder));
   if (occupancy.kind !== 'clear') throw new Error(`parked: ${occupancy.needsUser.summary}`);

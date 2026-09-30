@@ -1,7 +1,8 @@
 // CLI entry: parses argv into the closed Command union (src/input/cli.ts) and runs it. Run commands find
 // their run dir through the RunLocator: the host lock claim's, or `--repo` + `--arc` explicitly. Commands
-// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`) only write a file into its durable
-// queue and print the command id; the executor applies it and writes the receipts. `apply` first hashes the
+// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`) only
+// write a file into its durable queue and print the command id; the executor applies it and writes the
+// receipts. `apply` first hashes the
 // plan file the arc started with (start.json) and every unit's spec into the command's manifest; `apply
 // --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
 // no smoke: a backend the new routing needs is listed under `smoke`). Output is agent-facing JSON.
@@ -73,6 +74,10 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'resume', target: command.target });
     case 'sweep':
       return submit(command.run, hostDir, { type: 'sweep', resource: command.resource });
+    case 'resolve-edge':
+      return submit(command.run, hostDir, { type: 'resolve-edge', edge: command.edge, evidence: command.evidence });
+    case 'run-only':
+      return submit(command.run, hostDir, { type: 'run-only', units: command.units });
     case 'apply': {
       const run = locate(command.run, hostDir);
       const start = startOf(run);
@@ -94,7 +99,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const run = locate(command.run, hostDir);
       const stop = new AbortController();
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
-      await watch(run.runDir, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
+      await watch(run.runDir, run.arc, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
       return;
     }
     case 'start': {
