@@ -97,20 +97,23 @@ export function writeReceipt(runDir: AbsPath, r: Receipt): Sha256Hex {
 export const receiptSha256 = (runDir: AbsPath, id: CommandId, state: ReceiptState): Sha256Hex =>
   sha256(sha256Hex(readFileSync(receiptPath(runDir, id, state))));
 
+/** The ids of the incoming commands without a terminal receipt, in id order; read-only (`roadmap gc` reads it too). */
+export function pendingCommandIds(runDir: AbsPath): readonly CommandId[] {
+  const dir = incomingDir(runDir);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((name) => {
+    const m = INCOMING_NAME.exec(name);
+    return m === null ? [] : [commandId(m[1])];
+  }).sort().filter((id) => terminalReceipt(runDir, id) === null);
+}
+
 /**
  * Every pending command (no terminal receipt), in id order. A command seen for the first time gets its
  * `accepted` receipt here. Re-polling returns the same pending set and writes nothing new.
  */
 export function pollCommands(runDir: AbsPath, arc: ArcId): readonly CommandFile[] {
-  const dir = incomingDir(runDir);
-  if (!existsSync(dir)) return [];
-  const ids = readdirSync(dir).flatMap((name) => {
-    const m = INCOMING_NAME.exec(name);
-    return m === null ? [] : [commandId(m[1])];
-  }).sort();
   const pending: CommandFile[] = [];
-  for (const id of ids) {
-    if (terminalReceipt(runDir, id) !== null) continue;
+  for (const id of pendingCommandIds(runDir)) {
     const { file } = readCommand(runDir, id, arc);
     if (readReceipt(runDir, id, 'accepted') === null) {
       writeReceipt(runDir, { v: SCHEMA_VERSION, command: id, state: 'accepted', at: isoTimeOf(new Date()) });

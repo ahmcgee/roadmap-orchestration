@@ -209,8 +209,11 @@ describe('cli: M3 forms', () => {
     const missing = await roadmap(['rule', join(repo, 'nope.json'), '--repo', repo, '--arc', 'arc-1']);
     assert.equal(missing.code, 64);
     assert.match(missing.stderr, /rule: no file/);
-    const gc = await roadmap(['gc', '--repo', repo]);
-    assert.notEqual(gc.code, 0);
-    assert.match(gc.stderr, /gc: not implemented \(step A5b\)/);
+    // gc runs for real (test/gc.test.ts, against a test host dir): here only on a repo with no arc, which it refuses
+    // before it reads the host dir, so the machine's own host dir is never touched.
+    const empty = makeRepo(tmpDir('cli-repo'), { files: { 'README.md': 'x\n' } });
+    const gc = await roadmap(['gc', '--repo', empty]);
+    assert.equal(gc.code, 78, gc.stderr);
+    assert.deepEqual(JSON.parse(gc.stdout), { refused: { kind: 'no-arcs', runtime: join(empty, '.git', 'roadmap-runtime') } });
   });
 });

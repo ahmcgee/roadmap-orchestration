@@ -437,13 +437,13 @@ test('host.prune-generation-files: the files of generations before the last K go
   touch('residues.jsonl');
 
   const claim = claimRecord({ supervisor: selfIdentity(), bootId: readBootId(), arc: HOST_ARC, generation: 5 });
-  const deleted = pruneGenerationFiles(dir, claim, 2);
+  const deleted = pruneGenerationFiles(dir, claim, 2, []);
   const gen = (g: number) => [`executor.${g}.err`, `executor.${g}.out`, `handshake.${g}`, `supervisor.${g % 2 === 0 ? 'failed' : 'ready'}.${g}`];
   assert.deepEqual(deleted, [...gen(1), ...gen(2), ...gen(3), `supervisor.${tokens.old}.err`, `supervisor.${tokens.old}.out`].sort());
   const left = readdirSync(dir).sort();
   for (const g of [4, 5]) for (const name of gen(g)) assert.ok(left.includes(name), name);
   for (const token of [tokens.spanning, tokens.live, tokens.none]) assert.ok(left.includes(`supervisor.${token}.out`) && left.includes(`supervisor.${token}.err`), token);
   assert.ok(left.includes('host.generation') && left.includes('residues.jsonl'));
-  assert.deepEqual(pruneGenerationFiles(dir, claim, 2), [], 'idempotent');
-  assert.throws(() => pruneGenerationFiles(dir, claim, 0), /always kept/);
+  assert.deepEqual(pruneGenerationFiles(dir, claim, 2, []), [], 'idempotent');
+  assert.throws(() => pruneGenerationFiles(dir, claim, 0, []), /always kept/);
 });

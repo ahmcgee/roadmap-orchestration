@@ -1230,8 +1230,8 @@ constants in the table (`Bounded.bound` names the field) and in the fold's charg
 sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
 `merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
 its effect is rejected `<type>: not implemented (step X)`: `audit` and `close-admissions` B7 (`NOT_YET`,
-`src/commands/apply.ts`; `reverse` since A2, `steer` and `merge-in` since A3, `rule` since A4); `gc` (A5b) fails in the
-CLI.
+`src/commands/apply.ts`; `reverse` since A2, `steer` and `merge-in` since A3, `rule` since A4). `gc` runs since A5b
+(`src/commands/gc.ts`).
 
 **Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
 `steered`, `not-reproduced`, `owner-request`, `respec-second`. Non-blocking (`NON_BLOCKING_M3_REASONS`):

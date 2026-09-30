@@ -58,6 +58,10 @@ at triage stay in git history.
 - Lens parallelism (lenses run serially, one `@cpu` each).
 - Vision playback verification (M4); the in-tree home of the vision for the next arc (M4).
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
+- `roadmap gc` (A5b), deferred until needed: residue-index pairs keyed to an arc whose run dir gc removed are kept by
+  every later compaction (an unreadable arc retains its pairs), so gc could compact first (threshold 1) while its
+  claim is held; the open needs-user items whose cited generations gc keeps are read from `--repo`'s arcs only, not
+  from another repo's arcs on the same host; archive retention is "the first K on the chain", no finer rule.
   Trigger: an implementer acting outside the sandbox.
 
 ### M4
@@ -135,8 +139,8 @@ None.
   and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
   without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
 - Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4),
-  `audit` and `close-admissions` (B7) in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s); `gc` failing in
-  `src/cli/main.ts` (A5b); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
+  `audit` and `close-admissions` (B7) in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s; A5b deleted
+  `gc`'s failure in `src/cli/main.ts`); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
   B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
   `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`
   (`src/recover/resource.ts`); the `reproduce` stage throw in `runStage` (`src/pipeline/unit.ts`, B3); the preempted

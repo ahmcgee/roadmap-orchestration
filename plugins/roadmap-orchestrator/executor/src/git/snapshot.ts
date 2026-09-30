@@ -289,7 +289,7 @@ export function snapshotRequestOf(input: Readonly<{ view: JournalView; runDir: A
 type Collected = ReadonlyMap<RepoPath, Readonly<{ bytes: Buffer; namedBy: NamedBy }>>;
 
 /** The first `highWater` complete lines of the event log, byte for byte, and their parsed events. */
-function eventsPrefix(runDir: AbsPath, highWater: number): { bytes: Buffer; events: readonly Event[] } {
+export function eventsPrefix(runDir: AbsPath, highWater: number): { bytes: Buffer; events: readonly Event[] } {
   const all = readFileSync(join(runDir, EVENTS_FILE));
   let end = 0;
   const events: Event[] = [];

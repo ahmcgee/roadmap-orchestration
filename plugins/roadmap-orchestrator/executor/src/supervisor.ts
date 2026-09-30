@@ -34,7 +34,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { identityOf, signal } from './contain/proc.ts';
@@ -118,6 +118,7 @@ function emit(line: SupervisorLine): void {
 
 const GENERATION_FILE = /^(?:handshake|supervisor\.ready|supervisor\.failed)\.([1-9][0-9]*)$|^executor\.([1-9][0-9]*)\.(?:out|err)$/;
 const SUPERVISOR_OUT = /^supervisor\.([0-9a-f]{16})\.out$/;
+const SUPERVISOR_LOG = /^supervisor\.([0-9a-f]{16})\.(?:out|err)$/;
 
 /** The generations a supervisor's stdout log claimed, from its complete lines. */
 function claimedGenerations(out: AbsPath): readonly number[] {
@@ -130,28 +131,46 @@ function claimedGenerations(out: AbsPath): readonly number[] {
 }
 
 /**
- * Deletes the host files of every generation before the last `keep` issued, `claim` (the caller's, held) being the
- * last: `handshake.<g>`, `supervisor.ready|failed.<g>`, `executor.<g>.out|err`, and a supervisor's
- * `supervisor.<token>.out|err` once the newest generation it claimed is among them. A supervisor log that claimed
- * nothing (a refused start, or one still starting) is left. Returns the names deleted, sorted.
+ * The host files of every generation before the last `keep` issued, `generation` (the caller's claim's, held, or
+ * the one it would claim) being the last: `handshake.<g>`, `supervisor.ready|failed.<g>`, `executor.<g>.out|err`,
+ * and a supervisor's `supervisor.<token>.out|err` once the newest generation it claimed is among them. A supervisor
+ * log that claimed nothing (a refused start, or one still starting) is left. So is every file of a generation a path
+ * of `cited` (an open needs-user item's evidence) belongs to: a generation file of it, or a supervisor log that
+ * claimed it. Sorted.
  */
-export function pruneGenerationFiles(dir: AbsPath, claim: HostLockClaim, keep: number): readonly string[] {
+export function generationFilesToPrune(dir: AbsPath, generation: number, keep: number, cited: readonly AbsPath[]): readonly string[] {
   if (!Number.isInteger(keep) || keep < 1) throw new Error(`keep ${keep}: the held generation is always kept`);
-  const oldest = claim.generation - keep + 1;
+  const oldest = generation - keep + 1;
+  const citedGenerations = new Set<number>();
+  for (const path of cited) {
+    if (dirname(path) !== dir) continue;
+    const g = GENERATION_FILE.exec(basename(path));
+    if (g !== null) citedGenerations.add(Number(g[1] ?? g[2]));
+    const s = SUPERVISOR_LOG.exec(basename(path));
+    const out = s === null ? null : hostPath(dir, `supervisor.${s[1]}.out`);
+    if (out !== null && existsSync(out)) for (const c of claimedGenerations(out)) citedGenerations.add(c);
+  }
   const doomed: string[] = [];
   for (const name of readdirSync(dir)) {
     const g = GENERATION_FILE.exec(name);
     if (g !== null) {
-      if (Number(g[1] ?? g[2]) < oldest) doomed.push(name);
+      const of = Number(g[1] ?? g[2]);
+      if (of < oldest && !citedGenerations.has(of)) doomed.push(name);
       continue;
     }
     const s = SUPERVISOR_OUT.exec(name);
     if (s === null) continue;
     const claimed = claimedGenerations(hostPath(dir, name));
-    if (claimed.length > 0 && Math.max(...claimed) < oldest) doomed.push(name, `supervisor.${s[1]}.err`);
+    if (claimed.length > 0 && Math.max(...claimed) < oldest && !claimed.some((c) => citedGenerations.has(c))) doomed.push(name, `supervisor.${s[1]}.err`);
   }
-  for (const name of doomed) durableUnlink(hostPath(dir, name));
   return doomed.sort();
+}
+
+/** Deletes `generationFilesToPrune`'s files (`roadmap gc`, src/commands/gc.ts). Returns the names deleted, sorted. */
+export function pruneGenerationFiles(dir: AbsPath, claim: HostLockClaim, keep: number, cited: readonly AbsPath[]): readonly string[] {
+  const doomed = generationFilesToPrune(dir, claim.generation, keep, cited);
+  for (const name of doomed) durableUnlink(hostPath(dir, name));
+  return doomed;
 }
 
 // ---------------------------------------------------------------------------------------------------

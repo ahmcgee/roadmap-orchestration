@@ -66,6 +66,7 @@ export const RESIDUE_ORDERING = 'resource.transition fail + residue';
 export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const RETRY_RECLAIM = 'resource.transition retry reclaim (M2: reclaim → teardown → disposition → release)';
 export const RESIDUE_COMPACT = 'residue-index compaction at start (M3: tmp → link archive → rename)';
+export const GC = 'roadmap gc (M3: verify all → raw evidence → run dir rename → removal → host files)';
 export const PROBE_JOB = 'probe job (M2: smoke spawn → probe fact)';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
@@ -525,6 +526,24 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the index is compacted; the next compaction is below the threshold and changes nothing',
       },
       B5: { status: 'excluded', why: 'the rename is the last act: after it the compaction is complete (B4)' },
+    },
+  },
+  {
+    // M3 step A5b. The scenario (test/gc.test.ts): `roadmap gc --keep 1` over two sealed arcs, as a CLI child.
+    // Recovery is the next gc, which takes over the dead claim; the oracle: it deletes the leftover and nothing else
+    // is left to delete, and the kept arc is still sealed.
+    row: GC,
+    test: 'test/gc.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'gc journals nothing: it verifies every arc before its first delete, and a crash before that leaves only its dead claim' },
+      B2: { status: 'excluded', why: 'every delete but a run dir\'s is of one path the next gc lists again or no longer finds; B3 is the one two-step delete' },
+      B3: {
+        status: 'crash',
+        labels: ['gc.run-dir.after-rename'],
+        recovery: 'the run dir is a `<arc>.gc-deleting` leftover beside a dead claim; the next gc takes the claim over and removes the leftover',
+      },
+      B4: { status: 'excluded', why: 'the removal of the renamed dir is idempotent by name: a crash inside it is B3\'s leftover, partly removed' },
+      B5: { status: 'excluded', why: 'host files and archives are single-path deletes listed again by the next gc (B2)' },
     },
   },
   {

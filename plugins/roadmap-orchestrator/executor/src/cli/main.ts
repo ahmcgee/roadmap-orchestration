@@ -3,7 +3,8 @@
 // for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's
 // `rule`, `reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) only write a file into its durable queue
 // and print the command id; the executor applies it and writes the receipts. `rule` and `steer` hash the file
-// they name into the command (its absolute path and sha256). `gc` is a host action (step A5b). `apply` first hashes the
+// they name into the command (its absolute path and sha256). `gc` is a host action under the host lock, not a
+// queued command (src/commands/gc.ts): it prints its report, or `{refused}` with exit 75 (host busy) or 78. `apply` first hashes the
 // plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
 // and the vision into the command's manifest (`RevisionManifest`); `apply
 // --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
@@ -20,6 +21,7 @@ import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
 import { evaluateApply } from '../commands/apply.ts';
+import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
@@ -34,6 +36,7 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
+import { EXIT_HOST_BUSY, EXIT_REFUSED } from '../preflight/startup.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { watch } from '../watch.ts';
@@ -131,9 +134,16 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'audit', lenses: command.lenses });
     case 'close-admissions':
       return submit(command.run, hostDir, { type: 'close-admissions' });
-    case 'gc':
-      // Interim (M3 0a): BACKLOG "Scaffolding to delete".
-      throw new Error('gc: not implemented (step A5b)');
+    case 'gc': {
+      const outcome = await gc({ hostDir, repo: absPath(resolve(command.repo)), keep: command.keep ?? DEFAULT_KEEP, dryRun: command.dryRun });
+      if (outcome.kind === 'done') {
+        process.stdout.write(`${canonicalJson(outcome.report)}\n`);
+        return;
+      }
+      process.stdout.write(`${canonicalJson({ refused: outcome.rejection })}\n`);
+      process.exitCode = outcome.rejection.kind === 'host-busy' ? EXIT_HOST_BUSY : EXIT_REFUSED;
+      return;
+    }
   }
 }
 
