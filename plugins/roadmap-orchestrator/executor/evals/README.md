@@ -4,11 +4,12 @@ A change is not done until the ladder passes, in order, from `executor/`:
 
 1. `npm run typecheck`: `tsc --noEmit` over `src/`, `test/` and `evals/`.
 2. `npm test`: `node --test test/*.test.ts`, pure-module and integrated tests, fake backends only. This tier
-   includes `test/evals-m1.test.ts` and `test/evals-m2.test.ts`, which run the M1 and M2 fixtures below end to
-   end against the fakes, and `test/upgrade.test.ts`, which starts the M1 fixture on the previous release's
-   executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops or parks it mid-arc and finishes it on HEAD.
+   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, which run the M1, M2
+   and M3 fixtures below end to end against the fakes, and `test/upgrade.test.ts`, which starts the M1 fixture on
+   the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
+   mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
-4. The paid fixtures, `evals/m1/` and `evals/m2/`: once per merged batch, never per worktree agent.
+4. The paid fixtures, `evals/m1/`, `evals/m2/` and `evals/m3/`: once per merged batch, never per worktree agent.
 
 ## The targeted probe
 
@@ -138,3 +139,74 @@ week-long reliability.
 
 A real implementer that does not edit the registry line in place leaves no conflict: the driver then stops the
 run with `device-failed`, which fails `run-ended` and `reentry`, and the report says why.
+
+## The M3 fixture
+
+The holistic layer's story against the Node CLI `ledger` (plan "Fixture evals/m3/", DESIGN-1.0.md §10 M3):
+three units, a vision, three obligations witnessed by journey lanes, audits, checkpoints and a repair, through
+the real `roadmap start`. One paid run, profile `default` only, in a fresh directory:
+
+```sh
+node evals/m3/setup.ts /var/tmp/m3-default
+node evals/m3/driver.ts /var/tmp/m3-default --profile default
+node evals/m3/check.ts /var/tmp/m3-default
+```
+
+- `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (`src/cli.js` with an unknown command
+  exiting 2, `src/format.js` whose `formatAmount` rounds on the decimal digits as written, unit tests under
+  `test/unit/` for the suite, journey tests under `test/journeys/` for the arc lanes; in-tree `.roadmap/` with
+  the ledger contract, the C-nn ledger, a hand-written `invariants.md` and an empty-routing config), `input/`
+  (plan.json, vision.json, obligations.json, rulings.md, one spec per unit) and `barriers/`. The plan is holistic:
+  audits every 2 publications with the required lens set L = {invariants, vision}, `limits.convergenceK` 1. The
+  vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
+  mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input". The obligations, each a node-test arc
+  lane over one journey test through the shipped reporter: I-1 future (serves V-1, delivered by `parse` and
+  `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: 1.005 renders 1.01; lane `money`, which
+  waits at the driver's barrier in audit-1's run only, `evals/m3/barrier.ts`), I-3 must-hold (serves V-3:
+  unknown commands exit 2). Every scoped path is mapped; `tidy`'s one path `src/format.js` maps to I-3 only, and
+  its spec replaces the rounding by `Math.round(amount * 100) / 100`, so it regresses I-2 unselected. Units:
+  `parse`, `tidy` after it, `report` after `parse`.
+- `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
+  its condition holds in the log, `status` or a barrier file: `report` added to `run-only` once audit-1 waits
+  at the money barrier; the barrier released once `report` merged (S′), so A1 audits S and re-witnesses its P1
+  over I-2 on S′; at the first checkpoint's `checkpoint-inputs`, the architect's edit of `direction` by `roadmap
+  apply`, which makes that bundle stale whole; the repair's id read from the `plan-applied{source: bundle}`
+  change (G18) and added to `run-only` once the drift audit that revision triggers has started; the
+  `divergence-digest` and `convergence-bound` items acknowledged; `run-only --clear` once the repair merged.
+  Each device is recorded in `report.json` (`devices`). A checkpoint that no-ops or asks the owner where a bundle
+  is required, a first checkpoint not rejected stale, a bundle adding anything but one repair unit, or a rejected
+  apply stops the run (`endedBy: device-failed`); a parked run is stopped as in M1; hard timeout 180 minutes.
+  It refuses a used dir, uses the machine's host lock, and kills only the pids `status` names.
+- `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
+  failed criterion. M3: `baseline`, `regression-unselected`, `audit-race`, `stale-whole`, `bundles-whole`,
+  `repair-divergence` (plan-departed citing V-2), `divergence-digest-bound` (each digest binds exactly the
+  recorded ids not bound before; the driver's ack covers it), `convergence-bound`, `repair-resolved`,
+  `drift-audit` (the vision lens alone, then a no-op), `final-audit` (L, then a no-op), `close-out` (docs-only,
+  covering its own edge), `completion` (`arc-completed`, then the terminal snapshot), `lens-coverage` (each lens
+  of L contiguous to the final head, the docs edge applied only from the final audit's SHA), `snapshot-closure`
+  (the terminal ref verifies as a closure carrying every witness record and payload), `obligations-discharged`.
+  Standing: run-ended, units-settled, head-is-publication, diff-product-and-docs (units' scopes plus the living
+  `.roadmap/` docs, `constraints.md` and `invariants.md` included), snapshot-verifies, judgment-fresh (lens and
+  checkpoint calls included), meter-covers-calls, no-model-ids.
+
+Cost and time: about 23 backend calls on the story's path: the backend smoke (2), plan-check, build and gate for
+`parse`, `tidy`, `report` and the repair (12, 4 of them Codex builds), the lenses (A1 2, A2 1, A3 2) and the
+checkpoints (the stale one, its re-evaluation, A2's and A3's): 13 Opus and 4 Fable calls among the Claude ones,
+about 2.2 times the M2 fixture. Expect 80 to 130 minutes; the driver stops at 180.
+
+`--fake story` runs the same driver against the fake backends (`evals/m3/scenario.ts`: unit calls as M1-style
+steps keyed by unit, lens and checkpoint calls as scripted judgments keyed by job and lens) with a host dir
+inside the fixture, for free (15 minute timeout). The fake story also plays the literal partial bundle (A18,
+G19): after the stale rejection, the next checkpoint answers the repair admit followed by an invalid op, which is
+rejected invalid with nothing applied, and its one re-evaluation admits the repair alone. The fake first
+checkpoint waits at `fake/ckpt-1.hold` until the driver's apply is applied; a real one simply takes longer than
+the apply (if not, the check fails `stale-whole`). `test/evals-m3.test.ts` runs it and requires every criterion.
+
+`NOT EXERCISED: …` names what the journal shows no trace of, from: rule, reverse, steer, merge-in, reproduction,
+batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid run takes
+none of them; each has a fake integrated test in `npm test` (the literal partial bundle in `evals-m3.fake`).
+`CANNOT SHOW: …` is fixed: real cgroup containment, crash boundaries under real models, week-long convergence,
+and a model's op list (the partial bundle is forced only by fakes).
+
+A real `tidy` gate that refuses the `Math.round` rewrite, or a real checkpoint that no-ops instead of admitting a
+repair, leaves the story unplayed: the run then ends `device-failed` or times out, and the report says where.
