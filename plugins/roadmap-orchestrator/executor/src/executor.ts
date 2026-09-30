@@ -17,9 +17,11 @@
 //   spawn a crashed start left open like any other → the outcomes of the stage attempts whose backend call
 //   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
 //   refusal exits `refused` as above, after readiness; on a respawn a failed backend is parked instead, A18)
-//   → the scheduler (src/schedule/scheduler.ts), which runs every unit that may run, each in its own task,
-//   applies commands as they arrive (control at once, mutations once their scope drains), probes parks,
-//   raises what is due, and returns `complete` or `stop`.
+//   → the scheduler (src/schedule/scheduler.ts), which runs every unit that may run, each in its own task, and
+//   the holistic layer's jobs (baseline, audits, checkpoints, repair batches, the close-out), applies commands as
+//   they arrive (control at once, mutations once their scope drains), probes parks, raises what is due, and
+//   returns `complete` or `stop`. After recovery and before the scheduler, the findings' moves the recovered log
+//   calls for are written (`syncRepairs`, M3 B3).
 //
 //   The contexts' `plan` and `routing` are the plan in force and its routing, read from the log at each call
 //   (`plan()`, `routing()`), so an apply takes effect at the next one. One arbiter serves every reservation of
@@ -48,7 +50,7 @@ import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
+import { type ArcId, type NeedsUserId, type PlanRev, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
   type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RunStart,
@@ -57,6 +59,7 @@ import { routingProvenanceOf } from './core/upgrade.ts';
 import { type Read, arrayOf, literal, object } from './core/validate.ts';
 import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
+import { readLegacyProvenance } from './git/snapshot.ts';
 import { hostPath, openHostDir } from './host/hostdir.ts';
 import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
@@ -68,6 +71,7 @@ import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts
 import { type ProberHandle, createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { docsPublisher } from './pipeline/publish.ts';
+import { syncRepairs } from './pipeline/reproduce.ts';
 import { consume } from './pipeline/unit.ts';
 import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
@@ -76,10 +80,10 @@ import {
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
 import { type ResolvedRouting, provenanceStack, resolveRouting } from './routing/layers.ts';
-import { type ProfileName, profileName } from './routing/types.ts';
+import { type ProfileName, type RoutingProvenance, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
-import { type SchedulerEnd, raiseResult, schedule } from './schedule/scheduler.ts';
+import { type SchedulerEnd, designRoute, holisticContexts, raiseResult, schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';
@@ -235,6 +239,8 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     }
     // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
     await recover({ stage: x.stage, commands: x.commands });
+    // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
+    syncRepairs(x.stage);
     await consumeRecovered(x);
     const smoked = await smokeCheck(checks, args.env);
     if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
@@ -262,9 +268,10 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
  * does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
  */
 async function consumeRecovered(x: Exec): Promise<void> {
+  const route = designRoute(holisticContexts(x));
   for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
-    if (s !== null && s.kind !== 'continue') raiseResult(x.stage, unit.id, s);
+    if (s !== null && s.kind !== 'continue') raiseResult(x.stage, unit.id, s, route);
   }
 }
 
@@ -280,8 +287,10 @@ async function consumeRecovered(x: Exec): Promise<void> {
  */
 function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
-  // H7 (M3 step A3): each revision's routing resolves from the provenance its plan-applied recorded (a 1.0.0-dev.5
-  // revision's is rebuilt from its plan, the profile and the repo config read at start), per unit (its layer on top).
+  // H7 (M3 steps A3, B7): each revision's routing resolves from the provenance its plan-applied recorded, per unit (its
+  // layer on top). A 1.0.0-dev.5 revision has none: it resolves from the record the adoption persisted
+  // (`routing-provenance/<rev>.json`, `adoptLegacyProvenance` in `runChecks`), never from the repo config read again at a
+  // later start (lead ruling: one canonical source).
   type Entry = Readonly<{ plan: PlanM1; routing: (unit: UnitId | null) => ResolvedRouting }>;
   const cache = new Map<string, Entry>();
   const inForce = (): Entry => {
@@ -290,7 +299,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     const known = cache.get(key);
     if (known !== undefined) return known;
     const { plan, fact: applied } = requirePlanInForce(context.runDir, journal.view);
-    const provenance = routingProvenanceOf(applied, () => provenanceOf({ profile, config }, plan));
+    const provenance = routingProvenanceOf(applied, () => adoptedProvenance(context.runDir, applied.rev, () => provenanceOf({ profile, config }, plan)));
     const resolved = new Map<UnitId | null, ResolvedRouting>();
     const routingOf = (unit: UnitId | null): ResolvedRouting => {
       const hit = resolved.get(unit);
@@ -332,6 +341,19 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };
+}
+
+/**
+ * The routing provenance a 1.0.0-dev.5 revision's adoption persisted (scaffolding: delete with the other dev.5
+ * defaults). An unreconstructable one (its routing revs are none the adopting start's config resolves) has no
+ * provenance to read: the revision resolves as a dev.5 executor resolved it, from the repo config of this start
+ * (`rebuild`), warned; a missing record is a bug (every start adopts before it runs).
+ */
+function adoptedProvenance(runDir: AbsPath, rev: PlanRev, rebuild: () => RoutingProvenance): RoutingProvenance {
+  const adopted = readLegacyProvenance(runDir, rev);
+  if (adopted.kind === 'reconstructed') return adopted.provenance;
+  process.stderr.write(`roadmap: upgrade (routing provenance, H7): ${adopted.reason}; plan rev ${rev} resolves under the repo config of this start\n`);
+  return rebuild();
 }
 
 // ---------------------------------------------------------------------------------------------------

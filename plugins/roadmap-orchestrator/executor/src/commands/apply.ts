@@ -64,8 +64,9 @@
 //   rule     (M3, A4) `rule <record.json>`: a ruling sidecar validated (fresh consistency, G21), landed in the
 //            ledger and its sidecars through the apply core and the fence, with its docs publication
 //            (src/commands/rule.ts). Mutation, no scope.
-//   audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET` implements each, it is
-//            rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
+//   audit    (M3, B7) `audit [--lens]`: `audit-requested`, run by the scheduler's audit job (src/commands/audit.ts).
+//            Mutation, no scope.
+//   close-admissions (M3, B7): `admissions-closed`, the arc drains (src/commands/admissions.ts). Mutation, no scope.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -89,8 +90,8 @@ import { type ApplyManifest, type CommandBody, type CommandFile, type NeedsUserA
 import type { ParkState } from '../core/state.ts';
 import { revisionSourceOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
-import { renderConstraints } from '../docs/constraints.ts';
-import { renderInvariants } from '../docs/invariants.ts';
+import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
+import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
 import type { ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
 import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
@@ -117,6 +118,8 @@ import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend } from '../routing/types.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { parseRulings } from '../spec/rulings.ts';
+import { closeAdmissions } from './admissions.ts';
+import { requestAudit } from './audit.ts';
 import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
 import { mergeIn } from './mergein.ts';
@@ -243,14 +246,11 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'rule':
       return rule(ctx, command.id, body);
     case 'audit':
+      return requestAudit(ctx, command.id, body.lenses);
     case 'close-admissions':
-      return { kind: 'rejected', reason: `${body.type}: not implemented (step ${NOT_YET[body.type]})` };
+      return closeAdmissions(ctx, command.id);
   }
 }
-
-/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{audit,admissions}.ts). */
-const NOT_YET = { audit: 'B7', 'close-admissions': 'B7' } as const satisfies
-  Readonly<Record<'audit' | 'close-admissions', string>>;
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
   const view = ctx.journal.view;
@@ -562,12 +562,9 @@ export type RevisionVerdict =
     kind: 'accepted'; draft: RevisionDraft; next: InputFiles; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[]; renders: readonly Render[];
   }>;
 
-/** The rendered documents of the revision (A2, §2.9): `constraints.md` when its rulings change, `invariants.md` when its obligations do. */
-const CONSTRAINTS_DOC = repoPath('.roadmap/constraints.md');
-const INVARIANTS_DOC = repoPath('.roadmap/invariants.md');
-
 /**
- * The docs publication a revision needs (A2): the in-tree documents code renders from the inputs it changes, each only
+ * The docs publication a revision needs (A2): `constraints.md` when its rulings change, `invariants.md` when its obligations
+ * do (§2.9). The in-tree documents code renders from the inputs it changes, each only
  * when its rendering changes, and the contract ops of the sidecars it lands; null when there is nothing to publish.
  */
 function publicationOf(view: JournalView, revision: RevisionInForce, inputs: NextInputs): Readonly<{ renders: readonly Render[]; contractOps: readonly ContractOp[] }> {

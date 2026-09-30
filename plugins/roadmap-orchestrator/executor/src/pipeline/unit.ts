@@ -59,7 +59,7 @@ import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
-import { candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
+import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { prepare } from './prepare.ts';
@@ -210,8 +210,11 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       if (f.outcome === 'transient-violation') {
         return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }
-      // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
       const at = stageParent(f);
+      // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
+      const batch = memberBatchCandidate(view, at);
+      if (batch !== null) return candidateFixRound(batchMemberFix(ctx, unit, batch), [], verification, tip);
+      // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
       const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
       // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
       const survived = mutantFix(ctx, at);
@@ -409,6 +412,11 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const consumed = await consume(ctx, unit);
   if (consumed !== null) return consumed;
   const u = ctx.journal.view.unit(unit.id);
+  // M3 (B7): a repair batch's ff retired the unit with its gate's approval still its decision: only its retire is left.
+  if (u.status === 'retired') {
+    await retire(ctx, unit);
+    return { kind: 'merged' };
+  }
   if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
   const f = u.decided;
   // Before a decision: a re-entry prepares first (its lineage not yet prepared), a vacuity repair reproduces its mutant
@@ -487,7 +495,7 @@ const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reent
  * vacuity repair: `reproduces`, src/pipeline/reproduce.ts `specFacts`), else its decided next stage (`nextStage`).
  */
 export const upcoming = (u: UnitState, reproduces: boolean): NextStage | null =>
-  (reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : 'plan-check' } : nextStage(u, reproduces));
+  (u.status === 'retired' ? null : reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : 'plan-check' } : nextStage(u, reproduces));
 
 // ---------------------------------------------------------------------------------------------------
 // The loop

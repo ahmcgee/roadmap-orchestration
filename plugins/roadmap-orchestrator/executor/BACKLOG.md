@@ -92,10 +92,18 @@ at triage stay in git history.
 
 ## Do soon (small fixes)
 
-None.
+- **One completion predicate (M3 B7).** `status`'s `completion.unmet` (src/status.ts `unmetOf`) and the scheduler's
+  `completionBlockers` (src/schedule/scheduler.ts) state §2.10 twice, with different names and no close-out in status;
+  status should read `completionBlockers`.
 
 ## Watch (act only on the trigger)
 
+- **A stop waits for a running audit's lens calls (M3 B7).** B5's audit asks its lenses one after another with no
+  cancellation, and a killed lens call abandons the audit (its triggers retried a wall-clock period later), so a stop
+  kills none. Trigger: a stop taking minutes behind an audit; the fix is a stop check between lenses in `runAudit`.
+- **A lane without a verdict retries its job every HOLISTIC_RETRY_MS (M3 B7).** The close-out, the baseline, an audit or
+  a batch whose lane is blocked (a lost runner, a deadline) is asked again every 5 s with no bound. Trigger: a lane
+  blocked for good; the fix is a backoff or a needs-user after N tries.
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
   outlasts a working day with nobody noticing.
@@ -133,13 +141,16 @@ None.
 
 ## Scaffolding to delete
 
+- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: `adoptedProvenance` in `src/executor.ts` (a
+  dev.5 revision's routing from its adoption record, its rebuild for an unreconstructable one) and `sched.json`'s absent
+  `jobQueue` read as empty (`schedFile`, `src/schedule/scheduler.ts`).
 - The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.5 is in flight:
   `revisionSourceOf` (a `plan-applied` without `source`, and the field's optionality), `transientRulesOf` and the
   dev.5 transient rules it selects (the five `.roadmap/` entries, no scope check; step A4's branch), `applyInputsOf`
   and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
   without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4),
-  `audit` and `close-admissions` (B7) in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s; A5b deleted
+- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4)
+  in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s, B7 `audit` and `close-admissions`'; A5b deleted
   `gc`'s failure in `src/cli/main.ts`); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
   B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
   `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`

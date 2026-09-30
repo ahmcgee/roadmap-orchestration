@@ -10,10 +10,14 @@
 // Retirement (A8, §2.9 "Growth across arcs"): the close-out rendering leaves out arc-lifetime rulings and every
 // ruling the ledger has withdrawn; the living rendering keeps them all. The ref keeps them either way.
 import type { RulingId } from '../core/ids.ts';
+import { repoPath } from '../core/values.ts';
 import type { RulingSidecar } from '../holistic/types.ts';
 import type { Ruling } from '../spec/rulings.ts';
 
 export type ConstraintsMode = 'living' | 'close-out';
+
+/** Where the rendering lives in the product tree (the docs publication writes it, A2, A8). */
+export const CONSTRAINTS_DOC = repoPath('.roadmap/constraints.md');
 
 const code = (v: string): string => `\`${v}\``;
 /** A bullet whose text may span lines: continuation lines are indented under it. */

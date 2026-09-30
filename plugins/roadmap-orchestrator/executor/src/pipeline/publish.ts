@@ -31,6 +31,15 @@
 // published → `finishDocs` (what is missing of docs-covered, snapshot, release); not published → `abandonDocs` (its
 // checkout removed, the slot released), and the source re-evaluates.
 //
+// The close-out publication (A8, M3 step B7; `publishCloseOut`) is the other docs publication: no revision, the same
+// slot, commit, transient check, ff and settle. At completion it publishes the close-out renderings where they differ from
+// the integration head (`constraints.md` without arc-lifetime and withdrawn rulings, `invariants.md` with the latched
+// obligations published must-hold) and runs the suite and every arc lane on it; with nothing to change it runs every arc
+// lane on the head alone (reusing what is observed there) and publishes nothing. A published close-out is docs-only: it
+// covers its own edge (`docs-covered`, A17) and records `docs-published{pub, source: close-out, commit}` before its
+// snapshot. A close-out never runs inside a revision (the scheduler runs it only with nothing else running), so
+// `finishDocs` tells it from a revision's publication by the plan in force not naming its pub.
+//
 // The lanes run as a journey series under `job{pub}` (src/pipeline/lanes.ts `runJourneySeries`): reserved first of every
 // unit, the red-lane protocol, evidence per lane execution in its own immutable dir (`jobLaneDir`), a witness record per
 // arc lane run, and the checkout's integrity after the lanes: a lane that left it dirty or moved its HEAD is preserved as
@@ -42,7 +51,9 @@ import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INT
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
+import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
 import { applyContractOps } from '../docs/contracts.ts';
+import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
 import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs } from '../git/docs.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
@@ -309,7 +320,9 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
  * Why the docs candidate is not green, or null: a series that ended without every verdict, a suite lane that did not
  * pass, or a selected obligation whose effect is `red` on the candidate's witness records (G12).
  */
-function verdictReason(series: JourneySeries, obligations: Obligations | null, selected: ReadonlySet<ObligationId>): string | null {
+function verdictReason(
+  series: JourneySeries, obligations: Obligations | null, selected: ReadonlySet<ObligationId>, latched: ReadonlySet<ObligationId> = new Set(),
+): string | null {
   switch (series.end.kind) {
     case 'ran':
       break;
@@ -332,7 +345,7 @@ function verdictReason(series: JourneySeries, obligations: Obligations | null, s
   if (obligations === null || selected.size === 0) return null;
   const records = new Map(series.runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
   const effects = obligationEffects({
-    obligations: obligations.obligations, selected, latched: new Set(), completing: new Set(),
+    obligations: obligations.obligations, selected, latched, completing: new Set(),
     verdict: (_o, witness) => {
       const record = records.get(witness.lane);
       return record === undefined ? null : verdictOf(record, witness);
@@ -341,6 +354,111 @@ function verdictReason(series: JourneySeries, obligations: Obligations | null, s
   if (!brakesOn(effects, selected)) return null;
   const reds = [...selected].filter((id) => effects.get(id) === 'red').sort();
   return `obligations ${reds.join(', ')} do not hold on the docs candidate`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The close-out publication (A8)
+
+/** The close-out renderings (A8) that differ from what `commit` holds: `constraints.md`, then `invariants.md`. */
+export function closeOutFiles(ctx: Reader, commit: Sha): readonly DocsFile[] {
+  const view = ctx.journal.view;
+  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view), ctx.planFile);
+  const latched = view.holistic().latched.map((l) => l.obligation);
+  const ledger = parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force');
+  const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, [...revision.sidecars.values()].map((x) => x.sidecar), 'close-out'), 'utf8') }];
+  if (revision.obligations !== null) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(renderInvariants(revision.obligations.value, latched), 'utf8') });
+  return renders.filter((r) => textAt(ctx.repo, commit, r.path) !== r.bytes.toString('utf8'));
+}
+
+export type CloseOutOutcome =
+  /** Published: the integration head is its commit; its docs-covered, docs-published and snapshot are written. */
+  | Readonly<{ kind: 'published'; pub: JobId; head: Sha }>
+  /** The head already holds the close-out renderings; every arc lane is witnessed on it. */
+  | Readonly<{ kind: 'nothing-to-change'; head: Sha }>
+  /** A lane gave no verdict (blocked, occupied, a failed cleanup: job-owned residues): the close-out runs again later. */
+  | Readonly<{ kind: 'no-verdict'; pub: JobId; detail: string }>
+  /** Refused before its ff: a suite lane or an obligation red on the head plus the renderings, or the head moved. */
+  | Readonly<{ kind: 'refused'; pub: JobId; reason: string }>;
+
+function endDetail(end: JourneySeries['end']): string {
+  switch (end.kind) {
+    case 'ran':
+      return 'ran';
+    case 'blocked':
+      return `lane ${end.lane} gave no verdict: ${end.detail}`;
+    case 'occupied':
+      return `a lane's resources were occupied: ${end.needsUser.summary}`;
+    case 'cleanup-failed':
+      return `a lane's resources could not be cleaned (${end.failed.join(', ')}): job-owned residues, probed and reclaimed`;
+    case 'interrupted':
+      return `interrupted (${end.reason})`;
+  }
+}
+
+/**
+ * The close-out publication (A8): see the header. `pub` is the next `docs-<n>` (a nothing-to-change run that reuses every
+ * observation writes nothing, so it names none). Like a revision's publication, it runs to its end: nothing kills its lanes.
+ */
+export async function publishCloseOut(ctx: DocsContext): Promise<CloseOutOutcome> {
+  const view = ctx.journal.view;
+  const pub = view.nextJobId('docs');
+  const parent: Parent = { type: 'job', job: pub };
+  const plan = ctx.plan();
+  const integration = branchRef(plan.integrationBranch);
+  const headNow = (): Sha => {
+    const tip = refTarget(ctx.repo, integration);
+    if (tip === null) throw new Error(`integration ${integration} does not exist`);
+    return tip;
+  };
+  const obligations = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view), ctx.planFile).obligations?.value ?? null;
+  const arcLanes = (obligations?.lanes ?? []).map(arcJourneyLane);
+  const owner = { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst } as const;
+
+  const head = headNow();
+  if (closeOutFiles(ctx, head).length === 0) {
+    const series = await runJourneySeries(ctx, owner, arcLanes, { path: docsWorktree(plan, pub), checkout: { type: 'detached', at: head } }, { reuse: true, stop: () => false });
+    return series.end.kind === 'ran' ? { kind: 'nothing-to-change', head } : { kind: 'no-verdict', pub, detail: endDetail(series.end) };
+  }
+
+  await takeSlot(ctx, { type: 'docs', pub });
+  const refuse = async (reason: string): Promise<CloseOutOutcome> => {
+    await releaseSlot(ctx, pub);
+    return { kind: 'refused', pub, reason: `close-out publication ${pub}: ${reason}` };
+  };
+  const tip = headNow();
+  const files = closeOutFiles(ctx, tip);
+  if (files.length === 0) return refuse(`${plan.integrationBranch} advanced to ${tip}, which holds the close-out renderings`);
+  const commit = await runOp(ctx.journal, docsCommitOp(ctx.repo), `docs:${pub}`, parent, planDocs(ctx.repo, {
+    arc: plan.arc, pub, tip, files, worktree: docsWorktree(plan, pub), identity: executorIdentity(), message: `roadmap ${plan.arc}: close-out publication ${pub}\n`,
+  }));
+  const next = commit.post.new;
+  const violations = docsTransientViolations(changedPaths(ctx.repo, tip, next), files.map((f) => f.path));
+  if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
+
+  // The suite, then every arc lane (§2.6: at close-out, all), graded by the brake over every non-exempt obligation.
+  const series = await runJourneySeries(ctx, owner, [...plan.suite.lanes.map(suiteJourneyLane), ...arcLanes], docsWorktreeRequest(commit), {
+    reuse: true, stop: (r) => r.record === null && r.verdict !== 'pass',
+  });
+  if (series.end.kind !== 'ran') {
+    await releaseSlot(ctx, pub);
+    return { kind: 'no-verdict', pub, detail: endDetail(series.end) };
+  }
+  const selected = new Set(obligations?.obligations.filter((o) => !isExempt(o)).map((o) => o.id) ?? []);
+  const why = verdictReason(series, obligations, selected, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)));
+  if (why !== null) return refuse(why);
+
+  const decision = planDocsFf(ctx.repo, integration, commit);
+  if (decision.kind !== 'ff') {
+    if (decision.kind === 'foreign-mover') return refuse(`${decision.ref} is at ${decision.observed ?? 'nothing'}, expected ${decision.expected}: an executor-owned ref was moved by another`);
+    return refuse(`integration advanced to ${decision.tip} while the close-out held the slot`);
+  }
+  const ff = await runPrepared(ctx.journal, integrationFfOp(ctx.repo, noUnit), `integration:${plan.arc}`, parent, decision.body);
+  const ffDone = ctx.journal.view.doneOf(ff.op);
+  if (ffDone === null || ffDone.kind !== 'integration.ff') throw new Error(`integration.ff ${ff.op} has no done record`);
+  if (ffDone.outcome.kind !== 'published') return refuse(`its ff ended ${ffDone.outcome.kind}`);
+  crashPoint('closeout.after-ff');
+  await finishDocs(ctx, pub);
+  return { kind: 'published', pub, head: next };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -361,16 +479,23 @@ function payloadOfPub(view: JournalView, runDir: AbsPath, ff: IntentOf<'integrat
 /**
  * After a published docs publication's activation, each step only where missing (recovery calls it again): a
  * docs-only publication's `docs-covered{pub, T → D}` (A17: no contract op, so its diff is confined to the rendered
- * `.roadmap/` files), the snapshot of the run's records (the `plan-applied` included), then the slot released.
+ * `.roadmap/` files; a close-out's always), a close-out's `docs-published`, the snapshot of the run's records (the
+ * `plan-applied` included), then the slot released.
  */
 export async function finishDocs(ctx: ResourceContext, pub: JobId): Promise<void> {
   const view = ctx.journal.view;
   const ff = docsFfOf(view, pub);
   const done = ff === undefined ? null : view.doneOf(ff.op);
   if (ff === undefined || done === null || done.kind !== 'integration.ff' || done.outcome.kind !== 'published') throw new Error(`docs publication ${pub} did not publish`);
-  const payload = payloadOfPub(view, ctx.runDir, ff);
-  if (payload.publication?.contractOps.length === 0 && !view.holistic().docsCovered.some((d) => d.pub === pub)) {
+  // A close-out (A8) carries no revision: the plan in force never names its pub (it runs outside any revision).
+  const closeOut = view.planApplied()?.publication?.pub !== pub;
+  const docsOnly = closeOut || payloadOfPub(view, ctx.runDir, ff).publication?.contractOps.length === 0;
+  if (docsOnly && !view.holistic().docsCovered.some((d) => d.pub === pub)) {
     ctx.journal.fact({ kind: 'docs-covered', pub, from: ff.expect.old, to: ff.expect.new });
+  }
+  if (closeOut && !view.holistic().docsPublished.some((d) => d.pub === pub)) {
+    crashPoint('closeout.before-published');
+    ctx.journal.fact({ kind: 'docs-published', pub, source: 'close-out', commit: ff.expect.new });
   }
   const parent: Parent = { type: 'job', job: pub };
   const snapped = view.opsOf('snapshot.publish').some((i) => canonicalJson(i.parent) === canonicalJson(parent) && view.doneOf(i.op) !== null);
