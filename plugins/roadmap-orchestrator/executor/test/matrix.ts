@@ -65,6 +65,7 @@ export const SPEC_PATCH = 'spec.patch';
 export const RESIDUE_ORDERING = 'resource.transition fail + residue';
 export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const RETRY_RECLAIM = 'resource.transition retry reclaim (M2: reclaim → teardown → disposition → release)';
+export const PROBE_JOB = 'probe job (M2: smoke spawn → probe fact)';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
@@ -453,6 +454,36 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['retry.after-disposition', 'resource.after-done'],
         recovery: 'the disposition is durable, the instance still cleaning under the retry: recovery reruns the idempotent teardown and releases without a second disposition',
+      },
+    },
+  },
+  {
+    // M2 step 3. The scenarios (test/fixtures/probe-child.ts `probe`): one probe job of a backend target (a claude
+    // outage park: the backend's smoke) and one of the host target (a unit's blocked-lane park: the host sample
+    // and the smoke's shell command), each ending in its `probe` fact. Recovery is `recover`, then the next
+    // probe of whatever is still due. A resource target's spawn and reclaim order are the retry reclaim row.
+    row: PROBE_JOB,
+    test: 'test/probe-crash.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'excluded',
+        why: 'a spawn intent durable before its runner is the proc.spawn row\'s B2 (spawn.after-intent), reconciled lost the same way for a smoke spawn; B3 launch.after-launch-json crashes this row\'s spawn before its runner starts',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['launch.after-launch-json', 'launch.after-spawn'],
+        recovery: 'a runner never started is closed lost, a started one is adopted and its result recorded once; either way no probe fact, so the target is due again and the next probe records the one pass',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['probe.before-fact'],
+        recovery: 'the smoke is done and nothing is open; with no probe fact the target is due again and the next probe records the one pass',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['probe.after-fact'],
+        recovery: 'the pass is durable and the park recovered: nothing is open and nothing is due',
       },
     },
   },

@@ -4,8 +4,9 @@
 // group is reported, so the architect fixes them together):
 //
 //   1. input        plan schema (nothing else can run without a plan), legacy `.roadmap/`, the rest of
-//                   `plan-invalid` (spec files, baseline ancestry, resource names)
-//   2. environment  worktree root, lanes, routing, host residues             (pure: no effect yet)
+//                   `plan-invalid` (spec files, baseline ancestry, resource names, over capacity)
+//   2. environment  worktree root, lanes, routing, host residues other than the arc's own (A9)
+//                                                                            (pure: no effect yet)
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files, a start whose files differ
@@ -15,7 +16,8 @@
 //
 // `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
 // separate: its spawns are journaled, so the executor runs it only after `executor-started` and recovery,
-// which closes a smoke spawn a crashed start left open like any other (lead ruling, 14c).
+// which closes a smoke spawn a crashed start left open like any other (lead ruling, 14c). On a respawn of an
+// established arc a failed smoke parks its backend instead of refusing (A18).
 //
 // Order within groups 1 and 2 follows the table. Nothing here names a model: routing refusals name the
 // seat and the layer.
@@ -31,13 +33,14 @@ import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
-import { undispositioned, undispositionedResidueCheck } from '../host/residues.ts';
+import { ownArcResidue, undispositioned, undispositionedResidueCheck } from '../host/residues.ts';
 import type { ClaimOutcome } from '../host/lock.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import { classify } from '../input/classify.ts';
 import { type InputFiles, planInForce, readInputFiles, recordPlan, specBytesOf, specFilePath, specShaInForce } from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
+import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
 import {
   type RepoConfig, type ResolvedRouting, arcStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
@@ -46,7 +49,7 @@ import type { ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import { resolveArgv0 } from './argv0.ts';
-import { type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeRejections } from './smoke.ts';
+import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
 import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
@@ -208,16 +211,36 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
       }
     };
     for (const lane of plan.suite.lanes) unknown(null, lane, lane.resources);
+    const specsLoaded = new Map<UnitId, SpecM1>();
     for (const unit of plan.units) {
       unknown(unit.id, null, unit.resources);
       const spec = loaded.get(unit.id);
       if (spec === undefined || !isSpec(spec)) continue;
+      specsLoaded.set(unit.id, spec);
       unknown(unit.id, null, spec.resources);
       for (const lane of spec.lanes) unknown(unit.id, lane, lane.resources);
     }
+    const view = arcView(context);
+    if (view !== 'corrupt') out.push(...overCapacity(plan, { cpu: cpuCapacity(plan) }, specsLoaded, view));
     return out;
   },
 };
+
+/** The arc's log, read-only (the checks run before the journal opens), or `corrupt` (group 4 refuses it as log-corrupt). */
+function arcLog(context: StartupContext): JournalView | 'corrupt' {
+  try {
+    return readJournal(context.runDir, context.plan.arc).view;
+  } catch (error) {
+    if (error instanceof LogCorruptError) return 'corrupt';
+    throw error;
+  }
+}
+
+/** The arc's log once it records a plan revision; null before one (a first start). */
+function arcView(context: StartupContext): JournalView | null | 'corrupt' {
+  const view = arcLog(context);
+  return view === 'corrupt' || view.scheduling() !== null ? view : null;
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Group 2: environment
@@ -319,6 +342,19 @@ export function containmentModeCheck(journal: OpenJournal): readonly Rejection<'
   return recorded === detected ? [] : [{ kind: 'containment-mode-changed', recorded, detected }];
 }
 
+/**
+ * The `undispositioned-residue` row, less this arc's own residues (A9): a residue its log proves it owns
+ * (`ownArcResidue`) never refuses its start or respawn; the arc disposes of it itself (a retryable park's
+ * probe, or a sweep). Every other arc's residue still refuses. A log that does not read owns nothing.
+ */
+async function residueCheck(context: StartupContext): Promise<readonly Rejection<'undispositioned-residue'>[]> {
+  const rows = await undispositionedResidueCheck.check(context);
+  if (rows.length === 0) return [];
+  const view = arcLog(context);
+  const foreign = rows.flatMap((r) => r.residues).filter((key) => view === 'corrupt' || !ownArcResidue(view, key));
+  return foreign.length === 0 ? [] : [{ kind: 'undispositioned-residue', residues: foreign }];
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Composition
 
@@ -353,7 +389,11 @@ export type StartChecks =
     /** Open when the containment mode or the plan in force refused: the caller closes it. */
     journal: OpenJournal | null;
   }>
-  | Readonly<{ kind: 'passed'; context: StartupContext; routing: SmokeRouting; claim: HostLockClaim; journal: OpenJournal }>;
+  | Readonly<{
+    kind: 'passed'; context: StartupContext; routing: SmokeRouting; claim: HostLockClaim; journal: OpenJournal;
+    /** A supervisor's respawn of an established arc (it runs the plan in force): a failed smoke parks, never refuses (A18). */
+    respawn: boolean;
+  }>;
 
 /** The absolute git common dir of `repo`, where the run dirs live. */
 export function gitCommonDir(repo: AbsPath): AbsPath {
@@ -430,7 +470,8 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     ({ kind: 'refused', rejections, claim, journal });
 
   // 1. input
-  const source = (input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc, input.planFile)) ?? fileSource(input.planFile);
+  const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc, input.planFile);
+  const source = inForce ?? fileSource(input.planFile);
   if ('kind' in source) return refused([...legacyRoadmapDir(input.repo), source]);
   const { plan } = source;
   let profile: ProfileName;
@@ -458,7 +499,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     ...(await worktreeRootCheck.check(context)),
     ...(await specLaneCheck(input.env).check(context)),
     ...routingRows,
-    ...(await undispositionedResidueCheck.check(context)),
+    ...(await residueCheck(context)),
   ];
   if (environment.length > 0 || resolved === null) return refused(environment);
 
@@ -475,7 +516,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const planRows = settlePlan(journal, context, source.files);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
-  return { kind: 'passed', context, routing: { profile, resolved }, claim, journal };
+  return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
 }
 
 /**
@@ -493,11 +534,21 @@ export async function applyRows(
   ];
 }
 
-/** Group 5: the backend smoke for the resolved profile, over the passed checks' journal. */
+/**
+ * Group 5: the backend smoke for the resolved profile, over the passed checks' journal. A first start refuses a
+ * missing or failed backend. A supervisor's respawn of an established arc does not (A18): it parks each such
+ * backend (`backend-park`, `outage` unless the backend reported a usage limit or capacity error) and the arc
+ * runs everything else, the prober recovering a retryable park. A profile that excludes a backend some seat
+ * still routes to is a configuration error and refuses either way.
+ */
 export async function smokeCheck(
   passed: Extract<StartChecks, { kind: 'passed' }>, env: Readonly<Record<string, string | undefined>>,
-): Promise<Readonly<{ kind: 'refused'; rejections: readonly StartupRejection[] }> | Readonly<{ kind: 'passed'; smoke: SmokeReport }>> {
+): Promise<Readonly<{ kind: 'refused'; rejections: readonly StartupRejection[] }> | Readonly<{ kind: 'passed'; smoke: SmokeReport; parked: readonly SmokePark[] }>> {
   const report = await smoke(passed.routing, { journal: passed.journal, runDir: passed.context.runDir, hostEnv: backendEnv(env) });
   const rejections = smokeRejections(report);
-  return rejections.length > 0 ? { kind: 'refused', rejections } : { kind: 'passed', smoke: report };
+  const parked = passed.respawn ? smokeOutages(report) : [];
+  const refused = rejections.filter((r) => !parked.some((p) => p.backend === r.backend));
+  if (refused.length > 0) return { kind: 'refused', rejections: refused };
+  for (const p of parked) passed.journal.fact({ kind: 'backend-park', backend: p.backend, class: p.class, inv: p.inv });
+  return { kind: 'passed', smoke: report, parked };
 }

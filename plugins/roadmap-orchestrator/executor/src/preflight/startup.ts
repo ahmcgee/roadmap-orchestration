@@ -4,13 +4,14 @@
 // kind; no fs or git here. A refused start persists its rejections as `status.rejection.json` in the run
 // dir (`RejectionFile`, step 13b), which `status` reads back through `rejectionFile`.
 import {
-  type ArcId, type InvocationId, type LaneId, type ResourceName, type Sha, type UnitId, arcId, invocationIdOf, laneId, resourceName, sha, unitId,
+  type ArcId, type InvocationId, type LaneId, type ResourceName, type Sha, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId, resourceName, sha, unitId,
 } from '../core/ids.ts';
 import { type ResidueKey, residueKey } from '../core/records.ts';
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, type PlanPath, type RefName, absPath, isoTime, planPath, refName } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import type { OverCapacity } from '../resources/pool.ts';
 import {
   type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
 } from '../routing/types.ts';
@@ -60,7 +61,9 @@ export type StartupRejection =
       | Readonly<{ type: 'unit-branch-conflict'; ref: RefName; detail: string }>
       | Readonly<{ type: 'baseline-not-ancestor'; baseline: Sha; tip: Sha }>
       | Readonly<{ type: 'unknown-resource'; unit: UnitId | null; lane: LaneId | null; resource: ResourceName }>
-      | Readonly<{ type: 'unknown-cite'; unit: UnitId; cite: string }>;
+      | Readonly<{ type: 'unknown-cite'; unit: UnitId; cite: string }>
+      // M2: a request for more of a pool than it has (only `@cpu` can be exceeded; src/resources/pool.ts).
+      | OverCapacity;
   }>
   // Host rows from the plan's "Host lock and ownership" and "Tail rule" sections, also refused at start.
   | Readonly<{ kind: 'recovery-holder-dead'; pid: number }>
@@ -164,6 +167,11 @@ const planProblem: Read<Row<'plan-invalid'>['problem']> = tagged('type', {
     type: f.get('type', literal('unknown-resource')), unit: f.get('unit', nullable(unitId)), lane: f.get('lane', nullable(laneId)), resource: f.get('resource', resourceName),
   })),
   'unknown-cite': object((f): Row<'plan-invalid'>['problem'] => ({ type: f.get('type', literal('unknown-cite')), unit: f.get('unit', unitId), cite: f.get('cite', str) })),
+  'over-capacity': object((f): Row<'plan-invalid'>['problem'] => ({
+    type: f.get('type', literal('over-capacity')), unit: f.get('unit', nullable(unitId)), lane: f.get('lane', nullable(laneId)),
+    resource: f.get('resource', (v, p): OverCapacity['resource'] => (v === CPU_POOL ? CPU_POOL : resourceName(v, p))),
+    requested: f.get('requested', positive), total: f.get('total', positive),
+  })),
 });
 
 export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionKind, StartupRejection>('kind', {
