@@ -80,6 +80,7 @@ export const DOCS_PUBLICATION = 'command.apply: rule, its docs publication (M3 A
 export const PREEMPT = 'docs publication preempting a candidate before green (M3 A4, A7: preempt kill of its suite lane)';
 export const LATCH = 'obligation-latched after a unit ff{published}, before its snapshot (M3 B2)';
 export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot under batch{finding, attempt}, chained candidate, job lanes, batch ff, finish)';
+export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -1179,6 +1180,35 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['snapshot.act-end'],
         recovery: 'the batch published and its snapshot acted: the snapshot reconciled, the slot left held; finishBatch writes nothing twice and releases it',
+      },
+    },
+  },
+  {
+    // A requested audit of two lenses runs in a child (test/fixtures/audit-child.ts); recovery runs, then the audit is run
+    // again: a running audit resumes as the same job from its recorded inputs.
+    row: AUDIT_JOB,
+    test: 'test/audit.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['audit.after-started'],
+        recovery: 'audit-started durable, nothing run: the job resumes as audit-1 from its recorded inputs (no second capture); its lanes and both lenses run once; one audit-ended, completed',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['spawn.after-runner-exit', 'audit.after-lens'],
+        recovery: 'inside the job: its arc lane settled by recovery (re-run, no witnessed fact before), or the first lens read with its findings opened; the job resumes, consumes the call it already made and asks only the next lens; one audit-ended',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['audit.before-ended'],
+        recovery: 'every lens read and the lens checkout removed, the end not written: the job resumes, consumes both calls, asks nothing, writes one audit-ended',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['audit.after-ended'],
+        recovery: 'the audit ended: nothing to resume; no audit is due; no call was asked twice',
       },
     },
   },

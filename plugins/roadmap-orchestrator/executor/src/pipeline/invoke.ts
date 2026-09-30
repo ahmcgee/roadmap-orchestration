@@ -213,6 +213,7 @@ function assertPairing(subject: SpawnSubject, terminal: LaunchTerminal): void {
   };
   switch (subject.purpose) {
     case 'backend':
+    case 'arc-backend':
       if (terminal.type !== 'backend' || terminal.purpose !== 'backend' || terminal.role !== subject.role || terminal.routingRev !== subject.routingRev) fail();
       return;
     case 'smoke':
