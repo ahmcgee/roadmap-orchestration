@@ -4,14 +4,16 @@
 // independent of outcome"), because the fact is written from result.json before the spawn's done, for
 // every result.
 //
-// Smokes are charged to their backend, not to a seat (`bySmoke`), so seat spend is the units' own.
+// Smokes are charged to their backend, not to a seat (`bySmoke`), so seat spend is the units' and jobs' own. A job's
+// lens or checkpoint call (M3, `MeterSubject.job`) is charged to its arc seat (`lens.arc`, `checkpoint.arc`): it
+// counts in `byRole` and `bySeat` like a unit's call, and per job in `byJob` (never in `byUnit`).
 //
 // Totals are keyed by role (and seat tier) and routing revision, never by model: records carry `{role,
 // tier, routingRev}` only. `byModel` derives a model view at render time from the revisions' routing tables
 // and writes nothing. A fact names its seat's tier (lead ruling, 13b), so each seat total resolves to
 // exactly one model.
 import type { Event, Fact } from './core/events.ts';
-import type { RoutingRev, UnitId } from './core/ids.ts';
+import type { JobId, RoutingRev, UnitId } from './core/ids.ts';
 import { type Backend, type ModelId, type Role, type RoutingTable, type SeatRef, atSeat, seatRef } from './routing/types.ts';
 
 export type UsageTotals = Readonly<{
@@ -32,6 +34,7 @@ export type RoleTotal = Readonly<{ role: Role; routingRev: RoutingRev }> & Usage
 export type SeatTotal = SeatRef & Readonly<{ routingRev: RoutingRev }> & UsageTotals;
 export type UnitTotal = Readonly<{ unit: UnitId; role: Role; routingRev: RoutingRev }> & UsageTotals;
 export type SmokeTotal = Readonly<{ backend: Backend; routingRev: RoutingRev }> & UsageTotals;
+export type JobTotal = Readonly<{ job: JobId; role: Role; routingRev: RoutingRev }> & UsageTotals;
 
 export type Meter = Readonly<{
   /** Ascending by role, then routingRev. */
@@ -40,6 +43,8 @@ export type Meter = Readonly<{
   bySeat: readonly SeatTotal[];
   /** Ascending by unit, role, routingRev. */
   byUnit: readonly UnitTotal[];
+  /** M3: the jobs' lens and checkpoint calls, ascending by job, role, routingRev. */
+  byJob: readonly JobTotal[];
   /** Start-up smokes, ascending by backend, routingRev: in no role, seat or unit total. */
   bySmoke: readonly SmokeTotal[];
 }>;
@@ -74,6 +79,7 @@ export function meterOf(events: Iterable<Event>): Meter {
   const seats = new Map<string, Mutable<SeatTotal>>();
   const units = new Map<string, Mutable<UnitTotal>>();
   const smokes = new Map<string, Mutable<SmokeTotal>>();
+  const jobs = new Map<string, Mutable<JobTotal>>();
   for (const e of events) {
     if (e.type !== 'fact' || (e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable')) continue;
     const f = e.fact;
@@ -83,19 +89,19 @@ export function meterOf(events: Iterable<Event>): Meter {
       smokes.set(k, { backend: s.backend, routingRev: f.routingRev, ...add(smokes.get(k) ?? ZERO, f) });
       continue;
     }
-    // M3: a job's lens or checkpoint call has an arc seat and no unit. Interim (0a): nothing charges one before
-    // steps B4-B6 run them; B9 folds them into the role and seat totals.
-    if (s.type === 'job') {
-      throw new Error(`meter: a job's usage (${f.inv}): not implemented (step B9)`);
-    }
     const rk = `${s.role} ${f.routingRev}`;
     roles.set(rk, { role: s.role, routingRev: f.routingRev, ...add(roles.get(rk) ?? ZERO, f) });
     const sk = `${s.role} ${s.tier} ${f.routingRev}`;
     seats.set(sk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, ...add(seats.get(sk) ?? ZERO, f) });
+    if (s.type === 'job') {
+      const jk = `${s.job} ${rk}`;
+      jobs.set(jk, { job: s.job, role: s.role, routingRev: f.routingRev, ...add(jobs.get(jk) ?? ZERO, f) });
+      continue;
+    }
     const uk = `${s.unit} ${rk}`;
     units.set(uk, { unit: s.unit, role: s.role, routingRev: f.routingRev, ...add(units.get(uk) ?? ZERO, f) });
   }
-  return { byRole: sorted(roles), bySeat: sorted(seats), byUnit: sorted(units), bySmoke: sorted(smokes) };
+  return { byRole: sorted(roles), bySeat: sorted(seats), byUnit: sorted(units), byJob: sorted(jobs), bySmoke: sorted(smokes) };
 }
 
 export type ModelTotal = Readonly<{ model: ModelId }> & UsageTotals;

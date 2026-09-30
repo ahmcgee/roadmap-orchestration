@@ -191,7 +191,8 @@ test('gc.keeps-records: a sealed arc within K loses only its raw evidence; its r
   for (const kept of ['events.jsonl', 'inputs', 'evidence/u1/1-lanes/mul/output/manifest.json', 'evidence/jobs/docs-1/suite/witness.json', 'inv/9-1/launch.json', 'inv/9-1/result.json']) {
     assert.ok(existsSync(join(a.runDir, kept)), `${kept} is a record and stays`);
   }
-  assert.deepEqual(status(a.runDir, a.arc, host), before, 'the fold and status are unchanged');
+  const untimed = (s: typeof before) => ({ ...s, host: { ...s.host, log: { ...s.host.log, foldMs: 0 } } });
+  assert.deepEqual(untimed(status(a.runDir, a.arc, host)), untimed(before), 'the fold and status are unchanged (but for the fold\'s own timing)');
   assert.equal(sealingOf(a.repo, a.runDir, readJournal(a.runDir, a.arc)).kind, 'sealed');
   assert.equal(readClaim(host), null, 'the claim is released');
   assert.deepEqual((await done(gc({ hostDir: host, repo: a.repo, keep: DEFAULT_KEEP, dryRun: false }))).deleted, [], 'idempotent');

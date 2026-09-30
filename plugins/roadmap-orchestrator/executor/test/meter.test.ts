@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
-import { type RoutingRev, arcId, invocationId, opId, routingRev, unitId } from '../src/core/ids.ts';
+import { type RoutingRev, arcId, invocationId, jobIdOf, opId, routingRev, unitId } from '../src/core/ids.ts';
 import type { TokenUsage } from '../src/core/records.ts';
 import { invoke } from '../src/pipeline/invoke.ts';
 import { byModel, meterOf } from '../src/meter.ts';
@@ -70,6 +70,34 @@ describe('meter', () => {
     ]);
     assert.deepEqual(m.byRole.map((t) => [t.role, t.calls, t.input]), [['planCheck', 1, 5]]);
     assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['planCheck', 'low', 1]]);
+  });
+
+  it('meter.job-usage: a job\'s lens and checkpoint calls count at their arc seat, by role and per job, never per unit; byModel renders them', () => {
+    const job = (j: string, role: 'lens' | 'checkpoint', attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role, tier: 'arc' }) as const;
+    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, holistic: true });
+    const rev = holistic.rev;
+    const log = [
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: job('audit-1', 'lens', 1), usage: tokens(100, 10) }),
+      factEvent({ kind: 'meter', inv: inv(2), routingRev: rev, subject: job('audit-1', 'lens', 2), usage: tokens(50, 5, 7) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(3), routingRev: rev, subject: job('ckpt-1', 'checkpoint', 1), reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(4), routingRev: rev, subject: job('ckpt-1', 'checkpoint', 2), usage: tokens(30, 3) }),
+      factEvent({ kind: 'meter', inv: inv(5), routingRev: rev, subject: seat('gate', 'med', U1, 1), usage: tokens(1, 1) }),
+    ];
+    const m = meterOf(log);
+    const zero = { cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0 };
+    assert.deepEqual(m.byRole.map((t) => [t.role, t.calls, t.input, t.unavailable]), [['checkpoint', 2, 30, 1], ['gate', 1, 1, 0], ['lens', 2, 150, 0]]);
+    assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['checkpoint', 'arc', 2], ['gate', 'med', 1], ['lens', 'arc', 2]]);
+    assert.deepEqual(m.byJob, [
+      { job: 'audit-1', role: 'lens', routingRev: rev, calls: 2, input: 150, output: 15, ...zero, cacheRead: 7, unavailable: 0 },
+      { job: 'ckpt-1', role: 'checkpoint', routingRev: rev, calls: 2, input: 30, output: 3, ...zero, unavailable: 1 },
+    ]);
+    assert.deepEqual(m.byUnit.map((t) => [t.unit, t.role]), [[U1, 'gate']], 'a job\'s call is in no unit total');
+    // The render-time model view resolves the arc seats of a holistic revision's table.
+    const models = byModel(m.bySeat, new Map([[rev, holistic.table]]));
+    assert.equal(models.reduce((n, x) => n + x.calls, 0), 5);
+    const callsOf = (model: string) => models.find((x) => x.model === model)?.calls ?? 0;
+    assert.ok(callsOf(holistic.table.lens.arc.model) >= 2 && callsOf(holistic.table.checkpoint.arc.model) >= 2, JSON.stringify(models));
+    assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
   });
 
   it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {

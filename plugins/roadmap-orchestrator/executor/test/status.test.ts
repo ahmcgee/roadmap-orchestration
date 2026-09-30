@@ -74,7 +74,8 @@ describe('status.subset', () => {
   }, T);
 
   test('no-owner when nothing has run: every field present, nothing to report', () => {
-    assert.deepEqual(before_, {
+    assert.ok(before_.host.log.foldMs >= 0);
+    assert.deepEqual({ ...before_, host: { ...before_.host, log: { ...before_.host.log, foldMs: 0 } } }, {
       arc: r.arc,
       run: { state: 'no-owner', owner: { state: 'none', generation: null, pid: null }, heartbeatAt: null },
       units: [],
@@ -83,19 +84,38 @@ describe('status.subset', () => {
       legacy: false,
       needsUser: [],
       commands: { pending: [], receipts: [] },
-      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, bySmoke: [] },
-      host: { containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], probes: [], backends: [] },
+      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
+      host: {
+        containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], probes: [], backends: [],
+        log: { bytes: 0, events: 0, foldMs: 0, compactionDue: false },
+      },
       parkedBackends: [],
       plan: null,
       routing: null,
       rejection: null,
+      holistic: false,
+      target: null,
+      nowTrue: [],
+      notYetTrue: [],
+      waived: [],
+      deferred: [],
+      vision: null,
+      divergences: [],
+      decisionsSince: [],
+      convergence: null,
+      findings: { active: [], metrics: [] },
+      audit: null,
+      owed: { audits: [] },
+      completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'arc', 'commands', 'edges', 'host', 'legacy', 'needsUser', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'units',
+      'arc', 'audit', 'commands', 'completion', 'convergence', 'decisionsSince', 'deferred', 'divergences', 'edges', 'findings', 'holistic', 'host', 'legacy',
+      'needsUser', 'notYetTrue', 'nowTrue', 'owed', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'units', 'vision',
+      'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
@@ -127,6 +147,11 @@ describe('status.subset', () => {
     assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
     assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin' });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
+    // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2.
+    assert.equal(s.holistic, false);
+    assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences, s.decisionsSince], [null, null, null, null, [], [], [], []]);
+    assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: [] });
+    assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
   });
 });
 
