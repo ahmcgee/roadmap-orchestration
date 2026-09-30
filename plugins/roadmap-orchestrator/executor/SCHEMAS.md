@@ -1144,7 +1144,9 @@ id), cites: V-n[] (ascending), evidence: string[], appliesTo: arc|units{units}, 
 active|superseded|withdrawn, consistency}` with **`consistency` required (G21)**: `{verdict: consistent|inconsistent,
 judgedRevs: {head, ledgerSha256, obligationsSha256|null, visionSha256|null, contracts: [{path, blob}]}, by:
 judgment{role: FreshRole, routingRev}|architect}`. The reader requires contract ops for a `deviates` ref, and cites
-and evidence for a checkpoint's ruling; staleness of `judgedRevs` is A1's check at commit.
+and evidence for a checkpoint's ruling; staleness of `judgedRevs` is A1's check at commit. `head` is provenance only
+(lead ruling 2026-09-30): a judgment is stale when the ledger, obligations, vision or a judged contract's blob
+moved, never merely because a unit merged; docRefs are re-checked at the tip regardless.
 
 **Revisions** (G1, A2, A19). A revision's inputs are the plan, the specs, the ledger with its sidecars, the
 obligations and the vision: `RevisionManifest = PlanManifest & {rulings: {ledgerSha256, sidecars: {C-n: sha256}},

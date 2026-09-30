@@ -17,8 +17,11 @@
 //   obligations     named ids exist; every disposition's id is among `obligations`
 //   vision          every cited clause active (`citeReasons`); appliesTo names planned units
 //   consistency     (G21) the verdict `consistent`, judged by the checkpoint's own judgment for a checkpoint ruling,
-//                   and `judgedRevs` equal to the revisions in force: the head, the ledger, the obligations and the
-//                   vision bytes, and the blob of every contract it names or edits (`consistencyRevs`)
+//                   and `judgedRevs` equal to the revisions in force: the ledger, the obligations and the vision
+//                   bytes, and the blob of every contract it names or edits (`consistencyRevs`). The judged head is
+//                   provenance only: a merge that leaves those untouched keeps the judgment fresh (lead ruling,
+//                   2026-09-30), and docRefs are re-checked at the tip regardless
+
 // `ledgerAfter` and `sidecarsAfter` put a validated ruling in force: its line appended, every fully superseded
 // ruling folded to `withdrawn by` (and its sidecar marked `superseded`), the ledger's other bytes kept.
 import { readFileSync } from 'node:fs';
@@ -140,12 +143,12 @@ export function validateRuling(s: RulingSidecar, ctx: RulingContext): readonly s
   if (s.ruledBy.type === 'checkpoint' && c.by.type !== 'judgment') out.push(`${at} is the checkpoint's: its consistency is a judgment's`);
   const fresh = consistencyRevs(s, ctx);
   if ('reasons' in fresh) out.push(...fresh.reasons);
-  else if (canonicalJson(c.judgedRevs) !== canonicalJson(fresh.revs)) out.push(`${at}'s consistency is stale: judged ${staleParts(c.judgedRevs, fresh.revs).join(', ')} at other revisions than those in force`);
+  else if (staleParts(c.judgedRevs, fresh.revs).length > 0) out.push(`${at}'s consistency is stale: judged ${staleParts(c.judgedRevs, fresh.revs).join(', ')} at other revisions than those in force`);
   return out;
 }
 
 function staleParts(judged: Consistency['judgedRevs'], now: Consistency['judgedRevs']): readonly string[] {
-  const keys = ['head', 'ledgerSha256', 'obligationsSha256', 'visionSha256', 'contracts'] as const;
+  const keys = ['ledgerSha256', 'obligationsSha256', 'visionSha256', 'contracts'] as const;
   return keys.filter((k) => canonicalJson(judged[k]) !== canonicalJson(now[k]));
 }
 

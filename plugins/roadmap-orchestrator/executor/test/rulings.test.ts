@@ -168,15 +168,16 @@ describe('ruling sidecars', () => {
   it('rulings.consistency-stale: judged revisions other than those in force, or an inconsistent verdict, are refused (G21)', () => {
     const judged = sidecar().consistency.judgedRevs;
     const withRevs = (revs: object, by: object = { type: 'architect' }): RulingSidecar => sidecar({ consistency: { verdict: 'consistent', judgedRevs: { ...judged, ...revs }, by } });
-    refused(withRevs({ head: sha('d'.repeat(40)) }), /consistency is stale: judged head at other revisions/);
+    // The judged head is provenance only: a merge that leaves the judged revisions untouched keeps it fresh.
+    assert.deepEqual(validateRuling(withRevs({ head: sha('d'.repeat(40)) }), context()), []);
     refused(withRevs({ ledgerSha256: sha256('9'.repeat(64)) }), /stale: judged ledgerSha256/);
     refused(withRevs({ obligationsSha256: null }), /stale: judged obligationsSha256/);
     refused(withRevs({ visionSha256: sha256('8'.repeat(64)) }), /stale: judged visionSha256/);
     refused(withRevs({ contracts: [{ path: 'docs/money.md', blob: BLOB2 }] }), /stale: judged contracts/);
     refused(withRevs({ contracts: [] }), /stale: judged contracts/);
     refused(sidecar({ consistency: { verdict: 'inconsistent', judgedRevs: judged, by: { type: 'architect' } } }), /found it inconsistent/);
-    // The head moved after the judgment: the same sidecar is now stale.
-    refused(sidecar(), /stale: judged head/, context({ inForce: { ...context().inForce, head: sha('e'.repeat(40)) } }));
+    // The head moved after the judgment, the judged revisions did not: still fresh; a judged contract moving is stale.
+    assert.deepEqual(validateRuling(sidecar(), context({ inForce: { ...context().inForce, head: sha('e'.repeat(40)) } })), []);
     const fresh = consistencyRevs(sidecar(), context());
     assert.ok('revs' in fresh);
     assert.deepEqual(fresh.revs, judged);

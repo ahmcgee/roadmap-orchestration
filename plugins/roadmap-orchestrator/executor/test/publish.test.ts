@@ -134,9 +134,9 @@ test('rule.red-rejected: a docs candidate whose suite is red is refused before a
     assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), ledger, 'nothing is written back');
 
     const stale = ruleRecord(r, 'C-2');
-    (stale['consistency'] as Json)['judgedRevs'] = { ...((stale['consistency'] as Json)['judgedRevs'] as Json), head: 'b'.repeat(40) };
+    (stale['consistency'] as Json)['judgedRevs'] = { ...((stale['consistency'] as Json)['judgedRevs'] as Json), ledgerSha256: 'b'.repeat(64) };
     const refused = await applyCommand(w.commands, submitRule(r, stale));
-    assert.ok(refused.kind === 'rejected' && /C-2's consistency is stale: judged head/.test(refused.reason), JSON.stringify(refused));
+    assert.ok(refused.kind === 'rejected' && /C-2's consistency is stale: judged ledgerSha256/.test(refused.reason), JSON.stringify(refused));
     const wrongId = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-5')));
     assert.ok(wrongId.kind === 'rejected' && /C-5 is not the ledger's next id \(C-2\)/.test(wrongId.reason), JSON.stringify(wrongId));
     assert.equal(r.journal.view.opsOf('revision.commit').length, 2, 'the refused records never began a revision');
@@ -188,23 +188,21 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
     const tip = head(d);
-    // Judged at the tip before the unit publishes: its publication, waiting behind the unit's chain, finds it stale.
-    const early = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+    // Judged at the tip before the unit publishes: its publication waits behind the unit's chain, and, the unit
+    // touching none of the revisions it judged (the head is provenance only), publishes on the new tip.
+    const file = submitRule(r, ruleRecord(r, 'C-2'));
+    const early = applyCommand(w.commands, file);
     await sleep(1_000);
     assert.equal(r.journal.view.opsOf('docs.commit').length, 0, 'the docs publication waits for the green publication');
     assert.ok(!outcomes(d).includes('candidate:preempted'));
     assert.equal(slotState(r), 'running', 'the unit\'s publication still holds the slot');
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
+    const merged = r.journal.view.opsOf('integration.ff').find((i) => i.expect.subject === undefined)!.expect.new;
     const outcome = await early;
-    assert.ok(outcome.kind === 'rejected' && /C-2's consistency is stale: judged head/.test(outcome.reason), JSON.stringify(outcome));
-    const merged = head(d);
     assert.notEqual(merged, tip);
     assert.deepEqual(outcomes(d).slice(-3), ['candidate:green', 'ff:published', 'snapshot:published'], 'the chain was never preempted');
-    // Judged at the new tip, it publishes on it.
-    const file = submitRule(r, ruleRecord(r, 'C-2'));
-    const again = await applyCommand(w.commands, file);
-    assert.equal(again.kind, 'applied', JSON.stringify(again));
-    assertPublished(r, file.id, 'docs-2', merged);
+    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+    assertPublished(r, file.id, 'docs-1', merged);
   } finally {
     stop();
     r.journal.close();
