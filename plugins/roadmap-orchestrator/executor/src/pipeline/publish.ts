@@ -380,7 +380,8 @@ export type CloseOutOutcome =
   /** Refused before its ff: a suite lane or an obligation red on the head plus the renderings, or the head moved. */
   | Readonly<{ kind: 'refused'; pub: JobId; reason: string }>;
 
-function endDetail(end: JourneySeries['end']): string {
+/** Why a journey series ended without every verdict, in words (a job's escalation and refusals name it). */
+export function endDetail(end: JourneySeries['end']): string {
   switch (end.kind) {
     case 'ran':
       return 'ran';

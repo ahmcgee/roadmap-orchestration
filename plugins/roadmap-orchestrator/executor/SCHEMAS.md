@@ -1808,10 +1808,8 @@ src/pipeline/dispatch.ts `callArcRole`):
 8. **`run.state`** gains `draining` (a live executor that would be `running`, with admissions closed). A holistic arc is
    `complete` only while its `arc-completed` is active (A20); an arc without the layer completes as in M2.
    **`completion`** `{planRev, head, active, sealed, notSealed, unmet}`: `sealed` is A5b's `sealingOf` (its reason or
-   mismatch detail in `notSealed`); `unmet` names the §2.10 conditions that fail now (`COMPLETION_CONDITIONS`: units
-   open, obligations not discharged, blocking items, pending commands, coverage outstanding, audit owed, the latest
-   generation not quiescent under the vision in force (B6 `quiescentGenerations`), residues). The close-out publication
-   is not among them (B7's).
+   mismatch detail in `notSealed`); `unmet` names the §2.10 clauses that fail now: since B7's follow-up it is the
+   scheduler's `completionBlockers` itself (one rule; see "Choices made in M3 B7" item 1).
 9. **`host.log`** `{bytes, events, foldMs, compactionDue}`: the size of `events.jsonl`, the events folded, the fold's
    wall time in ms, and whether either compaction trigger (50 MB, 2 s) is reached. Two status reads differ only by
    `foldMs`.
@@ -1822,14 +1820,17 @@ src/pipeline/dispatch.ts `callArcRole`):
 **Choices made in M3 B7** (the scheduler joins the holistic layer; src/schedule/scheduler.ts, src/executor.ts,
 src/needsuser.ts, src/commands/{audit,admissions}.ts):
 
-1. **`complete` for a holistic arc** is `completionBlockers(h, {blocking, pending})` empty, a closed list in this order:
-   `units-open` (a unit neither merged, cut nor superseded: a parked unit is never complete, §2.10), `blocking-items`,
-   `pending-commands`, `residues`, `baseline-owed`, `audit-pending` (running or due), `coverage-outstanding` (a lens of L,
-   `coverageOf` at the head), `audit-owed` (the cadence owes a trigger), `checkpoint-pending`, `generation-not-quiescent`
-   (the latest generation any audit or checkpoint recorded, under the vision in force; none recorded: vacuous),
-   `close-out` (item 2), `obligations-not-discharged` (a non-exempt obligation, split parents through their children, not
-   observed held on the head's tree in this host's environment). It is evaluated only with nothing running and no
-   mutation pending. An arc without the layer ends as in M2 (operator parks settle it; no close-out, no `arc-completed`).
+1. **`complete`** (every arc, B7 follow-up lead ruling) is `completionBlockers(h, {blocking, pending})` empty, a closed list
+   in this order: `units-open` (holistic: a unit neither merged, cut nor superseded, a parked unit is never complete,
+   §2.10; without the layer: a unit M2 does not settle, an operator park settling), `blocking-items`, `pending-commands`,
+   `residues`, `baseline-owed`, `audit-pending` (running or due), `coverage-outstanding` (a lens of L, `coverageOf` at the
+   head), `audit-owed` (the cadence owes a trigger), `checkpoint-pending`, `generation-not-quiescent` (the latest
+   generation any audit or checkpoint recorded, under the vision in force; none recorded: vacuous), `close-out` (item 2),
+   `obligations-not-discharged` (a non-exempt obligation, split parents through their children, whose latest observation
+   on the head's tree, in whichever environment ran it, is missing or not held). Without the layer the holistic clauses
+   and the close-out are vacuous. The scheduler evaluates it only with nothing running and no mutation pending; `status`'s
+   `completion.unmet` is the same function over a read-only view of the arc (`readOnlyContexts`: every writing or
+   process-running member throws), so there is one rule.
 2. **The close-out publication (A8)** is `publishCloseOut` (src/pipeline/publish.ts): its renderings are
    `constraints.md` in `close-out` mode and `invariants.md` (latched obligations must-hold) from the inputs in force; the
    files differing from the head are published like a revision's docs (slot `docs{pub}`, `docs.commit`, transient check,
@@ -1837,22 +1838,30 @@ src/needsuser.ts, src/commands/{audit,admissions}.ts):
    `docs-covered{pub, T → D}` (always docs-only), `docs-published{pub, source: close-out, commit}`, the snapshot, the
    release. With nothing to change it runs every arc lane on the head alone under `job{docs-n}` (reusing observations:
    when all are observed it writes nothing and names no job) and publishes nothing. It is done while the head is the
-   latest close-out's commit, or has nothing to change. The scheduler starts it only when every other clause holds and no
+   latest close-out's commit, or has nothing to change. An arc without the layer has no close-out (its in-tree documents
+   are not the executor's renderings: a 1.0.0-dev.5 fixture's hand-written `constraints.md` stays as it is). The scheduler starts it only when every other clause holds and no
    obligation is observed not held on the head. `finishDocs` tells a close-out from a revision's publication by the plan in
    force not naming its pub (a close-out never runs inside a revision). A refused close-out raises a blocking `base-red`
    (subject arc) parented by `job{pub}`: its lanes were red on the head plus renderings only; acknowledging it runs the
    next close-out. Crash labels `closeout.after-ff`, `closeout.before-published`.
-3. **Completion (A20, G8).** `arc-completed{planRev, head, highWater, units (merged, ascending)}` is written once while
+3. **Completion (A20, G8).** Every arc, holistic or not (so `gc` can seal any completed arc), writes
+   `arc-completed{planRev, head, highWater, units (merged, ascending)}` once while
    an active completion does not already record the plan rev and head, then the terminal snapshot (`snapshot.publish`,
    parent `{type: arc}`); the run ends `complete`. At every start, a completion no done arc-parented snapshot covers
    (its `highWater` below the fact's seq) gets its terminal snapshot first (crash label `complete.after-fact`). A restart
-   of a completed arc ends `complete` at once, writing nothing.
+   of a completed arc ends `complete` at once, writing nothing. An arc with no `plan-applied` (started before
+   1.0.0-dev.3) completes without the fact, warned (scaffolding).
 4. **The holistic jobs** run on three tracks, one job each at a time: `holistic` (the baseline while owed, else the
-   checkpoint while due or running, else the audit while due or running), `batch`, `closeout`. A job that made no progress
-   (a skip for a parked backend or a paused arc, a lane without a verdict, an interrupted call, `none`) is not asked again
-   for `HOLISTIC_RETRY_MS` (5 × POLL_MS). The audit's clock is `processClock` of the scheduler's start. At most once per
-   POLL_MS the loop raises the findings' items (`raiseFindingItems`) and an owed audit's (`raiseAuditOwed` over the
-   cadence).
+   checkpoint while due or running, else the audit while due or running), `batch`, `closeout`. A run that waits on a
+   condition a command changes (a skip for a parked backend or a paused arc, an interrupted call, nothing due) is asked
+   again after `HOLISTIC_RETRY_MS` (5 × POLL_MS). A run whose lane gave no verdict (a baseline or audit `incomplete`, a
+   batch's or close-out's `no-verdict`, an occupied batch lane aside, which raises its item) is retried on the
+   retryable-park backoff (`noVerdictDelayMs` over `PROBE_BACKOFF_MIN`: 1, 2, 4, 8, 16, then every 30 minutes); once
+   the episode (consecutive such runs of the track) is `PARK_ESCALATE_MS` (6 h) old, one non-blocking `park-escalated`
+   item parented by the job (`escalateNoVerdict`, raised once per job, D2); progress ends the episode. The park machinery
+   itself is unit-bound (park facts, probes), so this is its smallest equivalent: the episode is in memory (a restart
+   starts a new one). The audit's clock is `processClock` of the scheduler's start. At most once per POLL_MS the loop
+   raises the findings' items (`raiseFindingItems`) and an owed audit's (`raiseAuditOwed` over the cadence).
 5. **The baseline hold (A6).** While the baseline is owed (`baselineOwed`), running, or its blocking `obligation-baseline`
    is unacknowledged, no unit is admitted to any stage (chains run on). `baselineOwed` guards B2's `baselineDue`, which
    reads the tip now: a baseline job that witnessed every arc lane on a tree the tip has since left is done.
@@ -1874,11 +1883,11 @@ src/needsuser.ts, src/commands/{audit,admissions}.ts):
    finding's members wait for its acknowledgement (`batchSuspended`); `stale{invalid}` → those members leave batching
    (in memory, until their approval changes) and take their own candidate, whose ff re-gates them; `finding-blocked`
    and other `no-verdict`s retry. A crash-cut published batch is finished at the scheduler's start (`finishBatch`).
-8. **Pause and stop.** A pause kills the paused unit's backend, lane, journey and mutant invocations. A stop kills
-   backend, lane, smoke, journey, mutant and checkpoint (`arc-backend{role: checkpoint}`) invocations, never a docs
-   publication's lanes (`job{docs-n}`: a revision's or the close-out's runs to its end like a publication chain; its
-   lanes see no interruption) and never a lens call (B5's run asks its lenses one after another, and a killed call
-   abandons the audit: a stop waits for the lenses).
+8. **Pause and stop.** A pause kills the paused unit's backend, lane, journey and mutant invocations. A stop (control
+   applies at once, §2.3; B7 follow-up lead ruling) kills backend, lane, smoke, journey, mutant and arc-backend (lens and
+   checkpoint) invocations: a killed lens call abandons its audit, which runs again later (the spend accepted). A docs
+   publication's lanes (`job{docs-n}`: a revision's or the close-out's) are never killed: a critical section, run to its
+   end like a publication chain.
 9. **`sched.json`** gains `jobQueue` (the arbiter's first-served waiters, `waitingFirst`, src/schedule/arbiter.ts).
 10. **Routing provenance (lead ruling).** The executor's contexts resolve a 1.0.0-dev.5 revision from its adoption record
     (`readLegacyProvenance`, persisted by `runChecks`); an `unreconstructable` one resolves from this start's repo config

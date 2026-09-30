@@ -92,18 +92,10 @@ at triage stay in git history.
 
 ## Do soon (small fixes)
 
-- **One completion predicate (M3 B7).** `status`'s `completion.unmet` (src/status.ts `unmetOf`) and the scheduler's
-  `completionBlockers` (src/schedule/scheduler.ts) state §2.10 twice, with different names and no close-out in status;
-  status should read `completionBlockers`.
+None.
 
 ## Watch (act only on the trigger)
 
-- **A stop waits for a running audit's lens calls (M3 B7).** B5's audit asks its lenses one after another with no
-  cancellation, and a killed lens call abandons the audit (its triggers retried a wall-clock period later), so a stop
-  kills none. Trigger: a stop taking minutes behind an audit; the fix is a stop check between lenses in `runAudit`.
-- **A lane without a verdict retries its job every HOLISTIC_RETRY_MS (M3 B7).** The close-out, the baseline, an audit or
-  a batch whose lane is blocked (a lost runner, a deadline) is asked again every 5 s with no bound. Trigger: a lane
-  blocked for good; the fix is a backoff or a needs-user after N tries.
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
   outlasts a working day with nobody noticing.
@@ -141,6 +133,8 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
+  `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.
 - The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: `adoptedProvenance` in `src/executor.ts` (a
   dev.5 revision's routing from its adoption record, its rebuild for an unreconstructable one) and `sched.json`'s absent
   `jobQueue` read as empty (`schedFile`, `src/schedule/scheduler.ts`).

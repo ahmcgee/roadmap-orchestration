@@ -40,18 +40,20 @@
 // Pause: `pause <u>` aborts u's task (its waits end: an entry reservation, a later lane's set, a clear host) and
 // kills u's live backend, lane, journey and mutant invocations, which their stage records as `interrupted`; `pause
 // --all` does so for every unit. Stop (a `stop` command, or a unit whose outcome stops the arc): every task is
-// aborted and every live backend, lane, journey, mutant, smoke and checkpoint invocation killed (a probe's
-// included); teardowns and reclaims run to their end, as do chains and docs publications (a revision's or the
-// close-out: their lanes are never killed, like a publication chain's), and an audit asking its lenses (a killed
-// lens call would abandon the audit; B5's run asks them one after another). Control commands keep applying
-// meanwhile. Once every task and job has settled, `recoverReservations` cleans what a stage still holds, and the
+// aborted and every live backend, lane, journey, mutant, smoke, lens and checkpoint invocation killed (a probe's
+// included; a killed lens call abandons its audit, which runs again later); teardowns and reclaims run to their end,
+// as do chains and docs publications (a revision's or the close-out: their lanes are never killed, a critical
+// section like a publication chain). Control commands keep applying meanwhile. Once every task and job has settled, `recoverReservations` cleans what a stage still holds, and the
 // run ends `stop`.
 //
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
 // (`runCheckpoint`, B6) while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running
-// (one audit at a time, its clock `processClock`). A job that made no progress (skipped for a parked backend or a
-// paused arc, a lane without a verdict, an interrupted call) is not asked again for HOLISTIC_RETRY_MS. Beside it, a
+// (one audit at a time, its clock `processClock`). A job that waits on a condition a command changes (skipped for a
+// parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
+// lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
+// minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
+// (`escalateNoVerdict`, D2); progress ends the episode. Beside it, a
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
@@ -70,22 +72,22 @@
 // decided nothing for it (or a respec the unit cannot re-open on) raises the park's item, and a second design park
 // on a respecified lineage raises `respec-second` from the checkpoint instead.
 //
-// Ends. An arc without the holistic layer ends `complete` as in M2: nothing runs, every unit is merged, cut,
-// superseded or parked for the architect (an operator park: a retryable park is probed until it recovers), no
-// own-arc residue is left (`JournalView.residues()`) and no blocking needs-user is open. A holistic arc ends
-// `complete` when the completion predicate (§2.10, `completionBlockers`) holds: every unit merged, cut or
+// Ends. Every arc ends by the completion predicate (§2.10, `completionBlockers`). An arc without the holistic layer
+// completes as in M2 (nothing runs, every unit merged, cut, superseded or parked for the architect, no own-arc residue,
+// no blocking needs-user, no pending command; no close-out). A holistic arc ends
+// `complete` when every unit is merged, cut or
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
 // no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head. The close-out (A8, `publishCloseOut`) runs once all but
 // itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
-// when nothing changes). Then `arc-completed{planRev, head, highWater, units}` (once while active) and the terminal
-// snapshot (parent `arc`, G8), and the run ends `complete`. The completion stays active while the plan rev and the
+// when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
+// the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS } from '../commands/queue.ts';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
 import { atomicJson, canonicalJson } from '../core/fsx.ts';
@@ -93,7 +95,7 @@ import {
   type ArcId, type CommandId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type UnitId, arcId, commandId, findingId,
   invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
 } from '../core/ids.ts';
-import type { JournalView } from '../core/interfaces.ts';
+import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
 import { type CommandFile, type NeedsUserContent, STAGES, type Stage } from '../core/records.ts';
 import { type Read, arrayOf, bool, literal, nat, object, oneOf, positive, tagged, version } from '../core/validate.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
@@ -105,18 +107,21 @@ import { type CheckpointContext, type DesignParkRoute, checkpointPending, design
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
-import { isExempt } from '../holistic/types.ts';
+import { isExempt, laneRevOf } from '../holistic/types.ts';
+import { type Observation, verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import type { RoutingBase } from '../input/inforce.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
-import { type PlanUnit, lensSetOf } from '../input/plan.ts';
-import { type BlockingItem, blockingItems, holdsUnit, raiseNeedsUser, raisedFor } from '../needsuser.ts';
+import { type PlanM1, type PlanUnit, lensSetOf } from '../input/plan.ts';
+import { type BlockingItem, blockingItems, holdsUnit, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
 import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
 import { type StageContext, runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { observedViews } from '../pipeline/lanes.ts';
-import { type DocsContext, closeOutFiles, publishCloseOut } from '../pipeline/publish.ts';
+import { observations } from '../pipeline/lanes.ts';
+import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
 import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
 import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
@@ -126,7 +131,7 @@ import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter, FirstHolder } from './arbiter.ts';
 import { admitter, nextStage, rankOf, ready } from './ready.ts';
-import { type AdmissionStage, type CommandScope, type ResourceRequest, type TaskState } from './types.ts';
+import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // sched.json: the scheduler's in-memory view, for `status` only
@@ -229,7 +234,7 @@ type Task = {
 
 /** Invocation purposes a pause kills among a paused unit's spawns. */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (a checkpoint call among the arc-backend ones; never a docs publication's lanes). */
+/** Invocation purposes a stop kills (lens and checkpoint calls included; never a docs publication's lanes). */
 const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend'];
 
 /** A holistic job that made no progress is asked again only this long after. */
@@ -281,7 +286,9 @@ export function arcSettled(view: JournalView, units: readonly Readonly<{ id: Uni
 export type HolisticContexts = Readonly<{ audit: AuditContext; checkpoint: CheckpointContext; docs: DocsContext }>;
 
 /** The holistic contexts over a run's stage and command contexts and its arbiter. */
-export function holisticContexts(x: Readonly<{ stage: StageContext; commands: CommandContext; arbiter: Arbiter }>, clock = processClock(x.stage.journal.view)): HolisticContexts {
+export function holisticContexts(
+  x: Readonly<{ stage: StageContext; commands: Pick<CommandContext, 'planFile' | 'routingBase' | 'docs'>; arbiter: Arbiter }>, clock = processClock(x.stage.journal.view),
+): HolisticContexts {
   const audit: AuditContext = { ...x.stage, acquireFirst: x.arbiter.acquireFirst, clock };
   return {
     audit,
@@ -384,14 +391,33 @@ export function baselineOwed(ctx: StageContext): JobId | null {
 /** The integration head's tree now (the observation store's key). */
 const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integrationHeadNow(ctx)}^{tree}`);
 
-/** Every non-exempt obligation (split parents through their children) on `head`: held, one not observed there, or one not held. */
-export function obligationsOn(ctx: StageContext, head: Sha): 'discharged' | 'unobserved' | 'not-held' {
+/**
+ * Every non-exempt obligation (split parents through their children) on `head`: held, one not observed there, or one not
+ * held. Each witness is read from the latest observation of its lane (at its rev) on the head's tree, in whichever
+ * environment ran it (the scheduler and `status` read the same rule).
+ */
+export function obligationsOn(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>, head: Sha): 'discharged' | 'unobserved' | 'not-held' {
   const { obligations } = holisticInForce(ctx);
   if (obligations === null) return 'discharged';
-  const leaves = obligations.obligations.filter((o) => !isExempt(o) && o.state.type !== 'split' && o.witness !== null);
-  const views = observedViews(ctx, obligations, leaves, head);
-  if (views.some((v) => v.observation === null)) return 'unobserved';
-  return views.every((v) => v.observation!.verdict === 'held') ? 'discharged' : 'not-held';
+  const tree = revParse(ctx.repo, `${head}^{tree}`);
+  const latest = new Map<string, Observation>();
+  for (const o of observations(ctx).values()) {
+    if (o.key.treeSha !== tree) continue;
+    const k = `${o.key.lane}/${o.key.laneRev}`;
+    const seen = latest.get(k);
+    if (seen === undefined || o.seq > seen.seq) latest.set(k, o);
+  }
+  const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  let unobserved = false;
+  for (const o of obligations.obligations) {
+    if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
+    const lane = lanes.get(o.witness.lane);
+    if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
+    const found = latest.get(`${lane.id}/${laneRevOf(lane)}`);
+    if (found === undefined) unobserved = true;
+    else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
+  }
+  return unobserved ? 'unobserved' : 'discharged';
 }
 
 /** A8: the close-out at `head`: done (the head is the latest close-out's commit), nothing to change, or due. */
@@ -402,21 +428,28 @@ export function closeOutState(h: HolisticContexts, head: Sha): 'done' | 'nothing
 }
 
 /**
- * §2.10's `complete` for a holistic arc: the conditions that fail now (none: complete). `blocking`: the open blocking
- * items; `pending`: the pending mutations.
+ * §2.10's `complete`: the conditions that fail now (none: complete). `blocking`: the open blocking items; `pending`: the
+ * pending mutations. Every arc: `units-open` (holistic: a unit neither merged, cut nor superseded; without the layer, one
+ * not settled as M2 settles it, an operator park settling), `blocking-items`, `pending-commands`, `residues`. A holistic
+ * arc adds the baseline, audit, checkpoint, quiescence, close-out and obligation clauses (vacuous without the layer: an
+ * arc without it has no close-out, its in-tree documents being none of the executor's renderings).
  */
 export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocking: number; pending: number }>): readonly CompletionBlocker[] {
   const ctx = h.audit;
   const view = ctx.journal.view;
   const fold = view.holistic();
   const plan = ctx.plan();
-  const holistic = plan.holistic;
-  if (!fold.on || holistic === undefined) throw new Error('the holistic completion predicate of an arc without the layer');
   const out = new Set<CompletionBlocker>();
-  if (plan.units.some((u) => !TERMINAL.includes(view.unit(u.id).status))) out.add('units-open');
+  const head = integrationHeadNow(ctx);
   if (input.blocking > 0) out.add('blocking-items');
   if (input.pending > 0) out.add('pending-commands');
   if (view.residues().length > 0) out.add('residues');
+  const holistic = plan.holistic;
+  if (!fold.on || holistic === undefined) {
+    if (!plan.units.every((u) => unitSettled(view, u.id))) out.add('units-open');
+    return COMPLETION_BLOCKERS.filter((b) => out.has(b));
+  }
+  if (plan.units.some((u) => !TERMINAL.includes(view.unit(u.id).status))) out.add('units-open');
   if (baselineOwed(ctx) !== null) out.add('baseline-owed');
   if (auditPending(ctx)) out.add('audit-pending');
   const c = cadence(ctx, ctx.clock);
@@ -428,9 +461,36 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
   if (g > 0 && !quiescentGenerations(fold, vision).has(g)) out.add('generation-not-quiescent');
-  if (closeOutState(h, c.head) === 'due') out.add('close-out');
-  if (obligationsOn(ctx, c.head) !== 'discharged') out.add('obligations-not-discharged');
+  if (closeOutState(h, head) === 'due') out.add('close-out');
+  if (obligationsOn(ctx, head) !== 'discharged') out.add('obligations-not-discharged');
   return COMPLETION_BLOCKERS.filter((b) => out.has(b));
+}
+
+/**
+ * The holistic contexts of a reader outside any executor (`status`): what the completion predicate reads. It runs no
+ * job and writes nothing: every writing or process-running member throws.
+ */
+export function readOnlyContexts(x: Readonly<{
+  view: JournalView; runDir: AbsPath; repo: AbsPath; hostDir: AbsPath; planFile: AbsPath; plan: () => PlanM1; hostEnv: Readonly<Record<string, string | undefined>>;
+  routingBase: RoutingBase;
+}>): HolisticContexts {
+  const refuse = (what: string) => (): never => {
+    throw new Error(`the completion predicate's reader ${what}: it only reads`);
+  };
+  const journal: Journal = {
+    get view() {
+      return x.view;
+    },
+    begin: refuse('began an op'), retry: refuse('retried an op'), done: refuse('closed an op'), abort: refuse('aborted an op'), fact: refuse('wrote a fact'),
+  };
+  const containment: Containment = { mode: 'session', launch: refuse('launched'), members: refuse('scanned'), kill: refuse('killed'), empty: refuse('scanned') };
+  const stage: StageContext = {
+    journal, containment, runDir: x.runDir, repo: x.repo, hostDir: x.hostDir, plan: x.plan, planDir: absPath(dirname(x.planFile)), hostEnv: x.hostEnv,
+    routing: refuse('resolved routing'), acquire: refuse('reserved'), rank: refuse('ranked'), signal: new AbortController().signal,
+  };
+  const arbiter: Arbiter = { acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };
+  const commands = { planFile: x.planFile, routingBase: x.routingBase, docs: refuse('published docs') } as const;
+  return holisticContexts({ stage, commands, arbiter });
 }
 
 /** G8: whether a terminal snapshot (parent `arc`) covers the completion at `seq`. */
@@ -450,15 +510,57 @@ export async function terminalSnapshot(ctx: StageContext): Promise<void> {
   }));
 }
 
-/** Writes `arc-completed` for the plan in force and the integration head now, unless an active completion records them. */
+/**
+ * Writes `arc-completed` for the plan in force and the integration head now, unless an active completion records them.
+ * An arc started before plan revisions (1.0.0-dev.2, no `plan-applied`) completes without it (scaffolding).
+ */
 function completeArc(ctx: StageContext): void {
   const view = ctx.journal.view;
   if (view.holistic().completion?.active === true) return;
   const applied = view.planApplied();
-  if (applied === null) throw new Error('arc-completed before any plan revision');
+  if (applied === null) {
+    process.stderr.write('roadmap: upgrade (arc-completed): the arc has no plan revision (started before 1.0.0-dev.3); it completes without the fact\n');
+    return;
+  }
   const merged = ctx.plan().units.filter((u) => view.unit(u.id).status === 'retired').map((u) => u.id).sort();
   ctx.journal.fact({ kind: 'arc-completed', planRev: applied.rev, head: integrationHeadNow(ctx), highWater: view.highWater(), units: merged });
   crashPoint('complete.after-fact');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A holistic job's progress, and the retry of one whose lane gave no verdict
+
+/** What one run of a holistic job did: progress, a wait on a condition a command changes, or a lane without a verdict. */
+type Progress = Readonly<{ kind: 'progress' }> | Readonly<{ kind: 'wait' }> | Readonly<{ kind: 'no-verdict'; job: JobId; detail: string }>;
+const PROGRESS: Progress = { kind: 'progress' };
+const WAIT: Progress = { kind: 'wait' };
+
+/**
+ * The wait before the `tries`-th retry of a job whose lane gave no verdict: the retryable-park backoff (PROBE_BACKOFF_MIN:
+ * 1, 2, 4, 8, 16 minutes, then 30 repeatedly).
+ */
+export function noVerdictDelayMs(tries: number): number {
+  if (!Number.isSafeInteger(tries) || tries < 1) throw new Error(`a no-verdict retry counts from 1, not ${tries}`);
+  return PROBE_BACKOFF_MIN[Math.min(tries, PROBE_BACKOFF_MIN.length - 1)]! * 60_000;
+}
+
+/**
+ * D2 for a job: its lanes have given no verdict since `since`, PARK_ESCALATE_MS or more: one non-blocking `park-escalated`
+ * item, parented by the job (raised once per job); the retries go on.
+ */
+export function escalateNoVerdict(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>, job: JobId, detail: string, since: number): NeedsUserId {
+  const view = ctx.journal.view;
+  const parent: Parent = { type: 'job', job };
+  const key = canonicalJson(parent);
+  const raised = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null
+    && readNeedsUser(ctx.runDir, i.expect.id)?.reason === 'park-escalated');
+  if (raised !== undefined) return raised.expect.id;
+  return raiseNeedsUser(ctx.journal, ctx.runDir, {
+    blocking: false, subject: { type: 'arc' }, reason: 'park-escalated',
+    summary: `Job ${job}'s lanes have given no verdict since ${new Date(since).toISOString()} (6 h or more; last: ${detail}). It is retried every 30 min.`,
+    recommendation: `Read the job's evidence (${jobEvidenceRoot(ctx.runDir, job)}) and fix what keeps its lane from a verdict (a runner lost, a deadline, a resource); then acknowledge this item.`,
+    options: [], evidence: [jobEvidenceRoot(ctx.runDir, job)],
+  }, parent);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -552,6 +654,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   let stopping: Readonly<{ cause: 'command' | 'unit'; unit: UnitId | null }> | null = null;
   /** Holistic tracks (the one holistic job, the batch, the close-out) not asked again before this time (ms). */
   const retryAt = new Map<string, number>();
+  /** Per track, the episode of consecutive runs whose lane gave no verdict (in memory: a restart starts a new one). */
+  const noVerdict = new Map<string, { since: number; tries: number }>();
   /** Batch members whose approval no longer held at the tip (a stale batch): by the approval they had then. */
   const unbatched = new Map<UnitId, string>();
   /** Members a published batch retired: their retire runs in a task of their own. */
@@ -587,9 +691,24 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    * Tracks a job of the holistic track `track` (`holistic`, `batch`, `closeout`) whose `work` says whether it made
    * progress; after one that made none the track is not asked again for HOLISTIC_RETRY_MS.
    */
-  const trackRetrying = (key: string, trackKey: string, work: () => Promise<boolean>): void => {
+  const trackRetrying = (key: string, trackKey: string, work: () => Promise<Progress>): void => {
     track(key, async () => {
-      if (!(await work())) retryAt.set(trackKey, Date.now() + HOLISTIC_RETRY_MS);
+      const p = await work();
+      if (p.kind === 'progress') {
+        noVerdict.delete(trackKey);
+        return;
+      }
+      if (p.kind === 'wait') {
+        retryAt.set(trackKey, Date.now() + HOLISTIC_RETRY_MS);
+        return;
+      }
+      // A lane gave no verdict: the retryable-park backoff, and the escalation once the episode is 6 h old (D2).
+      const now = Date.now();
+      const episode = noVerdict.get(trackKey) ?? { since: now, tries: 0 };
+      episode.tries += 1;
+      noVerdict.set(trackKey, episode);
+      retryAt.set(trackKey, now + noVerdictDelayMs(episode.tries));
+      if (now - episode.since >= PARK_ESCALATE_MS) escalateNoVerdict(x.stage, p.job, p.detail, episode.since);
     });
   };
   /** Whether the holistic track `trackKey` may start a job now: none of its jobs runs and its retry time passed. */
@@ -758,13 +877,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     }
   };
 
-  /** A stop kills a spawn unless it is a docs publication's lane (it runs to its end) or a lens call (an audit asks all its lenses). */
-  const stopKills = (intent: IntentOf<'proc.spawn'>): boolean => {
-    const s = intent.expect.subject;
-    if (!STOP_KILLS.includes(s.purpose)) return false;
-    if (s.purpose === 'arc-backend') return s.role === 'checkpoint';
-    return !(intent.parent.type === 'job' && parseJobId(intent.parent.job).kind === 'docs');
-  };
+  /** A stop kills a spawn unless it is a docs publication's lane: a revision's or the close-out's runs to its end (a critical section). */
+  const stopKills = (intent: IntentOf<'proc.spawn'>): boolean =>
+    STOP_KILLS.includes(intent.expect.subject.purpose) && !(intent.parent.type === 'job' && parseJobId(intent.parent.job).kind === 'docs');
 
   /** What pause and stop ask of the running tasks now, per the durable markers. */
   const interrupt = (): void => {
@@ -868,9 +983,21 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
     if (due('holistic')) {
-      if (baselineOwed(x.stage) !== null) trackRetrying('holistic:baseline', 'holistic', async () => (await runBaseline(h.audit)).kind !== 'incomplete');
-      else if (checkpointPending(h.checkpoint) || respecSecondDue()) trackRetrying('holistic:checkpoint', 'holistic', async () => (await runCheckpoint(h.checkpoint)).kind === 'decided');
-      else if (auditPending(h.audit)) trackRetrying('holistic:audit', 'holistic', async () => (await runAudit(h.audit)).kind === 'ended');
+      const job = baselineOwed(x.stage);
+      if (job !== null) {
+        trackRetrying('holistic:baseline', 'holistic', async () => {
+          const out = await runBaseline(h.audit);
+          return out.kind === 'incomplete' ? { kind: 'no-verdict', job, detail: endDetail(out.end) } : PROGRESS;
+        });
+      } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
+        trackRetrying('holistic:checkpoint', 'holistic', async () => ((await runCheckpoint(h.checkpoint)).kind === 'decided' ? PROGRESS : WAIT));
+      } else if (auditPending(h.audit)) {
+        trackRetrying('holistic:audit', 'holistic', async () => {
+          const out = await runAudit(h.audit);
+          if (out.kind === 'incomplete') return { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) };
+          return out.kind === 'ended' ? PROGRESS : WAIT;
+        });
+      }
     }
     const ready = batch.ready;
     if (ready !== null && !holds.baseline && due('batch') && heldBatch(view()) === null) {
@@ -879,7 +1006,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         const settled = settleBatch(x.stage, ready.finding, ready.members, out);
         for (const u of settled.retire) retiring.add(u);
         for (const u of settled.unbatch) unbatched.set(u, approvalKey(u));
-        return settled.progress;
+        if (out.kind === 'no-verdict' && out.end.kind !== 'occupied') return { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) };
+        return settled.progress ? PROGRESS : WAIT;
       });
     }
   };
@@ -898,7 +1026,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           options: [], evidence: [jobEvidenceRoot(runDir, out.pub)],
         }, parent);
       }
-      return out.kind !== 'no-verdict';
+      return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.pub, detail: out.detail } : PROGRESS;
     });
   };
 
@@ -926,15 +1054,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   });
 
   /**
-   * With nothing running and no mutation pending: M2's end for an arc without the holistic layer; for a holistic arc,
-   * the completion predicate (the close-out started when only it and the obligations' witnesses on the head are left).
+   * With nothing running and no mutation pending: the completion predicate (the close-out started when only it and the
+   * obligations' witnesses on the head are left), then `arc-completed` and the terminal snapshot, for every arc.
    */
   const ended = async (blocking: readonly BlockingItem[]): Promise<SchedulerEnd | null> => {
-    if (!holistic()) return blocking.length === 0 && arcSettled(view(), plan().units) ? { kind: 'complete', units: summary() } : null;
     const blockers = completionBlockers(h, { blocking: blocking.length, pending: 0 });
     if (blockers.length === 0) {
       completeArc(x.stage);
-      await terminalSnapshot(x.stage);
+      if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
       return { kind: 'complete', units: summary() };
     }
     const closing = blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged');

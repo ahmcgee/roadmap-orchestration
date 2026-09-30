@@ -136,8 +136,10 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   ],
   B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
 };
+/** A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot). */
+const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact'] };
 /** The bumpy run adds the merge-in's conflicted path. */
-const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'] };
+const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], ...COMPLETE_LABELS };
 
 /** A whole-pipeline row's cells: every label at occurrence 1, and 2 where the label repeats. */
 function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[]>>>, recovery: Readonly<Record<Boundary, string>>): Readonly<Record<Boundary, Cell>> {
@@ -898,7 +900,7 @@ export const MATRIX: readonly Row[] = [
     // supervisor restarts it; the oracle (test/oracle.ts) compares the end with the uncrashed run.
     row: PIPELINE_STRAIGHT,
     test: 'test/pipeline-matrix.test.ts',
-    cells: pipelineCells({}, PIPELINE_RECOVERY),
+    cells: pipelineCells(COMPLETE_LABELS, PIPELINE_RECOVERY),
   },
   {
     // The bumpy scenario (pm-common.ts BUMPY): u1 redirect, red lane + fix, gate revise; u2 integration moved

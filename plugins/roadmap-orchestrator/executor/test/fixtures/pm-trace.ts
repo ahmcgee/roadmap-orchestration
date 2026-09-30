@@ -63,6 +63,8 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'unit.after-stage': NONE,
   'recover.before-op': NONE,
   'recover.after-op': NONE,
+  // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.
+  'complete.after-fact': NONE,
 };
 
 /**

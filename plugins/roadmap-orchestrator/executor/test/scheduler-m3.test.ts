@@ -3,7 +3,8 @@
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), draining, and the M3 command
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), complete.m2-arc, sched.no-verdict-backoff and
+// sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -11,7 +12,7 @@ import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type NeedsUserId, type Sha, sha, unitId } from '../src/core/ids.ts';
+import { type NeedsUserId, type Sha, jobId, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
@@ -25,7 +26,7 @@ import { runBaseline } from '../src/pipeline/baseline.ts';
 import { publishCloseOut } from '../src/pipeline/publish.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { completionBlockers, settleBatch } from '../src/schedule/scheduler.ts';
+import { completionBlockers, escalateNoVerdict, noVerdictDelayMs, settleBatch } from '../src/schedule/scheduler.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -194,6 +195,78 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(blockers(), []);
     } finally {
       clearInterval(tick);
+      r.journal.close();
+    }
+  });
+});
+
+describe('every arc completes with arc-completed (B7 follow-up, lead ruling)', () => {
+  test('complete.m2-arc: an arc without the holistic layer completes as in M2 and records arc-completed and its terminal snapshot; nothing to close out', T, async () => {
+    const d = setupArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
+    const r = contextFor(d);
+    try {
+      await runToComplete(r);
+      assert.equal(r.journal.view.holistic().on, false);
+      const [completed] = factsOf(r, 'arc-completed');
+      assert.deepEqual([completed!.planRev, completed!.head, completed!.units], [r.journal.view.planApplied()!.rev, head(d), ['u1']]);
+      const snaps = terminalSnapshots(r);
+      assert.equal(snaps.length, 1);
+      assert.ok(snaps[0]!.expect.highWater >= completed!.seq);
+      assert.deepEqual([factsOf(r, 'docs-published'), factsOf(r, 'audit-started')], [[], []], 'no close-out, no holistic job');
+      assert.equal(r.journal.view.holistic().completion?.active, true);
+      assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }), []);
+      await runToComplete(r);
+      assert.equal(factsOf(r, 'arc-completed').length, 1, 'a restart writes nothing again');
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('a job whose lane gives no verdict (B7 follow-up, lead ruling)', () => {
+  test('sched.no-verdict-backoff: retried on the retryable-park backoff (1, 2, 4, 8, 16, then every 30 min), never faster', T, () => {
+    assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 50].map((n) => noVerdictDelayMs(n) / 60_000), [1, 2, 4, 8, 16, 30, 30, 30]);
+    assert.throws(() => noVerdictDelayMs(0), /counts from 1/);
+  });
+
+  test('sched.no-verdict-escalation (D2): at the 6 h point one non-blocking park-escalated item, parented by the job, raised once', T, () => {
+    const r = contextFor(completingArc());
+    try {
+      const since = Date.now() - 7 * 60 * 60_000;
+      const id = escalateNoVerdict(r.ctx, jobId('audit', 1), 'lane journey gave no verdict: lost', since);
+      const record = readNeedsUser(r.ctx.runDir, id)!;
+      assert.deepEqual([record.reason, record.blocking, record.subject], ['park-escalated', false, { type: 'arc' }]);
+      assert.equal(raisedFor(r.journal.view, { type: 'job', job: jobId('audit', 1) }), id);
+      assert.equal(escalateNoVerdict(r.ctx, jobId('audit', 1), 'again', since), id, 'raised once per job');
+      assert.equal(r.journal.view.needsUser().length, 1);
+      assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }).includes('blocking-items'), false);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('stop (B7 follow-up, lead ruling: control applies immediately)', () => {
+  test('sched.stop-kills-lens: a stop kills a running audit\'s lens call; the audit is abandoned and the run ends stop', T, async () => {
+    const barrier = { type: 'barrier', name: 'lens', timeoutMs: 120_000 } as const;
+    const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier])]);
+    const r = contextFor(d);
+    submit(r, { type: 'pause', target: { type: 'unit', unit: unitId('u1') } });
+    submit(r, { type: 'audit', lenses: null });
+    const s = startHolistic(r);
+    try {
+      await reached(d.scenarioDir, 'lens', WAIT_MS);
+      submit(r, { type: 'stop' });
+      const end = await s.end;
+      assert.deepEqual(end, { kind: 'stop', cause: 'command', needsUser: null });
+      const kills = r.journal.view.opsOf('proc.kill').filter((k) => k.expect.reason === 'stop');
+      const lens = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend');
+      assert.ok(lens.length >= 1 && kills.some((k) => lens.some((l) => k.expect.inv.startsWith(l.op))), 'the lens call was killed');
+      const [ended] = factsOf(r, 'audit-ended');
+      assert.equal(ended?.outcome, 'abandoned');
+      assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally {
+      release(d.scenarioDir, 'lens');
       r.journal.close();
     }
   });

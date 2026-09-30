@@ -147,10 +147,11 @@ describe('status.subset', () => {
     assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
     assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin' });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
-    // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2.
+    // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2; like every arc it records
+    // `arc-completed` and its terminal snapshot (B7 lead ruling), so it is sealed.
     assert.equal(s.holistic, false);
     assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences, s.decisionsSince], [null, null, null, null, [], [], [], []]);
-    assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: [] });
+    assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
   });
 });

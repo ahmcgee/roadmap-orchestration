@@ -68,7 +68,7 @@
 //                 range, the generation, and the minutes of lanes run under checkpoint jobs
 //   owed          the open `audit-owed` items
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
-//                 conditions of the completion predicate now
+//                 clauses of the completion predicate now (the scheduler's `completionBlockers`: one rule)
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -110,7 +110,7 @@ import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
-import { type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, schedFile, unitSettled } from './schedule/scheduler.ts';
+import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, readOnlyContexts, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import { type ResolvedRouting, type SeatSources, planStack, provenanceStack, resolveRouting } from './routing/layers.ts';
 import {
@@ -123,7 +123,7 @@ import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
 import { readLegacyProvenance, legacyProvenancePath, witnessDir } from './git/snapshot.ts';
 import { coverageBase, coverageOf } from './holistic/coverage.ts';
-import { type AppliedBundle, brakesOf, quiescentGenerations } from './holistic/convergence.ts';
+import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric, findingMetrics, isActive } from './holistic/findings.ts';
 import { type Observation, verdictOf } from './holistic/observe.ts';
@@ -355,13 +355,6 @@ export type AuditView = Readonly<{
   checkpointLaneMinutes: number;
 }>;
 
-/** The completion predicate's conditions (§2.10), as `completion.unmet` names those that fail now. */
-export const COMPLETION_CONDITIONS = [
-  'units-open', 'obligations-not-discharged', 'blocking-items', 'pending-commands', 'coverage-outstanding', 'audit-owed', 'generation-not-quiescent',
-  'residues',
-] as const;
-export type CompletionCondition = (typeof COMPLETION_CONDITIONS)[number];
-
 export type CompletionView = Readonly<{
   /** The latest `arc-completed`'s plan rev and head; null before one. */
   planRev: PlanRev | null;
@@ -370,7 +363,8 @@ export type CompletionView = Readonly<{
   sealed: boolean;
   /** Why it is not sealed (A5b `sealingOf`); null when sealed. */
   notSealed: string | null;
-  unmet: readonly CompletionCondition[];
+  /** The completion predicate's clauses that fail now (src/schedule/scheduler.ts `completionBlockers`, the one rule). */
+  unmet: readonly CompletionBlocker[];
 }>;
 
 /** The event log's growth (the deferred compaction's trigger): its bytes, its events and how long this fold took. */
@@ -1190,37 +1184,21 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
 const generationOf = (fold: HolisticFold): number =>
   Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((c) => c.inputs.generation));
 
-/** §2.10: the latest generation is quiescent under the vision in force (B6 `quiescentGenerations`; vacuous before any). */
-function quiescent(fold: HolisticFold, visionSha256: Sha256Hex): boolean {
-  const g = generationOf(fold);
-  return g === 0 || quiescentGenerations(fold, visionSha256).has(g);
-}
+type CompletionInputs = Readonly<{ d: Derived; hostDir: AbsPath; pending: number }>;
 
-type CompletionInputs = Readonly<{
-  d: Derived;
-  pending: number;
-  notYetTrue: number;
-  audit: AuditView | null;
-  owed: number;
-  visionSha256: Sha256Hex | null;
-}>;
-
-/** The completion predicate's unmet conditions now (§2.10), in `COMPLETION_CONDITIONS` order. */
-function unmetOf(x: CompletionInputs): readonly CompletionCondition[] {
-  const { view, plan, blocking } = x.d;
-  const fold = view.holistic();
-  const unmet = new Set<CompletionCondition>();
-  if (plan === null || plan.units.some((u) => !TERMINAL_UNIT.includes(view.unit(u.id).status))) unmet.add('units-open');
-  if (blocking.length > 0) unmet.add('blocking-items');
-  if (x.pending > 0) unmet.add('pending-commands');
-  if (view.residues().length > 0) unmet.add('residues');
-  if (fold.on && x.visionSha256 !== null) {
-    if (x.notYetTrue > 0) unmet.add('obligations-not-discharged');
-    if (x.audit?.coverage.some((c) => c.outstanding) === true) unmet.add('coverage-outstanding');
-    if (x.owed > 0) unmet.add('audit-owed');
-    if (!quiescent(fold, x.visionSha256)) unmet.add('generation-not-quiescent');
-  }
-  return COMPLETION_CONDITIONS.filter((c) => unmet.has(c));
+/**
+ * The completion predicate's unmet clauses now: the scheduler's `completionBlockers` over a read-only view of the arc
+ * (`readOnlyContexts`), so status and the executor read one rule. Without a passed start or a plan in force nothing is
+ * evaluable: the units are open.
+ */
+function unmetOf(runDir: AbsPath, x: CompletionInputs): readonly CompletionBlocker[] {
+  const { view, start, inForce, blocking } = x.d;
+  if (start === null || inForce === null) return ['units-open'];
+  const h = readOnlyContexts({
+    view, runDir, repo: start.record.repo, hostDir: x.hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
+    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
+  });
+  return completionBlockers(h, { blocking: blocking.length, pending: x.pending });
 }
 
 function completionOf(runDir: AbsPath, d: Derived, x: CompletionInputs): CompletionView {
@@ -1229,7 +1207,7 @@ function completionOf(runDir: AbsPath, d: Derived, x: CompletionInputs): Complet
   return {
     planRev: c?.planRev ?? null, head: c?.head ?? null, active: c?.active ?? false, sealed: sealing.kind === 'sealed',
     notSealed: sealing.kind === 'sealed' ? null : sealing.kind === 'open' ? sealing.reason : sealing.detail,
-    unmet: unmetOf(x),
+    unmet: unmetOf(runDir, x),
   };
 }
 
@@ -1268,7 +1246,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     : truths(runDir, view, d.units, obligations, revParse(on.repo, `${head}^{tree}`));
   const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
   const owed = needsUser.filter((n) => n.reason === 'audit-owed').map((n) => n.id);
-  const visionSha256 = revision?.manifest.vision ?? null;
 
   return {
     arc,
@@ -1309,6 +1286,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     },
     audit,
     owed: { audits: owed },
-    completion: completionOf(runDir, d, { d, pending: commands.pending.length, notYetTrue: t.notYetTrue.length, audit, owed: owed.length, visionSha256 }),
+    completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
   };
 }
