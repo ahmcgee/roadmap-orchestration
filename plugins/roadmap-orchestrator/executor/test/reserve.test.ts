@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sessionContainment } from '../src/contain/session.ts';
 import type { Holder } from '../src/core/events.ts';
-import { type ResourceName, INTEGRATION_SLOT, commandId, invocationId, namedResource, opId, unitId } from '../src/core/ids.ts';
+import { type ResourceName, type ResourceUnit, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
 import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
 import { probe } from '../src/resources/probe.ts';
@@ -27,7 +27,7 @@ import {
 
 const T = { timeout: 60_000 };
 
-function reserved<S extends Reservation<'reserved', StageHolder>>(r: S | { state: 'refused'; busy: readonly ResourceName[] }): S {
+function reserved<S extends Reservation<'reserved', StageHolder>>(r: S | { state: 'refused'; busy: readonly ResourceUnit[] }): S {
   if (r.state === 'refused') throw new Error(`refused: ${r.busy.join(', ')}`);
   return r;
 }
@@ -129,7 +129,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
         }
         refusals += 1;
         assert.equal(journal.view.highWater(), before, 'a refused reserve journals nothing');
-        assert.ok(got.busy.length > 0 && got.busy.every((x) => resources.includes(x)));
+        assert.ok(got.busy.length > 0 && got.busy.every((x) => (resources as readonly ResourceUnit[]).includes(x)));
         await sleep(Math.random() * 20);
       }
     };
@@ -137,7 +137,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
     journal.close();
     const ts = transitions(r);
     // Every transition names its set in lock order, integration-slot last.
-    for (const t of ts) assert.deepEqual(t.resources, lockOrder(t.resources.map(namedResource)), JSON.stringify(t));
+    for (const t of ts) assert.deepEqual(t.resources, lockOrder(t.resources), JSON.stringify(t));
     // Never two holders at once: replaying the log never reserves a held resource (the fold refuses
     // that), and each reservation is contiguous: its reserve is followed by its own run, clean, release
     // before the other holder's reserve of a shared resource.

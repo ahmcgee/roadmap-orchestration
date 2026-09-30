@@ -7,13 +7,16 @@
 // The rest of the op kind's reconciler (reserved, running, cleaning) is the reservation cycle's (step 10).
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf } from '../core/events.ts';
-import { type ResourceName, namedResource, parseOpId } from '../core/ids.ts';
+import { type ResourceInstance, parseOpId } from '../core/ids.ts';
 import type { Disposition } from '../core/interfaces.ts';
 import type { TeardownRecipe } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { recordResidue } from '../host/residues.ts';
 
-/** What a residue must carry so a later sweep can clean it: the resolved teardown and the resource label. */
+/**
+ * What a residue must carry so a later sweep or retry can clean it: the resolved teardown (with the holder's
+ * instance binding, F7) and the resource label.
+ */
 export type ResidueRecipe = Readonly<{ teardown: TeardownRecipe; label: string }>;
 
 /**
@@ -24,7 +27,7 @@ export type ResidueRecipe = Readonly<{ teardown: TeardownRecipe; label: string }
 export function appendFailedCleanupResidues(
   hostDir: AbsPath,
   intent: IntentOf<'resource.transition'>,
-  recipes: ReadonlyMap<ResourceName, ResidueRecipe>,
+  recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
 ): void {
   const { holder, edge } = intent.expect;
   if (edge.type !== 'fail') throw new Error(`${intent.op}: a ${edge.type} transition records no residue`);
@@ -32,7 +35,7 @@ export function appendFailedCleanupResidues(
   if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by a sweep has no unit to key its residues`);
   const arc = parseOpId(intent.op).arc;
   for (const { resource, teardown } of edge.residues) {
-    const recipe = recipes.get(namedResource(resource));
+    const recipe = recipes.get(resource);
     if (recipe === undefined) throw new Error(`${intent.op}: no teardown recipe for failed resource ${resource}`);
     crashPoint('residue.before-host-append');
     recordResidue(hostDir, { type: 'residue', key: { arc, unit: holder.unit, inv: teardown, resource }, teardown: recipe.teardown, label: recipe.label });
@@ -44,7 +47,7 @@ export function appendFailedCleanupResidues(
 export function reconcileFailedCleanup(
   hostDir: AbsPath,
   intent: IntentOf<'resource.transition'>,
-  recipes: ReadonlyMap<ResourceName, ResidueRecipe>,
+  recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
 ): Extract<Disposition<'resource.transition'>, { kind: 'done' }> {
   appendFailedCleanupResidues(hostDir, intent, recipes);
   return { kind: 'done', outcome: { kind: 'transitioned' } };
