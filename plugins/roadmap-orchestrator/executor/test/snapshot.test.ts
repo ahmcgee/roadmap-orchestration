@@ -182,8 +182,8 @@ type Holistic = Run & Readonly<{ planSha: string; specSha: string; witnessInv: s
 
 /**
  * The base run plus the records a snapshot must follow beyond it: a 1.0.0-dev.5 `plan-applied` (kept plan and
- * spec, no routing provenance), start.json with its `executor-started`, and a docs job's lane run that wrote its
- * witness record where src/pipeline/publish.ts keeps it and was `witnessed`.
+ * spec, no routing provenance), start.json with its `executor-started`, and a docs job's lane run (or a candidate's)
+ * that wrote its witness record in its invocation dir (src/pipeline/lanes.ts `witnessRecordPath`) and was `witnessed`.
  */
 async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Holistic> {
   const r = await run();
@@ -199,7 +199,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
     body: () => ({ expect: { subject: { purpose: 'lane', unit: UNIT, lane: laneId('journey'), set: 'suite', at: sha('b'.repeat(40)) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
   });
   const inv = invocationId(spawn.op, 1);
-  const witnessDir = join(r.runDir, 'evidence', 'jobs', job, 'journey');
+  const witnessDir = join(r.runDir, 'inv', invocationDirName(inv));
   mkdirSync(witnessDir, { recursive: true });
   const witness = '{"records":[]}\n';
   writeFileSync(join(witnessDir, 'witness.json'), witness);
@@ -260,12 +260,14 @@ describe('snapshot closure records', () => {
     if (dropped.kind === 'mismatch') assert.match(dropped.detail, /^start\.json, which event \d+ names, is not in the snapshot$/);
   });
 
-  it('a named record that cannot be located fails the publication loudly; a candidate witness is not implemented yet', async () => {
+  it('a named record that cannot be located fails the publication loudly; a candidate\'s witness record is carried as a job\'s', async () => {
     const r = await holisticRun();
     rmSync(r.witnessFile);
-    await assert.rejects(publish(r), /witness record .*witness\.json does not exist/);
+    await assert.rejects(publish(r), /witness\.json does not exist/);
     const c = await holisticRun('candidate');
-    await assert.rejects(publish(c), /is for a candidate: not implemented \(step B2\)/);
+    const intent = await publish(c);
+    assertSnapshot(c, intent);
+    assert.ok(treePaths(c.repo, intent.post.new).includes(`witness/${c.witnessInv}.json`));
   });
 
   it('a snapshot a 1.0.0-dev.5 executor published (no namedBy) verifies by its allowlist', async () => {

@@ -36,7 +36,8 @@
 //                its revision activated by the revision phase before this one) → what is missing of its
 //                docs-covered, snapshot and release; otherwise its checkout is removed and the slot released (its
 //                revision was aborted, and its source re-evaluates).
-//   batch        not yet (step B2).
+//   batch        (B2) a repair batch's slot (src/pipeline/integrate.ts): its batch ff published → left held for
+//                `finishBatch`; otherwise abandoned (`abandonBatch`: its job's checkouts removed, the slot released).
 import type { Holder, IntentOf, Parent } from '../core/events.ts';
 import { type ResourceInstance, type ResourceUnit, compareResourceUnits } from '../core/ids.ts';
 import type { Disposition, Reconciler } from '../core/interfaces.ts';
@@ -50,6 +51,7 @@ import {
 import { PUBLICATION_CHAIN } from '../schedule/types.ts';
 import { reconcileFailedCleanup } from './residue.ts';
 import { spawnReconciler } from './spawn.ts';
+import { abandonBatch, batchHolderPublished } from '../pipeline/integrate.ts';
 import { recoverDocs } from '../pipeline/publish.ts';
 
 type ResourceDisposition = Extract<Disposition<'resource.transition'>, { kind: 'done' }>;
@@ -127,9 +129,10 @@ async function settleHolder(ctx: ResourceContext, holder: Exclude<Holder, SweepH
       return settleRetry(ctx, holder);
     case 'docs':
       return recoverDocs(ctx, holder.pub);
-    // Interim (M3 0a): no release before this step holds resources under it.
     case 'batch':
-      throw new Error(`recovering a repair batch's reservation: not implemented (step B2)`);
+      // Its ff published: the slot stays the batch's until `finishBatch` (latches, snapshot, release); else abandoned.
+      if (batchHolderPublished(ctx.journal.view, holder)) return;
+      return abandonBatch(ctx, holder);
   }
 }
 

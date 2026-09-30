@@ -16,14 +16,13 @@
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
-// | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's lane run): its `witness.json`          |
+// | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (any witness run): its `witness.json`           |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
 //
 // Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, `events.jsonl`,
-// `state.json`), so the run dir's records are restored by copying the tree into it. A job's lane run keeps its
-// `witness.json` at `<runDir>/evidence/jobs/<job>/<lane>/` (src/pipeline/publish.ts); a candidate's (B2) and a
-// mutant's (B3) have no writer yet, and a `witnessed` fact for one is refused loudly.
+// `state.json`), so the run dir's records are restored by copying the tree into it. A witness run keeps its
+// `witness.json` in its invocation dir (src/pipeline/lanes.ts `witnessRecordPath`).
 //
 // `manifest.json` lists every other file's sha256, size and naming record (`namedBy`: the log itself, an event
 // seq, or another item's path) with the arc and the high-water mark. `verifySnapshot` recomputes the closure from
@@ -42,7 +41,7 @@ import {
 } from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import {
-  type ArcId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, parseOpId, sha, sha256,
+  type ArcId, type InvocationId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, parseOpId, sha, sha256,
 } from '../core/ids.ts';
 import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
@@ -147,9 +146,8 @@ type Source =
   | Readonly<{ type: 'provenance'; fact: PlanAppliedFact }>
   | Readonly<{ type: 'input'; sha256: Sha256Hex; ext: string }>
   | Readonly<{ type: 'start' }>
-  | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' }>
-  /** A job's lane run keeps its record at `<job evidence root>/<lane>/witness.json` (src/pipeline/publish.ts). */
-  | Readonly<{ type: 'witness'; job: JobId; lane: LaneId }>
+  /** A backend call's result files, or a witness run's record (`witness.json` in its invocation dir, src/pipeline/lanes.ts). */
+  | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' | 'witness.json' }>
   | Readonly<{ type: 'file'; path: AbsPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
 
@@ -246,9 +244,8 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
         input(f.brief, BRIEF_INPUT, by);
         break;
       case 'witnessed':
-        // Only a job's lane runs witness so far (the docs publication); a candidate's is step B2's, a mutant's B3's.
-        if (f.for.type !== 'job') throw new Error(`snapshot: witnessed ${f.inv} (event ${e.seq}) is for a ${f.for.type}: not implemented (step ${f.for.type === 'candidate' ? 'B2' : 'B3'})`);
-        add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'witness', job: f.for.job, lane: f.lane } });
+        // Every witness run (a candidate's, a job's, a mutant's) keeps its record in its invocation dir (src/pipeline/lanes.ts).
+        add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'inv', inv: f.inv, file: WITNESS_RECORD_FILE } });
         break;
       case 'needs-user-acked':
         add({ path: repoPath(`${NEEDS_USER_DIR}/${f.id}.ack.json`), namedBy: by, sha256: null, source: { type: 'ack', id: f.id } });
@@ -309,8 +306,6 @@ const mustRead = (path: string, what: string): Buffer => {
   return readFileSync(path);
 };
 
-/** A job's evidence root, `<runDir>/evidence/jobs/<job>`: src/pipeline/publish.ts `jobEvidenceRoot` owns it (not imported: a cycle). */
-const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
 
 /** Collects the closure at `request.highWater` from the run dir: every named file must exist and hash as its record says. */
 export function collectSnapshot(repo: AbsPath, request: SnapshotPublishRequest): Collected {
@@ -338,8 +333,6 @@ export function collectSnapshot(repo: AbsPath, request: SnapshotPublishRequest):
         const path = join(runDir, INV_DIR, invocationDirName(source.inv), source.file);
         return source.file === 'reads.json' && !existsSync(path) ? null : mustRead(path, `${source.inv}'s`);
       }
-      case 'witness':
-        return mustRead(join(jobEvidenceRoot(runDir, source.job), source.lane, WITNESS_RECORD_FILE), `${source.job}'s ${source.lane} witness record`);
       case 'file':
         return mustRead(source.path, 'named record');
       case 'ack':

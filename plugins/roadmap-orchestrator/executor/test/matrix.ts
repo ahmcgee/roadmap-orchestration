@@ -78,6 +78,8 @@ export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer
 export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
 export const DOCS_PUBLICATION = 'command.apply: rule, its docs publication (M3 A4: slot, docs.commit, lanes, docs ff, activation, snapshot)';
 export const PREEMPT = 'docs publication preempting a candidate before green (M3 A4, A7: preempt kill of its suite lane)';
+export const LATCH = 'obligation-latched after a unit ff{published}, before its snapshot (M3 B2)';
+export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot under batch{finding, attempt}, chained candidate, job lanes, batch ff, finish)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -1127,6 +1129,56 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['kill.after-done'],
         recovery: 'the kill is done, the candidate\'s outcome not recorded: its slot released by recovery; the rule publishes once, then the unit merges',
+      },
+    },
+  },
+  {
+    // u1 completes future obligation I-2 (held on its candidate) and runs to its merge in a child
+    // (test/fixtures/brake-child.ts); the whole recovery runs, then the unit driver finishes the unit.
+    row: LATCH,
+    test: 'test/brake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no latch is written before the ff published: the candidate.merge, integration.ff, snapshot.publish row crashes the ff intent and its act' },
+      B3: { status: 'excluded', why: 'the latch is one fact append (the journal.append row crashes a torn append); the ff act itself is the candidate.merge, integration.ff, snapshot.publish row' },
+      B4: {
+        status: 'crash',
+        labels: ['ff.act-end'],
+        recovery: 'the ff moved integration, its done not written: reconciled published; the ff stage runs again, reads the published ff back and writes the missing latch; one obligation-latched, before the snapshot',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['latch.after-fact'],
+        recovery: 'the latch is durable, the ff stage outcome not: the stage runs again, reads the published ff back, writes no second latch, records published; the snapshot follows',
+      },
+    },
+  },
+  {
+    // Two approved units repairing F-1 publish as one batch in a child (test/fixtures/batch-child.ts); recovery runs, then
+    // a published batch is finished (`finishBatch`) and any other runs again as the next attempt of the same job.
+    row: BATCH_PUBLICATION,
+    test: 'test/batch.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['resource.after-intent', 'candidate.act-start', 'ff.act-start'],
+        recovery: 'the slot reserve, the chained candidate.merge or the batch ff is durable, not acted: closed (the reserve done, the merge redone to its recorded chain, the ff done unpublished at T: a batch CAS is never redone); the batch holder abandoned (checkouts removed, slot released); the batch runs again as attempt 2 of batch-1 and publishes once',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['candidate.after-commit-tree'],
+        recovery: 'inside the chain\'s act: redone to the same commits; the batch abandoned and run again as the same job, published once',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['batch.after-candidate', 'ff.act-end'],
+        recovery: 'the candidate made (abandoned, run again) or the ff moved integration with no done: reconciled published, the batch holder left holding the slot; finishBatch writes the snapshot and releases it; both members retired by the one ff',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['snapshot.act-end'],
+        recovery: 'the batch published and its snapshot acted: the snapshot reconciled, the slot left held; finishBatch writes nothing twice and releases it',
       },
     },
   },

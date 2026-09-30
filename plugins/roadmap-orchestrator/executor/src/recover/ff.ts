@@ -6,7 +6,8 @@
 //   holds and the unit is still eligible (G10: no active P1 blocks an obligation it selects); otherwise done
 //   unpublished at T (the unit's ff stage then records `fingerprint-invalid` or `finding-blocked`). A docs
 //   publication's is redone: its lanes passed before its intent was written, and it holds the slot, so nothing else
-//   moved integration.
+//   moved integration. A repair batch's is never redone: done unpublished at T, its job dead with it; the batch runs
+//   again (src/pipeline/integrate.ts `publishBatch`), re-checking every member's fingerprint and eligibility (G5, G10).
 // - advanced past old without new → done unpublished at the new tip (fresh candidate).
 // - anything else (integration rewound or rewritten) → recovery-required; the caller raises a needs-user.
 //
@@ -38,7 +39,9 @@ export function reconcileIntegrationFf(repo: AbsPath, unitRedo: UnitRedo): Recon
         return { kind: 'done', outcome: { kind: 'published' } };
       }
       case 'pending': {
-        const redo = intent.expect.subject === undefined ? unitRedo(intent.expect.fingerprint) : intent.expect.subject.type === 'docs';
+        // A unit's CAS is redone while its approval holds and it is eligible; a docs publication's always; a batch's never.
+        const subject = intent.expect.subject;
+        const redo = subject === undefined ? unitRedo(intent.expect.fingerprint) : subject.type === 'docs';
         return redo ? { kind: 'redo' } : { kind: 'done', outcome: { kind: 'unpublished', tip: old } };
       }
       case 'advanced':

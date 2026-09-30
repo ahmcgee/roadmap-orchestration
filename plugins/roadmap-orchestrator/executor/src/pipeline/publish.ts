@@ -11,7 +11,7 @@
 //              at the tip T, those rulings validated again at T (`validateRuling`, G21: their consistency is fresh).
 //   docs.commit on `refs/roadmap-run/<arc>/docs/<pub>`, parents [T] (src/git/docs.ts).
 //   transient  the commit's diff holds only those files (`docsTransientViolations`).
-//   lanes      in a detached checkout of the commit, under `job{pub}` (`runJobLanes`): the plan's suite, then the arc
+//   lanes      in a detached checkout of the commit, under `job{pub}` (`runJourneySeries`, lanes.ts): the plan's suite, then the arc
 //              lanes witnessing the selected obligations (below), each witness run a `witnessed{for: job{pub}}` fact.
 //   verdict    green only with every suite lane passing and no selected obligation's effect `red` (the table,
 //              src/holistic/table.ts): a must-hold obligation the revision adds must hold on the docs candidate (G12).
@@ -31,56 +31,41 @@
 // published → `finishDocs` (what is missing of docs-covered, snapshot, release); not published → `abandonDocs` (its
 // checkout removed, the slot released), and the source re-evaluates.
 //
-// `runJobLanes` is the minimum a job's lanes need (a docs publication's here): serial lanes under `job{job}`, spawned
-// as `journey{owner: job}`, reserved first of every unit, evidence per lane, a witness record per arc lane. B2 extends
-// it (the red-lane protocol, batch and audit lanes).
-import { mkdirSync } from 'node:fs';
+// The lanes run as a journey series under `job{pub}` (src/pipeline/lanes.ts `runJourneySeries`: reserved first of every
+// unit, the red-lane protocol, evidence per execution, a witness record per arc lane run).
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
-import {
-  type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type OpId, type ResourceInstance, type Sha, type Sha256Hex, INTEGRATION_SLOT, laneRev,
-  opKey,
-} from '../core/ids.ts';
+import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INTEGRATION_SLOT } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { type CommandVerdict, type LaneDef, type NeedsUserContent, STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
-import { type AbsPath, type RepoPath, absPath, branchRef, isoTimeOf, repoPattern } from '../core/values.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
 import { applyContractOps } from '../docs/contracts.ts';
-import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs, treeOf } from '../git/docs.ts';
+import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs } from '../git/docs.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
 import { gitRun, refTarget } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
-import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn, obligationEffects } from '../holistic/table.ts';
-import {
-  type ArcLaneDef, type Obligations, type RulingSidecar, type WitnessRecord, isExempt, laneRevOf, parseObligations, parseRulingSidecar,
-} from '../holistic/types.ts';
-import { collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
+import { type ArcLaneDef, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
 import {
   OBLIGATIONS_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
 } from '../input/inforce.ts';
 import type { PlanM1 } from '../input/plan.ts';
-import { instanceEnv } from '../resources/pool.ts';
-import { probe } from '../resources/probe.ts';
 import {
-  type DocsHolder, type JobHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, jobOwnerLabel,
-  resourceTable, run,
+  type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
 } from '../resources/reserve.ts';
-import { OWNER_ENV } from '../resources/teardown.ts';
 import { type DocsOutcome, type DocsPublisher } from '../recover/revision.ts';
-import { docsCommitOp, evidenceSnapshotOp, integrationFfOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { docsCommitOp, evidenceSnapshotOp, integrationFfOp, snapshotPublishOp, worktreeRemoveOp } from '../recover/ops.ts';
 import { spawnReconciler } from '../recover/spawn.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
 import { preemptCandidate } from './integrate.ts';
-import { invocationDir, invoke } from './invoke.ts';
-import { LANE_DEADLINE_MS, LANE_STALL_MS, laneRequest } from './lanes.ts';
+import { type JourneySeries, arcJourneyLane, jobEvidenceRoot, runJourneySeries, suiteJourneyLane } from './lanes.ts';
 import { runOp, runPrepared } from './dispatch.ts';
 import { executorIdentity } from './stages.ts';
 
@@ -99,11 +84,8 @@ const SLOT: ResourceRequest = { named: [], pools: [], cpu: 0, publication: true 
 const WAKE_MS = 200;
 /** A job's waits are never cancelled: a docs publication runs to its end once its revision committed to it. */
 const NEVER = new AbortController().signal;
-const LANE_GRACE_MS = 5_000;
 
 export const docsWorktree = (plan: PlanM1, pub: JobId): AbsPath => absPath(join(plan.worktreeRoot, plan.arc, `${pub}.checkout`));
-/** Where a job keeps its lanes' evidence: one dir per lane, as a series does (`evidence/jobs/<job>/<lane>/`). */
-export const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
 
 /** The executor's docs publisher: `DocsPublisher` over `ctx` (src/recover/revision.ts). */
 export function docsPublisher(ctx: DocsContext): DocsPublisher {
@@ -261,143 +243,6 @@ function witnessLanes(obligations: Obligations, selected: ReadonlySet<Obligation
   return obligations.lanes.filter((l) => needed.has(l.id));
 }
 
-/** A suite lane's rev, as an arc lane's (`laneRevOf`): what its `journey` spawn names. */
-export const suiteLaneRev = (lane: LaneDef): LaneRev => laneRev(sha256Hex(canonicalJson(lane)).slice(0, 16));
-
-// ---------------------------------------------------------------------------------------------------
-// A job's lanes
-
-/** One lane a job runs: a suite lane (`witness` null), or an arc lane, whose run is a witness. */
-export type JobLane = Readonly<{ def: LaneDef; laneRev: LaneRev; witness: ArcLaneDef | null }>;
-
-export const suiteJobLane = (def: LaneDef): JobLane => ({ def, laneRev: suiteLaneRev(def), witness: null });
-export const arcJobLane = (def: ArcLaneDef): JobLane => ({ def, laneRev: laneRevOf(def), witness: def });
-
-/** A lane's run: its verdict, its evidence dir, and a witness lane's record. */
-export type JobLaneRun = Readonly<{ lane: LaneId; inv: InvocationId; verdict: CommandVerdict; dir: AbsPath; record: WitnessRecord | null }>;
-
-export type JobSeriesEnd =
-  /** Every lane ran (or `stop` ended the series at a lane that ran). */
-  | Readonly<{ kind: 'ran' }>
-  /** A lane's runner was lost, or its run was cancelled: no verdict. */
-  | Readonly<{ kind: 'blocked'; lane: LaneId; detail: string }>
-  | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
-  /** A lane's resources could not be cleaned: job-owned residues, never released. */
-  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
-
-export type JobSeries = Readonly<{ end: JobSeriesEnd; runs: readonly JobLaneRun[] }>;
-
-export type JobLaneContext = ResourceContext & Readonly<{ hostEnv: Readonly<Record<string, string | undefined>>; acquireFirst: AcquireFirst }>;
-
-/** A job lane's env: its declared env verbatim, the job's owner label and instance binding, and a witness run's reporter env. */
-function jobLaneEnv(ctx: JobLaneContext, job: JobId, lane: JobLane, held: readonly string[], witnessFile: AbsPath): Readonly<Record<string, string>> {
-  const env: Record<string, string> = { ...lane.def.env.set };
-  for (const name of lane.def.env.pass) {
-    const value = ctx.hostEnv[name];
-    if (value === undefined) throw new Error(`lane ${lane.def.id} passes ${name}, which the executor's environment lacks`);
-    env[name] = value;
-  }
-  const executor: Record<string, string> = {
-    [OWNER_ENV]: jobOwnerLabel(ctx.plan().arc, job), ...instanceEnv(held as Parameters<typeof instanceEnv>[0]),
-    ...(lane.witness === null ? {} : witnessEnv(lane.witness.reporter, witnessFile)),
-  };
-  for (const [name, value] of Object.entries(executor)) {
-    if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.def.id} declares ${name}, which the executor sets`);
-    env[name] = value;
-  }
-  return env;
-}
-
-/**
- * Runs `lanes` one at a time under `job{job}` in the detached checkout `checkout` (created before the first lane,
- * removed after the last, citing the series' last evidence snapshot), keeping each lane's evidence under `root`.
- * Each lane reserves its declared resources first of every unit (`acquireFirst`), is probed, runs verbatim as a
- * `journey{owner: job}` spawn, and is snapshotted; an arc lane's reporter output becomes its witness record
- * (`witness.json`) and a `witnessed{for: job{job}}` fact. The series ends at the first lane `stop` says stops it.
- */
-export async function runJobLanes(
-  ctx: JobLaneContext, job: JobId, lanes: readonly JobLane[], checkout: WorktreeCreateRequest, root: AbsPath, stop: (run: JobLaneRun) => boolean,
-): Promise<JobSeries> {
-  if (checkout.checkout.type !== 'detached') throw new Error(`a job's lanes run in a detached checkout, not on ${checkout.checkout.branch}`);
-  const { at } = checkout.checkout;
-  const parent: Parent = { type: 'job', job };
-  const holder: JobHolder = { type: 'job', job };
-  const treeSha = treeOf(ctx.repo, at);
-  const runs: JobLaneRun[] = [];
-  let evidence: OpId | null = null;
-  let end: JobSeriesEnd = { kind: 'ran' };
-  for (const lane of lanes) {
-    const request = laneRequest(ctx, lane.def);
-    let held: Reservation<'running', JobHolder> | null = null;
-    if (request !== null) {
-      const grant = await ctx.acquireFirst(request, holder, NEVER);
-      if (grant.kind !== 'granted') throw new Error(`${job}: a lane wait was cancelled, and nothing cancels it`);
-      const reserved = heldReservation(ctx, holder, 'reserved');
-      const occupancy = await probe(ctx, reserved, parent);
-      if (occupancy.kind === 'parked') {
-        const cleaned = await cleanup(ctx, reserved, parent);
-        end = cleaned.kind === 'released' ? { kind: 'occupied', needsUser: occupancy.needsUser } : { kind: 'cleanup-failed', failed: cleaned.failed };
-        break;
-      }
-      held = run(ctx, reserved, parent);
-    }
-    if (evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, checkout);
-    const dir = absPath(join(root, lane.def.id));
-    mkdirSync(dir, { recursive: true });
-    const witnessFile = absPath(join(dir, 'witness.lines'));
-    const outcome = await invoke(ctx.journal, ctx.containment, {
-      runDir: ctx.runDir,
-      origin: { type: 'new', key: opKey(`lane:${job}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
-      subject: { purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: { type: 'job', job } },
-      launch: () => ({
-        argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: jobLaneEnv(ctx, job, lane, held?.resources ?? [], witnessFile),
-        stdinPath: null, stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
-      }),
-    });
-    const invDir = invocationDir(ctx.runDir, outcome.inv);
-    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
-      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
-    })).op;
-    if (lane.def.evidenceGlobs.length > 0) {
-      evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, { source: checkout.path, globs: lane.def.evidenceGlobs, dest: absPath(join(dir, 'tree')) })).op;
-    }
-    if (held !== null) {
-      const cleaned = await cleanup(ctx, held, parent);
-      if (cleaned.kind !== 'released') {
-        end = { kind: 'cleanup-failed', failed: cleaned.failed };
-        break;
-      }
-    }
-    if (outcome.kind === 'lost') {
-      end = { kind: 'blocked', lane: lane.def.id, detail: `${outcome.inv} was lost with its runner` };
-      break;
-    }
-    if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a lane produced a ${outcome.result.type} result`);
-    const verdict = outcome.result.verdict;
-    if (verdict === 'cancelled' || verdict === 'process-fault') {
-      end = { kind: 'blocked', lane: lane.def.id, detail: `${outcome.inv} ended ${verdict}` };
-      break;
-    }
-    let record: WitnessRecord | null = null;
-    if (lane.witness !== null) {
-      const tests = collectWitness(lane.witness.reporter, { witnessFile, stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
-      record = witnessRecordOf({ lane: lane.witness, envId: envIdOf(lane.witness, hostIdentity(), ctx.hostEnv), treeSha, inv: outcome.inv, purpose: 'witness' }, tests);
-      const recordsSha256 = writeWitnessRecord(dir, record);
-      ctx.journal.fact({
-        kind: 'witnessed', lane: record.lane, laneRev: record.laneRev, envId: record.envId, treeSha, inv: outcome.inv, recordsSha256, purpose: 'witness',
-        for: { type: 'job', job },
-      });
-    }
-    const ran: JobLaneRun = { lane: lane.def.id, inv: outcome.inv, verdict, dir, record };
-    runs.push(ran);
-    if (stop(ran)) break;
-  }
-  if (evidence !== null) {
-    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
-  }
-  return { end, runs };
-}
-
 // ---------------------------------------------------------------------------------------------------
 // The publication
 
@@ -437,10 +282,10 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
 
   const obligations = revisionObligations(ctx.runDir, payload);
   const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes));
-  const lanes = [...plan.suite.lanes.map(suiteJobLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJobLane))];
-  const series = await runJobLanes(
-    { ...ctx, acquireFirst: ctx.arbiter.acquireFirst }, pub, lanes, docsWorktreeRequest(commit), jobEvidenceRoot(ctx.runDir, pub),
-    (r) => r.record === null && r.verdict !== 'pass',
+  const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
+  const series = await runJourneySeries(
+    ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit), jobEvidenceRoot(ctx.runDir, pub),
+    { reuse: true, stop: (r) => r.record === null && r.verdict !== 'pass' },
   );
   crashPoint('docs.after-lanes');
   const why = verdictReason(series, obligations, selected);
@@ -462,7 +307,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
  * Why the docs candidate is not green, or null: a series that ended without every verdict, a suite lane that did not
  * pass, or a selected obligation whose effect is `red` on the candidate's witness records (G12).
  */
-function verdictReason(series: JobSeries, obligations: Obligations | null, selected: ReadonlySet<ObligationId>): string | null {
+function verdictReason(series: JourneySeries, obligations: Obligations | null, selected: ReadonlySet<ObligationId>): string | null {
   switch (series.end.kind) {
     case 'ran':
       break;
@@ -472,6 +317,8 @@ function verdictReason(series: JobSeries, obligations: Obligations | null, selec
       return `a lane's resources were occupied: ${series.end.needsUser.summary}`;
     case 'cleanup-failed':
       return `a lane's resources could not be cleaned (${series.end.failed.join(', ')}): job-owned residues, probed and reclaimed`;
+    case 'interrupted':
+      throw new Error(`a docs publication's lanes are never interrupted (${series.end.reason})`);
   }
   const red = series.runs.find((r) => r.record === null && r.verdict !== 'pass');
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;

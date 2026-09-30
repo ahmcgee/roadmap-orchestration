@@ -53,7 +53,7 @@ import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
-import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
+import { candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { prepare } from './prepare.ts';
@@ -207,6 +207,8 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       const at = stageParent(f);
       const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
       const failing = suite.filter((l) => l.verdict !== 'pass');
+      // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
+      if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return candidateFixRound(candidateBrakeFix(ctx, unit, at), suite, verification, tip);
       return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite, verification, tip);
     }
     default:

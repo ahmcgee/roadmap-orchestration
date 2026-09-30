@@ -67,8 +67,9 @@ export type RetryHolder = Extract<Holder, { type: 'retry' }>;
 export type PublicationHolder = Extract<Holder, { type: 'publication' }>;
 export type DocsHolder = Extract<Holder, { type: 'docs' }>;
 export type JobHolder = Extract<Holder, { type: 'job' }>;
+export type BatchHolder = Extract<Holder, { type: 'batch' }>;
 /** The holders that reserve through a request (and so through the arbiter). */
-export type AcquiringHolder = StageHolder | PublicationHolder | DocsHolder | JobHolder;
+export type AcquiringHolder = StageHolder | PublicationHolder | DocsHolder | BatchHolder | JobHolder;
 /** The acquiring holders that act for a unit (a stage attempt, or its candidate's publication). */
 export type UnitAcquiringHolder = StageHolder | PublicationHolder;
 /** The holders whose failed cleanup records residues (`RESIDUE_HOLDERS`): keyed by the unit, or by the job. */
@@ -141,7 +142,8 @@ export function holderRecipes(
     case 'publication':
       return stageRecipes(plan, repo, holder.unit, resources, instances);
     case 'docs':
-      if (instancesOf(resources).length > 0) throw new Error(`${canonicalJson(holder)} holds ${JSON.stringify(resources)}: a docs holder holds integration-slot alone`);
+    case 'batch':
+      if (instancesOf(resources).length > 0) throw new Error(`${canonicalJson(holder)} holds ${JSON.stringify(resources)}: a ${holder.type} holder holds integration-slot alone`);
       return new Map();
     case 'job': {
       const label = jobOwnerLabel(plan.arc, holder.job);
@@ -288,7 +290,7 @@ export function reserve<H extends AcquiringHolder>(
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
-  if ((holder.type === 'publication' || holder.type === 'docs') && !slotAlone) {
+  if ((holder.type === 'publication' || holder.type === 'docs' || holder.type === 'batch') && !slotAlone) {
     throw new Error(`a ${holder.type} holder reserves integration-slot alone, not ${canonicalJson(req)}`);
   }
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
@@ -383,7 +385,7 @@ export async function finishCleanup<H extends Holder>(
     if (recipe !== undefined) runs.push(await teardown(ctx, unit, resource as ResourceInstance, recipe, parent));
   }
   const failed = runs.filter((t) => !t.clean);
-  if (failed.length > 0 && (holder.type === 'publication' || holder.type === 'docs')) throw new Error(`${canonicalJson(holder)} holds a unit with a teardown: ${JSON.stringify(r.resources)}`);
+  if (failed.length > 0 && (holder.type === 'publication' || holder.type === 'docs' || holder.type === 'batch')) throw new Error(`${canonicalJson(holder)} holds a unit with a teardown: ${JSON.stringify(r.resources)}`);
   const released = r.resources.filter((res) => !failed.some((t) => t.resource === res));
   if (failed.length > 0 && recordsResidues(r)) recordFailedCleanup(ctx, r, failed, parent);
   if (released.length > 0) transition<Holder>(ctx, r.holder, released, { type: 'release' }, parent);

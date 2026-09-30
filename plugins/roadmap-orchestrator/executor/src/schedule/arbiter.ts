@@ -25,21 +25,22 @@ import type { Holder, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import { envBlocked, overlaps } from '../resources/pool.ts';
 import {
-  type AcquiringHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder,
+  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder,
 } from '../resources/reserve.ts';
 import { type Acquire, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */
 export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean }>;
 
-/** A job's holder that waits before every unit: a docs publication's slot, or a job's lanes. */
-export type FirstHolder = DocsHolder | JobHolder;
+/** A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), or a job's lanes. */
+export type FirstHolder = DocsHolder | BatchHolder | JobHolder;
 
 /**
  * Waits for `request` under a job's holder, served before every unit's waiter (A7). `onBlocked` runs at each
- * evaluation that refuses it (the docs publication preempts a candidate holding the slot before green).
+ * evaluation that refuses it (the docs publication preempts a candidate holding the slot before green). `parent`: the
+ * job a batch holder reserves for (its `batch{finding, attempt}` names no job); none for any other holder.
  */
-export type AcquireFirst = (request: ResourceRequest, holder: FirstHolder, signal: AbortSignal, onBlocked?: () => void) => Promise<Grant>;
+export type AcquireFirst = (request: ResourceRequest, holder: FirstHolder, signal: AbortSignal, onBlocked?: () => void, parent?: Parent) => Promise<Grant>;
 
 export type Arbiter = Readonly<{
   acquire: Acquire;
@@ -58,7 +59,7 @@ type Waiter<H extends AcquiringHolder> = {
   readonly onAbort: () => void;
 };
 type UnitWaiter = Waiter<UnitAcquiringHolder> & { readonly rank: () => Rank };
-type FirstWaiter = Waiter<FirstHolder> & { readonly onBlocked: () => void };
+type FirstWaiter = Waiter<FirstHolder> & { readonly onBlocked: () => void; readonly parent: Parent };
 
 /** The parent of a grant's `reserve` transition: the stage attempt that waits (a publication's is its candidate), or the job. */
 function parentOf(holder: AcquiringHolder): Parent {
@@ -71,6 +72,8 @@ function parentOf(holder: AcquiringHolder): Parent {
       return { type: 'job', job: holder.pub };
     case 'job':
       return { type: 'job', job: holder.job };
+    case 'batch':
+      throw new Error(`${canonicalJson(holder)}: a batch holder's parent is its job, given to acquireFirst`);
   }
 }
 
@@ -104,7 +107,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
         blocked.push(w.request);
         continue;
       }
-      const got = reserve(ctx, w.holder, w.request, parentOf(w.holder));
+      const got = reserve(ctx, w.holder, w.request, w.parent);
       if (got.state === 'refused') {
         blocked.push(w.request);
         refused.push(w);
@@ -136,14 +139,16 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     });
   };
 
-  const acquireFirst: AcquireFirst = (request, holder, signal, onBlocked = () => {}) => {
+  const acquireFirst: AcquireFirst = (request, holder, signal, onBlocked = () => {}, parent) => {
     if (first.some((w) => sameHolder(w.holder, holder))) throw new Error(`${canonicalJson(holder)} already waits`);
-    if (holder.type === 'docs' && !(request.publication && request.named.length === 0 && request.pools.length === 0 && request.cpu === 0)) {
-      throw new Error(`a docs publication waits for integration-slot alone, not ${canonicalJson(request)}`);
+    if ((holder.type === 'docs' || holder.type === 'batch') && !(request.publication && request.named.length === 0 && request.pools.length === 0 && request.cpu === 0)) {
+      throw new Error(`a ${holder.type} holder waits for integration-slot alone, not ${canonicalJson(request)}`);
     }
+    if ((holder.type === 'batch') !== (parent !== undefined)) throw new Error(`${canonicalJson(holder)}: a parent is given exactly for a batch holder`);
+    const reservedFor = parent ?? parentOf(holder);
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     return new Promise<Grant>((resolve) => {
-      const w: FirstWaiter = { request, holder, signal, resolve, onBlocked, onAbort: () => settle(first, w, { kind: 'cancelled' }) };
+      const w: FirstWaiter = { request, holder, signal, resolve, onBlocked, parent: reservedFor, onAbort: () => settle(first, w, { kind: 'cancelled' }) };
       signal.addEventListener('abort', w.onAbort, { once: true });
       first.push(w);
       wake();

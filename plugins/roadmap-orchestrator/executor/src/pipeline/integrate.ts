@@ -21,9 +21,13 @@
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
 //              - red (or a suite that dirtied the checkout): the suite runs again on T alone in its own
 //                detached checkout: red there too → `base-red` (uncharged), else a fix round (C);
+//              - green → in a holistic arc, the held-claims brake (M3 B2, below): the arc lanes witnessing the
+//                obligations the approval selects run on the candidate as journey lanes; red claims take the same
+//                path, witnessing T alone (`base-red`, `red`, or green by the known-regression rule);
 //              - green → ff.
 //   ff         the approval fingerprint recomputed at the tip being published onto; `planFf`, then
-//              `integration.ff` by CAS under the publication's slot. published → snapshot · the tip advanced with the
+//              `integration.ff` by CAS under the publication's slot. published → the latches (M3: a future obligation
+//              the unit completes and that holds on its candidate, `latchPublished`) → snapshot · the tip advanced with the
 //              approval intact → a fresh candidate, no new gate · the approval no longer holds → re-gate
 //              · integration rewound or an executor-owned ref moved by another → stop, needs-user.
 //   snapshot   `snapshot.publish` of the run's records at the journal's high-water mark (the ff done
@@ -47,32 +51,44 @@
 // Re-entry: a stage attempt a restart cut short runs again as a new attempt. A merge-in it already
 // prepared (MERGE_HEAD = T in the unit worktree) and a publication op it already closed are read back
 // from the journal rather than repeated.
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { IntentOf, OpOutcome } from '../core/events.ts';
+import { crashPoint } from '../core/crash.ts';
+import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { Journal } from '../core/interfaces.ts';
-import { type FindingId, INTEGRATION_SLOT, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import type { Journal, JournalView } from '../core/interfaces.ts';
+import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, specRepairs } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
-import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
-import { planFf } from '../git/ff.ts';
+import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
+import { planBatchFf, planFf } from '../git/ff.ts';
+import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
 import { unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
+import { keyOf, observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
+import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
+import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
-import { type PublicationHolder, type Reservation, cleanup, entryOf, heldReservation, resourceTable, run } from '../resources/reserve.ts';
+import {
+  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder,
+} from '../resources/reserve.ts';
+import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import {
   type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
 } from './dispatch.ts';
-import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';
-import { type Series, laneRuntime, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
-import { type StageDone, at, executorIdentity, failedFacts, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
+import {
+  type JourneyEnd, type JourneyRun, type Series, arcJourneyLane, jobEvidenceRoot, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, suiteJourneyLane,
+} from './lanes.ts';
+import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
@@ -194,7 +210,7 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent));
       const fault = seriesFault(onCandidate);
       if (fault !== null) return fault;
-      if (!failed(onCandidate)) return ended('green');
+      if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
@@ -247,6 +263,282 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
 }
 
 // ---------------------------------------------------------------------------------------------------
+// The held-claims brake (M3 B2; DESIGN-1.0.md §2.8; plan "Journey lanes and the held-claims brake")
+
+/** What a candidate is graded against: the obligations in force, its selection, its completions and its declared repairs. */
+export type Claims = Readonly<{
+  obligations: Obligations;
+  /** The candidate's selection, split closure applied (`selectObligations`). */
+  selected: ReadonlySet<ObligationId>;
+  /** Future obligations (not latched) whose `deliveredBy` the candidate completes. */
+  completing: ReadonlySet<ObligationId>;
+  /** The obligations its units' specs declare they repair (a finding repair: its finding's obligation). */
+  repairs: ReadonlySet<ObligationId>;
+  latched: ReadonlySet<ObligationId>;
+  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order. */
+  lanes: readonly ArcLaneDef[];
+}>;
+
+/** The obligations a unit's spec repairs: its `I-n` repairs, and the obligation of each finding it repairs. */
+export function repairedObligations(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): ReadonlySet<ObligationId> {
+  const findings = ctx.journal.view.holistic().findings;
+  return new Set(specRepairs(loadUnitSpec(ctx, unit).spec).flatMap((r): ObligationId[] => {
+    if (r.startsWith('I-')) return [r as ObligationId];
+    const o = findings.find((f) => f.id === r)?.obligation ?? null;
+    return o === null ? [] : [o];
+  }));
+}
+
+/** The latched obligations: must-hold from their latch on. */
+const latchedSet = (view: JournalView): ReadonlySet<ObligationId> => new Set(view.holistic().latched.map((l) => l.obligation));
+
+/**
+ * The claims of a candidate publishing `units` (one unit, or a batch's members) with selection `selected` over the
+ * obligations in force; null outside a holistic arc with obligations.
+ */
+export function claimsOf(
+  ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, obligations: Obligations | null, units: readonly UnitId[],
+  selected: readonly ObligationId[], repairs: ReadonlySet<ObligationId>,
+): Claims | null {
+  if (obligations === null) return null;
+  const view = ctx.journal.view;
+  const latched = latchedSet(view);
+  const published = new Set(view.publications().map((p) => p.unit));
+  const chosen = new Set(selected);
+  const completing = new Set(obligations.obligations.filter((o) => o.activation === 'future' && !latched.has(o.id) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  const needed = new Set(obligations.obligations.flatMap((o) => (chosen.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
+  return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id)) };
+}
+
+/** A unit candidate's claims at tip `tip` for its approved commit `head` (`selected`, gate.ts: what its approval selects). */
+function unitClaims(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha): Claims | null {
+  const { obligations } = holisticInForce(ctx);
+  if (obligations === null) return null;
+  return claimsOf(ctx, obligations, [unit.id], selected(ctx, unit, tip, head).map((o) => o.id), repairedObligations(ctx, unit));
+}
+
+/** Active P1 findings' obligations: what the known-regression rule reads (R4, G11). */
+function p1Obligations(view: JournalView): ReadonlySet<ObligationId> {
+  return new Set(view.holistic().findings.flatMap((f) => (f.severity === 'P1' && ACTIVE_FINDING.has(f.state) && f.obligation !== null ? [f.obligation] : [])));
+}
+
+/** How the claims grade on one tree. */
+export type TreeGrade = Readonly<{
+  effects: ReadonlyMap<ObligationId, ObligationEffect>;
+  /** Selected obligations whose effect is `red` (the brake), and declared repairs not shown held: never excused. */
+  red: readonly ObligationId[];
+  /**
+   * Failing tests the known-regression rule may excuse (background failures, G11), per lane: in the witness of an
+   * unselected must-hold obligation over which an active P1 is open.
+   */
+  background: ReadonlyMap<LaneId, readonly string[]>;
+  /** Lanes that ran red with a failure nothing explains: a failing test no obligation or P1 accounts for, or no failing test at all. */
+  unexplained: readonly LaneId[];
+}>;
+
+/**
+ * The claims graded on the records of one tree (`runs`, a journey series on it), with `completing` and `repairs` as the
+ * tree has them (the tip alone completes and repairs nothing). A failing test of a future obligation not yet latched,
+ * or of an exempt one, is measured, never graded.
+ */
+export function gradeTree(
+  claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
+): TreeGrade {
+  const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  const defs = claims.obligations.obligations;
+  const verdict = (_o: ObligationDef, w: WitnessRef): ObservationVerdict | null => {
+    const rec = records.get(w.lane);
+    return rec === undefined ? null : verdictOf(rec, w);
+  };
+  const effects = obligationEffects({ obligations: defs, selected: claims.selected, latched: claims.latched, completing, verdict });
+  const mustHold = (o: ObligationDef): boolean => o.activation === 'must-hold' || claims.latched.has(o.id);
+  const red = new Set([...claims.selected].filter((id) => effects.get(id) === 'red'));
+  for (const id of repairs) {
+    const o = defs.find((d) => d.id === id);
+    if (o === undefined) throw new Error(`repaired obligation ${id} is not in force`);
+    if (isExempt(o)) continue;
+    const held = o.state.type === 'split' ? effects.get(id) === 'discharged' : o.witness !== null && verdict(o, o.witness) === 'held';
+    if (!held) red.add(id);
+  }
+  const background = new Map<LaneId, string[]>();
+  const unexplained = new Set<LaneId>();
+  for (const r of runs) {
+    if (r.record === null) continue;
+    const failing = r.record.records.filter((t) => t.outcome === 'fail').map((t) => t.testId);
+    if (r.record.malformed || failing.length === 0) {
+      if (journeyRed(r)) unexplained.add(r.lane);
+      continue;
+    }
+    for (const t of failing) {
+      const owners = defs.filter((o) => o.witness !== null && o.witness.lane === r.lane && o.witness.testIds.includes(t));
+      if (owners.length === 0) {
+        unexplained.add(r.lane);
+        continue;
+      }
+      const live = owners.filter((o) => !isExempt(o) && mustHold(o));
+      // A selected must-hold obligation's failing test is the brake's, never excused; an exempt or measured one's is not graded.
+      if (live.length === 0 || live.some((o) => claims.selected.has(o.id))) continue;
+      if (live.some((o) => p1.has(o.id))) background.set(r.lane, [...(background.get(r.lane) ?? []), t]);
+      else unexplained.add(r.lane);
+    }
+  }
+  return {
+    effects, red: [...red].sort(), unexplained: [...unexplained].sort(),
+    background: new Map([...background].map(([lane, tests]) => [lane, [...new Set(tests)].sort()] as const)),
+  };
+}
+
+const clean = (g: TreeGrade): boolean => g.red.length === 0 && g.unexplained.length === 0 && g.background.size === 0;
+
+/**
+ * A non-clean candidate grade read against the tip alone's (the red-suite path): a blocking failure (a brake red, a
+ * repair not held, an unexplained lane) that the tip reproduces → `base-red`, else `red` (charged). An obligation the
+ * candidate declares it repairs is known not to hold on the tip: its red is the candidate's (`red`), never the base's.
+ * Background failures only: the tip failing exactly those tests on each lane → `green` (known regression, R4, G11); the
+ * tip failing none of them → `red`; anything else → `base-red`.
+ */
+export function brakeVerdict(candidate: TreeGrade, tip: TreeGrade, repairs: ReadonlySet<ObligationId>): 'green' | 'red' | 'base-red' {
+  if (candidate.red.length > 0 || candidate.unexplained.length > 0) {
+    const reproduced = candidate.red.some((id) => !repairs.has(id) && tip.red.includes(id)) || candidate.unexplained.some((l) => tip.unexplained.includes(l));
+    return reproduced ? 'base-red' : 'red';
+  }
+  const lanes = [...candidate.background.keys()];
+  if (lanes.every((l) => canonicalJson(tip.background.get(l) ?? []) === canonicalJson(candidate.background.get(l)))) return 'green';
+  if (lanes.every((l) => !tip.background.has(l) && !tip.unexplained.includes(l))) return 'red';
+  return 'base-red';
+}
+
+export const journeyWorktree = (root: AbsPath, arc: string, owner: string, which: 'journey' | 'base-journey', attempt: number): AbsPath =>
+  absPath(join(root, arc, `${owner}.${which}-${attempt}`));
+/** Where a candidate attempt keeps its journey lanes' evidence: on the candidate, and on the tip alone. */
+export const journeyRoot = (runDir: AbsPath, parent: StageParent, on: 'candidate' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), on === 'candidate' ? 'journey' : 'base-journey'));
+
+/** A journey series' end read as a candidate outcome, when it has no verdict. */
+function journeyFault(end: JourneyEnd): CandidateEnd | null {
+  switch (end.kind) {
+    case 'ran':
+      return null;
+    case 'blocked':
+      return ended('blocked');
+    case 'interrupted':
+      return ended(end.reason === 'preempt' ? 'preempted' : 'interrupted');
+    case 'cleanup-failed':
+      return { kind: 'cleanup-failed', needsUser: null, failed: end.failed };
+    case 'occupied':
+      return ended('occupied', end.needsUser);
+  }
+}
+
+/**
+ * After a green suite: the arc lanes witnessing the candidate's selected obligations, on the candidate, under the
+ * unit's stage holder. Clean → green. Otherwise the tip alone is witnessed with the same lanes and `brakeVerdict`
+ * decides: `red` (a fix round, charged), `base-red`, or green by the known-regression rule.
+ */
+async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent, intent: IntentOf<'candidate.merge'>): Promise<CandidateEnd> {
+  const tip = intent.expect.integrationTip;
+  const claims = unitClaims(ctx, unit, tip, intent.expect.unitCommit);
+  if (claims === null || claims.selected.size === 0) return ended('green');
+  const owner = { type: 'unit', parent, rt: laneRuntime(ctx, unit.id) } as const;
+  const lanes = claims.lanes.map(arcJourneyLane);
+  const root = ctx.plan().worktreeRoot;
+  const onCandidate = await runJourneySeries(ctx, owner, lanes, {
+    path: journeyWorktree(root, ctx.plan().arc, unit.id, 'journey', parent.attempt), checkout: { type: 'detached', at: intent.post.new },
+  }, journeyRoot(ctx.runDir, parent, 'candidate'), { reuse: true, stop: () => false });
+  const fault = journeyFault(onCandidate.end);
+  if (fault !== null) return fault;
+  const p1 = p1Obligations(ctx.journal.view);
+  const grade = gradeTree(claims, onCandidate.runs, claims.completing, claims.repairs, p1);
+  if (clean(grade)) return ended('green');
+  if (ctx.signal.reason === 'preempt') return ended('preempted');
+  const alone = await runJourneySeries(ctx, owner, lanes, {
+    path: journeyWorktree(root, ctx.plan().arc, unit.id, 'base-journey', parent.attempt), checkout: { type: 'detached', at: tip },
+  }, journeyRoot(ctx.runDir, parent, 'base'), { reuse: true, stop: () => false });
+  const baseFault = journeyFault(alone.end);
+  if (baseFault !== null) return baseFault;
+  switch (brakeVerdict(grade, gradeTree(claims, alone.runs, new Set(), new Set(), p1), claims.repairs)) {
+    case 'green':
+      return ended('green');
+    case 'red':
+      return ended('red');
+    case 'base-red':
+      return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, [
+        candidateSeriesRoot(ctx.runDir, parent), journeyRoot(ctx.runDir, parent, 'candidate'), journeyRoot(ctx.runDir, parent, 'base'),
+      ]));
+  }
+}
+
+/**
+ * The fix round after a candidate whose suite was green and whose held claims were red (the brake): the obligations it
+ * left red on the candidate (re-graded from the observations its journey lanes left), with the journey evidence.
+ */
+export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: StageParent): FixRound {
+  const cand = latestCandidate(ctx, unit.id);
+  const claims = unitClaims(ctx, unit, cand.expect.integrationTip, cand.expect.unitCommit);
+  if (claims === null) throw new Error(`unit ${unit.id}: a red candidate with a green suite outside a holistic arc`);
+  const runs = observedRuns(ctx, claims, cand.post.new);
+  const grade = gradeTree(claims, runs, claims.completing, claims.repairs, p1Obligations(ctx.journal.view));
+  const byId = new Map(claims.obligations.obligations.map((o) => [o.id, o]));
+  const directives = [
+    ...grade.red.map((id) => {
+      const o = byId.get(id)!;
+      const tests = o.witness === null ? 'its split children' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
+      return `Obligation ${id} must hold on the candidate and does not (${grade.effects.get(id) ?? 'red'}): "${o.statement}" (witness: ${tests}). Make it hold without weakening its witness.`;
+    }),
+    ...grade.unexplained.map((lane) => `Journey lane ${lane} ran red on the candidate with a failure no obligation explains; read its output and fix the regression.`),
+    ...[...grade.background].map(([lane, tests]) => `Journey lane ${lane}: tests ${tests.join(', ')} fail on the candidate but not on the integration tip alone; the change regressed them.`),
+  ];
+  const root = journeyRoot(ctx.runDir, parent, 'candidate');
+  return { failingEvidenceDirs: existsSync(root) ? [root] : [], directives: directives.length > 0 ? directives : ['The candidate\'s held claims were red; read the journey evidence and fix it.'] };
+}
+
+/** The claims' lanes as the observations on `commit`'s tree record them (a lane with none reads as not run). */
+function observedRuns(ctx: StageContext, claims: Claims, commit: Sha): readonly JourneyRun[] {
+  const tree = revParse(ctx.repo, `${commit}^{tree}`);
+  const store = observations(ctx);
+  return claims.lanes.flatMap((l) => {
+    const o = reuse(store, keyOf(tree, l, laneEnvId(ctx, l)));
+    return o === null ? [] : [{ lane: l.id, inv: o.record.inv, verdict: null, flaky: false, dir: null, record: o.record }];
+  });
+}
+
+/**
+ * Latching (plan "Latching"; §2.8): after `ff{published}` of `commit` publishing `units`, and before the snapshot, an
+ * `obligation-latched` for each future obligation the publication completes and that holds on its tree (the `latch`
+ * effect), where missing. From then on it is must-hold. A restart that re-reads the published ff writes what is missing.
+ */
+export function latchPublished(
+  ctx: Readonly<{ journal: Journal; runDir: AbsPath; repo: AbsPath; hostEnv: Readonly<Record<string, string | undefined>> }>, units: readonly UnitId[], commit: Sha,
+): void {
+  const { obligations } = holisticInForce(ctx);
+  if (obligations === null) return;
+  const view = ctx.journal.view;
+  const latched = latchedSet(view);
+  const published = new Set(view.publications().map((p) => p.unit));
+  const completing = new Set(obligations.obligations.filter((o) => o.activation === 'future' && !latched.has(o.id) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  if (completing.size === 0) return;
+  const tree = revParse(ctx.repo, `${commit}^{tree}`);
+  const store = observations(ctx);
+  const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  const effects = obligationEffects({
+    obligations: obligations.obligations, selected: completing, latched, completing,
+    verdict: (_o, w) => {
+      const lane = lanes.get(w.lane);
+      if (lane === undefined) throw new Error(`witness lane ${w.lane} is not in the obligations in force`);
+      return observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), w);
+    },
+  });
+  const ids = latches(effects).filter((id) => completing.has(id));
+  if (ids.length === 0) return;
+  for (const id of ids) {
+    const o = obligations.obligations.find((d) => d.id === id)!;
+    const unit = units.find((u) => o.deliveredBy.includes(u));
+    if (unit === undefined) throw new Error(`obligation ${id} latches, but none of ${units.join(', ')} delivers it`);
+    ctx.journal.fact({ kind: 'obligation-latched', obligation: id, unit, treeSha: tree });
+  }
+  crashPoint('latch.after-fact');
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Preemption (A7)
 
 /** The candidates that hold the slot before green, by journal: what a docs publication may preempt. */
@@ -287,7 +579,8 @@ function preemptible(ctx: StageContext, unit: UnitId, parent: StageParent): Pree
   let open = true;
   const sweep = (): void => {
     for (const intent of ctx.journal.view.openIntents()) {
-      if (intent.kind !== 'proc.spawn' || canonicalJson(intent.parent) !== canonicalJson(parent) || intent.expect.subject.purpose !== 'lane') continue;
+      if (intent.kind !== 'proc.spawn' || canonicalJson(intent.parent) !== canonicalJson(parent)) continue;
+      if (intent.expect.subject.purpose !== 'lane' && intent.expect.subject.purpose !== 'journey') continue;
       const inv = invocationId(intent.op, intent.ordinal);
       if (killed.has(inv)) continue;
       // A runner that has not written runner.json may not have exec'd yet: the next sweep finds it.
@@ -338,11 +631,7 @@ export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock
   const selected = new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id));
   if (selected.size === 0) return null;
   const findings = ctx.journal.view.holistic().findings;
-  const repaired = new Set(specRepairs(loadUnitSpec(ctx, unit).spec).flatMap((r): ObligationId[] => {
-    if (r.startsWith('I-')) return [r as ObligationId];
-    const o = findings.find((f) => f.id === r)?.obligation ?? null;
-    return o === null ? [] : [o];
-  }));
+  const repaired = repairedObligations(ctx, unit);
   for (const f of findings) {
     if (f.severity !== 'P1' || !ACTIVE_FINDING.has(f.state) || f.obligation === null) continue;
     if (selected.has(f.obligation) && !repaired.has(f.obligation)) return { finding: f.id, obligation: f.obligation };
@@ -415,6 +704,8 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
   const closed = (outcome: OpOutcome['integration.ff']): StageDone<'ff'> => {
     switch (outcome.kind) {
       case 'published':
+        // Latching (plan "Latching"): after ff{published}, before the snapshot; a restart re-reads the ff and writes what is missing.
+        latchPublished(ctx, [unit.id], cand.post.new);
         return record(ctx, parent, 'published');
       case 'unpublished':
         return stale(outcome.tip);
@@ -446,6 +737,284 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
       return closed(done.outcome);
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A repair batch's publication (M3 B2; R7, G5, H4; DESIGN-1.0.md §2.8 "Batch repair")
+//
+// All approved units repairing one finding publish as one candidate: `publishBatch` takes `integration-slot` under
+// `batch{finding, attempt}` (first of every unit waiter, as a repair ranks first, R6) for the batch's durable job
+// `batch-<n>` (one per finding until it publishes; each attempt reuses it), chains the members as `--no-ff` merges on
+// the candidate ref (src/git/candidate.ts `planBatchCandidate`), and runs the plan's suite and the arc lanes of the
+// members' selected obligations as a journey series under `job{batch-<n>}` (its residues job-owned, reclaimed by the
+// job's own holder, G4). It grades like a unit candidate (the brake, known regressions, the tip alone); green, it
+// re-checks every member's approval fingerprint at the tip and eligibility (G10), then `ff{subject: batch}`: the fold
+// retires every member on that one ff. Then the latches, the snapshot, the slot released (`finishBatch`).
+//
+// Red: `red{attributable}` names the members whose own selection holds a red obligation (a fix round each), none when
+// the red is not attributable (every member parks); the caller (the scheduler, step B7) records the members' outcomes.
+//
+// Recovery (src/recover/resource.ts): a batch holder found holding the slot whose ff published is left holding it, and
+// `finishBatch` completes it; any other is abandoned (`abandonBatch`: its checkouts removed, the slot released). A batch
+// ff's CAS is never redone (src/recover/ff.ts): the batch runs again as the next attempt of the same job.
+
+export type BatchContext = StageContext & Readonly<{ acquireFirst: AcquireFirst }>;
+
+export type BatchOutcome =
+  | Readonly<{ kind: 'published'; job: JobId; head: Sha }>
+  /** A member's diff failed the transient check, its merge conflicted, or the chain collides by case: that member's fix. */
+  | Readonly<{ kind: 'refused'; job: JobId; unit: UnitId | null; reason: 'transient-violation' | 'conflict' | 'prefix-collision' }>
+  | Readonly<{ kind: 'red'; job: JobId; attributable: readonly UnitId[] }>
+  | Readonly<{ kind: 'base-red'; job: JobId; needsUser: NeedsUserContent }>
+  /** A lane gave no verdict (blocked, occupied, a failed cleanup: job-owned residues): the batch runs again later. */
+  | Readonly<{ kind: 'no-verdict'; job: JobId; end: JourneyEnd }>
+  /** The tip advanced (a fresh batch), or these members' approvals no longer hold at the tip (each re-gates). */
+  | Readonly<{ kind: 'stale'; job: JobId; invalid: readonly UnitId[] }>
+  | Readonly<{ kind: 'finding-blocked'; job: JobId; unit: UnitId; block: FindingBlock }>
+  | Readonly<{ kind: 'foreign-move'; job: JobId; needsUser: NeedsUserContent }>;
+
+/** A batch's slot: `integration-slot` alone. */
+const BATCH_SLOT: ResourceRequest = { named: [], pools: [], cpu: 0, publication: true };
+/** A batch's waits are never cancelled: once begun it runs to its end. */
+const NEVER = new AbortController().signal;
+
+const batchCheckout = (root: AbsPath, arc: string, job: JobId, which: 'candidate' | 'base', attempt: number): AbsPath =>
+  absPath(join(root, arc, `${job}.${which}-${attempt}`));
+const batchRoot = (runDir: AbsPath, job: JobId, which: 'candidate' | 'base', attempt: number): AbsPath => absPath(join(jobEvidenceRoot(runDir, job), `${which}-${attempt}`));
+
+/** The batch reservations of `finding` (their `reserve` intents, log order): each attempt's holder and its job. */
+function batchReserves(view: JournalView, finding: FindingId): readonly Readonly<{ holder: BatchHolder; job: JobId }>[] {
+  return view.opsOf('resource.transition').flatMap((i) => {
+    const h = i.expect.holder;
+    if (h.type !== 'batch' || h.finding !== finding || i.expect.edge.type !== 'reserve') return [];
+    if (i.parent.type !== 'job') throw new Error(`${i.op}: a batch reserve parented by ${canonicalJson(i.parent)}, not its job`);
+    return [{ holder: h, job: i.parent.job }];
+  });
+}
+
+/** The batch `ff` of `job`, if one was begun (the latest). */
+const batchFfOf = (view: JournalView, job: JobId): IntentOf<'integration.ff'> | undefined =>
+  view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'batch' && i.expect.subject.job === job).at(-1);
+
+/** Whether `job`'s batch `ff` published. */
+function batchPublished(view: JournalView, job: JobId): boolean {
+  const ff = batchFfOf(view, job);
+  const done = ff === undefined ? null : view.doneOf(ff.op);
+  return done !== null && done.kind === 'integration.ff' && done.outcome.kind === 'published';
+}
+
+/** The batch holder holding the slot now, and its job; null when the slot is not a batch's. */
+export function heldBatch(view: JournalView): Readonly<{ holder: BatchHolder; job: JobId }> | null {
+  const { status } = entryOf(resourceTable(view), INTEGRATION_SLOT);
+  if (status.state === 'free' || status.holder.type !== 'batch') return null;
+  const holder = status.holder;
+  const found = batchReserves(view, holder.finding).find((r) => r.holder.attempt === holder.attempt);
+  if (found === undefined) throw new Error(`${canonicalJson(holder)} holds ${INTEGRATION_SLOT} without a reserve intent`);
+  return found;
+}
+
+/** The batch holder's slot released (it declares no teardown, so its cleanup cannot fail), from whatever state it is in. */
+async function releaseBatch(ctx: ResourceContext, holder: BatchHolder, job: JobId): Promise<void> {
+  const parent: Parent = { type: 'job', job };
+  const { status, pending } = entryOf(resourceTable(ctx.journal.view), INTEGRATION_SLOT);
+  if (pending !== null) throw new Error(`${job}: ${pending.op} is open on ${INTEGRATION_SLOT}`);
+  if (status.state === 'free' || !sameHolder(status.holder, holder)) return;
+  const cleaned = status.state === 'cleaning'
+    ? await finishCleanup(ctx, { state: 'cleaning', holder, resources: [INTEGRATION_SLOT], recipes: new Map() }, parent)
+    : await cleanup(ctx, heldReservation(ctx, holder, status.state === 'reserved' ? 'reserved' : 'running'), parent);
+  if (cleaned.kind !== 'released') throw new Error(`the integration slot of ${job} was not released: ${cleaned.kind}`);
+}
+
+/** The done batch `candidate.merge` of `job` (the latest). */
+function batchCandidateOf(view: JournalView, job: JobId): IntentOf<'candidate.merge'> {
+  const intent = view.opsOf('candidate.merge').filter((i) => i.expect.batch?.job === job && view.doneOf(i.op) !== null).at(-1);
+  if (intent === undefined) throw new Error(`batch ${job} has no done candidate`);
+  return intent;
+}
+
+/**
+ * After a batch's `ff{published}`, each step only where missing (recovery's restart calls it again): the latches for
+ * every member, the snapshot (parent `job{batch-n}`), the slot released.
+ */
+export async function finishBatch(ctx: StageContext): Promise<BatchOutcome> {
+  const held = heldBatch(ctx.journal.view);
+  if (held === null) throw new Error('finishBatch: no batch holds the integration slot');
+  const { holder, job } = held;
+  const view = ctx.journal.view;
+  if (!batchPublished(view, job)) throw new Error(`finishBatch: batch ${job} did not publish`);
+  const ff = batchFfOf(view, job)!;
+  const members = batchCandidateOf(view, job).expect.batch!.members.map((m) => m.unit);
+  latchPublished(ctx, members, ff.expect.new);
+  const parent: Parent = { type: 'job', job };
+  if (!view.opsOf('snapshot.publish').some((i) => canonicalJson(i.parent) === canonicalJson(parent) && view.doneOf(i.op) !== null)) {
+    await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, snapshotRequestOf({
+      view: ctx.journal.view, runDir: ctx.runDir, identity: executorIdentity(), message: `roadmap ${ctx.plan().arc}: snapshot after publishing batch ${job} (${members.join(', ')})\n`,
+    }));
+  }
+  await releaseBatch(ctx, holder, job);
+  return { kind: 'published', job, head: ff.expect.new };
+}
+
+/** Recovery of a batch holder that did not publish: its checkouts removed, the slot released; the batch runs again. */
+export async function abandonBatch(ctx: ResourceContext, holder: BatchHolder): Promise<void> {
+  const found = batchReserves(ctx.journal.view, holder.finding).find((r) => r.holder.attempt === holder.attempt);
+  if (found === undefined) throw new Error(`${canonicalJson(holder)} has no reserve intent`);
+  await removeJobCheckouts(ctx, found.job);
+  await releaseBatch(ctx, holder, found.job);
+}
+
+/** Whether a batch holder's `ff` published (recovery then leaves the slot to `finishBatch`). */
+export function batchHolderPublished(view: JournalView, holder: BatchHolder): boolean {
+  const found = batchReserves(view, holder.finding).find((r) => r.holder.attempt === holder.attempt);
+  return found !== undefined && batchPublished(view, found.job);
+}
+
+/** The grade of a tree with no claims: nothing selected, nothing failing. */
+const NO_CLAIMS: TreeGrade = { effects: new Map(), red: [], background: new Map(), unexplained: [] };
+
+/** A batch's suite lanes that ran red count as failures nothing explains (the red-suite path). */
+const withSuite = (g: TreeGrade, runs: readonly JourneyRun[]): TreeGrade =>
+  ({ ...g, unexplained: [...new Set([...g.unexplained, ...runs.filter((r) => r.record === null && journeyRed(r)).map((r) => r.lane)])].sort() });
+
+/**
+ * Publishes the approved `members` (at least two) repairing `finding` as one batch candidate. A batch whose ff published
+ * but was cut short is finished first.
+ */
+export async function publishBatch(ctx: BatchContext, finding: FindingId, members: readonly PlanUnit[]): Promise<BatchOutcome> {
+  if (heldBatch(ctx.journal.view) !== null) return finishBatch(ctx);
+  if (members.length < 2) throw new Error(`a batch of ${members.length} member for ${finding}: a batch has at least two`);
+  const view = ctx.journal.view;
+  const f = view.holistic().findings.find((x) => x.id === finding);
+  if (f === undefined) throw new Error(`batch for ${finding}: no such finding`);
+  const sorted = [...members].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const u of sorted) {
+    if (view.unit(u.id).approval === null) throw new Error(`batch for ${finding}: member ${u.id} is not approved`);
+    const repairs = specRepairs(loadUnitSpec(ctx, u).spec);
+    if (!repairs.includes(finding) && (f.obligation === null || !repairs.includes(f.obligation))) throw new Error(`batch for ${finding}: member ${u.id} does not repair it`);
+  }
+  const reserves = batchReserves(view, finding);
+  const earlier = reserves.at(-1);
+  const job = earlier === undefined || batchPublished(view, earlier.job) ? view.nextJobId('batch') : earlier.job;
+  const attempt = reserves.length + 1;
+  const holder: BatchHolder = { type: 'batch', finding, attempt };
+  const parent: Parent = { type: 'job', job };
+  const grant = await ctx.acquireFirst(BATCH_SLOT, holder, NEVER, undefined, parent);
+  if (grant.kind !== 'granted') throw new Error(`${job}: its slot wait was cancelled, and nothing cancels it`);
+  run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
+  const close = async (outcome: BatchOutcome): Promise<BatchOutcome> => {
+    await releaseBatch(ctx, holder, job);
+    return outcome;
+  };
+
+  const plan = ctx.plan();
+  const integration = branchRef(plan.integrationBranch);
+  const approvals = new Map(sorted.map((u) => [u.id, approvalOf(ctx, u.id)] as const));
+  const decision = planBatchCandidate(ctx.repo, {
+    arc: plan.arc, job, integration, worktree: batchCheckout(plan.worktreeRoot, plan.arc, job, 'candidate', attempt), identity: executorIdentity(),
+    message: `roadmap ${plan.arc}: batch ${job} repairing ${finding} (${sorted.map((u) => u.id).join(', ')})\n`,
+    members: sorted.map((u) => {
+      const fingerprint = approvals.get(u.id)!;
+      const head = unitTip(ctx, u.id);
+      if (fingerprint.unitCommit !== head) throw new Error(`batch ${job}: ${u.id}'s approval binds ${fingerprint.unitCommit}, the branch is at ${head}`);
+      return { unit: u.id, unitCommit: head, fingerprint, rules: candidateRequest(ctx, u, 0).rules };
+    }),
+  });
+  if (decision.kind !== 'merge') return close({ kind: 'refused', job, unit: decision.kind === 'prefix-collision' ? null : decision.unit, reason: decision.kind });
+  const op = candidateMergeOp(ctx.repo);
+  const cand = await runPrepared(ctx.journal, op, `candidate:${job}`, parent, await op.prepare(decision.plan));
+  crashPoint('batch.after-candidate');
+  const tip = cand.expect.integrationTip;
+
+  // The claims: the union of every member's selection (each over its own diff and closure), completions over all members.
+  const { obligations } = holisticInForce(ctx);
+  const ids = [...new Set(sorted.flatMap((u) => selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id)))].sort();
+  const repairs = new Set(sorted.flatMap((u) => [...repairedObligations(ctx, u)]));
+  const claims = claimsOf(ctx, obligations, sorted.map((u) => u.id), ids, repairs);
+  const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
+  const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(claims?.lanes ?? []).map(arcJourneyLane)];
+  const suiteRed = (r: JourneyRun): boolean => r.record === null && journeyRed(r);
+  const onCandidate = await runJourneySeries(ctx, owner, lanes, candidateWorktreeRequest(cand), batchRoot(ctx.runDir, job, 'candidate', attempt), { reuse: true, stop: suiteRed });
+  if (onCandidate.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: onCandidate.end });
+  const p1 = p1Obligations(ctx.journal.view);
+  // Outside an arc with obligations only the suite grades.
+  const gradeOn = (runs: readonly JourneyRun[], on: 'candidate' | 'tip'): TreeGrade => withSuite(claims === null ? NO_CLAIMS : on === 'candidate'
+    ? gradeTree(claims, runs, claims.completing, claims.repairs, p1)
+    : gradeTree(claims, runs, new Set(), new Set(), p1), runs);
+  const grade = gradeOn(onCandidate.runs, 'candidate');
+  if (!clean(grade)) {
+    const alone = await runJourneySeries(ctx, owner, lanes, {
+      path: batchCheckout(plan.worktreeRoot, plan.arc, job, 'base', attempt), checkout: { type: 'detached', at: tip },
+    }, batchRoot(ctx.runDir, job, 'base', attempt), { reuse: true, stop: () => false });
+    if (alone.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: alone.end });
+    switch (brakeVerdict(grade, gradeOn(alone.runs, 'tip'), claims?.repairs ?? new Set())) {
+      case 'green':
+        break;
+      case 'red': {
+        // A member is attributable when its own selection holds a red obligation and nothing else is red.
+        const attributable = grade.unexplained.length > 0 || grade.background.size > 0 ? [] : sorted.filter((u) => {
+          const own = new Set(selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id));
+          return grade.red.some((id) => own.has(id));
+        }).map((u) => u.id);
+        return close({ kind: 'red', job, attributable });
+      }
+      case 'base-red':
+        return close({ kind: 'base-red', job, needsUser: {
+          blocking: true, subject: { type: 'arc' }, reason: 'base-red',
+          summary: `Batch ${job} repairing ${finding} is red on ${plan.integrationBranch} at ${tip} alone as well: the base is broken, not the batch. Merges halt.`,
+          recommendation: `Repair ${plan.integrationBranch} (or the suite), then acknowledge this item: the batch runs again.`,
+          options: [], evidence: [batchRoot(ctx.runDir, job, 'candidate', attempt), batchRoot(ctx.runDir, job, 'base', attempt)],
+        } });
+    }
+  }
+
+  // Green: every member's approval at the tip, then eligibility (G10), then the ff.
+  const blocked = (): BatchOutcome | null => {
+    for (const u of sorted) {
+      const block = findingBlocking(ctx, u);
+      if (block !== null) return { kind: 'finding-blocked', job, unit: u.id, block };
+    }
+    return null;
+  };
+  const eligible = blocked();
+  if (eligible !== null) return close(eligible);
+  const ffPlan = planBatchFf(ctx.repo, integration, cand);
+  switch (ffPlan.kind) {
+    case 'foreign-mover':
+      return close({ kind: 'foreign-move', job, needsUser: batchForeignMove(ctx, job, `${ffPlan.ref} is at ${ffPlan.observed ?? 'nothing'}, expected ${ffPlan.expected}`) });
+    case 'unpublished':
+      return close({ kind: 'stale', job, invalid: [] });
+    case 'ff':
+      break;
+  }
+  const invalid = sorted.filter((u) => !fingerprintHolds(ctx, u, approvals.get(u.id)!, tip)).map((u) => u.id);
+  if (invalid.length > 0) return close({ kind: 'stale', job, invalid });
+  const late = blocked();
+  if (late !== null) return close(late);
+  const ff = await runPrepared(ctx.journal, integrationFfOp(ctx.repo, noBatchRedo), `integration:${plan.arc}`, parent, ffPlan.body);
+  const done = ctx.journal.view.doneOf(ff.op);
+  if (done === null || done.kind !== 'integration.ff') throw new Error(`integration.ff ${ff.op} has no done record`);
+  switch (done.outcome.kind) {
+    case 'published':
+      return finishBatch(ctx);
+    case 'unpublished':
+      return close({ kind: 'stale', job, invalid: [] });
+    case 'recovery-required':
+      return close({ kind: 'foreign-move', job, needsUser: batchForeignMove(ctx, job, `${integration} is at ${done.outcome.observed ?? 'nothing'} after the publication CAS`) });
+  }
+}
+
+/** A batch `ff` never asks for a unit's re-check (src/recover/ff.ts never redoes a batch CAS). */
+const noBatchRedo = (): never => {
+  throw new Error('a batch ff has no unit to re-check');
+};
+
+function batchForeignMove(ctx: StageContext, job: JobId, detail: string): NeedsUserContent {
+  return {
+    blocking: true, subject: { type: 'arc' }, reason: 'foreign-ref-move',
+    summary: `Publication of batch ${job} stopped: ${detail}. Integration only moves forward, and only the executor moves its refs.`,
+    recommendation: `Find out who moved it; restore ${ctx.plan().integrationBranch} (or the ref) to a descendant of what the executor published, then acknowledge.`,
+    options: [], evidence: [],
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------

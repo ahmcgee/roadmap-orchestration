@@ -18,6 +18,7 @@ import { git as rawGit } from '../src/git/git.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
 import { docsTransientViolations } from '../src/git/transient.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { witnessRecordPath } from '../src/pipeline/lanes.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -299,7 +300,8 @@ describe('holistic docs publications', () => {
       assert.equal(head(r.d), tip);
       const witnessed = facts(r).flatMap((f) => (f.kind === 'witnessed' ? [[f.lane, f.for, f.purpose]] : []));
       assert.deepEqual(witnessed, [['journey', { type: 'job', job: 'docs-1' }, 'witness']]);
-      assert.ok(existsSync(join(r.ctx.runDir, 'evidence', 'jobs', 'docs-1', 'journey', 'witness.json')));
+      const inv = facts(r).flatMap((f) => (f.kind === 'witnessed' ? [f.inv] : []))[0]!;
+      assert.ok(existsSync(witnessRecordPath(r.ctx.runDir, inv)), 'the witness record is kept in its invocation dir');
 
       // I-3 (passing) instead of I-2.
       const path = join(r.d.planPath, '..', 'obligations.json');

@@ -74,6 +74,7 @@ function ownerOf(ctx: ResourceContext, holder: AcquiringHolder): Owner {
         stopped: `job ${holder.job}'s lane did not run`, resume: `let job ${holder.job} run its lane again`,
       };
     case 'docs':
+    case 'batch':
       throw new Error(`${JSON.stringify(holder)} holds integration-slot alone: it has nothing to probe`);
   }
 }

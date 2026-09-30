@@ -41,7 +41,6 @@ import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type ObligationRev, specObligations, specRepairs } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
-import type { ObligationView } from '../prompts/inputs.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, repoPath } from '../core/values.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
@@ -59,7 +58,7 @@ import {
   judgmentDispatch, unitBranch, verdictOf,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSeries, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { latestSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import {
   type PlanCheckDone, type StageDone, architecture, at, changedPremiseFiles, enterJudgment, holisticInForce, inMs, integrationTip, judgmentOutput, judgmentSpawns,
   ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, start, verdictKind, writeJudgmentInputs,
@@ -141,9 +140,6 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
   });
   return ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
 }
-
-/** The selected obligations as the gate reads them; the observation on the tree under review is the candidate's (B2). */
-const obligationViews = (defs: readonly ObligationDef[]): readonly ObligationView[] => defs.map((o) => ({ obligation: o, exempt: isExempt(o), observation: null }));
 
 const sameFingerprint = (a: ApprovalFingerprint, b: ApprovalFingerprint): boolean => canonicalJson(a) === canonicalJson(b);
 
@@ -252,7 +248,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const rendered = prompt.render({
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), architecture: architecture(ctx, tip),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
-      obligations: obligationViews(selected(ctx, unit, tip, head)),
+      obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
       laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
     });
