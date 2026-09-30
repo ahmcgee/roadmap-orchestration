@@ -296,7 +296,7 @@ function readLens(ctx: StageContext, job: JobId, called: BackendCallOutcome): Le
 }
 
 /** Holds `@cpu`×1 under the job's holder around `body` (none on a legacy arc). */
-async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Promise<T>): Promise<T> {
+export async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Promise<T>): Promise<T> {
   const request = judgmentEntry(ctx);
   if (request === null) return body();
   const holder: JobHolder = { type: 'job', job };
@@ -315,7 +315,7 @@ async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Promise<T>)
 }
 
 /** Removes a checkout the job made, citing an evidence snapshot of whatever it holds beyond its commit. */
-async function removeCheckout(ctx: StageContext, job: JobId, path: AbsPath): Promise<void> {
+export async function removeCheckout(ctx: StageContext, job: JobId, path: AbsPath): Promise<void> {
   const parent = jobParent(job);
   const dirty = dirtyPaths(path);
   const snap = await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
