@@ -91,6 +91,12 @@ export interface JournalView {
   planApplied(): PlanAppliedFact | null;
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */
+  decidedSeq(unit: UnitId): number | null;
+  /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
+  publications(): readonly Readonly<{ unit: UnitId; seq: number }>[];
+  /** M2 (rank, F17): the seq of the first `plan-applied` fact that named the unit, or null if none did. */
+  addedSeq(unit: UnitId): number | null;
   /** Every unit id any `plan-applied` fact named, ascending: ids are never reused. */
   plannedUnits(): readonly UnitId[];
 }
