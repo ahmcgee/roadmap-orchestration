@@ -232,12 +232,6 @@ export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }>
   | Readonly<{ subject: FfSubject; fingerprint?: never }>
 );
 
-/** A unit `ff`'s fingerprint; a docs or batch `ff` has none, and asking for one is a bug. */
-export function unitFfFingerprint(expect: IntegrationFfExpect): ApprovalFingerprint {
-  if (expect.fingerprint === undefined) throw new Error(`integration.ff of ${JSON.stringify(expect.subject)} carries no unit fingerprint`);
-  return expect.fingerprint;
-}
-
 /** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
 export type RevisionBase = PlanRev | 0;
 

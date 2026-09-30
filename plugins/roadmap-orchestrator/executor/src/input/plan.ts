@@ -218,6 +218,18 @@ const planUnit: Read<PlanUnit> = object((f) => {
   };
 });
 
+/**
+ * Why a unit entering the plan (a fresh arc's rev 1, or a unit a revision adds) may not take `id`, or null. A repair
+ * batch's candidate ref is keyed by its job id beside the units' (src/git/candidate.ts), and the run dir's
+ * `evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`. Units already in an adopted arc's plan keep
+ * their ids: this is never a schema rule.
+ */
+export function reservedUnitIdReason(id: UnitId): string | null {
+  return /^batch-\d+$/.test(id) || id === 'jobs' || id === 'mutants'
+    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence); choose another id`
+    : null;
+}
+
 /** Field paths in errors start at `plan`, e.g. `plan.units[0].risk`. */
 export function parsePlan(value: unknown): PlanM1 {
   return object((f): PlanM1 => {

@@ -7,8 +7,8 @@
 //   2. Validation (A1 `validateRuling`) at the integration tip, against the revisions in force: its identity (the
 //      ledger's next C-n), supersession, docRefs, contract ops (the plan's contracts and architecture doc only),
 //      obligations, cites (active vision clauses only: a withdrawn cite is refused, H16), and its `consistency`, which
-//      must be fresh (G21): judged at exactly the head, ledger, obligations and vision in force and the contracts'
-//      blobs. Every reason is listed.
+//      must be fresh (G21): judged against the ledger, obligations and vision in force and the contracts' blobs at the
+//      head (the judged head itself is provenance only, src/spec/rulings.ts). Every reason is listed.
 //   3. The proposal (the apply core, G1): the revision in force with the ledger after it (`ledgerAfter`: its line
 //      appended, fully superseded rulings folded), its sidecars after it (`sidecarsAfter`) and its obligation
 //      dispositions applied (`obligationsAfter`: a `waived`, `deferred` or `retired` obligation takes that state

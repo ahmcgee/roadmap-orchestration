@@ -207,9 +207,9 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 |---|---|---|
 | `start` / `status` / `ack <id>` | launch or recover / §2.4 / acknowledge a `needs-user` item | a live owner or undispositioned residue / — / unknown id |
 | `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth): a retryable park is probed now, an operator-env park re-runs its stage (`unparked`), an operator-design park reopens on an applied revision; `--backend` clears that backend's current park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has applied (`apply`) a revision of its spec to the next rev, keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit with no revision applied, or parked at any other stage |
-| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter`, `cut`, `route`, `limits`, `obligation add\|split\|witness` and the vision below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`; a unit routing layer; bounds; obligation edits; vision clauses), not separate commands, and so are pool, `capacity`, mapping and `holistic` edits (lead ruling LR-c, A1); a file watcher is rejected (no command path, no expected revision, reads files mid-write). The manifest also hashes the ledger, the obligations file and the vision; the ledger is only compared (A3) | a stale `--expect-rev`; no `--expect-rev` when a revision since the caller's last `apply` came from a non-architect source (a bundle or the executor; stale files would silently revert its act, A4); a ledger file differing from the ledger in force (A3); removing `holistic`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's scope, risk, resources, spec path or new `after`, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
+| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter`, `cut`, `route`, `limits`, `obligation add\|split\|witness` and the vision below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`; a unit routing layer; bounds; obligation edits; vision clauses), not separate commands, and so are pool, `capacity`, mapping and `holistic` edits (lead ruling LR-c, A1); a file watcher is rejected (no command path, no expected revision, reads files mid-write). The manifest also hashes the ledger, the obligations file and the vision; the ledger is only compared (A3) | a stale `--expect-rev`; no `--expect-rev` when a revision since the caller's last `apply` came from a non-architect source (a bundle or the executor; stale files would silently revert its act, A4); a ledger file differing from the ledger in force (A3); removing `holistic`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's lower risk, resources, spec path or new `after`, or its scope growth without a cited ruling naming exactly the added patterns, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
 | `run-only <ids>` / `--clear` | dispatch allowlist checked at admission (arc 1's `dispatchOnly`, used W29–34); a command, not an `apply` edit, because it records a runtime fact | ids outside the plan |
-| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it) and obligation dispositions: the sidecar is validated against old revisions (its `consistency` fresh, G21), then the docs publication (§2.6), then the commit through the revision fence; invalidates citing approvals. The ledger's only writer after `start` (A3): it writes back to the live ledger file only while that file still holds the previous bytes | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match; stale base; stale `consistency`; a vision effect; a withdrawn `V-n` cited |
+| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it) and obligation dispositions: the sidecar is validated against old revisions (its `consistency` fresh, G21), then the docs publication (§2.6), then the commit through the revision fence; invalidates citing approvals. The ledger's only writer after `start` (A3): it writes back to the live ledger file only while that file still holds the previous bytes | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match at the tip; stale `consistency`; a vision effect; a withdrawn `V-n` cited |
 | `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited ruling naming exactly the added patterns (the unit is then re-pinned, and the transient check allows exactly those paths) |
 | `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); a checkpoint admit while `draining` (a `bundle-request` instead); declared obligations narrower than the impact mapping (prefix-conservative) |
 | `resolve-edge <edge> --evidence` | contingent edge → resolved (`edge-resolved`, a runtime fact, so a command) | unknown or resolved edge |
@@ -226,7 +226,7 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 | `steer <unit> --brief <f> --budget <min> [--class <efficient\|frontier\|summit>] [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, `steered`, one uncharged steer round, then normal salvage → lanes → review/gate exit. Non-green parks; green parks unless `--resume` (R11); minutes (lanes excluded) and usage recorded. Unblocked arc 1's launcher and estate | unit not parked or preparing; `budget ≤ 0`; widening the envelope |
 | `audit [--lens]` | §2.5 on demand (`audit-requested`). `explore` is deferred (A11, §8) | holistic off |
 | `debt resolve <id> --ruling` / `promote <id>` | ledger ops | promote while `draining` |
-| `close-admissions`, `stop` | latch `draining` (`admissions-closed`, §2.10) / park all, teardown, release the host lock (residues persist) | already `draining` / — |
+| `close-admissions`, `stop` | latch `draining` (`admissions-closed`, §2.10) / park all, teardown, release the host lock (residues persist); every live call and lane is killed, lens and checkpoint calls included (a killed lens call abandons its audit, which runs again later), except a docs publication's lanes, which run to their end (lead ruling 2026-09-30) | already `draining` / — |
 
 Automatic: salvage (arc 1 did it by hand three times); teardown after any kill; the snapshot (§2.9); residue
 compaction at `start` (§2.9).
@@ -279,13 +279,16 @@ them acts (§2.8).
   the obligations with observations, the range diff and owner branch diffs; findings; `audit-ended{covered}`;
   the worktree removed, citing a snapshot. Coverage stops at the audited SHA, and before the checkpoint the cited
   P1s are re-witnessed on the current head. A failed job-lane cleanup leaves a residue owned by `job{…}`,
-  probed and reclaimed like any other; the job re-runs the lane.
+  probed and reclaimed like any other; the job re-runs the lane. A job whose lane gives no verdict is retried on
+  the retryable-park backoff, and at 6 h raises one non-blocking `park-escalated` (lead ruling 2026-09-30).
 - **Coverage**: per lens, a contiguous watermark over the integration history; results are observations keyed by
   the audited SHA. A docs-only publication (the executor-rendered `.roadmap/` files, rendered by code from
   in-force records) covers its own edge U→D by construction (`docs-covered`, A17, H8): a lens's watermark
   advances to D only when it already reaches U; otherwise it stays, and the edge is recorded for when the gap
   closes. Outstanding triggers and drift obligations are kept, and its witnesses still run. A rule publication
-  carrying contract ops is not docs-only. A vision revision resets every lens's watermark to the change's head.
+  carrying contract ops is not docs-only. A vision revision clears every coverage recorded before it: each lens's
+  watermark restarts at the arc's base (the head when it turned holistic), so the next audit of each lens covers
+  the whole arc under the new vision and no merged range survives the change unaudited (lead ruling 2026-09-30).
 - **Mutants are executed, never judged by reading.** A vacuity finding admits a bounded repair unit whose first
   stage, `reproduce`, applies the mutant (`mutant.apply` in a detached worktree) and runs the lane under
   `purpose: mutant`: `reproduced` → plan-check; `not-reproduced` → code dismisses the finding and the unit
@@ -310,7 +313,9 @@ when a ref `deviates`), `obligations`, `obligationDispositions [{id, waived|defe
 and the required `consistency {verdict, judgedRevs {head, ledgerSha256, obligationsSha256, visionSha256,
 contracts}, by}` (G21). Code checks identity, anchors and quoted text, revisions, supersession, amendment
 linkage, overlapping anchors, that every cited `V-n` is active, and that `consistency` is fresh against the
-revisions in force; semantic consistency is the model judgment `consistency` records. Rulings are checked
+revisions in force: the ledger, obligations and vision bytes and the named contracts' blobs (the judged `head` is
+provenance only, so a merge that leaves those untouched keeps it fresh; docRefs are re-checked at the tip
+regardless; lead ruling 2026-09-30); semantic consistency is the model judgment `consistency` records. Rulings are checked
 against the code before landing (plan-check readings overturned three arc-1 drafts).
 
 **Ledger ownership (OR-Q5, A3).** After `start` the ledger is executor-owned and `rule` is its only writer (a
@@ -373,7 +378,7 @@ refused. **Readers:** the full vision goes first into every lens and checkpoint 
 wins. Plan-check receives it as read-only context and may emit `visionConflict [{clauses, note}]`; each entry
 opens a P3 finding (`lens: plan-check`) for the next checkpoint and is never a redirect on its own: a redirect
 needs the spec's own grounds (R17). The gate never receives it: it grades spec and contracts, and the pinned
-scope holds. **A vision revision** resets every lens's audit coverage to the change's head (§2.5), reopens the
+scope holds. **A vision revision** restarts every lens's audit coverage at the arc's base (§2.5), reopens the
 quiescence of generations recorded under the old vision, and triggers a drift-only audit (H3, R15).
 
 **Holistic on by vision (A5).** The layer runs only when `plan.holistic` names a vision; obligations may be
@@ -432,7 +437,8 @@ envId, treeSha, inv, runner, purpose: witness | mutant, records, malformed}`; ma
 declared test `unwitnessed`. The verdict is pure: every selected test ≥ 1 and passing → `held`; any failing →
 `not-held`; passes mixed with skip or zero-selected → `partial`; else `unwitnessed`. An observation derives from a
 `purpose: witness` record, keyed `(treeSha, lane, laneRev, envId)`, and is reused only when all four keys and the
-record hash match; mutant records carry the patched tree's id and never certify (G13). "This test proves this
+record hash match. Discharge is strict: `envId` is the executor's own (`status` reads the one it recorded), and
+another environment's observation never discharges (lead ruling 2026-09-30); mutant records carry the patched tree's id and never certify (G13). "This test proves this
 statement" is judged at Phase 0, bound to both revisions, re-judged only when either changes. Unit-branch
 success never certifies an integrated claim (w38). Checkpoint lane duration is part of Phase-0 feasibility and
 `status`.
@@ -599,7 +605,8 @@ surfaces as a ranked Phase-0 question. Obligation-affecting items are findings, 
   (§2.9). **Completion (A20)** is **active** while the plan rev and the integration head are unchanged (used by
   resume and `status`); an admitting `apply` or a reopen invalidates it. It is **sealed** (used by `gc`) when its
   verified head is still in the integration history and its own log and queue hold no later work; head equality
-  is not required. An arc without the holistic layer completes as in M2.
+  is not required. An arc without the holistic layer completes on M2's predicate and also records
+  `arc-completed` and the terminal snapshot, so `gc` can seal it (lead ruling 2026-09-30).
 - **`needs-user`**: an unacknowledged blocking `needs-user` item.
 - **`blocked`** (a `status` `run.state` since M2): nothing can dispatch while in-scope work remains (parked,
   excluded by `run-only`, behind an unresolved contingent edge, or behind a dead dependency awaiting `cut` or
@@ -794,7 +801,8 @@ reporters and a real-`go` capture; the read-only Codex judgment profile.
    refusal; `usage: unavailable`; routing layers and refusals, `claude-only` resolving no Codex role; pre-staged
    salvage; dirty verification tree; the §3.1 fixture (`Capacity: 2Gi` → no halt); witness records; lane reuse;
    the transition table; unmapped paths; future activation; repair batch; both audit-race orders; stale and
-   partial bundles; `no-op`; the convergence bound; arc-state predicates.
+   partial bundles; `no-op`; the convergence bound; arc-state predicates. The upgrade test (an arc the previous
+   release started, adopted) runs alone after the parallel suite: its park premise needs a calm host.
 3. **targeted probe** — real calls: both Claude profiles and Codex fresh/resume against real schemas (M1 gate).
 4. **paid** — per-slice fixtures (§10), once per merged batch, offline in file mode, the M1 fixture also under
    `claude-only`; the issue fixture (D6). A property a model's output cannot be forced to show is asserted at
@@ -840,9 +848,9 @@ ladder with its own runnable fixture:
   `merge-in`, `audit`, `close-admissions`, and `route`, `limits`, obligation and vision edits through `apply`;
   the growth controls of §2.9 (ruling retirement, obligation re-derivation at Phase 0, dismissal arc lifetime,
   residue compaction at `start`, `roadmap gc`) and the snapshot closure. Version 1.0.0-dev.6 adopts dev.5 arcs:
-  such an arc runs without a vision or the holistic layer, spends nothing new and completes as in M2; `apply`
+  such an arc runs without a vision or the holistic layer, spends nothing new and completes on M2's predicate; `apply`
   may opt it in. The dev.5 defaulting (the live-ledger reader `rulingsFromLiveFile`, the legacy manifest reader,
-  dev.5 routing reconstruction and dev.5 transient rules) is scaffolding, deleted once no dev.5 arc is in
+  dev.5 routing reconstruction, dev.5 transient rules and the other read-time defaults BACKLOG lists) is scaffolding, deleted once no dev.5 arc is in
   flight. Fixture (one paid run, `--profile default`, obligations seeded by hand, lead ruling LR-f): the Node
   CLI `ledger`; vision V-1 (purpose: "bookkeepers reconcile a month in one command"), V-2 (non-negotiable:
   "money is never silently mis-rounded"), V-3 (tradeoff, rank 1: "clear errors over permissive input");

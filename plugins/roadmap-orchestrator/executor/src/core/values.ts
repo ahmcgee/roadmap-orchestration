@@ -1,6 +1,6 @@
 // Branded scalar values that are not ids: paths, ref names, timestamps, host tokens. Same contract as
 // ids.ts: one checking constructor per brand, SchemaError on a malformed value.
-import { posix } from 'node:path';
+import { matchesGlob, posix } from 'node:path';
 import { type Brand, SchemaError } from './validate.ts';
 
 type Reader<T> = (value: unknown, path?: string) => T;
@@ -35,6 +35,12 @@ export const planPath = checked('PlanPath', 'relative path under the plan direct
 export type RepoPattern = Brand<string, 'RepoPattern'>;
 export const repoPattern = checked('RepoPattern', 'relative glob, no leading /, no .. segments', (s) =>
   s.length > 0 && !s.startsWith('/') && !s.includes('\0') && s.split('/').every((seg) => seg !== '..'));
+
+/** `pattern` as a glob, or as a directory prefix (`src` and `src/` both cover `src/a/b`). */
+export function matchesPattern(path: RepoPath, pattern: RepoPattern): boolean {
+  const p = pattern.replace(/\/+$/, '');
+  return path === p || path.startsWith(`${p}/`) || matchesGlob(path, p) || matchesGlob(path, `${p}/**`);
+}
 
 // git check-ref-format rules, applied per component.
 function refComponentsOk(s: string): boolean {

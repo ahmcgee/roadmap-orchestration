@@ -115,16 +115,6 @@ export function compareResourceUnits(a: ResourceUnit, b: ResourceUnit): number {
   return ia - ib;
 }
 
-/**
- * A resource unit as a named resource, for the reservation paths that take only those until pool instances
- * and `@cpu` tokens are reserved (M2 step 1): an instance or token there is a bug.
- */
-export function namedResource(unit: ResourceUnit): ResourceName {
-  const p = parseResourceUnit(unit);
-  if (p.type !== 'named') throw new Error(`resource unit ${unit} is not a named resource; only named resources are reserved before pools and @cpu`);
-  return p.name;
-}
-
 /** A contingent edge's id (plan `contingent[].id`), unique across the plan; `resolve-edge` names it. */
 export type EdgeId = Brand<string, 'EdgeId'>;
 export const edgeId: IdReader<EdgeId> = textual('EdgeId', new RegExp(`^${SLUG}$`), SLUG_FORM);

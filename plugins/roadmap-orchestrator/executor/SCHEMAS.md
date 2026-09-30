@@ -1,7 +1,9 @@
 # Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a)
 
-The specification every later step compiles against. M2's records and scheduling interfaces are in place
-below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic layer" at the end. Each schema names the TypeScript type and the
+The specification every later step compiles against, current as of 1.0.0-dev.6 (M3). M2's records and scheduling
+interfaces are in place below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic
+layer" at the end, whose later "Choices made in M3 …" sections state the rule where an earlier section is
+superseded. Each schema names the TypeScript type and the
 validator that implement it; if you change one, change the other in the same commit. Owner: the lead.
 Other steps request changes rather than edit.
 
@@ -76,7 +78,7 @@ Every change is additive; the defaults live in `src/core/upgrade.ts` and each wa
 **1.0.0-dev.5 → 1.0.0-dev.6 (M3).** `SCHEMA_VERSION` stays 1; the plan and spec literals stay `roadmap/plan-m1` and
 `roadmap/spec-m1`. Every change is additive and byte-preserving (G14): nothing is rewritten, and each default
 below is a helper in `src/core/upgrade.ts` (warned once per process) or a lasting absent-means-none encoding (no
-warning). `PREVIOUS_RELEASE` for this update is be76132 (B10 moves it). A dev.5 arc runs with no vision and no
+warning). `PREVIOUS_RELEASE` for this update is be76132 (1.0.0-dev.5). A dev.5 arc runs with no vision and no
 holistic layer, spends nothing new, and completes as in M2.
 
 | Record | Change | Read-time default for dev.5 state |
@@ -96,7 +98,7 @@ holistic layer, spends nothing new, and completes as in M2.
 | New facts, `CommandBody`, `NeedsUserReason`, `Role` | "M3: the holistic layer" | none |
 | `UnitState` (fold) | `+ bounds` | derived from the latest dispatch record |
 | `DerivedState` (`state.json`) | `+ holistic` (`HolisticFold`) | derived |
-| `residues.jsonl` | `+ compacted` head (A5a) | none |
+| `residues.jsonl` | `+ compacted` head, archives (A5a) | none: an uncompacted index has no head |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -158,7 +160,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `capacity?` (M2) | `{cpu?: positive}` | the `@cpu` pool's size; absent: `availableParallelism()` |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
-| `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
+| `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
 | `holistic?` (M3, A5) | `{vision: PlanPath, obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
 | `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
@@ -255,7 +257,7 @@ in the line belongs to `arc`.
 | `abort` | `op, reason: {code: precondition\|recovery\|cancelled, detail}` | `AbortRecord` |
 | `fact` | `fact: Fact` | `FactRecord` |
 
-`Parent = stage{unit, stage, attempt} | command{command} | op{op} | arc`.
+`Parent = stage{unit, stage, attempt} | command{command} | op{op} | arc` (M3 adds `job{job}`).
 
 | Fact `kind` | Fields |
 |---|---|
@@ -369,8 +371,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 
 ## Op kinds (`OP_KINDS`, `OP_SCHEMAS`)
 
-`proc.spawn` purposes: `backend | lane | teardown | probe | smoke`. `proc.kill` reasons: `deadline | stall | pause |
-stop | recovery | external-unknown`.
+`proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`).
+`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt` (`preempt`: M3, lanes only).
 
 | Kind | `expect` (`OpExpect`) | `post` (`OpPost`) | done `outcome` (`OpOutcome`) |
 |---|---|---|---|
@@ -390,18 +392,19 @@ stop | recovery | external-unknown`.
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
 `SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
-`teardown|probe{unit\|null, resource: ResourceInstance}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`.
+`teardown|probe{unit\|null, resource: ResourceInstance}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`
+(M3 adds `arc-backend`, `journey`, `mutant`: "M3: the holistic layer").
 `(role, tier)` is a seat (`build.escalation` is refused), which the usage fact copies.
 The invocation is `op#ordinal`; its launch.json is written after the intent is durable and must hash to
 `launchSha256`.
 
 `Holder = stage{unit, stage, attempt} | sweep{command} | retry{unit, stage, attempt} | publication{unit, attempt}`
 (M2 adds the last two: a probe reclaiming its unit's own residue, keyed by the stage attempt whose cleanup failed;
-the publication transaction, A2). `ResourceEdge`: `reserve` (free→reserved), `run`
+the publication transaction, A2; M3 adds `docs{pub}`, `batch{finding, attempt}`, `job{job}`). `ResourceEdge`: `reserve` (free→reserved), `run`
 (reserved→running), `clean{from: reserved|running}` (→cleaning), `release` (cleaning→free), `fail{residues:
 [{resource: ResourceInstance, teardown: InvocationId}]}` (cleaning→cleanup-failed; one residue per transitioned resource,
 appended to the host index before this intent's done), `reclaim` (cleanup-failed→cleaning, sweep and retry holders only
-(`RECLAIM_HOLDERS`):
+(`RECLAIM_HOLDERS`; M3 adds `job`):
 a sweep or a probe taking back this arc's own resource to re-run its residue's teardown; step 13). Lock order
 (`compareResourceUnits`): named resources and pool instances ascending by name (a pool's instances numerically),
 then `@cpu#*` numerically, then `integration-slot`; over plain names it is M1's order. Op keys per holder:
@@ -420,6 +423,10 @@ checks the relationship.
 | `mergein.prepare` | `worktree, branch, old, integrationTip T, merge: clean{commit (parents [old, T])} \| conflicted{conflicts}` | `clean-merged{new}` \| `conflicted` | clean-merged: HEAD = new; conflicted: HEAD = old, MERGE_HEAD = T; completed: implementer commit with parents `[old, T]` |
 | `candidate.merge` | `ref = refs/roadmap-run/<arc>/candidate/<unit>`, `old\|null, T, unitCommit, worktree, commit` (parents `[T, unitCommit]`, tree from `merge-tree --write-tree`) | `new` | ref = new; candidate worktree detached at new |
 | `integration.ff` | `ref = refs/heads/<int>`, `old = T, new = candidate, fingerprint` | | ref = new; new^1 = T; new^2 = approved unitCommit |
+
+M3 adds `docs.commit` and `mutant.apply`, a repair batch's `candidate.merge` (`+ batch`, on
+`refs/roadmap-run/<arc>/candidate/<batch-n>`: no unit entering the plan may take the id `batch-<n>`, so the two never share a ref in a new arc)
+and a docs or batch `integration.ff` (`subject`, no fingerprint): "M3: the holistic layer", Op kinds.
 | `snapshot.publish` | `ref = refs/roadmap/<arc>`, `old\|null, highWater, manifestSha256, commit` (parents `[old]` or `[]`) | `new` | ref = new; tree matches its own manifest |
 
 Candidate validation adds the prefix-collision guard (a new path whose case-folded form equals, or is a
@@ -443,7 +450,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 |---|---|---|---|
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; absent in a 1.0.0-dev.1 launch.json, read as null), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
-| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery, at` |
+| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt, at` (`preempt`: M3, a lane only) |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
@@ -454,8 +461,8 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
-exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` beside
-`cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
+exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` (a command's
+also `preempt`, M3) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
@@ -704,11 +711,13 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 | `exit.reason.json` | `ExecutorExitReason` | `{v, generation, reason: stop\|complete\|refused}` |
 | `supervisor.<token>.out` / `.err` | JSON lines (`supervisorLine`, `src/supervisor.ts`) / text | the supervisor's stdio, named by `roadmap start`: `{kind: claimed, generation}` per claim, or the refused exit line |
 | `executor.<generation>.out` / `.err` | exit line / text | the executor's stdio: its `ExitReason` line at an intentional exit; stderr of a crash (the crash-limit needs-user cites these) |
-| `residues.jsonl` | `ResidueLine` = `ChainEnvelope & ResidueRecord` | envelope `{v, seq, prev, at}` (no `arc`), same chain and tail rules as the event log (`parseChainLine`) |
+| `residues.jsonl` | `ResidueLine` = `ChainEnvelope & ResidueRecord` | envelope `{v, seq, prev, at}` (no `arc`), same chain and tail rules as the event log (`parseChainLine`); since M3 a compacted index starts with a `compacted` head (A5a) |
+| `residues.archive.<prevSeq>.<sha8>.jsonl` (M3) | the index file a compaction replaced, byte for byte | named by its last line's seq and the first 8 hex of that line's hash (`residueArchiveName`) |
+| `residues.jsonl.compact` (M3) | `COMPACT_TMP` | a compaction's new index before its rename; a stray one is removed by the next compaction |
 
 `ResidueRecord = residue{key, teardown: {argv, cwd, env}, label} | disposition{key, cleaned, by{arc, inv}} |
-disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, unit, inv, resource}` (per
-resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10 s, stale at 5 min; `start.json`
+disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, inv, resource} & (unit | job)` (per
+resource; M3: exactly one of `unit` and `job`, G4). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10 s, stale at 5 min; `start.json`
 (`RunStart {v, generation, at, repo, planFile, profile}` with the resolved profile, rewritten by every start that
 passes, read by `status` for the repo and plan file, and to rebuild the routing of a dev.5 revision not yet adopted); `status.rejection.json` (`RejectionFile`, above).
 
@@ -1030,7 +1039,8 @@ needs `reopened` or a re-entry.
 **Residue probing (lead ruling 2026-09-30).** Residue repair is keyed to the residue, not to a park: a failed
 cleanup that no stage outcome parks (recovery's cleanup of a killed holder, whose attempt gets no outcome) is
 probed all the same. The fold keeps `ResidueState = {key: ResidueKey, holder: stage{unit, stage, attempt}, fail:
-OpId, failSeq, at}` per instance: set by a done `fail` (its op, seq and done time; the key is this arc's, the
+OpId, failSeq, at}` per instance (M3: `holder` a stage or job holder; a job reclaims its own, "Choices made in M3 A4"
+item 8): set by a done `fail` (its op, seq and done time; the key is this arc's, the
 holder's unit, the residue's teardown and instance), dropped by the instance's next `release` (so a residue
 disposed but not yet released stays until the reclaim order ends). `residueTargets` are those whose instance is
 `cleanup-failed` or `cleaning` under a `retry` holder (a sweep's is its command's). Each is a `resource{instance}`
@@ -1068,14 +1078,14 @@ arc does not use the graph: `legacyNext(view, units)` is its frontier.
 
 **Priority (F17).** `Rank = {unit, origin, waitStartSeq, bypassMerges, promoted, planIndex}`; `promoted` when
 `bypassMerges >= PROMOTION_BYPASS` (3). `compareRank`: promoted first by `waitStartSeq` alone; the rest by
-`ORIGIN_RANK` (checkpoint 0, planned 1), then `waitStartSeq`; plan index last, so the order is total.
+`ORIGIN_RANK` (repair 0, checkpoint 1, planned 2; M3 added `repair`), then `waitStartSeq`; plan index last, so the order is total.
 
 **Admission (A12, A17).** `ADMISSION_STAGES = prepare, plan-check, build, lanes, gate, candidate`; chains
 (`BUILD_CHAIN` quiesce → evidence → salvage → teardown, `PUBLICATION_CHAIN` ff → snapshot) run to completion
 under pause and drain. `TaskState = idle | awaiting-admission | in-stage | in-chain` (memory only).
 `Admit(input: AdmitInput{view, plan, unit, stage, blocking, drains, tripped}) → admit | wait{constraints}` with
 `AdmissionConstraint = paused{arc|unit} | drain{command} | run-only | backend-parked{backend, class} |
-breaker{target} | base-red | blocking-item{id, reason}`. `CommandScope = arc | units{units} | none`;
+breaker{target} | base-red | blocking-item{id, reason}` (M3 adds `finding-blocked{finding, obligation}`). `CommandScope = arc | units{units} | none`;
 `ScopeOf(body, view, plan)`: `resume` (all), resource, pool, capacity and routing edits → arc; `resume <u>` →
 {u}; spec and unit edits → those units; `sweep`, `resume --backend`, `resolve-edge`, `run-only` → none.
 
@@ -1142,7 +1152,8 @@ added, split or re-witnessed obligations, G12).
 treeSha, inv, runner: Reporter, purpose: witness|mutant, records: [{testId, selected: nat, outcome:
 pass|fail|skip|zero-selected}] (ascending by testId), malformed}`; malformed ⇒ no records (every declared test
 unwitnessed). `ObservationVerdict = held | not-held | partial | unwitnessed`; `ObservationKey = {treeSha, lane,
-laneRev, envId}` (`observationKeyText`); `VerdictOf(record, witness) → ObservationVerdict` is B1's (pure).
+laneRev, envId}` (`observationKeyText`); `VerdictOf(record, witness) → ObservationVerdict` is B1's (pure,
+`verdictOf` in src/holistic/observe.ts; the witness protocol is "Choices made in M3 B1").
 
 **Ruling sidecars** (`roadmap/ruling-m3`, `parseRulingSidecar`; `rule <record.json>` and a bundle's `rulings`).
 `{schema, id: C-n, statement, kind: constraint|decision|deviation|disposition, ruledBy: architect|checkpoint{job},
@@ -1210,8 +1221,7 @@ worktree, commit (parents [integrationTip])}`, post `{new}`, done `committed`; `
 patchSha256}`, post null, done `applied{tree}` (the patched tree's real id) `| inapplicable{detail}`;
 `revision.commit{source, base, rev = base + 1, payloadSha256, docs}`, post null, done `applied`. Git kinds:
 `docs.commit`, `mutant.apply`. `integration.ff`: a unit `ff` is `{ref, old, new, fingerprint}` (the dev.5 shape,
-no subject); a docs or batch `ff` is `{ref, old, new, subject: docs{pub} | batch{job}}` and has no fingerprint
-(`unitFfFingerprint` asks for a unit's). `candidate.merge` `+ batch?{job: batch-n, members: [{unit, unitCommit,
+no subject); a docs or batch `ff` is `{ref, old, new, subject: docs{pub} | batch{job}}` and has no fingerprint. `candidate.merge` `+ batch?{job: batch-n, members: [{unit, unitCommit,
 fingerprint}] (≥ 2, each unit once), chain: [{commit, parents: [previous merge, next member]}] (one per member after
 the first)}`: `unitCommit` is the first member's, `commit` merges it onto the tip, and `post.new` is the last
 chain commit. Keys: `revision` for `revision.commit`.
@@ -1224,7 +1234,7 @@ job). `RECLAIM_HOLDERS += job`; `RESIDUE_HOLDERS = stage, job` (a failed cleanup
 call), `journey{lane, laneRev, at, owner: unit{unit}|job{job}}`, `mutant{finding, lane, laneRev, tree}`; the unit
 `backend` subject names a `UnitSeatRef`. `MeterSubject += job{job, attempt, role, tier: arc}`; `seat` names a
 `UnitSeatRef`. `ResidueKey = {arc, inv, resource} & (unit | job)` (exactly one; `residueOwner(key) → unit{unit} |
-job{job}`, G4); `ResidueState.holder` is the stage or job holder (`stageResidueHolder` narrows).
+job{job}`, G4); `ResidueState.holder` is the stage or job holder.
 
 **Stage outcomes and the transition table** (`src/pipeline/transitions.ts`). Stage `reproduce` (a vacuity repair's
 first stage, an admission stage): `reproduced` → plan-check; `not-reproduced` and `inapplicable` → park operator
@@ -1245,10 +1255,9 @@ implemented it: `reverse` A2, `steer` and `merge-in` A3, `rule` A4, `audit` and 
 `steered`, `not-reproduced`, `owner-request`, `respec-second`. Non-blocking (`NON_BLOCKING_M3_REASONS`):
 `bundle-request`, `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest`.
 
-**Prompts** (`src/prompts/`). `lens` and `checkpoint` are `unsupported` for every model until B4 writes the
-modules (lens/Opus new, lens/Fable inherits Opus; checkpoint/Fable new, checkpoint/Opus inherits Fable; Sonnet and
-Codex unsupported), so a holistic plan is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why:
-no-prompt}` at startup until then. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses},
+**Prompts** (`src/prompts/`). Since B4: lens/Opus a module, lens/Fable inherits it; checkpoint/Fable a module,
+checkpoint/Opus inherits it; Sonnet and Codex are `unsupported` for both, so a holistic plan seating either role on
+one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses},
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
 owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout}`;
 `CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
@@ -1264,9 +1273,9 @@ obligation-split{obligation, children[{id, statement, docRef, witness, activatio
 obligation-dispose{obligation, disposition, ruling} | invalidate-approval{unit} | rule{ruling} | request{class:
 OwnerOnlyClass, summary}) & {cites: V-n[] (non-empty, unique), evidence (non-empty)}`; `OwnerOnlyClass = destructive
 | cost | legal | vision | resource | config | gc | ref-deletion | lane-program | env-prerequisite | contract-path`
-(A16: no op touches the vision, resource declarations, `.roadmap/config.json`, `gc` or ref deletion). **B4 adds**
-(frozen here, not in the 0a code, because every key of a strict schema is required and the modules, fakes and
-output change together): plan-check output `visionConflict: [{clauses: V-n[] (non-empty), note}]` (each opens a P3
+(A16: no op touches the vision, resource declarations, `.roadmap/config.json`, `gc` or ref deletion). **B4 added**
+(frozen here in 0a, landed with the modules, because every key of a strict schema is required and the modules,
+fakes and output change together): plan-check output `visionConflict: [{clauses: V-n[] (non-empty), note}]` (each opens a P3
 `plan-check` finding, R17); `PlanCheckInputs.vision: VisionInput | null` (read-only context, marked non-directive);
 `GateInputs.obligations: ObligationView[]` (the selected obligations); the gate never receives the vision.
 
@@ -1315,6 +1324,34 @@ work, whose queue is empty, whose head is in integration history and whose ref v
 11. **`gc` takes `--repo`**: run dirs live under a repo's git common dir.
 12. **The checkpoint output carries sidecars and a new unit's spec as JSON text** (`rulings`, `admit.spec`),
     validated by their own readers at activation, so the strict output schema stays finite.
+
+**Choices made in M3 A1** (anchors, contract ops, ruling validation, the obligation classifier, impact selection;
+src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,rederive}.ts):
+
+1. **Anchors** (`anchorSection`): `#<slug>` names the one Markdown ATX heading, outside fenced code blocks, whose
+   GitHub-style slug (`headingSlug`) is `<slug>`; its section runs to the next heading of the same or a higher level.
+   Any other anchor is literal text that occurs on exactly one line; its section runs from that line to the next
+   heading. No match, or more than one, is refused. A docRef's `quotedText` must lie in its anchor's section at the tip.
+2. **Contract ops** (`applyContractOps`, `validateRuling`): only on the plan's contracts and architecture doc, and
+   only on a path the ruling's `contractRefs` lists. `oldText` occurs exactly once in its anchor's section; two ops of
+   one ruling on one document whose sections overlap (a heading nested under another's section included) are refused,
+   since their order would matter. Every edited document's first line cites the ruling (`<!-- revised by C-3, C-7 -->`,
+   added or extended). All or none: every reason is listed.
+3. **What a consistency judgment covers** (`consistencyRevs`): the ledger, obligations and vision bytes in force and
+   the head blob of every path in `contractRefs` or a contract op, ascending. It is stale when any of those differs
+   from what is in force at commit; `judgedRevs.head` is provenance only (lead ruling 2026-09-30).
+4. **The split text rule** (`classifyObligations`): every sentence of the parent's statement (split after `.`, `;`,
+   `!` or `?` and white space) occurs verbatim in some child's statement. The architect's split drops none; a
+   checkpoint's drops text only citing active clauses, and the dropped sentences go to its `split-dropped` divergence.
+5. **Weakening needs a ruling** (`weakeningsOf`, `dispositionRuling`): removing an obligation is `retired` (removing
+   one already retired is free); a statement or docRef change, must-hold → future, or a test id dropped from its
+   witness is `amended`; a move to `waived`, `deferred` or `retired` needs that state's own ruling. Each needs a ruling
+   in force whose `obligationDispositions` names the id with that disposition. Re-derivation at Phase 0 (`rederive`)
+   applies the same test to the baseline tree's published `invariants.md` block (A2 item 9).
+6. **A file a witness lane runs** (`selectObligations`): an argv entry of the lane joined to its `cwd` and normalised
+   (posix), compared with the changed path. A changed path also selects through the obligation's contracts, its
+   docRef's document and every mapping pattern it matches (`matchesPattern`, src/core/values.ts: a glob, or a
+   directory prefix); a path no pattern matches selects every must-hold obligation.
 
 **Choices made in M3 A2** (the revisioned-input core):
 
@@ -1392,7 +1429,7 @@ work, whose queue is empty, whose head is in integration history and whose ref v
    (kept bytes; a dev.5 revision's live file).
 8. **The gate's obligations**: `selectObligations` over the obligations in force, the unit's declared ones and
    repairs (a finding repair: its finding's obligation), its `after` closure's declared ones and its diff's paths;
-   observations are null until B2. The fingerprint's `obligationRevs` are the selected non-exempt ones.
+   their observations are the tip's since B2 ("Choices made in M3 B2" item 6). The fingerprint's `obligationRevs` are the selected non-exempt ones.
 9. **The risk floor** (DESIGN §2.3 `route`): a unit's risk below its Phase-0 floor (its risk in the first revision
    that planned it) is refused unless its spec cites an active ruling whose sidecar applies to it; a dispatched unit's
    risk may rise (re-pinned at dispatch).
@@ -1409,19 +1446,18 @@ residues, the snapshot closure):
    `finishDocs`: a docs-only publication's `docs-covered{pub, T → D}` (no contract op: A17), the snapshot (parent
    `job{pub}`), the slot's release, each only where missing. A refusal before the ff releases the slot and aborts the
    revision. The new rulings are validated again at T under the slot (`validateRuling`, `rulingContextAt`), so a
-   ruling judged at an older head is refused as stale (G21 compares the head exactly).
+   ruling judged against inputs no longer in force at T is refused as stale (G21; the judged head is provenance
+   only, "Ruling sidecars" above).
 2. **Selection (G12).** The rendered `.roadmap/` files are not changed paths of a docs candidate: they are executor
    renderings of in-force records, and as unmapped paths they would select every must-hold obligation. A docs
    candidate selects through its contract ops' paths only (`changedPaths`; an unmapped contract path still selects
    every must-hold, as for a unit) plus the revision's added, split and re-witnessed obligations (`revised`), split
    closure applied, read against the revision's own obligations. Green: every suite lane passes and no selected
    obligation's effect is `red` (latched: none; completing: none).
-3. **A job's lanes** (superseded by Checkpoint A's AY and by B2: now `runJourneySeries`, src/pipeline/lanes.ts; see
-   "Choices made in M3 B2"): each under `job{job}` with its declared resources (reserved through `acquireFirst`, probed
-   under the job's owner label), in a detached checkout, spawned as `journey{lane, laneRev, at, owner: job{job}}` (a
-   suite lane too: the frozen `lane` subject names a unit; its `laneRev` is `suiteLaneRev`, 16 hex of sha256 over its
-   canonical definition), an arc lane's run a `witnessed{purpose: witness, for: job{job}}` fact (`treeSha` the commit's
-   tree id). `ROADMAP_WITNESS_FILE` is the one `ROADMAP_*` variable a launch.json may declare (src/core/records.ts).
+3. **A job's lanes** are a journey series (`runJourneySeries`, src/pipeline/lanes.ts): "Choices made in M3 B2" item 1,
+   with Checkpoint A's AY for their evidence dirs and checkout integrity. A job's suite lane is spawned `journey{…,
+   owner: job{job}}` too (the frozen `lane` subject names a unit), its `laneRev` `suiteLaneRev` (16 hex of sha256 over
+   its canonical definition). `ROADMAP_WITNESS_FILE` is the one `ROADMAP_*` variable a launch.json may declare (src/core/records.ts).
 4. **Preemption (A7).** The arbiter serves `acquireFirst` waiters (a docs slot, a job's lanes) before every unit
    waiter, in arrival order; a refused one's `onBlocked` runs after the evaluation. A docs publication refused the slot
    preempts its holder when that is a unit candidate with no recorded outcome (`preemptCandidate`,
@@ -1442,7 +1478,7 @@ residues, the snapshot closure):
    revision's (a new sidecar: while absent); a file changed since is left alone and reported.
 7. **The transient check (G17, H15)**: `candidateRequest` builds `TransientRules` from the unit's latest dispatch
    record (`unitTransientRules`): `m3` refuses any in-tree `.roadmap/` path (`roadmap-dir`) and any path no pattern of
-   the pinned scope matches (`out-of-scope`, as salvage matches); a dispatch without `transientRules` keeps dev.5's
+   the pinned scope matches (`out-of-scope`; `matchesPattern`, src/core/values.ts, as salvage matches); a dispatch without `transientRules` keeps dev.5's
    rules (ROADMAP_ALLOWLIST, no scope check) for its lineage attempt; run-state, evidence and executor-file rules
    apply under both. A docs publication's diff may hold only the files it writes, matched exactly
    (`docsTransientViolations`, rule `not-docs`).
@@ -1460,9 +1496,9 @@ residues, the snapshot closure):
    at `inputs/<sha>.<ext>` (everything a `plan-applied` or kept payload names, the payload's renders, `spec.patch`
    outputs, the specs `dispatch`, `judgment-inputs` and `reopened` name, `steered` briefs); `start.json` (named by the
    latest `executor-started`, its generation matching); every done backend or arc-backend spawn's `result.json`
-   (`reads.json` where written); each job witness `witness/<seq>-<ord>.json`; needs-user records and acks; evidence
-   manifests; a 1.0.0-dev.5 revision's routing provenance rebuilt at snapshot time into
-   `routing-provenance/<rev>.json` (H7). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
+   (`reads.json` where written); each `witnessed` fact's record (a job's, a candidate's or a mutant's run) as
+   `witness/<seq>-<ord>.json`; needs-user records and acks; evidence manifests; a 1.0.0-dev.5 revision's routing
+   provenance `routing-provenance/<rev>.json` (H7; persisted at adoption, not rebuilt: AY finding 12 below). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
    `verifySnapshot` recomputes the closure from the tree's own events and payloads and requires exactly that set, each
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot. A
    manifest without `namedBy` (1.0.0-dev.5) verifies by that release's allowlist, warned (scaffolding). Not yet in the
@@ -1538,7 +1574,75 @@ supersede the A4 items they name):
   while that revision was in force (its backend spawns, its dispatches, its own `routing` change; `matched` lists
   them), else `{kind: unreconstructable, reason}` (reported on stderr). The snapshot carries these bytes (the run-dir
   path mirrored), and a missing one fails the snapshot loudly. The executor's live routing of a dev.5 revision in force
-  (src/executor.ts `contexts`) still rebuilds from the config read at each start (not changed here).
+  resolves from this record since B7 ("Choices made in M3 B7" item 10).
+
+**Choices made in M3 A5a** (residue-index compaction; src/host/compact.ts, src/host/residues.ts):
+
+1. **When**: the supervisor runs `compactResidues` once per start, after its claim and before its first executor, so
+   nothing else writes the index meanwhile. A corrupt index is left alone (the executor's startup row refuses it
+   `log-corrupt`); what was compacted is reported on the supervisor's stderr.
+2. **What may go** (H1): a disposed pair (a residue and its disposition) whose instance no longer is held in the
+   resource fold of the key's arc nor of the disposing arc (`by.arc`), each read read-only from its run dir: not
+   `cleanup-failed`, not held by a reclaiming holder (`RECLAIM_HOLDERS`). An arc whose log is absent or corrupt keeps
+   every pair it is part of; an undisposed residue is always kept. Keys are compared as canonical JSON, so a job-owned
+   key (`{arc, inv, resource, job}`) and a unit-owned one never merge.
+3. **Threshold**: nothing is rewritten below `COMPACT_THRESHOLD` (64) droppable pairs.
+4. **The rewrite**: write `residues.jsonl.compact` (`COMPACT_TMP`): a head `{type: compacted, archive, prevSeq,
+   prevHash}` continuing the current file's chain (seq `prevSeq + 1`, `prev` = `prevHash`, the hash of its last line),
+   then the kept lines re-chained with their records and times unchanged, verified as a read would; `link` the current
+   index to `residues.archive.<prevSeq>.<prevHash[0:8]>.jsonl` (the old file, byte for byte); `rename` the tmp over the
+   index. A head is only ever the first line, and each archive chains back through its own head. Crash recovery: a
+   stray tmp is removed; an archive already linked to the unchanged index is continued from, one the index has since
+   moved past is unlinked first. Crash labels `residue.compact.after-tmp`, `.after-link`, `.after-rename` (matrix row
+   RESIDUE_COMPACT).
+
+**Choices made in M3 A5b** (`roadmap gc`; src/commands/gc.ts):
+
+1. **A host act, not a queued command**: `gc --repo <path> [--keep K] [--dry-run]` claims the host (naming the repo's
+   arc with the newest log, which that gc never deletes), acts and releases. Refused (`GcRefusal`): a `HostRefusal`
+   (`host-busy`, …), `executor-died{arc, generation}` (the host's last executor died holding it: that arc's next start
+   recovers it), `snapshot-mismatch{arcs: [{arc, detail}]}`, `no-arcs{runtime}`. Output: one canonical JSON line,
+   `GcReport = {dryRun, keep, generation (gc's own claim's; dry: the next), arcs: [{arc, action: evidence | run-dir} |
+   {arc, action: kept, reason}], deleted: AbsPath[] (deletion order)}`, or `{refused: GcRefusal}` with exit 75 for
+   `host-busy`, else 78. `--dry-run` is refused the same way, then reads without claiming. K defaults to
+   `DEFAULT_KEEP` (3).
+2. **Sealed** (`sealingOf`, A20, H5): the arc's `arc-completed` follows its `lastWorkSeq`, no command is pending, the
+   completion head is in the integration branch's history, and `refs/roadmap/<arc>` verifies at a high-water at or past
+   the completion with its `events.jsonl` the live log's prefix. Every arc is read and verified before anything is
+   deleted: one mismatch refuses the whole gc.
+3. **Retention**: sealed arcs, newest completion first; the first K (and the claim's arc) keep their run dir and lose
+   only raw evidence (each evidence snapshot's `files/`, every `witness.lines` under `evidence/` (a job lane's, a candidate journey's, a mutant's; `witness.json` stays), each invocation's `stdout`,
+   `stderr` and `runner.log`, the implementers' `work/`); the rest lose the run dir (renamed `<arc>.gc-deleting`, then
+   removed; a leftover is removed first; crash label `gc.run-dir.after-rename`), which the snapshot ref restores. Arcs
+   not sealed are kept whole. Host generation files beyond the last K before gc's own claim are pruned, except any
+   generation an open (unacknowledged) needs-user item of the repo's arcs cites as evidence. Residue archives: the
+   chain is walked from the index's `compacted` head through each archive's head; the first K on it stay, and every
+   other archive goes except one hard-linked to the live index (a crashed compaction's, which the next continues).
+
+**Choices made in M3 B1** (the witness protocol; src/holistic/{witness,observe}.ts, reporters/node-witness.mjs):
+
+1. **The witness line** (canonical for `node-test` and `jsonl`): `{"testId": <non-empty string>, "selected": <nat>,
+   "outcome": "pass" | "fail" | "skip" | "zero-selected"}`, `selected` 0 exactly for `zero-selected`. Lines with one id
+   aggregate into one record: `selected` sums, the outcome is the worst (fail > skip > pass > zero-selected). A missing
+   witness file, a line that does not parse, a torn last line or an unknown test2json action makes the record
+   `malformed` (no records).
+2. **Test ids**: node's is the test's name path from its outermost suite joined with `" > "` (suites are not
+   recorded; skip and todo are `skip`); go's is test2json's `Test` (`TestX/sub` for a subtest), read from the lane's
+   stdout, a test that started and never ended counting as `fail`; a `jsonl` wrapper writes the lines itself.
+3. **The run**: `witnessEnv(reporter, file)` adds to the lane's env `ROADMAP_WITNESS_FILE` (node-test, jsonl) and,
+   for node-test, `NODE_OPTIONS` loading the spec reporter to stdout and the shipped `reporters/node-witness.mjs` with
+   destination **stderr** (a file destination is fsynced at exit, which fails with EINVAL on /dev/null; the reporter
+   writes nothing to its stream, appending each line to the file with O_APPEND and unsetting the variable so a nested
+   `node --test` records nothing). The file is `witness.lines` in the execution's own dir. Afterwards
+   `collectWitness` → `witnessRecordOf` → `writeWitnessRecord`, which keeps `witness.json` write-once in the same dir
+   (the counted run's; `witnessDir`) and returns the sha256 of its bytes, the `witnessed` fact's `recordsSha256`.
+4. **`envId`** (`envIdOf`): the first 16 hex of sha256 over canonical `{host: {platform, arch, node (process.version)},
+   pass: {NAME: value | null}}`, the lane's pass-through variables (absent ones null). What the lane sets is in its
+   `laneRev`; a pool instance's binding is not identity.
+5. **Verdicts** (`verdictOf`) over the witness's test ids, a missing id counting as zero-selected: malformed →
+   unwitnessed; any fail → not-held; all pass → held; a pass mixed with skip or zero-selected → partial; else
+   unwitnessed. An observation is reused only when all four keys match and the kept file still hashes to the fact's
+   `recordsSha256`; a mutant record never is one (G13).
 
 **Choices made in M3 B2** (journey lanes, the held-claims brake, latching, the baseline job, the repair batch):
 
@@ -1578,7 +1682,7 @@ supersede the A4 items they name):
 8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` through `acquireFirst` with the job as
    the reserve's parent (`AcquireFirst`'s 5th parameter, required exactly for a batch holder); one durable `batch-<n>` per
    finding until it publishes, each attempt reusing it; the chain on `refs/roadmap-run/<arc>/candidate/<batch-n>` (the
-   frozen candidate ref shape; a unit named like a batch job would collide), each chain merge re-made from `merge-tree`
+   frozen candidate ref shape; a unit entering the plan may not take the id `batch-<n>`, which would share it), each chain merge re-made from `merge-tree`
    of its parents with `commit`'s identity and message. The claims are the union of each member's selection. Red →
    `red{attributable}`: members whose own selection holds a red obligation, none when anything else is red. Before the ff
    every member's fingerprint at the tip (`stale{invalid}`) and eligibility (`finding-blocked`). A batch ff's provenance
@@ -1606,8 +1710,8 @@ supersede the A4 items they name):
    opened resolves it. A `witness` P1 is also resolved by any unit publishing after it opened whose repairs name its
    obligation (`I-n`, or a finding over it): the brake proved it held with integrated evidence. No live repairer: `open`.
    Moves always follow `FINDING_MOVES` (a resolution from `open` writes owned → fixed-on-branch → resolved). The unit
-   driver calls it before and after every stage, `finishBatch` before the batch snapshot; the executor should call it
-   after recovery (B7).
+   driver calls it before and after every stage, `finishBatch` before the batch snapshot; the executor calls it
+   after recovery (B7 item 10).
 3. **Ruling**: `ruleFinding` refuses a non-active finding and a P1 deferred or accepted by anything but a ruling
    ("P1s never bank"); a checkpoint may dismiss a P1. Code dismisses (`by: code{not-reproduced}`) a finding whose mutant
    a unit's latest `reproduce` killed (derived from the decided outcome and the attempt's last mutant spawn, so a crash
@@ -1653,6 +1757,15 @@ supersede the A4 items they name):
     capture → `@cpu` window keeps the rev, and a redirect patches the spec in force at it; any other mismatch fails
     loud); each `visionConflict` opens a P3 `plan-check` finding (a re-read merges); a conflict citing a clause that is
     not an active clause of the vision in force (or with no vision) is `malformed`.
+
+**Choices made in M3 B4** (the arc roles' prompts; src/prompts/{lens,checkpoint}/, src/prompts/index.ts):
+
+1. **One lens module for the four lenses**: the standing rules in the system prompt, the lens's own brief in the
+   message's `<lens_brief>`, whose first line is the one marker `lens: <kind>` (what the fake backend keys on).
+2. **`MAX_LENS_FINDINGS` (8)** is stated in the prompt as the reporting bound, worst first; the reader does not
+   enforce it (an anti-spiral bound on reporting, never on reading).
+3. **Routing**: lens/Opus and checkpoint/Fable are modules; lens/Fable and checkpoint/Opus inherit them (reviewed
+   2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above).
 
 **Choices made in M3 B5** (the cadence audit, coverage, the arc roles' call; src/holistic/{audit,cadence,coverage}.ts,
 src/pipeline/dispatch.ts `callArcRole`):
@@ -1780,8 +1893,9 @@ src/pipeline/dispatch.ts `callArcRole`):
    never read for history. `routing` and admission read the provenance in force per unit (`provenanceStack`); only a dev.5
    revision not yet adopted is rebuilt from the live config, warned (scaffolding, as `src/executor.ts` does).
 3. **`nowTrue` / `notYetTrue`** list every non-exempt obligation in id order with its verdict on the integration head's
-   tree (the live branch tip): the latest observation there of its witness lane at the lane's current rev, in whichever
-   environment ran it (status runs anywhere; the executor's reuse keys on its own `envId`), else `not-covered`. A split
+   tree (the live branch tip): completion's strict rule (`dischargingObservation`, src/schedule/scheduler.ts): the
+   observation there of its witness lane at the lane's current rev in the environment the executor recorded for the lane
+   (`recordedLaneEnv`), else `not-covered`; another environment's observation is never shown held. A split
    parent's verdict is its non-exempt children's (held when all hold, else the worst of not-held, partial, unwitnessed,
    not-covered). `activation` is the effective one (latched → must-hold). `blockingUnits`: a pending future obligation's
    unmerged `deliveredBy` (lineage heads); otherwise the owners of its active findings. `reason` is the first of

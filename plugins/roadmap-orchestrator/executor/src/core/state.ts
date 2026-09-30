@@ -299,12 +299,6 @@ export type BackendParkState = Readonly<{ backend: Backend; seq: number; class: 
 export type ResidueState = Readonly<{ key: ResidueKey; holder: ResidueHolder; fail: OpId; failSeq: number; at: IsoTime }>;
 /** A residue's holder: the stage attempt, or (M3, G4) the job, whose cleanup failed. */
 export type ResidueHolder = Extract<Holder, { type: (typeof RESIDUE_HOLDERS)[number] }>;
-/** A residue's stage holder; a job-owned residue (G4) is reclaimed by step A4's code, and meeting one before it is a bug. */
-export function stageResidueHolder(r: ResidueState): Extract<Holder, { type: 'stage' }> {
-  if (r.holder.type !== 'stage') throw new Error(`residue ${JSON.stringify(r.key)} is owned by ${r.holder.job}: job-owned residues are not implemented (step A4)`);
-  return r.holder;
-}
-
 /** The latest probe of one target, with the time its fact was written. */
 export type ProbeState = Extract<Fact, { kind: 'probe' }> & Readonly<{ seq: number; at: IsoTime }>;
 

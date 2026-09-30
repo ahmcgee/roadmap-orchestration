@@ -5,7 +5,8 @@
 // effect, so `apply --dry-run` runs it as is, and `apply` runs it again just before its commit (A12). The
 // per-edit rules:
 //
-//   add a unit                  now; its id was never planned before; never already cut
+//   add a unit                  now; its id was never planned before and is not reserved (`reservedUnitIdReason`);
+//                               never already cut
 //   remove a unit               only if it never started
 //   unit order                  the started units keep their relative order (G3); a legacy arc keeps dev.4's
 //                               rule, the started units first in their order (its frontier is plan order)
@@ -97,7 +98,7 @@ import {
   type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
 } from './inforce.ts';
-import { type PlanM1, type PlanUnit, boundsOf, parsePlan } from './plan.ts';
+import { type PlanM1, type PlanUnit, boundsOf, parsePlan, reservedUnitIdReason } from './plan.ts';
 
 /**
  * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
@@ -475,8 +476,10 @@ export function classify(input: ClassifyInput): Classified {
   }
   for (const u of plan.units) {
     if (curIds.includes(u.id)) continue;
+    const reserved = reservedUnitIdReason(u.id);
     if (planned.has(u.id)) reasons.push(`unit id ${u.id} was planned before; ids are never reused`);
     else if (u.cut !== undefined) reasons.push(`unit ${u.id} is added cut; add it without \`cut\`, or leave it out`);
+    else if (reserved !== null) reasons.push(reserved);
     else {
       changes.push({ type: 'unit-added', unit: u.id });
       scoped.add(u.id);

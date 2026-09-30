@@ -517,6 +517,26 @@ describe('startup.plan-in-force', () => {
     assert.deepEqual(refused.kind === 'refused' ? refused.rejections : refused.kind, [{ kind: 'plan-change-refused', reasons: [unkeptSpecReason('u1', join(s.planDir, 'u1.json'))] }]);
   });
 
+  it('plan-change-refused: a fresh arc\'s unit with a reserved id (batch-<n>, jobs, mutants) is refused, and so is a start whose files add one', T, async () => {
+    const fresh = setup();
+    writeFileSync(join(fresh.planDir, 'batch-1.json'), JSON.stringify({ ...fresh.spec, unit: 'batch-1' }));
+    writeFileSync(fresh.planFile, JSON.stringify({ ...fresh.plan, units: [...(fresh.plan['units'] as Raw[]), { id: 'batch-1', spec: 'batch-1.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const refused = await start(input(fresh));
+    assert.ok(refused.kind === 'refused' && refused.rejections.length === 1 && refused.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(refused));
+    assert.equal(refused.rejections[0].reasons.length, 1);
+    assert.match(refused.rejections[0].reasons[0]!, /^unit id batch-1 is reserved/);
+    assert.equal(appliedFacts(fresh).rev, null, 'no revision recorded');
+
+    const added = setup();
+    assert.equal((await start(input(added))).kind, 'passed');
+    writeFileSync(join(added.planDir, 'mutants.json'), JSON.stringify({ ...added.spec, unit: 'mutants' }));
+    writeFileSync(added.planFile, JSON.stringify({ ...added.plan, units: [...(added.plan['units'] as Raw[]), { id: 'mutants', spec: 'mutants.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const later = await start(input(added));
+    assert.ok(later.kind === 'refused' && later.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(later));
+    assert.match(later.rejections[0].reasons.join('\n'), /^unit id mutants is reserved/);
+    assert.equal(appliedFacts(added).rev, 1);
+  });
+
   it('plan-change-refused: a start whose files drop a started unit and move the worktree root is refused with every reason (78); the plan in force stays', T, async () => {
     const s = setup();
     assert.equal((await start(input(s))).kind, 'passed');

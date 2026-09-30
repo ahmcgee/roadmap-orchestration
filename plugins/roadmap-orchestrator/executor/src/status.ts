@@ -53,8 +53,9 @@
 //                 unmerged `deliveredBy`), the critical path (the longest `after` chain of unsettled units), counts
 //   nowTrue       each non-exempt obligation whose witness holds on the integration head's tree; `notYetTrue` the
 //                 rest, with its verdict (or `not-covered`), the units it waits on and why (see `ObligationReason`)
-//                 and the witness evidence dirs. The observation read is the latest on the head's tree for the
-//                 obligation's lane at its current rev, in whichever environment ran it (status runs anywhere)
+//                 and the witness evidence dirs. The observation read is completion's (the scheduler's
+//                 `dischargingObservation`): on the head's tree, the lane at its current rev, in the environment the
+//                 executor recorded for it (`recordedLaneEnv`), so status never shows true what completion counts unmet
 //   waived/deferred  exempt obligations with the ruling that exempted each
 //   vision        the vision in force and its coverage both ways (A1 `visionCoverage`; citers: the sidecars in
 //                 force and the divergences)
@@ -110,7 +111,7 @@ import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
-import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, readOnlyContexts, schedFile, unitSettled } from './schedule/scheduler.ts';
+import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, dischargingObservation, readOnlyContexts, recordedLaneEnv, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import { type ResolvedRouting, type SeatSources, planStack, provenanceStack, resolveRouting } from './routing/layers.ts';
 import {
@@ -129,7 +130,7 @@ import { type FindingMetric, findingMetrics, isActive } from './holistic/finding
 import { type Observation, verdictOf } from './holistic/observe.ts';
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
-  type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, isExempt, laneRevOf,
+  type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, isExempt,
   observationKeyText, parseRulingSidecar,
 } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
@@ -905,14 +906,10 @@ function truths(
   runDir: AbsPath, view: JournalView, lines: readonly UnitStatusLine[], obligations: Obligations, tree: Sha,
 ): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
   const fold = view.holistic();
-  // The latest observation on the tree per lane and lane rev, in whichever environment ran it (status runs anywhere).
-  const latest = new Map<string, Observation>();
-  for (const o of observations({ journal: { view }, runDir }).values()) {
-    if (o.key.treeSha !== tree) continue;
-    const k = `${o.key.lane}/${o.key.laneRev}`;
-    const seen = latest.get(k);
-    if (seen === undefined || o.seq > seen.seq) latest.set(k, o);
-  }
+  // The completion predicate's rule (strict reuse): the observation on the tree in the environment the executor
+  // recorded for the lane, whatever this process's environment is.
+  const store = observations({ journal: { view }, runDir });
+  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation(store, tree, lane, (l) => recordedLaneEnv(view, l));
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -935,8 +932,8 @@ function truths(
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
     const future = o.activation === 'future' && !latched.has(o.id);
     const units = future ? unmergedOf(view, o.deliveredBy) : unmergedOf(view, owners(o.id));
-    const found = latest.get(`${lane.id}/${laneRevOf(lane)}`);
-    if (found === undefined) return { verdict: 'not-covered', evidence: [], units };
+    const found = onTree(lane);
+    if (found === null) return { verdict: 'not-covered', evidence: [], units };
     const entry = witnessed.get(found.seq);
     if (entry === undefined) throw new Error(`observation ${observationKeyText(found.key)} names seq ${found.seq}, which no witnessed fact has`);
     return { verdict: verdictOf(found.record, o.witness), evidence: [witnessDir(runDir, entry)], units };

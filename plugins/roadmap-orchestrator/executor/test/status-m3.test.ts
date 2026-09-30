@@ -61,10 +61,10 @@ function journeySpawn(r: ArcRun, job: string, lane: ArcLaneDef, at: string): Int
 }
 
 /** A witness run of `lane` on `tree` under `baseline-1` reporting `outcomes`: its record kept where the snapshot finds it, then `witnessed`. */
-function witness(r: ArcRun, lane: ArcLaneDef, tree: string, outcomes: Readonly<Record<string, 'pass' | 'fail'>>): string {
+function witness(r: ArcRun, lane: ArcLaneDef, tree: string, outcomes: Readonly<Record<string, 'pass' | 'fail'>>, env = 'fedcba9876543210'): string {
   const spawn = journeySpawn(r, 'baseline-1', lane, git(r.d.repo, 'rev-parse', 'main'));
   const inv = invocationId(spawn.op, 1);
-  const base = { lane: lane.id, laneRev: laneRevOf(lane), envId: envId('fedcba9876543210'), treeSha: sha(tree), inv, purpose: 'witness', for: { type: 'job', job: jobId('baseline', 1) } } as const;
+  const base = { lane: lane.id, laneRev: laneRevOf(lane), envId: envId(env), treeSha: sha(tree), inv, purpose: 'witness', for: { type: 'job', job: jobId('baseline', 1) } } as const;
   const dir = witnessDir(r.ctx.runDir, base);
   mkdirSync(dir, { recursive: true });
   const tests = Object.entries(outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([testId, outcome]) => ({ testId, selected: 1, outcome }));
@@ -155,6 +155,25 @@ describe('status M3', () => {
       s = statusOf(r);
       assert.deepEqual(s.nowTrue, []);
       assert.ok(s.notYetTrue.every((o) => o.verdict === 'not-covered' && o.evidence.length === 0));
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  it('status.strict-env: an observation from another environment than the one the executor recorded for the lane is not shown true (completion\'s rule)', T, async () => {
+    const { d } = holisticArc({ steps: [], units: [{ id: 'u1' }], lanes: ['journey'], mapping: [], trees: {}, obligations: [{ id: 'I-1', testIds: ['t1'] }] });
+    const r = contextFor(d);
+    try {
+      const journey = lanesOf(r).get('journey')!;
+      const tree = tipTree(d);
+      witness(r, journey, tree, { t1: 'pass' }, '0123456789abcdef');
+      assert.deepEqual(statusOf(r).nowTrue.map((o) => o.obligation), ['I-1'], 'held in the environment the executor recorded');
+      // The executor now witnesses the lane in another environment (on another tree): the head's observation is foreign.
+      witness(r, journey, 'e'.repeat(40), { t1: 'pass' });
+      const s = statusOf(r);
+      assert.deepEqual(s.nowTrue, []);
+      assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.verdict]), [['I-1', 'not-covered']]);
+      assert.ok(s.completion.unmet.includes('obligations-not-discharged'), JSON.stringify(s.completion.unmet));
     } finally {
       r.journal.close();
     }

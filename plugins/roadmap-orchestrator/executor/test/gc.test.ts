@@ -1,7 +1,7 @@
 // `roadmap gc` (src/commands/gc.ts; plan "Growth controls", A20/H5, G6-G8), integrated: real repos, real run dirs
 // under the repo's git common dir, real snapshot refs published through the op, a real host dir. An arc is sealed
 // here as the executor leaves one: its plan applied, raw evidence captured (an evidence snapshot, invocation output,
-// a job lane's witness lines, an implementer's work dir), `arc-completed`, then the terminal snapshot. Named tests:
+// witness lines of a job lane, a mutant and a candidate journey, an implementer's work dir), `arc-completed`, then the terminal snapshot. Named tests:
 // gc.keeps-records, gc.refuses-live, gc.dry-run, gc.host-files, gc.sealed-after-head-advanced,
 // gc.refuses-later-work, gc.verifies-before-delete, gc.generation-cited-kept, gc.crash-resumable.
 import assert from 'node:assert/strict';
@@ -71,6 +71,8 @@ function sibling(a: Arc, name: string): Arc {
 const rawOf = (a: Arc): readonly AbsPath[] => [
   join(a.runDir, 'evidence', 'u1', '1-lanes', 'mul', 'output', 'files'),
   join(a.runDir, 'evidence', 'jobs', 'docs-1', 'suite', 'witness.lines'),
+  join(a.runDir, 'evidence', 'mutants', 'F-1', 'journey-7-1', 'witness.lines'),
+  join(a.runDir, 'evidence', 'u1', '1-candidate', 'journey', 'arc-journey-8-1', 'witness.lines'),
   join(a.runDir, 'inv', '9-1', 'stdout'),
   join(a.runDir, 'inv', '9-1', 'stderr'),
   join(a.runDir, 'inv', '9-1', 'runner.log'),
@@ -99,10 +101,13 @@ async function seal(a: Arc, opts: SealOptions = {}): Promise<Sha> {
     for (const f of ['stdout', 'stderr', 'runner.log']) writeFileSync(join(inv, f), `raw ${f}\n`);
     writeFileSync(join(inv, 'launch.json'), '{"launch":true}\n');
     writeFileSync(join(inv, 'result.json'), '{"result":true}\n');
-    const job = join(a.runDir, 'evidence', 'jobs', 'docs-1', 'suite');
-    mkdirSync(job, { recursive: true });
-    writeFileSync(join(job, 'witness.lines'), '{"test":"raw"}\n');
-    writeFileSync(join(job, 'witness.json'), '{"witness":true}\n');
+    // Witness runs of a job lane, a mutant and a unit candidate's journey: the raw lines go, the records stay.
+    for (const rel of [['jobs', 'docs-1', 'suite'], ['mutants', 'F-1', 'journey-7-1'], ['u1', '1-candidate', 'journey', 'arc-journey-8-1']]) {
+      const dir = join(a.runDir, 'evidence', ...rel);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'witness.lines'), '{"test":"raw"}\n');
+      writeFileSync(join(dir, 'witness.json'), '{"witness":true}\n');
+    }
     mkdirSync(join(a.runDir, 'work', 'u1', '1-build'), { recursive: true });
     writeFileSync(join(a.runDir, 'work', 'u1', '1-build', 'decisions.json'), '{"decisions":[]}\n');
     if (opts.cite !== undefined) {
@@ -188,7 +193,8 @@ test('gc.keeps-records: a sealed arc within K loses only its raw evidence; its r
   assert.deepEqual(report.arcs, [{ arc: a.arc, action: 'evidence' }]);
   assert.deepEqual([...report.deleted].sort(), [...rawOf(a)].sort());
   for (const p of rawOf(a)) assert.equal(existsSync(p), false, p);
-  for (const kept of ['events.jsonl', 'inputs', 'evidence/u1/1-lanes/mul/output/manifest.json', 'evidence/jobs/docs-1/suite/witness.json', 'inv/9-1/launch.json', 'inv/9-1/result.json']) {
+  for (const kept of ['events.jsonl', 'inputs', 'evidence/u1/1-lanes/mul/output/manifest.json', 'evidence/jobs/docs-1/suite/witness.json',
+    'evidence/mutants/F-1/journey-7-1/witness.json', 'evidence/u1/1-candidate/journey/arc-journey-8-1/witness.json', 'inv/9-1/launch.json', 'inv/9-1/result.json']) {
     assert.ok(existsSync(join(a.runDir, kept)), `${kept} is a record and stays`);
   }
   const untimed = (s: typeof before) => ({ ...s, host: { ...s.host, log: { ...s.host.log, foldMs: 0 } } });

@@ -47,7 +47,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type ObservationStore, keyOf, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
-import { WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
+import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
 import { revParse } from '../git/git.ts';
 import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
@@ -671,8 +671,6 @@ export type JourneySeries = Readonly<{ end: JourneyEnd; runs: readonly JourneyRu
 /** Whether a series' checkout was still its commit after the lanes (a series that made none is). */
 export const intact = (series: JourneySeries): boolean => series.checkout === null || (series.checkout.dirty.length === 0 && series.checkout.movedTo === null);
 
-/** The reporter's file of a witness run, in its execution's dir. */
-const WITNESS_LINES = 'witness.lines';
 /** A job's waits are never cancelled: a job runs to its end once begun. */
 const NEVER = new AbortController().signal;
 
