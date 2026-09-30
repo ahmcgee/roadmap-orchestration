@@ -7,7 +7,7 @@
   "engines": { "node": ">=24.21" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts && node --test test/serial/*.test.ts",
     "probe": "node evals/probe.ts"
   },
   "devDependencies": {

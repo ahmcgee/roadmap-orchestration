@@ -34,7 +34,7 @@ inputs (plan, specs, ledger).
   release, and is deleted (with its BACKLOG entry) once none is in flight. It never rewrites a file.
 - `SCHEMA_VERSION` is bumped only for a change that cannot be defaulted, and then the readers accept both
   versions for as long as an arc on the older one may be in flight.
-- `test/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
+- `test/serial/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
 - Exception: arcs started before 1.0.0-dev.1 (a95355e, schema version 1 with the older dispatch, meter and
   spec shapes) are not adopted; they are adapted by hand. Hard cutover applies to 0.x layouts only.
