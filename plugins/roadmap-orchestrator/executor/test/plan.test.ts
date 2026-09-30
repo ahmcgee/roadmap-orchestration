@@ -121,9 +121,9 @@ describe('plan.json (M1)', () => {
     rejects({ ...plan, units: [noScope] }, 'plan.units[0].scope');
   });
 
-  it('rejects a unit id of the form batch-<n>: a repair batch candidate ref shares the namespace', () => {
+  it('rejects a unit id of the form batch-<n>, jobs or mutants: batch candidate refs and job/mutant evidence share the namespace', () => {
     const units = validPlan()['units'] as Record<string, unknown>[];
-    rejects({ ...validPlan(), units: [{ ...units[0], id: 'batch-3' }] }, 'plan.units[0].id');
+    for (const id of ['batch-3', 'jobs', 'mutants']) rejects({ ...validPlan(), units: [{ ...units[0], id }] }, 'plan.units[0].id');
     assert.doesNotThrow(() => parsePlan({ ...validPlan(), units: [{ ...units[0], id: 'batch-fix' }] }));
   });
 

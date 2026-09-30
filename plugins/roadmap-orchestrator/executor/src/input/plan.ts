@@ -212,8 +212,11 @@ const planUnit: Read<PlanUnit> = object((f) => {
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
-  // A repair batch's candidate ref is keyed by its job id beside the units' (src/git/candidate.ts).
-  if (/^batch-\d+$/.test(out.id)) throw new SchemaError(`${f.path}.id`, 'a unit id not of the form batch-<n> (a repair batch job id)', out.id);
+  // Ids that share a namespace with a unit's: a repair batch's candidate ref is keyed by its job id beside the units'
+  // (src/git/candidate.ts), and the run dir's evidence/<unit>/ sits beside evidence/jobs/ and evidence/mutants/.
+  if (/^batch-\d+$/.test(out.id) || out.id === 'jobs' || out.id === 'mutants') {
+    throw new SchemaError(`${f.path}.id`, 'a unit id other than batch-<n>, jobs or mutants (reserved for jobs and mutants)', out.id);
+  }
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),

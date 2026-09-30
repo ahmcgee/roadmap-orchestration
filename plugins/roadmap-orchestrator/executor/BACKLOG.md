@@ -31,7 +31,7 @@ at triage stay in git history.
 - Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
 - Persisted arbiter tickets, if exact post-recovery grant order is ever required (F20).
 
-### M3 (in progress: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; step 0a done in 1.0.0-dev.6)
+### M3 (implemented, in PR: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; 1.0.0-dev.6)
 
 - Scope (LR-a): DESIGN-1.0.md §10 M3 and the holistic layer (the vision as the root record, OR-V; obligations,
   witness protocol, impact mapping, journey lanes, the held-claims brake, lenses, the checkpoint with bundles,
@@ -46,22 +46,22 @@ at triage stay in git history.
 
 ### Deferred from M3 (the plan's "Deferred" list)
 
-- Event-log compaction (LR-e). Its trigger is surfaced as `status.host.log{bytes, events, foldMs}`: 50 MB or 2 s.
+- Event-log compaction (LR-e). Trigger: `status.host.log.compactionDue` (50 MB or a 2 s fold).
 - A read-only Codex judgment profile, kept as an override option (owner, 2026-09-29: vendor standings move).
   Until then Codex judgment triples are `unsupported` and the review digest seat resolves to the Claude low
-  judgment seat.
-- `explore` (A11); `--adversarial` (withdrawn, A12: a unit routing layer expresses it); `contractRequests` and
-  `owedAfterMerge` (A13: M4).
+  judgment seat. Trigger: the weekly Claude limit binding on judgments, or a Codex model the owner wants judging.
+- `explore` (A11). Trigger: arc 2's finding metrics showing a defect class the four lenses miss.
+  `--adversarial` is withdrawn (A12: a unit routing layer expresses it); `contractRequests` and `owedAfterMerge`
+  go to M4 (A13).
 - More witness reporters, and a capture from a real `go test -json` (`go-test-json` is tested on hand-written
-  streams only; no `go` on this host).
-- Glob-overlap precision (spec `obligations` against the mapping is prefix-conservative).
-- Lens parallelism (lenses run serially, one `@cpu` each).
-- Vision playback verification (M4); the in-tree home of the vision for the next arc (M4).
+  streams only; no `go` on this host). Trigger: a target repo whose tests are neither `node --test` nor a jsonl
+  wrapper, or a host with `go`.
+- Glob-overlap precision (spec `obligations` against the mapping is prefix-conservative). Trigger: an apply
+  refused for an obligation whose pattern cannot in fact overlap the unit's scope.
+- Lens parallelism (lenses run serially, one `@cpu` each). Trigger: audit wall time delaying completion or
+  raising `audit-owed`.
+- Vision playback verification and the vision's in-tree home for the next arc: M4.
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
-- `roadmap gc` (A5b), deferred until needed: residue-index pairs keyed to an arc whose run dir gc removed are kept by
-  every later compaction (an unreadable arc retains its pairs), so gc could compact first (threshold 1) while its
-  claim is held; the open needs-user items whose cited generations gc keeps are read from `--repo`'s arcs only, not
-  from another repo's arcs on the same host; archive retention is "the first K on the chain", no finer rule.
   Trigger: an implementer acting outside the sandbox.
 
 ### M4
@@ -96,6 +96,11 @@ None.
 
 ## Watch (act only on the trigger)
 
+- `status`'s `nowTrue`/`notYetTrue` read the latest observation on the head's tree in any environment, while the
+  completion predicate discharges only under the executor's recorded env id (strict reuse), so an obligation can
+  show true while `completion.unmet` lists it. Trigger: an owner misreads the two; then filter truths by the
+  recorded env id (src/status.ts `truths`).
+
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
   outlasts a working day with nobody noticing.
@@ -113,7 +118,7 @@ None.
 - Sonnet 5.5 builds at effort `medium` under `claude-only`, unmeasured. Trigger: fix-round counts against Opus;
   `low` is the cheaper step if verification holds. Sonnet has no judgment prompt; write one only if a route wants
   a cheap judge.
-- `apply`: the rulings ledger is read live, not kept by hash; `.roadmap/config.json` is read at `start` only, so a
+- `apply`: `.roadmap/config.json` is read at `start` only, so a
   class rebind needs a restart (and a dry run reads it fresh, so the two can disagree); a build's decisions are
   not appended while a revision of its spec is pending; a suite change is refused while any unit is active past a
   candidate attempt. Trigger: any of these blocking or misleading a real arc.
@@ -130,39 +135,62 @@ None.
   residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
   `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the
   fix would let the prober take a sweep-held residue or have the sweep hand it back as cleanup-failed.
+- `gc` then compaction: residue-index pairs keyed to an arc whose run dir `gc` removed are kept by every later
+  compaction (an unreadable arc retains its pairs). `gc` could compact first (threshold 1) while it holds the claim.
+  Trigger: the residue index growing with gc'd arcs' pairs.
+- `gc` keeps the generation files that open needs-user items of `--repo`'s arcs cite, not those another repo's arcs
+  on the same host cite. Archive retention is "the first K on the chain", no finer rule. Trigger: `gc` on a host
+  that has served arcs of more than one repo.
+- The node-test witness reporter reaches the lane through `NODE_OPTIONS` by its absolute path, space-joined
+  (src/holistic/witness.ts `witnessEnv`): a plugin install path containing whitespace breaks every node-test lane.
+  Trigger: such an install path (the fix quotes the path).
+- `status.convergence` shows K, the counter and the open brake items, not the per-identity counts: those need each
+  applied bundle's ops, which `appliedBundles` (src/holistic/checkpoint.ts) reads through a `CheckpointContext`.
+  A `{journal, runDir}` reader would let `status` show them. Trigger: a `convergence-identity` the owner could not
+  see coming.
+- The queue and receipts (`commands/`) are not in the snapshot closure: once `gc` removes a run dir, its ref shows
+  the revisions commands made, not the commands, their receipts or rejections. Trigger: needing a rejected
+  command's reasons after `gc`.
+- `stop` waits for a running docs publication's lanes (a revision's or the close-out's run to their end). Trigger:
+  a stop held long by a publication's lane series.
+- A job's no-verdict episode, and so its 6 h `park-escalated` clock, is held in memory: every executor restart starts
+  a new episode. Trigger: a job lane without a verdict across restarts that nobody saw.
+- The paid M3 fixture leaves untaken (its `NOT EXERCISED` list, evals/m3/check.ts `BRANCHES`): `rule`, `reverse`,
+  `steer`, `merge-in`, mutant reproduction, batch repair, the per-identity bound, `owner-request`, `draining`, a real
+  `go` lane and the literal partial bundle. Each has a fake integrated test in `npm test`. Trigger: the first real
+  arc to take one; read its log against the fake test.
 
 ## Scaffolding to delete
 
 - `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
   `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.
-- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: `adoptedProvenance` in `src/executor.ts` (a
-  dev.5 revision's routing from its adoption record, its rebuild for an unreconstructable one) and `sched.json`'s absent
-  `jobQueue` read as empty (`schedFile`, `src/schedule/scheduler.ts`).
-- The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.5 is in flight:
-  `revisionSourceOf` (a `plan-applied` without `source`, and the field's optionality), `transientRulesOf` and the
-  dev.5 transient rules it selects (the five `.roadmap/` entries, no scope check; step A4's branch), `applyInputsOf`
-  and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
-  without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4)
-  in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s, B7 `audit` and `close-admissions`'; A5b deleted
-  `gc`'s failure in `src/cli/main.ts`); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
-  B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
-  `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`
-  (`src/recover/resource.ts`); the `reproduce` stage throw in `runStage` (`src/pipeline/unit.ts`, B3); the preempted
-  lane throw in `src/pipeline/lanes.ts` (A4); the job-usage throw in `meterOf` (`src/meter.ts`, B9);
-  `stageResidueHolder`'s throw for a job-owned residue and its callers in `src/park/{probe,schedule}.ts` (A4);
-  `unitFfFingerprint`'s throw for a docs or batch `ff` in `src/git/ff.ts` and `src/recover/ff.ts` (A4, B2).
+- The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, each with its callers' branch and the optional field it
+  reads, once no arc started on 1.0.0-dev.5 is in flight:
+  - `revisionSourceOf`: a `plan-applied` without `source`.
+  - `transientRulesOf` and the `dev5` rules it selects in src/git/transient.ts (`ROADMAP_ALLOWLIST`, no scope check).
+  - `applyInputsOf` and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15).
+  - `rulingsFromLiveFile`: a revision without `rulingsSha256` reads the live ledger (src/pipeline/stages.ts,
+    src/input/inforce.ts).
+  - `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
+  - `judgmentFingerprintDefault`: a gate's `judgment-inputs` without `fingerprint` (src/pipeline/gate.ts).
+  - `planCheckVisionConflict`: a plan-check answer without `visionConflict`.
+- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: the routing-provenance adoption
+  (`adoptLegacyProvenance`, `readLegacyProvenance`, `routing-provenance/<rev>.json` in src/git/snapshot.ts; its
+  run in `runChecks`; `adoptedProvenance` in src/executor.ts; status's read of it); `sched.json`'s absent `jobQueue`
+  read as empty (`schedFile`, src/schedule/scheduler.ts); `rule`'s ledger preimage for a dev.5 previous revision
+  (`keepLegacyPreimage`, `legacyPreimage`, `commands/rule-preimages/`, src/commands/rule.ts). A dev.5 snapshot
+  manifest (no `namedBy`, verified by allowlist: `legacyAllowlisted`, `warnLegacy`) is read while a ref it
+  wrote may still be verified (`gc`, recovery): delete once no `refs/roadmap/<arc>` last written by 1.0.0-dev.5 is left.
 
 - The 1.0.0-dev.4 → M2 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.4 (or a dev.3 arc
   baselined after dispatch) is in flight: `legacyParkRecord` (a park without `park`) and its call in the fold's
   stage-outcome case; `rerouteAsUnpark` and the `rerouted` fact kind (reader, fold case, `Fact` member);
+  `judgmentInputsDefault` (a judgment attempt without `judgment-inputs`, src/pipeline/gate.ts);
   `isLegacy`, `legacyNext` and `legacySettled`, with the legacy branches of readiness and resources; the
   cause-less-hold release in the fold's `resumed{backend}` (`#releaseBackendHolds(..., legacy)`); and the
   `scheduling` field's absent case (every arc then writes `dag`).
-- Interim M2 shims, deleted by the step named: `namedResource` calls in `src/commands/apply.ts`,
-  `src/pipeline/unit.ts`, `src/recover/{residue,resource}.ts` and `test/reserve.test.ts` (step 1, once
-  reservations take pool instances and `@cpu`); the executor's rejection of `resolve-edge` and `run-only`
-  commands (step 5); `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a).
+- Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
+  src/pipeline/transitions.ts).
 
 - `src/core/upgrade.ts` 1.0.0-dev.1 defaults (launch.json `stallMs`, the lane deadline `laneRecord` derives a
   start from) and the `stallMs === null` branch in `laneRecord`: once no arc started on 1.0.0-dev.1 is in flight.

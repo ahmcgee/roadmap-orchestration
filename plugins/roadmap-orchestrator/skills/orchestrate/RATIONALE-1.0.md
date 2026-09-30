@@ -208,9 +208,12 @@ ruling broke cookie isolation (Obs §4.5).
 the owner. Each names a witness that emits per-test records; no record means `unwitnessed`, never passed.
 A `must-hold` obligation that goes red makes a candidate red, in code. Opus lenses report; a Fable
 checkpoint then rules toward the target, not the original plan. Its authority is bounded by the delegation
-envelope: it may amend implementation contracts, respec, re-route or cut, but any act that makes an
-obligation no longer required becomes a needs-user. Bundles apply all-or-none against a revision vector,
-and a convergence bound (default 3) hands control back before the checkpoint can churn. 0.x invariant 8,
+envelope: it may amend implementation contracts, respec, re-route or cut. The vision is the root record
+(owner ruling OR-V): the checkpoint may also weaken an obligation when it cites active vision clauses and
+evidence, reconciling silently and consulting the owner afterwards; every departure is a divergence with its
+preimage, and only owner-only acts (outside the sandbox, cost over $10, legal) go to the owner first. Bundles
+apply all-or-none against a revision vector, and a convergence bound (default 3) hands control back before
+the checkpoint can churn. 0.x invariant 8,
 "feedback never steers", becomes "feedback accumulates until a checkpoint; checkpoints steer". M1's
 approval fingerprint has no `obligationRevs` yet; M3 adds them.
 
