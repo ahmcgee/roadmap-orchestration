@@ -96,11 +96,6 @@ None.
 
 ## Watch (act only on the trigger)
 
-- `status`'s `nowTrue`/`notYetTrue` read the latest observation on the head's tree in any environment, while the
-  completion predicate discharges only under the executor's recorded env id (strict reuse), so an obligation can
-  show true while `completion.unmet` lists it. Trigger: an owner misreads the two; then filter truths by the
-  recorded env id (src/status.ts `truths`).
-
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
   outlasts a working day with nobody noticing.

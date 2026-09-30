@@ -37,6 +37,8 @@ import {
 
 /** The variable naming the file a `node-test` or `jsonl` lane's reporter appends witness lines to. */
 export const WITNESS_FILE_ENV = 'ROADMAP_WITNESS_FILE';
+/** The reporter's file in a witness run's evidence dir (a job lane's, a candidate journey's, a mutant's): raw evidence gc deletes. */
+export const WITNESS_LINES = 'witness.lines';
 /** The witness record's name in a lane's evidence dir. */
 export const WITNESS_RECORD_FILE = 'witness.json';
 /** The shipped node test reporter (plain JavaScript, loaded by the lane's node, not by the executor). */

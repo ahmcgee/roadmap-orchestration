@@ -121,10 +121,9 @@ describe('plan.json (M1)', () => {
     rejects({ ...plan, units: [noScope] }, 'plan.units[0].scope');
   });
 
-  it('rejects a unit id of the form batch-<n>, jobs or mutants: batch candidate refs and job/mutant evidence share the namespace', () => {
+  it('reads a reserved unit id (batch-<n>, jobs, mutants): an adopted arc keeps its units; only units entering are refused', () => {
     const units = validPlan()['units'] as Record<string, unknown>[];
-    for (const id of ['batch-3', 'jobs', 'mutants']) rejects({ ...validPlan(), units: [{ ...units[0], id }] }, 'plan.units[0].id');
-    assert.doesNotThrow(() => parsePlan({ ...validPlan(), units: [{ ...units[0], id: 'batch-fix' }] }));
+    for (const id of ['batch-3', 'jobs', 'mutants']) assert.equal(parsePlan({ ...validPlan(), units: [{ ...units[0], id }] }).units[0]!.id, id);
   });
 
   it('rejects unknown fields and duplicate unit ids', () => {

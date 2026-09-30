@@ -51,7 +51,7 @@ import {
   type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keptPayload, openRevision, planInForce, readInputFiles, recordPlan,
   specBytesOf, specFilePath, specShaInForce,
 } from '../input/inforce.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason } from '../input/plan.ts';
 import { adoptLegacyProvenance } from '../git/snapshot.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
@@ -497,6 +497,10 @@ export function settlePlan(journal: OpenJournal, context: StartupContext, files:
     // A fresh arc records the files as they are; one a release without plan revisions ran, as that release ran them.
     const baseline = earlierReleaseBaseline(journal.view, files, context.planFile);
     if ('reasons' in baseline) return [{ kind: 'plan-change-refused', reasons: baseline.reasons }];
+    // Units entering now: every unit of a fresh arc; of an earlier release's, those it never ran.
+    const ran = new Set(journal.view.unitsWithState());
+    const reserved = files.plan.units.filter((u) => !ran.has(u.id)).map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
+    if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
     recordPlan(journal, context.runDir, files, baseline.changes, routingBase);

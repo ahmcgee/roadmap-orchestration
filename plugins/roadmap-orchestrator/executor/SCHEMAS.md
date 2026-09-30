@@ -160,7 +160,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `capacity?` (M2) | `{cpu?: positive}` | the `@cpu` pool's size; absent: `availableParallelism()` |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
-| `units` | `PlanUnit[]` (non-empty) | an `id` of the form `batch-<digits>`, or `jobs` or `mutants`, is refused (M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
+| `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
 | `holistic?` (M3, A5) | `{vision: PlanPath, obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
 | `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
@@ -425,7 +425,7 @@ checks the relationship.
 | `integration.ff` | `ref = refs/heads/<int>`, `old = T, new = candidate, fingerprint` | | ref = new; new^1 = T; new^2 = approved unitCommit |
 
 M3 adds `docs.commit` and `mutant.apply`, a repair batch's `candidate.merge` (`+ batch`, on
-`refs/roadmap-run/<arc>/candidate/<batch-n>`: plan load refuses a unit id `batch-<n>` so the two never share a ref)
+`refs/roadmap-run/<arc>/candidate/<batch-n>`: no unit entering the plan may take the id `batch-<n>`, so the two never share a ref in a new arc)
 and a docs or batch `integration.ff` (`subject`, no fingerprint): "M3: the holistic layer", Op kinds.
 | `snapshot.publish` | `ref = refs/roadmap/<arc>`, `old\|null, highWater, manifestSha256, commit` (parents `[old]` or `[]`) | `new` | ref = new; tree matches its own manifest |
 
@@ -1611,7 +1611,7 @@ supersede the A4 items they name):
    the completion with its `events.jsonl` the live log's prefix. Every arc is read and verified before anything is
    deleted: one mismatch refuses the whole gc.
 3. **Retention**: sealed arcs, newest completion first; the first K (and the claim's arc) keep their run dir and lose
-   only raw evidence (each evidence snapshot's `files/`, a job lane's `witness.lines`, each invocation's `stdout`,
+   only raw evidence (each evidence snapshot's `files/`, every `witness.lines` under `evidence/` (a job lane's, a candidate journey's, a mutant's; `witness.json` stays), each invocation's `stdout`,
    `stderr` and `runner.log`, the implementers' `work/`); the rest lose the run dir (renamed `<arc>.gc-deleting`, then
    removed; a leftover is removed first; crash label `gc.run-dir.after-rename`), which the snapshot ref restores. Arcs
    not sealed are kept whole. Host generation files beyond the last K before gc's own claim are pruned, except any
@@ -1682,7 +1682,7 @@ supersede the A4 items they name):
 8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` through `acquireFirst` with the job as
    the reserve's parent (`AcquireFirst`'s 5th parameter, required exactly for a batch holder); one durable `batch-<n>` per
    finding until it publishes, each attempt reusing it; the chain on `refs/roadmap-run/<arc>/candidate/<batch-n>` (the
-   frozen candidate ref shape; `parsePlan` refuses a unit id `batch-<n>`, which would share it), each chain merge re-made from `merge-tree`
+   frozen candidate ref shape; a unit entering the plan may not take the id `batch-<n>`, which would share it), each chain merge re-made from `merge-tree`
    of its parents with `commit`'s identity and message. The claims are the union of each member's selection. Red →
    `red{attributable}`: members whose own selection holds a red obligation, none when anything else is red. Before the ff
    every member's fingerprint at the tip (`stale{invalid}`) and eligibility (`finding-blocked`). A batch ff's provenance
@@ -1893,8 +1893,9 @@ src/pipeline/dispatch.ts `callArcRole`):
    never read for history. `routing` and admission read the provenance in force per unit (`provenanceStack`); only a dev.5
    revision not yet adopted is rebuilt from the live config, warned (scaffolding, as `src/executor.ts` does).
 3. **`nowTrue` / `notYetTrue`** list every non-exempt obligation in id order with its verdict on the integration head's
-   tree (the live branch tip): the latest observation there of its witness lane at the lane's current rev, in whichever
-   environment ran it (status runs anywhere; the executor's reuse keys on its own `envId`), else `not-covered`. A split
+   tree (the live branch tip): completion's strict rule (`dischargingObservation`, src/schedule/scheduler.ts): the
+   observation there of its witness lane at the lane's current rev in the environment the executor recorded for the lane
+   (`recordedLaneEnv`), else `not-covered`; another environment's observation is never shown held. A split
    parent's verdict is its non-exempt children's (held when all hold, else the worst of not-held, partial, unwitnessed,
    not-covered). `activation` is the effective one (latched → must-hold). `blockingUnits`: a pending future obligation's
    unmerged `deliveredBy` (lineage heads); otherwise the owners of its active findings. `reason` is the first of

@@ -152,6 +152,20 @@ const ROWS: readonly Row[] = [
     edit: (d) => editPlan(d, (p) => void p.units.push({ ...p.units[1]!, id: 'u3', spec: 'u3.json' })),
     expect: [/unit id u3 was planned before; ids are never reused/],
   },
+  {
+    name: 'add a unit with a reserved id (batch-<n>, jobs, mutants): refused, each named',
+    edit: (d) => ['batch-3', 'jobs', 'mutants'].forEach((id) => addUnit(d, id)),
+    expect: [/unit id batch-3 is reserved/, /unit id jobs is reserved/, /unit id mutants is reserved/],
+  },
+  {
+    name: 'a reserved id already in an adopted arc\'s plan in force stays: its edits and other additions apply',
+    units: [{ id: 'u1' }, { id: 'batch-2' }, { id: 'jobs' }],
+    edit: (d) => {
+      addUnit(d, 'u4');
+      editSpec(d, 'jobs', addClause);
+    },
+    expect: (r) => [{ type: 'unit-added', unit: unitId('u4') }, specChange(r.d, 'jobs', 'undispatched', 1)],
+  },
   { name: 'remove a unit that never started: now', edit: (d) => editPlan(d, (p) => void p.units.splice(2, 1)), expect: () => [{ type: 'unit-removed', unit: unitId('u3') }] },
   {
     name: 'remove a unit that started: refused, with every reason',

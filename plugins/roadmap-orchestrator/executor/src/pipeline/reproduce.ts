@@ -39,7 +39,7 @@ import { mutantLaneDir } from '../git/snapshot.ts';
 import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
-import { WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
+import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { type Reservation, type StageHolder, cleanup, heldReservation, run } from '../resources/reserve.ts';
@@ -193,7 +193,6 @@ async function runMutant(ctx: StageContext, parent: StageParent, target: MutantT
 }
 
 /** The reporter's file of a mutant run, in its execution's dir (as a journey lane's). */
-const WITNESS_LINES = 'witness.lines';
 
 /** The unit lane environment plus the reporter's witness file; a lane declaring what the executor sets is a bug the reader refuses. */
 function mutantEnv(ctx: StageContext, unit: UnitId, lane: ArcLaneDef, held: readonly ResourceUnit[], witnessFile: AbsPath): Readonly<Record<string, string>> {

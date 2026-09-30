@@ -212,16 +212,23 @@ const planUnit: Read<PlanUnit> = object((f) => {
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
-  // Ids that share a namespace with a unit's: a repair batch's candidate ref is keyed by its job id beside the units'
-  // (src/git/candidate.ts), and the run dir's evidence/<unit>/ sits beside evidence/jobs/ and evidence/mutants/.
-  if (/^batch-\d+$/.test(out.id) || out.id === 'jobs' || out.id === 'mutants') {
-    throw new SchemaError(`${f.path}.id`, 'a unit id other than batch-<n>, jobs or mutants (reserved for jobs and mutants)', out.id);
-  }
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
   };
 });
+
+/**
+ * Why a unit entering the plan (a fresh arc's rev 1, or a unit a revision adds) may not take `id`, or null. A repair
+ * batch's candidate ref is keyed by its job id beside the units' (src/git/candidate.ts), and the run dir's
+ * `evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`. Units already in an adopted arc's plan keep
+ * their ids: this is never a schema rule.
+ */
+export function reservedUnitIdReason(id: UnitId): string | null {
+  return /^batch-\d+$/.test(id) || id === 'jobs' || id === 'mutants'
+    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence); choose another id`
+    : null;
+}
 
 /** Field paths in errors start at `plan`, e.g. `plan.units[0].risk`. */
 export function parsePlan(value: unknown): PlanM1 {

@@ -15,7 +15,8 @@
 // carries, plus the queue and state) and lose only their raw evidence; the rest lose the whole run dir, which the
 // ref restores (`snapshot.reconstruct-alone`). The deletions, in order:
 //   1. raw evidence of each kept sealed arc: every evidence snapshot's captured `files/` (its manifest stays), a
-//      job lane's `witness.lines` (its `witness.json` stays), each invocation's `stdout`, `stderr` and `runner.log`
+//      witness run's `witness.lines` anywhere under `evidence/` (a job lane's, a candidate journey's, a mutant's; its
+//      `witness.json` stays), each invocation's `stdout`, `stderr` and `runner.log`
 //      (`result.json`, `reads.json` and the launch records stay), and the implementers' `work/`;
 //   2. a `<arc>.gc-deleting` a crashed gc left, then each run dir beyond K: renamed to `<arc>.gc-deleting`, then
 //      removed;
@@ -33,7 +34,7 @@
 // recovered by its next start, not by gc. `--dry-run` is refused the same way, then reads without claiming (no
 // generation issued, no tail repaired) and lists what a gc claiming the next generation would delete.
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { durableRename, durableUnlink } from '../core/fsx.ts';
 import { type ArcId, arcId, sha256 } from '../core/ids.ts';
@@ -52,6 +53,7 @@ import { readOwner } from '../host/owner.ts';
 import { type CompactedHead, RESIDUE_ARCHIVE, verifyIndexBytes } from '../host/residues.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import { planInForce } from '../input/inforce.ts';
+import { WITNESS_LINES } from '../holistic/witness.ts';
 import { fileNeedsUser, recordOf } from '../needsuser.ts';
 import { reconcilePreviousArc } from '../recover/recover.ts';
 import { generationFilesToPrune, pruneGenerationFiles } from '../supervisor.ts';
@@ -256,8 +258,10 @@ function rawEvidence({ arc, runDir }: ArcDir): readonly AbsPath[] {
     if (!dest.startsWith(`${runDir}/`)) throw new Error(`arc ${arc}: evidence snapshot ${intent.op} wrote to ${dest}, outside its run dir`);
     add(join(dest, 'files'));
   }
-  const jobs = join(runDir, 'evidence', 'jobs');
-  if (existsSync(jobs)) for (const job of readdirSync(jobs).sort()) for (const lane of readdirSync(join(jobs, job)).sort()) add(join(jobs, job, lane, 'witness.lines'));
+  const evidence = join(runDir, 'evidence');
+  if (existsSync(evidence)) {
+    for (const path of readdirSync(evidence, { recursive: true, encoding: 'utf8' }).sort()) if (basename(path) === WITNESS_LINES) add(join(evidence, path));
+  }
   const inv = join(runDir, 'inv');
   if (existsSync(inv)) for (const dir of readdirSync(inv).sort()) for (const file of ['stdout', 'stderr', 'runner.log']) add(join(inv, dir, file));
   add(join(runDir, 'work'));

@@ -108,7 +108,7 @@ import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
-import { keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
@@ -411,6 +411,15 @@ export function baselineOwed(ctx: StageContext): JobId | null {
 const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integrationHeadNow(ctx)}^{tree}`);
 
 /**
+ * The observation that witnesses `lane` on `tree` under §2.8's strict reuse rule: the lane's observation on the tree at
+ * its revision in the executor's environment (`laneEnv`), or null. Completion and `status` both read it (one rule).
+ */
+export function dischargingObservation(store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null): Observation | null {
+  const env = laneEnv(lane);
+  return env === null ? null : reuse(store, keyOf(tree, lane, env));
+}
+
+/**
  * Every non-exempt obligation (split parents through their children) on `head`: held, one not observed there, or one not
  * held. §2.8's reuse rule, strict: a witness counts only from the observation of its lane on the head's tree at the lane's
  * revision in the executor's environment (`laneEnv`: all four keys, its record's hash checked); another environment's
@@ -429,8 +438,7 @@ export function obligationsOn(
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const env = laneEnv(lane);
-    const found = env === null ? null : reuse(store, keyOf(tree, lane, env));
+    const found = dischargingObservation(store, tree, lane, laneEnv);
     if (found === null) unobserved = true;
     else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
   }
