@@ -64,6 +64,7 @@ const RUNNER_LABELS = [
 export const SPEC_PATCH = 'spec.patch';
 export const RESIDUE_ORDERING = 'resource.transition fail + residue';
 export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
+export const RETRY_RECLAIM = 'resource.transition retry reclaim (M2: reclaim → teardown → disposition → release)';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
@@ -421,6 +422,37 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['resource.after-done'],
         recovery: 'nothing is open; a held set of the dead holder is cleaned and torn down again, then released; after the fail done the failed resource stays cleanup-failed, never released',
+      },
+    },
+  },
+  {
+    // M2 step 1. The scenario (test/fixtures/pool-child.ts `retry`): u1's build reserves estate#1, runs, and its
+    // teardown fails (cleanup-failed, residue durable first); the retry of the park then reclaims it: reclaim →
+    // the recorded teardown → the residue's cleaned disposition → release (F2). Every occurrence of every label is
+    // crashed; recovery is the resources phase, then the park's next probe (retryReclaim) runs again.
+    row: RETRY_RECLAIM,
+    test: 'test/pool-crash.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['resource.after-intent'],
+        recovery: 'the open reclaim or release is closed as it stands; a retry holder found cleaning resumes the reclaim order (teardown again, the disposition unless recorded, release); a released instance is never dirty',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['spawn.after-intent', 'launch.after-spawn', 'spawn.after-runner-exit'],
+        recovery: 'the retry\'s teardown is settled by the spawn reconciler, then rerun as a new op; the residue is disposed by a passing teardown of that instance',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['retry.before-disposition'],
+        recovery: 'the teardown passed, the residue is undisposed and owned by the arc (A9); recovery reruns the teardown, records the cleaned disposition, releases',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['retry.after-disposition', 'resource.after-done'],
+        recovery: 'the disposition is durable, the instance still cleaning under the retry: recovery reruns the idempotent teardown and releases without a second disposition',
       },
     },
   },

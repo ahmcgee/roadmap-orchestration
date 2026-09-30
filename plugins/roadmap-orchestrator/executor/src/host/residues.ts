@@ -25,6 +25,7 @@ import { type ResidueKey, type ResidueRecord, residueRecord } from '../core/reco
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import type { StartupCheck } from '../preflight/startup.ts';
 import { RESIDUES, hostPath } from './hostdir.ts';
 
@@ -190,3 +191,23 @@ export const undispositionedResidueCheck: StartupCheck<'undispositioned-residue'
     return residues.length === 0 ? [] : [{ kind: 'undispositioned-residue', residues }];
   },
 };
+
+/**
+ * A9: whether the arc whose log `view` is owns the residue `key`, so the residue does not refuse that arc's start
+ * or respawn. Ownership is proven by a `resource.transition{fail}` intent of this arc, open or done (never an
+ * aborted one), held by the key's unit, whose residues name the key's resource with its teardown invocation. The
+ * intent is durable before any residue (reserve.ts), so this holds across the whole lifecycle (F2): the residue
+ * appended while `fail` is still open, `cleanup-failed`, a retry's reclaim (`cleaning`), and a teardown passed
+ * before the disposition. Another arc's residue is never owned. The startup row reads the log read-only
+ * (`readJournal`) before the claim.
+ */
+export function ownArcResidue(view: JournalView, key: ResidueKey): boolean {
+  if (key.arc !== view.arc) return false;
+  const open = new Set(view.openIntents().map((i) => i.op));
+  return view.opsOf('resource.transition').some((i) => {
+    const { holder, edge } = i.expect;
+    if (edge.type !== 'fail' || holder.type !== 'stage' || holder.unit !== key.unit) return false;
+    if (!open.has(i.op) && view.doneOf(i.op) === null) return false;
+    return edge.residues.some((r) => r.resource === key.resource && r.teardown === key.inv);
+  });
+}
