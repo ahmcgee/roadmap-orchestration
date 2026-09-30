@@ -5,8 +5,9 @@
 // held at the baseline; the barrier holds only audit-1's run of the money lane; the story's tidy regresses I-2 and its
 // repair restores it), the driver fires every forcing device and the arc completes, every check criterion passes,
 // the literal partial bundle applies nothing (A18, G19), a used fixture dir is refused, and the criteria
-// discriminate. Named tests: evals-m3.setup-valid, evals-m3.fake, evals-m3.partial-bundle, evals-m3.rerun-refused,
-// evals-m3.tamper-digest, evals-m3.tamper-stale.
+// discriminate. Also the latch-during-audit race: I-1 latches while audit-1 runs, and the audit grades latches as of
+// its capture. Named tests: evals-m3.setup-valid, evals-m3.fake, evals-m3.partial-bundle, evals-m3.latch-during-audit,
+// evals-m3.rerun-refused, evals-m3.tamper-digest, evals-m3.tamper-stale.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -239,6 +240,17 @@ describe('evals-m3: the fake-backed fixture run', () => {
     assert.ok(bundle !== undefined && bundle.source?.type === 'bundle' && bundle.source.job === 'ckpt-3');
     assert.deepEqual(bundle.changes, [{ type: 'unit-added', unit: REPAIR_UNIT.id }], 'the re-evaluation applied the admit, and only it');
     assert.ok(bundle.seq > invalid.seq);
+  });
+
+  test('evals-m3.latch-during-audit: I-1 latches while audit-1 runs; the audit grades latches as of its capture, so it opens the I-2 witness P1 and nothing over I-1', () => {
+    const started = factsOf('audit-started').find((f) => f.job === BARRIER_JOB)!;
+    const ended = factsOf('audit-ended').find((f) => f.job === BARRIER_JOB)!;
+    assert.ok(started !== undefined && ended !== undefined);
+    const latch = factsOf('obligation-latched').find((f) => f.obligation === 'I-1');
+    assert.ok(latch !== undefined && latch.seq > started.highWater && latch.seq < ended.seq, 'I-1 latched after the audit\'s capture and before its end: the race');
+    const opened = factsOf('finding-opened').filter((f) => ended.findings.includes(f.id));
+    assert.deepEqual(opened.map((f) => [f.id, f.lens, f.severity, f.obligation]), [['F-1', 'witness', 'P1', 'I-2']], 'the audit\'s one finding is the I-2 witness P1');
+    assert.deepEqual(factsOf('finding-opened').filter((f) => f.obligation === 'I-1'), [], 'no finding over I-1, which S did not deliver');
   });
 
   test('evals-m3.rerun-refused: setup and the driver refuse a fixture dir that was used', async () => {

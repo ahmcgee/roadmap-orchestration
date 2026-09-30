@@ -28,10 +28,11 @@
 //                              the plan-check and merges it on rev 2, recording no plan revision of its own; the
 //                              finished arc then classifies an apply adding a unit as accepted (revision 3).
 //   upgrade.park-adopted       unit `slug` merged; `page-id`'s lane killed by a signal twice (blocked, then its
-//                              retry), so parked `lane-blocked` operator-env (dev.5 records the park class); its
-//                              needs-user acknowledged, and the previous release ends the arc. `resume page-id`
-//                              (queued through the previous release's CLI) re-runs its lanes on HEAD, which now
-//                              pass, and it merges.
+//                              retry) on a calm host (the test waits, bounded, for dev.5's own host sample to clear:
+//                              on a busy one dev.5 parks it as host pressure), so parked `lane-blocked` operator-env
+//                              (dev.5 records the park class); its needs-user acknowledged, and the previous release
+//                              ends the arc. `resume page-id` (queued through the previous release's CLI) re-runs its
+//                              lanes on HEAD, which now pass, and it merges.
 //   upgrade.named-cpu-low-host (F18) the plan declares a named resource `cpu`, which both units reserve; `page-id`
 //                              stopped mid-build as in stop-mid-build. A dev.5 arc is a DAG arc: on a one-CPU
 //                              host (`taskset -c 0`) HEAD refuses it over the `@cpu` capacity, as dev.5 does, and
@@ -134,6 +135,9 @@ const EVALS = join(EXECUTOR, 'evals', 'm1');
 /** The driver's own hard timeout under --fake is 5 min; each phase gets that and a margin. */
 const PHASE_MS = 7 * 60_000;
 const T = { timeout: 3 * PHASE_MS };
+/** How long a test whose premise is a calm host waits for the host to clear (park-adopted), and its timeout. */
+const CLEAR_HOST_MS = 20 * 60_000;
+const T_CALM = { timeout: 3 * PHASE_MS + CLEAR_HOST_MS };
 const CLI_MS = 60_000;
 /** `start` waits for readiness itself (240 s by default). */
 const START_MS = 300_000;
@@ -143,6 +147,12 @@ type PreviousModules = Readonly<{
   fakeSteps: typeof import('../evals/m1/scenario.ts').fakeSteps;
   readScenario: typeof import('../evals/m1/scenario.ts').readScenario;
   writeShims: typeof import('./fakes/shim.ts').writeShims;
+  /** The previous release's host sample and its busy/clear thresholds (the host park's classification). */
+  sample: Readonly<{
+    readHostSample: typeof import('../src/host/sample.ts').readHostSample;
+    isBusy: (s: ReturnType<typeof import('../src/host/sample.ts').readHostSample>) => boolean;
+    isClear: (s: ReturnType<typeof import('../src/host/sample.ts').readHostSample>) => boolean;
+  }>;
 }>;
 type Previous = Readonly<{ root: string; modules: PreviousModules }>;
 
@@ -160,8 +170,14 @@ before(async () => {
   const root = join(dir, EXECUTOR_PATH);
   assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.5"/);
   const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
-  const [scenario, shim] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts')]);
-  previous = { root, modules: { fakeSteps: scenario['fakeSteps'], readScenario: scenario['readScenario'], writeShims: shim['writeShims'] } as PreviousModules };
+  const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
+  previous = {
+    root,
+    modules: {
+      fakeSteps: scenario['fakeSteps'], readScenario: scenario['readScenario'], writeShims: shim['writeShims'],
+      sample: { readHostSample: sample['readHostSample'], isBusy: sample['isBusy'], isClear: sample['isClear'] },
+    } as PreviousModules,
+  };
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -521,7 +537,19 @@ function editJson<T>(path: string, edit: (value: T) => T): void {
   writeFileSync(path, `${JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as T), null, 2)}\n`);
 }
 
-test('upgrade.park-adopted: a unit the previous release parked lane-blocked (operator-env) stays parked on HEAD; `resume page-id` re-runs its lanes, and it merges', T, async () => {
+/** Waits until the previous release's host sample is clear and not busy; fails naming the last sample if it never is. */
+async function clearHost(): Promise<void> {
+  const { readHostSample, isBusy, isClear } = previous.modules.sample;
+  const deadline = Date.now() + CLEAR_HOST_MS;
+  for (;;) {
+    const s = readHostSample();
+    if (isClear(s) && !isBusy(s)) return;
+    if (Date.now() >= deadline) assert.fail(`the host stayed busy for ${CLEAR_HOST_MS / 60_000} min (last sample ${JSON.stringify(s)}): this test needs a calm host`);
+    await sleep(5_000);
+  }
+}
+
+test('upgrade.park-adopted: a unit the previous release parked lane-blocked (operator-env) stays parked on HEAD; `resume page-id` re-runs its lanes, and it merges', T_CALM, async () => {
   const c = clean();
   let marker = '';
   // page-id's lane is killed by a signal (no verdict: blocked) until the marker exists.
@@ -532,6 +560,9 @@ test('upgrade.park-adopted: a unit the previous release parked lane-blocked (ope
       lanes: spec.lanes.map((lane) => ({ ...lane, argv: ['/bin/sh', '-c', '[ -e "$1" ] && exec node --test test/page-id.test.js; kill -KILL $$', 'lane', marker] })),
     }));
   });
+  // The premise: a calm host. The previous release reads a lane killed by a signal on a busy host as host pressure
+  // (a retryable host park), so the run starts only once its own sample says the host is clear.
+  await clearHost();
   const scope = scopeOf(p);
   track(scope);
   try {
