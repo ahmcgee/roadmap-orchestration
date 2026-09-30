@@ -180,10 +180,16 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
   },
 });
 
+/**
+ * The one ROADMAP_* variable the executor sets in a launch: a witness run's reporter file (M3; src/holistic/witness.ts
+ * `WITNESS_FILE_ENV`, named here literally so the core imports nothing of the holistic layer).
+ */
+const WITNESS_FILE_ENV = 'ROADMAP_WITNESS_FILE';
+
 const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
   const env = stringMap(value, path);
   for (const k of Object.keys(env)) {
-    if (k.startsWith('ROADMAP_')) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
+    if (k.startsWith('ROADMAP_') && k !== WITNESS_FILE_ENV) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
   }
   return env;
 };

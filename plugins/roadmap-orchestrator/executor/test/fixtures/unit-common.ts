@@ -122,8 +122,8 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
-    if (d.dag === true) recordDagPlan(journal, absPath(d.runDir), absPath(d.planPath));
-    else recordLegacyPlan(journal, absPath(d.runDir), absPath(d.planPath));
+    if (d.dag === true) recordDagPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
+    else recordLegacyPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
   }
   const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const resources = {

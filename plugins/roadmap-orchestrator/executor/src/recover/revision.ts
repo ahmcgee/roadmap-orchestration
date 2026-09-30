@@ -7,7 +7,8 @@
 //                    payload (done); otherwise abort, and the source re-evaluates (an `apply`'s command op
 //                    re-runs it, a bundle re-queues, a start re-reads its files). It never reclassifies.
 //
-// The docs publication is src/pipeline/publish.ts (step A4), reached through `DocsPublisher`. Which publication
+// The docs publication is src/pipeline/publish.ts (step A4), reached through `DocsPublisher`; its `settle` (the
+// snapshot and the slot's release) runs after the activation, and recovery's docs holder finishes it after a crash. Which publication
 // carried a revision is read from the log alone: the docs `integration.ff` begun after its `revision.commit`
 // (one revision commits at a time, and a close-out publication never runs inside one).
 import { crashPoint } from '../core/crash.ts';
@@ -17,13 +18,21 @@ import type { Journal, JournalView, Reconciler } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type Publication, appendRevision, beginRevision, closeRevision, keptPayload } from '../input/inforce.ts';
 
-/** A docs publication's end: its `ff` published (the pub and the new head), or refused before its `ff` (the reason). */
-export type DocsOutcome = Readonly<{ kind: 'published'; publication: Publication }> | Readonly<{ kind: 'refused'; reason: string }>;
+/**
+ * A docs publication's end: its `ff` published (the pub and the new head, and `settle`: what follows the revision's
+ * activation, the snapshot and the slot's release, A4), or refused before its `ff` (the reason).
+ */
+export type DocsOutcome =
+  | Readonly<{ kind: 'published'; publication: Publication; settle: () => Promise<void> }>
+  | Readonly<{ kind: 'refused'; reason: string }>;
 /** Publishes a revision's rendered `.roadmap/` files and contract ops (A4, src/pipeline/publish.ts) inside its open commit. */
 export type DocsPublisher = (payload: RevisionPayload, commit: IntentOf<'revision.commit'>) => Promise<DocsOutcome>;
 
-/** Interim (M3 A2): no docs publication until step A4 (BACKLOG "Scaffolding to delete"); a revision needing one is refused. */
-export const DOCS_NOT_YET: DocsPublisher = async () => ({ kind: 'refused', reason: 'a revision that changes the in-tree documents needs the docs publication: not implemented (step A4)' });
+/**
+ * The publisher of a context that publishes no docs (a test's unit or stage context: the executor's is
+ * src/pipeline/publish.ts `docsPublisher`); a revision needing a publication is refused there.
+ */
+export const DOCS_NOT_YET: DocsPublisher = async () => ({ kind: 'refused', reason: 'a revision that changes the in-tree documents needs the docs publication, which this context does not run' });
 
 export type RevisionCommitContext = Readonly<{ journal: Journal; runDir: AbsPath; docs: DocsPublisher }>;
 
@@ -35,18 +44,20 @@ export type Committed = Readonly<{ kind: 'applied'; fact: PlanAppliedFact }> | R
  */
 export async function commitRevision(ctx: RevisionCommitContext, payload: RevisionPayload, parent: Parent): Promise<Committed> {
   const commit = beginRevision(ctx.journal, ctx.runDir, payload, parent);
-  let publication: Publication | null = null;
+  let docs: Extract<DocsOutcome, { kind: 'published' }> | null = null;
   if (payload.publication !== null) {
-    const docs = await ctx.docs(payload, commit);
-    if (docs.kind === 'refused') {
-      ctx.journal.abort(commit.op, 'precondition', docs.reason);
-      return { kind: 'refused', reason: docs.reason };
+    const outcome = await ctx.docs(payload, commit);
+    if (outcome.kind === 'refused') {
+      ctx.journal.abort(commit.op, 'precondition', outcome.reason);
+      return { kind: 'refused', reason: outcome.reason };
     }
-    publication = docs.publication;
+    docs = outcome;
     crashPoint('revision.commit.after-docs');
   }
-  const fact = appendRevision(ctx.journal, commit, payload, publication);
+  const fact = appendRevision(ctx.journal, commit, payload, docs?.publication ?? null);
   closeRevision(ctx.journal, commit.op, false);
+  // The publication's slot is held through the activation: no unit publishes between its docs ff and its plan-applied.
+  if (docs !== null) await docs.settle();
   return { kind: 'applied', fact };
 }
 

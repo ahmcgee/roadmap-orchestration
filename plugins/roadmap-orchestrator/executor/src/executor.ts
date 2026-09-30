@@ -67,6 +67,7 @@ import type { PlanM1 } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
 import { type ProberHandle, createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
+import { docsPublisher } from './pipeline/publish.ts';
 import { consume } from './pipeline/unit.ts';
 import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
@@ -74,7 +75,6 @@ import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { DOCS_NOT_YET } from './recover/revision.ts';
 import { type ResolvedRouting, provenanceStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
@@ -326,7 +326,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     laneEnv: args.env,
     planFile: context.planFile,
     routingBase: { profile, config },
-    docs: DOCS_NOT_YET,
+    docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
     routing: (unit) => ({ profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },

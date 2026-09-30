@@ -33,11 +33,19 @@
 //                                 never dirty (`retryReclaim`).
 //   sweep{command}                a `sweep` command. It never runs a workload and never records a failed
 //                                 cleanup: what it could not clean stays `cleaning` and its residue undisposed.
-// A retry or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
+//   docs{pub}                     a docs publication (M3, A7), holding `integration-slot` alone, like a
+//                                 publication: no teardown, never fails.
+//   job{job}                      a durable job's lanes (M3, G4, H4: docs, audit, baseline and batch lanes). It
+//                                 never takes the slot, runs workloads like a stage, and records a failed
+//                                 cleanup as job-owned residues (keyed by the job). Its recipes carry the job's
+//                                 owner label (`jobOwnerLabel`). It reclaims its own residue itself
+//                                 (`retryReclaim`), in a unit retry's order: it is both the failing and the
+//                                 reclaiming holder, since a job, unlike a stage attempt, outlives its lane.
+// A retry, a job or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
 import { crashPoint } from '../core/crash.ts';
 import { type Holder, type Parent, type ResourceEdge, holderUnit } from '../core/events.ts';
 import {
-  type InvocationId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey,
+  type ArcId, type InvocationId, type JobId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -50,15 +58,23 @@ import { type ProcContext, killWorkload } from '../pipeline/invoke.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { type ResidueRecipe, appendFailedCleanupResidues } from '../recover/residue.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { allocate } from './pool.ts';
-import { type TeardownRun, stageRecipes, teardown } from './teardown.ts';
+import { allocate, instanceEnv } from './pool.ts';
+import { type TeardownRun, instancesOf, resolveCommand, resourceDecl, stageRecipes, teardown } from './teardown.ts';
 
 export type StageHolder = Extract<Holder, { type: 'stage' }>;
 export type SweepHolder = Extract<Holder, { type: 'sweep' }>;
 export type RetryHolder = Extract<Holder, { type: 'retry' }>;
 export type PublicationHolder = Extract<Holder, { type: 'publication' }>;
+export type DocsHolder = Extract<Holder, { type: 'docs' }>;
+export type JobHolder = Extract<Holder, { type: 'job' }>;
 /** The holders that reserve through a request (and so through the arbiter). */
-export type AcquiringHolder = StageHolder | PublicationHolder;
+export type AcquiringHolder = StageHolder | PublicationHolder | DocsHolder | JobHolder;
+/** The acquiring holders that act for a unit (a stage attempt, or its candidate's publication). */
+export type UnitAcquiringHolder = StageHolder | PublicationHolder;
+/** The holders whose failed cleanup records residues (`RESIDUE_HOLDERS`): keyed by the unit, or by the job. */
+export type ResidueHolder = StageHolder | JobHolder;
+/** The holders that reclaim their own residue through `retryReclaim`: a unit's retry, or the owning job (G4). */
+export type ReclaimHolder = RetryHolder | JobHolder;
 
 /**
  * What the reservation cycle needs beyond processes: the plan's declarations, the repo root, the host dir.
@@ -88,15 +104,50 @@ export type Refused = Readonly<{ state: 'refused'; busy: readonly ResourceUnit[]
 
 export type CleanupResult<H extends Holder> =
   | Readonly<{ kind: 'released'; released: readonly ResourceUnit[] }>
-  | (H extends StageHolder
+  | (H extends ResidueHolder
     /** Residues are durable for `failed`, which are cleanup-failed and never released. */
     ? Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[]; released: readonly ResourceUnit[] }>
-    /** A sweep or retry records no failure: `failed` stay cleaning, held by it. A publication never fails. */
+    /** A sweep or retry records no failure: `failed` stay cleaning, held by it. A publication or docs holder never fails. */
     : Readonly<{ kind: 'left-cleaning'; failed: readonly ResourceInstance[]; released: readonly ResourceUnit[] }>);
 
-/** The stage a holder's needs-user and parents speak of: a publication is its candidate attempt's. */
-export function holderStage(holder: AcquiringHolder): Stage {
+/** The stage a unit holder's needs-user and parents speak of: a publication is its candidate attempt's. */
+export function holderStage(holder: UnitAcquiringHolder): Stage {
   return holder.type === 'stage' ? holder.stage : 'candidate';
+}
+
+/**
+ * The owner label a job's lanes and teardowns carry (G4): `<arc>/job/<job>`. A unit's is `<arc>/<unit>`
+ * (`ownerLabel`, teardown.ts); the extra segment keeps a job's objects apart from a unit's even where a unit id
+ * reads like a job id (`audit-1`), since a slug never contains `/`.
+ */
+export function jobOwnerLabel(arc: ArcId, job: JobId): string {
+  return `${arc}/job/${job}`;
+}
+
+/**
+ * The teardown recipe of each resource instance among `resources` under `holder`, bound to `instances`
+ * (default: the binding of `resources`; recovery passes the holder's whole set, F7). A unit holder's are
+ * `stageRecipes`; a job's carry `jobOwnerLabel`; a docs holder holds integration-slot alone, which has none.
+ */
+export function holderRecipes(
+  plan: PlanM1,
+  repo: AbsPath,
+  holder: AcquiringHolder,
+  resources: readonly ResourceUnit[],
+  instances: Readonly<Record<string, string>> = instanceEnv(resources),
+): ReadonlyMap<ResourceInstance, ResidueRecipe> {
+  switch (holder.type) {
+    case 'stage':
+    case 'publication':
+      return stageRecipes(plan, repo, holder.unit, resources, instances);
+    case 'docs':
+      if (instancesOf(resources).length > 0) throw new Error(`${canonicalJson(holder)} holds ${JSON.stringify(resources)}: a docs holder holds integration-slot alone`);
+      return new Map();
+    case 'job': {
+      const label = jobOwnerLabel(plan.arc, holder.job);
+      return new Map(instancesOf(resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -188,7 +239,7 @@ function journalTransition(
   crashPoint('resource.after-done', unit);
 }
 
-/** Any transition but `fail` (only `cleanup` takes it, for a stage holder) and `reclaim` (a sweep's or a retry's). */
+/** Any transition but `fail` (only `cleanup` takes it, for a stage or job holder) and `reclaim` (a sweep's, a retry's or a job's). */
 export function transition<H extends Holder>(
   ctx: ResourceContext,
   holder: H,
@@ -197,7 +248,7 @@ export function transition<H extends Holder>(
   parent: Parent,
 ): void {
   const e = edge as ResourceEdge;
-  if (e.type === 'fail') throw new Error('a fail transition is recorded only by a stage holder\'s cleanup, with its residues');
+  if (e.type === 'fail') throw new Error('a fail transition is recorded only by a stage or job holder\'s cleanup, with its residues');
   if (e.type === 'reclaim') throw new Error('a reclaim is taken only through reclaimForSweep or retryReclaim');
   if ((holder.type === 'sweep' || holder.type === 'retry') && e.type === 'run') throw new Error(`${canonicalJson(holder)} cannot run a workload`);
   journalTransition(ctx, holder, resources, e, parent, new Map());
@@ -205,16 +256,17 @@ export function transition<H extends Holder>(
 
 /**
  * cleaning→cleanup-failed with one residue per failed instance, durable in the host index before the done
- * (step 7's ordering). Only a stage holder records one: it has the unit a residue is keyed by.
+ * (step 7's ordering). Only a stage or job holder records one (`RESIDUE_HOLDERS`): it has the owner a residue is
+ * keyed by (the unit, or the job, G4).
  */
 function recordFailedCleanup(
   ctx: ResourceContext,
-  r: Reservation<'cleaning', StageHolder>,
+  r: Reservation<'cleaning', ResidueHolder>,
   failed: readonly TeardownRun[],
   parent: Parent,
 ): void {
   const holder = r.holder as Holder;
-  if (holder.type !== 'stage') throw new Error(`${canonicalJson(holder)} cannot record a failed cleanup: only a stage holder records one`);
+  if (holder.type !== 'stage' && holder.type !== 'job') throw new Error(`${canonicalJson(holder)} cannot record a failed cleanup: only a stage or job holder records one`);
   const residues = failed.map((t) => ({ resource: t.resource, teardown: t.inv }));
   journalTransition(ctx, holder, residues.map((x) => x.resource), { type: 'fail', residues }, parent, r.recipes);
 }
@@ -235,13 +287,15 @@ export function reserve<H extends AcquiringHolder>(
   parent: Parent,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
-  if (holder.type === 'publication' && !(req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0)) {
-    throw new Error(`a publication holder reserves integration-slot alone, not ${canonicalJson(req)}`);
+  const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
+  if ((holder.type === 'publication' || holder.type === 'docs') && !slotAlone) {
+    throw new Error(`a ${holder.type} holder reserves integration-slot alone, not ${canonicalJson(req)}`);
   }
+  if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
   journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map());
-  return { state: 'reserved', holder, resources: got.units, recipes: stageRecipes(plan, ctx.repo, holder.unit, got.units) };
+  return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
 }
 
 /**
@@ -256,7 +310,7 @@ export function heldReservation<S extends HeldState, H extends AcquiringHolder>(
     const e = entryOf(table, u);
     if (e.pending !== null || e.status.state !== state) throw new Error(`${canonicalJson(holder)} holds ${u} ${e.status.state}${e.pending === null ? '' : ` (${e.pending.op} open)`}, not ${state}`);
   }
-  return { state, holder, resources: units, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, units) };
+  return { state, holder, resources: units, recipes: holderRecipes(ctx.plan(), ctx.repo, holder, units) };
 }
 
 /** A sweep reserves exactly the resource instances it has recipes for (the residues it sweeps). */
@@ -329,19 +383,19 @@ export async function finishCleanup<H extends Holder>(
     if (recipe !== undefined) runs.push(await teardown(ctx, unit, resource as ResourceInstance, recipe, parent));
   }
   const failed = runs.filter((t) => !t.clean);
-  if (failed.length > 0 && holder.type === 'publication') throw new Error(`${canonicalJson(holder)} holds a unit with a teardown: ${JSON.stringify(r.resources)}`);
+  if (failed.length > 0 && (holder.type === 'publication' || holder.type === 'docs')) throw new Error(`${canonicalJson(holder)} holds a unit with a teardown: ${JSON.stringify(r.resources)}`);
   const released = r.resources.filter((res) => !failed.some((t) => t.resource === res));
-  if (failed.length > 0 && isStage(r)) recordFailedCleanup(ctx, r, failed, parent);
+  if (failed.length > 0 && recordsResidues(r)) recordFailedCleanup(ctx, r, failed, parent);
   if (released.length > 0) transition<Holder>(ctx, r.holder, released, { type: 'release' }, parent);
   const names = failed.map((t) => t.resource);
-  const result: CleanupResult<StageHolder> | CleanupResult<SweepHolder> = failed.length === 0
+  const result: CleanupResult<ResidueHolder> | CleanupResult<SweepHolder> = failed.length === 0
     ? { kind: 'released', released }
-    : isStage(r) ? { kind: 'cleanup-failed', failed: names, released } : { kind: 'left-cleaning', failed: names, released };
+    : recordsResidues(r) ? { kind: 'cleanup-failed', failed: names, released } : { kind: 'left-cleaning', failed: names, released };
   return result as CleanupResult<H>;
 }
 
-function isStage(r: Reservation<'cleaning', Holder>): r is Reservation<'cleaning', StageHolder> {
-  return r.holder.type === 'stage';
+function recordsResidues(r: Reservation<'cleaning', Holder>): r is Reservation<'cleaning', ResidueHolder> {
+  return r.holder.type === 'stage' || r.holder.type === 'job';
 }
 
 /**
@@ -364,31 +418,36 @@ export async function cancel(
 
 const residueKeyText = (k: ResidueKey): string => canonicalJson(k);
 
+/** Whose residues `holder` reclaims: a retry its unit's, a job its own (G4). */
+const reclaimOwner = (holder: ReclaimHolder): string => (holder.type === 'retry' ? `unit ${holder.unit}` : `job ${holder.job}`);
+const ownsKey = (holder: ReclaimHolder, key: ResidueKey): boolean => (holder.type === 'retry' ? key.unit === holder.unit : key.job === holder.job);
+
 /**
- * The residue a retry reclaims `instance` for: this arc's and unit's first undisposed one, or, once it is
- * disposed (a crash between the disposition and the release), the last recorded one, whose recipe the
- * teardown replays. Null when none names it.
+ * The residue `holder` reclaims `instance` for: this arc's first undisposed one owned by its unit (a retry) or by
+ * the job itself, or, once it is disposed (a crash between the disposition and the release), the last recorded
+ * one, whose recipe the teardown replays. Null when none names it.
  */
-function ownResidue(ctx: ResourceContext, holder: RetryHolder, instance: ResourceInstance): Readonly<{ entry: ResidueEntry; open: boolean }> | null {
+function ownResidue(ctx: ResourceContext, holder: ReclaimHolder, instance: ResourceInstance): Readonly<{ entry: ResidueEntry; open: boolean }> | null {
   const arc = ctx.journal.view.arc;
-  const mine = readResidues(ctx.hostDir).flatMap((l) => (l.type === 'residue' && l.key.arc === arc && l.key.unit === holder.unit && l.key.resource === instance ? [l as ResidueEntry] : []));
+  const mine = readResidues(ctx.hostDir).flatMap((l) => (l.type === 'residue' && l.key.arc === arc && ownsKey(holder, l.key) && l.key.resource === instance ? [l as ResidueEntry] : []));
   const open = new Set(undispositioned(ctx.hostDir).map(residueKeyText));
   const pending = mine.filter((r) => open.has(residueKeyText(r.key)));
-  if (pending.length > 1) throw new Error(`${instance} has ${pending.length} undisposed residues of unit ${holder.unit}; one cleanup-failed instance has one`);
+  if (pending.length > 1) throw new Error(`${instance} has ${pending.length} undisposed residues of ${reclaimOwner(holder)}; one cleanup-failed instance has one`);
   if (pending[0] !== undefined) return { entry: pending[0], open: true };
   const last = mine.at(-1);
   return last === undefined ? null : { entry: last, open: false };
 }
 
 /**
- * Reclaims one of the unit's own cleanup-failed instances under `holder` (the attempt whose cleanup failed), in the order that
+ * Reclaims one of the unit's own cleanup-failed instances under a retry `holder` (the attempt whose cleanup
+ * failed), or one a job's own holder failed under that job holder (G4), in the order that
  * keeps a released instance clean (F2): `reclaim` (cleanup-failed→cleaning) → the residue's recorded teardown
  * (its instance binding included) → on pass the residue's `cleaned` disposition in the host index → `release`.
  * A failed teardown leaves the instance cleaning under `holder` and the residue undisposed: the next probe of the
  * instance resumes from there. Idempotent from every point, so recovery and a later probe call it again after a
  * crash. `pass` means the instance is free and its residue disposed; the caller then writes the `probe` fact.
  */
-export async function retryReclaim(ctx: ResourceContext, holder: RetryHolder, instance: ResourceInstance, parent: Parent): Promise<'pass' | 'fail'> {
+export async function retryReclaim(ctx: ResourceContext, holder: ReclaimHolder, instance: ResourceInstance, parent: Parent): Promise<'pass' | 'fail'> {
   const entry = entryOf(resourceTable(ctx.journal.view), instance);
   if (entry.pending !== null) throw new Error(`retry of ${instance}: ${entry.pending.op} is still open on it`);
   const { status } = entry;
@@ -398,21 +457,23 @@ export async function retryReclaim(ctx: ResourceContext, holder: RetryHolder, in
     if (residue?.open === true) throw new Error(`${instance} is free with residue ${residueKeyText(residue.entry.key)} undisposed`);
     return 'pass';
   }
-  if (residue === null) throw new Error(`retry of ${instance}: no residue of unit ${holder.unit} names it`);
+  if (residue === null) throw new Error(`retry of ${instance}: no residue of ${reclaimOwner(holder)} names it`);
   if (status.state === 'cleanup-failed') {
-    if (status.holder.type !== 'stage' || status.holder.unit !== holder.unit) {
-      throw new Error(`retry ${canonicalJson(holder)} of ${instance}, which ${canonicalJson(status.holder)} failed: only the unit's own residue is reclaimed`);
+    const own = holder.type === 'retry' ? status.holder.type === 'stage' && status.holder.unit === holder.unit : sameHolder(status.holder, holder);
+    if (!own) {
+      throw new Error(`retry ${canonicalJson(holder)} of ${instance}, which ${canonicalJson(status.holder)} failed: only the ${holder.type === 'retry' ? 'unit' : 'job'}'s own residue is reclaimed`);
     }
     journalTransition(ctx, holder, [instance], { type: 'reclaim' }, parent, new Map());
   } else if (status.state !== 'cleaning' || !sameHolder(status.holder, holder)) {
     throw new Error(`retry ${canonicalJson(holder)} of ${instance}, which is ${status.state} under ${canonicalJson(status.holder)}`);
   }
-  const run = await teardown(ctx, holder.unit, instance, { teardown: residue.entry.teardown, label: residue.entry.label }, parent);
+  const unit = holderUnit(holder);
+  const run = await teardown(ctx, unit, instance, { teardown: residue.entry.teardown, label: residue.entry.label }, parent);
   if (!run.clean) return 'fail';
   if (residue.open) {
-    crashPoint('retry.before-disposition', holder.unit);
+    crashPoint('retry.before-disposition', unit ?? undefined);
     recordDisposition(ctx.hostDir, { type: 'disposition', key: residue.entry.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: run.inv } });
-    crashPoint('retry.after-disposition', holder.unit);
+    crashPoint('retry.after-disposition', unit ?? undefined);
   }
   transition(ctx, holder, [instance], { type: 'release' }, parent);
   return 'pass';

@@ -64,7 +64,7 @@ import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { type StageContext, type StageParent, evidenceRoot, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
-import { type LaneHost, type RedEvidence, abortReason, classifyRed, redLane } from './redlane.ts';
+import { type LaneCancel, type LaneHost, type RedEvidence, classifyRed, laneAbortReason, redLane } from './redlane.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** A lane with no progress this long has hung. Default, unmeasured: re-derive once arcs have measured stalls. */
@@ -104,7 +104,8 @@ export type SeriesEnd =
   | Readonly<{ kind: 'red'; lane: LaneRecord }>
   /** Ended by its runner's deadline or lost with it, or a host signature without a verdict (redlane.ts). */
   | Readonly<{ kind: 'blocked'; lane: LaneRecord | null; detail: string }>
-  | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>
+  /** `preempt` only in a candidate's suite (M3, A7). */
+  | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
 
@@ -120,7 +121,7 @@ export type Series = Readonly<{
 
 /**
  * What a series needs from its stage beyond the context: `acquire` for each lane's reservation (the arbiter's,
- * with the waiter's `rank`), the stage's cancel `signal` (aborted with reason `pause` or `stop`), which also
+ * with the waiter's `rank`), the stage's cancel `signal` (aborted with reason `pause` or `stop`, or `preempt` for a candidate's suite), which also
  * cancels a wait for a clear host, and `sampleHost`, the host sampler (`readHostSample`).
  */
 export type LaneRuntime = Readonly<{ acquire: Acquire; rank: () => Rank; signal: AbortSignal; sampleHost: () => HostSample }>;
@@ -305,7 +306,7 @@ function spawnOf(view: JournalView, op: OpId): IntentOf<'proc.spawn'> {
   return intent;
 }
 
-type Ran = Readonly<{ record: LaneRun; evidence: OpId; interrupted: 'pause' | 'stop' | null; blocked: string | null }>;
+type Ran = Readonly<{ record: LaneRun; evidence: OpId; interrupted: LaneCancel | null; blocked: string | null }>;
 
 async function runLane(
   ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, tree: AbsPath, at: Sha, dir: AbsPath, held: readonly ResourceUnit[],
@@ -352,8 +353,6 @@ async function runLane(
   const record = laneRun(ctx, spawned, lane, dir);
   const exit = runnerFiles(invDir, outcome.inv).read('exit.json');
   const interrupted = outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
-  // Interim (M3 0a): nothing preempts a lane before step A4 (docs publications) sends `preempt` cancels.
-  if (interrupted === 'preempt') throw new Error(`${outcome.inv}: a preempted lane: not implemented (step A4)`);
   const blocked = outcome.kind === 'lost' ? `${outcome.inv} was lost with its runner` : record.verdict === 'process-fault' ? `${outcome.inv} ended by ${exit?.cause ?? 'unknown'}` : null;
   return { record, evidence, interrupted, blocked };
 }
@@ -410,7 +409,7 @@ export async function runLaneSeries(
     if (request !== null) {
       if (!entry) {
         const grant = await rt.acquire(request, holder, rt.rank, rt.signal);
-        if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: abortReason(rt.signal) }, ran: null };
+        if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: laneAbortReason(rt.signal) }, ran: null };
       }
       entry = false;
       const reserved = heldReservation(ctx, holder, 'reserved');

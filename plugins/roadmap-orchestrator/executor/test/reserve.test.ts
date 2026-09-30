@@ -226,7 +226,7 @@ test('res.sweep-cannot-fail', T, async () => {
   assert.throws(
     // @ts-expect-error a sweep holder cannot take a fail transition
     () => transition(ctx, sweep, [QUEUE], { type: 'fail', residues: [{ resource: QUEUE, teardown: teardownInv }] }, parent),
-    /only by a stage holder's cleanup/,
+    /only by a stage or job holder's cleanup/,
   );
   // Run time, for callers that bypass the types: refused before anything is journaled.
   assert.throws(() => transition(ctx, sweep as Holder, [QUEUE], { type: 'run' }, parent), /cannot run a workload/);

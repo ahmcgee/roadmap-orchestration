@@ -6,6 +6,9 @@
 //   1. `--class`: the unit's routing layer seats that class at `build.<its build tier>`, a revision of the plan in
 //      force (the `route` edit class, `routing{routingRev, unit}`, source the command) committed through the apply core
 //      and the fence, after a smoke of any backend it newly seats; the steer record then names a new routingRev.
+//      The revision's plan bytes are then written back to the live plan file, only while that file still holds the
+//      plan in force before it (`spec.patch`'s write-back rule), so a later `apply` of the architect's unchanged file
+//      keeps the layer; a file the architect changed since is left alone, and the receipt says so.
 //   2. The brief, kept content-addressed (`inputs/<sha256>.brief.md`): the steer round reads it from there.
 //   3. The pre-steer state saved: an `evidence.snapshot` of the unit worktree (what it holds beyond its commit; the
 //      commit stays on the branch the round builds on).
@@ -21,12 +24,15 @@
 // steer round runs under the pinned scope, and salvage enforces it.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PlanAppliedFact } from '../core/events.ts';
+import { durableWrite } from '../core/fsx.ts';
 import { canonicalJson } from '../core/json.ts';
+import { readJournal } from '../core/log.ts';
 import type { CommandId, UnitId } from '../core/ids.ts';
 import type { CommandBody } from '../core/records.ts';
 import { absPath } from '../core/values.ts';
 import { capturedEvidence, pathPattern } from '../git/evidence.ts';
-import { inForceFiles, keepInput, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import { PLAN_INPUT, inForceFiles, keepInput, keptInput, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
 import { unitWorktree } from '../pipeline/dispatch.ts';
 import { dirtyPaths } from '../pipeline/lanes.ts';
@@ -34,7 +40,7 @@ import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import { evidenceSnapshotOp } from '../recover/ops.ts';
 import type { RoutingLayer } from '../routing/types.ts';
-import { bytesSha256 } from '../spec/spec.ts';
+import { bytesSha256, fileSha256 } from '../spec/spec.ts';
 import { runOp } from '../pipeline/dispatch.ts';
 import { type CommandContext, type Effect, acknowledgePark, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
 
@@ -89,7 +95,7 @@ async function savePreSteer(ctx: CommandContext, id: CommandId, unit: UnitId): P
 async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls: NonNullable<SteerBody['class']>): Promise<Effect> {
   const view = ctx.journal.view;
   const done = view.planAppliedBy(id);
-  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: unit ${unit}'s implementer class ${cls}`] };
+  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: unit ${unit}'s implementer class ${cls}`, writeBack(ctx, done)] };
   const tier = view.unit(unit).buildTier;
   if (tier === null) throw new Error(`steer of ${unit}: dispatched without a build tier`);
   const inForce = requirePlanInForce(ctx.runDir, view);
@@ -120,5 +126,30 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
   }
   const committed = await commitUnderFence(ctx, evaluated, { type: 'apply' }, { type: 'command', command: id }, parentOf(id));
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
-  return { kind: 'applied', verified: [`plan rev ${committed.fact.rev} in force: unit ${unit}'s implementer class ${cls}`, ...committed.fact.changes.map((c) => canonicalJson(c))] };
+  return {
+    kind: 'applied',
+    verified: [`plan rev ${committed.fact.rev} in force: unit ${unit}'s implementer class ${cls}`, ...committed.fact.changes.map((c) => canonicalJson(c)), writeBack(ctx, committed.fact)],
+  };
+}
+
+/**
+ * The class revision's plan bytes written to the live plan file, only while it holds the plan in force before the
+ * revision (the `plan-applied` fact preceding `fact` in the log): the architect's file then holds the layer the
+ * command put in force. A file already holding them (a run again after a crash past the write) is left as it is; one
+ * the architect changed since is left alone.
+ */
+function writeBack(ctx: CommandContext, fact: PlanAppliedFact): string {
+  const file = ctx.planFile;
+  const now = existsSync(file) ? fileSha256(file) : null;
+  if (now === fact.planSha256) return `plan file ${file} holds plan rev ${fact.rev}`;
+  const applied = readJournal(ctx.runDir, ctx.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [e.fact] : []));
+  const previous = applied[applied.findIndex((f) => f.rev === fact.rev) - 1];
+  if (previous === undefined) throw new Error(`plan rev ${fact.rev} has no plan in force before it in the log`);
+  if (now !== previous.planSha256) {
+    return `plan file ${file} left alone: it changed since plan rev ${previous.rev}, so it does not hold plan rev ${fact.rev}'s routing, and an apply of it as it is drops that`;
+  }
+  const bytes = keptInput(ctx.runDir, fact.planSha256, PLAN_INPUT);
+  if (bytes === null) throw new Error(`plan rev ${fact.rev} is ${fact.planSha256}, which is not kept`);
+  durableWrite(file, bytes);
+  return `plan file ${file} written back: it holds plan rev ${fact.rev}`;
 }

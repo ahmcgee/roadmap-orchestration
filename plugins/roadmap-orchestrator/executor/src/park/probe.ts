@@ -10,7 +10,7 @@
 //                the host sample for a blocked lane, `git -C <worktree> status` for a salvage (G7).
 //   resource{i}  the reclaim order under the residue's reclaim holder (`retryHolderOf`: the reclaim in progress's,
 //                else the residue's owner: a `retry` of the attempt whose cleanup failed, as the residue key names
-//                it, or the owning `job` (G4; its reclaim order is step A4's) — `retryReclaim`: reclaim →
+//                it, or the owning `job` (G4: the job reclaims its own residue) — `retryReclaim`: reclaim →
 //                teardown → the residue's `cleaned` disposition → release — then the fact; a pass is written only
 //                once the instance is free and its residue disposed. The same whether a unit park names the
 //                instance, a residue alone does (a failed cleanup no stage outcome parked), or both.
@@ -109,9 +109,6 @@ async function resourceCheck(ctx: ProberContext, target: Extract<ProbeTarget, { 
   const holder = retryHolderOf(ctx.journal.view, target.instance);
   // Released: the reclaim order finished (a crash came before the probe fact), or a sweep took the residue.
   if (holder === null) return true;
-  if (holder.type === 'job') {
-    throw new Error(`a probe of ${target.instance}: the reclaim order under job ${holder.job}'s holder is step A4's (retryReclaim takes a unit's retry holder only)`);
-  }
   return (await retryReclaim(ctx, holder, target.instance, { type: 'arc' })) === 'pass';
 }
 

@@ -2,11 +2,12 @@
 // fake-backed over a unit-common arc: a unit parked by two gate escalations is steered through the command path; its
 // steer round is a fresh, uncharged implementer session on the brief with the budget as its window; the pass exits by
 // the table's steer rows; a judgment after it is always a fresh session; the command's rejections and its `--class`
-// revision; and the crash cells of the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
+// revision, written back to the live plan file only while it holds the plan in force before it; and the crash cells of
+// the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
-// steer.crash-cells.
+// steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
 import assert from 'node:assert/strict';
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
@@ -22,14 +23,14 @@ import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { bytesSha256 } from '../src/spec/spec.ts';
+import { bytesSha256, fileSha256 } from '../src/spec/spec.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { followingContext, unitInForce } from './fixtures/steer-common.ts';
-import { type ArcDescriptor, type ArcRun, U1, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { STEER, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -102,6 +103,17 @@ const charged = (r: ArcRun) => {
 const buildSpawns = (r: ArcRun) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
 
 const argAfter = (c: CallRecord, flag: string): string | undefined => (c.argv.includes(flag) ? c.argv[c.argv.indexOf(flag) + 1] : undefined);
+
+/** u1's `build.med` seat in the live plan file, as the architect's next `apply` would read it. */
+const fileSeat = (d: ArcDescriptor): unknown =>
+  (JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: { id: string; routing?: { build?: { med?: string } } }[] }).units.find((u) => u.id === 'u1')?.routing?.build?.med;
+
+/** The applied receipt's `verified` of a command. */
+const verifiedOf = (r: ArcRun, id: CommandId): readonly string[] => {
+  const receipt = readReceipt(r.ctx.runDir, id, 'applied');
+  assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
+  return receipt.verified;
+};
 
 test('steer.round-uncharged: a parked unit steered through the command path runs one fresh, uncharged implementer round on the brief with the budget as its window; its steer exit park charges nothing', T, async () => {
   const d = setupArc({ steps: [...TO_PARK, codexSteer(), gateStep({ decision: 'revise', directives: ['name the helper better'] })] });
@@ -312,6 +324,58 @@ test('steer.class: `--class frontier` on a parked unit commits a plan revision r
   }
 });
 
+test('steer.class-write-back: the class revision is written back to the unchanged live plan file, and a later apply of that file keeps the layer', T, async () => {
+  const d = setupArc({ steps: TO_PARK });
+  const r = contextFor(d);
+  try {
+    await parkU1(r);
+    const f = followingContext(r);
+    const before = r.journal.view.planApplied();
+    assert.ok(before !== null);
+    assert.equal(fileSha256(absPath(d.planPath)), before.planSha256, 'the live file holds the plan in force');
+    const steered = await command(r, steerBody({ cls: 'frontier' }), f);
+    const applied = r.journal.view.planAppliedBy(steered.id);
+    assert.ok(applied !== null);
+    const verified = verifiedOf(r, steered.id);
+    assert.ok(verified.includes(`plan file ${d.planPath} written back: it holds plan rev ${applied.rev}`), JSON.stringify(verified));
+    assert.equal(fileSha256(absPath(d.planPath)), applied.planSha256, 'the live file holds the class revision');
+    assert.equal(fileSeat(d), 'frontier');
+
+    const again = await command(r, applyBody(d), f);
+    assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
+    assert.equal(r.journal.view.planApplied()?.rev, applied.rev, 'the unchanged file is the plan in force: no revision');
+    assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the layer stays');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('steer.class-architect-edit: a live plan file the architect changed since the plan in force is left alone, and the receipt says so', T, async () => {
+  const d = setupArc({ steps: TO_PARK });
+  const r = contextFor(d);
+  try {
+    await parkU1(r);
+    const f = followingContext(r);
+    const before = r.journal.view.planApplied();
+    assert.ok(before !== null);
+    // The architect's edit in progress: the same plan, reformatted.
+    const edited = `${JSON.stringify(JSON.parse(readFileSync(d.planPath, 'utf8')))}\n`;
+    writeFileSync(d.planPath, edited);
+    assert.notEqual(fileSha256(absPath(d.planPath)), before.planSha256);
+    const steered = await command(r, steerBody({ cls: 'frontier' }), f);
+    const applied = r.journal.view.planAppliedBy(steered.id);
+    assert.ok(applied !== null);
+    assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the revision is in force');
+    const text = `plan file ${d.planPath} left alone: it changed since plan rev ${before.rev}, so it does not hold plan rev ${applied.rev}'s routing, and an apply of it as it is drops that`;
+    const verified = verifiedOf(r, steered.id);
+    assert.ok(verified.includes(text), JSON.stringify(verified));
+    assert.equal(readFileSync(d.planPath, 'utf8'), edited, 'the architect\'s file is untouched');
+    assert.equal(fileSeat(d), undefined);
+  } finally {
+    r.journal.close();
+  }
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Crash cells
 
@@ -356,6 +420,7 @@ describe(`matrix row ${STEER}`, () => {
         assert.equal(applied.length, 1, 'exactly one plan-applied from the command');
         assert.ok(applied[0]!.kind === 'plan-applied' && applied[0].changes.some((c) => c.type === 'routing' && c.unit === U1));
         assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier');
+        assert.equal(fileSha256(absPath(d.planPath)), applied[0].planSha256, 'the class revision written back to the live plan file, once');
         const briefs = readdirSync(join(d.runDir, 'inputs')).filter((n) => n.endsWith(`.${BRIEF_INPUT}`));
         assert.deepEqual(briefs, [`${brief.sha256}.${BRIEF_INPUT}`], 'one kept brief');
         assert.equal(keptInput(r.ctx.runDir, brief.sha256, BRIEF_INPUT)?.toString('utf8'), BRIEF);

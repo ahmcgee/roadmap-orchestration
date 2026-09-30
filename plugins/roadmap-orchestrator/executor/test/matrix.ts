@@ -75,6 +75,8 @@ export const PLAN_START = 'start: a later start whose files change the plan (sup
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
 export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer snapshot, steered)';
 export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
+export const DOCS_PUBLICATION = 'command.apply: rule, its docs publication (M3 A4: slot, docs.commit, lanes, docs ff, activation, snapshot)';
+export const PREEMPT = 'docs publication preempting a candidate before green (M3 A4, A7: preempt kill of its suite lane)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -1049,6 +1051,65 @@ export const MATRIX: readonly Row[] = [
     row: ADVERSARIAL_ORPHAN,
     test: 'test/recover.test.ts, test/runner.test.ts, test/recover-spawn.test.ts',
     cells: coveredBy('crashed by the proc.spawn and runner-death rows (orphan kill, lost) and the two adversarial live-runner rows (adoption through a crash in recovery and through a cross-arc takeover); the whole-pipeline host-death row adopts through roadmap start'),
+  },
+  {
+    // `rule` landing C-2 with a contract op (so its docs publication commits constraints.md and contracts/api.md), applied
+    // by a child with the real publisher (test/fixtures/publish-child.ts); the whole recovery runs, its command
+    // reconciler with the real publisher too.
+    row: DOCS_PUBLICATION,
+    test: 'test/publish.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['revision.commit.after-intent', 'docs.act-start'],
+        recovery: 'the commit is open with no docs ff (its docs.commit redone to its recorded commit, or never begun): the commit is aborted, the docs holder abandoned (checkout removed, slot released), and the rule re-evaluates and publishes again (docs-2, or docs-1 when the crashed commit never took the slot): one plan-applied, integration at that publication\'s commit',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['docs.after-commit-tree', 'ff.act-start'],
+        recovery: 'docs.commit mid-act: redone to the same commit, then aborted with its revision and republished as docs-2; the docs ff mid-act: redone (a docs ff has no unit to re-check), the revision appended from its payload with docs-1, then finishDocs (docs-covered where docs-only, snapshot, release)',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['docs.act-end', 'docs.after-lanes', 'ff.act-end', 'revision.commit.after-docs'],
+        recovery: 'before its ff (committed, or its lanes run): abandoned and republished as docs-2; its ff published (done or not): the revision appended from its payload exactly with docs-1, never reclassified, then finishDocs; one plan-applied either way',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['revision.commit.after-fact', 'docs.after-snapshot'],
+        recovery: 'plan-applied written: the commit closed reconciled, then finishDocs writes only what is missing (one snapshot) and releases the slot; the rule finds its fact and writes the ledger back',
+      },
+    },
+  },
+  {
+    // Unit u1's candidate parks in its suite lane (a barrier) holding the slot before green; `rule` is applied in the
+    // same child (test/fixtures/publish-child.ts), preempting it: the kill of its lane with reason `preempt` is crashed.
+    row: PREEMPT,
+    test: 'test/publish.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['kill.after-intent'],
+        recovery: 'the preempt kill is open, the lane alive: the kill is finished, the lane closed, the candidate\'s slot released (it never recorded green), the rule re-evaluates and publishes once; the unit then runs a fresh candidate and merges',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['kill.after-cancel'],
+        recovery: 'cancel.json written: the kill is finished or reconciled, the candidate abandoned, the slot released; the rule publishes once, then the unit merges',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['kill.after-quiesced'],
+        recovery: 'the lane is quiesced, the kill not done: reconciled; the candidate abandoned; the rule publishes once, then the unit merges',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['kill.after-done'],
+        recovery: 'the kill is done, the candidate\'s outcome not recorded: its slot released by recovery; the rule publishes once, then the unit merges',
+      },
+    },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },
   { row: FIXTURE_RED_LANE, test: 'test/stages.test.ts', cells: fixtureCells('stages.red-lane-fix-round') },

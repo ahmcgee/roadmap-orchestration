@@ -61,7 +61,10 @@
 //            its routing layer. Mutation, scope {u}.
 //   merge-in (M3) src/commands/mergein.ts: the integration tip merged into a unit's branch; a conflict is rejected with
 //            no act; the unit re-enters at its lanes. Mutation, scope {u}.
-//   rule, audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET` implements each, it is
+//   rule     (M3, A4) `rule <record.json>`: a ruling sidecar validated (fresh consistency, G21), landed in the
+//            ledger and its sidecars through the apply core and the fence, with its docs publication
+//            (src/commands/rule.ts). Mutation, no scope.
+//   audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET` implements each, it is
 //            rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
@@ -118,6 +121,7 @@ import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
 import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
+import { rule } from './rule.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -237,15 +241,16 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'merge-in':
       return mergeIn(ctx, command.id, body.unit);
     case 'rule':
+      return rule(ctx, command.id, body);
     case 'audit':
     case 'close-admissions':
       return { kind: 'rejected', reason: `${body.type}: not implemented (step ${NOT_YET[body.type]})` };
   }
 }
 
-/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,audit,admissions}.ts). */
-const NOT_YET = { rule: 'A4', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
-  Readonly<Record<'rule' | 'audit' | 'close-admissions', string>>;
+/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{audit,admissions}.ts). */
+const NOT_YET = { audit: 'B7', 'close-admissions': 'B7' } as const satisfies
+  Readonly<Record<'audit' | 'close-admissions', string>>;
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
   const view = ctx.journal.view;
@@ -789,7 +794,7 @@ export async function commitUnderFence(
 }
 
 /** A rejected revision's receipt reason (an `apply`'s, a `reverse`'s): every reason, numbered. */
-export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' = 'apply'): string =>
+export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' | 'rule' = 'apply'): string =>
   `${what} rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
 
 const appliedText = (rev: PlanRev, changes: readonly PlanChange[]): readonly string[] =>

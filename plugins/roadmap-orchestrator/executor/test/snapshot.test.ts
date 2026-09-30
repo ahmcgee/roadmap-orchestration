@@ -3,12 +3,15 @@
 // The plan's snapshot.allowlist, snapshot.manifest-mismatch-detected, and the snapshot.* cells of the
 // candidate.merge / integration.ff / snapshot.publish matrix row.
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
-import type { IntentOf } from '../src/core/events.ts';
-import { needsUserIdForOp, opKey, sha, sha256 } from '../src/core/ids.ts';
-import { sha256Hex } from '../src/core/json.ts';
+import type { Fact, IntentOf } from '../src/core/events.ts';
+import {
+  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, needsUserIdForOp, opKey, planRev, sha, sha256,
+} from '../src/core/ids.ts';
+import { canonicalJson, sha256Hex } from '../src/core/json.ts';
+import { PLAN_INPUT, SPEC_INPUT, keepInput } from '../src/input/inforce.ts';
 import { type AbsPath, absPath, repoPattern } from '../src/core/values.ts';
 import { git as gitRaw } from '../src/git/git.ts';
 import { parentsOf } from '../src/git/mergein.ts';
@@ -61,14 +64,16 @@ async function run(): Promise<Run> {
   });
   mkdirSync(join(runDir, 'needs-user'));
   writeFileSync(join(runDir, 'needs-user', `${needsUser}.json`), content);
-  writeFileSync(join(runDir, 'needs-user', `${needsUser}.ack.json`), '{"ack":true}\n');
   journal.done(raised.op, 'needsuser.raise', { kind: 'raised' }, null);
+  // The ack file first, then its fact (commands/apply.ts): the fact names it into the closure.
+  writeFileSync(join(runDir, 'needs-user', `${needsUser}.ack.json`), '{"ack":true}\n');
+  journal.fact({ kind: 'needs-user-acked', id: needsUser as NeedsUserId, command: commandId('cmd-0123456789abcdef'), choice: null });
   journal.close();
   return { repo, runDir, spec, needsUser, evidenceSeq: Number(evidence.op.split('/')[1]) };
 }
 
 function request(r: Run, highWater: number): SnapshotPublishRequest {
-  return { arc: ARC, runDir: r.runDir, highWater, specs: [{ unit: UNIT, path: r.spec }], identity: IDENTITY, message: `roadmap: snapshot ${ARC}\n` };
+  return { arc: ARC, runDir: r.runDir, highWater, identity: IDENTITY, message: `roadmap: snapshot ${ARC}\n` };
 }
 
 async function publish(r: Run): Promise<IntentOf<'snapshot.publish'>> {
@@ -105,7 +110,6 @@ describe('snapshot.publish', () => {
       'manifest.json',
       `needs-user/${r.needsUser}.ack.json`,
       `needs-user/${r.needsUser}.json`,
-      'specs/unit-a.json',
       'state.json',
     ]);
     for (const raw of ['raw stdout', 'raw stderr', 'raw lane output']) {
@@ -145,7 +149,7 @@ describe('snapshot.publish', () => {
 
     const extra = retree((lines) => [...lines, `100644 blob ${blob('raw stdout\n')}\tstdout`]);
     const withExtra = verifySnapshot(r.repo, sha(extra));
-    assert.deepEqual(withExtra, { kind: 'mismatch', detail: 'stdout is not an allowlisted snapshot path' });
+    assert.deepEqual(withExtra, { kind: 'mismatch', detail: 'stdout is not in the manifest' });
 
     const missing = retree((lines) => lines.filter((l) => !l.endsWith('\tstate.json')));
     assert.deepEqual(verifySnapshot(r.repo, sha(missing)), { kind: 'mismatch', detail: 'manifest lists missing files state.json' });
@@ -163,6 +167,120 @@ describe('snapshot.publish', () => {
     assert.equal(recovery.kind, 'aborted');
     assert.equal(journal.view.openIntents().length, 0);
     journal.close();
+  });
+});
+
+/** A plan-m1 plan of one unit, the arc's `ARC`. */
+const PLAN = {
+  schema: 'roadmap/plan-m1', arc: ARC, integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt', contracts: [],
+  rulings: 'rulings.md', architectureDoc: 'docs/architecture.md', direction: 'Converge on the documented target state.',
+  suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }] },
+  resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', scope: ['src/**'], resources: [] }],
+};
+
+type Holistic = Run & Readonly<{ planSha: string; specSha: string; witnessInv: string; witnessFile: string }>;
+
+/**
+ * The base run plus the records a snapshot must follow beyond it: a 1.0.0-dev.5 `plan-applied` (kept plan and
+ * spec, no routing provenance), start.json with its `executor-started`, and a docs job's lane run that wrote its
+ * witness record where src/pipeline/publish.ts keeps it and was `witnessed`.
+ */
+async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Holistic> {
+  const r = await run();
+  const planSha = keepInput(r.runDir, Buffer.from(`${JSON.stringify(PLAN)}\n`), PLAN_INPUT);
+  const specSha = keepInput(r.runDir, Buffer.from('{"schema":"roadmap/spec-m1"}\n'), SPEC_INPUT);
+  writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 1, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
+  const journal = openArc(r.runDir);
+  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, planSha256: planSha, specs: { [UNIT]: specSha }, changes: [] } as Fact);
+  journal.fact({ kind: 'executor-started', generation: 1 });
+  const job = jobId('docs', 1);
+  const spawn = journal.begin({
+    kind: 'proc.spawn', key: opKey(`lane:${job}`), parent: { type: 'arc' }, deadlineAt: null,
+    body: () => ({ expect: { subject: { purpose: 'lane', unit: UNIT, lane: laneId('journey'), set: 'suite', at: sha('b'.repeat(40)) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
+  });
+  const inv = invocationId(spawn.op, 1);
+  const witnessDir = join(r.runDir, 'evidence', 'jobs', job, 'journey');
+  mkdirSync(witnessDir, { recursive: true });
+  const witness = '{"records":[]}\n';
+  writeFileSync(join(witnessDir, 'witness.json'), witness);
+  journal.fact({
+    kind: 'witnessed', lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210'), treeSha: sha('b'.repeat(40)), inv,
+    recordsSha256: sha256(sha256Hex(witness)), purpose: 'witness', for: witnessFor === 'job' ? { type: 'job', job } : { type: 'candidate', unit: UNIT, attempt: 1 },
+  });
+  journal.close();
+  return { ...r, planSha, specSha, witnessInv: invocationDirName(inv), witnessFile: join(witnessDir, 'witness.json') };
+}
+
+/** `commit`'s tree with `path` set to `text` (null: removed) and its manifest entry rewritten to match. */
+function retreed(repo: AbsPath, commit: string, path: string, text: string | null): Sha {
+  const blob = (t: string): string => gitRaw(repo, ['hash-object', '-w', '--stdin'], { input: t }).trim();
+  const files = new Map(gitRaw(repo, ['ls-tree', '-r', '-z', commit]).split('\0').filter((l) => l !== '').map((l) => {
+    const [meta, name] = l.split('\t') as [string, string];
+    return [name, meta.split(' ')[2]!] as const;
+  }));
+  if (text === null) files.delete(path);
+  else files.set(path, blob(text));
+  const m = JSON.parse(git(repo, 'show', `${commit}:manifest.json`)) as { files: { path: string; sha256: string; size: number; namedBy: unknown }[] };
+  const named = m.files.find((f) => f.path === path)?.namedBy ?? { type: 'log' };
+  const rest = m.files.filter((f) => f.path !== path);
+  m.files = text === null ? rest : [...rest, { path, sha256: sha256Hex(text), size: Buffer.byteLength(text), namedBy: named }].sort((a, b) => (a.path < b.path ? -1 : 1));
+  files.set('manifest.json', blob(canonicalJson(m)));
+  const tmp = tmpDir('snapshot-retree');
+  const indexFile = absPath(join(tmp, 'index'));
+  gitRaw(repo, ['update-index', '--add', '-z', '--index-info'], { indexFile, input: [...files].map(([p, o]) => `100644 ${o}\t${p}\0`).join('') });
+  const tree = gitRaw(repo, ['write-tree'], { indexFile }).trim();
+  rmSync(tmp, { recursive: true, force: true });
+  return sha(gitRaw(repo, ['commit-tree', tree, '-m', 'tampered'], { identity: IDENTITY }).trim());
+}
+
+describe('snapshot closure records', () => {
+  it('snapshot.closure-records: kept inputs, a rebuilt dev.5 routing provenance, start.json and a job witness are carried; tampering fails', async () => {
+    const r = await holisticRun();
+    const intent = await publish(r);
+    assertSnapshot(r, intent);
+    const at = intent.post.new;
+    const paths = treePaths(r.repo, at);
+    for (const p of [`inputs/${r.planSha}.plan.json`, `inputs/${r.specSha}.spec.json`, 'routing-provenance/1.json', 'start.json', `witness/${r.witnessInv}.json`]) {
+      assert.ok(paths.includes(p), `${p} is in the snapshot: ${paths.join(', ')}`);
+    }
+    const provenance = JSON.parse(git(r.repo, 'show', `${at}:routing-provenance/1.json`)) as { profile: string; planLayer: unknown; unitLayers: unknown };
+    assert.deepEqual([provenance.profile, provenance.planLayer, provenance.unitLayers], ['default', null, {}], 'rebuilt from start.json\'s profile and the kept plan');
+    const manifest = JSON.parse(git(r.repo, 'show', `${at}:manifest.json`)) as { files: { path: string; namedBy: { type: string } }[] };
+    assert.equal(manifest.files.find((f) => f.path === `witness/${r.witnessInv}.json`)?.namedBy.type, 'event', 'the witnessed fact names the record');
+
+    // A named item changed with its manifest entry kept consistent: its naming record still disagrees.
+    const forged = verifySnapshot(r.repo, retreed(r.repo, at, `witness/${r.witnessInv}.json`, '{"records":["forged"]}\n'));
+    assert.equal(forged.kind, 'mismatch');
+    if (forged.kind === 'mismatch') assert.match(forged.detail, /^witness\/.+\.json hashes to [0-9a-f]{64}, event \d+ names [0-9a-f]{64}$/);
+    // A file no record names, listed in the manifest: outside the closure.
+    assert.deepEqual(verifySnapshot(r.repo, retreed(r.repo, at, 'inv/9-1/stdout', 'raw\n')), { kind: 'mismatch', detail: 'inv/9-1/stdout is not in the snapshot closure' });
+    // A named item dropped from tree and manifest alike: the closure misses it.
+    const dropped = verifySnapshot(r.repo, retreed(r.repo, at, 'start.json', null));
+    assert.equal(dropped.kind, 'mismatch');
+    if (dropped.kind === 'mismatch') assert.match(dropped.detail, /^start\.json, which event \d+ names, is not in the snapshot$/);
+  });
+
+  it('a named record that cannot be located fails the publication loudly; a candidate witness is not implemented yet', async () => {
+    const r = await holisticRun();
+    rmSync(r.witnessFile);
+    await assert.rejects(publish(r), /witness record .*witness\.json does not exist/);
+    const c = await holisticRun('candidate');
+    await assert.rejects(publish(c), /is for a candidate: not implemented \(step B2\)/);
+  });
+
+  it('a snapshot a 1.0.0-dev.5 executor published (no namedBy) verifies by its allowlist', async () => {
+    const r = await run();
+    const journal = openArc(r.runDir);
+    const highWater = journal.view.highWater();
+    journal.close();
+    const events = readFileSync(join(r.runDir, 'events.jsonl'), 'utf8');
+    const state = '{"dev5":true}\n';
+    const file = (path: string, text: string) => ({ path, sha256: sha256Hex(text), size: Buffer.byteLength(text) });
+    const manifest = canonicalJson({ v: 1, schema: 'roadmap/1.0', arc: ARC, highWater, files: [file('events.jsonl', events), file('state.json', state)] });
+    const blob = (t: string): string => gitRaw(r.repo, ['hash-object', '-w', '--stdin'], { input: t }).trim();
+    const tree = gitRaw(r.repo, ['mktree'], { input: `100644 blob ${blob(events)}\tevents.jsonl\n100644 blob ${blob(manifest)}\tmanifest.json\n100644 blob ${blob(state)}\tstate.json\n` }).trim();
+    const check = verifySnapshot(r.repo, sha(gitRaw(r.repo, ['commit-tree', tree, '-m', 'dev.5 snapshot'], { identity: IDENTITY }).trim()));
+    assert.equal(check.kind, 'verified', check.kind === 'mismatch' ? check.detail : '');
   });
 });
 

@@ -23,6 +23,20 @@
 //                the instance's next probe.
 //   sweep        re-driven by its command's reconciliation (command.apply, step 13), which knows the residues
 //                it sweeps; here only its open transition is closed.
+// Per holder (M3):
+//   job          (G4) the job is dead (recovery runs before anything is dispatched): like a stage, with its
+//                invocations the open spawns parented by `job{job}`, its recipes bound under the job's owner
+//                label (`holderRecipes`), and a failed teardown recorded as job-owned residues. A job holder
+//                also reclaims its own residue (`retryReclaim`), so an instance it holds cleaning is one of two
+//                things, told apart by the fold: with an own-arc residue on the instance (`JournalView.residues()`,
+//                which only a release ends) it is a reclaim in progress (a `reclaim` edge took it from
+//                cleanup-failed; a live run's clean cannot follow a fail without a release between) and resumes
+//                the reclaim order like a retry; without one it is a live run's clean, rerun as a stage's.
+//   docs         (A4) a docs publication's slot (src/pipeline/publish.ts `recoverDocs`): its docs `ff` published (and
+//                its revision activated by the revision phase before this one) → what is missing of its
+//                docs-covered, snapshot and release; otherwise its checkout is removed and the slot released (its
+//                revision was aborted, and its source re-evaluates).
+//   batch        not yet (step B2).
 import type { Holder, IntentOf, Parent } from '../core/events.ts';
 import { type ResourceInstance, type ResourceUnit, compareResourceUnits } from '../core/ids.ts';
 import type { Disposition, Reconciler } from '../core/interfaces.ts';
@@ -30,13 +44,13 @@ import { canonicalJson } from '../core/json.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { instanceEnv } from '../resources/pool.ts';
 import {
-  type HeldState, type PublicationHolder, type Reservation, type ResourceContext, type RetryHolder, type StageHolder, finishCleanup,
-  holderUnits, resourceTable, retryReclaim, sameHolder, transition,
+  type HeldState, type JobHolder, type PublicationHolder, type ReclaimHolder, type Reservation, type ResourceContext, type StageHolder,
+  finishCleanup, holderRecipes, holderUnits, resourceTable, retryReclaim, sameHolder, transition,
 } from '../resources/reserve.ts';
-import { stageRecipes } from '../resources/teardown.ts';
 import { PUBLICATION_CHAIN } from '../schedule/types.ts';
 import { reconcileFailedCleanup } from './residue.ts';
 import { spawnReconciler } from './spawn.ts';
+import { recoverDocs } from '../pipeline/publish.ts';
 
 type ResourceDisposition = Extract<Disposition<'resource.transition'>, { kind: 'done' }>;
 type SweepHolderShape = Readonly<{ type: 'sweep' }>;
@@ -58,9 +72,9 @@ function close(ctx: ResourceContext, intent: IntentOf<'resource.transition'>): R
   const { holder, resources, edge } = intent.expect;
   let disposition: ResourceDisposition = { kind: 'done', outcome: { kind: 'transitioned' } };
   if (edge.type === 'fail') {
-    if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by ${canonicalJson(holder)}`);
+    if (holder.type !== 'stage' && holder.type !== 'job') throw new Error(`${intent.op}: a fail transition held by ${canonicalJson(holder)}`);
     const bound = instanceEnv(holderUnits(ctx.journal.view, holder));
-    disposition = reconcileFailedCleanup(ctx.hostDir, intent, stageRecipes(ctx.plan(), ctx.repo, holder.unit, resources, bound));
+    disposition = reconcileFailedCleanup(ctx.hostDir, intent, holderRecipes(ctx.plan(), ctx.repo, holder, resources, bound));
   }
   ctx.journal.done(intent.op, 'resource.transition', disposition.outcome, 'reconciled');
   return disposition;
@@ -68,9 +82,9 @@ function close(ctx: ResourceContext, intent: IntentOf<'resource.transition'>): R
 
 /**
  * The resources-phase entry for the recovery engine (step 14b): every open transition through the
- * reconciler, then every stage, publication and retry holder that still holds anything. Afterwards each unit a
- * stage held is free or cleanup-failed; a publication holds the slot only before its `ff` or `snapshot`; a
- * retry holds only an instance whose teardown failed again.
+ * reconciler, then every stage, publication, retry and job holder that still holds anything. Afterwards each unit
+ * a stage or job held is free or cleanup-failed; a publication holds the slot only before its `ff` or `snapshot`; a
+ * retry, or a job reclaiming its own residue, holds only an instance whose teardown failed again.
  */
 export async function recoverReservations(ctx: ResourceContext): Promise<void> {
   const reconcile = resourceReconciler(ctx);
@@ -108,13 +122,14 @@ async function settleHolder(ctx: ResourceContext, holder: Exclude<Holder, SweepH
       return settleStage(ctx, holder, { type: 'stage', unit: holder.unit, stage: 'candidate', attempt: holder.attempt });
     case 'retry':
       return settleRetry(ctx, holder);
-    // Interim (M3 0a): no release before these steps holds resources under them.
+    case 'job':
+      await settleStage(ctx, holder, { type: 'job', job: holder.job });
+      return settleRetry(ctx, holder);
     case 'docs':
-      throw new Error(`recovering a docs publication's reservation: not implemented (step A4)`);
+      return recoverDocs(ctx, holder.pub);
+    // Interim (M3 0a): no release before this step holds resources under it.
     case 'batch':
       throw new Error(`recovering a repair batch's reservation: not implemented (step B2)`);
-    case 'job':
-      throw new Error(`recovering a job's reservation: not implemented (step A4)`);
   }
 }
 
@@ -126,36 +141,59 @@ function publicationContinues(ctx: ResourceContext, holder: PublicationHolder): 
   return next.kind === 'stage' && (PUBLICATION_CHAIN as readonly string[]).includes(next.target.stage);
 }
 
-/** A dead holder whose workload ran under `stage`: settle its invocations, clean, rerun teardowns, release or fail. */
-async function settleStage(ctx: ResourceContext, holder: StageHolder | PublicationHolder, stage: Parent): Promise<void> {
+/**
+ * The instances `holder` holds cleaning because it reclaimed its own residue (a retry, or a job, G4): those with an
+ * own-arc residue in the fold. A live run's cleaning set never has one: a residue ends only at a release, and a
+ * cleanup-failed instance leaves only through `reclaim`.
+ */
+function reclaiming(ctx: ResourceContext, holder: ReclaimHolder | StageHolder | PublicationHolder): ReadonlySet<ResourceUnit> {
+  if (holder.type !== 'retry' && holder.type !== 'job') return new Set();
+  return new Set(ctx.journal.view.residues().map((r) => r.key.resource).filter((r) => {
+    const status = resourceTable(ctx.journal.view).get(r)?.status;
+    return status !== undefined && status.state === 'cleaning' && sameHolder(status.holder, holder);
+  }));
+}
+
+/**
+ * A dead holder whose workload ran under `parent` (a stage attempt, or a job): settle its invocations, clean, rerun
+ * teardowns, release or fail (a stage's or job's residues first). A job's instances in a reclaim are `settleRetry`'s.
+ */
+async function settleStage(ctx: ResourceContext, holder: StageHolder | PublicationHolder | JobHolder, parent: Parent): Promise<void> {
   const spawn = spawnReconciler(ctx);
   const before = heldBy(ctx, holder);
   for (const from of ['reserved', 'running'] as const) {
     const resources = before.get(from);
     if (resources === undefined) continue;
-    // The dead holder's invocations: every open spawn parented by its stage attempt.
+    // The dead holder's invocations: every open spawn parented by its stage attempt (or its job).
     for (const intent of ctx.journal.view.openIntents()) {
-      if (intent.kind === 'proc.spawn' && canonicalJson(intent.parent) === canonicalJson(stage)) await spawn(intent, ctx.journal.view);
+      if (intent.kind === 'proc.spawn' && canonicalJson(intent.parent) === canonicalJson(parent)) await spawn(intent, ctx.journal.view);
     }
     transition(ctx, holder, resources, { type: 'clean', from }, RECOVERY);
   }
-  const cleaning = heldBy(ctx, holder).get('cleaning');
-  if (cleaning === undefined) return;
+  const reclaims = reclaiming(ctx, holder);
+  const cleaning = heldBy(ctx, holder).get('cleaning')?.filter((u) => !reclaims.has(u));
+  if (cleaning === undefined || cleaning.length === 0) return;
   await settleTeardowns(ctx, cleaning);
   const bound = instanceEnv(holderUnits(ctx.journal.view, holder));
-  const r: Reservation<'cleaning', StageHolder | PublicationHolder> = {
-    state: 'cleaning', holder, resources: cleaning, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, cleaning, bound),
+  const r: Reservation<'cleaning', StageHolder | PublicationHolder | JobHolder> = {
+    state: 'cleaning', holder, resources: cleaning, recipes: holderRecipes(ctx.plan(), ctx.repo, holder, cleaning, bound),
   };
   await finishCleanup(ctx, r, RECOVERY);
 }
 
-/** A retry holds only what it reclaimed, cleaning: resume the reclaim order per instance. */
-async function settleRetry(ctx: ResourceContext, holder: RetryHolder): Promise<void> {
+/**
+ * A reclaim in progress: resume the reclaim order per instance. A retry holds only what it reclaimed, cleaning; a
+ * job (after `settleStage` settled its live runs) holds cleaning only the instances it reclaims.
+ */
+async function settleRetry(ctx: ResourceContext, holder: ReclaimHolder): Promise<void> {
   const held = heldBy(ctx, holder);
   for (const state of ['reserved', 'running'] as const) {
-    if (held.has(state)) throw new Error(`${canonicalJson(holder)} holds ${held.get(state)!.join(', ')} ${state}; a retry only reclaims`);
+    if (held.has(state)) throw new Error(`${canonicalJson(holder)} holds ${held.get(state)!.join(', ')} ${state}; a reclaim never runs`);
   }
   const cleaning = held.get('cleaning') ?? [];
+  const reclaims = reclaiming(ctx, holder);
+  const stray = cleaning.filter((u) => !reclaims.has(u));
+  if (stray.length > 0) throw new Error(`${canonicalJson(holder)} holds ${stray.join(', ')} cleaning with no residue to reclaim`);
   await settleTeardowns(ctx, cleaning);
   for (const instance of cleaning) await retryReclaim(ctx, holder, instance as ResourceInstance, RECOVERY);
 }

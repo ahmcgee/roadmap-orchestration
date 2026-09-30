@@ -40,8 +40,7 @@ switch (s.op) {
   }
   case 'snapshot':
     await runOp(journal, snapshotPublishOp(repo), 'snapshot:arc', {
-      arc: ARC, runDir: absPath(s.runDir), highWater: journal.view.highWater(), specs: [{ unit: UNIT, path: absPath(s.spec) }],
-      identity: IDENTITY, message: `roadmap: snapshot ${ARC}\n`,
+      arc: ARC, runDir: absPath(s.runDir), highWater: journal.view.highWater(), identity: IDENTITY, message: `roadmap: snapshot ${ARC}\n`,
     });
     break;
 }

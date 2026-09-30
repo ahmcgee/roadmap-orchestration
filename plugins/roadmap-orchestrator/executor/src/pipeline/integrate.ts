@@ -32,29 +32,47 @@
 // Every checkout a series creates here is removed before the stage records its outcome, citing the
 // series' evidence snapshot; the unit's branch and the candidate ref stay.
 //
+// Preemption (M3, A7): a docs publication (publish.ts) outranks every unit publication. While the slot is held by a
+// candidate that has not recorded green, the publication asks it to abandon (`preemptCandidate`): its suite lanes are
+// killed with reason `preempt` (and any lane it starts after is killed at once), and the stage records `preempted`,
+// uncharged, releasing the slot; the unit's next candidate waits behind the docs publication. Once green, the ff ->
+// snapshot chain completes first and the docs publication waits for its release.
+//
+// Eligibility (G10): an active P1 finding over an obligation the unit's approval selects (its fingerprint's
+// `obligationRevs`), which its spec does not repair, blocks publication (`findingBlocking`). Re-checked under the slot
+// before a candidate records green (-> `finding-blocked`, uncharged), immediately before the unit's `ff` intent (the
+// frozen `ff` vocabulary has no `finding-blocked`: -> `cas-stale`, whose fresh candidate records it), and in recovery's
+// `ff` redo (`unitRedo`: a blocked unit's CAS is not redone).
+//
 // Re-entry: a stage attempt a restart cut short runs again as a new attempt. A merge-in it already
 // prepared (MERGE_HEAD = T in the unit worktree) and a publication op it already closed are read back
 // from the journal rather than repeated.
 import { join } from 'node:path';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
-import { INTEGRATION_SLOT, type ResourceInstance, type Sha, type UnitId } from '../core/ids.ts';
-import type { ApprovalFingerprint, NeedsUserContent } from '../core/records.ts';
+import { canonicalJson } from '../core/json.ts';
+import type { Journal } from '../core/interfaces.ts';
+import { type FindingId, INTEGRATION_SLOT, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, specRepairs } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
 import { planFf } from '../git/ff.ts';
+import { snapshotRequestOf } from '../git/snapshot.ts';
+import { unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { reentryRecommendation } from '../needsuser.ts';
+import { runnerFiles } from '../runner/files.ts';
+import { invocationDir, killWorkload } from './invoke.ts';
 import { type PublicationHolder, type Reservation, cleanup, entryOf, heldReservation, resourceTable, run } from '../resources/reserve.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import {
-  type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
+  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
 } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';
 import { type Series, laneRuntime, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
-import { type StageDone, at, executorIdentity, failedFacts, keptSpecPath, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone, at, executorIdentity, failedFacts, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
@@ -97,7 +115,7 @@ async function releasePublication(ctx: StageContext, held: Reservation<'running'
 // candidate
 
 type CandidateEnd = Readonly<{
-  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted';
+  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked';
   needsUser: NeedsUserContent | null;
   /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
   failed: readonly ResourceInstance[];
@@ -110,7 +128,7 @@ function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): C
   return {
     arc: ctx.plan().arc, unit: unit.id, integration: branchRef(ctx.plan().integrationBranch), unitCommit: unitTip(ctx, unit.id),
     worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
-    rules: { evidenceGlobs: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort() },
+    rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort()),
     identity: executorIdentity(),
     message: `roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}\n`,
   };
@@ -123,8 +141,9 @@ function seriesFault(series: Series): CandidateEnd | null {
     case 'red':
       return null;
     case 'blocked':
+      return ended('blocked');
     case 'interrupted':
-      return ended(series.end.kind);
+      return ended(series.end.reason === 'preempt' ? 'preempted' : 'interrupted');
     case 'cleanup-failed':
       return { kind: 'cleanup-failed', needsUser: null, failed: series.end.failed };
     case 'occupied':
@@ -150,6 +169,7 @@ async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeC
 const failed = (series: Series): boolean => series.end.kind === 'red' || series.dirty.length > 0;
 
 async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent, decision: CandidateDecision): Promise<CandidateEnd> {
+  if (ctx.signal.reason === 'preempt') return ended('preempted');
   switch (decision.kind) {
     case 'transient-violation':
     case 'prefix-collision':
@@ -170,10 +190,12 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
     case 'merge': {
       const op = candidateMergeOp(ctx.repo);
       const intent = await runPrepared(ctx.journal, op, `candidate:${unit.id}`, parent, await op.prepare(decision.plan));
+      if (ctx.signal.reason === 'preempt') return ended('preempted');
       const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent));
       const fault = seriesFault(onCandidate);
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return ended('green');
+      if (ctx.signal.reason === 'preempt') return ended('preempted');
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
       const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent));
@@ -208,10 +230,130 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   if (isCancelled(entered)) return entered;
   // The slot declares no probe: nothing can occupy it.
   const held = run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
-  const end = await integrate(ctx, unit, parent, planCandidate(ctx.repo, request));
+  const preempt = preemptible(ctx, unit.id, parent);
+  let end: CandidateEnd;
+  try {
+    end = await integrate(preempt.ctx, unit, parent, planCandidate(ctx.repo, request));
+    // Before green is recorded: a preemption that arrived after the last lane still wins (A7), and an active P1 over
+    // a selected obligation blocks it (G10).
+    if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
+    if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
+  } finally {
+    await preempt.close();
+  }
   const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed));
   if (end.kind !== 'green') await releasePublication(ctx, held, parent);
   return done;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Preemption (A7)
+
+/** The candidates that hold the slot before green, by journal: what a docs publication may preempt. */
+const preemptions = new WeakMap<Journal, Map<UnitId, AbortController>>();
+
+/** How often a preempted candidate kills a lane it started after the preemption (the race of the first kill). */
+const PREEMPT_POLL_MS = 100;
+
+/**
+ * Asks `unit`'s candidate, holding the slot before green, to abandon (A7). False when it has no such candidate (it
+ * has not reached the slot yet, or it is past green): the caller asks again at its next wake.
+ */
+export function preemptCandidate(journal: Journal, unit: UnitId): boolean {
+  const c = preemptions.get(journal)?.get(unit);
+  if (c === undefined) return false;
+  if (!c.signal.aborted) c.abort('preempt');
+  return true;
+}
+
+type Preemptible = Readonly<{ ctx: StageContext; close: () => Promise<void> }>;
+
+/**
+ * Registers the candidate attempt for preemption and gives `ctx` a signal that a preemption also aborts (reason
+ * `preempt`, so its lanes' waits end `interrupted{preempt}`). Once preempted, every lane of the attempt that is
+ * running, or starts later, is killed with reason `preempt`. `close` unregisters it and awaits the kills.
+ */
+function preemptible(ctx: StageContext, unit: UnitId, parent: StageParent): Preemptible {
+  let byUnit = preemptions.get(ctx.journal);
+  if (byUnit === undefined) {
+    byUnit = new Map();
+    preemptions.set(ctx.journal, byUnit);
+  }
+  if (byUnit.has(unit)) throw new Error(`unit ${unit} has two candidates in the slot`);
+  const controller = new AbortController();
+  byUnit.set(unit, controller);
+  const kills: Promise<void>[] = [];
+  const killed = new Set<string>();
+  let open = true;
+  const sweep = (): void => {
+    for (const intent of ctx.journal.view.openIntents()) {
+      if (intent.kind !== 'proc.spawn' || canonicalJson(intent.parent) !== canonicalJson(parent) || intent.expect.subject.purpose !== 'lane') continue;
+      const inv = invocationId(intent.op, intent.ordinal);
+      if (killed.has(inv)) continue;
+      // A runner that has not written runner.json may not have exec'd yet: the next sweep finds it.
+      const files = runnerFiles(invocationDir(ctx.runDir, inv), inv);
+      if (files.read('runner.json') === null || files.read('exit.json') !== null) continue;
+      killed.add(inv);
+      kills.push(killWorkload(ctx, { inv, scope: 'invocation', reason: 'preempt' }));
+    }
+  };
+  let looping: Promise<void> = Promise.resolve();
+  controller.signal.addEventListener('abort', () => {
+    looping = (async () => {
+      while (open) {
+        sweep();
+        await new Promise((resolve) => setTimeout(resolve, PREEMPT_POLL_MS));
+      }
+    })();
+  }, { once: true });
+  const signal = AbortSignal.any([ctx.signal, controller.signal]);
+  const map = byUnit;
+  return {
+    ctx: { ...ctx, signal },
+    close: async () => {
+      open = false;
+      map.delete(unit);
+      await looping;
+      await Promise.all(kills);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Eligibility (G10)
+
+/** An active P1 finding that blocks a unit's publication, and the selected obligation it is over. */
+export type FindingBlock = Readonly<{ finding: FindingId; obligation: ObligationId }>;
+
+/** A finding is active until it is resolved or ruled. */
+const ACTIVE_FINDING: ReadonlySet<string> = new Set(['open', 'owned', 'fixed-on-branch']);
+
+/**
+ * The first active P1 finding (by id) over an obligation the unit's approval selects that its spec does not repair
+ * (a finding repair repairs its obligation), or null (G10). Read from the fold's findings, which B3 opens.
+ */
+export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock | null {
+  const approval = ctx.journal.view.unit(unit.id).approval;
+  if (approval === null) throw new Error(`unit ${unit.id}: eligibility is checked only for an approved unit`);
+  const selected = new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id));
+  if (selected.size === 0) return null;
+  const findings = ctx.journal.view.holistic().findings;
+  const repaired = new Set(specRepairs(loadUnitSpec(ctx, unit).spec).flatMap((r): ObligationId[] => {
+    if (r.startsWith('I-')) return [r as ObligationId];
+    const o = findings.find((f) => f.id === r)?.obligation ?? null;
+    return o === null ? [] : [o];
+  }));
+  for (const f of findings) {
+    if (f.severity !== 'P1' || !ACTIVE_FINDING.has(f.state) || f.obligation === null) continue;
+    if (selected.has(f.obligation) && !repaired.has(f.obligation)) return { finding: f.id, obligation: f.obligation };
+  }
+  return null;
+}
+
+/** The re-check recovery's `ff` redo takes (ops.ts `integrationFfOp`): the approval at the tip now, and eligibility. */
+export function unitRedo(ctx: StageContext, unit: PlanUnit): (fingerprint: ApprovalFingerprint) => boolean {
+  const valid = fingerprintValid(ctx, unit);
+  return (fingerprint) => valid(fingerprint) && findingBlocking(ctx, unit) === null;
 }
 
 /** The unit's latest done candidate.merge: the commit its suite tested. */
@@ -231,7 +373,7 @@ export function candidateRefusalFix(ctx: StageContext, unit: PlanUnit): FixRound
   const decision = planCandidate(ctx.repo, candidateRequest(ctx, unit, 0));
   switch (decision.kind) {
     case 'transient-violation':
-      return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files or .roadmap/ outside its published entries): ${decision.violations.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch.`] };
+      return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${decision.violations.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, say so in your report as a scope growth instead of keeping it.`] };
     case 'prefix-collision':
       return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these new paths collide, ignoring case, with existing ones: ${decision.collisions.map((c) => `${c.path} with ${c.existing}`).join(', ')}. Rename them.`] };
     case 'conflict':
@@ -294,7 +436,10 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
       return stale(decision.tip);
     case 'ff': {
       if (!holds(cand.expect.integrationTip)) return record(ctx, parent, 'fingerprint-invalid');
-      const op = integrationFfOp(ctx.repo, fingerprintValid(ctx, unit));
+      // G10, immediately before the intent: a blocked unit does not publish; its fresh candidate records
+      // `finding-blocked` (the frozen ff vocabulary has none of its own).
+      if (findingBlocking(ctx, unit) !== null) return record(ctx, parent, 'cas-stale');
+      const op = integrationFfOp(ctx.repo, unitRedo(ctx, unit));
       const intent = await runPrepared(ctx.journal, op, `integration:${ctx.plan().arc}`, parent, decision.body);
       const done = ctx.journal.view.doneOf(intent.op);
       if (done === null || done.kind !== 'integration.ff') throw new Error(`integration.ff ${intent.op} has no done record`);
@@ -309,16 +454,10 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
 export async function snapshot(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'snapshot'>> {
   const held = heldPublication(ctx, unit.id);
   const parent = at(start(ctx, unit.id, 'snapshot'), 'snapshot');
-  await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, {
-    arc: ctx.plan().arc,
-    runDir: ctx.runDir,
-    // Everything durable so far, the ff's done included.
-    highWater: ctx.journal.view.highWater(),
-    // The specs in force (kept by hash), never the live files, which may hold edits nobody applied.
-    specs: ctx.plan().units.map((u) => ({ unit: u.id, path: keptSpecPath(ctx, u) })),
-    identity: executorIdentity(),
-    message: `roadmap ${ctx.plan().arc}: snapshot after publishing unit ${unit.id}\n`,
-  });
+  // Everything durable so far, the ff's done included.
+  await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, snapshotRequestOf({
+    view: ctx.journal.view, runDir: ctx.runDir, identity: executorIdentity(), message: `roadmap ${ctx.plan().arc}: snapshot after publishing unit ${unit.id}\n`,
+  }));
   const done = record(ctx, parent, 'published');
   await releasePublication(ctx, held, parent);
   return done;

@@ -1,31 +1,69 @@
-// `snapshot.publish`: copy the run's records one-way to `refs/roadmap/<arc>` (DESIGN §2.9), so no PR diff
-// carries them and the arc's history survives the run dir.
+// `snapshot.publish`: copy the run's authoritative records one-way to `refs/roadmap/<arc>` (DESIGN §2.9), so no
+// PR diff carries them and the arc's history survives the run dir.
 //
 // The input is frozen at an event high-water seq: the snapshot carries the first `highWater` lines of
-// `events.jsonl` and the state the fold derives from exactly those lines (never the live `state.json`
-// cache, which may already be ahead). Dispatch records (dispatch facts) and approval fingerprints (the
-// `integration.ff` intents) are in that log. Beside it: each unit's spec, the needs-user files raised by
-// then (with their acks), and the manifest of every captured evidence snapshot. Raw evidence, stdout and
-// stderr, and worktrees never enter the tree: the tree is built from this allowlist only, and
-// `verifySnapshot` refuses any path outside it.
+// `events.jsonl` and the state the fold derives from exactly those lines (never the live `state.json` cache,
+// which may already be ahead). Beside them, the snapshot is the transitive closure of the authoritative records
+// those lines name (G6, H6; `closureOf`), each file carried at a path its naming record determines:
 //
-// `manifest.json` lists the sha256 and size of every other file with the arc and the high-water mark. The
-// blobs and the tree are written at prepare; the commit (parent = the old ref, or none) has recorded
-// inputs, so act and any redo make the same id; the ref moves by CAS.
+// | Snapshot path                          | Named by                                                           |
+// |----------------------------------------|--------------------------------------------------------------------|
+// | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
+// |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
+// |                                        | inputs, sidecars, renders), a `spec.patch` done, a `dispatch`,      |
+// |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief) |
+// | `routing-provenance/<rev>.json`        | a 1.0.0-dev.5 `plan-applied` (none recorded): rebuilt here (H7)     |
+// | `start.json`                           | the latest `executor-started` fact (its generation)                |
+// | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
+// | `reads.json`                           |                                                                    |
+// | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's lane run): its `witness.json`          |
+// | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
+// | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
+//
+// Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, `events.jsonl`,
+// `state.json`), so the run dir's records are restored by copying the tree into it. A job's lane run keeps its
+// `witness.json` at `<runDir>/evidence/jobs/<job>/<lane>/` (src/pipeline/publish.ts); a candidate's (B2) and a
+// mutant's (B3) have no writer yet, and a `witnessed` fact for one is refused loudly.
+//
+// `manifest.json` lists every other file's sha256, size and naming record (`namedBy`: the log itself, an event
+// seq, or another item's path) with the arc and the high-water mark. `verifySnapshot` recomputes the closure from
+// the tree's own events and payloads: the tree holds exactly it, each file hashing as the manifest lists and as
+// its naming record states. Raw evidence, stdout and stderr, and worktrees never enter the tree.
+//
+// The blobs and the tree are written at prepare; the commit (parent = the old ref, or none) has recorded inputs,
+// so act and any redo make the same id; the ref moves by CAS.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import { type CommitInputs, type Event, type IntentOf, type OpOutcome, parentUnit, parseEventLine } from '../core/events.ts';
+import {
+  type CommitInputs, type Event, type IntentOf, type IntentRecord, type OpOutcome, type PlanAppliedFact, type RevisionPayload, parentUnit, parseEventLine,
+  parseRevisionPayload,
+} from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
-import { type ArcId, type OpId, type Sha, type Sha256Hex, type UnitId, arcId, parseOpId, sha, sha256 } from '../core/ids.ts';
-import type { GitSteps, IntentBody } from '../core/interfaces.ts';
+import {
+  type ArcId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, parseOpId, sha, sha256,
+} from '../core/ids.ts';
+import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
+import { runStart } from '../core/records.ts';
 import { fold } from '../core/state.ts';
-import { Fields, type Read, literal, nat, positive, sortedBy, version } from '../core/validate.ts';
+import { routingProvenanceOf as recordedProvenance } from '../core/upgrade.ts';
+import { Fields, type Read, SchemaError, literal, nat, object, positive, sortedBy, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
+import { START_FILE } from '../executor.ts';
+import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
+import {
+  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
+  routingProvenanceOf as rebuiltProvenance,
+} from '../input/inforce.ts';
+import { parsePlan } from '../input/plan.ts';
+import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
+import { BRIEF_INPUT } from '../pipeline/rounds.ts';
+import { readRepoConfig } from '../preflight/checks.ts';
+import { routingProvenance } from '../routing/types.ts';
 import { manifestPath } from './evidence.ts';
 import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
@@ -42,18 +80,20 @@ export const snapshotRef = (arc: ArcId): RefName => refName(`refs/roadmap/${arc}
 
 export const SNAPSHOT_SCHEMA = 'roadmap/1.0';
 export const SNAPSHOT_MANIFEST = 'manifest.json';
+const STATE_FILE = 'state.json';
+const INV_DIR = 'inv';
 
-/** Every path a snapshot tree may hold besides its manifest. Nothing else is ever collected or accepted. */
-const ALLOWLIST: readonly RegExp[] = [
-  /^events\.jsonl$/,
-  /^state\.json$/,
-  /^specs\/[a-z0-9-]+\.json$/,
-  /^needs-user\/[a-z0-9-]+(\.ack)?\.json$/,
-  /^evidence-manifests\/[1-9][0-9]*\.json$/,
-];
-const allowlisted = (path: string): boolean => ALLOWLIST.some((re) => re.test(path));
+// ---------------------------------------------------------------------------------------------------
+// The manifest
 
-export type SnapshotFile = Readonly<{ path: RepoPath; sha256: Sha256Hex; size: number }>;
+/** The record naming a snapshot item: the snapshot itself (the log, its fold), an event of the log, or another item. */
+export type NamedBy =
+  | Readonly<{ type: 'log' }>
+  | Readonly<{ type: 'event'; seq: number }>
+  | Readonly<{ type: 'item'; path: RepoPath }>;
+
+/** `namedBy` null: an entry a 1.0.0-dev.5 executor wrote (no closure; `verifySnapshot` reads it by its allowlist). */
+export type SnapshotFile = Readonly<{ path: RepoPath; sha256: Sha256Hex; size: number; namedBy: NamedBy | null }>;
 
 export type SnapshotManifest = Readonly<{
   v: SchemaVersion;
@@ -61,12 +101,22 @@ export type SnapshotManifest = Readonly<{
   arc: ArcId;
   /** The seq of the last event the snapshot's `events.jsonl` holds. */
   highWater: number;
+  /** Ascending by path; every entry has a `namedBy`, or (1.0.0-dev.5) none has. */
   files: readonly SnapshotFile[];
 }>;
 
+const namedBy: Read<NamedBy> = tagged('type', {
+  log: object((f): NamedBy => ({ type: f.get('type', literal('log')) })),
+  event: object((f): NamedBy => ({ type: f.get('type', literal('event')), seq: f.get('seq', positive) })),
+  item: object((f): NamedBy => ({ type: f.get('type', literal('item')), path: f.get('path', (v, p) => repoPath(v, p)) })),
+});
+
 const snapshotFile: Read<SnapshotFile> = (value, path) => {
   const f = new Fields(value, path);
-  const out = { path: f.get('path', (v, p) => repoPath(v, p)), sha256: f.get('sha256', (v, p) => sha256(v, p)), size: f.get('size', nat) };
+  const out = {
+    path: f.get('path', (v, p) => repoPath(v, p)), sha256: f.get('sha256', (v, p) => sha256(v, p)), size: f.get('size', nat),
+    namedBy: f.optional('namedBy', namedBy) ?? null,
+  };
   f.end();
   return out;
 };
@@ -81,8 +131,140 @@ export const snapshotManifest: Read<SnapshotManifest> = (value, path) => {
     files: f.get('files', sortedBy(snapshotFile, (e) => e.path, { nonEmpty: true })),
   };
   f.end();
+  const named = out.files.filter((e) => e.namedBy !== null).length;
+  if (named !== 0 && named !== out.files.length) throw new SchemaError(`${path}.files`, 'a namedBy on every entry or (1.0.0-dev.5) on none', `${named} of ${out.files.length}`);
   return out;
 };
+
+// ---------------------------------------------------------------------------------------------------
+// The closure
+
+/** Where an item's bytes come from at collection. */
+type Source =
+  | Readonly<{ type: 'log' }>
+  | Readonly<{ type: 'fold' }>
+  /** A 1.0.0-dev.5 revision's routing provenance, rebuilt from its plan, start.json's profile and the repo config (H7). */
+  | Readonly<{ type: 'provenance'; fact: PlanAppliedFact }>
+  | Readonly<{ type: 'input'; sha256: Sha256Hex; ext: string }>
+  | Readonly<{ type: 'start' }>
+  | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' }>
+  /** A job's lane run keeps its record at `<job evidence root>/<lane>/witness.json` (src/pipeline/publish.ts). */
+  | Readonly<{ type: 'witness'; job: JobId; lane: LaneId }>
+  | Readonly<{ type: 'file'; path: AbsPath }>
+  | Readonly<{ type: 'ack'; id: NeedsUserId }>;
+
+type Item = Readonly<{
+  path: RepoPath;
+  namedBy: NamedBy;
+  /** The sha256 the naming record states; null when it names the file without one. */
+  sha256: Sha256Hex | null;
+  /** Only a backend call's reads.json: a Claude call writes one, a Codex call none. */
+  optional: boolean;
+  source: Source;
+  /** start.json only: the generation the naming `executor-started` fact records. */
+  generation?: number;
+}>;
+
+/** The closure of the records `events` name, in naming order, each path once (its first naming record). */
+function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => RevisionPayload): readonly Item[] {
+  const items = new Map<string, Item>();
+  const add = (item: Omit<Item, 'optional'> & { optional?: boolean }): void => {
+    if (!items.has(item.path)) items.set(item.path, { optional: false, ...item });
+  };
+  const input = (sha: Sha256Hex, ext: string, by: NamedBy): void =>
+    add({ path: repoPath(`inputs/${sha}.${ext}`), namedBy: by, sha256: sha, source: { type: 'input', sha256: sha, ext } });
+  const payload = (sha: Sha256Hex, by: NamedBy): void => {
+    const path = repoPath(`inputs/${sha}.${REVISION_INPUT}`);
+    if (items.has(path)) return;
+    input(sha, REVISION_INPUT, by);
+    const p = payloadOf(sha);
+    const m = p.manifest;
+    const from: NamedBy = { type: 'item', path };
+    input(m.planSha256, PLAN_INPUT, from);
+    for (const s of Object.values(m.specs)) input(s, SPEC_INPUT, from);
+    input(m.rulings.ledgerSha256, RULINGS_INPUT, from);
+    for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
+    if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
+    if (m.vision !== null) input(m.vision, VISION_INPUT, from);
+    for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
+  };
+
+  add({ path: repoPath(EVENTS_FILE), namedBy: { type: 'log' }, sha256: null, source: { type: 'log' } });
+  add({ path: repoPath(STATE_FILE), namedBy: { type: 'log' }, sha256: null, source: { type: 'fold' } });
+  const intents = new Map<OpId, Readonly<{ seq: number; intent: IntentRecord }>>();
+  let started: Readonly<{ seq: number; generation: number }> | null = null;
+  for (const e of events) {
+    const by: NamedBy = { type: 'event', seq: e.seq };
+    if (e.type === 'intent') {
+      intents.set(e.op, { seq: e.seq, intent: e });
+      if (e.kind === 'revision.commit') payload(e.expect.payloadSha256, by);
+      continue;
+    }
+    if (e.type === 'done') {
+      const opened = intents.get(e.op);
+      if (opened === undefined) throw new Error(`${EVENTS_FILE}: done ${e.op} at seq ${e.seq} without an intent`);
+      const { intent } = opened;
+      const byIntent: NamedBy = { type: 'event', seq: opened.seq };
+      if (intent.kind === 'spec.patch') input(intent.post.newSha256, SPEC_INPUT, byIntent);
+      if (intent.kind === 'needsuser.raise') {
+        add({ path: repoPath(`${NEEDS_USER_DIR}/${intent.expect.id}.json`), namedBy: byIntent, sha256: intent.post.sha256, source: { type: 'file', path: intent.expect.path } });
+      }
+      if (e.kind === 'evidence.snapshot' && e.outcome.kind === 'captured' && intent.kind === 'evidence.snapshot') {
+        add({ path: repoPath(`evidence-manifests/${parseOpId(e.op).seq}.json`), namedBy: by, sha256: e.outcome.manifestSha256, source: { type: 'file', path: manifestPath(intent.expect.dest) } });
+      }
+      if (e.kind === 'proc.spawn' && e.outcome.kind === 'result' && intent.kind === 'proc.spawn') {
+        const purpose = intent.expect.subject.purpose;
+        if (purpose === 'backend' || purpose === 'arc-backend') {
+          const inv = invocationId(intent.op, intent.ordinal);
+          const dir = `${INV_DIR}/${invocationDirName(inv)}`;
+          add({ path: repoPath(`${dir}/reads.json`), namedBy: by, sha256: null, optional: true, source: { type: 'inv', inv, file: 'reads.json' } });
+          add({ path: repoPath(`${dir}/result.json`), namedBy: by, sha256: e.outcome.resultSha256, source: { type: 'inv', inv, file: 'result.json' } });
+        }
+      }
+      continue;
+    }
+    if (e.type !== 'fact') continue;
+    const f = e.fact;
+    switch (f.kind) {
+      case 'plan-applied':
+        if (f.payloadSha256 !== undefined) payload(f.payloadSha256, by);
+        input(f.planSha256, PLAN_INPUT, by);
+        for (const s of Object.values(f.specs)) input(s, SPEC_INPUT, by);
+        if (f.rulingsSha256 !== undefined) input(f.rulingsSha256, RULINGS_INPUT, by);
+        if (f.obligationsSha256 !== undefined) input(f.obligationsSha256, OBLIGATIONS_INPUT, by);
+        if (f.visionSha256 !== undefined) input(f.visionSha256, VISION_INPUT, by);
+        if (f.routingProvenance === undefined) add({ path: repoPath(`routing-provenance/${f.rev}.json`), namedBy: by, sha256: null, source: { type: 'provenance', fact: f } });
+        break;
+      case 'dispatch':
+        input(f.record.specSha256, SPEC_INPUT, by);
+        break;
+      case 'judgment-inputs':
+      case 'reopened':
+        input(f.specSha256, SPEC_INPUT, by);
+        break;
+      case 'steered':
+        input(f.brief, BRIEF_INPUT, by);
+        break;
+      case 'witnessed':
+        // Only a job's lane runs witness so far (the docs publication); a candidate's is step B2's, a mutant's B3's.
+        if (f.for.type !== 'job') throw new Error(`snapshot: witnessed ${f.inv} (event ${e.seq}) is for a ${f.for.type}: not implemented (step ${f.for.type === 'candidate' ? 'B2' : 'B3'})`);
+        add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'witness', job: f.for.job, lane: f.lane } });
+        break;
+      case 'needs-user-acked':
+        add({ path: repoPath(`${NEEDS_USER_DIR}/${f.id}.ack.json`), namedBy: by, sha256: null, source: { type: 'ack', id: f.id } });
+        break;
+      case 'executor-started':
+        started = { seq: e.seq, generation: f.generation };
+        break;
+      default:
+        break;
+    }
+  }
+  if (started !== null) {
+    add({ path: repoPath(START_FILE), namedBy: { type: 'event', seq: started.seq }, sha256: null, source: { type: 'start' }, generation: started.generation });
+  }
+  return [...items.values()];
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Collecting the input
@@ -92,13 +274,19 @@ export type SnapshotPublishRequest = Readonly<{
   runDir: AbsPath;
   /** The journal's high-water seq when the snapshot was decided (`JournalView.highWater()`). */
   highWater: number;
-  /** Each unit's spec file (the plan's `units[].spec`). */
-  specs: readonly Readonly<{ unit: UnitId; path: AbsPath }>[];
   identity: Identity;
   message: string;
 }>;
 
-type Collected = ReadonlyMap<RepoPath, Buffer>;
+/**
+ * The one way to ask for a snapshot: of the arc `view` folds, at its high-water mark (everything durable so far),
+ * with `message` as the commit message. Nothing unit-specific: a unit's publication and a docs publication use it.
+ */
+export function snapshotRequestOf(input: Readonly<{ view: JournalView; runDir: AbsPath; identity: Identity; message: string }>): SnapshotPublishRequest {
+  return { arc: input.view.arc, runDir: input.runDir, highWater: input.view.highWater(), identity: input.identity, message: input.message };
+}
+
+type Collected = ReadonlyMap<RepoPath, Readonly<{ bytes: Buffer; namedBy: NamedBy }>>;
 
 /** The first `highWater` complete lines of the event log, byte for byte, and their parsed events. */
 function eventsPrefix(runDir: AbsPath, highWater: number): { bytes: Buffer; events: readonly Event[] } {
@@ -116,54 +304,81 @@ function eventsPrefix(runDir: AbsPath, highWater: number): { bytes: Buffer; even
   return { bytes: all.subarray(0, end), events };
 }
 
-/** Each done evidence.snapshot's manifest, checked against the hash its done record carries. */
-function evidenceManifests(events: readonly Event[]): ReadonlyMap<OpId, Buffer> {
-  const dest = new Map<OpId, AbsPath>();
-  const out = new Map<OpId, Buffer>();
-  for (const e of events) {
-    if (e.type === 'intent' && e.kind === 'evidence.snapshot') dest.set(e.op, e.expect.dest);
-    if (e.type === 'done' && e.kind === 'evidence.snapshot' && e.outcome.kind === 'captured') {
-      const dir = dest.get(e.op);
-      if (dir === undefined) throw new Error(`evidence.snapshot ${e.op}: done without an intent`);
-      const bytes = readFileSync(manifestPath(dir));
-      if (sha256Hex(bytes) !== e.outcome.manifestSha256) throw new Error(`evidence manifest ${manifestPath(dir)} hashes to ${sha256Hex(bytes)}, done record says ${e.outcome.manifestSha256}`);
-      out.set(e.op, bytes);
+const mustRead = (path: string, what: string): Buffer => {
+  if (!existsSync(path)) throw new Error(`snapshot: ${what} ${path} does not exist`);
+  return readFileSync(path);
+};
+
+/** A job's evidence root, `<runDir>/evidence/jobs/<job>`: src/pipeline/publish.ts `jobEvidenceRoot` owns it (not imported: a cycle). */
+const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
+
+/** Collects the closure at `request.highWater` from the run dir: every named file must exist and hash as its record says. */
+export function collectSnapshot(repo: AbsPath, request: SnapshotPublishRequest): Collected {
+  const { arc, runDir, highWater } = request;
+  const { bytes: log, events } = eventsPrefix(runDir, highWater);
+  const payloadOf = (s: Sha256Hex): RevisionPayload => parseRevisionPayload(JSON.parse(mustRead(inputPath(runDir, s, REVISION_INPUT), 'revision payload').toString('utf8')));
+  const startPath = join(runDir, START_FILE);
+  const start = () => runStart(JSON.parse(mustRead(startPath, 'start.json (a 1.0.0-dev.5 revision\'s routing is rebuilt from its profile)').toString('utf8')), startPath);
+  const bytesOf = (source: Source): Buffer | null => {
+    switch (source.type) {
+      case 'log':
+        return log;
+      case 'fold':
+        return Buffer.from(fileJson(fold(arc, events)), 'utf8');
+      case 'provenance': {
+        const plan = parsePlan(JSON.parse(mustRead(inputPath(runDir, source.fact.planSha256, PLAN_INPUT), `plan rev ${source.fact.rev}`).toString('utf8')));
+        const profile = start().profile;
+        return Buffer.from(fileJson(recordedProvenance(source.fact, () => rebuiltProvenance({ profile, config: readRepoConfig(repo) }, plan))), 'utf8');
+      }
+      case 'input':
+        return mustRead(inputPath(runDir, source.sha256, source.ext), 'kept input');
+      case 'start':
+        return mustRead(startPath, 'start.json');
+      case 'inv': {
+        const path = join(runDir, INV_DIR, invocationDirName(source.inv), source.file);
+        return source.file === 'reads.json' && !existsSync(path) ? null : mustRead(path, `${source.inv}'s`);
+      }
+      case 'witness':
+        return mustRead(join(jobEvidenceRoot(runDir, source.job), source.lane, WITNESS_RECORD_FILE), `${source.job}'s ${source.lane} witness record`);
+      case 'file':
+        return mustRead(source.path, 'named record');
+      case 'ack':
+        return mustRead(needsUserAckPath(runDir, source.id), 'needs-user acknowledgement');
     }
+  };
+  const files = new Map<RepoPath, Readonly<{ bytes: Buffer; namedBy: NamedBy }>>();
+  for (const item of closureOf(events, payloadOf)) {
+    const bytes = bytesOf(item.source);
+    if (bytes === null) continue;
+    const problem = namingProblem(item, bytes);
+    if (problem !== null) throw new Error(`snapshot: ${problem}`);
+    files.set(item.path, { bytes, namedBy: item.namedBy });
   }
-  return out;
+  return files;
 }
 
-export function collectSnapshot(request: SnapshotPublishRequest): Collected {
-  const { arc, runDir, highWater, specs } = request;
-  const { bytes, events } = eventsPrefix(runDir, highWater);
-  const state = fold(arc, events);
-  const files = new Map<RepoPath, Buffer>();
-  const put = (path: string, content: Buffer): void => {
-    if (!allowlisted(path)) throw new Error(`snapshot: ${path} is not an allowlisted snapshot path`);
-    if (files.has(repoPath(path))) throw new Error(`snapshot: ${path} collected twice`);
-    files.set(repoPath(path), content);
-  };
-  put(EVENTS_FILE, bytes);
-  put('state.json', Buffer.from(fileJson(state), 'utf8'));
-  for (const spec of specs) put(`specs/${spec.unit}.json`, readFileSync(spec.path));
-  for (const id of state.needsUser) {
-    put(`needs-user/${id}.json`, readFileSync(join(runDir, 'needs-user', `${id}.json`)));
-    const ack = join(runDir, 'needs-user', `${id}.ack.json`);
-    if (existsSync(ack)) put(`needs-user/${id}.ack.json`, readFileSync(ack));
+const namer = (by: NamedBy): string => (by.type === 'log' ? 'the log' : by.type === 'event' ? `event ${by.seq}` : by.path);
+
+/** null when `bytes` are what the item's naming record states (its hash; start.json's generation). */
+function namingProblem(item: Item, bytes: Buffer): string | null {
+  if (item.sha256 !== null && sha256Hex(bytes) !== item.sha256) return `${item.path} hashes to ${sha256Hex(bytes)}, ${namer(item.namedBy)} names ${item.sha256}`;
+  if (item.generation !== undefined) {
+    const generation = runStart(JSON.parse(bytes.toString('utf8')), item.path).generation;
+    if (generation !== item.generation) return `${item.path} is generation ${generation}, ${namer(item.namedBy)} started generation ${item.generation}`;
   }
-  for (const [op, manifest] of evidenceManifests(events)) put(`evidence-manifests/${parseOpId(op).seq}.json`, manifest);
-  return files;
+  if (item.source.type === 'provenance') routingProvenance(JSON.parse(bytes.toString('utf8')), item.path);
+  return null;
 }
 
 const byPath = <T extends { readonly path: string }>(a: T, b: T): number => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
 function manifestOf(arc: ArcId, highWater: number, files: Collected): SnapshotManifest {
-  const entries = [...files].map(([path, bytes]) => ({ path, sha256: sha256(sha256Hex(bytes)), size: bytes.length })).sort(byPath);
+  const entries = [...files].map(([path, { bytes, namedBy: by }]) => ({ path, sha256: sha256(sha256Hex(bytes)), size: bytes.length, namedBy: by })).sort(byPath);
   return { v: SCHEMA_VERSION, schema: SNAPSHOT_SCHEMA, arc, highWater, files: entries };
 }
 
 /** Writes each file as a blob and the whole set as a tree, through a temporary index. */
-function writeSnapshotTree(repo: AbsPath, files: Collected): Sha {
+function writeSnapshotTree(repo: AbsPath, files: ReadonlyMap<RepoPath, Buffer>): Sha {
   const tmp = mkdtempSync(join(tmpdir(), 'roadmap-snapshot-'));
   try {
     const indexFile = absPath(join(tmp, 'index'));
@@ -185,9 +400,13 @@ export type SnapshotVerification =
   | Readonly<{ kind: 'verified'; manifest: SnapshotManifest; manifestSha256: Sha256Hex }>
   | Readonly<{ kind: 'mismatch'; detail: string }>;
 
+class Mismatch extends Error {}
+
 /**
- * Re-reads a snapshot commit: its tree holds `manifest.json` and exactly the files it lists, every file
- * allowlisted and hashing as listed, and `events.jsonl` ends at the manifest's high-water mark.
+ * Re-reads a snapshot commit: its tree holds `manifest.json` and exactly the files it lists, each hashing as
+ * listed; `events.jsonl` ends at the manifest's high-water mark; and the listed files are exactly the closure the
+ * tree's own events and payloads name (reads.json where a call wrote one), each with its naming record, hashing as
+ * that record states.
  */
 export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
   const mismatch = (detail: string): SnapshotVerification => ({ kind: 'mismatch', detail });
@@ -196,35 +415,86 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
   if (manifestEntry === undefined) return mismatch('no manifest.json');
   const manifestText = blobText(repo, manifestEntry.object);
   const manifest = snapshotManifest(JSON.parse(manifestText), `${commit}:${SNAPSHOT_MANIFEST}`);
+  const legacy = manifest.files[0]!.namedBy === null;
   const listed = new Map(manifest.files.map((f) => [f.path as string, f]));
+  const blobs = new Map<string, Buffer>();
   for (const e of entries) {
     if (e.path === SNAPSHOT_MANIFEST) continue;
-    if (!allowlisted(e.path)) return mismatch(`${e.path} is not an allowlisted snapshot path`);
+    if (legacy && !legacyAllowlisted(e.path)) return mismatch(`${e.path} is not an allowlisted snapshot path`);
     const want = listed.get(e.path);
     if (want === undefined) return mismatch(`${e.path} is not in the manifest`);
     const bytes = Buffer.from(blobText(repo, e.object), 'utf8');
     if (sha256Hex(bytes) !== want.sha256 || bytes.length !== want.size) return mismatch(`${e.path} hashes to ${sha256Hex(bytes)} (${bytes.length} bytes), manifest says ${want.sha256} (${want.size})`);
-    listed.delete(e.path);
+    blobs.set(e.path, bytes);
   }
-  if (listed.size > 0) return mismatch(`manifest lists missing files ${[...listed.keys()].join(', ')}`);
-  const events = entries.find((e) => e.path === EVENTS_FILE);
-  if (events === undefined) return mismatch('no events.jsonl');
-  const lines = blobText(repo, events.object).split('\n');
+  const absent = [...listed.keys()].filter((p) => !blobs.has(p));
+  if (absent.length > 0) return mismatch(`manifest lists missing files ${absent.join(', ')}`);
+  const log = blobs.get(EVENTS_FILE);
+  if (log === undefined) return mismatch('no events.jsonl');
+  const lines = log.toString('utf8').split('\n');
   if (lines.pop() !== '' || lines.length !== manifest.highWater) return mismatch(`events.jsonl holds ${lines.length} lines, high-water mark ${manifest.highWater}`);
-  if (parseEventLine(lines[lines.length - 1]!).seq !== manifest.highWater) return mismatch(`events.jsonl ends at another seq than ${manifest.highWater}`);
-  return { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestText)) };
+  const events = lines.map(parseEventLine);
+  if (events[events.length - 1]!.seq !== manifest.highWater) return mismatch(`events.jsonl ends at another seq than ${manifest.highWater}`);
+  const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestText)) };
+  if (legacy) {
+    warnLegacy(commit);
+    return verified;
+  }
+
+  let closure: readonly Item[];
+  try {
+    closure = closureOf(events, (s) => {
+      const path = `inputs/${s}.${REVISION_INPUT}`;
+      const bytes = blobs.get(path);
+      if (bytes === undefined) throw new Mismatch(`the closure names ${path}, which the tree does not hold`);
+      return parseRevisionPayload(JSON.parse(bytes.toString('utf8')));
+    });
+  } catch (e) {
+    if (e instanceof Mismatch) return mismatch(e.message);
+    throw e;
+  }
+  const inClosure = new Set<string>();
+  for (const item of closure) {
+    inClosure.add(item.path);
+    const entry = listed.get(item.path);
+    if (entry === undefined) {
+      if (item.optional) continue;
+      return mismatch(`${item.path}, which ${namer(item.namedBy)} names, is not in the snapshot`);
+    }
+    if (canonicalJson(entry.namedBy) !== canonicalJson(item.namedBy)) return mismatch(`${item.path} is listed as named by ${namer(entry.namedBy!)}, the closure has ${namer(item.namedBy)}`);
+    const problem = namingProblem(item, blobs.get(item.path)!);
+    if (problem !== null) return mismatch(problem);
+  }
+  const extra = [...listed.keys()].filter((p) => !inClosure.has(p));
+  if (extra.length > 0) return mismatch(`${extra.join(', ')} ${extra.length === 1 ? 'is' : 'are'} not in the snapshot closure`);
+  return verified;
 }
 
-/** A blob's content. Every snapshot file is UTF-8 JSON the executor wrote, so text round-trips its bytes. */
+/** A blob's content. Every snapshot file is UTF-8 text (JSON, the ledger, a brief, a render), so text round-trips its bytes. */
 const blobText = (repo: AbsPath, blob: Sha): string => gitRun(repo, ['cat-file', 'blob', blob]).stdout;
+
+// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): a snapshot a 1.0.0-dev.5 executor published (no
+// `namedBy`) verifies by that release's allowlist and hashes, so recovery closes its open `snapshot.publish`. Delete
+// once no arc started on 1.0.0-dev.5 is in flight.
+const LEGACY_ALLOWLIST: readonly RegExp[] = [
+  /^events\.jsonl$/, /^state\.json$/, /^specs\/[a-z0-9-]+\.json$/, /^needs-user\/[a-z0-9-]+(\.ack)?\.json$/, /^evidence-manifests\/[1-9][0-9]*\.json$/,
+];
+const legacyAllowlisted = (path: string): boolean => LEGACY_ALLOWLIST.some((re) => re.test(path));
+let warnedLegacy = false;
+function warnLegacy(commit: Sha): void {
+  if (warnedLegacy) return;
+  warnedLegacy = true;
+  process.stderr.write(`roadmap: upgrade default (snapshot.namedBy): snapshot ${commit} has no closure (written by 1.0.0-dev.5); verified by its allowlist\n`);
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The op
 
 function prepare(repo: AbsPath, request: SnapshotPublishRequest): IntentBody<'snapshot.publish'> {
   const ref = snapshotRef(request.arc);
-  const files = new Map(collectSnapshot(request));
-  const manifestBytes = Buffer.from(canonicalJson(manifestOf(request.arc, request.highWater, files)), 'utf8');
+  const collected = collectSnapshot(repo, request);
+  const files = new Map([...collected].map(([path, { bytes }]) => [path, bytes] as const));
+  const manifestBytes = Buffer.from(canonicalJson(manifestOf(request.arc, request.highWater, collected)), 'utf8');
   files.set(repoPath(SNAPSHOT_MANIFEST), manifestBytes);
   const old = refTarget(repo, ref);
   const commit: CommitInputs<readonly [] | readonly [Sha]> = {
@@ -255,7 +525,7 @@ function act(repo: AbsPath, intent: IntentOf<'snapshot.publish'>): void {
   crashPoint('snapshot.act-end', parentUnit(intent.parent));
 }
 
-/** null when the postcondition holds: ref = new, and its tree verifies against its own manifest at the recorded mark. */
+/** null when the postcondition holds: ref = new, and its tree verifies (manifest, closure) at the recorded mark. */
 export function snapshotPostcondition(repo: AbsPath, intent: IntentOf<'snapshot.publish'>): string | null {
   const { ref, highWater, manifestSha256 } = intent.expect;
   const next = intent.post.new;

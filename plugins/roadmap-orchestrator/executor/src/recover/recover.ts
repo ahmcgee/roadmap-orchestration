@@ -3,7 +3,7 @@
 //
 //   processes   proc.kill, then proc.spawn (a spawn's own recovery kill must not collide with a kill left
 //               open before the crash; lead note, 14b). Both reconcilers write their own done.
-//   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge,
+//   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge, docs.commit,
 //               integration.ff, snapshot.publish: the reconciler reads the postcondition and returns a
 //               disposition this module applies (done, redo through the op's own act and verify, abort).
 //   revisions   revision.commit (M3, G1): after the git ops, so its docs `ff` is closed; before the command ops, so
@@ -41,7 +41,7 @@ import type { PreviousArcVerdict } from '../host/lock.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { needsUserReconciler, publishNeedsUser, raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import { type StageContext, dispatchOf } from '../pipeline/dispatch.ts';
-import { fingerprintValid } from '../pipeline/gate.ts';
+import { unitRedo } from '../pipeline/integrate.ts';
 import { type ProcContext, invocationDir, liveRunner, quiescent } from '../pipeline/invoke.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
 import { launchSha256 } from '../runner/launch.ts';
@@ -53,7 +53,7 @@ import { recoverReservations } from './resource.ts';
 import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
 import {
-  candidateMergeOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
+  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
 } from './ops.ts';
 
 /** The stage context the git and resource reconcilers need, and the command context command.apply needs. */
@@ -70,7 +70,7 @@ export type RecoveryReport = Readonly<{
 }>;
 
 const GIT_KINDS = [
-  'worktree.create', 'worktree.remove', 'evidence.snapshot', 'salvage.commit', 'mergein.prepare', 'candidate.merge', 'integration.ff',
+  'worktree.create', 'worktree.remove', 'evidence.snapshot', 'salvage.commit', 'mergein.prepare', 'candidate.merge', 'docs.commit', 'integration.ff',
   'snapshot.publish',
 ] as const satisfies readonly OpKind[];
 const FILE_KINDS = ['spec.patch', 'needsuser.raise', 'command.apply'] as const satisfies readonly OpKind[];
@@ -103,6 +103,11 @@ function salvageRules(ctx: StageContext, unit: PlanUnit): SalvageRules {
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };
 }
+
+/** A docs or batch `ff` has no unit to re-check; its reconciler never asks. */
+const notAUnit = (intent: IntentRecord) => (): never => {
+  throw new Error(`${intent.kind} ${intent.op} publishes no unit: it has no approval to re-check`);
+};
 
 /** The needs-user op as a redoable: the reconciler, and the rename of the staged file as its act. */
 function needsUserOp(runDir: AbsPath): Redoable<'needsuser.raise'> {
@@ -198,7 +203,10 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
     case 'candidate.merge':
       return apply(ctx, intent, candidateMergeOp(s.repo));
     case 'integration.ff':
-      return apply(ctx, intent, integrationFfOp(s.repo, fingerprintValid(s, unitOf(s, intent))));
+      // A docs publication's `ff` (parent job{docs-n}) is redone without a unit's re-check.
+      return apply(ctx, intent, integrationFfOp(s.repo, intent.expect.subject === undefined ? unitRedo(s, unitOf(s, intent)) : notAUnit(intent)));
+    case 'docs.commit':
+      return apply(ctx, intent, docsCommitOp(s.repo));
     case 'snapshot.publish':
       return apply(ctx, intent, snapshotPublishOp(s.repo));
     case 'spec.patch':
@@ -207,9 +215,7 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
       return apply(ctx, intent, needsUserOp(s.runDir));
     case 'command.apply':
       return apply(ctx, intent, commandOp(ctx.commands));
-    // Interim (M3 0a): no release before these steps writes these intents.
-    case 'docs.commit':
-      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step A4)`);
+    // Interim (M3 0a): no release before this step writes these intents.
     case 'mutant.apply':
       throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step B3)`);
     case 'revision.commit':

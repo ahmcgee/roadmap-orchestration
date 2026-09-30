@@ -72,13 +72,25 @@ export function abortReason(signal: AbortSignal): 'pause' | 'stop' {
   return reason;
 }
 
-export type HostWait = Readonly<{ kind: 'clear' }> | Readonly<{ kind: 'timeout' }> | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>;
+/**
+ * Why a lane's wait was cancelled: `pause` or `stop` (the stage's signal), or, for a candidate's suite lanes, `preempt`
+ * (M3, A7: a docs publication took the slot before green; src/pipeline/integrate.ts).
+ */
+export type LaneCancel = 'pause' | 'stop' | 'preempt';
+
+export function laneAbortReason(signal: AbortSignal): LaneCancel {
+  const reason: unknown = signal.reason;
+  if (reason !== 'preempt') return abortReason(signal);
+  return reason;
+}
+
+export type HostWait = Readonly<{ kind: 'clear' }> | Readonly<{ kind: 'timeout' }> | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>;
 
 /** Waits, holding nothing, until a sample is clear, at most `waitMs`; cancelled by `signal`. */
 export async function waitForClearHost(sample: () => HostSample, signal: AbortSignal, waitMs: number = HOST_CLEAR_WAIT_MS): Promise<HostWait> {
   const until = Date.now() + waitMs;
   for (;;) {
-    if (signal.aborted) return { kind: 'interrupted', reason: abortReason(signal) };
+    if (signal.aborted) return { kind: 'interrupted', reason: laneAbortReason(signal) };
     if (isClear(sample())) return { kind: 'clear' };
     const left = until - Date.now();
     if (left <= 0) return { kind: 'timeout' };
@@ -99,7 +111,7 @@ export type RedLaneResult<R, E> =
   /** A signature without host evidence, or a host that did not clear in time: no rerun. */
   | Readonly<{ kind: 'blocked'; detail: string }>
   /** Cancelled while waiting for a clear host. */
-  | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>
+  | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'ended'; end: E }>;
 
 /**

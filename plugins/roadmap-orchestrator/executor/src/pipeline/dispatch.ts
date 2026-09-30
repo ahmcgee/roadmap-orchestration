@@ -51,7 +51,7 @@ import { inputPath, keepInput } from '../input/inforce.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
-import { type AcquiringHolder, type ResourceContext, holderUnits } from '../resources/reserve.ts';
+import { type ResourceContext, type UnitAcquiringHolder, holderUnits } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
@@ -526,7 +526,7 @@ export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
  * the grant's `reserve` transition is that op, parented by the attempt. `entered` once it is granted (at once
  * when `request` is null); `cancelled` when the task's signal is aborted first, with nothing journaled.
  */
-export async function enter(ctx: StageContext, holder: AcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
+export async function enter(ctx: StageContext, holder: UnitAcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
   if (ctx.signal.aborted) return { kind: 'cancelled', reason: abortReason(ctx.signal) };
   if (request === null) return { kind: 'entered' };
   const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal);

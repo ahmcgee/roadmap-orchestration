@@ -20,6 +20,6 @@ export function fakeDocs(journal: Journal, repo: AbsPath, branch: BranchName): D
     });
     git(repo, 'update-ref', ref, commit, old);
     journal.done(op, 'integration.ff', { kind: 'published' }, null);
-    return { kind: 'published', publication: { pub, head: commit } };
+    return { kind: 'published', publication: { pub, head: commit }, settle: async () => {} };
   };
 }

@@ -1227,8 +1227,9 @@ constants in the table (`Bounded.bound` names the field) and in the fold's charg
 **Commands** (M3 bodies; scopes per the plan's table, `commandScope` in `src/input/classify.ts`): `rule{path,
 sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
 `merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
-its effect is rejected `<type>: not implemented (step X)`: `rule` A4 (`reverse` since A2, `steer` and `merge-in` since A3), `audit`
-and `close-admissions` B7 (`NOT_YET`, `src/commands/apply.ts`); `gc` (A5b) fails in the CLI.
+its effect is rejected `<type>: not implemented (step X)`: `audit` and `close-admissions` B7 (`NOT_YET`,
+`src/commands/apply.ts`; `reverse` since A2, `steer` and `merge-in` since A3, `rule` since A4); `gc` (A5b) fails in the
+CLI.
 
 **Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
 `steered`, `not-reproduced`, `owner-request`, `respec-second`. Non-blocking (`NON_BLOCKING_M3_REASONS`):
@@ -1324,9 +1325,8 @@ work, whose queue is empty, whose head is in integration history and whose ref v
 4. **The publication plan**: `.roadmap/constraints.md` rendered when the ledger or sidecars change,
    `.roadmap/invariants.md` when the obligations do, each only when its rendering changes (bytes kept as
    `inputs/<sha>.render`), plus the contract ops of sidecars new in the revision. A start's changed files that need
-   a publication are refused (apply them); an arc's first start publishes nothing. Until A4 wires
-   `src/pipeline/publish.ts`, the executor's `DocsPublisher` refuses (`DOCS_NOT_YET`), so an obligation edit applies
-   only once A4 lands.
+   a publication are refused (apply them); an arc's first start publishes nothing. The executor's `DocsPublisher` is
+   `src/pipeline/publish.ts` since A4 (`DOCS_NOT_YET` remains only for test contexts that publish no docs).
 5. **Which publication carried a revision** is read from the log: the docs `integration.ff` begun after its
    `revision.commit` (`docsStateOf`). Recovery runs `revision.commit` after the git ops and before the command ops;
    an abort raises no needs-user (its source re-evaluates).
@@ -1369,7 +1369,11 @@ work, whose queue is empty, whose head is in integration history and whose ref v
 5. **The steer round** is a fresh implementer session (`STEER_DIRECTIVE` and the brief, kept as
    `inputs/<sha256>.brief.md`), re-pinned whatever its seat (`steerDispatch`); its report is read as a fresh build's.
    `--class c` commits a revision setting the unit's layer `build.<build tier>` = c (proposer `apply`, source the
-   command); the live plan file is not written back.
+   command). Since A4 its plan bytes are written durably back to the live plan file only while that file hashes to
+   the plan in force before the revision (the `plan-applied` preceding it in the log): `spec.patch`'s write-back
+   rule. A run again after a crash (`planAppliedBy`) writes back the same way; a file the architect changed since is
+   left alone and the receipt's `verified` says so. Stale base (A2 choice 6) treats a `command` revision as
+   architect-owned, so a later `apply` of the unchanged file keeps the layer.
 6. **`merge-in`** plans with the op's own prepare (`merge-tree`); a conflict, or a branch already containing the tip,
    is rejected before any intent. Its `mergein.prepare` op is parented by the command.
 7. **Fenced captures (H2)**: plan-check and gate read their inputs, render their prompt and write `judgment-inputs` in
@@ -1382,3 +1386,76 @@ work, whose queue is empty, whose head is in integration history and whose ref v
 9. **The risk floor** (DESIGN §2.3 `route`): a unit's risk below its Phase-0 floor (its risk in the first revision
    that planned it) is refused unless its spec cites an active ruling whose sidecar applies to it; a dispatched unit's
    risk may rise (re-pinned at dispatch).
+
+**Choices made in M3 A4** (the docs publication, `rule`, preemption, eligibility, the transient check, job-owned
+residues, the snapshot closure):
+
+1. **The docs publication** (`src/pipeline/publish.ts`, `docsPublisher`) runs inside its revision's commit: the slot
+   under `docs{pub}` (`pub` = `nextJobId('docs')`), the files (each render's kept bytes; each document the revision's
+   new sidecars' contract ops edit at the tip T, applied in id order), `docs.commit` on `refs/roadmap-run/<arc>/docs/<pub>`
+   (parents [T]; its checkout `<worktreeRoot>/<arc>/<pub>.checkout`), the transient check, the lanes, `ff{subject:
+   docs{pub}}` T → the commit. `DocsOutcome.published` gains `settle` (src/recover/revision.ts): `commitRevision` runs
+   it after `plan-applied` and the commit's done, so the slot is held through the activation; `settle` is
+   `finishDocs`: a docs-only publication's `docs-covered{pub, T → D}` (no contract op: A17), the snapshot (parent
+   `job{pub}`), the slot's release, each only where missing. A refusal before the ff releases the slot and aborts the
+   revision. The new rulings are validated again at T under the slot (`validateRuling`, `rulingContextAt`), so a
+   ruling judged at an older head is refused as stale (G21 compares the head exactly).
+2. **Selection (G12).** The rendered `.roadmap/` files are not changed paths of a docs candidate: they are executor
+   renderings of in-force records, and as unmapped paths they would select every must-hold obligation. A docs
+   candidate selects through its contract ops' paths only (`changedPaths`; an unmapped contract path still selects
+   every must-hold, as for a unit) plus the revision's added, split and re-witnessed obligations (`revised`), split
+   closure applied, read against the revision's own obligations. Green: every suite lane passes and no selected
+   obligation's effect is `red` (latched: none; completing: none).
+3. **A job's lanes** (`runJobLanes`, the minimum B2 extends): serial, each under `job{job}` with its declared resources
+   (reserved through `acquireFirst`, probed under the job's owner label), in a detached checkout, spawned as
+   `journey{lane, laneRev, at, owner: job{job}}` (a suite lane too: the frozen `lane` subject names a unit; its
+   `laneRev` is `suiteLaneRev`, 16 hex of sha256 over its canonical definition), evidence under
+   `<runDir>/evidence/jobs/<job>/<lane>/`. An arc lane's reporter output becomes `witness.json` there and a
+   `witnessed{purpose: witness, for: job{job}}` fact (`treeSha` the commit's tree id). A lost or cancelled run ends
+   the series without a verdict. No red-lane protocol yet (B2). `ROADMAP_WITNESS_FILE` is the one `ROADMAP_*` variable
+   a launch.json may declare (src/core/records.ts).
+4. **Preemption (A7).** The arbiter serves `acquireFirst` waiters (a docs slot, a job's lanes) before every unit
+   waiter, in arrival order; a refused one's `onBlocked` runs after the evaluation. A docs publication refused the slot
+   preempts its holder when that is a unit candidate with no recorded outcome (`preemptCandidate`,
+   src/pipeline/integrate.ts); a candidate past green (its ff and snapshot chain) is waited for. The preempted
+   candidate's lanes see `preempt` as their cancel reason (`LaneCancel`, src/pipeline/redlane.ts); every lane of the
+   attempt that is running or starts later is killed `proc.kill{reason: preempt}`; the stage records `preempted`
+   (uncharged) and releases the slot. `sched.json`'s queue lists unit waiters only.
+5. **Eligibility (G10)** is `findingBlocking` (src/pipeline/integrate.ts), read from the fold's findings: an active
+   (open, owned or fixed-on-branch) P1 over an obligation of the approval's `obligationRevs` that the unit's spec does
+   not repair (a finding repair repairs its obligation). Checked before a candidate records green (→
+   `finding-blocked`), immediately before a unit `ff` intent (the frozen ff vocabulary has no `finding-blocked`: →
+   `cas-stale`, whose fresh candidate records it), and by recovery before redoing a unit CAS (`unitRedo`). The
+   known-regression exception (G11) needs a candidate's per-test witness records: B2's, with the candidate's arc lanes.
+6. **`rule <record.json>`** (src/commands/rule.ts): the record hashes as the CLI recorded, parses, and passes
+   `validateRuling` at the tip; the proposal is the revision in force with `ledgerAfter` and `sidecarsAfter` (a
+   superseded sidecar re-serialised with its new status), proposer `rule`, committed through `commitUnderFence`. Then
+   the live ledger and each changed sidecar file take the revision's bytes only while they hold the previous
+   revision's (a new sidecar: while absent); a file changed since is left alone and reported.
+7. **The transient check (G17, H15)**: `candidateRequest` builds `TransientRules` from the unit's latest dispatch
+   record (`unitTransientRules`): `m3` refuses any in-tree `.roadmap/` path (`roadmap-dir`) and any path no pattern of
+   the pinned scope matches (`out-of-scope`, as salvage matches); a dispatch without `transientRules` keeps dev.5's
+   rules (ROADMAP_ALLOWLIST, no scope check) for its lineage attempt; run-state, evidence and executor-file rules
+   apply under both. A docs publication's diff may hold only the files it writes, matched exactly
+   (`docsTransientViolations`, rule `not-docs`).
+8. **Job-owned residues (G4, H4)**: a job holder reserves through a request but never takes `integration-slot`; a
+   docs holder takes the slot alone. A job's teardowns, probes and lanes carry the owner label `<arc>/job/<job>`
+   (`jobOwnerLabel`). A failed cleanup under a job holder records residues keyed `{arc, inv, resource, job}`, which
+   the job's own holder reclaims in a unit retry's order (reclaim → recorded teardown → `cleaned` → release), through
+   the residue's probe or recovery. Recovery treats a dead job like a dead stage (its spawns parented by `job{job}`
+   settled, clean, teardowns, release or fail); an instance a job holds `cleaning` with an own-arc residue on it is a
+   reclaim in progress and resumes the reclaim order. A docs holder found holding the slot is finished
+   (`finishDocs`) when its docs `ff` published, else abandoned (`abandonDocs`: its checkout removed, the slot
+   released; the revision was aborted and its source re-evaluates).
+9. **The snapshot (G6, H6)** is the transitive closure of the records its first `highWater` log lines name, not an
+   allowlist (`snapshotRequestOf({view, runDir, identity, message})`, `collectSnapshot`). Content-addressed inputs sit
+   at `inputs/<sha>.<ext>` (everything a `plan-applied` or kept payload names, the payload's renders, `spec.patch`
+   outputs, the specs `dispatch`, `judgment-inputs` and `reopened` name, `steered` briefs); `start.json` (named by the
+   latest `executor-started`, its generation matching); every done backend or arc-backend spawn's `result.json`
+   (`reads.json` where written); each job witness `witness/<seq>-<ord>.json`; needs-user records and acks; evidence
+   manifests; a 1.0.0-dev.5 revision's routing provenance rebuilt at snapshot time into
+   `routing-provenance/<rev>.json` (H7). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
+   `verifySnapshot` recomputes the closure from the tree's own events and payloads and requires exactly that set, each
+   file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot. A
+   manifest without `namedBy` (1.0.0-dev.5) verifies by that release's allowlist, warned (scaffolding). Not yet in the
+   closure: commands and their receipts, and a dev.5 revision's live ledger (never kept).
