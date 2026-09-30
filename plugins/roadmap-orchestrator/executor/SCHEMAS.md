@@ -659,7 +659,7 @@ passes, read by `status` to re-resolve routing tables); `status.rejection.json` 
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: PlanManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2; until step 5 applies them the executor rejects them) |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: PlanManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
