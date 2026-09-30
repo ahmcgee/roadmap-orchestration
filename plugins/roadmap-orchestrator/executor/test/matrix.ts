@@ -80,6 +80,7 @@ export const DOCS_PUBLICATION = 'command.apply: rule, its docs publication (M3 A
 export const PREEMPT = 'docs publication preempting a candidate before green (M3 A4, A7: preempt kill of its suite lane)';
 export const LATCH = 'obligation-latched after a unit ff{published}, before its snapshot (M3 B2)';
 export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot under batch{finding, attempt}, chained candidate, job lanes, batch ff, finish)';
+export const MUTANT_APPLY = 'mutant.apply: a vacuity repair\'s reproduce (M3 B3: detached worktree, patch applied, mutant lane, worktree removed)';
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
@@ -1182,6 +1183,36 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['snapshot.act-end'],
         recovery: 'the batch published and its snapshot acted: the snapshot reconciled, the slot left held; finishBatch writes nothing twice and releases it',
+      },
+    },
+  },
+  {
+    // The vacuity repair v1 runs to its merge in a child (test/fixtures/repair-child.ts): its reproduce applies F-1's
+    // mutant at the tip (occurrence 1 of each label; its candidate's kill check is occurrence 2); recovery runs, then the
+    // unit driver finishes the unit.
+    row: MUTANT_APPLY,
+    test: 'test/repair.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['mutant.act-start'],
+        recovery: 'the intent is durable, nothing made: redone (the worktree made, the patch applied), done; the cut-short reproduce runs again as a new attempt, removing that worktree first; one reproduced, the unit merges',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['mutant.after-worktree'],
+        recovery: 'the worktree made, the patch not applied: the worktree removed and the act redone; the reproduce runs again, removing the leftover; one reproduced, the unit merges',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['mutant.act-end'],
+        recovery: 'the patched worktree is exactly the recorded outcome: done reconciled with the patched tree; the reproduce runs again, removing the leftover; one reproduced, the unit merges',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['mutant.after-done'],
+        recovery: 'the apply done, its lane never run: no intent open for it; the reproduce runs again as a new attempt, removing the leftover worktree; one reproduced, the unit merges and resolves F-1',
       },
     },
   },

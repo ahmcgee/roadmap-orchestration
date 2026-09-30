@@ -32,7 +32,9 @@
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
 //               envelope, and may cite only plan contracts and ledger rulings; a raised risk re-pins the
 //               dispatch record. The session reads detached checkouts of the integration tip (its cwd) and
-//               of the unit branch when one exists, created for the attempt and removed when it is read.
+//               of the unit branch when one exists, created for the attempt and removed when it is read. The
+//               answer is read against the spec rev its `judgment-inputs` captured; each `visionConflict` opens
+//               a P3 `plan-check` finding for the checkpoint (R17, src/holistic/findings.ts), never a redirect.
 //   build       the implementer round (rounds.ts) under its entry reservation, held from reserve to
 //               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only, the
 //               worktree, the evidence dir, the pinned scope, the approving plan-check's notes. A resumed
@@ -77,6 +79,7 @@ import {
   type LoadedSpec, OBLIGATIONS_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
+import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
@@ -588,8 +591,15 @@ export async function planCheckRead(
   await releaseJudgment(ctx, parent);
   const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
   const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;
-  // The spec this judgment read: the file, or, once its redirect patched it, what the patch replaced.
-  const specRev = applied?.expect.expectRev ?? spec.rev;
+  // The spec revision this judgment read: its captured inputs' (A19; captured before the `@cpu` wait, so the spec in
+  // force may since carry an evidence-only edit, which keeps the rev). Its redirect patches the spec in force at that
+  // rev; once patched, the spec in force is the next rev.
+  const captured = ctx.journal.view.judgmentInputs(unit.id, 'plan-check', parent.attempt);
+  if (captured === null) throw new Error(`plan-check ${unit.id}#${parent.attempt} has no judgment-inputs`);
+  const specRev = captured.specRev;
+  if (applied === null ? spec.rev !== specRev : applied.expect.expectRev !== specRev) {
+    throw new Error(`plan-check ${unit.id}#${parent.attempt} judged spec rev ${specRev}, but ${applied === null ? `the spec in force is rev ${spec.rev}` : `its patch expects rev ${applied.expect.expectRev}`}`);
+  }
   const seenSha256 = applied?.expect.oldSha256 ?? sha256;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const done = (d: StageDone<'plan-check'>): PlanCheckDone => ({ ...d, session, specRev });
@@ -602,6 +612,14 @@ export async function planCheckRead(
   } catch (error) {
     if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'));
     throw error;
+  }
+  // R17: each vision conflict opens a P3 finding for the checkpoint (a re-read merges into it), whatever the decision; it
+  // is never a redirect by itself. A conflict citing no active clause of the vision in force (or with no vision) is an
+  // unusable judgment.
+  if (out.visionConflict.length > 0) {
+    const active = new Set((holisticInForce(ctx).vision?.clauses ?? []).filter((c) => c.state === 'active').map((c) => c.id));
+    if (out.visionConflict.some((v) => v.clauses.some((c) => !active.has(c)))) return done(record(ctx, parent, 'malformed'));
+    for (const v of out.visionConflict) openFinding(ctx.journal, visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: v.clauses, note: v.note }));
   }
   // R2: the judgment may raise the floor, never lower it, and a redirect may not widen the envelope.
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));

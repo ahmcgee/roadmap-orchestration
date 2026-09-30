@@ -7,12 +7,18 @@
 // every `after` dependency is merged (D1; the edge follows the lineage once the successor prepared, F15),
 // every contingent edge is resolved, and its next stage is an admission stage that `admit` lets in. A legacy
 // arc's readiness is 1.0.0-dev.4's serial frontier (`legacyNext`, G4), still subject to admission.
+//
+// M3 (B3): two facts about a unit come from its spec in force, which only the pipeline reads (`SpecFacts`,
+// src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
+// stage is `reproduce`, not plan-check), and the obligations it repairs, which exempt it from an active P1's
+// `finding-blocked` at candidate admission (G10). Repair units rank first (R6, `ORIGIN_RANK`).
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { UnitId } from '../core/ids.ts';
+import type { ObligationId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { NeedsUserReason } from '../core/records.ts';
+import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { isLegacy, legacyNext } from '../core/upgrade.ts';
+import { p1Blocking } from '../holistic/findings.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
 import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
@@ -30,14 +36,23 @@ export type NextStage = Readonly<{ kind: 'admission'; stage: AdmissionStage }> |
 const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_STAGES as readonly OutcomeStage[]).includes(s);
 
 /**
- * The stage a unit runs next, from its latest decided outcome: plan-check before one (or after a reopen), and
- * `prepare` for a re-entry that has not prepared yet. null when the decision ends the unit's stages (a park,
- * a stop or a retire). A chain stage runs without admission (F5). M3: an entry a command set goes first (a steer's
- * round is a build, a merge-in's lanes: `ENTRY_STAGE`).
+ * M3 (B3): what admission and `nextStage` read from a unit's spec in force. `reproduces`: it repairs an active vacuity
+ * finding with a mutant, so it reproduces the mutant before anything is graded. `repairs`: the obligations it repairs
+ * (its `I-n` repairs and its findings' obligations).
  */
-export function nextStage(u: UnitState): NextStage | null {
+export type SpecFacts = Readonly<{ reproduces: boolean; repairs: ReadonlySet<ObligationId> }>;
+export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
+
+/**
+ * The stage a unit runs next, from its latest decided outcome: before one (or after a reopen) its first stage,
+ * `reproduce` for a vacuity repair (`reproduces`, M3 B3), else plan-check; `prepare` for a re-entry that has not
+ * prepared yet. null when the decision ends the unit's stages (a park, a stop or a retire). A chain stage runs
+ * without admission (F5). M3: an entry a command set goes first (a steer's round is a build, a merge-in's lanes:
+ * `ENTRY_STAGE`).
+ */
+export function nextStage(u: UnitState, reproduces: boolean): NextStage | null {
   if (u.entry !== null) return { kind: 'admission', stage: ENTRY_STAGE[u.entry.kind] };
-  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : 'plan-check' };
+  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : reproduces ? 'reproduce' : 'plan-check' };
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return null;
   const s = d.target.stage;
@@ -67,14 +82,14 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
 }
 
 /**
- * Whether a tripped breaker on `target` blocks `stage`: `host` blocks builds and lanes, a backend the stages
- * that call it. A resource instance's breaker blocks no admission: the arbiter sets aside the waiters of a
- * dirty instance (F8).
+ * Whether a tripped breaker on `target` blocks `stage`: `host` blocks builds and lanes (a reproduce runs a lane), a
+ * backend the stages that call it. A resource instance's breaker blocks no admission: the arbiter sets aside the
+ * waiters of a dirty instance (F8).
  */
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
     case 'host':
-      return stage === 'build' || stage === 'lanes';
+      return stage === 'build' || stage === 'lanes' || stage === 'reproduce';
     case 'backend':
       return target.backend === backend;
     case 'resource':
@@ -86,12 +101,23 @@ const scopeCovers = (scope: CommandScope, unit: UnitId): boolean =>
   scope.type === 'arc' || (scope.type === 'units' && scope.units.includes(unit));
 
 /**
+ * The active P1 that holds `unit`'s candidate admission (G10): over an obligation its approval selects that its spec
+ * does not repair; null when none does or it has no approval.
+ */
+function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlySet<ObligationId>): Extract<AdmissionConstraint, { type: 'finding-blocked' }> | null {
+  const approval = view.unit(unit).approval;
+  if (approval === null) return null;
+  const block = p1Blocking(view.holistic().findings, new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id)), repairs);
+  return block === null ? null : { type: 'finding-blocked', ...block };
+}
+
+/**
  * `admit` under the routing in force (each unit's, M3: its layer on the arc's stack): every constraint that holds for the unit's stage now, or admit. Pause,
  * drain and run-only hold per unit; a parked backend (any class) and a tripped breaker only for the stages
- * that need them; `base-red` for candidates; recovery-required, log-corrupt, the supervisor crash limit and
- * host items for every stage (A17).
+ * that need them; `base-red` and an active P1 over a selected obligation (M3, G10; `specOf` names the unit's repairs)
+ * for candidates; recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17).
  */
-export function admitter(routing: (unit: UnitId) => RoutingTable): Admit {
+export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
   return ({ view, unit, stage, blocking, drains, tripped }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const control = view.control();
@@ -104,6 +130,10 @@ export function admitter(routing: (unit: UnitId) => RoutingTable): Admit {
     for (const p of view.backendParks()) if (p.backend === backend) c.push({ type: 'backend-parked', backend, class: p.class });
     for (const t of tripped) if (breakerBlocks(t, stage, backend)) c.push({ type: 'breaker', target: t });
     if (stage === 'candidate' && blocking.some((b) => b.reason === 'base-red')) c.push({ type: 'base-red' });
+    if (stage === 'candidate') {
+      const block = findingBlock(view, unit.id, specOf(unit).repairs);
+      if (block !== null) c.push(block);
+    }
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };
@@ -143,8 +173,8 @@ export function rankOf(view: JournalView, plan: PlanM1, id: UnitId): Rank {
 // ---------------------------------------------------------------------------------------------------
 // Readiness
 
-/** What `ready` reads: admission's inputs for the arc and the routing in force. */
-export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: (unit: UnitId) => RoutingTable }>;
+/** What `ready` reads: admission's inputs for the arc, the routing in force and each unit's spec facts. */
+export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: (unit: UnitId) => RoutingTable; spec: SpecFactsOf }>;
 
 export type ReadyUnit = Readonly<{ unit: PlanUnit; stage: AdmissionStage; rank: Rank }>;
 
@@ -161,7 +191,7 @@ function dependenciesMet(view: JournalView, unit: PlanUnit): boolean {
  */
 export function ready(input: ReadyInput): readonly ReadyUnit[] {
   const { view, plan } = input;
-  const admit = admitter(input.routing);
+  const admit = admitter(input.routing, input.spec);
   let candidates: readonly PlanUnit[];
   if (isLegacy(view)) {
     const f = legacyNext(view, plan.units);
@@ -173,7 +203,7 @@ export function ready(input: ReadyInput): readonly ReadyUnit[] {
   for (const unit of candidates) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
-    const next = nextStage(u);
+    const next = nextStage(u, input.spec(unit).reproduces);
     if (next?.kind !== 'admission') continue;
     if (admit({ ...input, unit, stage: next.stage }).kind !== 'admit') continue;
     out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id) });

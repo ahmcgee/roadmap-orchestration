@@ -63,6 +63,7 @@ import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
 import type { StageContext } from '../pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
+import { specFacts } from '../pipeline/reproduce.ts';
 import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
 import { recoverReservations } from '../recover/resource.ts';
 import { holderStage } from '../resources/reserve.ts';
@@ -222,6 +223,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const { journal, runDir } = x.stage;
   const view = (): JournalView => journal.view;
   const plan = () => x.stage.plan();
+  /** What admission and each unit's next stage read from its spec in force (M3 B3). */
+  const specOf = specFacts(x.stage);
   const { arbiter } = x;
   const scopeOf = commandScope(x.commands);
 
@@ -312,13 +315,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   });
 
   const admitWaiting = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>): void => {
-    const admit = admitter((u) => x.stage.routing(u).table);
+    const admit = admitter((u) => x.stage.routing(u).table, specOf);
     const input = admissionInput(blocking, mutations);
     for (const task of tasks.values()) {
       const w = task.waiting;
       if (w === null) continue;
       const u = view().unit(task.unit);
-      const next = upcoming(u);
+      const next = upcoming(u, specOf(planUnit(task.unit)).reproduces);
       // Ended at this boundary: a pause or stop, or the unit moved on without it (cut, superseded, re-opened).
       if (stopping !== null || task.abort.signal.aborted || u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) {
         endTask(task);
@@ -345,12 +348,12 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startChains = (): void => {
     for (const unit of plan().units) {
       const u = view().unit(unit.id);
-      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u)?.kind === 'chain') startTask(unit);
+      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u, specOf(unit).reproduces)?.kind === 'chain') startTask(unit);
     }
   };
 
   const startReady = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>): void => {
-    for (const r of ready({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table })) {
+    for (const r of ready({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table, spec: specOf })) {
       if (tasks.has(r.unit.id) || blocking.some((b) => holdsUnit(b, r.unit.id))) continue;
       startTask(r.unit);
     }

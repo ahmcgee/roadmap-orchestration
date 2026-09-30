@@ -21,7 +21,7 @@
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
 // interrupted attempt's invocation, read from the fold's `interrupted` fact. Before every stage the driver
 // asserts that none of the unit's invocations has a live workload, then asks its `gate`: an admission stage
-// (prepare, plan-check, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
+// (prepare, reproduce, plan-check, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
 // end the task instead (a pause, a stop: the unit is left where the fold says, holding nothing); a chain
 // stage (quiesce → evidence → salvage → teardown after a build, ff → snapshot in a publication) is only
 // announced and runs whatever pause or drain says (F5). A re-entered unit starts at `prepare` (step 6). A
@@ -33,6 +33,12 @@
 // latest decision says: `steer <u>` a steer round (a fresh implementer session with the architect's brief, R11; the
 // pass then goes build chain → lanes → gate and exits by the table's steer rows), `merge-in <u>` the unit's lanes at
 // its merged commit.
+//
+// M3 (step B3): a vacuity repair (its spec repairs an active vacuity finding with a mutant, reproduce.ts `specFacts`)
+// starts at `reproduce` instead of plan-check, and so does its re-open. Around every stage the driver writes the
+// findings' moves the log calls for (`syncRepairs`: ownership by the repairing units, resolution by their publication,
+// code's dismissal of a mutant a reproduce killed). A candidate red on a surviving mutant gets its fix round from the
+// mutant's run (`mutantFix`).
 //
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
@@ -57,6 +63,7 @@ import { candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot,
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { prepare } from './prepare.ts';
+import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
 import {
   type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, steerBrief,
 } from './rounds.ts';
@@ -206,6 +213,9 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
       const at = stageParent(f);
       const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+      // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
+      const survived = mutantFix(ctx, at);
+      if (survived !== null) return candidateFixRound(survived, suite, verification, tip);
       const failing = suite.filter((l) => l.verdict !== 'pass');
       // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
       if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return candidateFixRound(candidateBrakeFix(ctx, unit, at), suite, verification, tip);
@@ -252,7 +262,7 @@ async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): P
 async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
     case 'reproduce':
-      throw new Error(`unit ${unit.id}: the reproduce stage: not implemented (step B3)`);
+      return reproduce(ctx, unit);
     case 'plan-check':
       return planCheck(ctx, unit);
     case 'build':
@@ -388,13 +398,26 @@ export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step |
  * the unit, its result (a merged unit's retire is finished first if a restart cut it short).
  */
 export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
+  // M3 (B3): the findings' moves the log calls for (ownership, a killed mutant's dismissal) before and after each stage.
+  syncRepairs(ctx);
+  const s = await stepOnce(ctx, unit);
+  syncRepairs(ctx);
+  return s;
+}
+
+async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const consumed = await consume(ctx, unit);
   if (consumed !== null) return consumed;
   const u = ctx.journal.view.unit(unit.id);
   if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
   const f = u.decided;
-  // Before a decision: a re-entry prepares first (its lineage not yet prepared), anything else plan-checks.
-  if (f === null) return after(ctx, unit, u.lineage !== null && !u.lineage.prepared ? await prepare(ctx, unit) : await planCheck(ctx, unit));
+  // Before a decision: a re-entry prepares first (its lineage not yet prepared), a vacuity repair reproduces its mutant
+  // (M3), anything else plan-checks.
+  if (f === null) {
+    const first = nextStage(u, specFacts(ctx)(unit).reproduces);
+    if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : await planCheck(ctx, unit));
+  }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;
   const decided = decidedBy(f);
@@ -459,8 +482,12 @@ function reopenIfDue(ctx: StageContext, unit: UnitId): void {
 /** Whether the unit re-opens on a pending revision at this boundary. */
 const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reentryAllowed(u);
 
-/** The stage the unit starts next: plan-check when it re-opens at this boundary, else its decided next stage (`nextStage`). */
-export const upcoming = (u: UnitState): NextStage | null => (reopenDue(u) ? { kind: 'admission', stage: 'plan-check' } : nextStage(u));
+/**
+ * The stage the unit starts next: its first stage when it re-opens at this boundary (plan-check, or `reproduce` for a
+ * vacuity repair: `reproduces`, src/pipeline/reproduce.ts `specFacts`), else its decided next stage (`nextStage`).
+ */
+export const upcoming = (u: UnitState, reproduces: boolean): NextStage | null =>
+  (reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : 'plan-check' } : nextStage(u, reproduces));
 
 // ---------------------------------------------------------------------------------------------------
 // The loop
@@ -508,7 +535,7 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
     const u = ctx.journal.view.unit(unit.id);
-    const next = upcoming(u);
+    const next = upcoming(u, specFacts(ctx)(unit).reproduces);
     if (next !== null) {
       assertQuiescent(ctx, unit.id);
       if (!(await gate(next))) {

@@ -24,6 +24,8 @@
 //              - green → in a holistic arc, the held-claims brake (M3 B2, below): the arc lanes witnessing the
 //                obligations the approval selects run on the candidate as journey lanes; red claims take the same
 //                path, witnessing T alone (`base-red`, `red`, or green by the known-regression rule);
+//              - green, for a vacuity repair (M3 B3): each mutant it repairs applied to the candidate and its lane
+//                run (reproduce.ts `mutantAcceptance`); a mutant the candidate does not kill → `red` (charged);
 //              - green → ff.
 //   ff         the approval fingerprint recomputed at the tip being published onto; `planFf`, then
 //              `integration.ff` by CAS under the publication's slot. published → the latches (M3: a future obligation
@@ -68,6 +70,7 @@ import { snapshotRequestOf } from '../git/snapshot.ts';
 import { unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
+import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
 import { keyOf, observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
 import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt } from '../holistic/types.ts';
@@ -89,6 +92,7 @@ import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, intact, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, suiteJourneyLane,
 } from './lanes.ts';
+import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
@@ -224,6 +228,22 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
   }
 }
 
+/** The mutant kill check's end as a candidate outcome. */
+function mutantEnd(m: MutantEnd): CandidateEnd {
+  switch (m.kind) {
+    case 'green':
+    case 'red':
+    case 'blocked':
+      return ended(m.kind);
+    case 'interrupted':
+      return ended(m.reason === 'preempt' ? 'preempted' : 'interrupted');
+    case 'occupied':
+      return ended('occupied', m.needsUser);
+    case 'cleanup-failed':
+      return { kind: 'cleanup-failed', needsUser: null, failed: m.failed };
+  }
+}
+
 /** `evidence`: the suite series on the candidate and on T alone. */
 function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha, evidence: readonly AbsPath[]): NeedsUserContent {
   return {
@@ -251,6 +271,8 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   let end: CandidateEnd;
   try {
     end = await integrate(preempt.ctx, unit, parent, planCandidate(ctx.repo, request));
+    // M3 (B3): a vacuity repair's candidate must kill every mutant it repairs (src/pipeline/reproduce.ts).
+    if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
     // Before green is recorded: a preemption that arrived after the last lane still wins (A7), and an active P1 over
     // a selected obligation blocks it (G10).
     if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
@@ -282,12 +304,7 @@ export type Claims = Readonly<{
 
 /** The obligations a unit's spec repairs: its `I-n` repairs, and the obligation of each finding it repairs. */
 export function repairedObligations(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): ReadonlySet<ObligationId> {
-  const findings = ctx.journal.view.holistic().findings;
-  return new Set(specRepairs(loadUnitSpec(ctx, unit).spec).flatMap((r): ObligationId[] => {
-    if (r.startsWith('I-')) return [r as ObligationId];
-    const o = findings.find((f) => f.id === r)?.obligation ?? null;
-    return o === null ? [] : [o];
-  }));
+  return repairedBy(ctx.journal.view.holistic().findings, specRepairs(loadUnitSpec(ctx, unit).spec));
 }
 
 /** The latched obligations: must-hold from their latch on. */
@@ -319,9 +336,7 @@ function unitClaims(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha): Cla
 }
 
 /** Active P1 findings' obligations: what the known-regression rule reads (R4, G11). */
-function p1Obligations(view: JournalView): ReadonlySet<ObligationId> {
-  return new Set(view.holistic().findings.flatMap((f) => (f.severity === 'P1' && ACTIVE_FINDING.has(f.state) && f.obligation !== null ? [f.obligation] : [])));
-}
+const p1Obligations = (view: JournalView): ReadonlySet<ObligationId> => activeP1Obligations(view.holistic().findings);
 
 /** How the claims grade on one tree. */
 export type TreeGrade = Readonly<{
@@ -622,28 +637,17 @@ function preemptible(ctx: StageContext, unit: UnitId, parent: StageParent): Pree
 // ---------------------------------------------------------------------------------------------------
 // Eligibility (G10)
 
-/** An active P1 finding that blocks a unit's publication, and the selected obligation it is over. */
-export type FindingBlock = Readonly<{ finding: FindingId; obligation: ObligationId }>;
-
-/** A finding is active until it is resolved or ruled. */
-const ACTIVE_FINDING: ReadonlySet<string> = new Set(['open', 'owned', 'fixed-on-branch']);
-
 /**
  * The first active P1 finding (by id) over an obligation the unit's approval selects that its spec does not repair
- * (a finding repair repairs its obligation), or null (G10). Read from the fold's findings, which B3 opens.
+ * (a finding repair repairs its obligation), or null (G10): src/holistic/findings.ts `p1Blocking` over the fold's
+ * findings, read at this moment (so a P1 opened while the candidate ran blocks its ff).
  */
 export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock | null {
   const approval = ctx.journal.view.unit(unit.id).approval;
   if (approval === null) throw new Error(`unit ${unit.id}: eligibility is checked only for an approved unit`);
   const selected = new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id));
   if (selected.size === 0) return null;
-  const findings = ctx.journal.view.holistic().findings;
-  const repaired = repairedObligations(ctx, unit);
-  for (const f of findings) {
-    if (f.severity !== 'P1' || !ACTIVE_FINDING.has(f.state) || f.obligation === null) continue;
-    if (selected.has(f.obligation) && !repaired.has(f.obligation)) return { finding: f.id, obligation: f.obligation };
-  }
-  return null;
+  return p1Blocking(ctx.journal.view.holistic().findings, selected, repairedObligations(ctx, unit));
 }
 
 /** The re-check recovery's `ff` redo takes (ops.ts `integrationFfOp`): the approval at the tip now, and eligibility. */
@@ -851,6 +855,8 @@ export async function finishBatch(ctx: StageContext): Promise<BatchOutcome> {
   const ff = batchFfOf(view, job)!;
   const members = batchCandidateOf(view, job).expect.batch!.members.map((m) => m.unit);
   latchPublished(ctx, members, ff.expect.new);
+  // M3 (B3): the members' publication resolves the findings they repair, before the snapshot.
+  syncRepairs(ctx);
   const parent: Parent = { type: 'job', job };
   if (!view.opsOf('snapshot.publish').some((i) => canonicalJson(i.parent) === canonicalJson(parent) && view.doneOf(i.op) !== null)) {
     await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, snapshotRequestOf({

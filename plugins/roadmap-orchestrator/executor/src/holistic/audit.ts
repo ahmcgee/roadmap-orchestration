@@ -30,17 +30,16 @@
 //      re-witnessed on the current head (`rewitnessP1s`, their obligations' lanes under the same job), so the
 //      checkpoint reads their observation there. The checkpoint (B6) calls it again before its own capture.
 //
-// Findings (`openFinding`): `key = findingKey(lens, obligation, cause)`. A key matching an open, owned or
-// fixed-on-branch finding merges into it (no fact; the audit names it); one matching a dismissed finding is suppressed
-// unless a cited evidence blob changed (dismissals have arc lifetime); otherwise a `finding-opened` with the next id.
+// Findings go through the one store (src/holistic/findings.ts `openFinding`: merge into an active key, suppress a
+// dismissed one unless a cited blob changed); code's P1s are `witnessFindingDraft`s, a vacuity mutant's patch is kept by
+// `keepMutantPatch`. The ids opened or merged and the suppressed count become `audit-ended{findings, suppressed}`.
 // `gateHadPassed`: a unit had published before the audit started (the defect passed some gate).
 import { basename, isAbsolute, join, relative } from 'node:path';
-import type { AuditInputs, HolisticFact, Parent } from '../core/events.ts';
+import type { AuditInputs, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
 import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId } from '../core/ids.ts';
-import type { Journal } from '../core/interfaces.ts';
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -48,7 +47,7 @@ import { capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { catFileType, git, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
-import { RULINGS_INPUT, OBLIGATIONS_INPUT, VISION_INPUT, keepInput, keptInput, keptPayload } from '../input/inforce.ts';
+import { RULINGS_INPUT, OBLIGATIONS_INPUT, VISION_INPUT, keptInput, keptPayload } from '../input/inforce.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
@@ -66,9 +65,10 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder } from './cadence.ts';
 import { coverageBase, lensCoverage } from './coverage.ts';
+import { type FindingDraft, type FindingOpen, keepMutantPatch, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
-  FINDING_MOVES, type FindingEvidence, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, findingKey, isExempt, parseObligations, parseVision,
+  FINDING_MOVES, type FindingEvidence, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, parseObligations, parseVision,
 } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
@@ -102,30 +102,7 @@ const checkoutOf = (ctx: StageContext, job: JobId, what: 'lanes' | 'lenses' | 'r
 // ---------------------------------------------------------------------------------------------------
 // Findings
 
-/** A finding before its id and key: what a lens or code opens. `cause` feeds the key and is not recorded. */
-export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }>, 'kind' | 'id' | 'key'> & Readonly<{ cause: string }>;
-export type FindingOpen = Readonly<{ kind: 'opened' | 'merged'; id: FindingId }> | Readonly<{ kind: 'suppressed'; by: FindingId }>;
-
-/** Whether a path the dismissed finding cited is cited now at another blob. */
-function evidenceChanged(dismissed: readonly FindingEvidence[], now: readonly FindingEvidence[]): boolean {
-  return now.some((e) => dismissed.some((d) => d.path === e.path && d.blob !== e.blob));
-}
-
-/** Opens `draft` as a finding, or merges or suppresses it (see the header). */
-export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen {
-  const key = findingKey(draft.lens, draft.obligation, draft.cause);
-  const same = journal.view.holistic().findings.filter((f) => f.key === key);
-  const active = same.find((f) => FINDING_MOVES[f.state].length > 0);
-  if (active !== undefined) return { kind: 'merged', id: active.id };
-  const dismissed = same.filter((f) => f.last?.state === 'ruled' && f.last.disposition === 'dismissed').at(-1);
-  if (dismissed !== undefined && !evidenceChanged(dismissed.evidence, draft.evidence)) return { kind: 'suppressed', by: dismissed.id };
-  const id = journal.view.nextFindingId();
-  const { cause: _cause, ...fields } = draft;
-  journal.fact({ kind: 'finding-opened', id, key, ...fields });
-  return { kind: 'opened', id };
-}
-
-/** The findings an audit opened or merged, and how many it suppressed. */
+/** The findings an audit opened or merged, and how many it suppressed (src/holistic/findings.ts `openFinding`). */
 type Tally = { ids: Set<FindingId>; suppressed: number };
 const tally = (t: Tally, o: FindingOpen): void => {
   if (o.kind === 'suppressed') t.suppressed += 1;
@@ -273,7 +250,7 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     return [b.path, b] as const;
   })).values()];
   const mutant = lens === 'vacuity' && f.mutant !== null && laneIds.has(f.mutant.lane)
-    ? { patchSha256: keepInput(ctx.runDir, Buffer.from(f.mutant.patch, 'utf8'), 'patch'), lane: f.mutant.lane }
+    ? { patchSha256: keepMutantPatch(ctx.runDir, f.mutant.patch), lane: f.mutant.lane }
     : null;
   return {
     lens,
@@ -363,11 +340,11 @@ function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: Read
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`${s.job}: obligation ${o.id}'s lane ${o.witness.lane} has no record on ${s.integrationSha}`);
     if (witnessVerdict(record, o.witness) !== 'not-held') return [];
-    return [{
-      lens: 'witness', severity: 'P1', obligation: o.id, visionClauses: [...o.serves].sort(),
+    return [witnessFindingDraft({
+      obligation: o.id, serves: o.serves, job: s.job, gateHadPassed,
       claim: `${o.id} is not held on ${s.integrationSha}: its witness ${o.witness.lane} (${o.witness.testIds.join(', ')}) fails there.`,
-      cause: 'witness not held', evidence: [{ path: jobEvidenceRoot(ctx.runDir, s.job), blob: null }], mutant: null, source: { type: 'job', job: s.job }, gateHadPassed,
-    }];
+      evidence: [{ path: jobEvidenceRoot(ctx.runDir, s.job), blob: null }],
+    })];
   });
 }
 

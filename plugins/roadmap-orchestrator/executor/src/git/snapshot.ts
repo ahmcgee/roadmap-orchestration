@@ -11,13 +11,14 @@
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
 // |                                        | inputs, sidecars, renders), a `spec.patch` done, a `dispatch`,      |
-// |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief) |
+// |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
+// |                                        | a vacuity `finding-opened` (its mutant `.patch`)                   |
 // | `routing-provenance/<rev>.json`        | a 1.0.0-dev.5 `plan-applied` (none recorded): reconstructed once at |
 // |                                        | adoption (`adoptLegacyProvenance`, H7), or why it cannot be          |
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
-// | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's or a candidate's run): its `witness.json` |
+// | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's, a candidate's or a mutant's run): its `witness.json` |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
 //
@@ -25,8 +26,8 @@
 // `events.jsonl`, `state.json`), so the run dir's records are restored by copying the tree into it. A witness run
 // keeps its `witness.json` in its own execution's dir (`witnessDir`, written by src/pipeline/lanes.ts
 // `runJourneySeries`): a job's `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`), a unit candidate's
-// `<runDir>/evidence/<unit>/<attempt>-candidate/journey/arc-<lane>-<inv>/` (`candidateLaneDir`); a mutant's (B3) has no
-// writer yet, and a `witnessed` fact for one is refused loudly.
+// `<runDir>/evidence/<unit>/<attempt>-candidate/journey/arc-<lane>-<inv>/` (`candidateLaneDir`), a mutant's (written by
+// src/pipeline/reproduce.ts) `<runDir>/evidence/mutants/<finding>/<lane>-<inv>/` (`mutantLaneDir`).
 //
 // `manifest.json` lists every other file's sha256, size and naming record (`namedBy`: the log itself, an event
 // seq, or another item's path) with the arc and the high-water mark. `verifySnapshot` recomputes the closure from
@@ -45,7 +46,7 @@ import {
 } from '../core/events.ts';
 import { exclusivePublish, canonicalJson as fileJson } from '../core/fsx.ts';
 import {
-  type ArcId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type PlanRev, type RoutingRev, type Sha, type Sha256Hex, type UnitId, arcId, invocationDirName,
+  type ArcId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type PlanRev, type RoutingRev, type Sha, type Sha256Hex, type UnitId, arcId, invocationDirName,
   invocationId, parseOpId, routingRev, sha, sha256,
 } from '../core/ids.ts';
 import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
@@ -68,6 +69,7 @@ import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { provenanceStack, resolveRouting } from '../routing/layers.ts';
 import { type RoutingProvenance, routingProvenance } from '../routing/types.ts';
 import { manifestPath } from './evidence.ts';
+import { MUTANT_PATCH_INPUT } from './mutant.ts';
 import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
 export class SnapshotStateError extends Error {
@@ -248,9 +250,11 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
       case 'steered':
         input(f.brief, BRIEF_INPUT, by);
         break;
+      case 'finding-opened':
+        if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
+        break;
       case 'witnessed':
-        // A job's and a candidate's lane runs witness; a mutant's is step B3's.
-        if (f.for.type === 'mutant') throw new Error(`snapshot: witnessed ${f.inv} (event ${e.seq}) is for a mutant: not implemented (step B3)`);
+        // A job's, a candidate's and a mutant's lane run alike (a mutant's record never certifies, G13).
         add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'witness', fact: f } });
         break;
       case 'needs-user-acked':
@@ -418,9 +422,16 @@ export const jobLaneDir = (runDir: AbsPath, job: JobId, kind: JobLaneKind, lane:
 export const candidateLaneDir = (runDir: AbsPath, unit: UnitId, attempt: number, kind: JobLaneKind, lane: LaneId, invDir: string): AbsPath =>
   absPath(join(runDir, 'evidence', unit, `${attempt}-candidate`, 'journey', `${kind}-${lane}-${invDir}`));
 
+/**
+ * A mutant lane execution's evidence dir (M3 B3): `<runDir>/evidence/mutants/<finding>/<lane>-<seq>-<ordinal>`, whether
+ * a vacuity repair's `reproduce` stage or its candidate's kill check ran it (src/pipeline/reproduce.ts).
+ */
+export const mutantLaneDir = (runDir: AbsPath, finding: FindingId, lane: LaneId, invDir: string): AbsPath =>
+  absPath(join(runDir, 'evidence', 'mutants', finding, `${lane}-${invDir}`));
+
 type WitnessedFact = Readonly<{ lane: LaneId; inv: InvocationId; for: WitnessFor }>;
 
-/** Where a `witnessed` fact's run keeps its `witness.json`: its execution's dir. A mutant's run has no writer yet (B3). */
+/** Where a `witnessed` fact's run keeps its `witness.json`: its execution's dir. */
 export function witnessDir(runDir: AbsPath, f: WitnessedFact): AbsPath {
   const inv = invocationDirName(f.inv);
   switch (f.for.type) {
@@ -429,7 +440,7 @@ export function witnessDir(runDir: AbsPath, f: WitnessedFact): AbsPath {
     case 'candidate':
       return candidateLaneDir(runDir, f.for.unit, f.for.attempt, 'arc', f.lane, inv);
     case 'mutant':
-      throw new Error(`witness of ${f.inv}: a mutant's record has no location yet (step B3)`);
+      return mutantLaneDir(runDir, f.for.finding, f.lane, inv);
   }
 }
 

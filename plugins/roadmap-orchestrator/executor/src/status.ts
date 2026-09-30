@@ -43,7 +43,7 @@
 // supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`), read from `needs-user/`; an item is
 // acknowledged once the log holds its ack fact, as the executor reads it.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { terminalReceipt, readCommand } from './commands/queue.ts';
 import { type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, type OperatorParkKind, type ProbeTarget, holderUnit, probeTargetKey } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
@@ -59,7 +59,7 @@ import { PLAN_INPUT, keptInput, planInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
-import { type AbsPath, type IsoTime, isoTimeOf } from './core/values.ts';
+import { type AbsPath, type IsoTime, absPath, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf } from './needsuser.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from './input/plan.ts';
@@ -70,7 +70,8 @@ import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
 import { effectiveDependency } from './schedule/graph.ts';
-import { admitter, nextStage, rankOf } from './schedule/ready.ts';
+import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
+import { specFacts } from './pipeline/reproduce.ts';
 import { type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import { type ResolvedRouting, type SeatSources, planStack, resolveRouting } from './routing/layers.ts';
@@ -385,6 +386,8 @@ type Inputs = Readonly<{
   /** The routing in force, for admission's backend constraints; null before any start. */
   routing: RoutingTable | null;
   legacy: boolean;
+  /** What admission and the next stage read from each unit's spec in force (M3 B3). */
+  spec: SpecFactsOf;
 }>;
 
 const NO_WAIT: Omit<WaitingFor, 'deps' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
@@ -410,11 +413,11 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
     if (deps.some((d) => dead(view, d))) return { state: 'blocked', waitingFor: waitFor({ deps, edges }) };
     if (deps.length > 0 || edges.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, edges }) };
   }
-  const next = nextStage(u);
+  const next = nextStage(u, x.spec(unit).reproduces);
   const table = x.routing;
   if (next?.kind === 'admission' && table !== null) {
     // The arc's table for every unit (B9: a unit's own layer, once status resolves per unit).
-    const a = admitter(() => table)({
+    const a = admitter(() => table, x.spec)({
       view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
     });
     if (a.kind === 'wait') {
@@ -553,8 +556,15 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const blocking = blockingItems(runDir, view);
   const resolved = start === null ? null : resolveRouting(planStack(start.record.profile, readRepoConfig(start.record.repo), start.plan));
   const scheduling = view.scheduling();
+  // The specs in force are read only once a finding is active, which a started arc (start.json written first) alone has.
+  const spec: SpecFactsOf = record === null
+    ? (u) => {
+      if (view.holistic().findings.length > 0) throw new Error(`status: arc ${arc} has findings but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
+      return { reproduces: false, repairs: new Set() };
+    }
+    : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
   const inputs: Inputs | null = plan === null || scheduling === null ? null : {
-    view, plan, sched, alive: owner.state === 'alive', blocking, routing: resolved?.table ?? null, legacy: scheduling === 'legacy',
+    view, plan, sched, alive: owner.state === 'alive', blocking, routing: resolved?.table ?? null, legacy: scheduling === 'legacy', spec,
   };
   const starts = attemptStarts(events);
   const now = Date.now();

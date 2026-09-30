@@ -195,7 +195,7 @@ const kindOf = (u: string): string => (u.startsWith('@cpu#') ? '@cpu' : u);
 function waiting(view: JournalView, plan: PlanM1, id: UnitId, granted: ReadonlyMap<UnitId, number>, rank: Rank): string | null {
   const u = view.unit(id);
   if (u.status !== 'active' || u.open !== null) return null;
-  const next = nextStage(u);
+  const next = nextStage(u, false); // an M2 fixture arc: no finding, so no unit reproduces a mutant first
   if (next === null || next.kind !== 'admission' || next.stage === 'prepare') return null;
   const control = view.control();
   if (control.pausedAll || control.pausedUnits.includes(id)) return null;
