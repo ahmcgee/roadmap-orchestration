@@ -32,10 +32,14 @@
 // checkout removed, the slot released), and the source re-evaluates.
 //
 // `runJobLanes` is the minimum a job's lanes need (a docs publication's here): serial lanes under `job{job}`, spawned
-// as `journey{owner: job}`, reserved first of every unit, evidence per lane, a witness record per arc lane. B2 extends
-// it (the red-lane protocol, batch and audit lanes).
+// as `journey{owner: job}`, reserved first of every unit, evidence per lane execution in its own immutable dir
+// (`jobLaneDir`: a suite lane and an arc lane of one id, or two invocations, never share one), a witness record per
+// arc lane, and the checkout's integrity after the lanes (as a unit candidate's suite, src/pipeline/lanes.ts): a lane
+// that left it dirty or moved its HEAD is preserved as evidence (`_dirty`) and refuses the certification, since the
+// tree the lanes tested is not the commit that would publish. B2 extends it (the red-lane protocol, batch and audit
+// lanes).
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
 import {
@@ -48,10 +52,10 @@ import { type CommandVerdict, type LaneDef, type NeedsUserContent, STDERR_FILE, 
 import { type AbsPath, type RepoPath, absPath, branchRef, isoTimeOf, repoPattern } from '../core/values.ts';
 import { applyContractOps } from '../docs/contracts.ts';
 import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs, treeOf } from '../git/docs.ts';
-import { capturedEvidence } from '../git/evidence.ts';
+import { capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
 import { gitRun, refTarget } from '../git/git.ts';
-import { snapshotRequestOf } from '../git/snapshot.ts';
+import { type JobLaneKind, jobEvidenceRoot, jobLaneDir, snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
@@ -80,7 +84,7 @@ import type { ResourceRequest } from '../schedule/types.ts';
 import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
 import { preemptCandidate } from './integrate.ts';
 import { invocationDir, invoke } from './invoke.ts';
-import { LANE_DEADLINE_MS, LANE_STALL_MS, laneRequest } from './lanes.ts';
+import { LANE_DEADLINE_MS, LANE_STALL_MS, dirtyPaths, laneRequest } from './lanes.ts';
 import { runOp, runPrepared } from './dispatch.ts';
 import { executorIdentity } from './stages.ts';
 
@@ -102,8 +106,6 @@ const NEVER = new AbortController().signal;
 const LANE_GRACE_MS = 5_000;
 
 export const docsWorktree = (plan: PlanM1, pub: JobId): AbsPath => absPath(join(plan.worktreeRoot, plan.arc, `${pub}.checkout`));
-/** Where a job keeps its lanes' evidence: one dir per lane, as a series does (`evidence/jobs/<job>/<lane>/`). */
-export const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
 
 /** The executor's docs publisher: `DocsPublisher` over `ctx` (src/recover/revision.ts). */
 export function docsPublisher(ctx: DocsContext): DocsPublisher {
@@ -272,6 +274,9 @@ export type JobLane = Readonly<{ def: LaneDef; laneRev: LaneRev; witness: ArcLan
 
 export const suiteJobLane = (def: LaneDef): JobLane => ({ def, laneRev: suiteLaneRev(def), witness: null });
 export const arcJobLane = (def: ArcLaneDef): JobLane => ({ def, laneRev: laneRevOf(def), witness: def });
+const kindOf = (lane: JobLane): JobLaneKind => (lane.witness === null ? 'suite' : 'arc');
+/** The file an arc lane's reporter writes, in its execution's dir. */
+const WITNESS_LINES = 'witness.lines';
 
 /** A lane's run: its verdict, its evidence dir, and a witness lane's record. */
 export type JobLaneRun = Readonly<{ lane: LaneId; inv: InvocationId; verdict: CommandVerdict; dir: AbsPath; record: WitnessRecord | null }>;
@@ -285,7 +290,14 @@ export type JobSeriesEnd =
   /** A lane's resources could not be cleaned: job-owned residues, never released. */
   | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
 
-export type JobSeries = Readonly<{ end: JobSeriesEnd; runs: readonly JobLaneRun[] }>;
+/**
+ * The checkout after the lanes: the paths they left dirty (tracked or unignored changes, snapshotted under
+ * `<root>/_dirty`) and the HEAD they moved it to (null: still at the commit). Either refuses certification.
+ */
+export type JobCheckout = Readonly<{ dirty: readonly RepoPath[]; movedTo: Sha | null; evidence: AbsPath }>;
+
+/** `checkout` null: no lane ran, so no checkout was made. */
+export type JobSeries = Readonly<{ end: JobSeriesEnd; runs: readonly JobLaneRun[]; checkout: JobCheckout | null }>;
 
 export type JobLaneContext = ResourceContext & Readonly<{ hostEnv: Readonly<Record<string, string | undefined>>; acquireFirst: AcquireFirst }>;
 
@@ -310,13 +322,14 @@ function jobLaneEnv(ctx: JobLaneContext, job: JobId, lane: JobLane, held: readon
 
 /**
  * Runs `lanes` one at a time under `job{job}` in the detached checkout `checkout` (created before the first lane,
- * removed after the last, citing the series' last evidence snapshot), keeping each lane's evidence under `root`.
+ * checked for integrity after the last, then removed citing the series' last evidence snapshot), keeping each lane
+ * execution's evidence in its own dir under the job's root (`jobLaneDir`).
  * Each lane reserves its declared resources first of every unit (`acquireFirst`), is probed, runs verbatim as a
  * `journey{owner: job}` spawn, and is snapshotted; an arc lane's reporter output becomes its witness record
  * (`witness.json`) and a `witnessed{for: job{job}}` fact. The series ends at the first lane `stop` says stops it.
  */
 export async function runJobLanes(
-  ctx: JobLaneContext, job: JobId, lanes: readonly JobLane[], checkout: WorktreeCreateRequest, root: AbsPath, stop: (run: JobLaneRun) => boolean,
+  ctx: JobLaneContext, job: JobId, lanes: readonly JobLane[], checkout: WorktreeCreateRequest, stop: (run: JobLaneRun) => boolean,
 ): Promise<JobSeries> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a job's lanes run in a detached checkout, not on ${checkout.checkout.branch}`);
   const { at } = checkout.checkout;
@@ -342,19 +355,23 @@ export async function runJobLanes(
       held = run(ctx, reserved, parent);
     }
     if (evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, checkout);
-    const dir = absPath(join(root, lane.def.id));
-    mkdirSync(dir, { recursive: true });
-    const witnessFile = absPath(join(dir, 'witness.lines'));
+    // The execution's own evidence dir, named by its invocation once the spawn's intent names it (the launch).
+    const dirOf = (invDir: AbsPath): AbsPath => jobLaneDir(ctx.runDir, job, kindOf(lane), lane.def.id, basename(invDir));
     const outcome = await invoke(ctx.journal, ctx.containment, {
       runDir: ctx.runDir,
       origin: { type: 'new', key: opKey(`lane:${job}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
       subject: { purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: { type: 'job', job } },
-      launch: () => ({
-        argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: jobLaneEnv(ctx, job, lane, held?.resources ?? [], witnessFile),
-        stdinPath: null, stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
-      }),
+      launch: (invDir) => {
+        mkdirSync(dirOf(invDir), { recursive: true });
+        return {
+          argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)),
+          env: jobLaneEnv(ctx, job, lane, held?.resources ?? [], absPath(join(dirOf(invDir), WITNESS_LINES))),
+          stdinPath: null, stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
+        };
+      },
     });
     const invDir = invocationDir(ctx.runDir, outcome.inv);
+    const dir = dirOf(invDir);
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
       source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
     })).op;
@@ -380,7 +397,7 @@ export async function runJobLanes(
     }
     let record: WitnessRecord | null = null;
     if (lane.witness !== null) {
-      const tests = collectWitness(lane.witness.reporter, { witnessFile, stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
+      const tests = collectWitness(lane.witness.reporter, { witnessFile: absPath(join(dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
       record = witnessRecordOf({ lane: lane.witness, envId: envIdOf(lane.witness, hostIdentity(), ctx.hostEnv), treeSha, inv: outcome.inv, purpose: 'witness' }, tests);
       const recordsSha256 = writeWitnessRecord(dir, record);
       ctx.journal.fact({
@@ -392,10 +409,16 @@ export async function runJobLanes(
     runs.push(ran);
     if (stop(ran)) break;
   }
-  if (evidence !== null) {
-    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  if (evidence === null) return { end, runs, checkout: null };
+  // The checkout's integrity: what the lanes tested must be the commit itself.
+  const dirty = dirtyPaths(checkout.path);
+  const head = gitRun(checkout.path, ['rev-parse', 'HEAD']).stdout.trim() as Sha;
+  const dirtyDir = absPath(join(jobEvidenceRoot(ctx.runDir, job), '_dirty'));
+  if (dirty.length > 0) {
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, { source: checkout.path, globs: dirty.map(pathPattern), dest: dirtyDir })).op;
   }
-  return { end, runs };
+  await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  return { end, runs, checkout: { dirty, movedTo: head === at ? null : head, evidence: dirtyDir } };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -439,7 +462,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes));
   const lanes = [...plan.suite.lanes.map(suiteJobLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJobLane))];
   const series = await runJobLanes(
-    { ...ctx, acquireFirst: ctx.arbiter.acquireFirst }, pub, lanes, docsWorktreeRequest(commit), jobEvidenceRoot(ctx.runDir, pub),
+    { ...ctx, acquireFirst: ctx.arbiter.acquireFirst }, pub, lanes, docsWorktreeRequest(commit),
     (r) => r.record === null && r.verdict !== 'pass',
   );
   crashPoint('docs.after-lanes');
@@ -473,6 +496,11 @@ function verdictReason(series: JobSeries, obligations: Obligations | null, selec
     case 'cleanup-failed':
       return `a lane's resources could not be cleaned (${series.end.failed.join(', ')}): job-owned residues, probed and reclaimed`;
   }
+  const tree = series.checkout;
+  if (tree !== null && tree.dirty.length > 0) {
+    return `its lanes changed the checkout they tested (${tree.dirty.join(', ')}; kept at ${tree.evidence}): the tested tree is not the commit it would publish`;
+  }
+  if (tree !== null && tree.movedTo !== null) return `its lanes moved the checkout's HEAD to ${tree.movedTo}: the tested tree is not the commit it would publish`;
   const red = series.runs.find((r) => r.record === null && r.verdict !== 'pass');
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;
   if (obligations === null || selected.size === 0) return null;
