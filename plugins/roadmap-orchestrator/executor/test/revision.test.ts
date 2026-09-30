@@ -7,7 +7,7 @@
 // apply.obligation-split-parent-stays, apply.scope-growth-ruling, apply.holistic-add, apply.core-proposal,
 // startup.obligation-dropped, apply.legacy-manifest-queued, apply.legacy-manifest-open, reverse.preimage-restores,
 // reverse.conflict-refused, reverse.repair-unit-refused, split.checkpoint-drop-divergence, fence.capture-waits,
-// revision.crash-after-payload, revision.crash-after-docs.
+// revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells).
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -41,6 +41,7 @@ import { commandReconciler } from '../src/recover/command.ts';
 import { recover } from '../src/recover/recover.ts';
 import { bytesSha256 as fileSha256Bytes, fileSha256 } from '../src/spec/spec.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
+import { REVISION_COMMIT, crashCells } from './matrix.ts';
 import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -718,9 +719,16 @@ test('split.checkpoint-drop-divergence: a checkpoint split may drop text only ci
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Crash: the activation payload before any ff (G1)
+// Crash: the activation payload before any ff (G1). The cells are the matrix row's (test/matrix.ts REVISION_COMMIT).
 
-describe('revision.commit crash cells', () => {
+describe(`matrix row ${REVISION_COMMIT}`, () => {
+  const cells = crashCells(REVISION_COMMIT);
+
+  test('lists the revision commit\'s crash points', () => {
+    assert.deepEqual(cells.map((c) => `${c.boundary} ${c.label}`), ['B2 revision.commit.after-intent', 'B3 revision.commit.after-docs', 'B4 revision.commit.after-fact']);
+  });
+
+  /** An `apply` adding an obligation (a docs publication), its child crashed at `label`; the arc and the command id. */
   async function crashAt(label: string): Promise<Readonly<{ d: ArcDescriptor; id: string }>> {
     const r = holisticArc();
     const d = r.d;
@@ -734,49 +742,72 @@ describe('revision.commit crash cells', () => {
     return { d, id: file.id };
   }
 
-  async function recoverArc(r: ArcRun): Promise<void> {
-    await recover({ stage: r.ctx, commands: ctxOf(r) });
+  const openCommit = (r: ArcRun): IntentOf<'revision.commit'> => {
+    const open = r.journal.view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined;
+    assert.ok(open !== undefined, 'the commit is open');
+    return open;
+  };
+
+  /** Per label: the state the crash left, the whole recovery, and what it must come to. */
+  const CHECKS: Readonly<Record<string, Readonly<{ name: string; check: (r: ArcRun, id: string) => Promise<void> }>>> = {
+    'revision.commit.after-intent': {
+      name: 'revision.crash-after-payload: kept payload and intent, no docs ff → recovery aborts the commit and the apply re-evaluates and commits once',
+      check: async (r, id) => {
+        const open = openCommit(r);
+        assert.ok(keptInput(r.ctx.runDir, open.expect.payloadSha256, 'revision.json') !== null, 'its payload is kept before it is named');
+        assert.equal(r.journal.view.opsOf('integration.ff').length, 0, 'no ff');
+        await recover({ stage: r.ctx, commands: ctxOf(r) });
+        assert.equal(r.journal.view.doneOf(open.op), null, 'the crashed commit is aborted, not done');
+        assert.deepEqual(applied(r).map((f) => [f.rev, f.command]), [[1, null], [2, id]]);
+        assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'one docs ff, by the re-evaluated commit');
+      },
+    },
+    'revision.commit.after-docs': {
+      name: 'revision.crash-after-docs: docs ff published, no plan-applied → recovery appends exactly the payload, with the publication',
+      check: async (r, id) => {
+        const open = openCommit(r);
+        assert.equal(applied(r).length, 1, 'no plan-applied yet');
+        const head = revParse(r.d.repo, 'main');
+        await recover({ stage: r.ctx, commands: ctxOf(r) });
+        const fact = lastApplied(r);
+        assert.deepEqual([fact.rev, fact.command, fact.payloadSha256, fact.publication], [2, id, open.expect.payloadSha256, { pub: 'docs-1', head }]);
+        const payload = keptPayload(r.ctx.runDir, open.expect.payloadSha256);
+        assert.deepEqual(fact.changes, payload.changes);
+        assert.equal(canonicalJson(fact.routingProvenance), canonicalJson(payload.routingProvenance));
+        assert.equal(r.journal.view.doneOf(open.op)?.kind, 'revision.commit', 'the commit is done');
+        assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'the one docs ff');
+        assert.equal(git(r.d.repo, 'rev-parse', branchRef(branchName('main'))), head);
+      },
+    },
+    'revision.commit.after-fact': {
+      name: 'revision.crash-after-fact: plan-applied written, the commit open → recovery closes it reconciled with no second fact',
+      check: async (r, id) => {
+        const open = openCommit(r);
+        const before = lastApplied(r);
+        assert.deepEqual([before.rev, before.payloadSha256], [2, open.expect.payloadSha256]);
+        await recover({ stage: r.ctx, commands: ctxOf(r) });
+        assert.deepEqual(applied(r).map((f) => [f.rev, f.command]), [[1, null], [2, id]], 'one plan-applied');
+        const done = readJournal(r.ctx.runDir, r.journal.view.arc).events.find((e) => e.type === 'done' && e.op === open.op);
+        assert.ok(done !== undefined && done.type === 'done' && done.recoveredBy === 'reconciled', 'the commit closes reconciled');
+        assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'the one docs ff');
+      },
+    },
+  };
+
+  for (const cell of cells) {
+    const c = CHECKS[cell.label];
+    if (c === undefined) throw new Error(`no check for ${cell.label}`);
+    test(`${c.name} (${cell.boundary} ${cell.label})`, T, async () => {
+      const { d, id } = await crashAt(cell.label);
+      const r = contextFor(d);
+      try {
+        await c.check(r, id);
+        assert.equal(readReceipt(r.ctx.runDir, id as never, 'applied')?.state, 'applied');
+        assert.deepEqual(r.journal.view.openIntents(), [], 'recovery leaves nothing open');
+      } finally {
+        r.journal.close();
+      }
+    });
   }
-
-  test('revision.crash-after-payload: kept payload and intent, no docs ff → recovery aborts the commit and the apply re-evaluates and commits once', T, async () => {
-    const { d, id } = await crashAt('revision.commit.after-intent');
-    const r = contextFor(d);
-    try {
-      const open = r.journal.view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined;
-      assert.ok(open !== undefined, 'the commit is open');
-      assert.ok(keptInput(r.ctx.runDir, open.expect.payloadSha256, 'revision.json') !== null, 'its payload is kept before it is named');
-      assert.equal(r.journal.view.opsOf('integration.ff').length, 0, 'no ff');
-      await recoverArc(r);
-      assert.equal(r.journal.view.doneOf(open.op), null, 'the crashed commit is aborted, not done');
-      assert.deepEqual(applied(r).map((f) => [f.rev, f.command]), [[1, null], [2, id]]);
-      assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'one docs ff, by the re-evaluated commit');
-      assert.equal(readReceipt(r.ctx.runDir, id as never, 'applied')?.state, 'applied');
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('revision.crash-after-docs: docs ff published, no plan-applied → recovery appends exactly the payload, with the publication', T, async () => {
-    const { d, id } = await crashAt('revision.commit.after-docs');
-    const r = contextFor(d);
-    try {
-      const open = r.journal.view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined;
-      assert.ok(open !== undefined);
-      assert.equal(applied(r).length, 1, 'no plan-applied yet');
-      const head = revParse(d.repo, 'main');
-      await recoverArc(r);
-      const fact = lastApplied(r);
-      assert.deepEqual([fact.rev, fact.command, fact.payloadSha256, fact.publication], [2, id, open.expect.payloadSha256, { pub: 'docs-1', head }]);
-      const payload = keptPayload(r.ctx.runDir, open.expect.payloadSha256);
-      assert.deepEqual(fact.changes, payload.changes);
-      assert.equal(canonicalJson(fact.routingProvenance), canonicalJson(payload.routingProvenance));
-      assert.equal(r.journal.view.doneOf(open.op)?.kind, 'revision.commit', 'the commit is done');
-      assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'the one docs ff');
-      assert.equal(readReceipt(r.ctx.runDir, id as never, 'applied')?.state, 'applied');
-      assert.equal(git(d.repo, 'rev-parse', branchRef(branchName('main'))), head);
-    } finally {
-      r.journal.close();
-    }
-  });
 });
 

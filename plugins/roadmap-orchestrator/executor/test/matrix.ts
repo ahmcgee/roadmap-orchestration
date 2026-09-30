@@ -72,6 +72,7 @@ export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
+export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -110,6 +111,7 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B2: [
     'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'salvage.act-start', 'candidate.act-start', 'ff.act-start', 'snapshot.act-start', 'spec.patch.before-write', 'recover.before-op',
+    'revision.commit.after-intent',
   ],
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'salvage.after-copy-out',
@@ -118,7 +120,7 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   ],
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'salvage.act-end', 'candidate.act-end', 'ff.act-end',
-    'snapshot.act-end', 'spec.patch.after-write',
+    'snapshot.act-end', 'spec.patch.after-write', 'revision.commit.after-fact',
   ],
   B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
 };
@@ -133,9 +135,9 @@ function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[
 
 const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the torn or unwritten record is absent after the restart (a torn line is discarded with one tail-discarded fact); a lost done leaves its op open for its reconciler, a lost intent never began; the arc ends as uncrashed',
-  B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
+  B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once; the start\'s revision.commit is finished from its kept payload, reconciled); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
   B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; a start cut short between keeping the plan\'s bytes and its plan-applied fact records revision 1 on the respawn; the arc ends as uncrashed',
-  B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the arc ends as uncrashed',
+  B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the start\'s revision.commit with its plan-applied written closes reconciled, no second fact; the arc ends as uncrashed',
   B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
 };
 
@@ -147,6 +149,8 @@ export const CONCURRENT_EXCLUDED_LABELS: Readonly<Record<string, string>> = {
   'recover.before-op': 'a recovery occurrence: the crash during recovery rows and the whole-pipeline rows crash it',
   'recover.after-op': 'a recovery occurrence: the crash during recovery rows and the whole-pipeline rows crash it',
   'plan.apply.after-inputs': 'a start occurrence (the plan put in force before any unit runs): the whole-pipeline and plan-start rows crash it',
+  'revision.commit.after-intent': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
+  'revision.commit.after-fact': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
 };
 
 /**
@@ -639,6 +643,32 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the fact is written: the reconciler finds it (the postcondition) and writes the applied receipt if missing, or reads it; no second fact',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // An `apply` adding an obligation (so it has a docs publication), applied by a child with the stand-in docs
+    // publisher (test/fixtures/revision-child.ts); the whole recovery runs. A start's own revision (no docs step)
+    // reaches the B2 and B4 labels in the whole-pipeline rows, which crash them there.
+    row: REVISION_COMMIT,
+    test: 'test/revision.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['revision.commit.after-intent'],
+        recovery: 'the payload is kept and named, no docs ff: the commit is aborted (no needs-user) and the apply re-evaluates and commits once: one plan-applied, one docs ff',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['revision.commit.after-docs'],
+        recovery: 'the docs ff published, no plan-applied: recovery appends exactly the kept payload with that publication, never reclassifying; done reconciled; the apply finds its fact',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['revision.commit.after-fact'],
+        recovery: 'plan-applied written, its divergences and done not: recovery appends only what is missing; done reconciled; one plan-applied',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the commit: nothing is open for recovery' },
     },
   },
   {

@@ -13,6 +13,8 @@ export const NONE: Trace = UNCRASHED;
  */
 export const FROM_B2: Readonly<Record<string, Trace['recoveredBy']>> = {
   'proc.spawn': ['reconciled'], 'resource.transition': ['reconciled'], 'command.apply': ['reconciled'],
+  // A start's revision (no docs step) is finished from its kept payload by the next start (settlePlan): reconciled.
+  'revision.commit': ['reconciled'],
 };
 
 /** Every executor label but the journal's: what recovery does to the op it cut short. */
@@ -55,6 +57,9 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'spec.patch.after-write': R('reconciled'),
   // The start kept plan.json's bytes but wrote no plan-applied fact: the respawn records revision 1.
   'plan.apply.after-inputs': NONE,
+  // The start's revision.commit is open (its plan-applied written or not): finished from its kept payload, reconciled.
+  'revision.commit.after-intent': R('reconciled'),
+  'revision.commit.after-fact': R('reconciled'),
   'unit.after-stage': NONE,
   'recover.before-op': NONE,
   'recover.after-op': NONE,

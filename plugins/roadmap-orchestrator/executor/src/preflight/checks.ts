@@ -44,7 +44,8 @@ import { parseObligations, parseRulingSidecar, parseVision } from '../holistic/t
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InputFiles, type RoutingBase, commitRevisionNow, openRevision, planInForce, readInputFiles, recordPlan, specBytesOf, specFilePath, specShaInForce,
+  type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keptPayload, openRevision, planInForce, readInputFiles, recordPlan,
+  specBytesOf, specFilePath, specShaInForce,
 } from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
@@ -474,6 +475,13 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): Re
  * in force and asks nothing.
  */
 function settlePlan(journal: OpenJournal, context: StartupContext, files: InputFiles | null): readonly Rejection<'plan-change-refused'>[] {
+  // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
+  // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
+  const open = openRevision(journal.view);
+  if (open !== null && open.expect.source.type === 'start') {
+    appendRevision(journal, open, keptPayload(context.runDir, open.expect.payloadSha256), null);
+    closeRevision(journal, open.op, true);
+  }
   const inForce = planInForce(context.runDir, journal.view);
   if (files === null) {
     if (inForce === null) throw new Error('a respawn with no plan in force reads the files');
@@ -489,7 +497,7 @@ function settlePlan(journal: OpenJournal, context: StartupContext, files: InputF
     recordPlan(journal, context.runDir, files, baseline.changes, routingBase);
     return [];
   }
-  // A revision a crash left mid-commit: recovery settles it before anything runs; the files are settled at the next start.
+  // A command's or bundle's revision a crash left mid-commit: recovery settles it; the files are settled at the next start.
   if (openRevision(journal.view) !== null) return [];
   const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase };
   const verdict = evaluateRevision(rctx, files, { type: 'start' });
