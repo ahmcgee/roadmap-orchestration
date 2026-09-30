@@ -129,7 +129,8 @@ test('snapshot.reconstruct-alone: the run dir deleted and restored from the ref 
   const after = status(runDir, arc, absPath(r.hostDir));
   assert.equal(before.run.state, 'complete');
   assert.ok(before.plan !== null && before.routing !== null && before.spend.byModel.models.length > 0, 'plan in force, routing and spend by model are derived');
-  // heartbeat.json is liveness, not a record: the only field the snapshot does not carry (and the fold's own timing).
-  const records = (s: typeof before) => ({ ...s, run: { ...s.run, heartbeatAt: null }, host: { ...s.host, log: { ...s.host.log, foldMs: 0 } } });
+  // heartbeat.json is liveness, not a record: the only field the snapshot does not carry. `host.log` measures the log
+  // file itself, which the snapshot carries up to its high-water (its own publication's op lines come after).
+  const records = (s: typeof before) => ({ ...s, run: { ...s.run, heartbeatAt: null }, host: { ...s.host, log: null } });
   assert.deepEqual(records(after), records(before));
 });

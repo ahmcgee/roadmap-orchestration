@@ -710,7 +710,7 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, unit, inv, resource}` (per
 resource). Run dir: `heartbeat.json` (`Heartbeat {v, generation, at}`), every 10 s, stale at 5 min; `start.json`
 (`RunStart {v, generation, at, repo, planFile, profile}` with the resolved profile, rewritten by every start that
-passes, read by `status` to re-resolve routing tables); `status.rejection.json` (`RejectionFile`, above).
+passes, read by `status` for the repo and plan file, and to rebuild the routing of a dev.5 revision not yet adopted); `status.rejection.json` (`RejectionFile`, above).
 
 ## Commands, receipts, needs-user
 
@@ -868,19 +868,21 @@ settle, never dispatch). Unreconciled: a corrupt log, a survivor whose launch.js
 survivor left after the pass.
 
 `status(runDir, arc, hostDir) → Status` (`src/status.ts`, `roadmap status [--repo --arc]`, JSON only): `arc`;
-`run{state: running|held|parked|blocked|complete|refused|no-owner, owner, heartbeatAt}`; `units[…]` (the plan in
+`run{state: running|draining|held|parked|blocked|complete|refused|no-owner, owner, heartbeatAt}`; `units[…]` (the plan in
 force's units, below); `edges`; `runOnly: UnitId[]|null`; `legacy: bool` (`scheduling() = legacy`); `plan{rev,
 planSha256}|null` (the plan in force; an arc with none yet reads its plan file, warned); `routing{profile, rev,
-seats: ClassTable, sources, bindings}|null` (the latest start's profile resolved under the current repo config and
-the plan in force; classes only, no model id); `needsUser[{id, reason, blocking}]` (unacknowledged, the log's items
+seats: ClassTable, sources, bindings}|null` (since M3 B9: the plan in force under its revision's routing provenance;
+classes only, no model id); `needsUser[{id, reason, blocking}]` (unacknowledged, the log's items
 and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `commands{pending[{id, type}], receipts[]}` (the
-last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, bySmoke}` (every total: `calls, input,
+last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, byJob, bySmoke}` (every total: `calls, input,
 output, cacheRead, cacheWrite, turns, costUsd, unavailable`; `bySmoke` per backend and revision, in no role or
-model total); `host{…}` (below); `parkedBackends`; `rejection`. The log is read with `readJournal`
+model total); `host{…, log}` (below); `parkedBackends`; `rejection`; and the M3 keys (`holistic`, `target`, `nowTrue`,
+`notYetTrue`, `waived`, `deferred`, `vision`, `divergences`, `decisionsSince`, `convergence`, `findings`, `audit`,
+`owed`, `completion`: "Choices made in M3 B9"). The log is read with `readJournal`
 (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
 the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
-id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, re-resolved from every plan
-revision the log applied and the repo config under every built-in profile.
+id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, resolved from the routing
+provenance each plan revision recorded (M3 B9 item 2).
 
 A unit line: `{unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}|null}` (`status` is the
 fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are not merged), and since M2:
@@ -908,7 +910,9 @@ now covers: park seqs and a residue's fail seq), nextProbeAt (null: due now), la
 target with a current retryable park or an own-arc residue, `probeTargets`); `backends[{backend, parkSeq, class}]`.
 
 `run.state`: without a live executor, `refused` (the latest start was refused), `complete` (every unit merged, cut,
-superseded or parked operator, no own-arc residue left, and no blocking needs-user open) or `no-owner`. With one, the first that holds:
+superseded or parked operator, no own-arc residue left, and no blocking needs-user open; a holistic arc: its
+`arc-completed` active, M3 B9 item 8) or `no-owner`. With one, the first that holds (`running` reads `draining` while
+admissions are closed):
 `running` (a unit runs, prepares, is ready, waits in the arbiter's queue, or waits only on a drain), `held` (a unit
 is held or waits on a pause), `parked` (a blocking needs-user is open), `blocked` (work remains that nothing can
 move: parks or own-arc residues being probed, run-only, an unresolved edge, a dead dependency, a tripped breaker), else `running`.
@@ -1354,7 +1358,7 @@ work, whose queue is empty, whose head is in integration history and whose ref v
    unit)`, src/routing/layers.ts): `StageContext.routing(unit | null)` and `CommandContext.routing(unit | null)`
    resolve it, in the executor from the `routingProvenance` of the revision in force (a dev.5 revision's rebuilt,
    `routingProvenanceOf`), never a live config. A unit without a layer has the arc's routingRev. Admission reads each
-   unit's table (`admitter((unit) => table)`); `status` still reads the arc's (B9).
+   unit's table (`admitter((unit) => table)`); `status` does too since B9.
 2. **Every dispatch record since dev.6** carries `transientRules: 'm3'` and `bounds: boundsOf(plan, unit)`
    (`firstPin`); a re-pin copies both unless the plan in force changed the bounds. The dispatch check re-pins when
    the unit's routingRev, its bounds, its scope (a ruled growth: the fold admits a scope containing the previous one
@@ -1761,3 +1765,54 @@ src/pipeline/dispatch.ts `callArcRole`):
 13. **The admit template** (B4 carry-forward) is part of the rendered `plan` input: the spec in force of the plan's
     first unit, pretty JSON. No prompt module changed.
 14. **Quiescence** (`quiescentGenerations`): a generation whose checkpoint decided `no-op` under the vision in force.
+
+**Choices made in M3 B9** (`status`, `watch`, the meter; src/{status,watch,meter}.ts):
+
+1. **The meter charges a job's call to its arc seat.** `MeterSubject.job` counts in `byRole` and `bySeat` (`lens.arc`,
+   `checkpoint.arc`) like a unit's call, and per job in `byJob` (`{job, role, routingRev}` + totals), never in `byUnit`.
+   `status.spend.byJob` shows it.
+2. **By-model totals come from recorded provenance only.** Each `plan-applied`'s table is resolved from its own
+   `routingProvenance`, or a 1.0.0-dev.5 revision's from its adoption record (`routing-provenance/<rev>.json`,
+   `reconstructed`), for the arc and each unit layer. A revision with neither (a dev.5 arc no start of this release has
+   adopted, or one adopted as `unreconstructable`) leaves its routing revs in `unresolvedRevs`; the live repo config is
+   never read for history. `routing` and admission read the provenance in force per unit (`provenanceStack`); only a dev.5
+   revision not yet adopted is rebuilt from the live config, warned (scaffolding, as `src/executor.ts` does).
+3. **`nowTrue` / `notYetTrue`** list every non-exempt obligation in id order with its verdict on the integration head's
+   tree (the live branch tip): the latest observation there of its witness lane at the lane's current rev, in whichever
+   environment ran it (status runs anywhere; the executor's reuse keys on its own `envId`), else `not-covered`. A split
+   parent's verdict is its non-exempt children's (held when all hold, else the worst of not-held, partial, unwitnessed,
+   not-covered). `activation` is the effective one (latched → must-hold). `blockingUnits`: a pending future obligation's
+   unmerged `deliveredBy` (lineage heads); otherwise the owners of its active findings. `reason` is the first of
+   supervision, host, waiting-dep, code over those units' states (`ObligationReason`), `spec` when there are none.
+   `evidence` is the witness record's evidence dir.
+4. **`target.nextMilestone`** (R13): among non-exempt, non-split, not latched future obligations with an unmerged
+   `deliveredBy`, the fewest unmerged (ties: lowest id). **`criticalPath`**: the longest chain of unsettled units over
+   effective `after` edges (ties: plan order).
+5. **`decisionsSince`** runs from the latest acknowledgement of a `divergence-digest` (the whole arc before one), in log
+   order: a revision's new sidecars (`ruling`, the arc's first revision excepted), a bundle's revision (`bundle`), a
+   `reverse` command's revision (read from its command file; a run dir restored from a snapshot has none, and the
+   revision then shows only by its changes), each `unit-cut` (`cut`), `unit-reentered` (`reenter`) and non-evidence spec
+   change (`patch`), every done `spec.patch` op (`patch`, ruled by plan-check or the executor), `steered` and `divergence`
+   facts. `ruledBy`: `architect{command|null}` (null: a start's files), `checkpoint{job}`, `judgment{planCheck}`,
+   `executor`. `quarantine` has no 1.0 record and is not emitted.
+6. **`divergences`** are B6's `uncoveredDivergences`, each with the open digest binding it (`digest`, else null).
+   **`convergence`** is B6's `brakesOf` over the committed bundle revisions (`{k, counter, since, open}`); the identity
+   bound needs each bundle's ops (the checkpoint's recorded call, read through a `StageContext`), so status does not
+   render the changed identities.
+7. **`audit`**: per lens in L, `coveredTo` (B5's watermark), `outstanding`, `pendingDocs`; `uncovered` the outstanding
+   lenses' ranges to the head; `generation` the highest any audit or checkpoint recorded; `checkpointLaneMinutes` the
+   wall-clock minutes of journey spawns owned by a `ckpt-n` job, intent to done (a running one's to now). **`owed`**: the
+   open `audit-owed` items (the executor's cadence decides them; status does not re-derive triggers).
+8. **`run.state`** gains `draining` (a live executor that would be `running`, with admissions closed). A holistic arc is
+   `complete` only while its `arc-completed` is active (A20); an arc without the layer completes as in M2.
+   **`completion`** `{planRev, head, active, sealed, notSealed, unmet}`: `sealed` is A5b's `sealingOf` (its reason or
+   mismatch detail in `notSealed`); `unmet` names the §2.10 conditions that fail now (`COMPLETION_CONDITIONS`: units
+   open, obligations not discharged, blocking items, pending commands, coverage outstanding, audit owed, the latest
+   generation not quiescent under the vision in force (B6 `quiescentGenerations`), residues). The close-out publication
+   is not among them (B7's).
+9. **`host.log`** `{bytes, events, foldMs, compactionDue}`: the size of `events.jsonl`, the events folded, the fold's
+   wall time in ms, and whether either compaction trigger (50 MB, 2 s) is reached. Two status reads differ only by
+   `foldMs`.
+10. **`commands.pending`** is `pendingCommandIds` (A5b); the receipts are listed from the receipts dir.
+11. **`watch`** is unchanged in code: every raised item, blocking or not, is a `needs-user` line, so the M3 kinds wake
+    the Monitor as any other (test `watch.m3-kinds`).

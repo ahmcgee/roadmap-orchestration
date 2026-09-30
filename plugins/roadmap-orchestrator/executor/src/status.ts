@@ -83,7 +83,7 @@ import { readJson } from './core/fsx.ts';
 import {
   type ArcId, CPU_POOL, type CommandId, type DivergenceId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId,
-  commandId, compareResourceUnits, cpuToken, parseJobId,
+  commandId, compareResourceUnits, cpuToken, parseJobId, parseOpId,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
@@ -99,7 +99,7 @@ import {
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf } from './needsuser.ts';
-import { DEFAULT_CONVERGENCE_K, type PlanM1, type PlanUnit, lensSetOf, parsePlan } from './input/plan.ts';
+import { type PlanM1, type PlanUnit, lensSetOf, parsePlan } from './input/plan.ts';
 import { type JobTotal, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { readRepoConfig } from './preflight/checks.ts';
@@ -122,7 +122,9 @@ import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
 import { readLegacyProvenance, legacyProvenancePath, witnessDir } from './git/snapshot.ts';
-import { coverageBase, coverageOf, publishedHeads } from './holistic/coverage.ts';
+import { coverageBase, coverageOf } from './holistic/coverage.ts';
+import { type AppliedBundle, brakesOf, quiescentGenerations } from './holistic/convergence.ts';
+import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric, findingMetrics, isActive } from './holistic/findings.ts';
 import { type Observation, verdictOf } from './holistic/observe.ts';
 import {
@@ -330,6 +332,8 @@ export type ConvergenceView = Readonly<{
   k: number;
   /** Bundles applied since the counter last cleared (a publication, a latch, or an acknowledged `convergence-bound`). */
   counter: number;
+  /** The seq the counter counts from. */
+  since: number;
   /** Open `convergence-bound` and `convergence-identity` items. */
   open: readonly NeedsUserId[];
 }>;
@@ -1034,11 +1038,8 @@ function visionOf(revision: RevisionInForce, fold: HolisticFold): VisionView | n
 
 /** Every divergence no acknowledged digest covers (H11), ascending. */
 function divergencesOf(view: JournalView): readonly DivergenceView[] {
-  const fold = view.holistic();
-  const acked = fold.digests.filter((g) => view.ackOf(g.needsUser) !== null);
-  const covered = new Set(acked.flatMap((g) => g.ids));
-  const open = new Map(fold.digests.filter((g) => view.ackOf(g.needsUser) === null).flatMap((g) => g.ids.map((id) => [id, g.needsUser] as const)));
-  return fold.divergences.filter((d) => !covered.has(d.id)).map((d) => ({
+  const open = new Map(view.holistic().digests.filter((g) => view.ackOf(g.needsUser) === null).flatMap((g) => g.ids.map((id) => [id, g.needsUser] as const)));
+  return uncoveredDivergences(view).map((d) => ({
     id: d.id, type: d.type, from: d.from, what: d.what, cites: d.cites, evidence: d.evidence, bundle: d.job, compensation: d.compensation,
     digest: open.get(d.id) ?? null,
   }));
@@ -1137,22 +1138,15 @@ function decisionsSince(runDir: AbsPath, arc: ArcId, view: JournalView, events: 
 }
 
 /**
- * The convergence counter (§2.8, A9): bundles applied since it last cleared (a unit or batch publication, a latch, or an
- * acknowledged `convergence-bound`), against K. Per-identity counts are the checkpoint's (B6).
+ * The convergence brakes (§2.8, A9; B6 `brakesOf`): the applied bundles counted against K since the counter last cleared,
+ * and the open brake items. The bundles are the log's committed bundle revisions; their ops (read from the checkpoint's
+ * recorded call) only feed the identity bound, which the checkpoint applies and status does not render.
  */
-function convergenceOf(view: JournalView, events: readonly Event[], plan: PlanM1, open: readonly OpenItem[], acked: ReadonlyMap<NeedsUserId, NeedsUserReason>, acks: ReadonlyMap<NeedsUserId, number>): ConvergenceView {
-  const fold = view.holistic();
-  const cleared = Math.max(
-    0,
-    ...publishedHeads(view).filter((h) => h.subject !== 'docs').map((h) => h.seq),
-    ...fold.latched.map((l) => l.seq),
-    ...[...acked].flatMap(([id, reason]) => (reason === 'convergence-bound' ? [acks.get(id)!] : [])),
-  );
-  const counter = events.filter((e) => e.seq > cleared && e.type === 'fact' && e.fact.kind === 'plan-applied' && e.fact.source?.type === 'bundle').length;
-  return {
-    k: plan.limits?.convergenceK ?? DEFAULT_CONVERGENCE_K, counter,
-    open: open.filter((n) => n.reason === 'convergence-bound' || n.reason === 'convergence-identity').map((n) => n.id),
-  };
+function convergenceOf(runDir: AbsPath, view: JournalView, plan: PlanM1): ConvergenceView {
+  const applied: AppliedBundle[] = view.opsOf('revision.commit').flatMap((commit) => (commit.expect.source.type !== 'bundle' || view.doneOf(commit.op) === null
+    ? [] : [{ job: commit.expect.source.job, seq: parseOpId(commit.op).seq, ops: [] }]));
+  const brakes = brakesOf(view, runDir, plan, applied, new Set(), (u) => u);
+  return { k: brakes.k, counter: brakes.count, since: brakes.since, open: brakes.open };
 }
 
 /** Minutes of the journey lanes checkpoint jobs ran: each spawn from its intent to its done (a running one's to now). */
@@ -1196,10 +1190,10 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
 const generationOf = (fold: HolisticFold): number =>
   Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((c) => c.inputs.generation));
 
-/** §2.10: the latest generation is quiescent when a checkpoint of it decided `no-op` under the vision in force (vacuous before any). */
-function quiescent(fold: HolisticFold, visionSha256: Sha256Hex | null): boolean {
+/** §2.10: the latest generation is quiescent under the vision in force (B6 `quiescentGenerations`; vacuous before any). */
+function quiescent(fold: HolisticFold, visionSha256: Sha256Hex): boolean {
   const g = generationOf(fold);
-  return g === 0 || fold.checkpoints.some((c) => c.inputs.generation === g && c.decided?.kind === 'no-op' && c.inputs.visionSha256 === visionSha256);
+  return g === 0 || quiescentGenerations(fold, visionSha256).has(g);
 }
 
 type CompletionInputs = Readonly<{
@@ -1220,7 +1214,7 @@ function unmetOf(x: CompletionInputs): readonly CompletionCondition[] {
   if (blocking.length > 0) unmet.add('blocking-items');
   if (x.pending > 0) unmet.add('pending-commands');
   if (view.residues().length > 0) unmet.add('residues');
-  if (fold.on) {
+  if (fold.on && x.visionSha256 !== null) {
     if (x.notYetTrue > 0) unmet.add('obligations-not-discharged');
     if (x.audit?.coverage.some((c) => c.outstanding) === true) unmet.add('coverage-outstanding');
     if (x.owed > 0) unmet.add('audit-owed');
@@ -1254,28 +1248,25 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const resolvable = meter.bySeat.filter((t) => tables.has(t.routingRev));
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
 
-  const logItems: OpenItem[] = [];
-  const acked = new Map<NeedsUserId, NeedsUserReason>();
-  for (const n of view.needsUser()) {
-    const { reason } = recordOf(runDir, n.id);
-    if (n.ack === null) logItems.push({ id: n.id, reason, blocking: n.blocking });
-    else acked.set(n.id, reason);
-  }
-  const needsUser = [...logItems, ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking }))]
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const needsUser: readonly OpenItem[] = [
+    ...view.needsUser().filter((n) => n.ack === null).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
+    ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
+  ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const commands = commandsOf(runDir, arc);
   const acks = ackSeqs(events);
 
   // The holistic keys: only an arc whose plan in force names a vision (A5) has them; a dev.5 revision has no payload.
   const fold = view.holistic();
   const plan = inForce?.plan ?? null;
-  const holistic = fold.on && plan !== null && start !== null && inForce !== null && inForce.fact.payloadSha256 !== undefined;
-  const revision = holistic ? revisionInForce(runDir, inForce, start.record.planFile) : null;
-  const head = holistic ? revParse(start.record.repo, branchRef(plan.integrationBranch)) : null;
+  const on = fold.on && plan !== null && start !== null && inForce !== null && inForce.fact.payloadSha256 !== undefined
+    ? { plan, repo: start.record.repo, revision: revisionInForce(runDir, inForce, start.record.planFile) } : null;
+  const holistic = on !== null;
+  const revision = on?.revision ?? null;
+  const head = on === null ? null : revParse(on.repo, branchRef(on.plan.integrationBranch));
   const obligations = revision?.obligations?.value ?? null;
-  const t = obligations === null || head === null ? { nowTrue: [], notYetTrue: [] }
-    : truths(runDir, view, d.units, obligations, revParse(start!.record.repo, `${head}^{tree}`));
-  const audit = holistic && head !== null ? auditOf(runDir, view, events, plan, head, now) : null;
+  const t = on === null || head === null || obligations === null ? { nowTrue: [], notYetTrue: [] }
+    : truths(runDir, view, d.units, obligations, revParse(on.repo, `${head}^{tree}`));
+  const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
   const owed = needsUser.filter((n) => n.reason === 'audit-owed').map((n) => n.id);
   const visionSha256 = revision?.manifest.vision ?? null;
 
@@ -1303,7 +1294,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     routing: d.resolved === null ? null : routingView(d.resolved.profile, d.resolved.arc),
     rejection: d.rejection,
     holistic,
-    target: obligations === null || plan === null ? null : targetOf(view, plan, obligations, t),
+    target: on === null || obligations === null ? null : targetOf(view, on.plan, obligations, t),
     nowTrue: t.nowTrue,
     notYetTrue: t.notYetTrue,
     waived: exemptBy(obligations, 'waived'),
@@ -1311,8 +1302,11 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     vision: revision === null ? null : visionOf(revision, fold),
     divergences: divergencesOf(view),
     decisionsSince: decisionsSince(runDir, arc, view, events, acks),
-    convergence: holistic && plan !== null ? convergenceOf(view, events, plan, logItems, acked, acks) : null,
-    findings: { active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })), metrics: findingMetrics(events, fold.findings) },
+    convergence: on === null ? null : convergenceOf(runDir, view, on.plan),
+    findings: {
+      active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
+      metrics: findingMetrics(events, fold.findings),
+    },
     audit,
     owed: { audits: owed },
     completion: completionOf(runDir, d, { d, pending: commands.pending.length, notYetTrue: t.notYetTrue.length, audit, owed: owed.length, visionSha256 }),

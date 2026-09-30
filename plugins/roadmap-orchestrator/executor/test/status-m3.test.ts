@@ -221,7 +221,7 @@ describe('status M3', () => {
     try {
       let s = statusOf(r);
       assert.deepEqual([s.decisionsSince, s.divergences], [[], []], 'the arc\'s first revision decides nothing');
-      assert.deepEqual(s.convergence, { k: 3, counter: 0, open: [] });
+      assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
 
       checkpointInputs(r, 1, 1);
       const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'checkpoint', job: 'ckpt-1' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
@@ -251,19 +251,20 @@ describe('status M3', () => {
         ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
         ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
       ]);
-      assert.deepEqual(s.convergence, { k: 3, counter: 1, open: [] });
+      assert.deepEqual(s.convergence, { k: 3, counter: 1, since: 0, open: [] });
       assert.deepEqual(s.vision?.coverage.withdrawnCited, []);
 
       const digest = item(r, 'divergence-digest', false);
       r.journal.fact({ kind: 'divergence-digest', needsUser: digest, ids: ['D-1', 'D-2'] } as unknown as Fact);
       assert.deepEqual(statusOf(r).divergences.map((x) => [x.id, x.digest]), [['D-1', digest], ['D-2', digest]], 'an open digest binds them');
       const bound = item(r, 'convergence-bound', false);
-      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 1, open: [bound] });
+      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 1, since: 0, open: [bound] });
       ack(r, digest);
       ack(r, bound);
       s = statusOf(r);
       assert.deepEqual([s.divergences, s.decisionsSince], [[], []], 'the acknowledged digest covers them, and nothing was decided since');
-      assert.deepEqual(s.convergence, { k: 3, counter: 0, open: [] }, 'acknowledging the bound resets the counter');
+      assert.deepEqual([s.convergence?.counter, s.convergence?.open], [0, []], 'acknowledging the bound resets the counter');
+      assert.ok((s.convergence?.since ?? 0) > 0);
 
       checkpointInputs(r, 2, 2);
       r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 2), outcome: { kind: 'no-op' } } as unknown as Fact);

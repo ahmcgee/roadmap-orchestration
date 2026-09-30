@@ -8,6 +8,11 @@
 //   {"event":"owner","state":"alive"|"dead"|"none","generation","pid"}     on the first poll and every change
 //   {"event":"units","run":<run.state>,"units":{<unit>:<state>}}           on the first poll and every change
 //
+// Every raised item is a `needs-user` line, blocking or not: the Monitor wakes the session on each (DESIGN §2), so the
+// holistic layer's items wake it as any other does: `owner-request`, the `divergence-digest`, the `convergence-bound`
+// and `convergence-identity` brakes, `audit-owed`, `finding-p1-escalated` and `new-finding-draining` (test
+// watch.m3-kinds). `run` may be `draining` (admissions closed).
+//
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
 // `waiting:resources`, `awaiting-admission:paused`, `parked:retryable`, `merged`… The view is re-derived
 // only when the log, sched.json, the needs-user dir or the owner changed. Owner liveness is `status`'s
