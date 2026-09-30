@@ -61,6 +61,7 @@ import { type Activation, type BundleDecision, type Captured, type CheckpointCon
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
+import { isActive } from './findings.ts';
 import { keyOf } from './observe.ts';
 import { type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
@@ -284,7 +285,7 @@ function capture(ctx: CheckpointContext, due: Due): Captured {
   const job = view.nextJobId('ckpt');
   const fact = {
     kind: 'checkpoint-inputs' as const, job, trigger: due.trigger, generation: due.generation, vector, headSha: head, visionSha256: vector.visionSha256,
-    findings: view.holistic().findings.filter((f) => f.state === 'open' || f.state === 'owned' || f.state === 'fixed-on-branch').map((f) => f.id).sort(),
+    findings: view.holistic().findings.filter(isActive).map((f) => f.id).sort(),
     observations: shown,
   };
   const seq = ctx.journal.fact(fact);

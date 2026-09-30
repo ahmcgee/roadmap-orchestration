@@ -1702,3 +1702,62 @@ src/pipeline/dispatch.ts `callArcRole`):
    `gateHadPassed`: a unit had published before the audit started. A vision-lens P1 is recorded P2; unknown obligation
    and clause ids are dropped; a vacuity mutant is kept content-addressed (`.patch`) only on a known lane.
 10. **Smoke and argv:** the claude-judgment role is any `FreshRole`, so a probe can call `lens.arc` or `checkpoint.arc`.
+
+**Choices made in M3 B6** (the checkpoint job and its bundles; src/holistic/{checkpoint,bundle,convergence,divergence}.ts):
+
+1. **One fence hold per activation, staleness first.** `activate` holds the revision fence from its first check through
+   the commit, and builds the proposal (the revision in force plus the ops) inside it, so no revision lands between the
+   build and the commit. The order is staleness, validation, owner-only, draining, evidence, convergence, then the apply
+   core: staleness comes first so a bundle decided on moved inputs is re-evaluated, never counted invalid. It composes
+   the apply core's parts (`evaluateRevision`, `keepRevision`, `commitRevision`) rather than calling `commitUnderFence`,
+   because a bundle's payload carries the divergences code computes from its ops (beyond the core's `split-dropped`)
+   and its staleness check must sit in the same hold. A docs publication refused at the tip is `rejected{stale}`.
+2. **Staleness per artifact touched, the vision always (H3).** The plan: its bytes at the captured rev against the
+   plan in force (a revision that left the plan alone does not stale a plan op). A patched or re-entered unit: its
+   spec rev. A split or disposition: the obligations' bytes. A `rule` op: the ledger's bytes and the blob of every
+   contract its ruling names or edits, at the captured head against the tip. A finding a disposition names that left
+   the active states since the capture is stale too.
+3. **Rulings are stamped by the executor** (lead ruling: the model echoes no revisions): `ruledBy: checkpoint{the
+   deciding job}`, `consistency: {verdict: consistent, judgedRevs: {the captured head, ledger, obligations and vision,
+   each judged contract's blob at the captured head}, by: judgment{checkpoint, the call's routingRev}}`. Each lands
+   through exactly one `rule` op and is validated at the tip with the earlier ones landed; a contract op outside the
+   plan's contracts and architecture doc is left to the owner-only check (H10), not reported invalid.
+4. **Split children** are written by the executor at rev 1, serving the parent's clauses plus the op's cites, with the
+   parent's contracts and `parent`, and a proof judgment `{proves, obligationRev 1, the witness lane's laneRev, the
+   witness}`: the checkpoint that named the witness is the judgment.
+5. **`invalidate-approval` is refused as invalid**: no 1.0.0-dev.6 record voids a gate approval (carry-forward).
+6. **Divergences per op**: admit, reenter, cut, route, limits → `plan-departed` (preimage: the plan rev); patch-spec
+   → `plan-departed` (preimage: the unit's spec rev); obligation-split and obligation-dispose → `obligation-departed`
+   (preimage: the obligations' bytes); a landing ruling's `deviates` doc refs → `target-departed` and its contract ops
+   → `contract-departed` (preimage: the ledger and the contracts' blobs; the hint supersedes by `rule`). A ruling that
+   departs from nothing, a request and invalidate-approval record none. Compensation `restore-revision` for all of
+   these; an interpretation's is `none`. Evidence: the op's; an interpretation's the decision's cited findings and
+   observations, else its reasons.
+7. **The digest** item is raised first (parent `{type: arc}`, its summary's first line listing the ids) and its
+   `divergence-digest` fact second; a crash between them is finished by reading the ids back from that line.
+8. **Convergence.** Material: every op but `request` and a repair `admit` (R10). Identities: each finding or
+   obligation id the op is about (its own obligation, and each `F-n`/`I-n` of the arc its evidence names) × the
+   lineage root of its unit (`arc` for an arc-level op). The identity bound: a bundle with a material op on an identity
+   an applied bundle changed since the latest acknowledged `convergence-identity` is itself requested, raising that
+   item. The arc counter: applied bundles since the latest unit publication, latch or acknowledged `convergence-bound`;
+   the bundle that reaches K applies and raises `convergence-bound` once per counter episode. While any brake item is
+   open every bundle is a `bundle-request`. All three items are non-blocking, parented by the job.
+9. **Due and re-queue.** A trigger (`audit{job}` for a completed audit; `park{unit, seq}` for an operator-design park,
+   `seq` the park's) is due while it has no job, or its latest job was rejected (stale or evidence: always; invalid:
+   the next is the last, since a trigger's second invalid decision, a failed call included, is a non-blocking
+   `bundle-request` with no options), or its latest job's `bundle-request` was acknowledged `apply`. That next job
+   enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
+   requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
+   checkpoint's generation is the latest recorded (1 before any).
+10. **Evidence.** After `rejected{evidence}`, the lanes of the observations it cited are re-witnessed on the head under
+    the rejected job before the trigger's next capture (a crash in between repeats it, reusing what ran).
+11. **Interrupted calls.** A call cancelled or failed with a backend-park class leaves the job running; a later run asks
+    again as the next attempt (the meter's attempt), skipped while the seat's backend is parked or the arc paused.
+12. **OR-Q1.** `designParkRoute(ctx, unit)` is the scheduler's (B7) answer for a design park: `checkpoint` (hold its
+    item back), `respecified{planRev}` (re-open it), `park-item` (raise its own item: the checkpoint decided a no-op or
+    an unacknowledged request), `respec-second` (a second design park on a lineage the checkpoint respecified: the
+    blocking item is raised by the checkpoint job, parented by the park's deciding attempt, so the park's own item is
+    not raised as well).
+13. **The admit template** (B4 carry-forward) is part of the rendered `plan` input: the spec in force of the plan's
+    first unit, pretty JSON. No prompt module changed.
+14. **Quiescence** (`quiescentGenerations`): a generation whose checkpoint decided `no-op` under the vision in force.
