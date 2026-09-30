@@ -45,7 +45,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { terminalReceipt, readCommand } from './commands/queue.ts';
-import { type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, type OperatorParkKind, type ProbeTarget, probeTargetKey } from './core/events.ts';
+import { type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, type OperatorParkKind, type ProbeTarget, holderUnit, probeTargetKey } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
   type ArcId, CPU_POOL, type CommandId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceUnit, type RoutingRev, type Sha256Hex, type UnitId,
@@ -73,7 +73,7 @@ import { effectiveDependency } from './schedule/graph.ts';
 import { admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
-import { type ResolvedRouting, type SeatSources, arcStack, resolveRouting } from './routing/layers.ts';
+import { type ResolvedRouting, type SeatSources, planStack, resolveRouting } from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, PROFILES, type ProfileName, type RiskTier, type SeatRef,
   type RoutingTable,
@@ -274,7 +274,7 @@ function routingTables(start: Readonly<{ record: RunStart; plan: PlanM1 }> | nul
   if (start === null) return new Map();
   const config = readRepoConfig(start.record.repo);
   return new Map([start.plan, ...plans].flatMap((plan) => PROFILES.map((profile) => {
-    const r = resolveRouting(arcStack(profile, config, plan.routing ?? null));
+    const r = resolveRouting(planStack(profile, config, plan));
     return [r.rev, r.table] as const;
   })));
 }
@@ -308,7 +308,6 @@ function holderOf(e: ResourceEntry): Holder | null {
   return e.pending?.expect.holder ?? null;
 }
 
-const holderUnit = (h: Holder): UnitId | null => (h.type === 'sweep' ? null : h.unit);
 
 function hostResources(view: JournalView): HostView['resources'] {
   return [...view.resources()].filter(([, e]) => e.status.state !== 'free' || e.pending !== null)
@@ -550,7 +549,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const owner = ownerState(runDir, hostDir);
   const sched = liveSched(runDir, arc, owner);
   const blocking = blockingItems(runDir, view);
-  const resolved = start === null ? null : resolveRouting(arcStack(start.record.profile, readRepoConfig(start.record.repo), start.plan.routing ?? null));
+  const resolved = start === null ? null : resolveRouting(planStack(start.record.profile, readRepoConfig(start.record.repo), start.plan));
   const scheduling = view.scheduling();
   const inputs: Inputs | null = plan === null || scheduling === null ? null : {
     view, plan, sched, alive: owner.state === 'alive', blocking, routing: resolved?.table ?? null, legacy: scheduling === 'legacy',

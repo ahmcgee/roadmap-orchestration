@@ -352,6 +352,8 @@ async function runLane(
   const record = laneRun(ctx, spawned, lane, dir);
   const exit = runnerFiles(invDir, outcome.inv).read('exit.json');
   const interrupted = outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
+  // Interim (M3 0a): nothing preempts a lane before step A4 (docs publications) sends `preempt` cancels.
+  if (interrupted === 'preempt') throw new Error(`${outcome.inv}: a preempted lane: not implemented (step A4)`);
   const blocked = outcome.kind === 'lost' ? `${outcome.inv} was lost with its runner` : record.verdict === 'process-fault' ? `${outcome.inv} ended by ${exit?.cause ?? 'unknown'}` : null;
   return { record, evidence, interrupted, blocked };
 }

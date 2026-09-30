@@ -7,7 +7,7 @@
 // - anything else (integration rewound or rewritten) → recovery-required; the caller raises a needs-user.
 //
 // Uses src/git/ff.ts's pure helpers and git.ts plumbing only; src/recover/ops.ts assembles the op.
-import type { IntentOf } from '../core/events.ts';
+import { type IntentOf, unitFfFingerprint } from '../core/events.ts';
 import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -18,7 +18,9 @@ export function reconcileIntegrationFf(repo: AbsPath, fingerprintValid: (fingerp
     intent: IntentOf<'integration.ff'>,
     _view: JournalView,
   ): Promise<Extract<Disposition<'integration.ff'>, { kind: 'done' | 'redo' | 'recovery-required' }>> {
-    const { ref, old, fingerprint } = intent.expect;
+    const { ref, old } = intent.expect;
+    // Interim (M3 0a): docs and batch `ff`s (steps A4, B2) carry no unit fingerprint.
+    const fingerprint = unitFfFingerprint(intent.expect);
     const next = intent.expect.new;
     const seen = observeIntegration(repo, ref, old, next);
     switch (seen.kind) {

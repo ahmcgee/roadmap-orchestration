@@ -39,7 +39,7 @@ import { reconcileFailedCleanup } from './residue.ts';
 import { spawnReconciler } from './spawn.ts';
 
 type ResourceDisposition = Extract<Disposition<'resource.transition'>, { kind: 'done' }>;
-type Settled = StageHolder | PublicationHolder | RetryHolder;
+type SweepHolderShape = Readonly<{ type: 'sweep' }>;
 
 /** Transitions made by recovery belong to no live stage. */
 const RECOVERY: Parent = { type: 'arc' };
@@ -77,7 +77,7 @@ export async function recoverReservations(ctx: ResourceContext): Promise<void> {
   for (const intent of ctx.journal.view.openIntents()) {
     if (intent.kind === 'resource.transition') await reconcile(intent, ctx.journal.view);
   }
-  const holders: Settled[] = [];
+  const holders: Exclude<Holder, SweepHolderShape>[] = [];
   for (const entry of resourceTable(ctx.journal.view).values()) {
     const { status } = entry;
     if (status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type === 'sweep') continue;
@@ -99,7 +99,7 @@ function heldBy(ctx: ResourceContext, holder: Holder): ReadonlyMap<HeldState, re
   return held;
 }
 
-async function settleHolder(ctx: ResourceContext, holder: Settled): Promise<void> {
+async function settleHolder(ctx: ResourceContext, holder: Exclude<Holder, SweepHolderShape>): Promise<void> {
   switch (holder.type) {
     case 'stage':
       return settleStage(ctx, holder, { type: 'stage', unit: holder.unit, stage: holder.stage, attempt: holder.attempt });
@@ -108,6 +108,13 @@ async function settleHolder(ctx: ResourceContext, holder: Settled): Promise<void
       return settleStage(ctx, holder, { type: 'stage', unit: holder.unit, stage: 'candidate', attempt: holder.attempt });
     case 'retry':
       return settleRetry(ctx, holder);
+    // Interim (M3 0a): no release before these steps holds resources under them.
+    case 'docs':
+      throw new Error(`recovering a docs publication's reservation: not implemented (step A4)`);
+    case 'batch':
+      throw new Error(`recovering a repair batch's reservation: not implemented (step B2)`);
+    case 'job':
+      throw new Error(`recovering a job's reservation: not implemented (step A4)`);
   }
 }
 

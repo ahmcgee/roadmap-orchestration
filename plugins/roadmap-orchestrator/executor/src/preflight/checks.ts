@@ -43,7 +43,7 @@ import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
 import {
-  type RepoConfig, type ResolvedRouting, arcStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
+  type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
 } from '../routing/layers.ts';
 import type { ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings } from '../spec/rulings.ts';
@@ -428,7 +428,7 @@ function inForceSource(runDir: AbsPath, arc: ArcId, planFile: AbsPath): Source |
 
 /** The arc's routing for `plan` under the start's profile and the repo config. */
 export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): ResolvedRouting {
-  return resolveRouting(arcStack(profile, readRepoConfig(repo), plan.routing ?? null));
+  return resolveRouting(planStack(profile, readRepoConfig(repo), plan));
 }
 
 /**

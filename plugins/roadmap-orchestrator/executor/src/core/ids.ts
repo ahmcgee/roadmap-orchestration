@@ -220,6 +220,78 @@ export function invocationDirName(inv: InvocationId): string {
   return `${parseOpId(op).seq}-${ordinal}`;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// M3 ids (SCHEMAS.md "M3"). A numbered id's `<n>` is 1 for the first of its kind in the arc and one more for
+// each later one, in log order; the fold checks the order where a fact opens it (`nextFindingId`,
+// `nextDivergenceId`, `nextJobId` on the journal view). Ids are never reused.
+
+function numbered<B extends string>(kind: B, prefix: string): Readonly<{ read: IdReader<Brand<string, B>>; of: (n: number) => Brand<string, B>; n: (id: Brand<string, B>) => number }> {
+  const re = new RegExp(`^${prefix}-(${POS})$`);
+  const read = textual(kind, re, `${prefix}-<n>`);
+  return { read, of: (n) => read(`${prefix}-${n}`), n: (id) => Number(re.exec(id)?.[1]) };
+}
+
+/** A vision clause: `V-<n>`. A withdrawn clause keeps its id; ids are never reused (H16). */
+export type VisionClauseId = Brand<string, 'VisionClauseId'>;
+const V = numbered('VisionClauseId', 'V');
+export const visionClauseId: IdReader<VisionClauseId> = V.read;
+
+/** An obligation: `I-<n>`. Ids survive amendments; a split child gets a new one. */
+export type ObligationId = Brand<string, 'ObligationId'>;
+const I = numbered('ObligationId', 'I');
+export const obligationId: IdReader<ObligationId> = I.read;
+
+/** A finding: `F-<n>`, numbered in the order the arc's `finding-opened` facts open them. */
+export type FindingId = Brand<string, 'FindingId'>;
+const F = numbered('FindingId', 'F');
+export const findingId: IdReader<FindingId> = F.read;
+export const findingIdOf = F.of;
+export const findingSeq = F.n;
+
+/** A divergence: `D-<n>`, numbered in the order the arc's `divergence` facts record them. */
+export type DivergenceId = Brand<string, 'DivergenceId'>;
+const D = numbered('DivergenceId', 'D');
+export const divergenceId: IdReader<DivergenceId> = D.read;
+export const divergenceIdOf = D.of;
+export const divergenceSeq = D.n;
+
+/**
+ * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch or the
+ * baseline witness. `<kind>-<n>`, numbered per kind.
+ */
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline'] as const;
+export type JobKind = (typeof JOB_KINDS)[number];
+export type JobId = Brand<string, 'JobId'>;
+const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);
+export const jobIdOf: IdReader<JobId> = textual('JobId', JOB, `<${JOB_KINDS.join('|')}>-<n>`);
+
+export function jobId(kind: JobKind, n: number): JobId {
+  return jobIdOf(`${kind}-${n}`);
+}
+
+export function parseJobId(job: JobId): Readonly<{ kind: JobKind; n: number }> {
+  const m = JOB.exec(job);
+  if (m === null) throw new InvalidIdError('JobId', 'JobId', '<kind>-<n>', job);
+  return { kind: m[1] as JobKind, n: Number(m[2]) };
+}
+
+/** A job id of one kind: `docs{pub}` names a `docs-<n>`, `batch` a `batch-<n>`, and so on. */
+export function jobIdOfKind(kind: JobKind): IdReader<JobId> {
+  return (value, path = 'JobId') => {
+    const job = jobIdOf(value, path);
+    if (parseJobId(job).kind !== kind) throw new InvalidIdError('JobId', path, `${kind}-<n>`, value);
+    return job;
+  };
+}
+
+/** An arc lane's revision: first 16 hex of sha256 over its canonical definition (`laneRevOf`). */
+export type LaneRev = Brand<string, 'LaneRev'>;
+export const laneRev: IdReader<LaneRev> = textual('LaneRev', /^[0-9a-f]{16}$/, '16 lowercase hex');
+
+/** A witness environment's identity: first 16 hex of sha256 over the lane's resolved environment (B1). */
+export type EnvId = Brand<string, 'EnvId'>;
+export const envId: IdReader<EnvId> = textual('EnvId', /^[0-9a-f]{16}$/, '16 lowercase hex');
+
 // NeedsUserId forms: `nu-<seq>` (raised by the needsuser.raise op with that seq), `sup-<generation>-<n>`
 // (supervisor crash limit, written without a journal), `host-<slug>` (host-level refusals such as a
 // corrupt log, written before the journal is usable).

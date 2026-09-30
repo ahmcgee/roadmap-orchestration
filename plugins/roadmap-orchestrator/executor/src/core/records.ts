@@ -2,11 +2,11 @@
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-  type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type EdgeId, type LaneId, type NeedsUserId, type OpId, type PlanRev, type ResourceInstance, type ResourceName, type RoutingRev, type RulingId,
-  type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, edgeId, implementerSessionId, invocationIdOf,
-  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha,
-  sha256, specRev, unitId,
+  type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
+  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ResourceInstance,
+  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId,
+  commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
+  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -20,7 +20,8 @@ import {
 import { launchStallMs } from './upgrade.ts';
 import type { SchemaVersion } from './version.ts';
 import {
-  type Backend, type ImplementerRole, type JudgmentRole, type ProfileName, type RiskTier, type Role, backend, profileName, riskTier,
+  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, modelClass,
+  profileName, riskTier,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -29,16 +30,20 @@ import {
 export type ProcIdentity = Readonly<{ pid: number; start: number }>;
 export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid', positive), start: f.get('start', nat) }));
 
-export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown'] as const;
+/** `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. */
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
 /** What the executor writes into cancel.json. `deadline` and `stall` are the runner's own; `external-unknown` kills are not invocation cancels. */
-export const CANCEL_REASONS = ['pause', 'stop', 'recovery'] as const;
+export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
 export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
+/** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
+export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
+export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
@@ -52,15 +57,19 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
 /**
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
+ * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
+ * its lane run under `purpose: mutant`.
  */
-export const STAGES = ['prepare', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
+export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
 export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'cleanup-failed'] as const;
 export type ResourceState = (typeof RESOURCE_STATES)[number];
 
-const role: Read<Role> = oneOf(['planCheck', 'build', 'gate'] as const);
+const role: Read<Role> = oneOf(ROLES);
+/** The roles whose call runs a fresh judgment session: every role but `build`. */
+const FRESH_ROLES = ROLES.filter((r): r is FreshRole => r !== 'build');
 const opId: Read<OpId> = (v, p) => opIdOf(v, p);
 const inv: Read<InvocationId> = (v, p) => invocationIdOf(v, p);
 const arc: Read<ArcId> = (v, p) => arcId(v, p);
@@ -106,7 +115,7 @@ type BackendTerminalBase = Readonly<{
   outputPath: AbsPath;
 }>;
 export type BackendTerminal =
-  | (BackendTerminalBase & Readonly<{ role: JudgmentRole; session: JudgmentSession }>)
+  | (BackendTerminalBase & Readonly<{ role: FreshRole; session: JudgmentSession }>)
   | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
 export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
@@ -166,7 +175,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(['planCheck', 'gate'] as const)), session: f.get('session', judgmentSession) };
+        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession) };
     })(value, path);
   },
 });
@@ -322,7 +331,7 @@ export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
-  | Readonly<{ verdict: 'cancelled'; reason: InterruptReason }>
+  | Readonly<{ verdict: 'cancelled'; reason: LaneInterruptReason }>
 );
 
 type BackendResultBase = InvocationBinding & Readonly<{
@@ -334,7 +343,7 @@ type BackendResultBase = InvocationBinding & Readonly<{
 }>;
 /** A judgment session is assigned at launch; an implementer's may be unknown if it died before reporting one. */
 export type BackendResult =
-  | (BackendResultBase & Readonly<{ role: JudgmentRole; session: JudgmentSessionId }>)
+  | (BackendResultBase & Readonly<{ role: FreshRole; session: JudgmentSessionId }>)
   | (BackendResultBase & Readonly<{ role: ImplementerRole; session: ImplementerSessionId | null }>);
 export type CommandResult = InvocationBinding & Readonly<{
   type: 'command';
@@ -373,7 +382,7 @@ export const resultFile: Read<ResultFile> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', nullable((v, p) => implementerSessionId(v, p))) }
-        : { ...base, role: f.get('role', oneOf(['planCheck', 'gate'] as const)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
+        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
     })(value, path);
   },
   command: object((f): ResultFile => {
@@ -386,7 +395,7 @@ export const resultFile: Read<ResultFile> = tagged('type', {
     };
     const verdict = f.get('verdict', oneOf(COMMAND_VERDICTS));
     const out: CommandResult = verdict === 'cancelled'
-      ? { ...base, verdict, reason: f.get('reason', oneOf(INTERRUPT_REASONS)) }
+      ? { ...base, verdict, reason: f.get('reason', oneOf(LANE_INTERRUPT_REASONS)) }
       : { ...base, verdict };
     if (out.exitCode === null && (out.verdict === 'pass' || out.verdict === 'fail')) {
       throw new SchemaError(`${f.path}.verdict`, '"stall", "process-fault" or "cancelled" when exitCode is null', out.verdict);
@@ -413,7 +422,9 @@ function processFault(exit: ExitFile): string | null {
  */
 export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, output: unknown, schemaValid: boolean): TerminalOutcome {
   if (exit.cause === 'cancel') {
-    if (cancel === null || cancel.reason === 'recovery') throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
+    if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'preempt') {
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop (a backend call is never preempted)`);
+    }
     return { kind: 'cancelled', reason: cancel.reason };
   }
   const fault = processFault(exit);
@@ -521,14 +532,60 @@ export type ApprovalFingerprint = Readonly<{
   contractRevs: readonly Readonly<{ path: RepoPath; blob: Sha }>[];
   /** Revisions of every cited C-nn, ascending by id. */
   rulingRevs: readonly Readonly<{ id: RulingId; rev: number }>[];
+  /**
+   * M3: the normative revisions of the selected, non-exempt obligations at the gated tip, ascending by id.
+   * Absent exactly when there are none (non-empty when present), so a fingerprint with no obligations is
+   * byte-identical to a 1.0.0-dev.5 one and compares equal to it (`obligationRevsOf`).
+   */
+  obligationRevs?: readonly ObligationRev[];
 }>;
+export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 
-export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => ({
-  unitCommit: f.get('unitCommit', commitSha),
-  specRev: f.get('specRev', (v, p) => specRev(v, p)),
-  contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
-  rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
-}));
+const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, p) => obligationId(v, p)), rev: g.get('rev', positive) }));
+
+export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
+  const obligationRevs = f.optional('obligationRevs', sortedBy(obligationRev, (e) => e.id, { nonEmpty: true }));
+  return {
+    unitCommit: f.get('unitCommit', commitSha),
+    specRev: f.get('specRev', (v, p) => specRev(v, p)),
+    contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
+    rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
+    ...(obligationRevs === undefined ? {} : { obligationRevs }),
+  };
+});
+
+/** The fingerprint's obligation revisions; none when the field is absent (its one encoding of none). */
+export const obligationRevsOf = (fp: ApprovalFingerprint): readonly ObligationRev[] => fp.obligationRevs ?? [];
+
+/**
+ * A unit's bounds (M3, `limits`): the counters' limits and the backend deadlines the transition table and the
+ * stages read, resolved from the built-in defaults, the plan's `limits` and the unit's (`boundsOf`,
+ * src/input/plan.ts). Deadlines are whole minutes.
+ */
+export type Bounds = Readonly<{
+  /** The chargeable failure that reaches this parks the unit (design). */
+  chargeable: number;
+  /** Plan-check redirects since the architect's latest spec revision. */
+  redirects: number;
+  reviseRounds: number;
+  candidateReds: number;
+  /** Uncharged retries per retry stage. */
+  retries: number;
+  judgmentDeadlineMin: number;
+  freshBuildMin: number;
+  /** What a fix, resume or resolve round may spend editing on top of the lane series. */
+  editAllowanceMin: number;
+}>;
+export const BOUND_FIELDS = ['chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin'] as const satisfies readonly (keyof Bounds)[];
+/** The built-in bounds: M2's constants (unmeasured defaults). */
+export const DEFAULT_BOUNDS: Bounds = {
+  chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
+};
+export const bounds: Read<Bounds> = object((f) => Object.fromEntries(BOUND_FIELDS.map((k) => [k, f.get(k, positive)])) as Bounds);
+
+/** H15: the transient-check rules a unit's lineage attempt runs under; absent on a 1.0.0-dev.5 dispatch (`transientRulesOf`). */
+export const TRANSIENT_RULES = ['m3'] as const;
+export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
 /**
  * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
@@ -545,18 +602,35 @@ export type DispatchRecord = Readonly<{
   routingRev: RoutingRev;
   implementerSeatRev: SeatRev;
   at: IsoTime;
+  /**
+   * M3 (H15): `m3` on every dispatch since 1.0.0-dev.6: the unit's candidate may touch only its pinned scope and
+   * ruling-added paths, and no in-tree `.roadmap/` path. Absent (a 1.0.0-dev.5 dispatch): dev.5's rules for the
+   * lineage attempt (`transientRulesOf`, src/core/upgrade.ts). A re-pin copies it.
+   */
+  transientRules?: TransientRules;
+  /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
+  bounds?: Bounds;
 }>;
 
-export const dispatchRecord: Read<DispatchRecord> = object((f) => ({
-  unit: f.get('unit', unit),
-  specRev: f.get('specRev', (v, p) => specRev(v, p)),
-  specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
-  scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
-  riskFloor: f.get('riskFloor', riskTier),
-  routingRev: f.get('routingRev', rev),
-  implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
-  at: f.get('at', time),
-}));
+export const dispatchRecord: Read<DispatchRecord> = object((f) => {
+  const transientRules = f.optional('transientRules', oneOf(TRANSIENT_RULES));
+  const b = f.optional('bounds', bounds);
+  return {
+    unit: f.get('unit', unit),
+    specRev: f.get('specRev', (v, p) => specRev(v, p)),
+    specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
+    scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
+    riskFloor: f.get('riskFloor', riskTier),
+    routingRev: f.get('routingRev', rev),
+    implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
+    at: f.get('at', time),
+    ...(transientRules === undefined ? {} : { transientRules }),
+    ...(b === undefined ? {} : { bounds: b }),
+  };
+});
+
+/** The bounds a dispatch record pins: its own, or the built-in ones when it names none. */
+export const boundsOfRecord = (record: DispatchRecord | null): Bounds => record?.bounds ?? DEFAULT_BOUNDS;
 
 // ---------------------------------------------------------------------------------------------------
 // spec.json (M1 subset) and SpecPatch
@@ -645,7 +719,22 @@ export type SpecM1 = Readonly<{
   decisions: readonly Stated<NoteDef>[];
   facts: readonly Stated<NoteDef>[];
   cites: SpecCites;
+  /**
+   * M3 (A13): the obligations the unit declares it serves (non-empty when present; absent: none). The
+   * classifier checks them against the impact mapping (prefix-conservative over its scope).
+   */
+  obligations?: readonly ObligationId[];
+  /** M3 (A13): what a repair unit repairs, findings or obligations (non-empty when present; required with `origin: repair`). */
+  repairs?: readonly RepairRef[];
 }>;
+
+/** What a repair names: a finding (`F-<n>`) or an obligation (`I-<n>`). */
+export type RepairRef = FindingId | ObligationId;
+export const repairRef: Read<RepairRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : obligationId(v, p));
+
+/** A spec's declared obligations and repairs; none when absent. */
+export const specObligations = (spec: SpecM1): readonly ObligationId[] => spec.obligations ?? [];
+export const specRepairs = (spec: SpecM1): readonly RepairRef[] => spec.repairs ?? [];
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
@@ -660,6 +749,8 @@ function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
 }
 
 export const specM1: Read<SpecM1> = object((f) => {
+  const obligations = f.optional('obligations', arrayOf((v, p) => obligationId(v, p), { nonEmpty: true }));
+  const repairs = f.optional('repairs', arrayOf(repairRef, { nonEmpty: true }));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
@@ -671,8 +762,12 @@ export const specM1: Read<SpecM1> = object((f) => {
     decisions: f.get('decisions', arrayOf(stated(noteFields))),
     facts: f.get('facts', arrayOf(stated(noteFields))),
     cites: f.get('cites', specCites),
+    ...(obligations === undefined ? {} : { obligations }),
+    ...(repairs === undefined ? {} : { repairs }),
   };
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts], (i) => i.id, `${f.path}.<item ids>`);
+  assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
+  assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;
@@ -853,14 +948,26 @@ export const runStart: Read<RunStart> = object((f) => ({
 export type Heartbeat = Readonly<{ v: SchemaVersion; generation: number; at: IsoTime }>;
 export const heartbeat: Read<Heartbeat> = object((f) => ({ v: f.get('v', version), generation: f.get('generation', positive), at: f.get('at', time) }));
 
-/** A residue is keyed per resource instance: a named resource or a pool instance (never an `@cpu` token). */
-export type ResidueKey = Readonly<{ arc: ArcId; unit: UnitId; inv: InvocationId; resource: ResourceInstance }>;
-export const residueKey: Read<ResidueKey> = object((f) => ({
-  arc: f.get('arc', arc),
-  unit: f.get('unit', unit),
-  inv: f.get('inv', inv),
-  resource: f.get('resource', (v, p) => resourceInstance(v, p)),
-}));
+/**
+ * A residue is keyed per resource instance: a named resource or a pool instance (never an `@cpu` token). Its
+ * owner (M3, G4) is the unit whose stage failed its cleanup (`unit`, every residue before M3) or the durable job
+ * whose lane did (`job`); exactly one of the two is present (`residueOwner`).
+ */
+export type ResidueKey = Readonly<{ arc: ArcId; inv: InvocationId; resource: ResourceInstance }>
+  & (Readonly<{ unit: UnitId; job?: never }> | Readonly<{ job: JobId; unit?: never }>);
+export type ResidueOwner = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'job'; job: JobId }>;
+export const residueKey: Read<ResidueKey> = (value, path) => {
+  const job = typeof value === 'object' && value !== null && Object.hasOwn(value, 'job');
+  return object((f): ResidueKey => {
+    const base = { arc: f.get('arc', arc), inv: f.get('inv', inv), resource: f.get('resource', (v, p) => resourceInstance(v, p)) };
+    return job ? { ...base, job: f.get('job', (v, p) => jobIdOf(v, p)) } : { ...base, unit: f.get('unit', unit) };
+  })(value, path);
+};
+export function residueOwner(key: ResidueKey): ResidueOwner {
+  if (key.job !== undefined) return { type: 'job', job: key.job };
+  if (key.unit !== undefined) return { type: 'unit', unit: key.unit };
+  throw new Error(`residue key ${JSON.stringify(key)} names no owner`);
+}
 
 export type TeardownRecipe = Readonly<{ argv: readonly string[]; cwd: AbsPath; env: Readonly<Record<string, string>> }>;
 
@@ -921,6 +1028,48 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
   specs: f.get('specs', manifestSpecs),
 }));
 
+/**
+ * M3 (G1, A3, A14): the revisioned set beyond plan and specs. `rulings`: the ledger's bytes and each ruling
+ * sidecar's (kept as `inputs/<sha256>.rulings.md` and `inputs/<sha256>.ruling.json`); `obligations` and `vision`:
+ * the obligations and vision files' (`inputs/<sha256>.obligations.json`, `.vision.json`), null when the plan
+ * names none.
+ */
+export type RevisionInputs = Readonly<{
+  rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
+  obligations: Sha256Hex | null;
+  vision: Sha256Hex | null;
+}>;
+/** What an M3 `apply` hashes (A2): the plan manifest and the revision inputs. */
+export type RevisionManifest = PlanManifest & RevisionInputs;
+/**
+ * An `apply` body's manifest: a `RevisionManifest` since 1.0.0-dev.6, or a 1.0.0-dev.5 command's `PlanManifest`
+ * (G15), which is read as the ledger live and no obligations or vision (`applyInputsOf`, src/core/upgrade.ts). The
+ * command's bytes and `commandSha256` are never rewritten.
+ */
+export type ApplyManifest = PlanManifest | RevisionManifest;
+
+const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) => {
+  const f = new Fields(value, path);
+  const out: Record<RulingId, Sha256Hex> = {};
+  for (const key of Object.keys(value as object)) out[rulingId(key, `${path}.${key}`)] = f.get(key, (v, p) => sha256(v, p));
+  f.end();
+  return out;
+};
+export const revisionInputs = (f: Fields): RevisionInputs => ({
+  rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+  obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
+  vision: f.get('vision', nullable((v, p) => sha256(v, p))),
+});
+export const applyManifest: Read<ApplyManifest> = (value, path) => {
+  const m3 = typeof value === 'object' && value !== null && Object.hasOwn(value, 'rulings');
+  return object((f): ApplyManifest => ({
+    planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
+    specs: f.get('specs', manifestSpecs),
+    ...(m3 ? revisionInputs(f) : {}),
+  }))(value, path);
+};
+export const isRevisionManifest = (m: ApplyManifest): m is RevisionManifest => 'rulings' in m;
+
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
   | Readonly<{ type: 'stop' }>
@@ -932,11 +1081,34 @@ export type CommandBody =
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
    * or null to apply over whatever is in force. A mutation.
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: PlanManifest }>
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: ApplyManifest }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
-  | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>;
+  | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>
+  /**
+   * `roadmap rule <record.json>` (M3): a ruling sidecar, hashed by the CLI (`sha256` over the file's bytes at
+   * `path`), validated and published through the revision fence. Scope ∅.
+   */
+  | Readonly<{ type: 'rule'; path: AbsPath; sha256: Sha256Hex }>
+  /** `roadmap reverse <D-n>` (M3, H13): the compensating revision built from the divergence's preimage. Scope: the arc. */
+  | Readonly<{ type: 'reverse'; divergence: DivergenceId }>
+  /**
+   * `roadmap steer <u> --brief <f> --budget <min> [--class <c>] [--resume]` (M3): the brief hashed like a rule
+   * record; `class` null keeps the unit's routing; `resume`: a green steer continues instead of parking (R11).
+   * Scope {u}.
+   */
+  | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: ModelClass | null; resume: boolean }>
+  /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
+  | Readonly<{ type: 'merge-in'; unit: UnitId }>
+  /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
+  | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
+  /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
+  | Readonly<{ type: 'close-admissions' }>;
+
+/** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
+export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
+export type LensKindName = (typeof LENS_KIND_NAMES)[number];
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
 export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
 
@@ -969,7 +1141,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   apply: object((f): CommandBody => ({
     type: f.get('type', literal('apply')),
     expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
-    manifest: f.get('manifest', planManifest),
+    manifest: f.get('manifest', applyManifest),
   })),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
@@ -977,6 +1149,21 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   'run-only': object((f): CommandBody => ({
     type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
+  rule: object((f): CommandBody => ({ type: f.get('type', literal('rule')), path: f.get('path', abs), sha256: f.get('sha256', (v, p) => sha256(v, p)) })),
+  reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
+  steer: object((f): CommandBody => ({
+    type: f.get('type', literal('steer')),
+    unit: f.get('unit', unit),
+    brief: f.get('brief', object((g) => ({ path: g.get('path', abs), sha256: g.get('sha256', (v, p) => sha256(v, p)) }))),
+    budgetMin: f.get('budgetMin', positive),
+    class: f.get('class', nullable(modelClass)),
+    resume: f.get('resume', bool),
+  })),
+  'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
+  audit: object((f): CommandBody => ({
+    type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
+  })),
+  'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({
@@ -1015,7 +1202,16 @@ export const NEEDS_USER_REASONS = [
   // M2: non-blocking. A retryable park unrecovered after 6 h (probing continues); a tripped probe breaker or a
   // repeat park on one target.
   'park-escalated', 'env-blocked',
+  // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
+  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act the checkpoint
+  // requested (A16); a second design park on one lineage (OR-Q1).
+  'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
+  // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
+  // the divergence digest (H11).
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
 ] as const;
+/** The M3 reasons raised non-blocking; every other M3 reason is raised blocking. */
+export const NON_BLOCKING_M3_REASONS = ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 
 export type NeedsUserSubject = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;

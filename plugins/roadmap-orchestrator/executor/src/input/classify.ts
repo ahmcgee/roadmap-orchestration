@@ -534,7 +534,16 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'sweep':
       case 'resolve-edge':
       case 'run-only':
+      case 'rule':
+      case 'audit':
+      case 'close-admissions':
         return NONE;
+      // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
+      case 'reverse':
+        return ARC;
+      case 'steer':
+      case 'merge-in':
+        return unitsScope([body.unit]);
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);
         if (inForce === null) return NONE;

@@ -1,6 +1,6 @@
 # roadmap-orchestrator 1.0 — design brief (draft for audit)
 
-Status: draft 7, 2026-09-30. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
+Status: draft 8, 2026-09-30. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
 all since removed from the tree), `orchestrator-observations.md`, and arc 1's full `.roadmap/` record (`calibration-0.20.0.md` §3.1–3.23,
 `skill-feedback-0.16.0.md`, the wave 33–38 audits, the architect log, the hand-written boundary patches);
 citations will be folded into RATIONALE 1.0. Draft 3 incorporated the adjudicated cross-model review (gpt-6-astra,
@@ -21,6 +21,14 @@ Draft 7 applies the M2 plan amendments (2026-09-30): merged-only dependencies, a
 dev.4 arcs, pools of instances with `@cpu`, a durable publication holder, admission-defined safe points,
 retryable parks classed by `(stage, outcome)` with probe-derived recovery, `reenter` and `cut` as `apply` edit
 classes, and N = 1 fix-round escalation; `steer`, `route`, `limits`, `merge-in` and the `repair` origin move to M3.
+Draft 8 applies the M3 plan amendments (2026-09-30): the vision as the root record, which the checkpoint
+reconciles against silently and consults on afterwards (owner ruling OR-V, superseding "weakening → needs-user");
+the holistic layer on only when the plan names a vision; `route`, `limits`, obligation and vision edits as `apply`
+edit classes; the ledger executor-owned after `start`, with `rule` its only writer; one payload-first activation
+record per revision under a revision fence; a fourth lens, `vision`, and a required lens set; divergences with
+preimages, digests and `reverse <D-n>`; owner-only acts as `request`s; docs publications that preempt; close-out,
+active and sealed completion; residue compaction and `gc`; `explore`, `--adversarial`, `contractRequests` and
+`owedAfterMerge` withdrawn or deferred.
 
 ## 1. What the system is for
 
@@ -110,8 +118,8 @@ teardown}` has instances `<name>#<n>`, bound into every workload of the holder b
 (persisted in `launch.json` and the residue's teardown recipe). `@cpu` costs, all unmeasured: judgment 1, build
 `unit.cpu ?? 4`, fast lane 2, estate and suite lanes 4, probe and teardown 0.
 Checkpoint-originated units outrank planned units, with aging: a unit that waits while M other units publish
-(default 3) is promoted, and promoted units are served oldest first. Audit P2 fixes (the `repair` origin, M3)
-carry a priority so they don't starve. Resources are declared
+(default 3) is promoted, and promoted units are served oldest first. Repair units (`origin: repair`, §2.8) rank
+first: `ORIGIN_RANK = {repair 0, checkpoint 1, planned 2}` (R6). Resources are declared
 with teardown, ownership labels and pools, replacing the concurrency knobs, load guard, `laneCleanup`
 and census.
 
@@ -154,7 +162,11 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   `publication{unit, attempt}`: it takes the slot at candidate start and keeps it through `ff` and `snapshot`,
   releasing it on any candidate outcome but green, on `ff` `cas-stale | fingerprint-invalid | foreign-move`, and
   after `snapshot`. Before green, pause and stop abandon the candidate; once green, `ff` and `snapshot` are a
-  mandatory chain. A red or conflicting candidate releases its suite resources
+  mandatory chain. The other holders are a docs publication `docs{pub}` (§2.6) and a repair batch `batch{finding,
+  attempt}` (§2.8). Docs publications outrank unit publications and preempt a candidate before green: cancel
+  reason `preempt`, outcome `preempted`, uncharged (A7). Under the slot, and again in recovery's `ff` redo, a P1
+  that now blocks a selected obligation abandons the candidate: `finding-blocked`, uncharged, held (G10). A red
+  or conflicting candidate releases its suite resources
   before the unit fix is dispatched, then reacquires. `recovery-required` resolves from the operation's
   postcondition.
 - **Parks.** Classed by `(stage, outcome)`; the class and its targets are written inside the `stage-outcome`
@@ -184,8 +196,10 @@ cleanup transition runs, then `applied` is receipted; they wait only for a publi
 **Mutations** — everything else, including every checkpoint act — apply only at safe points, defined by
 admission (§2.2), not by open intents: a mutation applies when every unit in its scope is idle or awaiting
 admission, and admission into a scope a pending mutation holds waits (drain). Scopes: `resume` and resource,
-pool, capacity and routing edits → the arc; `resume <u>` → that unit; spec and unit edits → those units;
-`sweep`, `resume --backend`, `resolve-edge`, `run-only` → none. After its asynchronous parts (smokes) a
+pool, capacity and routing edits, obligation, mapping, vision and `limits` edits, and `reverse` → the arc;
+`resume <u>`, `route`, `steer <u>` and `merge-in <u>` → that unit; spec and unit edits → those units; `sweep`,
+`resume --backend`, `resolve-edge`, `run-only`, `rule`, `audit` and `close-admissions` → none. Every revision
+commits through the revision fence (§2.6). After its asynchronous parts (smokes) a
 mutation is classified again immediately before its commit. Each stage attempt pins the plan in force it was
 admitted with; prompt inputs are snapshotted by revision at dispatch.
 
@@ -193,26 +207,29 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 |---|---|---|
 | `start` / `status` / `ack <id>` | launch or recover / §2.4 / acknowledge a `needs-user` item | a live owner or undispositioned residue / — / unknown id |
 | `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth): a retryable park is probed now, an operator-env park re-runs its stage (`unparked`), an operator-design park reopens on an applied revision; `--backend` clears that backend's current park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has applied (`apply`) a revision of its spec to the next rev, keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit with no revision applied, or parked at any other stage |
-| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter` and `cut` below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`), not separate commands, and so are pool and `capacity` edits; a file watcher is rejected (no command path, no expected revision, reads files mid-write) | a stale `--expect-rev`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's scope, risk, resources, spec path or new `after`, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
+| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter`, `cut`, `route`, `limits`, `obligation add\|split\|witness` and the vision below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`; a unit routing layer; bounds; obligation edits; vision clauses), not separate commands, and so are pool, `capacity`, mapping and `holistic` edits (lead ruling LR-c, A1); a file watcher is rejected (no command path, no expected revision, reads files mid-write). The manifest also hashes the ledger, the obligations file and the vision; the ledger is only compared (A3) | a stale `--expect-rev`; no `--expect-rev` when a revision since the caller's last `apply` came from a non-architect source (a bundle or the executor; stale files would silently revert its act, A4); a ledger file differing from the ledger in force (A3); removing `holistic`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's scope, risk, resources, spec path or new `after`, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
 | `run-only <ids>` / `--clear` | dispatch allowlist checked at admission (arc 1's `dispatchOnly`, used W29–34); a command, not an `apply` edit, because it records a runtime fact | ids outside the plan |
-| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it), validated against old revisions, published together (§2.6); invalidates citing approvals | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match; stale base; an obligation effect from the checkpoint |
-| `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited C-nn |
-| `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); non-architect admits while `draining`; obligations narrower than the impact mapping |
+| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it) and obligation dispositions: the sidecar is validated against old revisions (its `consistency` fresh, G21), then the docs publication (§2.6), then the commit through the revision fence; invalidates citing approvals. The ledger's only writer after `start` (A3): it writes back to the live ledger file only while that file still holds the previous bytes | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match; stale base; stale `consistency`; a vision effect; a withdrawn `V-n` cited |
+| `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited ruling naming exactly the added patterns (the unit is then re-pinned, and the transient check allows exactly those paths) |
+| `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); a checkpoint admit while `draining` (a `bundle-request` instead); declared obligations narrower than the impact mapping (prefix-conservative) |
 | `resolve-edge <edge> --evidence` | contingent edge → resolved (`edge-resolved`, a runtime fact, so a command) | unknown or resolved edge |
 | `reenter` | a new unit with `reenters{unit, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; a cycle in the effective graph (each superseded unit replaced by its head) |
 | `cut` | unit `cut{reason, ruling?}`: `inScope:false`; since the 2026-09-30 lead ruling, an edit class of `apply` | a unit in a task or merged; a direct dependent neither cut in the same apply nor dropping its `after` |
-| `route <unit> …` / `--risk` / `--adversarial` | per-unit routing layer (§4) | risk below the Phase-0 floor without a ruling; an unsupported triple |
-| `limits …` | per-unit or arc bounds and windows | lowering a counter below what is spent |
+| `route` | the unit's routing layer `unit.routing` (§4), a new `routingRev`; an edit class of `apply`. Risk may rise; a moved implementer seat once the build started parks the unit (`routing-changed`, §4). `--adversarial` is withdrawn: a unit routing layer expresses it (A12) | risk below the Phase-0 floor without a ruling; an unsupported triple |
+| `limits` | arc (`plan.limits`) or unit (`unit.limits`) bounds, in place of the built-in constants; an edit class of `apply` | lowering a counter below what is spent |
+| `obligation add\|split\|witness` | obligation edits (§2.8), edit classes of `apply`, published like a revision (§2.6). `waive`, `defer` and `retire` are not edits: they are a ruling's `obligationDispositions`, applied by `rule` or by a checkpoint bundle | unsupported reporter; a weakening without a ruling in force naming the id; an architect split whose children drop parent text; a withdrawn `V-n` cited |
+| vision | clauses `V-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14) | a vision diff from any other source; a reused id |
+| `reverse <D-n>` | builds a fresh compensating revision from the divergence's preimage, restoring the recorded revisions of exactly the artifacts it touched, and validates it like any revision (§2.8, A10) | a `repair-unit` divergence (a verified repair unit reverses a product effect); a conflicting later revision (with reasons; the architect then uses `apply`); an unknown id |
 | `sweep [--resource]` | declared teardown for resources with no live holder, incl. indexed residues | anything a live session holds |
-| `gc` | deletes raw evidence of completed arcs; prunes run dirs beyond the last K (§2.9; implemented in M3) | a live or incomplete arc |
-| `merge-in <unit>` | integration head into the unit branch (a `mergein.prepare` operation) | unit running; conflict → abort, report |
-| `steer <unit> --brief <f> --budget <min> --class <efficient\|frontier\|summit> [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, normal salvage → lanes → review/gate exit; parked unless `--resume`; minutes (lanes excluded) and usage recorded, fix budget uncharged. Unblocked arc 1's launcher and estate | unit not parked; no budget; widening the envelope |
-| `audit [--lens]` / `explore <q> [--at sha]` | §2.5 on demand / read-only recon to `feedback/` | lenses acting directly / any write |
-| `obligation add\|split\|waive\|defer\|witness` | edits obligations (§2.8), published like a `rule`; architect only, except `split` | unsupported reporter; `waive`/`defer` without a ruling; children dropping parent text |
+| `gc --repo <path> [--keep K] [--dry-run]` | a CLI act under the host lock, not a queued command: prunes sealed arcs (§2.9) | a busy host; an arc not sealed (§2.10) |
+| `merge-in <unit>` | a `merge-tree` plan of the integration head into the unit branch; a clean merge acts (a `mergein.prepare` operation), writes `merged-in`, and the unit re-enters at lanes | a unit in a task; a conflict (rejected with no act) |
+| `steer <unit> --brief <f> --budget <min> [--class <efficient\|frontier\|summit>] [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, `steered`, one uncharged steer round, then normal salvage → lanes → review/gate exit. Non-green parks; green parks unless `--resume` (R11); minutes (lanes excluded) and usage recorded. Unblocked arc 1's launcher and estate | unit not parked or preparing; `budget ≤ 0`; widening the envelope |
+| `audit [--lens]` | §2.5 on demand (`audit-requested`). `explore` is deferred (A11, §8) | holistic off |
 | `debt resolve <id> --ruling` / `promote <id>` | ledger ops | promote while `draining` |
-| `close-admissions`, `stop` | latch `draining` (§2.10) / park all, teardown, release the host lock (residues persist) | — |
+| `close-admissions`, `stop` | latch `draining` (`admissions-closed`, §2.10) / park all, teardown, release the host lock (residues persist) | already `draining` / — |
 
-Automatic: salvage (arc 1 did it by hand three times); teardown after any kill; the snapshot (§2.9).
+Automatic: salvage (arc 1 did it by hand three times); teardown after any kill; the snapshot (§2.9); residue
+compaction at `start` (§2.9).
 
 ### 2.4 `status`
 
@@ -222,37 +239,63 @@ without me, what is burning host or time.
 `run` {state (§2.10), since, owner, heartbeatAt, supervisorCrashes} · `target` {cutLine, nextMilestone,
 criticalPath, obligation counts} · `nowTrue` / `notYetTrue` from observations on the current head, with
 blocking units, reason (code|spec|host|supervision|waiting-dep) and evidence dirs · `waived` / `deferred` with
-rulings · `needsUser` ranked, with recommendation and options · `decisionsSince` [{C-nn | bundle | patch |
-reenter | cut | steer | quarantine, oneLine, ruledBy}] · `convergence` · `commands` · `units` {counts, running
-[{stage, attempt, elapsed, deadline, resources}], parked/quarantined/preparing [{why, reasonClass, nextProbeAt?,
-escalateAt?, lineage, dossier}]} · `findings` · `audit` {coveredTo, uncovered by lens, generation,
-checkpointLaneMinutes} · `owed` · `debt` · `spend` {Claude tokens by role (by-model totals derived from `routingRev` at render time),
-usage-unavailable calls, codexHours} · `host` {load, locks, residues, containment, strandedResources — non-empty is a flag}.
+rulings · `vision` {rev, confirmation, clauses with state, coverage {unservedClauses, obligationsServingNone,
+withdrawnCited}} · `needsUser` ranked, with recommendation and options · `decisionsSince` [{C-nn | bundle |
+patch | reenter | cut | steer | quarantine | divergence | reverse, oneLine, ruledBy}] · `divergences` (ids no
+acknowledged digest covers) · `convergence` · `commands` · `units` {counts, running [{stage, attempt, elapsed,
+deadline, resources}], parked/quarantined/preparing [{why, reasonClass, nextProbeAt?, escalateAt?, lineage,
+dossier}]} · `findings` · `audit` {coverage per lens in L (watermark and docs edges), uncovered by lens,
+generation, checkpointLaneMinutes} · `owed` · `completion` {planRev, head, active, sealed} · `debt` · `spend`
+{Claude tokens by role (by-model totals derived from `routingRev` at render time), usage-unavailable calls,
+codexHours} · `host` {load, locks, residues, containment, log {bytes, events, foldMs}, strandedResources —
+non-empty is a flag}. `target.nextMilestone` is the future obligation with the fewest unmerged `deliveredBy`
+(R13).
 
 The architect log keeps arc 1's four-paragraph shape (what the organisation can now rely on · what is not yet
 true · rulings · next target in business terms), rendered from the same state.
 
 ### 2.5 Cadence audit (Opus lenses)
 
-Three lenses — invariants, drift, vacuity — all paid off
-in arc 1 (w33 found two P1s and two P2s seven unit gates had passed; drift in four of six audits; eight vacuity
-rows). The lenses report; the Fable checkpoint that follows them acts (§2.8).
+Four lenses. Invariants, drift and vacuity all paid off in arc 1 (w33 found two P1s and two P2s seven unit
+gates had passed; drift in four of six audits; eight vacuity rows). The fourth, `vision` (A15), asks whether the
+product serves the vision, whether anything is faithful to its letter but wrong for it, and where the vision
+does not anticipate what happened; it opens P2 or P3 findings citing `V-n`. `holistic.audit.lenses` is the arc's
+**required lens set L** (default: all four); coverage, owed audits and completion are measured per lens in L
+(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the Fable checkpoint that follows
+them acts (§2.8).
 
-- **Triggers**: every N merges (D3); a merge leaving a touched obligation unwitnessed; drift-only whenever
-  rulings or patches land (w37 found drift with zero merges); wall-clock when merges cannot advance; on demand.
-  Overlapping triggers coalesce; each audit records its causal generation (§2.8).
-- **Immutable inputs**: integration SHA, ledger/spec/ruling revisions, branch SHAs of parked or in-flight
-  owners (the w33 P1s were already fixed on a blocked branch), prior findings with dispositions (w35–37 repeated
-  one note thrice), event high-water mark; a detached worktree, so merges continue.
-  Completion discharges only its covered range and lens; results are observations keyed by the audited SHA.
+- **Triggers**: every N publications (D3; unit, batch, and rule-with-contract-ops publications); a publication
+  leaving a selected future or exempt obligation unwitnessed (R8); drift-only on a revision from a rule, a
+  bundle, `reverse`, or an architect spec, obligation or vision edit (w37 found drift with zero merges), running
+  `L ∩ {drift, vision}`, or all of L when that is empty (R15); wall-clock (`wallClockMin`, default 360);
+  `audit [--lens]`; **final**: at the final head, every lens in L with an outstanding range (H9). Triggers
+  coalesce, one audit runs at a time, and each records its causal generation (§2.8).
+- **Immutable inputs**: `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
+  ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater}`, captured under the revision
+  fence (§2.6, A19): owners are the branch SHAs of parked or in-flight owners (the w33 P1s were already fixed on
+  a blocked branch), prior findings carry dispositions (w35–37 repeated one note thrice). A detached worktree,
+  so merges continue.
+- **Run**: all arc lanes on the snapshot; the lenses serially, one `@cpu` each, each given the vision first, then
+  the obligations with observations, the range diff and owner branch diffs; findings; `audit-ended{covered}`;
+  the worktree removed, citing a snapshot. Coverage stops at the audited SHA, and before the checkpoint the cited
+  P1s are re-witnessed on the current head. A failed job-lane cleanup leaves a residue owned by `job{…}`,
+  probed and reclaimed like any other; the job re-runs the lane.
+- **Coverage**: per lens, a contiguous watermark over the integration history; results are observations keyed by
+  the audited SHA. A docs-only publication (the executor-rendered `.roadmap/` files, rendered by code from
+  in-force records) covers its own edge U→D by construction (`docs-covered`, A17, H8): a lens's watermark
+  advances to D only when it already reaches U; otherwise it stays, and the edge is recorded for when the gap
+  closes. Outstanding triggers and drift obligations are kept, and its witnesses still run. A rule publication
+  carrying contract ops is not docs-only. A vision revision resets every lens's watermark to the change's head.
 - **Mutants are executed, never judged by reading.** A vacuity finding admits a bounded repair unit whose first
-  executor-verified obligation is reproducing it (the old test permits the mutant) before the repair is graded;
-  acceptance is the new test killing it. No unadmitted implementer runs.
+  stage, `reproduce`, applies the mutant (`mutant.apply` in a detached worktree) and runs the lane under
+  `purpose: mutant`: `reproduced` → plan-check; `not-reproduced` → code dismisses the finding and the unit
+  parks; `inapplicable` → re-evaluated at the next audit. Acceptance is the candidate killing the mutant; a
+  survivor is `red{mutant}`. Mutant records never certify (G13). No unadmitted implementer runs.
 - **Quarantine stays a real-defect signal**: 21 of 24 arc-1 dossiers were design-class; risk predicted it
   (high 30%, med 21%, low 7%). 1.0 stops charging host or supervision faults.
-- **Owed**: skipping is recorded; owed for 2N merges or past its deadline → `needs-user` (an owed explorer went
-  unrun for 27 waves). The final audit and checkpoint run after the last merge; the audit stays open until
-  its generation is quiescent.
+- **Owed**: a skipped audit keeps its triggers owed; at 2N publications or 2 × `wallClockMin` → a non-blocking
+  `audit-owed` (OR-Q2/3; an owed explorer went unrun for 27 waves). The final audit and checkpoint run after the
+  last merge; the audit stays open until its generation is quiescent.
 
 ### 2.6 Ruling record
 
@@ -261,17 +304,48 @@ rows). The lenses report; the Fable checkpoint that follows them acts (§2.8).
 `C-nn — withdrawn by C-mm`), with a JSON sidecar: `statement`, `kind`,
 `ruledBy` (architect | checkpoint), `trigger`, `supersedes [{id, part}]`, `condition?`, **`docRefs [{path,
 anchor, quotedText, relation: consistent|refines|deviates}]` required**, `contractRefs`, `contractOps` (required
-when a ref `deviates`), `obligations`, `obligationDispositions [{id, waived|deferred}]` (architect only),
-`appliesTo`, `lifetime`, `status`. Code checks identity, anchors and quoted text, revisions, supersession,
-amendment linkage and overlapping anchors; semantic consistency is a model judgment stored with the revisions
-it judged. Rulings are checked against the code before landing
-(plan-check readings overturned three arc-1 drafts).
+when a ref `deviates`), `obligations`, `obligationDispositions [{id, waived|deferred|retired|amended}]`
+(`amended`: a changed statement, `docRef` or activation; each the architect's, or the checkpoint's citing active
+`V-n` plus evidence, §2.8), `appliesTo`, `lifetime`, `status`,
+and the required `consistency {verdict, judgedRevs {head, ledgerSha256, obligationsSha256, visionSha256,
+contracts}, by}` (G21). Code checks identity, anchors and quoted text, revisions, supersession, amendment
+linkage, overlapping anchors, that every cited `V-n` is active, and that `consistency` is fresh against the
+revisions in force; semantic consistency is the model judgment `consistency` records. Rulings are checked
+against the code before landing (plan-check readings overturned three arc-1 drafts).
 
-**Publication.** In-tree `.roadmap/` (§2.9) and contracts change only through this operation, in the
-integration slot: old and new document blob SHAs, a rule candidate on the tip, journey lanes for the
-obligations the touched documents map to (§2.8) under the held-claims brake, the exact expected integration
-update, and one recoverable activation record making ledger entry and document commit visible together;
-recovery reconciles by its postcondition. There is no other document writer and no pending state.
+**Ledger ownership (OR-Q5, A3).** After `start` the ledger is executor-owned and `rule` is its only writer (a
+checkpoint ruling reaches it through a bundle's activation). An `apply` whose ledger file differs from the
+ledger in force is refused. Write-back to the live ledger file happens only while it still holds the previous
+bytes.
+
+**Revisions and activation (A2, G1).** The revisioned set is the plan, the specs, the ledger with its sidecars,
+the obligations with their mapping, and the vision; `plan-applied` records each hash. Every revision has one
+activation record, payload first, whatever its source: `start | command{id} | bundle{job} | executor{inv}`.
+`evaluate(proposal, source)` builds the proposal (`apply` from the files; a bundle from the plan in force plus
+its ops; `rule` from ledger plus sidecar; `reverse` from a divergence's preimage; the executor's `spec.patch` from
+its patch), takes the revision fence and evaluates again synchronously (a differing result → `stale`). Then
+`activate(payload)`: the full evaluated payload is kept content-addressed as `inputs/<sha>.revision.json`
+(manifest, changes, sidecars, dispositions, divergences, source, publication plan and referenced bytes); a
+`revision.commit` intent names it before any docs `ff`; the docs publication runs, if any; `plan-applied` is
+appended from the payload exactly, then its divergence facts; the fence is released. Recovery, with the `ff`
+done or no docs step, appends from the payload; otherwise it aborts and re-evaluates the source. It never
+reclassifies.
+
+**Revision fence (A19, H2).** One fence (op key `revision`, at most one open `revision.commit`) is held from
+final validation, through the docs `ff`, to `plan-applied`. It serialises `apply`, `rule`, `reverse`, bundles
+and the executor's `spec.patch`, so two revisions validated against one base cannot both commit. Every capture
+of revision-sensitive inputs takes it briefly and synchronously: `judgment-inputs` (plan-check, gate),
+`audit-started`, `checkpoint-inputs`, and a bundle's final staleness check. So no reader sees the window
+between a docs `ff` and its `plan-applied`, where new contract blobs sit beside an old ledger or plan.
+
+**Publication.** In-tree `.roadmap/` (§2.9) and contracts change only through a docs publication, in the
+integration slot under the holder `docs{pub}`: `docs.commit` (old and new document blob SHAs, a candidate on the
+tip), the transient check, suite lanes, then journey lanes for the obligations the touched documents map to plus
+those the revision changed (G12; at close-out, all) under the held-claims brake (§2.8), `ff{docs}` with the exact
+expected integration update, the activation above, then `snapshot`. Its lanes run under `job{docs-…}`. Docs
+publications outrank unit publications and preempt a candidate before green (A7, §2.2). Ledger entry and
+document commit become visible together; recovery reconciles by the postcondition. There is no other document
+writer and no pending state.
 
 ### 2.7 Spec record
 
@@ -281,86 +355,189 @@ is the one text verifier, gate and fixer read. Fields: `lanes [{id, argv[], cwd,
 fast|estate, resources, evidenceGlobs, until?: {unitMerged}, then?}]` (`argv[0]` resolves at plan load — no
 shell strings, so no bare `access.sh`; `until` resolves through `supersedes`, C-126), `acceptance [{id, clause,
 failLoudIfUndelivered}]`, `scope`, `resources`, `decisions [R1…]` verbatim for the implementer,
-`contractRequests` (routed to `rule`), `obligations [I-nn]`, `repairs? [finding or I-nn]`, `facts`,
-`owedAfterMerge`. `patch-spec` ops (`add | replace | strike | defer`) target ids with the expected revision, and are
-also how plan-check redirects apply; changing a lane or clause invalidates the evidence that graded it.
+`obligations? [I-nn]`, `repairs? [finding or I-nn]` (required non-empty for `origin: repair`), `facts`.
+`contractRequests` and `owedAfterMerge` move to M4: nothing in M3 reads them (A13). `patch-spec` ops (`add |
+replace | strike | defer`) target ids with the expected revision, and are also how plan-check redirects apply;
+changing a lane or clause invalidates the evidence that graded it.
 
-### 2.8 Holistic layer: obligations and checkpoint authority
+### 2.8 Holistic layer: vision, obligations and checkpoint authority
+
+**The vision is the root record (OR-V).** A vision record holds clauses `V-n {kind: purpose | serves | good |
+non-negotiable | tradeoff, text, rank, state: active | withdrawn}` (`rank` required for `tradeoff`, null
+otherwise) and the Phase-0 playback confirmation reference `{ref, at}`, stored unverified (A14). Ids are never
+reused, and a withdrawn clause stays in the file (H16). The vision is revisioned and **owner-only**: only an
+architect `apply` changes it; the classifier refuses a vision diff from any other source. New bundles, rulings and
+obligations may not cite a withdrawn clause (refused as invalid); existing citations stay and are listed in
+`status.vision.coverage.withdrawnCited`. Coverage (unserved clauses, obligations serving none) is reported, not
+refused. **Readers:** the full vision goes first into every lens and checkpoint prompt, and on conflict the vision
+wins. Plan-check receives it as read-only context and may emit `visionConflict [{clauses, note}]`; each entry
+opens a P3 finding (`lens: plan-check`) for the next checkpoint and is never a redirect on its own: a redirect
+needs the spec's own grounds (R17). The gate never receives it: it grades spec and contracts, and the pinned
+scope holds. **A vision revision** resets every lens's audit coverage to the change's head (§2.5), reopens the
+quiescence of generations recorded under the old vision, and triggers a drift-only audit (H3, R15).
+
+**Holistic on by vision (A5).** The layer runs only when `plan.holistic` names a vision; obligations may be
+empty. `apply` may add `holistic`, never remove it; adding it runs the baseline job. An arc without it (every arc
+started on 1.0.0-dev.5) has M2 semantics and no new spend.
 
 **Delegation envelope.** **Obligations** are owner-approved: every checkable claim extracted from the
 target-state document (extracted, cross-checked, adjudicated by the architect) plus the cut line.
-**Implementation contracts** — frozen contracts, conventions, specs, routing, the plan graph — the checkpoint
-edits autonomously. Any act whose effect is that an obligation is no longer required (weaken, retire,
-split-and-drop, re-anchor) becomes a `needs-user` request instead (Obs §4.5's hostname ruling broke cookie
-isolation).
+**Implementation contracts** — frozen contracts, conventions, specs, routing, limits, the plan graph — the
+checkpoint edits autonomously. It may also weaken or amend an obligation (dispose, split-and-drop, re-anchor)
+when it cites active `V-n` plus evidence: it reconciles silently against the vision and the owner is consulted
+afterwards through divergences and their digest (below). Obs §4.5's hostname ruling, which broke cookie
+isolation, is why every such act is recorded with its preimage. Only owner-only acts go to the owner first.
 
-**Obligation record.** `I-nn {statement, docRef {path, anchor, quotedText}, witness {laneId, testIds,
-reporter}, proofJudgment {verdict, rev}, deliveredBy [units], activation: future | must-hold, parent?, rev}`.
-Ids survive amendments; split children reference the parent, required until every child is discharged. One
-held on the base starts `must-hold`; others name `deliveredBy`. Evidence refresh never bumps the normative
-`obligationRevs`. `waived` and `deferred` are architect rulings, never `held`.
+**Owner-only acts (A16, H10)** are a closed set the checkpoint cannot express: irreversible or destructive acts
+outside the sandbox, possible cost over $10, and legal ramifications. `BundleOp` has no variant for the vision,
+resource declarations, `.roadmap/config.json`, `gc` or ref deletion; for such an act the checkpoint may only
+`request{class, summary, evidence}`. Nested effects are converted the same way: an op that would introduce a lane
+program whose `argv[0]` the plan in force does not already resolve, a new lane env prerequisite, or a contract-op
+path outside the plan's contracts and architecture docs becomes a `request{class}`. A request applies nothing and
+raises a blocking `owner-request`. Stated limit: this governs the checkpoint's revisions; an implementer build
+stays bounded by the unit policy (a prompt, §4) and by containment, not by this check.
 
-**Witnesses.** Arc lanes have stable ids and revisions; many obligations share one execution per tree. Each
-run emits per test id `{claimId, testId, runner, selected: n, outcome: pass|fail|skip|zero-selected,
-treeSha, laneRev, invocationId}` through a supported reporter: `go test -json`, a Node JSON reporter, or a shell
-wrapper for scripted journeys. No record or a malformed one → `unwitnessed`. An observation is reused only when tree
-SHA, lane revision and environment identity match. "This test proves this statement" is judged at Phase 0,
-bound to both revisions, re-judged only when either changes. Unit-branch success never certifies an integrated
-claim (w38). Checkpoint lane duration is part of Phase-0 feasibility and `status`.
+**Obligation record.** `I-nn {rev, statement, docRef {path, anchor, quotedText}, serves [V-n], witness {lane,
+testIds} | null, proofJudgment {verdict, rev} | null, deliveredBy [units], activation: future | must-hold,
+parent?, contracts, state: active | split{children} | waived{ruling} | deferred{ruling} | retired{ruling}}`, kept
+in one obligations file with the arc lanes, the cut line and the impact mapping. `witness` and `proofJudgment` are
+null exactly when the state is `split` (H14). `serves` is non-empty when the arc has a vision. Ids survive
+amendments; split children name the parent. One held on the base starts `must-hold`; others name
+`deliveredBy`. Evidence refresh never bumps the normative `obligationRevs`. `waived`, `deferred` and `retired`
+come only from a ruling's `obligationDispositions`, never from `held`. Extraction is in-session Phase-0 work (M4,
+LR-b); M3 fixtures seed obligations by hand.
+
+**Obligation edits** are `apply` edit classes (§2.3) or bundle ops:
+
+| Edit | Rule |
+|---|---|
+| added | `rev` 1; `serves` cites active clauses; a `must-hold` one must show held in the revision's docs candidate (G12); a `future` one needs `deliveredBy` |
+| split | the parent goes to `split{children}`, its `witness` and `proofJudgment` null; each child names the parent and has its own witness. The architect's children include the parent's text verbatim; a checkpoint split may drop text only citing `V-n`, and code records the dropped text as a `split-dropped` divergence |
+| witness | a fresh `proofJudgment`; a shrunk `testIds` set counts as weakening |
+| weakening (removed, statement or `docRef` changed, `must-hold` → `future`, waived, deferred, retired) | a ruling in force naming the id in `obligationDispositions`: the architect's, or the checkpoint's citing active `V-n` plus evidence |
+
+**Baseline witness (A6).** Before the first admission under `holistic`, a baseline job witnesses every
+obligation. A `must-hold` obligation not held → blocking `obligation-baseline`; a `future` one already held is
+refused as a vacuous witness.
+
+**Re-derivation (LR-b).** At Phase 0 the previous arc's published obligations (a JSON block in the baseline
+tree's `invariants.md`, R2) are diffed by I-nn against the new file; the startup row `obligation-dropped` refuses
+a missing or weakened id that no Phase-0 ruling dispositions. A split parent counts as present.
+
+**Witnesses.** Arc lanes have stable ids and revisions and declare a reporter on the lane (R1): `node-test` (the
+shipped reporter through `NODE_OPTIONS`, writing to `$ROADMAP_WITNESS_FILE`; a lane that sets `NODE_OPTIONS` is
+refused), `go-test-json` (stdout parsed as test2json events), or `jsonl` (a wrapper appends records to
+`$ROADMAP_WITNESS_FILE`). Many obligations share one execution per tree. A witness record is `{lane, laneRev,
+envId, treeSha, inv, runner, purpose: witness | mutant, records, malformed}`; malformed output makes every
+declared test `unwitnessed`. The verdict is pure: every selected test ≥ 1 and passing → `held`; any failing →
+`not-held`; passes mixed with skip or zero-selected → `partial`; else `unwitnessed`. An observation derives from a
+`purpose: witness` record, keyed `(treeSha, lane, laneRev, envId)`, and is reused only when all four keys and the
+record hash match; mutant records carry the patched tree's id and never certify (G13). "This test proves this
+statement" is judged at Phase 0, bound to both revisions, re-judged only when either changes. Unit-branch
+success never certifies an integrated claim (w38). Checkpoint lane duration is part of Phase-0 feasibility and
+`status`.
 
 **Ordering.** Observations (`held | not-held | partial | unwitnessed`) are append-only, keyed by tree SHA and
-revisions; current status is the one on the current integration head, never the latest to complete.
+revisions; current status is the one on the current integration head, never the latest to complete. The
+transition table is total, split parents included:
 
-| Obligation | Observation on the evaluated tree | Effect |
+| Obligation | Case | Effect |
 |---|---|---|
-| `future` | any | measured, never graded |
-| `future`, candidate completing `deliveredBy` | `held` / other | witness validated, then graded: latches `must-hold` / red |
-| `must-hold` | `held` on the current head, or validly reused | discharged for that head |
+| `future` | candidate not completing `deliveredBy` | measured, never graded |
+| `future` | candidate completing `deliveredBy`, `held` / other | witness validated, then graded: latches `must-hold` on publication / red |
+| `must-hold` | `held` on this tree, or validly reused | discharged for that head |
 | `must-hold` | `not-held`, `partial`, `unwitnessed`, skip, zero-selected, stale, missing | red for the brake; never discharges |
+| split parent | never witnessed directly | discharged when every non-exempt child is; red when any selected child is red; else measured |
+| waived, deferred or retired | any | exempt |
+
+A latch is `obligation-latched` after `ff{published}`, before the snapshot; recovery writes any latch missing.
 
 **Impact mapping.** One authoritative mapping, built at Phase 0 and revisioned with the obligations, selects a
-candidate's obligations: declared ones, those whose contracts, docRefs or witness files it touches, and those
-of its dependency closure; an unmapped changed path selects every `must-hold` obligation. `admit` and
-`patch-spec` validate declared obligations against it. Obligations neither run nor validly reused are recorded
-`not covered`, never passed.
+candidate's obligations: its declared ones and its `repairs`; those whose contracts, docRefs, witness files or
+mapping patterns its changed paths touch; those of its dependency closure; the future obligations it delivers;
+and every `must-hold` obligation when a changed path is unmapped. A split parent is selected when any child is,
+and selecting a parent selects its children (H14). A revision publication also selects the obligations it added,
+split or re-witnessed (G12). `admit` and `patch-spec` validate declared obligations against the mapping
+(prefix-conservative where patterns overlap the scope). Obligations neither run nor validly reused are recorded
+`not covered`, never passed. The fingerprint's `obligationRevs` covers the selected, non-exempt obligations at
+the gated tip.
 
-**Journey lanes** run (owned by no unit, same locks and evidence rules): in every candidate (unit or
-rule) for its selected obligations, and on every checkpoint snapshot for all. **Held-claims brake (code):** a
-selected `must-hold` obligation red makes the candidate red, same repair path as a red suite; only an architect
-waiver overrides it.
+**Journey lanes** run, owned by no unit, under the same arbiter, locks, watchdog, evidence and red-lane rules: in
+every candidate after the suite is green (unit lanes under the unit's stage holder, docs lanes under
+`job{docs-…}`, batch lanes under `job{batch-…}`); on every audit snapshot, all of them; in the baseline job and
+at close-out. **Held-claims brake (code):** a candidate is green only with the suite green and no selected
+obligation's effect red. A brake red takes the red-suite path, witnessing the tip alone: tip green →
+`red{brake}`, charged; tip red → `base-red`, unless a known regression applies. Only a disposition ruling
+exempts an obligation. **Known regression (R4, G11)** covers background failures only: a failing test in a
+reporter-declaring suite lane, or in an unselected obligation's witness, grades green when a P1 records that
+`(lane, testId)` and the tip alone fails exactly that set. A selected `must-hold` obligation is never excused.
 
-**Findings and repair.** States `open | owned | fixed-on-branch | resolved | ruled`. A P1 in the first three
-blocks merges of every unit selecting its obligation, except the declared repair (`spec.repairs`), which may
-publish when its candidate shows that obligation held with integrated evidence. A multi-unit repair publishes
-as one candidate holding every repair branch, or via a ruled intermediate state; a base red matching the
-recorded regression does not halt merges. A parked owner's P1 escalates at the park deadline; P1s never bank;
-while `draining`, a new P1/P2 is a durable `needs-user`. Per finding `{lens, severity, gateHadPassed,
-disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the checkpoint works.
+**Findings and repair.** States `open → owned → fixed-on-branch` (the owner's gate approved, R5) `→ resolved`,
+or `ruled`. Findings dedupe by `key = sha256(lens, obligation, cause)`: a key matching an open finding merges into
+it; one matching a dismissal is suppressed unless a cited evidence blob changed. Dismissals have arc lifetime.
+Lenses open findings; code opens a P1 (`lens: witness`) when a `must-hold` obligation is not held on an audit
+snapshot; plan-check opens P3 vision-conflict findings (R17). An active P1 adds `finding-blocked` to every
+candidate selecting its obligation, at admission and before `ff`, except the declared repair (`spec.repairs`),
+which publishes when its candidate shows every repaired obligation held with integrated evidence. A unit with
+`origin: repair` needs non-empty `repairs` and ranks first (R6, §2.2). **Batch repair (R7, G5, H4):** all
+approved units repairing one finding publish as one candidate, chained `--no-ff` merges on the candidate ref under
+the slot holder `batch{finding, attempt}`; its lanes run under one durable job identity `job{batch-<seq>}`, whose
+residues are job-owned; `ff` validates every member's fingerprint and every member retires on that one `ff`. On
+red, a fix round per attributable member, else every member parks. A parked owner's P1 escalates at the park
+deadline; P1s never bank; while `draining`, a new P1 or P2 raises a blocking `new-finding-draining`. Per finding
+`{lens, severity, gateHadPassed, disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the
+checkpoint works.
 
-**Checkpoint authority.** After the lenses (§2.5) the checkpoint seat **rules**, steering
-toward the vision rather than the original plan: amend implementation contracts, respec, `reenter`, `cut`,
-`admit`, re-route, re-pin scope, invalidate approvals, split obligations. Brakes in code:
+**Checkpoint authority.** After every completed audit (§2.5), and on every operator-design park, the checkpoint
+seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
+respec, `reenter`, `cut`, `admit`, re-route, set limits, rule, split or dispose obligations, invalidate
+approvals. A design park goes to the checkpoint for a respec, re-entry or cut first; a `no-op` raises the park's
+`needs-user`, and a second design park on the same lineage raises a blocking `respec-second` (OR-Q1). The
+checkpoint writes nothing itself (LR-d): its closed output is `{decision: no-op | bundle, reasons, ops,
+rulings, findingDispositions, interpretations [{clauses, situation, reading}], cites {vision, observations,
+findings}, premises}`, every op citing active `V-n` (non-empty) with evidence, and code activates it. Where the
+vision does not anticipate a situation, it takes the most optimistic reading that fits and records it in
+`interpretations`. Its inputs, captured under the revision fence as `checkpoint-inputs`, are the vision first,
+the revision vector `{plan, spec:<u>, obligations, ledger, vision, contract:<path>}`, the head, findings,
+observations, vision coverage and open vision-conflict findings. Brakes in code:
 
-- **Bundles.** A decision is one action bundle: ops, an expected revision vector over every artifact touched, its
-  evidence base (integration SHA + observations), one all-or-none activation record; affected dispatch waits
-  meanwhile. Staleness rejects and re-evaluates the whole bundle; a cited observation that differs on the current
-  head drops it and re-evaluates the finding. No effective change → `no-op`, no revisions. Reversal is a
-  compensating bundle; published effects are reversed by a verified repair unit.
-- **Generations.** Each checkpoint records the audit or ruling that triggered it; a `no-op` makes its
-  generation quiescent.
-- **Convergence bound.** Material changes (cut-and-replace, respec, scope expansion, budget reset, re-route, a
-  spec patch changing lanes or acceptance) count per causal identity `(obligation or finding id, lineage
-  root)`; a second → `needs-user`. Each applied bundle increments an arc counter cleared by a merge or a newly
-  held obligation; at K (default 3) one durable `needs-user`. Otherwise only architect acts reset them.
-- Every act is a ruling record (§2.6) with docRefs and a mutation, shown in `decisionsSince` and the log.
-  While `draining` the checkpoint requests instead of admitting. Answering the user stays root-only.
+- **Bundles.** A decision is one action bundle, activated as a mutation job scoped to its ops; affected dispatch
+  waits meanwhile. In order: validate schema, identity, rulings (their `consistency` included) and cites (active
+  `V-n` only, non-empty evidence); an owner-only op, nested ones included → `requested`, blocking
+  `owner-request`, nothing applied; while `draining`, an `admit` → `bundle-request`; staleness under the fence
+  over every artifact touched **plus the vision sha, always** → `rejected{stale}` and a re-queue; a cited
+  observation that differs or is missing on the head → `rejected{evidence}`, a re-witness, then a re-queue or
+  resolve; a convergence bound hit → `bundle-request`; an all-or-none `evaluate`, any refusal →
+  `rejected{invalid}`, re-evaluated once, then `bundle-request`; no effective change → `no-op`, no revision, its
+  interpretation divergences still recorded (idempotent facts keyed `(job, index)`, H12); else the commit through
+  the revision fence (§2.6): `plan-applied`, then the divergence facts from the payload. A `bundle-request`
+  offers `apply | reject` to the architect.
+- **Divergences (A10).** Code records a `divergence` for every checkpoint act that departs from the target
+  document, an approved obligation revision, the plan or a contract blob (a `split-dropped` text included), and
+  one per interpretation, on a `no-op` too. Each holds immutable preimages `{planRev, specs, obligationsSha256,
+  ledgerSha256, contracts [{path, blob}]}` and a compensation hint `restore-revision | repair-unit | none`; there
+  is no executable inverse (H13). Divergences are non-blocking. A `divergence-digest` binds an explicit id list:
+  every divergence neither covered by an acknowledged digest nor in an open one, raised when none is open;
+  acknowledging it covers exactly those ids, and later ones raise the next digest (H11). Reversal: `reverse
+  <D-n>` (§2.3) builds and validates a fresh compensating revision at request time, or the architect uses
+  `apply`. A published product effect (`repair-unit`) is reversed only by a verified repair unit.
+- **Generations.** A checkpoint takes its trigger's generation; an applied bundle's drift audit starts g+1. A
+  `no-op` makes its generation quiescent, unless the vision changed since.
+- **Convergence bound (OR-Q2/3, A9).** Material ops (cut-and-replace, respec, scope expansion, budget reset,
+  re-route, a spec patch changing lanes or acceptance) count per causal identity `(finding or obligation id,
+  lineage root)`; a second → `convergence-identity`. Each applied bundle increments an arc counter, cleared by a
+  publication or a new discharge; at K (default 3, set by `limits`) → `convergence-bound`. A repair `admit` is not
+  material (R10). Brakes act on the checkpoint and never halt units: both items are non-blocking, and while one
+  is open every bundle becomes a `bundle-request`. Acknowledging it resets the counter.
+- Every act is a ruling record (§2.6) or a revision, shown in `decisionsSince` and the log. Answering the user
+  stays root-only.
 
 ### 2.9 Artifacts
 
 The integration branch carries product changes and living docs only: in-tree
 `.roadmap/` holds exactly `contracts/`, `constraints.md`, `invariants.md`, `debt.md` (what a later arc's Phase 0
 reads, rendered from the ledgers) and `config.json` (§4), changed only by publication (§2.6; `debt.md`
-at each checkpoint). Plan, specs, ledgers, observations, log, dossiers and `result.json` are
+at each checkpoint). The authoritative run records (below) are
 snapshotted one-way to `refs/roadmap/<arc>` (allowlisted files plus a sha256 manifest of them, `schema:
 roadmap/1.0`, event high-water mark; the snapshot tree must match its own manifest), so no
 PR diff contains them (arc 1's 1,219-file PR); nothing extra enters a candidate, so the tested head is the
@@ -368,24 +545,43 @@ published head. Raw evidence (stdout/stderr, lane output) stays out of the ref, 
 manifest; the evidence itself stays in the run dir. An in-tree `.roadmap/` holding anything else is 0.x and
 refused.
 
+**The snapshot is the transitive closure of authoritative records (G6, H6).** From facts and intents it
+collects every kept input a `plan-applied` or payload names (plan, specs, ledger, sidecars, obligations, vision,
+`revision.json`); every spec a `spec.patch` produced; the spec bytes each `dispatch` and `judgment-inputs` fact
+names; the `routingProvenance` of every `routingRev` (§4); `start.json`; every witness record a `witnessed` fact
+names; every consumed judgment `result.json` and `reads.json`; needs-user records and acks; and evidence
+manifests. `verifySnapshot` checks every item's hash against the record naming it, and the ref alone restores a
+deleted run dir to the same fold and `status`. A **terminal snapshot** follows `arc-completed`, including when
+close-out had nothing to change; recovery republishes it when the ref lags (G8).
+
 | Artifact | Owner | Location | Mutability | Published to |
 |---|---|---|---|---|
-| Plan (units, edges, routing), specs | executor via commands | run dir | revisioned | ref |
+| Plan (units, edges, routing, limits), specs | executor via revisions (§2.6) | run dir | revisioned | ref |
+| Vision (V-n) | architect via `apply` only | run dir | revisioned; ids never reused | ref (in-tree home in M4) |
 | Contracts, architecture doc, `config.json` | executor via publication | product tree | blob-SHA revisions | tree |
-| C-nn ledger | executor via `rule` | run dir | append-only, supersede | tree (`constraints.md`), ref |
-| Obligations (I-nn), impact mapping | executor; architect via commands, checkpoint `split` | run dir | revisioned | tree (`invariants.md`), ref |
+| C-nn ledger | executor via `rule` (executor-owned after `start`) | run dir | append-only, supersede | tree (`constraints.md`), ref |
+| Obligations (I-nn), arc lanes, impact mapping | executor; architect via `apply`, checkpoint via bundles | run dir | revisioned | tree (`invariants.md`), ref |
 | Debt | executor | run dir | append-only | tree (`debt.md`), ref |
-| Observations, log, dossiers, `result.json` | executor | run dir | append-only / write-once | ref |
+| Observations, witness records, findings, divergences, log, dossiers, `result.json` | executor | run dir | append-only / write-once | ref |
 | State, events, queue, `needs-user` | executor | run dir | append-only / write-once | — (high-water mark in ref) |
-| Raw evidence | executor | run dir | write-once; `roadmap gc` after completion | ref (sha256 manifest only) |
-| Host lock and metadata, residual index | executor, supervisor | `/var/tmp/roadmap/` | `link()` claim; append + disposition | — |
+| Raw evidence | executor | run dir | write-once; `roadmap gc` once the arc is sealed | ref (sha256 manifest only) |
+| Host lock and metadata, residual index | executor, supervisor | `/var/tmp/roadmap/` | `link()` claim; append + disposition; compacted at `start` | — |
 | `skill-feedback.md` | architect | outside the product repo | hand-written | — |
 
-**Growth across arcs.** Four controls: arc-lifetime and superseded
-rulings leave the rendered `constraints.md` at close-out, kept in the ref (implemented in M3); obligations are
-re-derived from the target document at every Phase 0 and diffed (implemented in M3); `roadmap gc` deletes raw
-evidence of completed arcs and prunes run dirs beyond the last K (implemented in M3); finding dismissals have arc
-lifetime (implemented in M3). The residual-resource index is compacted at `start` (implemented in M3).
+**Close-out publication (A8).** At completion one docs publication (§2.6) retires rulings, renders the final
+`invariants.md`, and runs every arc lane. `complete` requires it, or that it had nothing to change; reuse is keyed
+by tree. Being docs-only, it covers its own edge (§2.5).
+
+**Growth across arcs.**
+
+| Control | Rule |
+|---|---|
+| Ruling retirement | Arc-lifetime and superseded rulings leave the rendered `constraints.md` in the close-out publication; the ref keeps them. |
+| Re-derivation | Obligations are re-derived from the target document at every Phase 0 and diffed by I-nn (§2.8). |
+| Dismissal lifetime | Finding dismissals are arc-scoped. |
+| Residue compaction at `start` | Run by the supervisor after its claim. A disposed pair is dropped only when no arc's resource fold still holds its instance (H1): `cleanup-failed`, or `cleaning` under a retry or sweep holder, including the window between the `cleaned` disposition and the release. Retention is never derived from open intents alone. Every arc's own-arc keys' log is folded read-only; an arc whose log is unreadable retains all its keys. Written as tmp, `link` of the archive, `rename`; the chain continues. |
+| `roadmap gc` | Claims the host lock and prunes only **sealed** arcs (§2.10; A20, H5): the log's last mutation fact is `arc-completed`, no queued or pending command, the completion head is reachable from the integration ref, and `refs/roadmap/<arc>` verifies at its high-water. It deletes only after that verification (G6): raw evidence, then run dirs beyond the last K (via a `.gc-deleting` rename), then host generation files beyond K and archives no longer retained. |
+| Event-log compaction | Deferred (LR-e, §8); `status.host.log {bytes, events, foldMs}` reports the growth. |
 
 **Debt across arcs** (implemented in M4). Each debt item has a stable id, its origin arc and a status. Phase 0 must disposition every
 open item (`promote | keep(reason) | resolve(ruling)`), or the arc refuses to start; an item kept across two arcs
@@ -395,16 +591,23 @@ surfaces as a ranked Phase-0 question. Obligation-affecting items are findings, 
 
 `run.state` is the first that holds:
 
-- **`complete`**: every in-scope unit merged or dispositioned (cut, or waived by ruling); every obligation
-  discharged on the current head or waived; no unacknowledged blocking `needs-user`; no pending commands; no
-  uncovered audit range; the final generation quiescent.
+- **`complete`**: every in-scope unit merged, cut or waived by ruling; every non-exempt obligation discharged
+  on the current head, split parents per the transition table (§2.8); no blocking `needs-user` unacknowledged
+  (non-blocking items do not block); no pending command; no lens in L with an outstanding range, no owed audit,
+  and the latest generation quiescent under the current vision; the close-out publication done, or nothing to
+  change; no own-arc residue. Then `arc-completed{planRev, head, highWater, units}` and the terminal snapshot
+  (§2.9). **Completion (A20)** is **active** while the plan rev and the integration head are unchanged (used by
+  resume and `status`); an admitting `apply` or a reopen invalidates it. It is **sealed** (used by `gc`) when its
+  verified head is still in the integration history and its own log and queue hold no later work; head equality
+  is not required. An arc without the holistic layer completes as in M2.
 - **`needs-user`**: an unacknowledged blocking `needs-user` item.
 - **`blocked`** (a `status` `run.state` since M2): nothing can dispatch while in-scope work remains (parked,
   excluded by `run-only`, behind an unresolved contingent edge, or behind a dead dependency awaiting `cut` or
   re-entry); parked in-scope work is never `complete`.
 - **`draining`**: latched by `close-admissions` or plan drain, reopened only by an
   architect `admit`; closure applies at the single minting point to every automatic admission and re-entry path
-  (debt, checkpoint admits, repair units), which become `needs-user` requests.
+  (debt, checkpoint admits, repair units): a checkpoint admit becomes a `bundle-request`, the others `needs-user`
+  requests.
 - **`running`**: otherwise.
 
 ## 3. What carries verbatim
@@ -414,8 +617,8 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 - **Phase 0**: decomposition, frozen contracts + conventions contract, `scopeAllow`, contract↔code cross-check
   (Codex), design authorities, edge classification, spec requirements (as `spec.json`), self-validation,
   `## Direction`, fidelity audit, C-nn ledger, ≤5 ranked questions, "units build from commits", the cross-model
-  plan-pack review (Astra, never rules) — now also obligation extraction (witnesses, `deliveredBy`, proof
-  judgments, impact mapping, cut line).
+  plan-pack review (Astra, never rules) — now also the vision (clauses `V-n`, its playback confirmation
+  reference) and obligation extraction (witnesses, `deliveredBy`, proof judgments, impact mapping, cut line).
 - **Ledgers**: C-nn, obligations, debt + closed-set `bankReason` (deduped by `(unit, kind, hash(what))`),
   architect log, `escalations.jsonl`, `degradations.jsonl` (host-fact kinds only), quarantine dossiers,
   `skill-feedback.md` never a product-repo issue.
@@ -432,20 +635,24 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 - **Git truth**: merged = second-parent reachability; integration only moves forward; **every diff is
   `merge-base(integrationTip, branch)..branch`, recomputed after any merge-in** (§3.5); worktree case from git
   exit codes; un-adopted commits never destroyed. Approval binds to `{unitCommit, specRev, contractRevs,
-  rulingRevs, obligationRevs}` (normative only; the architecture doc is a contract); any change invalidates the
+  rulingRevs, obligationRevs}` (normative only; the architecture doc is a contract; `obligationRevs` covers the
+  selected, non-exempt obligations at the gated tip); any change invalidates the
   gate and the unit re-enters at the earliest invalidated stage. A moved tip means a fresh candidate, not a new
   gate.
 - **Merge** (candidate-first): in the integration slot a candidate worktree makes a `--no-ff` merge onto the
-  current tip, held on the named ref `refs/roadmap-run/<arc>/candidate/<unit>`. The **transient check** (code) runs first: the merge-base diff may touch only pinned scope and
-  ruling-added paths, never in-tree `.roadmap/` outside publication; a denylisted path (declared `evidenceGlobs`,
-  worktree state dirs, lane outputs, ignored patterns, `__preview`, `__codex`) refuses the candidate as a
-  scope-growth finding, fixed by a normal fix round. Suite and journey lanes run, graded by exit code, witness
-  records and the held-claims brake; a suite that mutates the tree is refused; on green, integration fast-forwards
-  (the publication critical section). On red integration never moves, suite resources are released, and the
-  pre-merge tip is tested alone (an unexplained pre-existing red halts merges, `needs-user`; a known regression
-  under repair does not); otherwise one fix round under an independent gate, then a new candidate; red again
-  parks, branch kept. Conflicts take the same path. An approved empty diff is refused at gate. Prefix-collision
-  guard that grandfathers existing ones.
+  current tip, held on the named ref `refs/roadmap-run/<arc>/candidate/<unit>`. The **transient check** (code)
+  runs first (G17, H15): a unit dispatched under 1.0.0-dev.6 (`transientRules: 'm3'` in its dispatch record) may
+  touch only its pinned scope and ruling-added paths, and no in-tree `.roadmap/` path; a unit dispatched under
+  dev.5 keeps dev.5's rules for its whole lineage attempt (the five `.roadmap/` entries allowed, no scope check);
+  a docs candidate may touch only the rendered `.roadmap/` files and its ops' paths. A denylisted path (declared
+  `evidenceGlobs`, worktree state dirs, lane outputs, ignored patterns, `__preview`, `__codex`) refuses the
+  candidate as a scope-growth finding, fixed by a normal fix round. Suite and journey lanes run, graded by exit
+  code, witness records and the held-claims brake; a suite that mutates the tree is refused; on green,
+  integration fast-forwards (the publication critical section). On red integration never moves, suite resources
+  are released, and the pre-merge tip is tested alone (an unexplained pre-existing red halts merges,
+  `needs-user`; a known regression, background failures only, does not, §2.8); otherwise one fix round under an
+  independent gate, then a new candidate; red again parks, branch kept. Conflicts take the same path. An approved
+  empty diff is refused at gate. Prefix-collision guard that grandfathers existing ones.
 - **Termination**: debt never mints a unit while `draining`, enforced at the single minting point; "no spec, no
   unit"; graph-mutation validation (§2.3); edge hygiene; fixed-point satisfiability; the critical-path brake (a
   lineage quarantined twice with dependents waiting → `needs-user`); the convergence bound (§2.8). Completion
@@ -464,8 +671,8 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 
 | Item | Change |
 |---|---|
-| Routing profiles | `role → seat → model class → {backend,model,effort}` (owner rulings 2026-09-26, arc-1 feedback items 7-9). Seats: build `{low,med,high}`; each judgment role `{low,med,high,escalation}`: a unit's risk is never `escalation`; route-ups and risk triggers move a judgment to it, and a judgment already there that escalates parks (needs-user). Every layer names a **class** per seat, never a model: built-in profile < `.roadmap/config.json` `seats` (committed: set once per repo) < `plan.config` < per-unit `route`. Classes `efficient | frontier | summit` bind to triples in one place, the class catalogue in code, per profile (`efficient` → Luna medium under `default`, Sonnet 5.5 medium under `claude-only`; `frontier` → Opus 5.5 high, `summit` → Fable 5.1 high); `.roadmap/config.json` `classes` may rebind a class for the repo, and is the only place outside code a model is named (a plan cannot rebind). The resolved triples are hashed into `routingRev`, so a rebind changes it like a seat edit. Only supported triples (a prompt module exists) are selectable. Codex judgment triples are `unsupported` until a read-only Codex judgment profile exists: judgment roles resolve to Claude in both profiles, and a seat that names a Codex model for a judgment role (D2's sol digest) resolves to the Claude low judgment seat until then (owner ruling, 2026-09-25). Claude triples carry an effort, passed as `claude --effort <low|medium|high|xhigh|max>` on judgment and build calls (calls load no user settings, so nothing else sets it; Opus 5.5's own default is `medium`); `frontier` and `summit` bind `high`, Sonnet 5.5's `efficient` binds `medium` (Anthropic's starting point for agentic coding). Per-invocation launch instructions (`launch.json`) carry the backend argv, which necessarily names a model; they are launch inputs in the run dir, not state, and are the only executor-written files outside the `state.no-model-ids` scope (event log, state cache, needs-user, receipts, residues, the snapshot ref, `status` output and meter facts). Model ids are pinned: `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `gpt-5.6-luna`, `gpt-5.6-sol`. Sonnet 5.5 holds the implementer class only (build inherits the Opus brief; no judgment prompt); Haiku holds no seat. **`default`**: efficient builds low/med, frontier builds high; frontier plan-checks and gates every risk tier and summit holds both escalation seats (owner ruling 2026-09-26: independence is a clean context, not a different model; the stronger model is spent where a judgment escalates); plus Opus lenses, Fable checkpoint, Astra Phase-0 cross-check. **`claude-only`** (one config line; no Codex dependency with the built-in bindings; owner ruling 2026-09-29): the same seats, with efficient bound to Sonnet 5.5, so Sonnet builds low/med and frontier builds high; judgment as in `default`; Fable holds the checkpoint and consult seats; Opus digest for med/high; Opus lenses; Opus Phase-0 cross-check. `route` may set any class at any seat. A routing change mid-unit (lead ruling 2026-09-26): a judgment seat may change freely (every judgment is a fresh session); the implementer's may not once its build started (its session resumes), so such a unit parks with a needs-user (`routing-changed`) and any other is re-pinned under the new `routingRev`; once the architect restores that seat's routing (the plan's layer through `apply`), `resume <unit>` re-pins the parked unit and re-enters it at the stage it parked at, no spec edit. A routing `apply` re-resolves the routing in force at once; a newly seated backend passes its smoke first. Its preflight skips the Codex smoke and asserts no role resolves to Codex. Phase-0 risk is a floor plan-check may raise, never lower; runtime triggers (contract path, mismatch, gap, scope growth) promote in code. |
-| Prompt–model coupling | Every prompt is keyed by `(role, modelId)`: one module per pair (`prompts/<role>/<modelId>.ts`) citing the vendor prompting guide it follows and a reviewed date. Model ids are a closed union and each role's table is `Record<ModelId, Prompt>`: a new model fails compilation until every role has its prompt or a dated `inheritsFrom: <modelId>` (reviewed reuse, never implicit). Prompts are pure functions of revisioned inputs; a test asserts prompt fields == schema `required`. Precedent: 0.20's Opus 5.5 patterns. |
+| Routing profiles | `role → seat → model class → {backend,model,effort}` (owner rulings 2026-09-26, arc-1 feedback items 7-9). Seats: build `{low,med,high}`; each judgment role `{low,med,high,escalation}`: a unit's risk is never `escalation`; route-ups and risk triggers move a judgment to it, and a judgment already there that escalates parks (needs-user). Every layer names a **class** per seat, never a model: built-in profile < `.roadmap/config.json` `seats` (committed: set once per repo) < `plan.config` < the per-unit layer `unit.routing` (set by the `route` edit class or `steer --class`). The judgment roles `lens` and `checkpoint` sit on seat `arc`: lens → frontier, checkpoint → summit. Every `plan-applied` records `routingProvenance {profile, repoConfig {seats, classes}, planLayer, unitLayers}` for its `routingRev`, so reconstruction never re-reads a live config; a dev.5 rev is rebuilt from its `plan-applied` routing, `start.json`'s profile and the repo seats and class bindings in force at that revision (G16, H7). Classes `efficient | frontier | summit` bind to triples in one place, the class catalogue in code, per profile (`efficient` → Luna medium under `default`, Sonnet 5.5 medium under `claude-only`; `frontier` → Opus 5.5 high, `summit` → Fable 5.1 high); `.roadmap/config.json` `classes` may rebind a class for the repo, and is the only place outside code a model is named (a plan cannot rebind). The resolved triples are hashed into `routingRev`, so a rebind changes it like a seat edit. Only supported triples (a prompt module exists) are selectable. Codex judgment triples are `unsupported` until a read-only Codex judgment profile exists: judgment roles resolve to Claude in both profiles, and a seat that names a Codex model for a judgment role (D2's sol digest) resolves to the Claude low judgment seat until then (owner ruling, 2026-09-25). Claude triples carry an effort, passed as `claude --effort <low|medium|high|xhigh|max>` on judgment and build calls (calls load no user settings, so nothing else sets it; Opus 5.5's own default is `medium`); `frontier` and `summit` bind `high`, Sonnet 5.5's `efficient` binds `medium` (Anthropic's starting point for agentic coding). Per-invocation launch instructions (`launch.json`) carry the backend argv, which necessarily names a model; they are launch inputs in the run dir, not state, and are the only executor-written files outside the `state.no-model-ids` scope (event log, state cache, needs-user, receipts, residues, the snapshot ref, `status` output and meter facts). Model ids are pinned: `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `gpt-5.6-luna`, `gpt-5.6-sol`. Sonnet 5.5 holds the implementer class only (build inherits the Opus brief; no judgment prompt); Haiku holds no seat. **`default`**: efficient builds low/med, frontier builds high; frontier plan-checks and gates every risk tier and summit holds both escalation seats (owner ruling 2026-09-26: independence is a clean context, not a different model; the stronger model is spent where a judgment escalates); plus Opus lenses, Fable checkpoint, Astra Phase-0 cross-check. **`claude-only`** (one config line; no Codex dependency with the built-in bindings; owner ruling 2026-09-29): the same seats, with efficient bound to Sonnet 5.5, so Sonnet builds low/med and frontier builds high; judgment as in `default`; Fable holds the checkpoint and consult seats; Opus digest for med/high; Opus lenses; Opus Phase-0 cross-check. `route` may set any class at any seat. A routing change mid-unit (lead ruling 2026-09-26): a judgment seat may change freely (every judgment is a fresh session); the implementer's may not once its build started (its session resumes), so such a unit parks with a needs-user (`routing-changed`) and any other is re-pinned under the new `routingRev`; once the architect restores that seat's routing (the plan's layer through `apply`), `resume <unit>` re-pins the parked unit and re-enters it at the stage it parked at, no spec edit. A routing `apply` re-resolves the routing in force at once; a newly seated backend passes its smoke first. Its preflight skips the Codex smoke and asserts no role resolves to Codex. Phase-0 risk is a floor plan-check may raise, never lower; runtime triggers (contract path, mismatch, gap, scope growth) promote in code. |
+| Prompt–model coupling | Every prompt is keyed by `(role, modelId)`: one module per pair (`prompts/<role>/<modelId>.ts`) citing the vendor prompting guide it follows and a reviewed date. Model ids are a closed union and each role's table is `Record<ModelId, Prompt>`: a new model fails compilation until every role has its prompt or a dated `inheritsFrom: <modelId>` (reviewed reuse, never implicit). Prompts are pure functions of revisioned inputs; a test asserts prompt fields == schema `required`. Precedent: 0.20's Opus 5.5 patterns. The judgment roles `lens` and `checkpoint` (LR-d) are prompt modules like any other, run in fresh sessions under the judgment profile, metered, recorded as role + `routingRev`, with closed output schemas: lens/Opus is new (four kinds), lens/Fable inherits Opus; checkpoint/Fable is new, checkpoint/Opus inherits Fable; Sonnet and Codex models are unsupported for both. Lens and checkpoint prompts open with the full vision. The checkpoint's system text states that it may weaken or amend citing active `V-n` plus evidence; that where the vision does not anticipate a situation it takes the most optimistic reading that fits and records it in `interpretations`; and that for owner-only acts, nested ones included, it may only `request` (§2.8). |
 | Actors are roles, never models | (owner ruling 2026-09-25) Model ids appear only in routing configuration — the class catalogue and a repo's `.roadmap/config.json` class rebinds; profiles, `plan.config.routing` and per-unit `route` name classes (owner ruling 2026-09-26) — which is revisioned. Every record the executor writes (events, `result.json`, meter facts, ledgers, rulings, dossiers, the architect log, `status`) names the **role** an actor filled plus the `routingRev` in force, never a model id; the model is derivable from the routing revision when needed and `status.spend` is rendered by role (by-model totals are derived at render time). Prompt modules are keyed by model because they are code, not state. Rationale: models change month to month; state, ledgers and rulings must not rot with them. Plan-load validation and the unit test `state.no-model-ids` reject any executor-written record containing a known model id. |
 | Independence | A clean context, not a different model (owner, 2026-09-25): every judgment role (plan-check, digest, gate, consult, lenses, checkpoint) runs in a fresh session under the judgment profile, inputs snapshotted by revision, no implementer transcript. Checked in code at plan load and every judgment dispatch: a judgment invocation refuses `resume` and never reuses an implementer, steer or escalation session. The same model may implement and judge. |
 | Claude profiles | **judgment** (read-only; no settings, CLAUDE.md, MCP, skills or auto-memory: a clean context) and **implementer** (write tools in the unit worktree, commit-before-report; the repo's project settings and CLAUDE.md, no MCP, skills or auto-memory); both run `--output-format stream-json`, yield `result.json` and are metered. |
@@ -478,20 +685,20 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Occupancy | Inside the reservation: a probe mirroring the lane's preflight, then declared teardown; decided before any budget is charged (§3.12). Failed teardown → `cleanup-failed` (§2.2, §3.4). |
 | Process lifecycle | Every executor subprocess (backend, lane, probe, teardown) runs as a workload under a runner, which is the controller and never a workload member. The runner carries `ROADMAP_ROLE=runner`; the workload carries `ROADMAP_ROLE=workload`, `ROADMAP_OP` and `ROADMAP_INV`. Workload membership is every process whose environment has `ROADMAP_INV=<inv>` or whose session id equals the child's, identified by (pid, start time), excluding the runner; the runner is never signalled by its own kill and exits itself after writing its terminal files. **Session mode** is the containment 1.0 ships with: a `setsid` session and `/proc` scan; kill = stop members → rescan until the set is stable → TERM → KILL → rescan until empty; no next stage while non-empty (w39). Its guarantee is narrowed and stated in `status.host`: a descendant that calls `setsid()` and execs with a cleared environment escapes, caught only by the verification-tree assertion and the occupancy probe. **cgroup mode** (a cgroup v2 leaf per invocation under a delegated subtree, runner in `runner/`, workload in `work/`, entry fail-closed, kill = freeze → TERM → `cgroup.kill` → empty) is experimental: not selectable until a real-kernel gate passes on another host. Kill reasons: `deadline \| stall \| pause \| stop \| recovery \| external-unknown`. A lane runs under the runner's stall watchdog (no member CPU time, no output, no member started or ended for 10 min → `stall`, a red verdict: the fix round reads its output) and a 6 h deadline that only backstops a busy loop; a slow suite that is working is never cut short. |
 | Fix rounds | Resume the build session with evidence dirs (a session never moves across seats: a build whose implementer seat a risk raise moved starts fresh on the kept worktree); window from the unit's measured lane series (§3.2, §3.8). A fix round is **stalled** when the verification after it fails a lane that also failed before it, or the gate revises again; after the first stalled round (N = 1), while `chargeableFailures < CHARGEABLE_BOUND`, the next round runs cold on the `build.high` seat (D4), `implementer-escalated` journaled before that round's implementer seat is selected; no escalation when `build.<risk>` already binds `build.high`'s triple; no fresh final round; `harnessStop` never feeds a round. |
-| Plan-check | Redirects are internal revisioned patches (§2.7); only the patched spec is graded; may set an estate budget (D8). Reads a detached checkout of the integration tip (its cwd) and of the unit branch when one exists; host facts only from the executor's resolved lane programs or the checkouts. Checks spec coherence and buildability, not the implementation: defects in code already on the unit branch go to the build and gate as notes, never a redirect on their own. A redirect may add cites, never remove one (arc-1 feedback items 3, 12, 21, 26). |
-| Gate inputs | Spec rendering, cited contracts and C-nn in full with a one-line index of the rest (read on demand), architecture doc or its owner-approved digest, merge-base diff, lane ledger, evidence, witness records, digest, scope envelope + growth, Direction, the approving plan-check's notes; graded against the contract, not a paraphrase (w34). "Every spec lane ran verbatim" is a code assertion; `reportLostEver`, `LANE_BAR` go. |
+| Plan-check | Redirects are internal revisioned patches (§2.7); only the patched spec is graded; may set an estate budget (D8). Reads a detached checkout of the integration tip (its cwd) and of the unit branch when one exists; host facts only from the executor's resolved lane programs or the checkouts. Checks spec coherence and buildability, not the implementation: defects in code already on the unit branch go to the build and gate as notes, never a redirect on their own. A redirect may add cites, never remove one (arc-1 feedback items 3, 12, 21, 26). Under the holistic layer it receives the vision as read-only context, marked non-directive, and its output gains `visionConflict [{clauses, note}]`: each entry becomes a P3 finding for the next checkpoint, never a redirect by itself (R17, §2.8). |
+| Gate inputs | Spec rendering, cited contracts and C-nn in full with a one-line index of the rest (read on demand), architecture doc or its owner-approved digest, merge-base diff, lane ledger, evidence, witness records, digest, scope envelope + growth, Direction, the approving plan-check's notes and the spec's `obligations`; graded against the contract, not a paraphrase (w34). The gate never receives the vision: it grades spec and contracts, and the pinned scope holds (R17). Its `judgment-inputs` capture takes the revision fence (§2.6). "Every spec lane ran verbatim" is a code assertion; `reportLostEver`, `LANE_BAR` go. |
 | Round handoff | A judgment's round N+1 on the same unit (plan-check after its applied redirect, gate after its revise) is a fresh session that inherits round N's conclusions, never its session: the prior patch or directives and findings, the premises it relied on (claim + file:line evidence, part of every judgment's output), and the delta since (fix paths; premise files whose blobs changed). It rules each prior item resolved or not, reviews the delta for regressions, re-verifies only changed premises (overturning any with evidence), and raises a new finding on unchanged material only when it affects correctness or stated acceptance (arc-1 feedback items 25, 29). Judges report only what affects correctness or stated acceptance, verify only the premises a decision relies on, and batch reads (items 15, 28c). |
-| Unit policy | Every build prompt carries an executor-owned policy that overrides the repository's agent-instruction files: no cloud resources or CLIs, no sudo or system package installs, no killing processes the unit did not start, no network beyond the lanes' needs (arc-1 feedback item 20). |
+| Unit policy | Every build prompt carries an executor-owned policy that overrides the repository's agent-instruction files: no cloud resources or CLIs, no sudo or system package installs, no killing processes the unit did not start, no network beyond the lanes' needs (arc-1 feedback item 20). The unit policy is a prompt: with containment, it is what bounds an implementer build. The owner-only check (§2.8) governs checkpoint revisions only (H10); code-level enforcement beyond these is backlog (§8). |
 | Consults, findings | The consult seat reads evidence, spec, diff and C-nn directly; the Sonnet dossier goes. Findings dedupe by finding+cause with a disposition; a dismissed one is not re-raised without new evidence (sf16, w35–37). |
-| Wave-tail roles | → §2.5 + §2.8; a design-class quarantine gets a per-unit respec by the checkpoint seat, a second → `needs-user`; explorer and reconciler on demand. |
+| Wave-tail roles | → §2.5 + §2.8; an operator-design park goes to the checkpoint for a respec, re-entry or cut first, a second on the same lineage → `respec-second` (OR-Q1); explorer and reconciler are backlog (§8). |
 | Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. |
-| Plan-load validation | Every `edge.contract` path exists (sf18); `argv[0]` and env prerequisites resolve for spec lanes and `must-hold` arc lanes (`future` ones at activation); no request over capacity; worktree root not on tmpfs; routing supported, judgment roles on the judgment profile; every obligation not held on the base names `deliveredBy`; every witness has a supported reporter. |
+| Plan-load validation | Every `edge.contract` path exists (sf18); `argv[0]` and env prerequisites resolve for spec lanes and `must-hold` arc lanes (`future` ones at activation); no request over capacity; worktree root not on tmpfs; routing supported, judgment roles on the judgment profile; every obligation not held on the base names `deliveredBy`; every arc lane declares a supported reporter (R1), and a `node-test` lane does not set `NODE_OPTIONS`. |
 | Measurement | Per lane per invocation `{start, end, exitCode}`, per unit `{dispatchedAt, terminalAt, mergeSha, mergedAt}`, every upper-tier call's tokens keyed by `{role, routingRev}`, every escalation, checkpoint lane duration and per-finding instrumentation (§2.8). Arc 1 recorded almost none of this; defaults are marked unmeasured and re-derived after arc 2. |
 | State | The event log is authoritative and write-ahead; its envelope is frozen before M1: every operation has an arc-scoped id, parent command or stage id, invocation ordinal, expected inputs and postconditions; op kinds include `mergein.prepare` (integration merged into the unit branch in its worktree; postcondition `clean-merged | conflicted | completed`) and `evidence.snapshot` (a completion manifest of paths and sha256, required before teardown or retire); a complete durable intent precedes every act; `state.json` is derived (`atomic()`). A truncated final record is discarded; earlier corruption → `needs-user`. Every operation kind (resource states, spawns, commands, publications — the latter by second-parent test or activation postcondition) has a reconstruction rule pinned by a crash-boundary fixture. Deadlines are absolute; attempts monotonic across re-entry; run state reaches git only via `refs/roadmap/<arc>`. |
 | Invocation recovery | Per open spawn intent: inspect completed artifacts (a validated `result.json`; else `exit.json`, re-running the adapter) and tree effects → find the live workload by `ROADMAP_INV=<invocation id>` (the runner excluded; a scan by `ROADMAP_OP` also kills stray earlier ordinals) and adopt it through its live runner, or, with the runner dead, terminate it and classify the invocation `lost` → only then decide whether to invoke again. A valid `result.json` with live workload members is not quiescent: kill, then certify. Completed-but-unrecorded work is salvaged and re-verified, never treated as not started. Retries get a new invocation id; the original deadline holds. |
 | Issue mode, preview | Inbound only (D6; implemented in M4): `roadmap:bug` / `roadmap:feedback` issues read in code at Phase 0 and checkpoints; the outbound projection is deferred to 1.1. Preview's process and slot owned by the executor. |
 | Codex-native driver | Dropped; its fingerprint, candidate→suite→ff, `monotonic()`, "never reset a dirty worktree", marker-exact gh sync and Astra review survive. |
-| Refusals | Stop reason → `refusal`, routed up; `unit.adversarial` pins to the frontier. |
+| Refusals | Stop reason → `refusal`, routed up. |
 
 **Salvage** classifies staged, unstaged, untracked and ignored content separately and commits an explicit
 approved path set (inside the pinned scope; never `.roadmap/`, declared evidence/state or ignored paths) through
@@ -540,7 +747,7 @@ salvage SHA; a dirty verification tree is never certified under a SHA.
   sol plans and reviews, Opus gates low/med, Fable gates high. Astra is confined to Phase 0 (pack review,
   obligation cross-check), each finding adjudicated by the architect; it holds no seat that can build or
   reject. This is the `default` profile (§4); high-risk units spend the weekly limit by design, visibly (D5).
-- **D3 Audit cadence N.** *N = 5 merges, plus §2.5's other triggers.*
+- **D3 Audit cadence N.** *N = 5 publications (unit, batch, and rule-with-contract-ops), plus §2.5's other triggers.*
 - **D4 Fix-round escalation.** *Resume within a model; cold across models; no fresh final round; N = 1 (§4 Fix
   rounds).*
 - **D5 Claude spend — decided 2026-09-25.** *Meter only; no cap (arc 1: ~3 upper-tier calls per merged unit).*
@@ -560,7 +767,15 @@ of its own decomposition; seam-test unit first; how often plan-check acts on the
 yield; cross-model `codex resume`; an in-session `Agent` backend (only if headless billing changes);
 cache-aligned preambles; runtime explorer and reconciler as cadence roles; a third backend; mechanical
 spec-quality checks; several executors per
-host; multi-UID hosts; reboot recovery; more witness reporters; a formal ruling language.
+host; multi-UID hosts; reboot recovery; a formal ruling language.
+
+Deferred from M3: `explore` (A11); `--adversarial` is withdrawn, not deferred (a unit routing layer expresses
+it, A12); the spec's `contractRequests` and `owedAfterMerge` (A13, M4); lens parallelism (lenses run serially);
+vision playback verification (M4; the confirmation reference is stored unverified); the in-tree home of the
+vision for the next arc (M4); code-level enforcement of implementer boundaries beyond the unit policy and
+containment (H10's stated limit; trigger: an implementer acting outside the sandbox); event-log compaction
+(LR-e; trigger: a log over 50 MB or a fold over 2 s); glob-overlap precision in the impact mapping; more witness
+reporters and a real-`go` capture; the read-only Codex judgment profile.
 
 ## 9. Eval ladder
 
@@ -582,7 +797,9 @@ host; multi-UID hosts; reboot recovery; more witness reporters; a formal ruling 
    partial bundles; `no-op`; the convergence bound; arc-state predicates.
 3. **targeted probe** — real calls: both Claude profiles and Codex fresh/resume against real schemas (M1 gate).
 4. **paid** — per-slice fixtures (§10), once per merged batch, offline in file mode, the M1 fixture also under
-   `claude-only`; the issue fixture (D6).
+   `claude-only`; the issue fixture (D6). A property a model's output cannot be forced to show is asserted at
+   the unit tier instead: M3's literal partial-bundle rejection is asserted by the fake fixture `evals-m3.fake`,
+   and the paid run asserts stale-whole rejection (A18, G19).
 
 **Acceptance properties**, asserted by each slice as reached: lanes run by the executor verbatim,
 graded by exit code and witness records; fix rounds get evidence dirs in continuous context; diffs are
@@ -613,14 +830,35 @@ ladder with its own runnable fixture:
   `apply`, `resolve-edge`, `run-only`. The legacy-arc defaulting is scaffolding, deleted once no dev.4 arc is in
   flight. Fixture: no overlapping holders, bounded service for planned work, `cleanup-failed` survival, a
   conflicted re-entry, no duplicate writer after concurrent recovery.
-- **M3 Holistic layer and revisioned commands.** Obligations, witness protocol, impact mapping, journey lanes,
-  held-claims brake, lenses, the checkpoint with bundles and brakes, findings, arc states,
-  `rule`/`patch-spec`; `steer` (with `--class`), `route`, `limits`, `merge-in` and the P2 `repair` origin; the growth controls of §2.9 (ruling retirement from `constraints.md`, obligation
-  re-derivation at Phase 0, dismissal arc lifetime, residue-index compaction at `start`, `roadmap gc`). Fixture
-  (obligations seeded by hand): an initially absent multi-unit journey
-  whose foundation merges first, a regression and its repair, a stale audit race, a rejected partial bundle,
-  the convergence bound firing, final quiescence.
+- **M3 Holistic layer and revisioned commands** (lead ruling LR-a: this bullet, BACKLOG "M3", and from M2's
+  deferrals `merge-in`, `route`, `limits`, `steer --class` and the `repair` origin; the Codex judgment profile,
+  cgroup mode and everything M4 owns are out). The vision record, obligations with the witness protocol and
+  impact mapping, journey lanes, the held-claims brake with known regressions, findings, repair units and batch
+  repair, mutant reproduction, the four lenses with coverage per required lens, the checkpoint with bundles,
+  divergences, owner requests and brakes, arc states with active and sealed completion; the revision fence and
+  payload-first activation, docs publications with preemption, close-out; `rule`, `reverse`, `steer`,
+  `merge-in`, `audit`, `close-admissions`, and `route`, `limits`, obligation and vision edits through `apply`;
+  the growth controls of §2.9 (ruling retirement, obligation re-derivation at Phase 0, dismissal arc lifetime,
+  residue compaction at `start`, `roadmap gc`) and the snapshot closure. Version 1.0.0-dev.6 adopts dev.5 arcs:
+  such an arc runs without a vision or the holistic layer, spends nothing new and completes as in M2; `apply`
+  may opt it in. The dev.5 defaulting (the live-ledger reader `rulingsFromLiveFile`, the legacy manifest reader,
+  dev.5 routing reconstruction and dev.5 transient rules) is scaffolding, deleted once no dev.5 arc is in
+  flight. Fixture (one paid run, `--profile default`, obligations seeded by hand, lead ruling LR-f): the Node
+  CLI `ledger`; vision V-1 (purpose: "bookkeepers reconcile a month in one command"), V-2 (non-negotiable:
+  "money is never silently mis-rounded"), V-3 (tradeoff, rank 1: "clear errors over permissive input");
+  obligations I-1 (future, serves V-1, delivered by `parse` and `report`), I-2 (must-hold, serves V-2), I-3
+  (must-hold, "unknown commands exit 2", serves V-3); L = {invariants, vision}, audits every 2 publications,
+  K = 1. The story: `parse` merges; `tidy` merges with `Math.round`, regressing I-2 unselected; the first audit
+  runs while `report` merges and latches I-1, and code opens P1 F-1, re-witnessed on the new head; an
+  architect `apply` makes the first bundle stale whole; its re-evaluation admits a repair citing V-2, which
+  records a divergence whose digest the driver acknowledges; `convergence-bound` fires and is acknowledged; the
+  repair merges and resolves F-1; a drift-only audit runs the vision lens and the checkpoint no-ops; the final
+  audit runs both lenses of L and the checkpoint no-ops; the close-out publication is docs-only and covers its
+  own edge; `arc-completed`, then the terminal snapshot. Not exercised in the paid run (reported): `rule`,
+  `reverse`, `steer`, `merge-in`, reproduction, batch repair, the per-identity bound, `owner-request`,
+  `draining`, real `go`, and the literal partial bundle.
 - **M4 Skill text and acceptance.** SKILL.md (Phase 0 with obligation extraction, which is in-session work;
   check-in; session end), reference.md, inbound issue intake (outbound projection in 1.1), the debt lifecycle
-(§2.9: stable ids, Phase-0 disposition or refuse, the two-arc question), preview. Extraction runs on a real target document
-  and is adjudicated before the full acceptance fixture.
+(§2.9: stable ids, Phase-0 disposition or refuse, the two-arc question), preview, the spec's `contractRequests` and
+  `owedAfterMerge` (A13), vision playback verification and the vision's in-tree home for the next arc. Extraction
+  runs on a real target document and is adjudicated before the full acceptance fixture.

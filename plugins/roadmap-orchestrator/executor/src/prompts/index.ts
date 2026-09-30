@@ -14,6 +14,19 @@ import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
 /** Sonnet 5.5 is an implementer class only; write a Sonnet-native judgment module before a layer may seat it. */
 const SONNET_JUDGMENT = 'no judgment prompt written for Sonnet 5.5; no built-in seat uses it';
+/**
+ * Interim (M3 0a): the lens and checkpoint modules are step B4's (lens/Opus new, lens/Fable inherits Opus;
+ * checkpoint/Fable new, checkpoint/Opus inherits Fable; Sonnet and Codex unsupported). Until then every arc seat is
+ * unsupported, so a holistic plan is refused at startup (`unsupported-routing`) and a non-holistic one never seats them.
+ */
+const ARC_ROLE_PENDING = 'the lens and checkpoint prompt modules are written in step B4';
+const ARC_ROLE_UNSUPPORTED = {
+  'claude-opus-5-5': { type: 'unsupported', reason: ARC_ROLE_PENDING },
+  'claude-fable-5-1': { type: 'unsupported', reason: ARC_ROLE_PENDING },
+  'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+  'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+} as const;
 
 export const PROMPTS: PromptTable<PromptModules> = {
   planCheck: {
@@ -52,6 +65,8 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
+  lens: ARC_ROLE_UNSUPPORTED,
+  checkpoint: ARC_ROLE_UNSUPPORTED,
 };
 
 export class UnsupportedPromptError extends Error {

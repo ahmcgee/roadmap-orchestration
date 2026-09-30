@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { type Event, type LogRecord, type StageOutcomeFact, prevHash, serializeEvent } from '../src/core/events.ts';
 import { canonicalJson } from '../src/core/fsx.ts';
 import { type UnitId, arcId, commandId, needsUserId, opId, planRev, seatRev, sha256, specRev, unitId } from '../src/core/ids.ts';
-import type { Stage } from '../src/core/records.ts';
+import { DEFAULT_BOUNDS, type Stage } from '../src/core/records.ts';
 import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
 import type { RiskTier } from '../src/routing/types.ts';
@@ -81,7 +81,7 @@ describe('fold derives', () => {
     assert.deepEqual(state.units, [{
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
       spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, redirectBase: 0,
-      park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null,
+      park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,
@@ -124,6 +124,10 @@ describe('fold derives', () => {
       v: 1, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
       control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
       backendParks: [], scheduling: null, resources: [], runOnly: null, resolvedEdges: [],
+      holistic: {
+        on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], checkpoints: [], divergences: [],
+        digests: [], steered: [], mergedIn: [], draining: null, completion: null,
+      },
     });
   });
 

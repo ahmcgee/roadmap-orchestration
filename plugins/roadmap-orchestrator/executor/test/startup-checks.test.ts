@@ -590,7 +590,7 @@ describe('startup.m2: over capacity, own-arc residues, the respawn smoke', () =>
     });
     j.close();
     const own = residueEntry(resourceName('db'), arcId(s.arc));
-    recordResidue(s.hostDir, { ...own, key: { ...own.key, unit: u1, inv } });
+    recordResidue(s.hostDir, { ...own, key: { arc: own.key.arc, resource: own.key.resource, unit: u1, inv } });
     const start = await once(input(s));
     assert.equal(start.checks.kind, 'passed', JSON.stringify(start.checks));
     assert.equal((await once(respawnOf(s))).checks.kind, 'passed');

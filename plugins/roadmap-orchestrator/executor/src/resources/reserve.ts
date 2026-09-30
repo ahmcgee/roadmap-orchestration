@@ -35,7 +35,7 @@
 //                                 cleanup: what it could not clean stays `cleaning` and its residue undisposed.
 // A retry or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
 import { crashPoint } from '../core/crash.ts';
-import type { Holder, Parent, ResourceEdge } from '../core/events.ts';
+import { type Holder, type Parent, type ResourceEdge, holderUnit } from '../core/events.ts';
 import {
   type InvocationId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey,
 } from '../core/ids.ts';
@@ -143,6 +143,9 @@ function holderKey(holder: Holder): OpKey {
     case 'sweep': return opKey(`resources:${holder.command}`);
     case 'retry': return opKey(`resources:retry/${holder.unit}/${holder.stage}/${holder.attempt}`);
     case 'publication': return opKey(`resources:publication/${holder.unit}/${holder.attempt}`);
+    case 'docs': return opKey(`resources:docs/${holder.pub}`);
+    case 'batch': return opKey(`resources:batch/${holder.finding}/${holder.attempt}`);
+    case 'job': return opKey(`resources:job/${holder.job}`);
   }
 }
 
@@ -319,7 +322,7 @@ export async function finishCleanup<H extends Holder>(
   parent: Parent,
 ): Promise<CleanupResult<H>> {
   const holder: Holder = r.holder;
-  const unit = holder.type === 'sweep' ? null : holder.unit;
+  const unit = holderUnit(holder);
   const runs: TeardownRun[] = [];
   for (const resource of r.resources) {
     const recipe = r.recipes.get(resource as ResourceInstance);

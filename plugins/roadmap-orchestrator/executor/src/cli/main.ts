@@ -1,8 +1,9 @@
 // CLI entry: parses argv into the closed Command union (src/input/cli.ts) and runs it. Run commands find
 // their run dir through the RunLocator: the host lock claim's, or `--repo` + `--arc` explicitly. Commands
-// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`) only
-// write a file into its durable queue and print the command id; the executor applies it and writes the
-// receipts. `apply` first hashes the
+// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's
+// `rule`, `reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) only write a file into its durable queue
+// and print the command id; the executor applies it and writes the receipts. `rule` and `steer` hash the file
+// they name into the command (its absolute path and sha256). `gc` is a host action (step A5b). `apply` first hashes the
 // plan file the arc started with (start.json) and every unit's spec into the command's manifest; `apply
 // --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
 // no smoke: a backend the new routing needs is listed under `smoke`). Output is agent-facing JSON.
@@ -13,7 +14,7 @@
 // in exit.reason.json and `status`. `status` prints the status object.
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
@@ -21,7 +22,8 @@ import { evaluateApply } from '../commands/apply.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
-import { canonicalJson } from '../core/json.ts';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { sha256 } from '../core/ids.ts';
 import { type CommandBody, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
@@ -31,7 +33,7 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
-import { arcStack, resolveRouting } from '../routing/layers.ts';
+import { planStack, resolveRouting } from '../routing/layers.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { watch } from '../watch.ts';
@@ -115,7 +117,31 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
       return;
     }
+    case 'rule':
+      return submit(command.run, hostDir, { type: 'rule', ...hashedFile('rule', command.record) });
+    case 'reverse':
+      return submit(command.run, hostDir, { type: 'reverse', divergence: command.divergence });
+    case 'steer':
+      return submit(command.run, hostDir, {
+        type: 'steer', unit: command.unit, brief: hashedFile('steer', command.brief), budgetMin: command.budgetMin, class: command.class, resume: command.resume,
+      });
+    case 'merge-in':
+      return submit(command.run, hostDir, { type: 'merge-in', unit: command.unit });
+    case 'audit':
+      return submit(command.run, hostDir, { type: 'audit', lenses: command.lenses });
+    case 'close-admissions':
+      return submit(command.run, hostDir, { type: 'close-admissions' });
+    case 'gc':
+      // Interim (M3 0a): BACKLOG "Scaffolding to delete".
+      throw new Error('gc: not implemented (step A5b)');
   }
+}
+
+/** A file a command names, by its absolute path and the sha256 of its bytes as the CLI read them. */
+function hashedFile(command: string, path: string): Readonly<{ path: AbsPath; sha256: ReturnType<typeof sha256> }> {
+  const abs = absPath(resolve(path));
+  if (!existsSync(abs)) throw new CliError(`${command}: no file ${abs}`);
+  return { path: abs, sha256: sha256(sha256Hex(readFileSync(abs))) };
 }
 
 /** start.json of a run: the plan file an apply hashes, the repo and the resolved profile. */
@@ -131,7 +157,7 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: Pl
   const config = readRepoConfig(start.repo);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile,
-    resolve: (plan) => resolveRouting(arcStack(start.profile, config, plan.routing ?? null)), laneEnv: process.env, manifest: null, expectRev,
+    resolve: (plan) => resolveRouting(planStack(start.profile, config, plan)), laneEnv: process.env, manifest: null, expectRev,
   });
   switch (verdict.kind) {
     case 'rejected':

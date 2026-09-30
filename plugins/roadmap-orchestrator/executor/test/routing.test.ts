@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { unitId } from '../src/core/ids.ts';
+import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
+import { planPath } from '../src/core/values.ts';
 import { support } from '../src/prompts/index.ts';
 import { CLASS_CATALOGUE } from '../src/routing/classes.ts';
-import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, routingRevOf, selectProfile, unsupportedSeats } from '../src/routing/layers.ts';
+import {
+  type RoutingStack, arcStack, parseRepoConfig, planStack, resolveRouting, routingRevOf, seatsInForce, selectProfile, unsupportedSeats,
+} from '../src/routing/layers.ts';
 import { MODELS } from '../src/routing/models.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import {
@@ -141,18 +146,19 @@ describe('routing', () => {
 
   it('routing.rev-stable: the rev hashes triples: same table, same rev; any seat or binding change, a different rev', () => {
     const t = resolveRouting(base).table;
-    const rev = routingRevOf(t);
+    const rev = routingRevOf(t, false);
     assert.match(rev, /^[0-9a-f]{16}$/);
-    assert.equal(routingRevOf(structuredClone(t)), rev);
+    assert.equal(routingRevOf(structuredClone(t), false), rev);
     assert.equal(resolveRouting(base).rev, rev);
     // Naming the class a seat already has is no change.
     assert.equal(resolveRouting(arcStack('default', null, layer({ build: { low: 'efficient' } }))).rev, rev);
-    const seen = new Set([rev]);
+    // Every seat is hashed where it is in force: all of them in a holistic arc (the arc seats only there, M3 G20).
+    const seen = new Set([routingRevOf(t, true)]);
     for (const s of SEAT_REFS) {
       // A JSON round trip, not structuredClone: the table shares triple objects between seats.
       const changed = JSON.parse(JSON.stringify(t)) as Record<string, Record<Seat, Triple>>;
       changed[s.role]![s.tier] = atSeat(t, s).model === SOL_HIGH.model ? LUNA : SOL_HIGH;
-      const r = routingRevOf(changed as unknown as RoutingTable);
+      const r = routingRevOf(changed as unknown as RoutingTable, true);
       assert.ok(!seen.has(r), `${s.role}/${s.tier}`);
       seen.add(r);
     }
@@ -172,5 +178,42 @@ describe('routing', () => {
     }
     assert.ok(failed, 'the fixture must not typecheck');
     execFileSync(tsc, ['--noEmit', '-p', '.'], { cwd: EXECUTOR, stdio: 'pipe' });
+  });
+});
+
+describe('routing: the arc seats (M3)', () => {
+  it('routing.holistic-filter: the arc seats are in force, checked and hashed only in a holistic arc (G20)', () => {
+    // A non-holistic arc resolves as in M2: no arc seat is checked, and the rev hashes the unit roles alone.
+    for (const p of PROFILES) {
+      const r = resolveRouting(arcStack(p, null, null));
+      assert.equal(r.holistic, false);
+      assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint'), []);
+      assert.deepEqual(unsupportedSeats(r, null), [], p);
+      const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate };
+      assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the 1.0.0-dev.5 rev`);
+      // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
+      assert.equal(resolveRouting(arcStack(p, null, layer({ lens: { arc: 'summit' } }))).rev, r.rev);
+    }
+    // The built-in arc seats: the lenses on frontier (Opus), the checkpoint on summit (Fable).
+    const base = resolveRouting(arcStack('default', null, null));
+    assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['frontier', 'summit']);
+    assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [OPUS, FABLE]);
+    // A plan naming a vision puts them in force: every seat is checked (the modules are step B4's, so until then
+    // they are refused as no-prompt), and the rev hashes them too.
+    const plan = { holistic: { vision: planPath('vision.json') } };
+    const h = resolveRouting(planStack('default', null, plan));
+    assert.equal(h.holistic, true);
+    assert.equal(seatsInForce(h).length, SEAT_REFS.length);
+    assert.notEqual(h.rev, base.rev);
+    assert.deepEqual(unsupportedSeats(h, null), [
+      { kind: 'unsupported-routing', role: 'lens', tier: 'arc', layer: 'builtin', class: 'frontier', unit: null, why: 'no-prompt' },
+      { kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'builtin', class: 'summit', unit: null, why: 'no-prompt' },
+    ]);
+    assert.equal(resolveRouting(planStack('default', null, {})).rev, base.rev, 'no vision: the M2 stack');
+    // A plan layer may seat the arc roles; a Codex class there is a Codex judgment.
+    const codex = resolveRouting(planStack('default', null, { routing: layer({ checkpoint: { arc: 'efficient' } }), holistic: plan.holistic }));
+    assert.deepEqual(unsupportedSeats(codex, null).at(-1), {
+      kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment',
+    });
   });
 });

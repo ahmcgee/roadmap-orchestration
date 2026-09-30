@@ -205,6 +205,6 @@ describe('M2 plan fields', () => {
     refuses({ ...base, units: [u('a', { reenters: { unit: 'b', enterAt: 'candidate' } }), u('b')] }, 'plan.units[0].reenters.enterAt');
     refuses({ ...base, capacity: { cpu: 0 }, units: [u('a')] }, 'plan.capacity.cpu');
     refuses({ ...base, resources: [{ name: 'estate', probe: tool, teardown: tool, pool: { size: 0 } }], units: [u('a')] }, 'plan.resources[0].pool.size');
-    refuses({ ...base, units: [u('a', { origin: 'repair' })] }, 'plan.units[0].origin');
+    refuses({ ...base, units: [u('a', { origin: 'imported' })] }, 'plan.units[0].origin');
   });
 });

@@ -6,8 +6,8 @@ import {
   OP_KINDS, parseChainLine, parseEventLine, prevHash, serializeChainLine, serializeEvent,
 } from '../src/core/events.ts';
 import {
-  arcId, commandId, invocationId, laneId, needsUserId, opId, opKey, resourceName, routingRev, seatRev, sha, sha256, specRev, unitId,
-  INTEGRATION_SLOT, clauseId, rulingId,
+  arcId, commandId, findingId, invocationId, jobId, laneId, needsUserId, opId, opKey, planRev, resourceName, routingRev, seatRev, sha, sha256, specRev,
+  unitId, INTEGRATION_SLOT, clauseId, rulingId,
 } from '../src/core/ids.ts';
 import { type ResidueRecord, residueRecord } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
@@ -74,6 +74,11 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
   'snapshot.publish': intent('snapshot.publish', { ref: refName('refs/roadmap/arc-1'), old: A, highWater: 41, manifestSha256: H, commit: commit([A] as const) }, { new: B }),
   'needsuser.raise': intent('needsuser.raise', { id: needsUserId('nu-7'), path: absPath('/run/needs-user/nu-7.json'), blocking: true }, { sha256: H }),
   'command.apply': intent('command.apply', { command: commandId('cmd-0123456789abcdef'), commandSha256: H }, null),
+  'docs.commit': intent('docs.commit', {
+    ref: refName('refs/roadmap-run/arc-1/docs/docs-1'), old: null, pub: jobId('docs', 1), integrationTip: A, worktree: wt, commit: commit([A] as const),
+  }, { new: B }),
+  'mutant.apply': intent('mutant.apply', { worktree: wt, at: A, finding: findingId('F-1'), patchSha256: H }, null),
+  'revision.commit': intent('revision.commit', { source: { type: 'bundle', job: jobId('ckpt', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
 };
 
 // Every outcome variant of every kind.
@@ -96,6 +101,9 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
   'snapshot.publish': [{ kind: 'published' }],
   'needsuser.raise': [{ kind: 'raised' }],
   'command.apply': [{ kind: 'applied', receiptSha256: H }, { kind: 'rejected', reason: 'unknown needs-user id' }],
+  'docs.commit': [{ kind: 'committed' }],
+  'mutant.apply': [{ kind: 'applied', tree: C }, { kind: 'inapplicable', detail: 'the patch no longer applies' }],
+  'revision.commit': [{ kind: 'applied' }],
 };
 
 const FACTS: readonly Fact[] = [
@@ -132,8 +140,8 @@ function roundTrip(e: Event): void {
 describe('events', () => {
   it('lists exactly the plan\'s op kinds', () => {
     assert.deepEqual([...OP_KINDS].sort(), [
-      'candidate.merge', 'command.apply', 'evidence.snapshot', 'integration.ff', 'mergein.prepare', 'needsuser.raise',
-      'proc.kill', 'proc.spawn', 'resource.transition', 'salvage.commit', 'snapshot.publish', 'spec.patch',
+      'candidate.merge', 'command.apply', 'docs.commit', 'evidence.snapshot', 'integration.ff', 'mergein.prepare', 'mutant.apply', 'needsuser.raise',
+      'proc.kill', 'proc.spawn', 'resource.transition', 'revision.commit', 'salvage.commit', 'snapshot.publish', 'spec.patch',
       'worktree.create', 'worktree.remove',
     ]);
   });

@@ -83,6 +83,11 @@ export function meterOf(events: Iterable<Event>): Meter {
       smokes.set(k, { backend: s.backend, routingRev: f.routingRev, ...add(smokes.get(k) ?? ZERO, f) });
       continue;
     }
+    // M3: a job's lens or checkpoint call has an arc seat and no unit. Interim (0a): nothing charges one before
+    // steps B4-B6 run them; B9 folds them into the role and seat totals.
+    if (s.type === 'job') {
+      throw new Error(`meter: a job's usage (${f.inv}): not implemented (step B9)`);
+    }
     const rk = `${s.role} ${f.routingRev}`;
     roles.set(rk, { role: s.role, routingRev: f.routingRev, ...add(roles.get(rk) ?? ZERO, f) });
     const sk = `${s.role} ${s.tier} ${f.routingRev}`;

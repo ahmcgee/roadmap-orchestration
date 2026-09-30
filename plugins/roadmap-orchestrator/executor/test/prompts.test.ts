@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { clauseId, laneId, rulingId, sha, specRev, unitId } from '../src/core/ids.ts';
+import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
+import type { ObligationDef } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
@@ -10,8 +11,8 @@ import {
   ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateDecisionsFile, validateGateOutput,
   validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
-import { arcStack, resolveRouting } from '../src/routing/layers.ts';
-import { MODEL_IDS, PROFILES, ROLES, type Role, SEAT_REFS, atSeat } from '../src/routing/types.ts';
+import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
+import { MODEL_IDS, PROFILES, ROLES, type Role, atSeat } from '../src/routing/types.ts';
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -29,6 +30,21 @@ const index = (c: string, r: string, ledger: string) => ({
   contracts: [{ path: repoPath(c), heading: `${c} heading` }], rulings: [{ id: rulingId(r), line: `${r} first sentence.` }], ledger: absPath(ledger),
 });
 const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, line: 3 }] });
+
+// M3 arc roles (their modules are step B4's; the samples pin the frozen input shapes).
+const vision = (rev: number, text: string) => ({ rev, clauses: [{ id: visionClauseId('V-1'), kind: 'purpose' as const, text, rank: null, state: 'active' as const }] });
+const obligation = (id: string, statement: string): ObligationDef => ({
+  id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
+  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef') },
+  deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
+});
+const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
+  obligation: obligation(id, statement), exempt: false,
+  observation: { key: { treeSha: tree, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' as const },
+});
+const findingView = (id: string, claim: string) => ({
+  id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
+});
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
@@ -84,6 +100,34 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
     },
   ],
+  lens: [
+    {
+      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { from: SHA_A, to: SHA_B, diff: 'RANGE-A' },
+      owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
+    },
+    {
+      vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: { from: SHA_B, to: SHA_A, diff: 'RANGE-B' },
+      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: 'OWNER-B' }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
+      rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      architecture: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
+    },
+  ],
+  checkpoint: [
+    {
+      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, head: SHA_A, plan: 'PLAN-A', findings: [],
+      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedClauses: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+      contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',
+    },
+    {
+      vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40 }, head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
+      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedClauses: [visionClauseId('V-1')], obligationsServingNone: [], withdrawnCited: [] },
+      divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
+      index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), architecture: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },
+      direction: 'DIR-B',
+    },
+  ],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
@@ -103,15 +147,24 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
     findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [],
   },
+  lens: {
+    findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
+    reasons: ['I-1 fails on the audited tree'], premises: [],
+  },
+  checkpoint: {
+    decision: 'bundle', reasons: ['F-1 needs a repair'],
+    ops: [{ op: 'cut', unit: 'u-one', reason: 'superseded by the repair', cites: ['V-1'], evidence: ['F-1'] }],
+    rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
+  },
 };
 
 /** Every (role, model) either built-in profile can resolve. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const { table } = resolveRouting(arcStack(p, null, null));
-    for (const s of SEAT_REFS) {
-      const m = atSeat(table, s).model;
+    const resolved = resolveRouting(arcStack(p, null, null));
+    for (const s of seatsInForce(resolved)) {
+      const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
     }
   }

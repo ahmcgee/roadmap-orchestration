@@ -6,11 +6,12 @@
 // `supervisor.<token>.err` in the host dir).
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import type { CancelFile, ExitFile, ResultFile } from './records.ts';
+import { type ApplyManifest, type CancelFile, type DispatchRecord, type ExitFile, type ResultFile, type RevisionInputs, isRevisionManifest } from './records.ts';
+import type { RoutingProvenance } from '../routing/types.ts';
 import type { InputFiles } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
-import type { ParkRecord, PlanChange, StageOutcomeFact } from './events.ts';
+import type { ParkRecord, PlanAppliedFact, PlanChange, RevisionSource, StageOutcomeFact } from './events.ts';
 import type { SpecRev, UnitId } from './ids.ts';
 import type { JournalView } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
@@ -219,4 +220,55 @@ export function legacySettled(view: JournalView, id: UnitId): boolean {
   const parent = canonicalJson({ type: 'stage', unit: id, stage: u.decided.stage, attempt: u.decided.attempt });
   const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === parent && view.doneOf(i.op) !== null);
   return raise !== undefined && view.ackOf(raise.expect.id) !== null;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.5 → M3 (1.0.0-dev.6). Byte-preserving (G14): the readers validate a record's canonical raw bytes
+// with its M3 fields absent and return it as written; these helpers normalise it for the code that reads it,
+// so a default never enters a hash, a chain or a comparison.
+
+/** A `plan-applied` fact's source; a dev.5 fact has none: `start` for a null command, else that `command`. */
+export function revisionSourceOf(f: PlanAppliedFact): RevisionSource {
+  if (f.source !== undefined) return f.source;
+  warnDefaulted('plan-applied.source', `plan-applied rev ${f.rev} has no source (written by 1.0.0-dev.5); read from its command`);
+  return f.command === null ? { type: 'start' } : { type: 'command', command: f.command };
+}
+
+/**
+ * The transient-check rules of a dispatch's lineage attempt (H15): `m3` since 1.0.0-dev.6; a dev.5 dispatch keeps
+ * dev.5's rules (the five `.roadmap/` entries allowed, no pinned-scope check) for its whole lineage attempt.
+ */
+export function transientRulesOf(record: DispatchRecord): 'm3' | 'dev5' {
+  if (record.transientRules !== undefined) return record.transientRules;
+  warnDefaulted('dispatch.transientRules', `unit ${record.unit} was dispatched by 1.0.0-dev.5; its candidate keeps dev.5's transient rules`);
+  return 'dev5';
+}
+
+/**
+ * What an `apply` command's manifest puts in force beyond plan and specs (G15). A dev.5 command's `PlanManifest`:
+ * the ledger read live (`rulingsFromLiveFile`), no obligations and no vision. Its bytes and `commandSha256` stay.
+ */
+export function applyInputsOf(manifest: ApplyManifest): RevisionInputs | Readonly<{ rulings: 'live'; obligations: null; vision: null }> {
+  if (isRevisionManifest(manifest)) return { rulings: manifest.rulings, obligations: manifest.obligations, vision: manifest.vision };
+  warnDefaulted('apply.manifest', 'an apply command without rulings, obligations or vision (queued by 1.0.0-dev.5): the ledger is read live, no obligations or vision');
+  return { rulings: 'live', obligations: null, vision: null };
+}
+
+/**
+ * The ledger bytes of a plan revision that recorded no `rulingsSha256` (1.0.0-dev.5 and earlier): its live file,
+ * as that release read it, until the arc's first M3 revision keeps it.
+ */
+export function rulingsFromLiveFile(path: string): Buffer {
+  warnDefaulted('rulings.live', `the rulings ledger ${path} is read live (no plan revision recorded its bytes yet, 1.0.0-dev.5)`);
+  return readFileSync(path);
+}
+
+/**
+ * The routing provenance of a plan revision (H7): its own, or for a dev.5 revision the one `rebuild` makes from its
+ * `plan-applied` routing, start.json's profile and the repo config in force at that revision (A3 and B9 supply it).
+ */
+export function routingProvenanceOf(f: PlanAppliedFact, rebuild: () => RoutingProvenance): RoutingProvenance {
+  if (f.routingProvenance !== undefined) return f.routingProvenance;
+  warnDefaulted('plan-applied.routingProvenance', `plan-applied rev ${f.rev} records no routing provenance (1.0.0-dev.5); rebuilt from the plan, start.json and the repo config`);
+  return rebuild();
 }

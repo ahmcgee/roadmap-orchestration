@@ -29,7 +29,7 @@ import type { NeedsUserId, UnitId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { NeedsUserContent, NeedsUserReason } from '../core/records.ts';
-import type { ParkState, ProbeState, ResidueState, UnitState } from '../core/state.ts';
+import { type ParkState, type ProbeState, type ResidueState, type UnitState, stageResidueHolder } from '../core/state.ts';
 import { type AbsPath, type IsoTime, isoTimeOf } from '../core/values.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import {
@@ -188,7 +188,7 @@ export function residueEscalationsDue(view: JournalView, now: Date): readonly Re
   return residueTargets(view).filter((r) => Date.parse(r.at) + PARK_ESCALATE_MS <= now.getTime()).flatMap((r) => {
     const target = probeTargetKey({ type: 'resource', instance: r.key.resource });
     if (parked.has(target)) return [];
-    const { unit, stage, attempt } = r.holder;
+    const { unit, stage, attempt } = stageResidueHolder(r);
     return [{
       parent: { type: 'op', op: r.fail },
       content: {

@@ -222,6 +222,8 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
 /** Runs the stage `target` names, from inputs read back from the journal. */
 async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
+    case 'reproduce':
+      throw new Error(`unit ${unit.id}: the reproduce stage: not implemented (step B3)`);
     case 'plan-check':
       return planCheck(ctx, unit);
     case 'build':

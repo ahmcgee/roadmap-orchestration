@@ -22,7 +22,7 @@ import { crashPoint } from '../core/crash.ts';
 import { type ProbeTarget, probeTargetKey } from '../core/events.ts';
 import type { CommandId, ResourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { UnitState } from '../core/state.ts';
+import { type UnitState, stageResidueHolder } from '../core/state.ts';
 import { gitRun } from '../git/git.ts';
 import { type HostSample, isClear } from '../host/sample.ts';
 import { type StageContext, unitWorktree } from '../pipeline/dispatch.ts';
@@ -96,7 +96,7 @@ export function retryHolderOf(view: JournalView, instance: ResourceInstance): Re
   if (status.state !== 'cleanup-failed' || residue === undefined) {
     throw new Error(`a probe of ${instance}, which is ${status.state} under ${JSON.stringify(status.holder)}${residue === undefined ? ' with no residue' : ''}`);
   }
-  const { unit, stage, attempt } = residue.holder;
+  const { unit, stage, attempt } = stageResidueHolder(residue);
   return { type: 'retry', unit, stage, attempt };
 }
 

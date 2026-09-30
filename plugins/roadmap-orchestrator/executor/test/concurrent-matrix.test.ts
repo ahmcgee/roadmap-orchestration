@@ -129,7 +129,7 @@ const spawnsOf = (snap: LogSnapshot): readonly (Event & IntentOf<'proc.spawn'>)[
   snap.events.filter((e): e is Event & IntentOf<'proc.spawn'> => e.type === 'intent' && e.kind === 'proc.spawn');
 const subjectUnit = (i: IntentOf<'proc.spawn'>): string | null => {
   const s = i.expect.subject;
-  return s.purpose === 'smoke' ? null : s.unit;
+  return 'unit' in s ? s.unit : null;
 };
 const openSpawns = (snap: LogSnapshot, unit: string): readonly IntentOf<'proc.spawn'>[] =>
   snap.view.openIntents().flatMap((i) => (i.kind === 'proc.spawn' && subjectUnit(i) === unit ? [i] : []));

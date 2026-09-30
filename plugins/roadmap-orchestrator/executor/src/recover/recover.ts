@@ -203,6 +203,13 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
       return apply(ctx, intent, needsUserOp(s.runDir));
     case 'command.apply':
       return apply(ctx, intent, commandOp(ctx.commands));
+    // Interim (M3 0a): no release before these steps writes these intents.
+    case 'docs.commit':
+      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step A4)`);
+    case 'mutant.apply':
+      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step B3)`);
+    case 'revision.commit':
+      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step A2)`);
     case 'proc.spawn':
     case 'proc.kill':
     case 'resource.transition':

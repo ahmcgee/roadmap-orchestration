@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -143,5 +144,73 @@ describe('bin/roadmap', () => {
     const bare = await roadmap(['version']);
     assert.equal(bare.code, 64);
     assert.match(bare.stderr, /unknown command "version"/);
+  });
+});
+
+describe('cli: M3 forms', () => {
+  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, close-admissions, gc', () => {
+    assert.deepEqual(parseCommand(['rule', 'rulings/C-7.json']), { command: 'rule', record: 'rulings/C-7.json', run: HOST });
+    assert.deepEqual(parseCommand(['reverse', 'D-3', ...EXPLICIT]), { command: 'reverse', divergence: 'D-3', run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['steer', 'u1', '--brief', 'b.md', '--budget', '45']), {
+      command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: null, resume: false, run: HOST,
+    });
+    assert.deepEqual(parseCommand(['steer', 'u1', '--brief', 'b.md', '--budget', '45', '--class', 'summit', '--resume']), {
+      command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: 'summit', resume: true, run: HOST,
+    });
+    assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
+    assert.deepEqual(parseCommand(['audit']), { command: 'audit', lenses: null, run: HOST });
+    assert.deepEqual(parseCommand(['audit', '--lens', 'vision,drift,vision']), { command: 'audit', lenses: ['drift', 'vision'], run: HOST });
+    assert.deepEqual(parseCommand(['close-admissions', ...EXPLICIT]), { command: 'close-admissions', run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
+    assert.deepEqual(parseCommand(['gc', '--repo', '/r', '--keep', '3', '--dry-run']), { command: 'gc', repo: '/r', keep: 3, dryRun: true });
+  });
+
+  it('cli.m3-refusals: missing or malformed arguments name the command', () => {
+    const refuses = (args: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(args), (err: unknown) => err instanceof CliError && message.test(err.message), args.join(' '));
+    refuses(['rule'], /rule: <record\.json> is required/);
+    refuses(['rule', 'a.json', 'b.json'], /unexpected argument "b\.json"/);
+    refuses(['reverse', 'C-3'], /DivergenceId/);
+    refuses(['steer', 'u1', '--budget', '5'], /steer: --brief <file> is required/);
+    refuses(['steer', 'u1', '--brief', 'b.md'], /steer: --budget <minutes> is required/);
+    refuses(['steer', 'u1', '--brief', 'b.md', '--budget', '0'], /--budget takes a positive integer of minutes/);
+    refuses(['steer', 'u1', '--brief', 'b.md', '--budget', '5', '--class', 'turbo'], /class/);
+    refuses(['steer', '--brief', 'b.md', '--budget', '5'], /steer: <unit> is required/);
+    refuses(['merge-in'], /merge-in: <unit> is required/);
+    refuses(['audit', '--lens', 'style'], /lens/);
+    refuses(['audit', 'now'], /unexpected argument/);
+    refuses(['close-admissions', 'now'], /unexpected argument/);
+    refuses(['gc'], /gc: --repo <path> is required/);
+    refuses(['gc', '--repo', '/r', '--keep', '-1'], /needs a value|positive integer/);
+    refuses(['gc', '--repo', '/r', '--arc', 'arc-1'], /unknown option --arc/);
+  });
+
+  it('cli.m3-writes-command-file: the M3 commands queue their bodies; rule and steer hash the file they name', { timeout: 30_000 }, async () => {
+    const repo = makeRepo(tmpDir('cli-repo'), { files: { 'README.md': 'x\n' } });
+    const dir = join(repo, '.git', 'roadmap-runtime', 'arc-1');
+    mkdirSync(dir, { recursive: true });
+    const record = join(repo, 'C-7.json');
+    writeFileSync(record, '{"id":"C-7"}\n');
+    const sha = createHash('sha256').update('{"id":"C-7"}\n').digest('hex');
+    const cases: readonly [readonly string[], unknown][] = [
+      [['rule', record], { type: 'rule', path: record, sha256: sha }],
+      [['reverse', 'D-2'], { type: 'reverse', divergence: 'D-2' }],
+      [['steer', 'u1', '--brief', record, '--budget', '30', '--class', 'frontier'], { type: 'steer', unit: 'u1', brief: { path: record, sha256: sha }, budgetMin: 30, class: 'frontier', resume: false }],
+      [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
+      [['audit', '--lens', 'invariants'], { type: 'audit', lenses: ['invariants'] }],
+      [['close-admissions'], { type: 'close-admissions' }],
+    ];
+    for (const [args, body] of cases) {
+      const exit = await roadmap([...args, '--repo', repo, '--arc', 'arc-1']);
+      assert.equal(exit.code, 0, exit.stderr);
+      const out = JSON.parse(exit.stdout) as { command: string };
+      const file = commandFile(JSON.parse(readFileSync(join(dir, 'commands', 'incoming', `${out.command}.json`), 'utf8')), 'command');
+      assert.deepEqual(file.body, body, args.join(' '));
+    }
+    const missing = await roadmap(['rule', join(repo, 'nope.json'), '--repo', repo, '--arc', 'arc-1']);
+    assert.equal(missing.code, 64);
+    assert.match(missing.stderr, /rule: no file/);
+    const gc = await roadmap(['gc', '--repo', repo]);
+    assert.notEqual(gc.code, 0);
+    assert.match(gc.stderr, /gc: not implemented \(step A5b\)/);
   });
 });

@@ -6,7 +6,7 @@ at triage stay in git history.
 
 ## Milestones (DESIGN-1.0.md §10)
 
-### M2 (in progress: plan `/claude-state/plans/m2-dag-resources.md`, rev 2.1; step 0a done in 1.0.0-dev.5)
+### M2 (done: plan `/claude-state/plans/m2-dag-resources.md`, rev 2.1; 1.0.0-dev.5, merged at be76132)
 
 - Flake reruns, host signatures, retryable parks, cross-model cold start for fix rounds. In M1 a red lane is
   red and fix rounds resume the same model. Retryable parks cover every park that has no re-entry today but
@@ -19,29 +19,46 @@ at triage stay in git history.
 ### Deferred from M2 (the plan's "Deferred" list)
 
 - `merge-in`, `route`, `limits`, and `steer` (with `--class <efficient|frontier|summit>` as a per-unit routing
-  layer, A13): M3. The `repair` origin: M3.
+  layer, A13) and the `repair` origin: taken into M3 (LR-a).
 - Preview's own estate slot: specified with preview in M4 (F23).
 - A memory capacity class.
 - Handing adopted runners to unit tasks.
 - Async git (git runs through `spawnSync` and blocks the event loop).
 - cgroup CPU enforcement of `@cpu`.
 - Token-cost calibration (`CPU_COST` is unmeasured).
-- Event-log compaction (M3).
+- Event-log compaction: deferred again by M3 (LR-e).
 - Per-lane `stallMin`.
 - Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
 - Persisted arbiter tickets, if exact post-recovery grant order is ever required (F20).
 
-### M3
+### M3 (in progress: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; step 0a done in 1.0.0-dev.6)
 
-- Residue-index compaction at `start`, event-log compaction, `roadmap gc` (also the host dir's
-  `supervisor.<token>.*` and `executor.<gen>.*` log files, which accumulate until then).
-- Ruling retirement from `constraints.md`, obligation re-derivation at Phase 0, dismissal arc lifetime.
-- The holistic layer: obligations, witness protocol, checkpoint authority.
+- Scope (LR-a): DESIGN-1.0.md §10 M3 and the holistic layer (the vision as the root record, OR-V; obligations,
+  witness protocol, impact mapping, journey lanes, the held-claims brake, lenses, the checkpoint with bundles,
+  divergences and brakes, findings and repair, arc states and completion); `rule`, `reverse`, `steer --class`,
+  `route` and `limits` (apply edit classes), `merge-in`, `audit`, `close-admissions`, the `repair` origin.
+- Growth controls: residue-index compaction at `start`, `roadmap gc` (sealed arcs only; also the host dir's
+  `supervisor.<token>.*` and `executor.<gen>.*` log files, which accumulate until then), ruling retirement from
+  `constraints.md`, obligation re-derivation at Phase 0, dismissal arc lifetime.
+- Out (LR-a): the Codex judgment profile, cgroup containment, everything M4 owns.
+- cgroup containment stays experimental until `contain.cgroup-real` passes on a host with a writable,
+  delegated cgroup v2 tree.
+
+### Deferred from M3 (the plan's "Deferred" list)
+
+- Event-log compaction (LR-e). Its trigger is surfaced as `status.host.log{bytes, events, foldMs}`: 50 MB or 2 s.
 - A read-only Codex judgment profile, kept as an override option (owner, 2026-09-29: vendor standings move).
   Until then Codex judgment triples are `unsupported` and the review digest seat resolves to the Claude low
   judgment seat.
-- cgroup containment stays experimental until `contain.cgroup-real` passes on a host with a writable,
-  delegated cgroup v2 tree.
+- `explore` (A11); `--adversarial` (withdrawn, A12: a unit routing layer expresses it); `contractRequests` and
+  `owedAfterMerge` (A13: M4).
+- More witness reporters, and a capture from a real `go test -json` (`go-test-json` is tested on hand-written
+  streams only; no `go` on this host).
+- Glob-overlap precision (spec `obligations` against the mapping is prefix-conservative).
+- Lens parallelism (lenses run serially, one `@cpu` each).
+- Vision playback verification (M4); the in-tree home of the vision for the next arc (M4).
+- Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
+  Trigger: an implementer acting outside the sandbox.
 
 ### M4
 
@@ -111,6 +128,21 @@ None.
   fix would let the prober take a sweep-held residue or have the sweep hand it back as cleanup-failed.
 
 ## Scaffolding to delete
+
+- The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.5 is in flight:
+  `revisionSourceOf` (a `plan-applied` without `source`, and the field's optionality), `transientRulesOf` and the
+  dev.5 transient rules it selects (the five `.roadmap/` entries, no scope check; step A4's branch), `applyInputsOf`
+  and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
+  without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
+- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4), `reverse` (A2),
+  `steer` and `merge-in` (A3), `audit` and `close-admissions` (B7) in `src/commands/apply.ts`; `gc` failing in
+  `src/cli/main.ts` (A5b); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
+  B4); the recovery throws for `docs.commit` (A4), `mutant.apply` (B3) and `revision.commit` (A2) in
+  `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`
+  (`src/recover/resource.ts`); the `reproduce` stage throw in `runStage` (`src/pipeline/unit.ts`, B3); the preempted
+  lane throw in `src/pipeline/lanes.ts` (A4); the job-usage throw in `meterOf` (`src/meter.ts`, B9);
+  `stageResidueHolder`'s throw for a job-owned residue and its callers in `src/park/{probe,schedule}.ts` (A4);
+  `unitFfFingerprint`'s throw for a docs or batch `ff` in `src/git/ff.ts` and `src/recover/ff.ts` (A4, B2).
 
 - The 1.0.0-dev.4 → M2 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.4 (or a dev.3 arc
   baselined after dispatch) is in flight: `legacyParkRecord` (a park without `park`) and its call in the fold's

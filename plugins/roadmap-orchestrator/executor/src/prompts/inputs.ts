@@ -6,12 +6,16 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { LaneId, RulingId, Sha, SpecRev, UnitId } from '../core/ids.ts';
+import type { DivergenceId, FindingId, LaneId, RulingId, Sha, SpecRev, UnitId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
+import type {
+  CheckpointTrigger, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
+  VisionClause, VisionCoverage,
+} from '../holistic/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -147,13 +151,83 @@ export type GateInputs = Readonly<{
   priorRound: GatePriorRound | null;
 }>;
 
-export type RoleInputs = { readonly planCheck: PlanCheckInputs; readonly build: BuildInputs; readonly gate: GateInputs };
+// ---------------------------------------------------------------------------------------------------
+// M3: the arc roles' inputs (frozen in step 0a; the lens and checkpoint modules are step B4's). The vision
+// comes first and in full in both (A14); on a conflict the vision wins.
+
+/** The vision as a prompt gets it: every clause, withdrawn ones marked (H16). */
+export type VisionInput = Readonly<{ rev: number; clauses: readonly VisionClause[] }>;
+
+/** One obligation with its observation on the tree under review (null: none, `not covered`, never passed). */
+export type ObligationView = Readonly<{
+  obligation: ObligationDef;
+  exempt: boolean;
+  observation: Readonly<{ key: ObservationKey; verdict: ObservationVerdict }> | null;
+}>;
+
+/** A finding as a prompt shows it: enough to dedupe against and to rule on. */
+export type FindingView = Readonly<{
+  id: FindingId;
+  lens: FindingLens;
+  severity: FindingSeverity;
+  state: FindingStateName;
+  obligation: ObligationDef['id'] | null;
+  claim: string;
+  owner: UnitId | null;
+}>;
+
+export type LensInputs = Readonly<{
+  vision: VisionInput;
+  lens: LensKind;
+  obligations: readonly ObligationView[];
+  /** The audited range: the lens's watermark to the audited SHA, with its diff. */
+  range: Readonly<{ from: Sha; to: Sha; diff: string }>;
+  /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one). */
+  owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: string }>[];
+  priorFindings: readonly FindingView[];
+  contracts: readonly DocText[];
+  rulings: readonly RulingText[];
+  index: ReferenceIndex;
+  architecture: ArchitectureInput;
+  /** The audit's detached worktree at the audited SHA, the lens's cwd. */
+  checkout: AbsPath;
+}>;
+
+export type CheckpointInputs = Readonly<{
+  vision: VisionInput;
+  trigger: CheckpointTrigger;
+  head: Sha;
+  /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
+  plan: string;
+  findings: readonly FindingView[];
+  obligations: readonly ObligationView[];
+  coverage: VisionCoverage;
+  /** Divergences not yet covered by an acknowledged digest (H11). */
+  divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
+  contracts: readonly DocText[];
+  rulings: readonly RulingText[];
+  index: ReferenceIndex;
+  architecture: ArchitectureInput;
+  direction: string;
+}>;
+
+export type RoleInputs = {
+  readonly planCheck: PlanCheckInputs;
+  readonly build: BuildInputs;
+  readonly gate: GateInputs;
+  readonly lens: LensInputs;
+  readonly checkpoint: CheckpointInputs;
+};
 
 export const ROLE_INPUTS = {
   planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound'],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+  ],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
+  checkpoint: [
+    'vision', 'trigger', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index', 'architecture', 'direction',
   ],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
@@ -163,6 +237,8 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   planCheck: true,
   build: true,
   gate: true,
+  lens: true,
+  checkpoint: true,
 };
 void ROLE_INPUTS_COMPLETE;
 

@@ -10,7 +10,7 @@
 //   `unpublished`; the caller re-checks the fingerprint and makes a fresh candidate (or re-gates).
 // - `foreign`: anything else (integration rewound or rewritten): the caller stops with a needs-user.
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
+import { type IntentOf, type OpOutcome, parentUnit, unitFfFingerprint } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
@@ -113,7 +113,9 @@ function act(repo: AbsPath, intent: IntentOf<'integration.ff'>): void {
 }
 
 function verify(repo: AbsPath, intent: IntentOf<'integration.ff'>): OpOutcome['integration.ff'] {
-  const { ref, old, fingerprint } = intent.expect;
+  const { ref, old } = intent.expect;
+  // Interim (M3 0a): docs and batch `ff`s (steps A4, B2) carry no unit fingerprint.
+  const fingerprint = unitFfFingerprint(intent.expect);
   const next = intent.expect.new;
   const seen = observeIntegration(repo, ref, old, next);
   switch (seen.kind) {

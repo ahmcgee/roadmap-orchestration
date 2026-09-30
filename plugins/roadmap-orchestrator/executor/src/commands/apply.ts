@@ -51,6 +51,8 @@
 //            postcondition. All or nothing: a rejection lists every reason. `reenters` and `cut` are its edit
 //            classes (D3). Mutation.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
+//   rule, reverse, steer, merge-in, audit, close-admissions (M3): frozen in step 0a; until the step named in
+//            `NOT_YET` implements each, it is rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -203,8 +205,19 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return sweep(ctx, command.id, body.resource);
     case 'apply':
       return applyPlan(ctx, command.id, body);
+    case 'rule':
+    case 'reverse':
+    case 'steer':
+    case 'merge-in':
+    case 'audit':
+    case 'close-admissions':
+      return { kind: 'rejected', reason: `${body.type}: not implemented (step ${NOT_YET[body.type]})` };
   }
 }
+
+/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,reverse,steer,mergein,audit,admissions}.ts). */
+const NOT_YET = { rule: 'A4', reverse: 'A2', steer: 'A3', 'merge-in': 'A3', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
+  Readonly<Record<'rule' | 'reverse' | 'steer' | 'merge-in' | 'audit' | 'close-admissions', string>>;
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
   const view = ctx.journal.view;

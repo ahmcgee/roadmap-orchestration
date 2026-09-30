@@ -32,12 +32,16 @@
 //   chargeable bound is always `design`. The class is written into the parking `stage-outcome` fact (`park`).
 // - `prepare` (M2) is a re-entered unit's first stage; each of its outcomes enters the pipeline where the
 //   prepared worktree allows.
+// - M3: the bounds are the unit's (`UnitState.bounds`, from its dispatch record's `limits`; the built-in ones
+//   below otherwise). `reproduce` is a vacuity repair's first stage. A candidate `preempted` by a docs publication
+//   (A7) or `finding-blocked` by an active P1 (G10) goes back to the candidate stage uncharged; admission holds it
+//   there while the P1 blocks it.
 import {
   type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
   type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
 } from '../core/events.ts';
-import type { NeedsUserReason } from '../core/records.ts';
-import { CHARGEABLE_BOUND, type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
+import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
+import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
 import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
 
 /** One per (stage, kind) of `STAGE_OUTCOME_KINDS`: a gate outcome for a build stage is unrepresentable. */
@@ -71,11 +75,14 @@ export type Next =
 // ---------------------------------------------------------------------------------------------------
 // The table
 
-/** Two, not one: arc 1's high-risk adopted units each found real defects in a second round (arc-1 feedback item 2). */
-export const MAX_REDIRECTS = 2;
-export const MAX_REVISE_ROUNDS = 2;
-export const MAX_CANDIDATE_REDS = 1;
-export const MAX_RETRIES = 1;
+/**
+ * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them (M3). Two redirects, not one: arc 1's
+ * high-risk adopted units each found real defects in a second round (arc-1 feedback item 2).
+ */
+export const MAX_REDIRECTS = DEFAULT_BOUNDS.redirects;
+export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;
+export const MAX_CANDIDATE_REDS = DEFAULT_BOUNDS.candidateReds;
+export const MAX_RETRIES = DEFAULT_BOUNDS.retries;
 
 /** Where a decision sends the unit: a build round, or another stage. Never `prepare`: only a re-entry starts there. */
 export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build' | 'prepare'> }>;
@@ -94,11 +101,11 @@ type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
 type BoundedRound = 'redirect' | 'revise' | 'candidate-red';
-/** A round the unit may take `max` times; the next one takes `then`, uncharged. */
+/** A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. */
 type Bounded<S extends OutcomeStage> = Readonly<{
   do: 'bounded';
   round: BoundedRound;
-  max: number;
+  bound: keyof Pick<Bounds, 'redirects' | 'reviseRounds' | 'candidateReds'>;
   to: Target;
   chargeable: boolean;
   then: S extends JudgmentStage ? RouteUp : Park;
@@ -129,9 +136,20 @@ export const TABLE: Table = {
     // MERGE_HEAD kept (the M1 conflict precedent): a resolve round, in a fresh session (no session inherits).
     conflicted: go(build('resolve')),
   },
+  // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
+  reproduce: {
+    reproduced: go(at('plan-check')),
+    // The finding is dismissed by code; the unit parks (the checkpoint respecs or cuts it, OR-Q1).
+    'not-reproduced': park('not-reproduced', 'design'),
+    // The mutant no longer applies: re-evaluated at the next audit; the unit parks meanwhile.
+    inapplicable: park('not-reproduced', 'design'),
+    blocked: park('lane-blocked', 'retryable'),
+    interrupted: hold,
+    'cleanup-failed': park('residue', 'retryable'),
+  },
   'plan-check': {
     approve: go(build('fresh')),
-    redirect: { do: 'bounded', round: 'redirect', max: MAX_REDIRECTS, to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
+    redirect: { do: 'bounded', round: 'redirect', bound: 'redirects', to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
     infeasible: routeUp('escalation'),
     escalate: routeUp('escalation'),
     // R2: a redirect cannot lower the risk floor or widen the unit's envelope; refused → escalate.
@@ -183,7 +201,7 @@ export const TABLE: Table = {
   },
   gate: {
     approve: go(at('candidate')),
-    revise: { do: 'bounded', round: 'revise', max: MAX_REVISE_ROUNDS, to: build('fix'), chargeable: true, then: routeUp('escalation') },
+    revise: { do: 'bounded', round: 'revise', bound: 'reviseRounds', to: build('fix'), chargeable: true, then: routeUp('escalation') },
     escalate: routeUp('escalation'),
     'empty-diff': park('empty-diff', 'design'),
     refusal: routeUp('refusal'),
@@ -199,7 +217,7 @@ export const TABLE: Table = {
     // mergein.prepare, then resume "resolve and commit"; uncharged, the diff base is recomputed.
     conflict: go(build('resolve')),
     // Red with T alone green: a fix round, fresh gate, new candidate. Red again parks.
-    red: { do: 'bounded', round: 'candidate-red', max: MAX_CANDIDATE_REDS, to: build('fix'), chargeable: true, then: park('candidate-red', 'design') },
+    red: { do: 'bounded', round: 'candidate-red', bound: 'candidateReds', to: build('fix'), chargeable: true, then: park('candidate-red', 'design') },
     // Red with T alone red too: the base is broken, not the unit; uncharged.
     'base-red': park('base-red', 'env'),
     // A suite lane its runner ended (deadline) or lost: no product verdict, and no retry at this stage.
@@ -208,6 +226,10 @@ export const TABLE: Table = {
     // A suite lane's resources could not be cleaned: a residue, never released.
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
+    // M3 (A7): a docs publication took the slot before green; a new candidate later, uncharged.
+    preempted: go(at('candidate')),
+    // M3 (G10): an active P1 blocks a selected obligation; admission holds the next candidate until it lifts.
+    'finding-blocked': go(at('candidate')),
   },
   ff: {
     published: go(at('snapshot')),
@@ -237,6 +259,7 @@ const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candida
 function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
   switch (o.stage) {
     case 'prepare': return TABLE.prepare[o.kind];
+    case 'reproduce': return TABLE.reproduce[o.kind];
     case 'plan-check': return TABLE['plan-check'][o.kind];
     case 'build': return TABLE.build[o.kind];
     case 'quiesce': return TABLE.quiesce[o.kind];
@@ -285,12 +308,13 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
       return { class: rule.trigger ? 'trigger' : 'advance', chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
     case 'bounded': {
       const taken = rule.round === 'redirect' ? redirectsSinceEdit(u) : u.counters[ROUND_COUNTERS[rule.round]];
-      if (taken < rule.max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
-      return apply(u, o, rule.then, `${why} beyond ${rule.max} ${rule.round} round${rule.max === 1 ? '' : 's'}`);
+      const max = u.bounds[rule.bound];
+      if (taken < max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
+      return apply(u, o, rule.then, `${why} beyond ${max} ${rule.round} round${max === 1 ? '' : 's'}`);
     }
     case 'retry': {
       // The rule type admits `retry` only at a retry stage.
-      if (u.counters.retries[o.stage as RetryStage] >= MAX_RETRIES) return halt('park', rule.reason, o, `${why} after its uncharged retry`, rule.park);
+      if (u.counters.retries[o.stage as RetryStage] >= u.bounds.retries) return halt('park', rule.reason, o, `${why} after its uncharged retry`, rule.park);
       return { class: 'retry', chargeable: false, step: { to: 'stage', target: o.stage === 'build' ? build('resume') : at(o.stage as Exclude<RetryStage, 'build'>) } };
     }
     case 'route-up': {
@@ -312,8 +336,8 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
 
 function decide(u: UnitState, o: StageOutcome): Decision {
   const d = apply(u, o, ruleOf(o), '');
-  if (d.chargeable && u.counters.chargeableFailures + 1 >= CHARGEABLE_BOUND) {
-    return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${CHARGEABLE_BOUND}`, 'design', true);
+  if (d.chargeable && u.counters.chargeableFailures + 1 >= u.bounds.chargeable) {
+    return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${u.bounds.chargeable}`, 'design', true);
   }
   return d;
 }

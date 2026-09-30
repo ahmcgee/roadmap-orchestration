@@ -1,7 +1,7 @@
-# Executor schemas and contracts (frozen in M1 step 1a; M2 additions frozen in M2 step 0a)
+# Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a)
 
 The specification every later step compiles against. M2's records and scheduling interfaces are in place
-below and summarised in "M2: scheduling, resources, parks" at the end. Each schema names the TypeScript type and the
+below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic layer" at the end. Each schema names the TypeScript type and the
 validator that implement it; if you change one, change the other in the same commit. Owner: the lead.
 Other steps request changes rather than edit.
 
@@ -24,8 +24,11 @@ runtime state (event log, state cache, invocation files, needs-user, commands an
 inputs (plan, specs, ledger).
 
 - A record change is additive. A field the previous release did not write gets a safe default at the read
-  boundary, so the fold and the pipeline only ever see the new shape; the defaulting logs one warning per arc
-  per defaulted kind where `status` can surface it. An unknown value (say, a hash the old record never took)
+  boundary, so the fold and the pipeline only ever see the new shape; the defaulting logs one warning per
+  process per defaulted kind (`warnDefaulted`, on the executor's stderr, the supervisor's `supervisor.<token>.err`).
+  Since M3 (G14) a record whose line is hashed or chained is read byte-preserving: the reader validates its
+  canonical raw bytes with the new fields absent and returns it as written, and a helper in
+  `src/core/upgrade.ts` normalises it where it is read, so a default never enters a hash, a chain or a comparison. An unknown value (say, a hash the old record never took)
   is typed as unknown, never filled with a fake.
 - The defaulting code lives in one module marked as temporary scaffolding for arcs started on the previous
   release, and is deleted (with its BACKLOG entry) once none is in flight. It never rewrites a file.
@@ -70,6 +73,31 @@ Every change is additive; the defaults live in `src/core/upgrade.ts` and each wa
 | `DerivedState` (`state.json`) | `+ backendParks, scheduling, resources, runOnly, resolvedEdges` | derived |
 | Lane dir | `+ host.json`, `<lane>.rerun/` (M2 steps 0b, 4) | absent → null (lasting, no warning) |
 
+**1.0.0-dev.5 → 1.0.0-dev.6 (M3).** `SCHEMA_VERSION` stays 1; the plan and spec literals stay `roadmap/plan-m1` and
+`roadmap/spec-m1`. Every change is additive and byte-preserving (G14): nothing is rewritten, and each default
+below is a helper in `src/core/upgrade.ts` (warned once per process) or a lasting absent-means-none encoding (no
+warning). `PREVIOUS_RELEASE` for this update is be76132 (B10 moves it). A dev.5 arc runs with no vision and no
+holistic layer, spends nothing new, and completes as in M2.
+
+| Record | Change | Read-time default for dev.5 state |
+|---|---|---|
+| `plan.json` | `+ holistic?{vision, obligations?, audit?{every?, lenses?, wallClockMin?}}`, `+ limits?`; unit `+ routing?`, `+ limits?`; origin `+ repair` | absent: holistic off, the built-in bounds, no unit layer (lasting) |
+| `spec.json` | `+ obligations?`, `+ repairs?` (non-empty when present) | absent: none (`specObligations`, `specRepairs`; lasting) |
+| `plan-applied` | `+ source?, payloadSha256?, rulingsSha256?, obligationsSha256?, visionSha256?, publication?, routingProvenance?` | `source` from `command` (`revisionSourceOf`); no `rulingsSha256`: the ledger is read live (`rulingsFromLiveFile`) until the first M3 revision records it; no provenance: rebuilt (`routingProvenanceOf`, H7) |
+| `apply` body (G15) | `manifest` gains `rulings{ledgerSha256, sidecars}, obligations, vision` (`RevisionManifest`) | a `PlanManifest`: the ledger live, no obligations or vision (`applyInputsOf`); bytes and `commandSha256` never rewritten |
+| `DispatchRecord` (H15) | `+ transientRules?: 'm3'`, `+ bounds?: Bounds` | `transientRules` absent: dev.5's transient rules for the lineage attempt (`transientRulesOf`); `bounds` absent: `DEFAULT_BOUNDS` (`boundsOfRecord`, lasting) |
+| `ApprovalFingerprint` | `+ obligationRevs?` (non-empty when present) | absent: none (`obligationRevsOf`); a fingerprint selecting no obligation is byte-identical to a dev.5 one (lasting, no warning) |
+| Routing (G16, H7) | roles `+ lens, checkpoint` (seat `arc`); per-unit layers; `routingProvenance` per `plan-applied` | a non-holistic arc hashes the M2 table (unit roles only), so every dev.5 `routingRev` is unchanged; a dev.5 revision's provenance is rebuilt from its plan layer, start.json's profile and the repo config in force at it |
+| `ResidueKey` / holder (G4) | `unit` or `job` (exactly one); holder `+ job{job}`; `ResidueState.holder` stage or job | a dev.5 key names its unit (it is a unit-owned residue as written) |
+| `Holder`, `Parent`, `SpawnSubject`, `MeterSubject` | `+ docs{pub}, batch{finding, attempt}, job{job}`; `+ job{job}`; `+ arc-backend, journey, mutant`; `+ job{job, role, tier}` | none |
+| Op kinds | `+ docs.commit, mutant.apply, revision.commit`; `integration.ff` `+ subject?` (docs or batch, then no `fingerprint`); `candidate.merge` `+ batch?` | `subject` absent: a unit `ff` (the dev.5 shape) |
+| `stage-outcome` | stage `+ reproduce`; candidate `+ preempted, finding-blocked` | none |
+| Cancel and kill reasons | `+ preempt` (lanes only: `LANE_INTERRUPT_REASONS`) | none |
+| New facts, `CommandBody`, `NeedsUserReason`, `Role` | "M3: the holistic layer" | none |
+| `UnitState` (fold) | `+ bounds` | derived from the latest dispatch record |
+| `DerivedState` (`state.json`) | `+ holistic` (`HolisticFold`) | derived |
+| `residues.jsonl` | `+ compacted` head (A5a) | none |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -97,6 +125,14 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `resume [<unit> \| --backend claude\|codex]` | `{target: all \| unit \| backend}` |
 | `sweep [--resource <name>]` | `{resource \| null}` |
 | `apply [--expect-rev <n>] [--dry-run]` | `{expectRev: PlanRev \| null, dryRun}`: `--expect-rev` is a positive integer |
+| `resolve-edge <edge> --evidence <text>`, `run-only (<unit>... \| --clear)` (M2) | `{edge, evidence}`, `{units \| null}` |
+| `rule <record.json>` (M3) | `{record}`; the CLI queues `rule{path (absolute), sha256}` of the file's bytes |
+| `reverse <D-n>` (M3) | `{divergence: DivergenceId}` |
+| `steer <unit> --brief <f> --budget <min> [--class efficient\|frontier\|summit] [--resume]` (M3) | `{unit, brief, budgetMin (positive), class \| null, resume}`; queued with the brief hashed like a rule |
+| `merge-in <unit>` (M3) | `{unit}` |
+| `audit [--lens <k>[,<k>…]]` (M3) | `{lenses: LensKind[] (ascending, unique) \| null}` |
+| `close-admissions` (M3) | `{}` |
+| `gc --repo <path> [--keep <K>] [--dry-run]` (M3) | `{repo, keep \| null, dryRun}`: a host action with no run locator, not a queued command (step A5b) |
 
 `RunLocator = {type:'host'}` (the host lock claim's `runDir`) `| {type:'explicit', repo, arc}` (`--repo` and
 `--arc` together). Paths are returned as given; the caller resolves them against its cwd.
@@ -123,6 +159,8 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
 | `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
+| `holistic?` (M3, A5) | `{vision: PlanPath, obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
+| `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
@@ -459,14 +497,19 @@ expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `
 
 `ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; the spec's cited
 contracts, the architecture doc and its digest when the plan names one, at the gated tip), rulingRevs: [{id, rev}]
-(ascending id; the spec's cited rulings that are active)}`; `obligationRevs` arrive in M3. Recorded with the
+(ascending id; the spec's cited rulings that are active), obligationRevs?: [{id: ObligationId, rev}] (M3: ascending
+id; the selected, non-exempt obligations at the gated tip; absent exactly when there are none, non-empty when
+present, so a fingerprint with none is byte-identical to a dev.5 one; `obligationRevsOf`)}`. Recorded with the
 approval as an `approval` fact. Recomputed at the tip being published onto before `integration.ff`; any mismatch
 re-gates. M1's C-nn ledger has no supersede beyond the withdrawn fold, so every active ruling is at rev 1; a cited
 ruling that is withdrawn leaves the set, which changes the fingerprint. An uncited contract is outside the
 fingerprint (binding the documents a judgment actually read is backlog).
 
 `DispatchRecord = {unit, specRev, specSha256, scope: RepoPattern[] (sorted), riskFloor, routingRev,
-implementerSeatRev: SeatRev, at}`, recorded once per dispatch as a `dispatch` fact; `specRev` and `specSha256` are
+implementerSeatRev: SeatRev, at, transientRules?: 'm3', bounds?: Bounds}` (M3: `transientRules` on every dispatch
+since 1.0.0-dev.6, a re-pin copying it, absent on a dev.5 dispatch, whose lineage attempt keeps dev.5's transient
+rules, H15; `bounds` the unit's `boundsOf` in force since this pin, absent meaning `DEFAULT_BOUNDS`; the fold's
+`UnitState.bounds` is the latest pin's), recorded once per dispatch as a `dispatch` fact; `specRev` and `specSha256` are
 the spec revision the dispatching plan-check read and the sha256 of the file's bytes (a risk re-pin records the
 revision its plan-check read). A redirect cannot widen `scope` or lower `riskFloor`.
 `implementerSeatRev` hashes the triple at `build.<riskFloor>` under `routingRev`. A routing change mid-unit (lead
@@ -486,7 +529,9 @@ re-enters the unit at the stage it parked at (`rerouted`); while the seat is sti
 ## `spec.json` M1 subset and `SpecPatch`
 
 `SpecM1 = {schema:'roadmap/spec-m1', unit, rev: SpecRev, lanes, acceptance (non-empty), scope (non-empty),
-resources, decisions, facts, cites: {contracts: RepoPath[], rulings: RulingId[]}}`; item ids unique across all
+resources, decisions, facts, cites: {contracts: RepoPath[], rulings: RulingId[]}, obligations?: ObligationId[],
+repairs?: (FindingId | ObligationId)[]}` (M3, A13: both unique and non-empty when present, absent meaning none,
+`specObligations`/`specRepairs`; `contractRequests` and `owedAfterMerge` are M4's); item ids unique across all
 sections. `cites` is required (may be empty; a spec without it is refused, no conversion): the plan contracts and
 ledger rulings every prompt of the unit embeds in full; the rest reach prompts as a one-line index (contract: path
 and first Markdown heading; ruling: id and first sentence, or its fold line) to read on demand. Each cite must
@@ -621,9 +666,18 @@ the plan in force.
 `ModelId = 'claude-opus-5-5' | 'claude-fable-5-1' | 'claude-sonnet-5-5' | 'gpt-5.6-luna' | 'gpt-5.6-sol'` (closed). `Backend = claude |
 codex`. `Triple = {backend:'claude', model: ClaudeModelId, effort: low|medium|high|xhigh|max} | {backend:'codex', model:
 CodexModelId, effort: low|medium|high|xhigh}`; a Claude triple's effort is passed as `claude --effort <e>` on
-judgment and build calls. `Role = planCheck | build | gate`; `RiskTier = low | med | high` (a
-unit's risk); `JudgmentSeat = RiskTier | escalation`; seats: build has `RiskTier`, planCheck and gate have
-`JudgmentSeat` (`SeatRef = {role, tier}`, `build.escalation` unrepresentable). `ModelClass = efficient | frontier |
+judgment and build calls. `Role = planCheck | build | gate | lens | checkpoint` (M3 adds the arc roles last, so
+seat order is unchanged; `UnitRole` the first three, `ArcRole` the last two, `JudgmentRole = planCheck | gate`,
+`FreshRole = JudgmentRole | ArcRole`, the roles whose call runs a fresh judgment session); `RiskTier = low | med |
+high` (a unit's risk); `JudgmentSeat = RiskTier | escalation`; seats: build has `RiskTier`, planCheck and gate have
+`JudgmentSeat`, lens and checkpoint the one seat `arc` (`SeatRef = {role, tier}`, `build.escalation` and `gate.arc`
+unrepresentable; `UnitSeatRef` and `ArcSeatRef` split it, and a unit's backend subject and seat meter name only a
+`UnitSeatRef`). Built-in arc seats: `lens.arc` → frontier, `checkpoint.arc` → summit. They are in force only in a
+holistic arc (G20): `RoutingStack.holistic?: true` (`planStack(profile, config, plan)` sets it from
+`plan.holistic`; `arcStack` never does), `ResolvedRouting.holistic`, `seatsInForce(resolved)` (every seat when
+holistic, else the unit roles' seats), which `unsupportedSeats` and the smoke's seat choice iterate, and
+`routingRevOf(table, holistic)`, which hashes the unit roles alone when not holistic (the M2 table, so every
+dev.5 `routingRev` is unchanged). `ModelClass = efficient | frontier |
 summit`; the class catalogue binds per profile: `efficient` → codex gpt-5.6-luna medium (`default`) or
 claude-sonnet-5-5 medium (`claude-only`), `frontier` → claude-opus-5-5 high, `summit` → claude-fable-5-1 high. `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
 SeatTable<ModelClass>` (the built-in seats, shared by both profiles); `RoutingLayer` = a class at any subset of seats (a named role needs
@@ -660,13 +714,14 @@ passes, read by `status` to re-resolve routing tables); `status.rejection.json` 
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: PlanManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
 
 Control commands (`CONTROL_COMMANDS = pause, stop, ack`) apply immediately, waiting only for an
-`integration.ff` critical section. Mutations (`resume`, `sweep`, `apply`, `resolve-edge`, `run-only`) apply once
+`integration.ff` critical section. Mutations (`resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's `rule`,
+`reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) apply once
 their scope has drained (A12): every unit in the command's `CommandScope` has a task that is `idle` or
 `awaiting-admission` (none in a stage or a chain), and no earlier pending mutation overlaps it; while a mutation
 is pending, admission into its scope waits (`drain`). An open stage-parented intent no longer defines the safe
@@ -876,7 +931,10 @@ move: parks or own-arc residues being probed, run-only, an unresolved edge, a de
 `AllowedDisposition`: `proc.spawn` done/adopt/lost; `proc.kill` done/redo; `worktree.*`, `salvage.commit`,
 `mergein.prepare`, `spec.patch` done/redo/park; `evidence.snapshot`, `resource.transition`, `needsuser.raise`,
 `command.apply` done/redo; `candidate.merge`, `snapshot.publish` done/redo/abort; `integration.ff`
-done/redo/recovery-required.
+done/redo/recovery-required; M3: `docs.commit`, `mutant.apply` done/redo/abort, `revision.commit` done/abort.
+
+M3 adds to `JournalView`: `nextFindingId()`, `nextDivergenceId()`, `nextJobId(kind)`, `integrationHead()` (the latest
+published `integration.ff`'s `new`, any subject), `lastWorkSeq()` and `holistic() → HolisticFold` ("M3: the fold").
 
 ## Choices made in 1a
 
@@ -1021,3 +1079,226 @@ resource transition, retry or residue its holder's; a git, spec or needs-user op
 `unit.after-stage` its unit. Process- and arc-level labels (runner, supervisor, host, recovery, probe, command,
 plan apply, log open, `kill.after-cancel`) pass none. The concurrent crash matrix crashes by unit
 (`test/concurrent-matrix.test.ts`).
+
+## M3: the holistic layer (frozen in M3 step 0a)
+
+The records and signatures of both M3 batches (plan `/claude-state/plans/m3-holistic.md`, revision 2.1). The types
+and readers are in `src/core/{ids,records,events,state,interfaces,upgrade}.ts`, `src/holistic/{types,table}.ts`,
+`src/input/{plan,cli}.ts`, `src/routing/{types,profiles,layers}.ts`, `src/prompts/{inputs,schemas,index}.ts` and
+`src/schedule/types.ts`; the behaviour is the later steps' (A1–A5b, B1–B11). DESIGN-1.0.md §2.3–§2.10 (draft 8) is
+the prose.
+
+**Ids** (`src/core/ids.ts`). `VisionClauseId` `V-<n>`, `ObligationId` `I-<n>`, `FindingId` `F-<n>`,
+`DivergenceId` `D-<n>`, `JobId` `<audit|ckpt|docs|batch|baseline>-<n>` (`jobId(kind, n)`, `parseJobId`,
+`jobIdOfKind(kind)` for a field that names one kind), `LaneRev` and `EnvId` (16 lowercase hex). A numbered id's `n`
+is 1 for the first of its kind in the arc and one more each: findings and divergences by the order their facts
+open them (`nextFindingId`, `nextDivergenceId`), jobs per kind by the highest the log named (`nextJobId`; a job is
+named by a `job` parent or holder, a docs `pub`, a batch candidate, a `witnessed{for: job}` or its opening fact).
+Ids are never reused; a withdrawn clause keeps its id (H16).
+
+**Vision** (`roadmap/vision-m3`, `plan.holistic.vision`; `parseVision`). `{schema, rev: positive, confirmation:
+{ref, at}|null (the Phase-0 playback's, unverified until M4), clauses: [{id: V-n, kind: purpose|serves|good|
+non-negotiable|tradeoff, text, rank: positive|null (exactly for a tradeoff), state: active|withdrawn}]}`, ids unique,
+at least one active clause. Owner-only: only an architect `apply` (source `command`) changes it (A14). A new
+bundle, ruling or obligation may not cite a withdrawn clause (A1 refuses it); existing citations stay and are
+reported (`VisionCoverage{unservedClauses, obligationsServingNone, withdrawnCited[{clause, citedBy}]}`).
+
+**Obligations** (`roadmap/obligations-m3`, `plan.holistic.obligations`; `parseObligations`). `{schema, cutLine,
+lanes: ArcLaneDef[], obligations: ObligationDef[], mapping: {paths: [{pattern: RepoPattern, obligations: I-n[]
+(ascending, non-empty)}]}}`. `ArcLaneDef = LaneDef & {reporter: node-test|go-test-json|jsonl}` (R1, R3; a node-test
+lane may not set or pass `NODE_OPTIONS`); `laneRevOf(lane)` = first 16 hex of sha256 over its canonical definition.
+`ObligationDef = {id, rev (normative; evidence refreshes never bump it), statement, docRef{path, anchor, quotedText},
+serves: V-n[] (ascending; non-empty in an arc with a vision, checked by A1), witness{lane, testIds (unique,
+non-empty)}|null, proofJudgment{verdict: proves|insufficient, obligationRev, laneRev}|null, deliveredBy: UnitId[]
+(non-empty for a future one), activation: future|must-hold, parent?, contracts: RepoPath[], state: active |
+split{children} | waived{ruling} | deferred{ruling} | retired{ruling}}`. The reader checks: ids unique; `witness`
+and `proofJudgment` null exactly on a split parent (H14); a split parent's children exist and name it as `parent`,
+and a `parent` is a split parent listing the child; a witness lane is one of the file's lanes; mapping ids exist. A
+stale proof judgment (its `obligationRev` or `laneRev` no longer the obligation's or the lane's) is the
+classifier's to refuse (A1), not the reader's. `isExempt`: waived, deferred or retired.
+
+**The transition table** (`src/holistic/table.ts`, `obligationEffect(case) → measured | latch | red | discharged |
+exempt`, total; test `table.total`): exempt → exempt; future not completing its `deliveredBy` → measured; future
+completing, held → latch (on publication), otherwise red; must-hold held on the tree or validly reused →
+discharged, otherwise red; a split parent (never witnessed directly) → red when any selected child is red,
+discharged when every non-exempt child is discharged (all exempt: discharged), else measured. The caller passes
+the effective activation (a latched future obligation is must-hold). `brakes(effects)`: any `red`.
+
+**Impact selection** (signature frozen for A1's `src/holistic/impact.ts`, read by A3's fingerprint and B2's
+candidate): `SelectObligations(ImpactInput{obligations, units[{unit, declared, repairs}], closure, changedPaths,
+revised}) → ObligationId[]` (ascending, split closure applied both ways, H14; `revised`: a revision publication's
+added, split or re-witnessed obligations, G12).
+
+**Witness records** (`witness.json` in a lane's evidence dir, B1; `witnessRecord`). `{v, lane, laneRev, envId,
+treeSha, inv, runner: Reporter, purpose: witness|mutant, records: [{testId, selected: nat, outcome:
+pass|fail|skip|zero-selected}] (ascending by testId), malformed}`; malformed ⇒ no records (every declared test
+unwitnessed). `ObservationVerdict = held | not-held | partial | unwitnessed`; `ObservationKey = {treeSha, lane,
+laneRev, envId}` (`observationKeyText`); `VerdictOf(record, witness) → ObservationVerdict` is B1's (pure).
+
+**Ruling sidecars** (`roadmap/ruling-m3`, `parseRulingSidecar`; `rule <record.json>` and a bundle's `rulings`).
+`{schema, id: C-n, statement, kind: constraint|decision|deviation|disposition, ruledBy: architect|checkpoint{job},
+trigger, supersedes: [{id, part|null}], condition|null, docRefs: [{path, anchor, quotedText, relation:
+consistent|refines|deviates}] (non-empty), contractRefs (ascending), contractOps: [{path, anchor, oldText, newText}],
+obligations (ascending), obligationDispositions: [{id, disposition: waived|deferred|retired|amended}] (ascending by
+id), cites: V-n[] (ascending), evidence: string[], appliesTo: arc|units{units}, lifetime: arc|standing, status:
+active|superseded|withdrawn, consistency}` with **`consistency` required (G21)**: `{verdict: consistent|inconsistent,
+judgedRevs: {head, ledgerSha256, obligationsSha256|null, visionSha256|null, contracts: [{path, blob}]}, by:
+judgment{role: FreshRole, routingRev}|architect}`. The reader requires contract ops for a `deviates` ref, and cites
+and evidence for a checkpoint's ruling; staleness of `judgedRevs` is A1's check at commit.
+
+**Revisions** (G1, A2, A19). A revision's inputs are the plan, the specs, the ledger with its sidecars, the
+obligations and the vision: `RevisionManifest = PlanManifest & {rulings: {ledgerSha256, sidecars: {C-n: sha256}},
+obligations: sha256|null, vision: sha256|null}` (kept as `inputs/<sha256>.rulings.md`, `.ruling.json`,
+`.obligations.json`, `.vision.json` beside the plan and spec bytes). An `apply` body's `manifest` is an
+`ApplyManifest = PlanManifest | RevisionManifest` (`isRevisionManifest`; a dev.5 command's is read by
+`applyInputsOf`). The evaluated payload, `RevisionPayload = {v, source, base, rev = base + 1, manifest, changes,
+dispositions: [{obligation, disposition, ruling}], divergences: DivergenceDraft[], publication: {renders:
+[{path, sha256}] (the executor-rendered `.roadmap/` files), contractOps}|null, routingProvenance}`
+(`parseRevisionPayload`), is kept as `inputs/<sha256>.revision.json`, then a `revision.commit{source, base, rev,
+payloadSha256, docs}` intent (key `revision`, `REVISION_FENCE_KEY`: at most one open) names it before any docs
+`ff`; `plan-applied` is appended from it exactly, then its divergences in order, then the intent's done
+`applied`. Recovery: the docs `ff` done or no docs step → append from the payload; else abort (and re-evaluate the
+source). `RevisionSource = start | command{command} | bundle{job: ckpt-n} | executor{inv}`. The fence (A19) is that
+key: `judgment-inputs`, `audit-started`, `checkpoint-inputs` and a bundle's staleness check are captured only while
+no `revision.commit` is open.
+
+**`plan-applied` (M3 fields, all optional)**: `source` (with `command`: a `command` source names the fact's command,
+any other source has `command: null`), `payloadSha256`, `rulingsSha256`, `obligationsSha256` (only with a vision),
+`visionSha256` (present exactly while the arc is holistic, A5), `publication{pub: docs-n, head}`, `routingProvenance
+= {profile, repoConfig: {seats, classes}, planLayer, unitLayers: {unit: layer} (ascending)}` (H7; every M3 revision
+records it). New `PlanChange`s: `obligation{id, edit: added|split|witness|disposed}`, `mapping`, `vision{rev}`,
+`limits{unit|null}`, `holistic`; `routing{routingRev, unit?}` (with `unit`: that unit's layer changed, and the rev is
+its routing's).
+
+**Facts** (`HolisticFact`, `src/core/events.ts`; one of each round-trips in `test/m3-schemas.test.ts`):
+
+| Fact `kind` | Fields |
+|---|---|
+| `witnessed` | `lane, laneRev, envId, treeSha, inv, recordsSha256, purpose: witness\|mutant, for: candidate{unit, attempt} \| job{job} \| mutant{finding, of}`; `purpose: mutant` exactly with `for: mutant` (G13: never certifies). Batch lanes are `job{batch-n}` (H4) |
+| `obligation-latched` | `obligation, unit, treeSha`: after `ff{published}`, before the snapshot; once per obligation |
+| `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
+| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced}}` |
+| `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater` |
+| `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens), findings, suppressed, outcome: completed\|abandoned` |
+| `docs-covered` | `pub, from: U, to: D` (A17, H8) |
+| `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
+| `bundle-decided` | `job, outcome: no-op \| rejected{reason: stale\|evidence\|invalid, detail} \| requested{needsUser}`; an applied bundle is its `plan-applied{source: bundle{job}}` instead |
+| `divergence` | `id, index (its place among its job's divergences), job, type: target-departed\|obligation-departed\|plan-departed\|contract-departed\|split-dropped\|interpretation, from, what, cites: V-n[] (non-empty), evidence (non-empty), preimage: {planRev, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, contracts}, compensation: {hint, kind: restore-revision\|repair-unit\|none}` (H13: no executable inverse) |
+| `divergence-digest` | `needsUser, ids: D-n[] (ascending, non-empty)` (H11) |
+| `steered` | `unit, command, brief (sha256), budgetMin, resume` |
+| `merged-in` | `unit, command, integrationTip, head` |
+| `audit-requested` | `command, lenses \| null` |
+| `admissions-closed` | `command` |
+| `docs-published` | `pub, source: close-out, commit` |
+| `arc-completed` | `planRev, head, highWater (< its own seq), units (merged, ascending)` |
+
+**Op kinds** (M3): `docs.commit{ref = refs/roadmap-run/<arc>/docs/<pub>, old|null, pub: docs-n, integrationTip,
+worktree, commit (parents [integrationTip])}`, post `{new}`, done `committed`; `mutant.apply{worktree, at, finding,
+patchSha256}`, post null, done `applied{tree}` (the patched tree's real id) `| inapplicable{detail}`;
+`revision.commit{source, base, rev = base + 1, payloadSha256, docs}`, post null, done `applied`. Git kinds:
+`docs.commit`, `mutant.apply`. `integration.ff`: a unit `ff` is `{ref, old, new, fingerprint}` (the dev.5 shape,
+no subject); a docs or batch `ff` is `{ref, old, new, subject: docs{pub} | batch{job}}` and has no fingerprint
+(`unitFfFingerprint` asks for a unit's). `candidate.merge` `+ batch?{job: batch-n, members: [{unit, unitCommit,
+fingerprint}] (≥ 2, each unit once), chain: [{commit, parents: [previous merge, next member]}] (one per member after
+the first)}`: `unitCommit` is the first member's, `commit` merges it onto the tip, and `post.new` is the last
+chain commit. Keys: `revision` for `revision.commit`.
+
+**Holders, parents, subjects, residues.** `Holder += docs{pub}` (a docs publication's slot, A7), `batch{finding,
+attempt}` (a repair batch's slot, G5, H4), `job{job}` (a job's lanes); keys `resources:docs/<pub>`,
+`resources:batch/<finding>/<attempt>`, `resources:job/<job>`; `holderUnit(holder)` (null for sweep, docs, batch,
+job). `RECLAIM_HOLDERS += job`; `RESIDUE_HOLDERS = stage, job` (a failed cleanup under either records residues).
+`Parent += job{job}`. `SpawnSubject += arc-backend{role, tier: arc, routingRev, job, attempt}` (a lens or checkpoint
+call), `journey{lane, laneRev, at, owner: unit{unit}|job{job}}`, `mutant{finding, lane, laneRev, tree}`; the unit
+`backend` subject names a `UnitSeatRef`. `MeterSubject += job{job, attempt, role, tier: arc}`; `seat` names a
+`UnitSeatRef`. `ResidueKey = {arc, inv, resource} & (unit | job)` (exactly one; `residueOwner(key) → unit{unit} |
+job{job}`, G4); `ResidueState.holder` is the stage or job holder (`stageResidueHolder` narrows).
+
+**Stage outcomes and the transition table** (`src/pipeline/transitions.ts`). Stage `reproduce` (a vacuity repair's
+first stage, an admission stage): `reproduced` → plan-check; `not-reproduced` and `inapplicable` → park operator
+design, reason `not-reproduced`; `blocked` → park retryable `lane-blocked`; `interrupted` → hold; `cleanup-failed` →
+park retryable `residue`. Candidate `preempted` (A7) and `finding-blocked` (G10) → candidate again, uncharged
+(admission holds it while the P1 blocks: `AdmissionConstraint finding-blocked{finding, obligation}`). The bounds
+are the unit's: `UnitState.bounds` (its latest dispatch record's `bounds`, else `DEFAULT_BOUNDS`) replaces the
+constants in the table (`Bounded.bound` names the field) and in the fold's chargeable invariant; `MAX_*` and
+`CHARGEABLE_BOUND` remain as the built-in values. `ORIGIN_RANK = {repair: 0, checkpoint: 1, planned: 2}` (R6).
+
+**Commands** (M3 bodies; scopes per the plan's table, `commandScope` in `src/input/classify.ts`): `rule{path,
+sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
+`merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
+its effect is rejected `<type>: not implemented (step X)`: `rule` A4, `reverse` A2, `steer` and `merge-in` A3, `audit`
+and `close-admissions` B7 (`NOT_YET`, `src/commands/apply.ts`); `gc` (A5b) fails in the CLI.
+
+**Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
+`steered`, `not-reproduced`, `owner-request`, `respec-second`. Non-blocking (`NON_BLOCKING_M3_REASONS`):
+`bundle-request`, `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest`.
+
+**Prompts** (`src/prompts/`). `lens` and `checkpoint` are `unsupported` for every model until B4 writes the
+modules (lens/Opus new, lens/Fable inherits Opus; checkpoint/Fable new, checkpoint/Opus inherits Fable; Sonnet and
+Codex unsupported), so a holistic plan is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why:
+no-prompt}` at startup until then. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses},
+lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
+owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout}`;
+`CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
+divergences[{id, type, what}], contracts, rulings, index, architecture, direction}`. Outputs (strict; every key
+required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
+[{path, line}], mutant: {patch, lane}|null}], reasons, premises}`; `CheckpointOutput = {decision: no-op|bundle,
+reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as JSON text; none on a no-op),
+findingDispositions[{finding, disposition, reason}], interpretations[{clauses, situation, reading}], cites{vision,
+observations, findings}, premises}`, `BundleOp = (admit{unit{id, risk, scope, after, origin: checkpoint|repair},
+spec (spec.json text)} | patch-spec{unit, patch} | reenter{unit, reenters, enterAt|null, reset|null} | cut{unit,
+reason} | route{unit, seats[{role, tier, class}]} | limits{unit|null, limits[{field, value}]} |
+obligation-split{obligation, children[{id, statement, docRef, witness, activation, deliveredBy}]} |
+obligation-dispose{obligation, disposition, ruling} | invalidate-approval{unit} | rule{ruling} | request{class:
+OwnerOnlyClass, summary}) & {cites: V-n[] (non-empty, unique), evidence (non-empty)}`; `OwnerOnlyClass = destructive
+| cost | legal | vision | resource | config | gc | ref-deletion | lane-program | env-prerequisite | contract-path`
+(A16: no op touches the vision, resource declarations, `.roadmap/config.json`, `gc` or ref deletion). **B4 adds**
+(frozen here, not in the 0a code, because every key of a strict schema is required and the modules, fakes and
+output change together): plan-check output `visionConflict: [{clauses: V-n[] (non-empty), note}]` (each opens a P3
+`plan-check` finding, R17); `PlanCheckInputs.vision: VisionInput | null` (read-only context, marked non-directive);
+`GateInputs.obligations: ObligationView[]` (the selected obligations); the gate never receives the vision.
+
+**The fold** (`src/core/state.ts`, `JournalView.holistic() → HolisticFold`, `state.json` `holistic`):
+`{on (the plan in force records a vision), witnessed, latched, findings: FindingState[] ({...opened, state, owner,
+openedSeq, last}), audits: [{started, ended|null}], auditRequests, docsCovered, docsPublished, checkpoints: [{inputs,
+decided: applied{planRev} | BundleOutcome | null}], divergences, digests, steered, mergedIn, draining: {command,
+seq}|null, completion: {…arc-completed, seq, active}|null}`, each entry with the seq of its fact. Coverage
+watermarks, observations, generations, convergence counters and the digests to raise are pure derivations over it
+(B1, B5, B6). Invariants (refused as `log-corrupt` at open, never appended): a finding opens as `nextFindingId`, and
+not with the key of a finding that is still open, owned or fixed-on-branch (it merges instead); a move follows
+`FINDING_MOVES` (open → owned | ruled; owned → fixed-on-branch | open | ruled; fixed-on-branch → resolved | owned |
+open | ruled); one audit runs at a time, audits and checkpoints open as the next job of their kind, an audit ends
+once, covering only lenses it ran and naming known findings; a checkpoint decides once (`bundle-decided`, or its
+bundle's `plan-applied`); a divergence is the next `D-n`, of a checkpoint job, once per `(job, index)`; a digest
+binds recorded ids no earlier digest bound; `admissions-closed` only while not draining (an architect apply that
+adds a unit reopens, §2.10); a `plan-applied` keeps the vision once the arc is holistic (A5); an obligation latches
+once; `arc-completed` names the plan in force and a high-water before its own seq; a batch `ff` names a batch
+candidate. A batch `ff{published}` records a publication for every member and retires them (R7, H4).
+`completion.active` (A20): the plan rev and `integrationHead()` are those it recorded and no `reopened` followed.
+`lastWorkSeq()`: the latest record that is work, meaning any fact but `executor-started`, `containment-mode`,
+`tail-discarded`, `arc-completed`, `docs-published`, `probe`, `backend-park` and usage facts, or an intent with a
+stage, job or command parent, or a `revision.commit`. `gc` (A5b) seals an arc whose completion follows its last
+work, whose queue is empty, whose head is in integration history and whose ref verifies (H5).
+
+**Choices made in M3 0a** (where the plan left a shape open or could not be frozen as written):
+
+1. **`obligationRevs` is absent exactly when empty**, not defaulted to `[]` after raw validation: a fingerprint
+   selecting no obligation is byte-identical to a dev.5 one, so every existing comparison (`sameFingerprint`,
+   canonical equality) holds unchanged and no default is warned. `obligationRevsOf` reads it.
+2. **`ResidueKey` carries `unit` or `job`**, not an `owner` field: a dev.5 key is a unit-owned key as written
+   (byte-preserving); `residueOwner` is the plan's `owner` view.
+3. **A unit `ff` keeps its dev.5 shape**; only docs and batch `ff`s carry `subject` (and no fingerprint).
+4. **A divergence's kind is its `type`**: the fact's own `kind` is its discriminator.
+5. **Bounds reach the fold through the dispatch record** (`bounds?`, pinned per dispatch like the risk floor): A3
+   owns neither `transitions.ts` nor `state.ts`, so 0a threads `UnitState.bounds` into the table and the chargeable
+   invariant, and A3 writes `bounds` (and `transientRules: 'm3'`) at every dispatch.
+6. **The arc seats are hashed only in a holistic arc** (`routingRevOf(table, holistic)`), so every dev.5 routing rev
+   is reproduced by dev.6 code and nothing is re-pinned on upgrade; `planStack` sets `holistic` from the plan.
+7. **`preempt` is a lane-only interrupt reason** (`LANE_INTERRUPT_REASONS`): a backend call is never preempted.
+8. **`reproduce inapplicable` parks with reason `not-reproduced`** (design): the frozen reason list has no other fit.
+9. **`amended`** is an obligation disposition beside `waived | deferred | retired`: a statement, docRef or
+   activation change is weakening and needs a ruling naming it.
+10. **Rev 1's unstated fact shapes** (`steered`, `merged-in`, `audit-requested`, `admissions-closed`) and
+    `arc-completed.units` (the merged units) are fixed as in the table above.
+11. **`gc` takes `--repo`**: run dirs live under a repo's git common dir.
+12. **The checkpoint output carries sidecars and a new unit's spec as JSON text** (`rulings`, `admit.spec`),
+    validated by their own readers at activation, so the strict output schema stays finite.

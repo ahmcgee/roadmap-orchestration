@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
-import type { IntentOf } from '../src/core/events.ts';
+import { type IntentOf, unitFfFingerprint } from '../src/core/events.ts';
 import { type Sha, opKey, sha } from '../src/core/ids.ts';
 import type { ApprovalFingerprint } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
@@ -55,7 +55,7 @@ function publications(s: Scene, tip: Sha, unit: Sha): number {
 function assertPublished(s: Scene, intent: IntentOf<'integration.ff'>): void {
   const next = intent.expect.new;
   assert.equal(revOf(s.repo, 'main'), next, 'integration at the tested candidate');
-  assert.deepEqual(parentsOf(s.repo, next), [intent.expect.old, intent.expect.fingerprint.unitCommit]);
+  assert.deepEqual(parentsOf(s.repo, next), [intent.expect.old, unitFfFingerprint(intent.expect).unitCommit]);
   assert.equal(revOf(s.repo, 'main^1'), intent.expect.old, 'new^1 = T');
   assert.equal(revOf(s.repo, 'main^2'), s.unit, 'new^2 = the approved unit commit');
   assert.equal(publications(s, intent.expect.old, s.unit), 1, 'one publication of the unit');

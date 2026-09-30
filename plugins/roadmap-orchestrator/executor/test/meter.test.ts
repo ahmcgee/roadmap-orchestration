@@ -8,7 +8,7 @@ import type { TokenUsage } from '../src/core/records.ts';
 import { invoke } from '../src/pipeline/invoke.ts';
 import { byModel, meterOf } from '../src/meter.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
-import { type Seat, seatRef } from '../src/routing/types.ts';
+import { type Seat, unitSeatRef } from '../src/routing/types.ts';
 import { backend, context, dones, events, open, run, scenario, specFor } from './fixtures/invoke-specs.ts';
 
 const ARC = arcId('arc-1');
@@ -24,7 +24,7 @@ function factEvent(fact: Fact): Event {
 const inv = (n: number) => invocationId(opId(ARC, n), 1);
 const tokens = (input: number, output: number, cacheRead: number | null = null, cacheWrite: number | null = null, turns: number | null = null, costUsd: number | null = null): TokenUsage =>
   ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, turns, costUsd });
-const seat = (role: 'build' | 'gate' | 'planCheck', tier: Seat, unit: typeof U1, attempt: number) => ({ type: 'seat', ...seatRef(role, tier), unit, attempt }) as const;
+const seat = (role: 'build' | 'gate' | 'planCheck', tier: Seat, unit: typeof U1, attempt: number) => ({ type: 'seat', ...unitSeatRef(role, tier), unit, attempt }) as const;
 
 describe('meter', () => {
   it('spend.by-role: totals per role and routing revision, per seat and per unit, with turns and cost; never a model', () => {
@@ -78,7 +78,7 @@ describe('meter', () => {
     const claudeOnly = table('claude-only');
     const tables = new Map<RoutingRev, typeof def.table>([[def.rev, def.table], [claudeOnly.rev, claudeOnly.table]]);
     const t = (role: 'build' | 'gate', tier: Seat, rev: RoutingRev, input: number) =>
-      ({ ...seatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
+      ({ ...unitSeatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     const seats = [t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 2), t('gate', 'escalation', def.rev, 3)];
     assert.deepEqual(byModel(seats, tables), [
       { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },

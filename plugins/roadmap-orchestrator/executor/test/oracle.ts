@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import type { Event, Fact, IntentOf, RecoveredBy } from '../src/core/events.ts';
+import { type Event, type Fact, type IntentOf, type RecoveredBy, unitFfFingerprint } from '../src/core/events.ts';
 import { type ArcId, type UnitId, invocationId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -70,7 +70,8 @@ export function provenance(run: OracleRun, integration: string, baseline: string
   const chain = git(run.repo, ['rev-list', '--first-parent', head]).split('\n').filter((c) => c !== '');
   if (!chain.includes(baseline)) problems.push(`the first-parent chain of ${head} does not reach the baseline ${baseline}`);
   for (const ff of published) {
-    const { old, fingerprint } = ff.expect;
+    const { old } = ff.expect;
+    const fingerprint = unitFfFingerprint(ff.expect);
     const next = ff.expect.new;
     if (revParse(run.repo, `${next}^1`) !== old) problems.push(`${ff.op}: ${next}^1 is not T ${old}`);
     if (revParse(run.repo, `${next}^2`) !== fingerprint.unitCommit) problems.push(`${ff.op}: ${next}^2 is not the approved unit commit ${fingerprint.unitCommit}`);

@@ -4,10 +4,17 @@
 // removed them from the tree) on every constructed log.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, commandId, needsUserId, opId, opKey, planRev, seatRev, sha256, specRev, unitId } from '../src/core/ids.ts';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { type Fact, type LogRecord, parseEventLine, prevHash, serializeEvent, unitFfFingerprint } from '../src/core/events.ts';
+import { type UnitId, commandId, jobIdOf, needsUserId, opId, opKey, planRev, seatRev, sha256, specRev, unitId } from '../src/core/ids.ts';
+import { canonicalJson } from '../src/core/json.ts';
+import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, obligationRevsOf } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
-import { isLegacy, legacyNext, legacyParkRecord } from '../src/core/upgrade.ts';
+import {
+  applyInputsOf, isLegacy, legacyNext, legacyParkRecord, revisionSourceOf, routingProvenanceOf, rulingsFromLiveFile, transientRulesOf,
+} from '../src/core/upgrade.ts';
 import { absPath, isoTime, planPath, repoPattern } from '../src/core/values.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import type { PlanUnit } from '../src/input/plan.ts';
@@ -135,5 +142,67 @@ describe('upgrade.defaults-unit', () => {
     const seen = cases.map(([, units, records]) => legacyNext(folded(records), units));
     assert.ok(seen.some((s) => s === null) && seen.some((s) => s?.block === null) && seen.some((s) => s?.block?.includes('held after') === true));
     assert.deepEqual(legacyNext(folded(cases[13]![2]), chainPlan), { unit: A, block: null }, 'the reopened unit is the frontier again');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.5 → M3 (1.0.0-dev.6): byte-preserving readers (G14) and the read-time helpers.
+
+describe('upgrade.defaults-unit (dev.5 → M3)', () => {
+  const envelope = { v: 1, seq: 2, prev: H, at: '2026-09-29T12:00:00.000Z', arc: ARC };
+  const line = (record: object): string => canonicalJson({ ...envelope, ...record });
+
+  it('dev.5 lines read as written: validated raw, re-serialised byte for byte, normalised only by the helpers', () => {
+    const fp = { contractRevs: [], rulingRevs: [{ id: 'C-1', rev: 1 }], specRev: 2, unitCommit: 'b'.repeat(40) };
+    const dev5 = [
+      line({ type: 'fact', fact: { kind: 'approval', unit: 'a', attempt: 4, fingerprint: fp } }),
+      line({ type: 'fact', fact: { kind: 'plan-applied', rev: 3, command: CMD, planSha256: H, specs: { a: H }, changes: [{ type: 'routing', routingRev: REV }] } }),
+      line({ type: 'fact', fact: { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { a: H }, changes: [], scheduling: 'dag' } }),
+      line({ type: 'fact', fact: { kind: 'dispatch', record: { unit: 'a', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: '2026-09-29T12:00:00.000Z' } } }),
+      line({ type: 'intent', op: `${ARC}/2`, kind: 'integration.ff', key: 'ff', parent: { type: 'stage', unit: 'a', stage: 'ff', attempt: 5 }, ordinal: 1, deadlineAt: null, expect: { ref: 'refs/heads/main', old: 'a'.repeat(40), new: 'c'.repeat(40), fingerprint: fp }, post: null }),
+    ];
+    for (const l of dev5) assert.equal(serializeEvent(parseEventLine(l)), `${l}\n`, l);
+    const [approval, applied, first, dispatched, ff] = dev5.map(parseEventLine);
+    assert.ok(approval?.type === 'fact' && approval.fact.kind === 'approval');
+    assert.deepEqual(obligationRevsOf(approval.fact.fingerprint), [], 'a dev.5 fingerprint selects no obligation');
+    assert.ok(applied?.type === 'fact' && applied.fact.kind === 'plan-applied' && first?.type === 'fact' && first.fact.kind === 'plan-applied');
+    assert.deepEqual(revisionSourceOf(applied.fact), { type: 'command', command: CMD });
+    assert.deepEqual(revisionSourceOf(first.fact), { type: 'start' });
+    assert.equal(applied.fact.rulingsSha256, undefined, 'the ledger is read live until the first M3 revision records it');
+    assert.ok(dispatched?.type === 'fact' && dispatched.fact.kind === 'dispatch');
+    assert.equal(transientRulesOf(dispatched.fact.record), 'dev5');
+    assert.deepEqual(boundsOfRecord(dispatched.fact.record), DEFAULT_BOUNDS);
+    assert.ok(ff?.type === 'intent' && ff.kind === 'integration.ff');
+    assert.deepEqual(unitFfFingerprint(ff.expect), fp, 'a dev.5 ff is a unit ff');
+    // An M3 record states what the helpers default.
+    assert.equal(transientRulesOf({ ...dispatched.fact.record, transientRules: 'm3' }), 'm3');
+    assert.deepEqual(revisionSourceOf({ ...applied.fact, source: { type: 'bundle', job: jobIdOf('ckpt-1') }, command: null }), { type: 'bundle', job: 'ckpt-1' });
+  });
+
+  it('a dev.5 apply command keeps its bytes and reads as the ledger live, no obligations or vision (G15)', () => {
+    const body = { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { a: H } } };
+    const parsed = commandBody(body, 'body');
+    assert.ok(parsed.type === 'apply');
+    assert.equal(canonicalJson(parsed), canonicalJson(body));
+    assert.deepEqual(applyInputsOf(parsed.manifest), { rulings: 'live', obligations: null, vision: null });
+    const m3 = { planSha256: H, specs: { a: H }, rulings: { ledgerSha256: H2, sidecars: {} }, obligations: null, vision: H2 };
+    const read = commandBody({ ...body, manifest: m3 }, 'body');
+    assert.ok(read.type === 'apply');
+    assert.deepEqual(applyInputsOf(read.manifest), { rulings: m3.rulings, obligations: null, vision: H2 });
+  });
+
+  it('rulingsFromLiveFile reads the ledger file; routingProvenanceOf rebuilds only a dev.5 revision', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'roadmap-upgrade-'));
+    const path = join(dir, 'rulings.md');
+    writeFileSync(path, 'C-1 — a rule\n');
+    assert.equal(rulingsFromLiveFile(path).toString('utf8'), 'C-1 — a rule\n');
+    const provenance = { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} } as const;
+    const applied = parseEventLine(line({ type: 'fact', fact: { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { a: H }, changes: [] } }));
+    assert.ok(applied.type === 'fact' && applied.fact.kind === 'plan-applied');
+    let rebuilt = 0;
+    assert.deepEqual(routingProvenanceOf(applied.fact, () => { rebuilt += 1; return provenance; }), provenance);
+    assert.equal(rebuilt, 1);
+    const recorded = { ...provenance, profile: 'claude-only' } as const;
+    assert.deepEqual(routingProvenanceOf({ ...applied.fact, routingProvenance: recorded }, () => { throw new Error('rebuilt a recorded provenance'); }), recorded);
   });
 });

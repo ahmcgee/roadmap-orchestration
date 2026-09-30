@@ -73,7 +73,7 @@ import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { type ResolvedRouting, arcStack, resolveRouting } from './routing/layers.ts';
+import { type ResolvedRouting, planStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
@@ -278,7 +278,7 @@ async function consumeRecovered(x: Exec): Promise<void> {
  */
 function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
-  const resolve = (plan: PlanM1): ResolvedRouting => resolveRouting(arcStack(profile, config, plan.routing ?? null));
+  const resolve = (plan: PlanM1): ResolvedRouting => resolveRouting(planStack(profile, config, plan));
   const cache = new Map<Sha256Hex, Readonly<{ plan: PlanM1; routing: ResolvedRouting }>>();
   const inForce = (): Readonly<{ plan: PlanM1; routing: ResolvedRouting }> => {
     const fact = journal.view.planApplied();
