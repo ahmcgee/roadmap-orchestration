@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { Event, IntentOf, Parent, ResourceEdge } from '../../src/core/events.ts';
-import { type ResourceName, type UnitId, arcId, laneId, opKey, resourceName, sha, unitId } from '../../src/core/ids.ts';
+import { type ResourceName, type ResourceUnit, type UnitId, arcId, laneId, opKey, resourceName, sha, unitId } from '../../src/core/ids.ts';
 import { type OpenJournal, openJournal } from '../../src/core/log.ts';
 import { absPath, isoTimeOf } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
@@ -92,7 +92,7 @@ export function calls(run: ResRun): readonly string[] {
 }
 
 /** The resource table of a fresh open of the run's log, as plain statuses (absent = free). */
-export function tableOf(run: ResRun): ReadonlyMap<ResourceName, ResourceStatus> {
+export function tableOf(run: ResRun): ReadonlyMap<ResourceUnit, ResourceStatus> {
   const journal = openJournal(absPath(run.runDir), arcId(run.arc));
   try {
     assertNoOpen(journal);
@@ -107,7 +107,7 @@ function assertNoOpen(journal: OpenJournal): void {
   if (open.length > 0) throw new Error(`open intents remain: ${open.map((i) => `${i.op} ${i.kind}`).join(', ')}`);
 }
 
-export type Transition = Readonly<{ holder: string; resources: readonly ResourceName[]; edge: ResourceEdge['type']; from?: string }>;
+export type Transition = Readonly<{ holder: string; resources: readonly ResourceUnit[]; edge: ResourceEdge['type']; from?: string }>;
 
 /** Every resource.transition intent in log order, compactly. */
 export function transitions(run: ResRun): readonly Transition[] {
@@ -116,7 +116,7 @@ export function transitions(run: ResRun): readonly Transition[] {
     .map((e) => {
       const h = e.expect.holder;
       return {
-        holder: h.type === 'stage' ? `${h.unit}/${h.stage}/${h.attempt}` : h.command,
+        holder: h.type === 'stage' ? `${h.unit}/${h.stage}/${h.attempt}` : h.type === 'sweep' ? h.command : JSON.stringify(h),
         resources: e.expect.resources,
         edge: e.expect.edge.type,
         ...(e.expect.edge.type === 'clean' ? { from: e.expect.edge.from } : {}),

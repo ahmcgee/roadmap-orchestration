@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sessionContainment } from '../src/contain/session.ts';
 import type { Holder } from '../src/core/events.ts';
-import { type ResourceName, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
+import { type ResourceName, INTEGRATION_SLOT, commandId, invocationId, namedResource, opId, unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
 import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
 import { probe } from '../src/resources/probe.ts';
@@ -37,7 +37,7 @@ function states(ctx: ResourceContext): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [r, e] of resourceTable(ctx.journal.view)) {
     const s = e.status;
-    out[r] = s.state === 'free' ? 'free' : `${s.state}@${s.holder.type === 'stage' ? `${s.holder.unit}/${s.holder.stage}/${s.holder.attempt}` : s.holder.command}`;
+    out[r] = s.state === 'free' ? 'free' : `${s.state}@${s.holder.type === 'stage' ? `${s.holder.unit}/${s.holder.stage}/${s.holder.attempt}` : s.holder.type === 'sweep' ? s.holder.command : JSON.stringify(s.holder)}`;
   }
   return out;
 }
@@ -137,9 +137,9 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
     journal.close();
     const ts = transitions(r);
     // Every transition names its set in lock order, integration-slot last.
-    for (const t of ts) assert.deepEqual(t.resources, lockOrder(t.resources), JSON.stringify(t));
-    // Never two holders at once: replaying the log never reserves a held resource (resourceTable throws
-    // on that), and each reservation is contiguous: its reserve is followed by its own run, clean, release
+    for (const t of ts) assert.deepEqual(t.resources, lockOrder(t.resources.map(namedResource)), JSON.stringify(t));
+    // Never two holders at once: replaying the log never reserves a held resource (the fold refuses
+    // that), and each reservation is contiguous: its reserve is followed by its own run, clean, release
     // before the other holder's reserve of a shared resource.
     const table = tableOf(r);
     assert.ok([...table.values()].every((s) => s.state === 'free'));

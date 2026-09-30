@@ -7,7 +7,7 @@
 // The rest of the op kind's reconciler (reserved, running, cleaning) is the reservation cycle's (step 10).
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf } from '../core/events.ts';
-import { type ResourceName, parseOpId } from '../core/ids.ts';
+import { type ResourceName, namedResource, parseOpId } from '../core/ids.ts';
 import type { Disposition } from '../core/interfaces.ts';
 import type { TeardownRecipe } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -32,7 +32,7 @@ export function appendFailedCleanupResidues(
   if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by a sweep has no unit to key its residues`);
   const arc = parseOpId(intent.op).arc;
   for (const { resource, teardown } of edge.residues) {
-    const recipe = recipes.get(resource);
+    const recipe = recipes.get(namedResource(resource));
     if (recipe === undefined) throw new Error(`${intent.op}: no teardown recipe for failed resource ${resource}`);
     crashPoint('residue.before-host-append');
     recordResidue(hostDir, { type: 'residue', key: { arc, unit: holder.unit, inv: teardown, resource }, teardown: recipe.teardown, label: recipe.label });

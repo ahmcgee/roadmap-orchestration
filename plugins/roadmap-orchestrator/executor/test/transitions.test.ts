@@ -10,7 +10,8 @@ import {
 import { seatRev, specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
 import { repoPattern } from '../src/core/values.ts';
-import { type Next, type StageOutcome, TABLE, decidedBy, outcomeFact, transition } from '../src/pipeline/transitions.ts';
+import { type Next, type ParkClass, type StageOutcome, TABLE, decidedBy, outcomeFact, parkClassOf, transition } from '../src/pipeline/transitions.ts';
+import { resourceInstance } from '../src/core/ids.ts';
 import { ARC, AT, H, REV, U1, chain } from './fixtures/log-records.ts';
 
 type Counter = Exclude<keyof UnitCounters, 'retries' | 'attempts'> | `retries.${RetryStage}`;
@@ -69,6 +70,11 @@ function delta(before: UnitCounters, after: UnitCounters): Partial<Record<Counte
 // [stage, outcome, given state, next, recorded class, counter deltas]. The unit's risk is med throughout.
 type Row = { [S in OutcomeStage]: readonly [S, StageOutcomeKind<S>, Given, string, OutcomeClass, Partial<Record<Counter, number>>] }[OutcomeStage];
 const ROWS: readonly Row[] = [
+  // prepare (a re-entered unit's first stage, M2): where the prepared worktree enters
+  ['prepare', 'clean-plan-check', {}, 'plan-check@med', 'advance', {}],
+  ['prepare', 'clean-build', {}, 'build/fresh@med', 'advance', {}],
+  ['prepare', 'clean-verify', {}, 'lanes', 'advance', {}],
+  ['prepare', 'conflicted', {}, 'build/resolve@med', 'advance', {}],
   // plan-check (fresh judgment)
   ['plan-check', 'approve', {}, 'build/fresh@med', 'advance', {}],
   ['plan-check', 'redirect', {}, 'plan-check@med', 'redirect', { redirects: 1 }],
@@ -185,6 +191,49 @@ describe('transitions', () => {
       assert.deepEqual(delta(u.counters, after.counters), deltas, `${label}: counter deltas`);
       if (n.kind === 'stage') assert.deepEqual(n.counters, after.counters, `${label}: Next.counters are the recorded counters`);
     }
+  });
+
+  it('transitions.park-class: every park row has its class (A7); an operator park writes it, a retryable one its stated targets', () => {
+    const CLASS: Readonly<Record<string, ParkClass>> = {
+      'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
+      'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env',
+      'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
+      'build occupied': 'env', 'build cleanup-failed': 'retryable',
+      'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
+      'lanes red': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
+      'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
+      'gate process-fault': 'retryable', 'gate routing-changed': 'env',
+      'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
+    };
+    const targets = [{ type: 'resource', instance: resourceInstance('estate#2') }, { type: 'host' }, { type: 'host' }] as const;
+    let parks = 0;
+    for (const [stage, kind, given, next] of ROWS) {
+      const u = unit(given);
+      const o = outcome(stage, kind);
+      const label = `${stage} ${kind} ${JSON.stringify(given)}`;
+      if (!next.startsWith('park:')) {
+        assert.equal(parkClassOf(u, o), null, label);
+        assert.throws(() => outcomeFact(u, o, 1, { targets }), /decides no retryable park/, label);
+        continue;
+      }
+      parks += 1;
+      const cls = CLASS[`${stage} ${kind}`];
+      assert.equal(parkClassOf(u, o), cls, label);
+      if (cls === 'retryable') {
+        assert.equal(outcomeFact(u, o, 1).park, undefined, `${label}: no targets stated, no class written`);
+        assert.deepEqual(outcomeFact(u, o, 1, { targets }).park, { class: 'retryable', targets: [{ type: 'host' }, { type: 'resource', instance: 'estate#2' }] }, label);
+        assert.throws(() => outcomeFact(u, o, 1, { targets: [] }), /no targets/, label);
+      } else {
+        assert.deepEqual(outcomeFact(u, o, 1).park, { class: 'operator', kind: cls }, label);
+        assert.throws(() => outcomeFact(u, o, 1, { targets }), /decides no retryable park/, label);
+      }
+    }
+    assert.equal(parks, ROWS.filter((row) => row[3].startsWith('park:')).length);
+    const bound = outcomeFact(unit({ counters: { chargeableFailures: 2 } }), outcome('lanes', 'red'), 1);
+    assert.deepEqual(bound.park, { class: 'operator', kind: 'design' }, 'the chargeable bound is a design park');
+    const cause = { type: 'backend', backend: 'codex', parkSeq: 12 } as const;
+    assert.deepEqual(outcomeFact(unit(), outcome('build', 'interrupted'), 1, { cause }).cause, cause);
+    assert.throws(() => outcomeFact(unit(), outcome('build', 'success'), 1, { cause }), /a hold cause/);
   });
 
   it('transitions.decided-by: the recorded fact alone reads back the decision transition made, for every row and the bound', () => {

@@ -1,6 +1,7 @@
-# Executor schemas and contracts (frozen in M1 step 1a)
+# Executor schemas and contracts (frozen in M1 step 1a; M2 additions frozen in M2 step 0a)
 
-The specification every later step compiles against. Each schema names the TypeScript type and the
+The specification every later step compiles against. M2's records and scheduling interfaces are in place
+below and summarised in "M2: scheduling, resources, parks" at the end. Each schema names the TypeScript type and the
 validator that implement it; if you change one, change the other in the same commit. Owner: the lead.
 Other steps request changes rather than edit.
 
@@ -46,6 +47,28 @@ inputs (plan, specs, ledger).
   adapter keeps its bytes.
 - A 1.0.0-dev.3 supervisor that respawns this release's executor passes no `--respawn`: the respawn degrades to a
   start, so edits made since are applied or refused (`plan-change-refused`, exit 78) rather than ignored.
+
+**1.0.0-dev.4 → 1.0.0-dev.5 (M2).** `SCHEMA_VERSION` stays 1 and the plan literal stays `roadmap/plan-m1` (LR-1).
+Every change is additive; the defaults live in `src/core/upgrade.ts` and each warns once per process:
+
+| Record | Change | Read-time default for dev.4 state |
+|---|---|---|
+| `plan-applied` | `+ scheduling?: 'dag'` (rev 1 only, and only in a log with no `dispatch` fact) | absent on rev 1 → a legacy arc (`isLegacy`): dev.4's serial frontier (`legacyNext`, a port of `nextUnit` + `dispatchBlock`/`settledForAfter`, G4), no `@cpu` requests, a declared `cpu` stays a named resource, no over-capacity row for its existing requests; warn once |
+| `plan.json` | optional `capacity`, resource `pool`, unit `origin`, `cpu`, `contingent`, `reenters`, `cut` | absent (`contingent` reads `[]`) |
+| `LaneDef` | `+ cpu?` | absent → the tier's cost (`CPU_COST`) |
+| `stage-outcome` | `+ park?`, `+ cause?`; stage `prepare` | `park` absent on a park → operator, `design` for the chargeable bound and the design outcomes (refusal, escalate, infeasible, risk-lowered, scope-widened, redirect, revise, malformed, empty-diff, red), `env` otherwise (`legacyParkRecord`); `cause` absent → an operator hold (pause, stop, or a dev.4 usage-limit hold) |
+| New facts | `unparked`, `probe`, `judgment-inputs`, `edge-resolved`, `run-only`, `implementer-escalated` | none |
+| `rerouted` | kept readable, no longer the resume's record | read as `unparked` (`rerouteAsUnpark`); warn once |
+| `backend-park` | `+ class outage`; `inv` nullable (null exactly for `outage`) | none |
+| `Holder` | `+ retry{unit, stage, attempt}`, `+ publication{unit, attempt}` | none |
+| `resource.transition.resources` | `ResourceUnit[]` (lock order below) | a plain name is a named resource |
+| `ResidueKey.resource`, teardown/probe `SpawnSubject.resource`, `fail` residues | `ResourceInstance` | a plain name is a named resource |
+| `PlanChange` | `+ unit-cut`, `+ unit-reentered`; `PLAN_FIELDS + capacity`; pool edits are `resource` edits | none |
+| `CommandBody` | `+ resolve-edge`, `+ run-only` | none |
+| `NeedsUserReason` | `+ park-escalated`, `+ env-blocked` (both raised non-blocking) | none |
+| `UnitState` (fold) | `status + cut, superseded`; `+ park, lastRecovery, buildTier, lineage, supersededBy` | derived: `park` from the parking fact, `buildTier` = the dispatch floor |
+| `DerivedState` (`state.json`) | `+ backendParks, scheduling, resources, runOnly, resolvedEdges` | derived |
+| Lane dir | `+ host.json`, `<lane>.rerun/` (M2 steps 0b, 4) | absent → null (lasting, no warning) |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -96,9 +119,10 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `architectureDigest?` | `RepoPath` | the owner-approved digest of the architecture doc (section index + normative sentences with line anchors); when present, judgments embed it and read the whole doc from their checkout on demand |
 | `direction` | non-empty string | the Direction text |
 | `routing?` | `RoutingLayer` | the `plan` routing layer: a class per seat; a triple or a `classes` key is refused (a plan cannot rebind a class) |
+| `capacity?` (M2) | `{cpu?: positive}` | the `@cpu` pool's size; absent: `availableParallelism()` |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
-| `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand}`; `integration-slot` is built in and may not be declared |
-| `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17) |
+| `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
+| `units` | `PlanUnit[]` (non-empty) | `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
@@ -166,6 +190,11 @@ classified, not dropped.
 | `LaneId`, `ClauseId` | letter then `[A-Za-z0-9_.-]`, ≤ 64 | |
 | `RulingId` | `C-<digits>` | |
 | `OpKey` | printable ASCII, no whitespace, ≤ 256 | groups ops that must not overlap |
+| `PoolInstance` (M2) | `<pool>#<n>`, n ≥ 1 | `poolInstance(pool, n)`: instance n of a declared pool |
+| `CpuToken` (M2) | `@cpu#<n>`, n ≥ 1 | `cpuToken(n)`; `@` never occurs in a slug, so `@cpu` (`CPU_POOL`) never collides with a declared name |
+| `ResourceInstance` (M2) | `ResourceName \| PoolInstance` | what a probe, teardown or residue names |
+| `ResourceUnit` (M2) | `ResourceInstance \| CpuToken` | what a `resource.transition` moves; `parseResourceUnit` → `named{name} \| instance{pool, n} \| cpu{n}`; `compareResourceUnits` is lock order |
+| `EdgeId` (M2) | slug | a contingent edge's id, unique across the plan |
 
 Values (`src/core/values.ts`): `AbsPath` (absolute, normalised), `RepoPath` (repo-relative, `.` = root, no
 `.`/`..` segments), `PlanPath` (relative to the plan file's directory), `RepoPattern` (relative glob, no `..`),
@@ -197,17 +226,23 @@ in the line belongs to `arc`.
 | `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage`; a seat subject's `(role, tier)` is the seat (`tier` is `low\|med\|high`, or `escalation` for a judgment role), so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
 | `usage-unavailable` | `inv, routingRev, subject: MeterSubject, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
-| `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable`: one per `(unit, stage, attempt)`; see below |
-| `backend-park` | `backend, class: usage-limit\|capacity, inv`: a failed invocation whose backend reported such an error parks that backend arc-wide until `resume --backend` (lead ruling, 11b) |
+| `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable, park?, cause?`: one per `(unit, stage, attempt)`; see below |
+| `backend-park` | `backend, class: usage-limit\|capacity\|outage, inv\|null`: a failed invocation whose backend reported a usage-limit or capacity error parks that backend arc-wide (lead ruling, 11b); `outage` (M2, A18, `inv` null exactly then) is a failed smoke on a supervisor respawn. The fact's seq is the park's epoch (F12): see "M2: backend parks" |
 | `needs-user-acked` | `id, command, choice\|null`: at most one per id, any id form; the file twin is `<id>.ack.json` (step 13) |
 | `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
 | `stop-requested` | `command`: the durable stop marker (step 13) |
 | `executor-started` | `generation`: written at every start once the journal is open; clears the stop marker (a stop ends one run, not the arc). Pause markers and holds persist until `resume` (lead ruling, 13b) |
-| `plan-applied` | `rev: PlanRev, command: CommandId\|null, planSha256, specs: {unit: sha256}, changes: PlanChange[]`: a new plan in force ("Plan in force"): revision `rev` (1 for the first plan the arc ran, then one more each), the manifest of plan.json's and every unit's spec bytes (kept as `inputs/<sha256>.plan.json` and `.spec.json`), the apply that wrote it (null for a `start`) and what changed. An apply's postcondition, written once and last |
+| `plan-applied` | `rev: PlanRev, command: CommandId\|null, planSha256, specs: {unit: sha256}, changes: PlanChange[], scheduling?: 'dag'` (M2: only on rev 1, only in a log with no `dispatch` fact; absent on rev 1 = a legacy arc): a new plan in force ("Plan in force"): revision `rev` (1 for the first plan the arc ran, then one more each), the manifest of plan.json's and every unit's spec bytes (kept as `inputs/<sha256>.plan.json` and `.spec.json`), the apply that wrote it (null for a `start`) and what changed. An apply's postcondition, written once and last |
 | `reopened` | `unit, command\|null, specRev, specSha256`: a unit re-opened on an applied revision of its spec (`specRev` = the unit's recorded spec rev + 1, hashing to `specSha256`, its `pendingRevision`): by `resume <unit>` of a unit parked at `plan-check` or `gate` (`command` the resume), or by the driver at an in-flight unit's next stage boundary that allows re-entry (`command` the apply that recorded the revision, null for a start). The unit starts over at plan-check as a new attempt: `decided` and `interrupted` null, `stage` plan-check, `status` active; counters, `routedUp`, `promotion`, `approval`, the branch, worktree and implementer session are kept; `redirectBase` = `counters.redirects` |
-| `rerouted` | `unit, command`: `resume <unit>` re-entered a unit parked `routing-changed` (its latest decided outcome) once the routing in force resolves its implementer seat to the pinned `implementerSeatRev`, or no build has started; the command re-pinned it first (a `dispatch` fact under the rev in force, when that differs from the pinned one). `decided` and `interrupted` return to what they were before the park, so the unit re-runs the stage it parked at as a new, uncharged attempt; `stage` is that stage, `status` active; nothing else changes |
+| `rerouted` | (written through 1.0.0-dev.4; read as `unparked` since M2) `unit, command`: `resume <unit>` re-entered a unit parked `routing-changed` (its latest decided outcome) once the routing in force resolves its implementer seat to the pinned `implementerSeatRev`, or no build has started; the command re-pinned it first (a `dispatch` fact under the rev in force, when that differs from the pinned one). `decided` and `interrupted` return to what they were before the park, so the unit re-runs the stage it parked at as a new, uncharged attempt; `stage` is that stage, `status` active; nothing else changes |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
+| `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
+| `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
+| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev`: written after a judgment attempt's entry reservation and before its spawn (F1); one per `(unit, stage, attempt)`. A recovered call is consumed against it (`gateRead` at `tip`/`head`, `fingerprintAt` at `tip`) |
+| `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
+| `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
+| `implementer-escalated` (M2) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
 
 **`stage-outcome`** records one stage attempt's outcome as the transition table
 (`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
@@ -220,7 +255,11 @@ gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the `esc
 limit; the unit waits at its stage and a resume re-runs it as a new attempt, a build as a `continue` of the
 interrupted session; lead ruling, 11b) \| `park` \|
 `stop` \| `retire`. The attempt number of a stage start is the unit's `attempts` count plus one (numbered
-across the unit's stages).
+across the unit's stages). M2: `park?: ParkRecord` only with class `park` (the chargeable bound's is operator
+`design`), written by `outcomeFact` from the table's park class (retryable targets stated by the stage);
+`cause?: HoldCause = backend{backend, parkSeq}` only with class `hold`, when a backend park interrupted the stage
+(G5). Stage `prepare` (a re-entered unit's first stage) reports `clean-plan-check | clean-build | clean-verify |
+conflicted`, all `advance`: on to plan-check, a fresh build, lanes, or a `resolve` build.
 
 The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),
 the same function the transition table uses, so a decision's counters are the log's:
@@ -246,6 +285,16 @@ the plan-check redirect bound (`MAX_REDIRECTS` = 2, `src/pipeline/transitions.ts
 the architect's latest spec revision, `redirects - redirectBase`; plan-check and executor patches bump the rev too,
 but only a reopen resets the count.
 
+M2 adds to `UnitState`: `status` `cut` (a `unit-cut` change) and `superseded` (a `unit-reentered` change);
+`park: {seq, at, park: ParkRecord, passed: ProbeTarget[]}|null` while `park-pending` (`seq`/`at` of the parking
+fact; `park` as recorded or the pre-M2 default; `passed` the retryable targets a covering pass has cleared);
+`lastRecovery: {at, targets}|null`; `buildTier: RiskTier|null` (`max(risk, escalated)`: the dispatch floor, `high`
+after `implementer-escalated`, never lowered); `lineage: {reenters, root, prepared}|null` on a re-entering unit
+(`prepared` once its `prepare` stage recorded an outcome other than a park); `supersededBy: UnitId|null`. A
+re-entering unit starts at `prepare` with its predecessor's counters (`chargeableFailures` reset only with
+`reset`), attempt numbering (`attempts` continues from the predecessor's) and risk floor; the predecessor is
+`superseded`.
+
 **Append** (step 2). One serialised writer; `writeSync` loop until the full length is written; `fsync`; no act
 until fsync returns for the full line.
 
@@ -259,7 +308,16 @@ its `scope` and does not lower its `riskFloor`; a `reopened` fact names a unit t
 command, an `undispatched` spec edit only of a unit with no `dispatch` fact and any other only of one with, an
 `evidence` edit at the unit's rev, a `revision` at rev + 1, a `withdrawn` only of a pending revision (naming the
 unit's recorded spec); a `rerouted` fact names a unit
-that is `park-pending` with its `decided` outcome `routing-changed`. `state.json` is a derived cache, never read for a
+that is `park-pending` with its `decided` outcome `routing-changed`. M2: a `resource.transition` intent names no
+unit another open transition holds, and its done is a legal edge from each unit's state (`afterEdge`; the table
+is the fold's, `JournalView.resources()`); `scheduling` only on rev 1 of a log with no `dispatch`; `unit-cut` of a
+unit not retired, cut or superseded; `unit-reentered` of a parked or held unit, as an id new to the log and
+listed in the fact's manifest; a re-entering unit's first dispatch does not lower its lineage's floor; no
+dispatch or stage outcome of a cut or superseded unit; `prepare` only for a re-entering unit; a hold's `cause`
+names a `backend-park` fact of that backend; `unparked` only of an operator-env park; a `probe` covers only park
+seqs (each a unit park the target belongs to, or a park of that backend), and a unit park it covers is
+retryable; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
+`judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` is a derived cache, never read for a
 decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
 facts keyed by op/inv, so they cannot be lost or double-counted.
 
@@ -279,7 +337,7 @@ stop | recovery | external-unknown`.
 |---|---|---|---|
 | `worktree.create` | `path, checkout: branch{branch, at, createBranch} \| detached{at}` | `null` | `created{head}` |
 | `worktree.remove` | `path, evidence: OpId` (done `evidence.snapshot`) | `null` | `removed` |
-| `resource.transition` | `holder, resources` (lock order), `edge` | `null` | `transitioned` |
+| `resource.transition` | `holder, resources: ResourceUnit[]` (lock order), `edge` | `null` | `transitioned` |
 | `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
 | `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
@@ -293,17 +351,23 @@ stop | recovery | external-unknown`.
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
 `SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
-`teardown|probe{unit\|null, resource}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`.
+`teardown|probe{unit\|null, resource: ResourceInstance}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`.
 `(role, tier)` is a seat (`build.escalation` is refused), which the usage fact copies.
 The invocation is `op#ordinal`; its launch.json is written after the intent is durable and must hash to
 `launchSha256`.
 
-`Holder = stage{unit, stage, attempt} | sweep{command}`. `ResourceEdge`: `reserve` (free→reserved), `run`
+`Holder = stage{unit, stage, attempt} | sweep{command} | retry{unit, stage, attempt} | publication{unit, attempt}`
+(M2 adds the last two: a retryable park's probe reclaiming its unit's own residue, keyed by the parked attempt;
+the publication transaction, A2). `ResourceEdge`: `reserve` (free→reserved), `run`
 (reserved→running), `clean{from: reserved|running}` (→cleaning), `release` (cleaning→free), `fail{residues:
-[{resource, teardown: InvocationId}]}` (cleaning→cleanup-failed; one residue per transitioned resource,
-appended to the host index before this intent's done), `reclaim` (cleanup-failed→cleaning, sweep holders only:
-a sweep taking back this arc's own resource to re-run its residue's teardown; step 13). Lock order: ascending
-names, `integration-slot` last.
+[{resource: ResourceInstance, teardown: InvocationId}]}` (cleaning→cleanup-failed; one residue per transitioned resource,
+appended to the host index before this intent's done), `reclaim` (cleanup-failed→cleaning, sweep and retry holders only
+(`RECLAIM_HOLDERS`):
+a sweep or a probe taking back this arc's own resource to re-run its residue's teardown; step 13). Lock order
+(`compareResourceUnits`): named resources and pool instances ascending by name (a pool's instances numerically),
+then `@cpu#*` numerically, then `integration-slot`; over plain names it is M1's order. Op keys per holder:
+`resources:<unit>/<stage>/<attempt>`, `resources:<command>`, `resources:retry/<unit>/<stage>/<attempt>`,
+`resources:publication/<unit>/<attempt>`.
 
 ## Git intents
 
@@ -595,7 +659,7 @@ passes, read by `status` to re-resolve routing tables); `status.rejection.json` 
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: PlanManifest}` |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: PlanManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2; until step 5 applies them the executor rejects them) |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
@@ -733,7 +797,7 @@ profile.
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, dispatchesOf(unit) → DispatchRecord[] (every dispatch fact, log order), parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode(), planApplied() → the latest plan-applied fact\|null, planAppliedBy(command), plannedUnits()` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13; `planApplied`, `planAppliedBy`, `plannedUnits`: apply) |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, dispatchesOf(unit) → DispatchRecord[] (every dispatch fact, log order), parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode(), planApplied() → the latest plan-applied fact\|null, planAppliedBy(command), plannedUnits()`; M2: `backendParks() → [{backend, seq, class}]`, `resources() → Map<ResourceUnit, {status, pending}>` (the incremental table), `probes()` (the latest probe per target), `judgmentInputs(unit, stage, attempt)`, `edgeResolved(edge)`, `runOnly()`, `scheduling() → dag\|legacy\|null` | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13; `planApplied`, `planAppliedBy`, `plannedUnits`: apply) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |
@@ -794,3 +858,75 @@ Where the plan left a shape open. Each is the simplest shape that keeps illegal 
     owner.
 20. **Readiness, handshake, `exit.reason.json` and `supervisor.state.json` live in the host dir** beside the lock
     they belong to; `heartbeat.json` lives in the run dir the architect's Monitor watches.
+
+## M2: scheduling, resources, parks (frozen in M2 step 0a)
+
+The records are in place above; this section fixes their semantics and the scheduler's interfaces
+(`src/schedule/types.ts`, `src/schedule/graph.ts`), which later steps implement. DESIGN-1.0.md §2.2 is the prose.
+
+**Resources.** `ResourceUnit = ResourceName | PoolInstance | CpuToken` (Ids). Holders reserve all-or-none in lock
+order. `CPU_COST`: judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
+and teardown 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens; a legacy arc requests
+none. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
+`@cpu`×1; build the unit's resources and its `@cpu`; lanes the first lane's set; candidate the publication
+(`integration-slot`, held by `publication{unit, attempt}` through `ff` and `snapshot` once green, A2); prepare none.
+`Acquire(request: ResourceRequest{named, pools, cpu, publication}, holder, rank, signal) → granted{units} |
+cancelled` (a cancelled wait journals nothing). Plan-load refusal for a new arc or a new pool:
+`plan-invalid{over-capacity{unit|null, lane|null, resource, requested, total}}`. Reclaim order under a `retry`
+holder (F2): `reclaim` → teardown → on pass the residue's `cleaned` disposition in the host index → `release`.
+
+**Parks (A7).** A park's class is fixed per table row (`ParkClass` in `src/pipeline/transitions.ts`,
+`parkClassOf`): retryable rows are plan-check/build/gate `process-fault`, build `lost`, every `cleanup-failed`,
+lanes `blocked` (after its retry), candidate `blocked`, salvage `commit-failed`; operator `env` rows are
+`routing-changed`, `occupied`, salvage `unmerged`, candidate `base-red`; every other park is operator `design`
+(the chargeable bound, a refusal or escalation at the top seat, a bounded round or retry run out, `empty-diff`,
+a red candidate). `ParkRecord = retryable{targets: ProbeTarget[] (sorted by probeTargetKey, unique, non-empty)} |
+operator{kind: env|design}`, written inside the parking fact (F9). `ProbeTarget = backend{backend} | host |
+resource{instance: ResourceInstance}` (one per failed instance, F10; `probeTargetKey`: `backend:<b>`, `host`,
+`resource:<i>`). A park at seq P recovers when every target has a `probe{result: pass}` whose `covers` includes P;
+the fold then restores `decided`/`interrupted` to their pre-park values (the parked stage re-runs) and records
+`lastRecovery`. A pass covering a park that is no longer current changes nothing (stale); a cover of a seq that
+parked nothing, of an operator park, or of a park that does not target the probed target is refused. A host
+probe's `covers` are the parks it ran each local check for, fixed when it starts (G7). The resource target's
+pass is written only after its reclaim order completed. `unparked` re-runs an operator-env park; a design park
+needs `reopened` or a re-entry.
+
+**Park schedule (step 3 implements).** `PROBE_BACKOFF_MIN = [0, 1, 2, 4, 8, 16, 30]` then 30 repeatedly (each
+failed probe's `nextProbeAt`); `PARK_ESCALATE_MS` 6 h → a non-blocking `park-escalated` needs-user, probing continues
+(D2); `PARK_REPEAT_MS` 6 h: the same unit parking on the same target within it of a recovery parks operator
+(`env-blocked`); breaker: `BREAKER_UNITS` (2) distinct units parked on one target within `BREAKER_WINDOW_MS` (1 h)
+trip it (derived), blocking admission of the stages that need it, with one non-blocking `env-blocked` item.
+`Prober = {due(view, now) → ProbeJob[], run(job, signal) → pass|fail}`, `ProbeJob = {target, covers}`, at most one
+job per target at a time.
+
+**Backend parks (F12).** Per backend the fold keeps the latest `backend-park` fact's seq (its epoch) and a class:
+`usage-limit` if the current or the new park is one (it dominates until `resume --backend`, D4), else the new
+park's (`capacity`, `outage`: `RETRYABLE_BACKEND_PARKS`). A `probe{target: backend{b}, result: pass}` clears the
+park only when it covers exactly the current seq and the class is retryable. `resumed{backend}` clears whatever
+park is current. Either releases the holds with `cause: backend{b, parkSeq ≤ the cleared seq}` of units no pause
+covers; `resume --backend` also releases cause-less holds of unpaused units (a hold recorded before M2).
+
+**Graph (F15, D1).** `effectiveGraph(units)` maps each unit no other re-enters to its `after` dependencies with
+every superseded unit replaced by its lineage head (`lineageHead`, transitively; two re-entries of one unit
+throw); `findCycle` returns a cycle as its units, first repeated last. The classifier refuses an apply whose
+effective graph has a cycle (`top after old` plus `new after top, reenters old` is one). At run time
+`effectiveDependency(view, dep)` moves an edge to the successor only once the successor's `prepare` recorded an
+outcome (`lineage.prepared`); until then the edge waits on the superseded unit, which never merges. A legacy
+arc does not use the graph: `legacyNext(view, units)` is its frontier.
+
+**Priority (F17).** `Rank = {unit, origin, waitStartSeq, bypassMerges, promoted, planIndex}`; `promoted` when
+`bypassMerges >= PROMOTION_BYPASS` (3). `compareRank`: promoted first by `waitStartSeq` alone; the rest by
+`ORIGIN_RANK` (checkpoint 0, planned 1), then `waitStartSeq`; plan index last, so the order is total.
+
+**Admission (A12, A17).** `ADMISSION_STAGES = prepare, plan-check, build, lanes, gate, candidate`; chains
+(`BUILD_CHAIN` quiesce → evidence → salvage → teardown, `PUBLICATION_CHAIN` ff → snapshot) run to completion
+under pause and drain. `TaskState = idle | awaiting-admission | in-stage | in-chain` (memory only).
+`Admit(input: AdmitInput{view, plan, unit, stage, blocking, drains, tripped}) → admit | wait{constraints}` with
+`AdmissionConstraint = paused{arc|unit} | drain{command} | run-only | backend-parked{backend, class} |
+breaker{target} | base-red | blocking-item{id, reason}`. `CommandScope = arc | units{units} | none`;
+`ScopeOf(body, view, plan)`: `resume` (all), resource, pool, capacity and routing edits → arc; `resume <u>` →
+{u}; spec and unit edits → those units; `sweep`, `resume --backend`, `resolve-edge`, `run-only` → none.
+
+**Crash selector (G8).** The seam stays `crashPoint(label, unit?)`. A trigger file is `{label, occurrence, unit?}`;
+with `unit` only the calls passing that unit count (the plan's `<label>@<unit>:<n>`), without it every call of
+the label counts, as in M1.

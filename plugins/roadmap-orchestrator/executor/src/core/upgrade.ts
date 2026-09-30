@@ -8,10 +8,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { CancelFile, ExitFile, ResultFile } from './records.ts';
 import type { InputFiles } from '../input/inforce.ts';
+import type { PlanUnit } from '../input/plan.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
-import type { PlanChange } from './events.ts';
-import type { SpecRev } from './ids.ts';
+import type { ParkRecord, PlanChange, StageOutcomeFact } from './events.ts';
+import type { SpecRev, UnitId } from './ids.ts';
 import type { JournalView } from './interfaces.ts';
+import { canonicalJson } from './json.ts';
 import { SchemaError } from './validate.ts';
 
 const warned = new Set<string>();
@@ -138,4 +140,75 @@ export function commandCancelled(result: ResultFile, ended: () => Readonly<{ exi
   if (cancel === null || cancel.reason === 'recovery') throw new Error(`${path}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
   warnDefaulted('result.cancelled', `${path} records a cancelled command as process-fault (written by 1.0.0-dev.3 or earlier); read as cancelled{${cancel.reason}}`);
   return { ...result, verdict: 'cancelled', reason: cancel.reason };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.4 → M2 (1.0.0-dev.5)
+
+/** The outcomes whose park needs a spec revision or a re-entry (A7's operator-design rows). */
+const DESIGN_PARK_OUTCOMES: ReadonlySet<string> = new Set([
+  'refusal', 'escalate', 'infeasible', 'risk-lowered', 'scope-widened', 'redirect', 'revise', 'malformed', 'empty-diff', 'red',
+]);
+
+/**
+ * A parking `stage-outcome` fact without `park` (written by 1.0.0-dev.4 or earlier, which had no retryable
+ * parks): an operator park, `design` for the chargeable bound and the design rows (a refusal or escalation at
+ * the top seat, a bounded round or retry run out, an empty diff, a red candidate), `env` for every other.
+ */
+export function legacyParkRecord(f: StageOutcomeFact): ParkRecord {
+  warnDefaulted('stage-outcome.park', `a park without its class (written by 1.0.0-dev.4 or earlier) is read as an operator park; ${f.unit} ${f.stage}#${f.attempt} and any other`);
+  return { class: 'operator', kind: f.chargeable || DESIGN_PARK_OUTCOMES.has(f.outcome) ? 'design' : 'env' };
+}
+
+/** A `rerouted` fact (written through 1.0.0-dev.4) is read as `unparked`: the same re-entry at the parked stage. */
+export function rerouteAsUnpark(unit: UnitId): void {
+  warnDefaulted('rerouted', `rerouted facts (written through 1.0.0-dev.4) are read as unparked; unit ${unit} and any other`);
+}
+
+/**
+ * Whether the arc is legacy: its first plan revision carries no `scheduling: 'dag'` (started on 1.0.0-dev.4 or
+ * earlier, or a 1.0.0-dev.3 arc M2 baselined after it had dispatched). A legacy arc keeps that release's serial
+ * frontier (`legacyNext`) and resource meaning: no `@cpu` requests, a declared resource named `cpu` is a named
+ * resource, and the over-capacity row never runs for its existing requests (a pool an apply adds is checked).
+ * Throws before the first plan revision: nothing schedules before it.
+ */
+export function isLegacy(view: JournalView): boolean {
+  const scheduling = view.scheduling();
+  if (scheduling === null) throw new Error(`arc ${view.arc}: no plan revision yet, so no scheduling`);
+  if (scheduling === 'dag') return false;
+  warnDefaulted('scheduling.legacy', `arc ${view.arc} started before M2 (its plan revision 1 has no scheduling: dag); it keeps the serial frontier`);
+  return true;
+}
+
+/** The legacy frontier: the unit the serial arc works on next, and why it may not start now (null: it may). */
+export type LegacyFrontier = Readonly<{ unit: UnitId; block: string | null }>;
+
+/**
+ * 1.0.0-dev.4's serial frontier, ported exactly (G4) from `nextUnit` (src/executor.ts) and `dispatchBlock` with
+ * `settledForAfter` (src/pipeline/unit.ts): the earliest unit in plan order that is neither merged nor parked,
+ * so at most one is in flight; it waits while the arc or it is paused, or while a unit it runs `after` is
+ * neither merged nor parked with its needs-user acknowledged. A reopen or resume makes a parked unit active
+ * again, and so the frontier again if it comes first. Cut and superseded units (possible only after an M2
+ * apply) are passed over; an `after` on a superseded unit follows its lineage to the head. null: every unit
+ * is settled.
+ */
+export function legacyNext(view: JournalView, units: readonly PlanUnit[]): LegacyFrontier | null {
+  const next = units.find((u) => !['retired', 'park-pending', 'cut', 'superseded'].includes(view.unit(u.id).status));
+  if (next === undefined) return null;
+  const c = view.control();
+  if (c.pausedAll) return { unit: next.id, block: 'the arc is paused' };
+  if (c.pausedUnits.includes(next.id)) return { unit: next.id, block: `unit ${next.id} is paused` };
+  const after = next.after.filter((id) => !legacySettled(view, id));
+  return { unit: next.id, block: after.length > 0 ? `unit ${next.id} is held after ${after.join(', ')}` : null };
+}
+
+/** dev.4's `settledForAfter`: merged, or parked with the blocking needs-user of its park acknowledged. */
+function legacySettled(view: JournalView, id: UnitId): boolean {
+  const u = view.unit(id);
+  if (u.status === 'superseded' && u.supersededBy !== null) return legacySettled(view, u.supersededBy);
+  if (u.status === 'retired' || u.status === 'cut') return true;
+  if (u.status !== 'park-pending' || u.decided === null) return false;
+  const parent = canonicalJson({ type: 'stage', unit: id, stage: u.decided.stage, attempt: u.decided.attempt });
+  const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === parent && view.doneOf(i.op) !== null);
+  return raise !== undefined && view.ackOf(raise.expect.id) !== null;
 }

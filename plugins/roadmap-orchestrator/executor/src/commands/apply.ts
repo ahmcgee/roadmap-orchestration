@@ -50,7 +50,7 @@ import { crashPoint } from '../core/crash.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES } from '../core/events.ts';
-import { type CommandId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { type CommandId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, invocationId, namedResource, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, CommandFile, NeedsUserAck, PlanManifest, ResidueKey, Stage } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -160,6 +160,9 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
 async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effect> {
   const body: CommandBody = command.body;
   switch (body.type) {
+    case 'resolve-edge':
+    case 'run-only':
+      return { kind: 'rejected', reason: `${body.type} is not applied by this executor yet (M2 step 5)` };
     case 'pause':
       return pause(ctx, command.id, body.target);
     case 'stop': {
@@ -378,7 +381,7 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 
   const settle = async (r: ResidueEntry, result: CleanupResult<SweepHolder>): Promise<void> => {
     if (result.kind === 'released') {
-      recordDisposition(ctx.hostDir, { type: 'disposition', key: r.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: lastTeardown(ctx, r.key.resource) } });
+      recordDisposition(ctx.hostDir, { type: 'disposition', key: r.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: lastTeardown(ctx, namedResource(r.key.resource)) } });
       verified.push(`residue ${keyText(r.key)}: cleaned`);
     } else {
       verified.push(`residue ${keyText(r.key)}: teardown failed, left undisposed; ${r.key.resource} stays cleaning under the sweep`);
@@ -386,7 +389,8 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
   };
 
   // 1. Resources a sweep (this one after a crash, or an earlier one whose teardown failed) left behind.
-  for (const [resource, entry] of resourceTable(ctx.journal.view)) {
+  for (const [unit, entry] of resourceTable(ctx.journal.view)) {
+    const resource = namedResource(unit);
     const { status } = entry;
     if (!wanted(resource) || entry.pending !== null || status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type !== 'sweep') continue;
     if (status.state === 'running') throw new Error(`resource ${resource} is running under sweep ${status.holder.command}; a sweep never runs a workload`);
@@ -402,11 +406,12 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 
   // 2. Every residue still undisposed, one at a time: at most one sweep reservation per resource name.
   for (const key of undispositioned(ctx.hostDir)) {
-    if (!wanted(key.resource)) continue;
+    const resource = namedResource(key.resource);
+    if (!wanted(resource)) continue;
     const r = hostResidues().find((x) => canonicalJson(x.key) === canonicalJson(key));
     if (r === undefined) throw new Error(`undispositioned residue ${keyText(key)} has no residue record`);
-    const recipes = new Map([[key.resource, recipeOf(r)]]);
-    const { status } = entryOf(resourceTable(ctx.journal.view), key.resource);
+    const recipes = new Map([[resource, recipeOf(r)]]);
+    const { status } = entryOf(resourceTable(ctx.journal.view), resource);
     // A residue of this arc: its resource is cleanup-failed here, and only the sweep takes it back.
     if (key.arc === ctx.journal.view.arc && status.state === 'cleanup-failed') {
       await settle(r, await finishCleanup(ctx, reclaimForSweep(ctx, holder, recipes, parent), parent));

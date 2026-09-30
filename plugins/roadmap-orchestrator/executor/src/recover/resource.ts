@@ -14,7 +14,7 @@
 // A sweep's reservation is re-driven by its command's reconciliation (command.apply, step 13), which
 // knows the residues it sweeps; here only its open transition is closed.
 import type { Holder, IntentOf, Parent } from '../core/events.ts';
-import type { ResourceName } from '../core/ids.ts';
+import { type ResourceName, namedResource } from '../core/ids.ts';
 import type { Disposition, Reconciler } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
@@ -44,8 +44,8 @@ function close(ctx: ResourceContext, intent: IntentOf<'resource.transition'>): R
   const { holder, resources, edge } = intent.expect;
   let disposition: ResourceDisposition = { kind: 'done', outcome: { kind: 'transitioned' } };
   if (edge.type === 'fail') {
-    if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by sweep ${holder.command}`);
-    disposition = reconcileFailedCleanup(ctx.hostDir, intent, stageRecipes(ctx.plan(), ctx.repo, holder.unit, resources));
+    if (holder.type !== 'stage') throw new Error(`${intent.op}: a fail transition held by ${canonicalJson(holder)}`);
+    disposition = reconcileFailedCleanup(ctx.hostDir, intent, stageRecipes(ctx.plan(), ctx.repo, holder.unit, resources.map(namedResource)));
   }
   ctx.journal.done(intent.op, 'resource.transition', disposition.outcome, 'reconciled');
   return disposition;
@@ -74,9 +74,9 @@ export async function recoverReservations(ctx: ResourceContext): Promise<void> {
 /** The holder's resources per held state, each set in lock order. */
 function heldBy(ctx: ResourceContext, holder: Holder): ReadonlyMap<HeldState, readonly ResourceName[]> {
   const held = new Map<HeldState, ResourceName[]>();
-  for (const [resource, { status }] of resourceTable(ctx.journal.view)) {
+  for (const [unit, { status }] of resourceTable(ctx.journal.view)) {
     if (status.state === 'free' || status.state === 'cleanup-failed' || !sameHolder(status.holder, holder)) continue;
-    held.set(status.state, [...(held.get(status.state) ?? []), resource]);
+    held.set(status.state, [...(held.get(status.state) ?? []), namedResource(unit)]);
   }
   return new Map([...held].map(([state, rs]) => [state, lockOrder(rs)]));
 }
@@ -99,7 +99,7 @@ async function settleHolder(ctx: ResourceContext, holder: StageHolder): Promise<
   for (const intent of ctx.journal.view.openIntents()) {
     if (intent.kind !== 'proc.spawn') continue;
     const { subject } = intent.expect;
-    if (subject.purpose === 'teardown' && cleaning.includes(subject.resource)) await spawn(intent, ctx.journal.view);
+    if (subject.purpose === 'teardown' && cleaning.some((r) => r === subject.resource)) await spawn(intent, ctx.journal.view);
   }
   const r: Reservation<'cleaning', StageHolder> = {
     state: 'cleaning', holder, resources: cleaning, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, cleaning),

@@ -31,7 +31,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
-import { type OpId, type UnitId, invocationId } from '../core/ids.ts';
+import { type OpId, type UnitId, invocationId, namedResource } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
@@ -172,7 +172,7 @@ const stageParent = (f: StageOutcomeFact): StageParent => ({ type: 'stage', unit
 function heldBy(ctx: StageContext, holder: StageHolder): Reservation<'running', StageHolder> | null {
   const resources = [...resourceTable(ctx.journal.view)]
     .filter(([, e]) => e.pending === null && e.status.state === 'running' && sameHolder(e.status.holder, holder))
-    .map(([r]) => r);
+    .map(([r]) => namedResource(r));
   if (resources.length === 0) return null;
   const ordered = lockOrder(resources);
   return { state: 'running', holder, resources: ordered, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, ordered) };

@@ -3,9 +3,9 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type ImplementerSessionId, type InvocationId, type JudgmentSessionId,
-  type LaneId, type NeedsUserId, type OpId, type PlanRev, type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha,
-  type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, implementerSessionId, invocationIdOf,
-  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, planRev, resourceName, routingRev, rulingId, seatRev, sha,
+  type EdgeId, type LaneId, type NeedsUserId, type OpId, type PlanRev, type ResourceInstance, type ResourceName, type RoutingRev, type RulingId,
+  type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId, commandId, edgeId, implementerSessionId, invocationIdOf,
+  judgmentSessionId, laneId, needsUserId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha,
   sha256, specRev, unitId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
@@ -49,8 +49,11 @@ export const CONTAINMENT_MODES = ['session', 'cgroup'] as const;
 export type ContainmentMode = (typeof CONTAINMENT_MODES)[number];
 export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
 
-/** Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. */
-export const STAGES = ['plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
+/**
+ * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
+ * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
+ */
+export const STAGES = ['prepare', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
@@ -578,6 +581,8 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
+  /** `@cpu` tokens the lane takes (M2); absent: its tier's default (fast 2, estate 4). Absent stays absent. */
+  cpu?: number;
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -601,8 +606,9 @@ function laneFields(f: Fields): LaneDef {
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
+  const cpu = f.optional('cpu', positive);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
-  return out;
+  return cpu === undefined ? out : { ...out, cpu };
 }
 export const laneDef: Read<LaneDef> = object(laneFields);
 
@@ -847,13 +853,13 @@ export const runStart: Read<RunStart> = object((f) => ({
 export type Heartbeat = Readonly<{ v: SchemaVersion; generation: number; at: IsoTime }>;
 export const heartbeat: Read<Heartbeat> = object((f) => ({ v: f.get('v', version), generation: f.get('generation', positive), at: f.get('at', time) }));
 
-/** A residue is keyed per resource. */
-export type ResidueKey = Readonly<{ arc: ArcId; unit: UnitId; inv: InvocationId; resource: ResourceName }>;
+/** A residue is keyed per resource instance: a named resource or a pool instance (never an `@cpu` token). */
+export type ResidueKey = Readonly<{ arc: ArcId; unit: UnitId; inv: InvocationId; resource: ResourceInstance }>;
 export const residueKey: Read<ResidueKey> = object((f) => ({
   arc: f.get('arc', arc),
   unit: f.get('unit', unit),
   inv: f.get('inv', inv),
-  resource: f.get('resource', resource),
+  resource: f.get('resource', (v, p) => resourceInstance(v, p)),
 }));
 
 export type TeardownRecipe = Readonly<{ argv: readonly string[]; cwd: AbsPath; env: Readonly<Record<string, string>> }>;
@@ -926,7 +932,11 @@ export type CommandBody =
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
    * or null to apply over whatever is in force. A mutation.
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: PlanManifest }>;
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: PlanManifest }>
+  /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
+  | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
+  /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
+  | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>;
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
 export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
 
@@ -960,6 +970,12 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('apply')),
     expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
     manifest: f.get('manifest', planManifest),
+  })),
+  'resolve-edge': object((f): CommandBody => ({
+    type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
+  })),
+  'run-only': object((f): CommandBody => ({
+    type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
 });
 
@@ -996,6 +1012,9 @@ export const NEEDS_USER_REASONS = [
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
   'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
+  // M2: non-blocking. A retryable park unrecovered after 6 h (probing continues); a tripped probe breaker or a
+  // repeat park on one target.
+  'park-escalated', 'env-blocked',
 ] as const;
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

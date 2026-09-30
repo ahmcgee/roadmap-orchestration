@@ -6,6 +6,8 @@ import { join } from 'node:path';
 export interface TriggerSpec {
   readonly label: string;
   readonly occurrence: number;
+  /** Only the calls that pass this unit count (G8). */
+  readonly unit?: string;
 }
 
 /** Write a crash trigger into `dir`; returns its absolute path for ROADMAP_TEST_CRASH. */

@@ -51,11 +51,11 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing' | 'architect
 };
 
 describe('plan.json (M1)', () => {
-  it('a valid plan parses unchanged, with `after` and suite lanes\' `evidenceExcludes` defaulting to none', () => {
+  it('a valid plan parses unchanged, with `after`, `contingent` and suite lanes\' `evidenceExcludes` defaulting to none', () => {
     const plan = validPlan();
     const suite = plan['suite'] as { lanes: object[] };
     assert.deepEqual(parsePlan(plan), {
-      ...plan, suite: { lanes: suite.lanes.map((l) => ({ ...l, evidenceExcludes: [] })) }, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [] })),
+      ...plan, suite: { lanes: suite.lanes.map((l) => ({ ...l, evidenceExcludes: [] })) }, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [], contingent: [] })),
     });
   });
 

@@ -1,6 +1,6 @@
 # roadmap-orchestrator 1.0 — design brief (draft for audit)
 
-Status: draft 6, 2026-09-25. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
+Status: draft 7, 2026-09-30. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
 all since removed from the tree), `orchestrator-observations.md`, and arc 1's full `.roadmap/` record (`calibration-0.20.0.md` §3.1–3.23,
 `skill-feedback-0.16.0.md`, the wave 33–38 audits, the architect log, the hand-written boundary patches);
 citations will be folded into RATIONALE 1.0. Draft 3 incorporated the adjudicated cross-model review (gpt-6-astra,
@@ -17,6 +17,10 @@ residues keyed per resource; workload membership by `ROADMAP_INV` with the runne
 experimental; Codex judgment triples unsupported; op kinds `mergein.prepare` and `evidence.snapshot` and the
 candidate ref. Residue compaction, `gc`, ruling retirement, obligation re-derivation and dismissal lifetime are
 recorded for M3; the debt lifecycle and inbound-only issues for M4.
+Draft 7 applies the M2 plan amendments (2026-09-30): merged-only dependencies, a legacy serial frontier for
+dev.4 arcs, pools of instances with `@cpu`, a durable publication holder, admission-defined safe points,
+retryable parks classed by `(stage, outcome)` with probe-derived recovery, `reenter` and `cut` as `apply` edit
+classes, and N = 1 fix-round escalation; `steer`, `route`, `limits`, `merge-in` and the `repair` origin move to M3.
 
 ## 1. What the system is for
 
@@ -50,7 +54,8 @@ side effect write-ahead (§4 State). Nothing code can do exactly is done by a mo
 
 **The supervisor** owns the executor and nothing else: on executor death it takes over exclusively and
 restarts it with bounded backoff; after 3 crashes in an hour it persists a `needs-user` and stops. It is not a
-judgment surface. Host-reboot recovery is outside the unattended guarantee; `roadmap start` recovers from disk.
+judgment surface. A respawn of an established arc never refuses on a failed backend smoke: each failed
+backend gets a retryable `backend-park{outage}` and the rest of the arc runs; a first `roadmap start` still refuses. Host-reboot recovery is outside the unattended guarantee; `roadmap start` recovers from disk.
 
 **Backends** — `codex exec` and `claude -p` behind one process interface: prompt on stdin, explicit launch
 environment (declared vars, umask 022, cwd — sf18's umask-077 incident), JSON events on stdout. Each invocation
@@ -95,36 +100,80 @@ build session with the failing lanes' evidence dirs. Per-unit counters are cumul
 ### 2.2 Scheduling
 
 A DAG with resource locks replaces waves. A unit starts when every dependency is merged, its contingent edges are
-`resolved{evidence, by}` (only `resolve-edge` resolves), and its stage's resource set is acquirable. Resources are
+`resolved{evidence, by}` (only `resolve-edge` resolves), and its stage's resource set is acquirable.
+Dependencies are merged-only: dependents of a dead unit are released only by `cut` or by re-entry, whose lineage
+head stands in once its preparation succeeds (owner ruling 2026-09-30). Resources are
 **named** (clusters, ports, containers, images, volumes, per-worktree state dirs, tool locks, the integration
-slot) or **capacity** (CPU and estate slots); builds, preview and lanes take capacity (sf18, §3.3).
-Checkpoint-originated units outrank planned units, with aging: a planned unit outranked for more than M merges
-(default 3) regains top priority. Audit P2 fixes carry a priority so they don't starve. Resources are declared
-with teardown, ownership labels and capacity classes, replacing the concurrency knobs, load guard, `laneCleanup`
+slot) or **pools** of instances (sf18, §3.3). The built-in pool `@cpu` (`@` never occurs in a declared name) has
+`plan.capacity.cpu` instances, default `availableParallelism()`; a declared estate pool `{name, pool:{size}, probe,
+teardown}` has instances `<name>#<n>`, bound into every workload of the holder by `RESOURCE_INSTANCE_<NAME>=<n>`
+(persisted in `launch.json` and the residue's teardown recipe). `@cpu` costs, all unmeasured: judgment 1, build
+`unit.cpu ?? 4`, fast lane 2, estate and suite lanes 4, probe and teardown 0.
+Checkpoint-originated units outrank planned units, with aging: a unit that waits while M other units publish
+(default 3) is promoted, and promoted units are served oldest first. Audit P2 fixes (the `repair` origin, M3)
+carry a priority so they don't starve. Resources are declared
+with teardown, ownership labels and pools, replacing the concurrency knobs, load guard, `laneCleanup`
 and census.
 
-- **Locks.** A stage acquires its whole set all-or-none in one global order. A reservation covers probe →
+- **Legacy arcs (lead ruling 2026-09-30).** One plan schema with additive optional fields and one scheduler; every
+  new arc has the semantics above. An arc whose rev-1 `plan-applied` lacks `scheduling: 'dag'` (started on
+  1.0.0-dev.4) is legacy and keeps dev.4's serial frontier exactly: the earliest unsettled unit in plan order, at
+  most one in flight, explicit `after` released by merged or by parked with its needs-user acknowledged; no
+  implicit chain edges. It gets no `@cpu` requests, its declared names keep their meaning (a declared `cpu` is a
+  named resource), and the over-capacity refusal never runs for its existing requests. Temporary upgrade
+  scaffolding (§10).
+- **Admission.** The scheduler is the only admitter of stages. Admission boundaries sit before `prepare`,
+  `plan-check`, `build`, `lanes`, `gate` and `candidate`; pause, drain and every constraint are re-checked at
+  each. Constraints hold per stage: a limited or parked backend blocks the stages that call it (running calls
+  finish), a tripped `host` target blocks builds and lanes, `base-red` blocks candidates, and
+  `recovery-required`, `log-corrupt`, host-subject and supervisor crash-limit items block all admission. Chains
+  (`quiesce → evidence → salvage → teardown` after a build; `ff → snapshot` in a publication) run to completion
+  regardless of pause or drain, so a paused unit holds nothing but a residue of its own failed cleanup. On
+  restart, recovery rebuilds pending chains from the fold and the scheduler runs them first.
+- **Locks.** The reservation unit is a build, a judgment call, a lane or a publication, each taking its whole
+  set all-or-none in one global order (named and pool instances ascending, `@cpu#*`, then the integration slot).
+  A stage takes its entry reservation before its first journaled op; a wait cancelled by pause or stop journals
+  nothing. Hold-and-wait occurs only for a publication holder waiting on a suite lane's set. Waiters on a
+  `cleanup-failed` or residue-dirty resource are set aside and never block backfill. A reservation covers probe →
   cleanup → run → cleanup; states `free | reserved | running | cleaning | cleanup-failed`; release only after
-  confirmed cleanup. Requests over total capacity are refused at plan load. Preview has its own estate slot,
-  never the sole one. Docker/kind resources carry `roadmap.owner=<arc>/<unit>/<invocation>`.
+  confirmed cleanup. Requests over total capacity are refused at plan load and at `apply` (new pools included).
+  Preview's own estate slot is specified with preview in M4. Docker/kind resources carry
+  `roadmap.owner=<arc>/<unit>/<invocation>`.
 - **Residues.** `cleanup-failed` also enters the host residual-resource index, independent of the owner
   pointer, keyed per resource `(arc, unit, inv, resource)`, with its teardown recipe. The residue is durable in
 the host index before the local `cleanup-failed` is recorded and before any release; a multi-resource cleanup
 that fails partway leaves one residue per failed resource. `start` for any arc refuses until every
   residue is `cleaned` (by `sweep`) or `isolated | transferred` (by a `needs-user` disposition); an
-  acknowledgement alone frees nothing.
+  acknowledgement alone frees nothing. Own-arc residues are the exception: a start or respawn is not refused
+  when the arc's log proves ownership (a `resource.transition{fail}` intent, open or done, naming the key), and
+  the owned dirty instances are withheld from dispatch until a retry reclaims them (reclaim → teardown →
+  `cleaned` disposition → release).
 - **Integration slot.** Serial; all else runs in parallel. Each attempt ends `published | abandoned |
   recovery-required`. A publication needing the slot abandons the current candidate (cleaned, released) first,
-  waiting only for a critical section under way. A red or conflicting candidate releases its suite resources
+  waiting only for a critical section under way. A unit's publication is a durable holder
+  `publication{unit, attempt}`: it takes the slot at candidate start and keeps it through `ff` and `snapshot`,
+  releasing it on any candidate outcome but green, on `ff` `cas-stale | fingerprint-invalid | foreign-move`, and
+  after `snapshot`. Before green, pause and stop abandon the candidate; once green, `ff` and `snapshot` are a
+  mandatory chain. A red or conflicting candidate releases its suite resources
   before the unit fix is dispatched, then reacquires. `recovery-required` resolves from the operation's
   postcondition.
-- **Parks.** `retryable` (capacity, backend outage, host signature) persists a next probe with exponential
-  backoff (cap 30 min) and an escalation deadline (6 h → `needs-user`); the health probe, not a second unit,
-  establishes recovery. `operator` (auth, `needs-user`) waits for the architect.
-- **Usage limits (owner ruling 2026-09-25).** A `usage-limit` CLI error event marks that backend `limited`
-  arc-wide: running processes finish, stages needing it park as `operator/usage-limit`, others run until they
-  need it, and one `needs-user` is raised. It never auto-retries: `resume --backend <name>` re-runs that
-  backend's preflight smoke before unparking. Nothing brakes before the limit.
+- **Parks.** Classed by `(stage, outcome)`; the class and its targets are written inside the `stage-outcome`
+  fact that parks. `retryable` (backend `process-fault`, `capacity` or `outage`; a lane or candidate `blocked`;
+  `cleanup-failed`; salvage `commit-failed`) names probe targets `backend{b} | host | resource{instance}`, one
+  per failed instance; when salvage fails, the teardown's failed instances join its targets. Probes run at once,
+  then with exponential backoff (cap 30 min). Recovery is established by probes, never by a second unit, and is
+  derived, never fanned out: a park recovers when every target has a passing probe after it (a resource target
+  also disposed `cleaned`); a host probe records the parks it `covers`, and only those recover. At 6 h a
+  retryable park raises a non-blocking `park-escalated` `needs-user` and probing continues at the cap (owner
+  ruling 2026-09-30). `operator` parks (`env`: resumed by `resume <unit>`; `design`: an applied spec revision)
+  wait for the architect. A stage interrupted by a backend park is held as `hold{backend{b, parkSeq}}`, released
+  by a matching passing probe or `resume --backend`; operator pauses are preserved.
+- **Usage limits (owner ruling 2026-09-25, unchanged by owner ruling 2026-09-30).** A `usage-limit` CLI error
+  event marks that backend `limited` arc-wide: running processes finish, stages needing it park as
+  `operator/usage-limit`, others run until they need it, and one `needs-user` is raised. It never auto-retries:
+  `resume --backend <name>` re-runs that backend's preflight smoke before unparking. A usage-limit park dominates
+  a retryable park on the same backend, and a probe clears only the park epoch it tested. Nothing brakes before
+  the limit; limit hits under parallel burn are measured in arc 2.
 
 ### 2.3 Architect commands
 
@@ -132,27 +181,32 @@ Commands are files in one executor-owned durable queue; clients never write stat
 and the revisions it targets, and gets persisted `accepted | applied | rejected` receipts. **Control** (`pause`,
 `stop`, `ack`) apply immediately: the cancellation is recorded, the authorised kill → quiescence → salvage →
 cleanup transition runs, then `applied` is receipted; they wait only for a publication critical section under way.
-**Mutations** — everything else, including every checkpoint act — apply only at safe points: stage boundaries,
-before next-stage dispatch and before merge publication. Prompt inputs are snapshotted by revision at dispatch.
+**Mutations** — everything else, including every checkpoint act — apply only at safe points, defined by
+admission (§2.2), not by open intents: a mutation applies when every unit in its scope is idle or awaiting
+admission, and admission into a scope a pending mutation holds waits (drain). Scopes: `resume` and resource,
+pool, capacity and routing edits → the arc; `resume <u>` → that unit; spec and unit edits → those units;
+`sweep`, `resume --backend`, `resolve-edge`, `run-only` → none. After its asynchronous parts (smokes) a
+mutation is classified again immediately before its commit. Each stage attempt pins the plan in force it was
+admitted with; prompt inputs are snapshotted by revision at dispatch.
 
 | Command | What it does | Refuses |
 |---|---|---|
 | `start` / `status` / `ack <id>` | launch or recover / §2.4 / acknowledge a `needs-user` item | a live owner or undispositioned residue / — / unknown id |
-| `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth); `--backend` clears a `usage-limit` park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has applied (`apply`) a revision of its spec to the next rev, keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit with no revision applied, or parked at any other stage |
-| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit` and `patch-spec` below are edit classes of `apply` (adding units and edges; revising a unit's spec), not separate commands; a file watcher is rejected (no command path, no expected revision, reads files mid-write) | a stale `--expect-rev`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's scope, risk, resources, spec path or new `after`, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, the arc, integration branch, baseline or worktree root |
-| `run-only <ids>` | dispatch allowlist (arc 1's `dispatchOnly`, used W29–34) | ids outside the plan |
+| `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth): a retryable park is probed now, an operator-env park re-runs its stage (`unparked`), an operator-design park reopens on an applied revision; `--backend` clears that backend's current park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has applied (`apply`) a revision of its spec to the next rev, keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit with no revision applied, or parked at any other stage |
+| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter` and `cut` below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`), not separate commands, and so are pool and `capacity` edits; a file watcher is rejected (no command path, no expected revision, reads files mid-write) | a stale `--expect-rev`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's scope, risk, resources, spec path or new `after`, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
+| `run-only <ids>` / `--clear` | dispatch allowlist checked at admission (arc 1's `dispatchOnly`, used W29–34); a command, not an `apply` edit, because it records a runtime fact | ids outside the plan |
 | `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it), validated against old revisions, published together (§2.6); invalidates citing approvals | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops; anchor ≠ one match; stale base; an obligation effect from the checkpoint |
 | `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited C-nn |
 | `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); non-architect admits while `draining`; obligations narrower than the impact mapping |
-| `resolve-edge <edge> --evidence` | contingent edge → resolved | unknown or resolved edge |
-| `reenter <old> --as <new> [--enter-at build\|verify] [--patch]` | re-entry through a durable preparation (§4 Re-entry); a retry resumes it | old unit running; budget or scope reset without a ruling |
-| `cut <unit> --reason [--ruling]` | `inScope:false`; each descendant gets `cut \| replan \| needs-user` | merged dependents needing it; a running unit |
+| `resolve-edge <edge> --evidence` | contingent edge → resolved (`edge-resolved`, a runtime fact, so a command) | unknown or resolved edge |
+| `reenter` | a new unit with `reenters{unit, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; a cycle in the effective graph (each superseded unit replaced by its head) |
+| `cut` | unit `cut{reason, ruling?}`: `inScope:false`; since the 2026-09-30 lead ruling, an edit class of `apply` | a unit in a task or merged; a direct dependent neither cut in the same apply nor dropping its `after` |
 | `route <unit> …` / `--risk` / `--adversarial` | per-unit routing layer (§4) | risk below the Phase-0 floor without a ruling; an unsupported triple |
 | `limits …` | per-unit or arc bounds and windows | lowering a counter below what is spent |
 | `sweep [--resource]` | declared teardown for resources with no live holder, incl. indexed residues | anything a live session holds |
 | `gc` | deletes raw evidence of completed arcs; prunes run dirs beyond the last K (§2.9; implemented in M3) | a live or incomplete arc |
 | `merge-in <unit>` | integration head into the unit branch (a `mergein.prepare` operation) | unit running; conflict → abort, report |
-| `steer <unit> --brief <f> --budget <min> --model <m> [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--model` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, normal salvage → lanes → review/gate exit; parked unless `--resume`; minutes (lanes excluded) and usage recorded, fix budget uncharged. Unblocked arc 1's launcher and estate | unit not parked; no budget; widening the envelope |
+| `steer <unit> --brief <f> --budget <min> --class <efficient\|frontier\|summit> [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, normal salvage → lanes → review/gate exit; parked unless `--resume`; minutes (lanes excluded) and usage recorded, fix budget uncharged. Unblocked arc 1's launcher and estate | unit not parked; no budget; widening the envelope |
 | `audit [--lens]` / `explore <q> [--at sha]` | §2.5 on demand / read-only recon to `feedback/` | lenses acting directly / any write |
 | `obligation add\|split\|waive\|defer\|witness` | edits obligations (§2.8), published like a `rule`; architect only, except `split` | unsupported reporter; `waive`/`defer` without a ruling; children dropping parent text |
 | `debt resolve <id> --ruling` / `promote <id>` | ledger ops | promote while `draining` |
@@ -345,8 +399,9 @@ surfaces as a ranked Phase-0 question. Obligation-affecting items are findings, 
   discharged on the current head or waived; no unacknowledged blocking `needs-user`; no pending commands; no
   uncovered audit range; the final generation quiescent.
 - **`needs-user`**: an unacknowledged blocking `needs-user` item.
-- **`blocked`**: nothing can dispatch while in-scope work remains (parked, excluded by `run-only`, or behind an
-  unresolved contingent edge); parked in-scope work is never `complete`.
+- **`blocked`** (a `status` `run.state` since M2): nothing can dispatch while in-scope work remains (parked,
+  excluded by `run-only`, behind an unresolved contingent edge, or behind a dead dependency awaiting `cut` or
+  re-entry); parked in-scope work is never `complete`.
 - **`draining`**: latched by `close-admissions` or plan drain, reopened only by an
   architect `admit`; closure applies at the single minting point to every automatic admission and re-entry path
   (debt, checkpoint admits, repair units), which become `needs-user` requests.
@@ -417,19 +472,19 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Verification | The executor runs spec lanes serially, verbatim, under locks, fast before estate, in a clean worktree at the salvage SHA, evidence keyed by invocation. No verifier role; `judgeVerify` provenance is always `spec`. |
 | Lanes | Per §2.7; `env` prerequisites probed at plan load (missing → `spec-lane-unrunnable`, park, never a strike — sf16); `evidenceGlobs` snapshotted before teardown and handed to fix rounds (§3.21's cause was in `caller.stderr`). Every lane's gitignored writes are counted into a census the gate's ledger shows (undeclared output of a passing lane shows as `not-declared`); a lane that does not pass also gets its undeclared ignored output captured by default, capped, without build output, default secret excludes or the lane's `evidenceExcludes`, and handed to its fix round (executor/SCHEMAS.md "Lane evidence"). `evidenceGlobs` and `evidenceExcludes` may change at the unit's current spec revision while it is in flight: they are outside the approval fingerprint and read at the next lanes attempt; nothing else in a spec may. |
 | Implementer boundaries | Implementers run **fast** lanes only, the stage reserving their declared named resources throughout. **Estate** lanes are executor-only. Before release the occupancy probe runs: an undeclared estate with the unit's label is torn down; unlabelled → park, `needs-user` (§3.15, §3.16, §3.22). |
-| Host signatures | Code table (golangci lock, kind boot under load, EAGAIN). Red becomes `blocked` only with the signature **and** contemporaneous host evidence; the original result is kept. One same-SHA retry once clear; red again on a healthy host is a product failure; uncertain → `unknown`, uncharged. |
-| Flakes | An unexpected red lane gets one same-SHA diagnostic rerun before any code change (the host retry, where it applies); both kept; red-then-green is a flake and never approves. |
-| Blocks | A retryable park; never quarantines (sf16; log w35). Repeats on a unit, blocks on two units in a window, or the deadline → `env-*` → `needs-user`. |
+| Host signatures | Code table (golangci lock, kind boot under load, `EAGAIN`, `ENOSPC`); host sampled at lane start and end (busy: `load1/cpus ≥ 1.0` or MemAvailable < 5%; clear < 0.7). A signature red with contemporaneous busy-host evidence gets one same-SHA rerun once the host is clear (an in-stage wait of at most 30 min, cancellable, holding nothing); the original result is kept. Green then is a pass; red again on a healthy host is a product failure. A signature without host evidence is `blocked`, uncharged. |
+| Flakes | An unexpected red lane gets one same-SHA diagnostic rerun before any code change (the host retry, where it applies); both kept; red-then-green reads as red with `flaky: true`, charged as red, so it never approves. |
+| Blocks | A retryable park; never quarantines (sf16; log w35). The same unit and target again within 6 h of a recovery → operator park (`env-blocked`); two units on one target within 1 h trip its breaker, which blocks admission of the stages needing it, with one non-blocking `env-blocked` item. |
 | Occupancy | Inside the reservation: a probe mirroring the lane's preflight, then declared teardown; decided before any budget is charged (§3.12). Failed teardown → `cleanup-failed` (§2.2, §3.4). |
 | Process lifecycle | Every executor subprocess (backend, lane, probe, teardown) runs as a workload under a runner, which is the controller and never a workload member. The runner carries `ROADMAP_ROLE=runner`; the workload carries `ROADMAP_ROLE=workload`, `ROADMAP_OP` and `ROADMAP_INV`. Workload membership is every process whose environment has `ROADMAP_INV=<inv>` or whose session id equals the child's, identified by (pid, start time), excluding the runner; the runner is never signalled by its own kill and exits itself after writing its terminal files. **Session mode** is the containment 1.0 ships with: a `setsid` session and `/proc` scan; kill = stop members → rescan until the set is stable → TERM → KILL → rescan until empty; no next stage while non-empty (w39). Its guarantee is narrowed and stated in `status.host`: a descendant that calls `setsid()` and execs with a cleared environment escapes, caught only by the verification-tree assertion and the occupancy probe. **cgroup mode** (a cgroup v2 leaf per invocation under a delegated subtree, runner in `runner/`, workload in `work/`, entry fail-closed, kill = freeze → TERM → `cgroup.kill` → empty) is experimental: not selectable until a real-kernel gate passes on another host. Kill reasons: `deadline \| stall \| pause \| stop \| recovery \| external-unknown`. A lane runs under the runner's stall watchdog (no member CPU time, no output, no member started or ended for 10 min → `stall`, a red verdict: the fix round reads its output) and a 6 h deadline that only backstops a busy loop; a slow suite that is working is never cut short. |
-| Fix rounds | Resume the build session with evidence dirs (a session never moves across seats: a build whose implementer seat a risk raise moved starts fresh on the kept worktree); window from the unit's measured lane series (§3.2, §3.8); after N stalled rounds the strong implementer, cold (D4); no fresh final round; `harnessStop` never feeds a round. |
+| Fix rounds | Resume the build session with evidence dirs (a session never moves across seats: a build whose implementer seat a risk raise moved starts fresh on the kept worktree); window from the unit's measured lane series (§3.2, §3.8). A fix round is **stalled** when the verification after it fails a lane that also failed before it, or the gate revises again; after the first stalled round (N = 1), while `chargeableFailures < CHARGEABLE_BOUND`, the next round runs cold on the `build.high` seat (D4), `implementer-escalated` journaled before that round's implementer seat is selected; no escalation when `build.<risk>` already binds `build.high`'s triple; no fresh final round; `harnessStop` never feeds a round. |
 | Plan-check | Redirects are internal revisioned patches (§2.7); only the patched spec is graded; may set an estate budget (D8). Reads a detached checkout of the integration tip (its cwd) and of the unit branch when one exists; host facts only from the executor's resolved lane programs or the checkouts. Checks spec coherence and buildability, not the implementation: defects in code already on the unit branch go to the build and gate as notes, never a redirect on their own. A redirect may add cites, never remove one (arc-1 feedback items 3, 12, 21, 26). |
 | Gate inputs | Spec rendering, cited contracts and C-nn in full with a one-line index of the rest (read on demand), architecture doc or its owner-approved digest, merge-base diff, lane ledger, evidence, witness records, digest, scope envelope + growth, Direction, the approving plan-check's notes; graded against the contract, not a paraphrase (w34). "Every spec lane ran verbatim" is a code assertion; `reportLostEver`, `LANE_BAR` go. |
 | Round handoff | A judgment's round N+1 on the same unit (plan-check after its applied redirect, gate after its revise) is a fresh session that inherits round N's conclusions, never its session: the prior patch or directives and findings, the premises it relied on (claim + file:line evidence, part of every judgment's output), and the delta since (fix paths; premise files whose blobs changed). It rules each prior item resolved or not, reviews the delta for regressions, re-verifies only changed premises (overturning any with evidence), and raises a new finding on unchanged material only when it affects correctness or stated acceptance (arc-1 feedback items 25, 29). Judges report only what affects correctness or stated acceptance, verify only the premises a decision relies on, and batch reads (items 15, 28c). |
 | Unit policy | Every build prompt carries an executor-owned policy that overrides the repository's agent-instruction files: no cloud resources or CLIs, no sudo or system package installs, no killing processes the unit did not start, no network beyond the lanes' needs (arc-1 feedback item 20). |
 | Consults, findings | The consult seat reads evidence, spec, diff and C-nn directly; the Sonnet dossier goes. Findings dedupe by finding+cause with a disposition; a dismissed one is not re-raised without new evidence (sf16, w35–37). |
 | Wave-tail roles | → §2.5 + §2.8; a design-class quarantine gets a per-unit respec by the checkpoint seat, a second → `needs-user`; explorer and reconciler on demand. |
-| Re-entry | `reenter` replaces `adopt`. A preparation has a durable identity; budgets, attempts, risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit. Integration is merged into the prepared branch (§3.23); on conflict the index is aborted, the branch kept, and the preparation becomes a `preparing` plan unit resolved through the implementer stage (or `steer`). Replacement edges activate, cycle-checked, only after preparation succeeds. Resets need a ruling. |
+| Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. |
 | Plan-load validation | Every `edge.contract` path exists (sf18); `argv[0]` and env prerequisites resolve for spec lanes and `must-hold` arc lanes (`future` ones at activation); no request over capacity; worktree root not on tmpfs; routing supported, judgment roles on the judgment profile; every obligation not held on the base names `deliveredBy`; every witness has a supported reporter. |
 | Measurement | Per lane per invocation `{start, end, exitCode}`, per unit `{dispatchedAt, terminalAt, mergeSha, mergedAt}`, every upper-tier call's tokens keyed by `{role, routingRev}`, every escalation, checkpoint lane duration and per-finding instrumentation (§2.8). Arc 1 recorded almost none of this; defaults are marked unmeasured and re-derived after arc 2. |
 | State | The event log is authoritative and write-ahead; its envelope is frozen before M1: every operation has an arc-scoped id, parent command or stage id, invocation ordinal, expected inputs and postconditions; op kinds include `mergein.prepare` (integration merged into the unit branch in its worktree; postcondition `clean-merged | conflicted | completed`) and `evidence.snapshot` (a completion manifest of paths and sha256, required before teardown or retire); a complete durable intent precedes every act; `state.json` is derived (`atomic()`). A truncated final record is discarded; earlier corruption → `needs-user`. Every operation kind (resource states, spawns, commands, publications — the latter by second-parent test or activation postcondition) has a reconstruction rule pinned by a crash-boundary fixture. Deadlines are absolute; attempts monotonic across re-entry; run state reaches git only via `refs/roadmap/<arc>`. |
@@ -486,7 +541,8 @@ salvage SHA; a dirty verification tree is never certified under a SHA.
   obligation cross-check), each finding adjudicated by the architect; it holds no seat that can build or
   reject. This is the `default` profile (§4); high-risk units spend the weekly limit by design, visibly (D5).
 - **D3 Audit cadence N.** *N = 5 merges, plus §2.5's other triggers.*
-- **D4 Fix-round escalation.** *Resume within a model; cold across models; no fresh final round.*
+- **D4 Fix-round escalation.** *Resume within a model; cold across models; no fresh final round; N = 1 (§4 Fix
+  rounds).*
 - **D5 Claude spend — decided 2026-09-25.** *Meter only; no cap (arc 1: ~3 upper-tier calls per merged unit).*
   Every upper-tier call records `{role, routingRev, unit, attempt, inputTokens, outputTokens}` or `usage:
   unavailable` with its reason (the model is derived from the routing revision); nothing brakes on it.
@@ -515,7 +571,9 @@ host; multi-UID hosts; reboot recovery; more witness reporters; a formal ruling 
    resource semantics, prompt-hygiene, portable-budgets, phase0-templates. Dropped: persist, launch-pack,
    shared-consts, wave routing, knob pins. **New**, with real processes and git: a crash at every write-ahead
    boundary of every operation kind asserting the exact replay (torn tail, completed and live invocations, racing
-   takeover, executor SIGKILL with no session); new-session escape; lock order incl. the slot; foreign residues;
+   takeover, executor SIGKILL with no session), through the one seam `crashPoint(label)` with the selector
+   a trigger that may name a unit (`<label>[@<unit>]:<n>`, the trigger file's optional `unit`), counted per (label, unit), each concurrent crash asserting which unit's op
+   it hit and the peer's state; new-session escape; lock order incl. the slot; foreign residues;
    known vs unexplained base red; transient-check refusals; a queued `rule` abandoning a candidate; control vs
    mutation timing; a steer or escalation session never becoming a judge session; re-entry retry; merged-target
    refusal; `usage: unavailable`; routing layers and refusals, `claude-only` resolving no Codex role; pre-staged
@@ -550,12 +608,14 @@ ladder with its own runnable fixture:
   judgment session freshness, metering, `start`/`status`/`pause`/`resume`/`stop`, durable `needs-user`, a serial
   terminal predicate. Fixture: one redirect, one failed lane and its fix, a merge conflict, a red candidate, a
   crash at every boundary, both backend probes.
-- **M2 DAG and resources.** DAG dispatch, capacity scheduling, aging, retryable parks, `reenter`, graph
-  commands. Fixture: no overlapping holders, bounded service for planned work, `cleanup-failed` survival, a
+- **M2 DAG and resources.** DAG dispatch (legacy arcs keep dev.4's serial frontier), pools and `@cpu`, aging,
+  retryable parks with probes, flake reruns and host signatures, D4 escalation, `reenter` and `cut` through
+  `apply`, `resolve-edge`, `run-only`. The legacy-arc defaulting is scaffolding, deleted once no dev.4 arc is in
+  flight. Fixture: no overlapping holders, bounded service for planned work, `cleanup-failed` survival, a
   conflicted re-entry, no duplicate writer after concurrent recovery.
 - **M3 Holistic layer and revisioned commands.** Obligations, witness protocol, impact mapping, journey lanes,
   held-claims brake, lenses, the checkpoint with bundles and brakes, findings, arc states,
-  `rule`/`patch-spec`/`steer`; the growth controls of §2.9 (ruling retirement from `constraints.md`, obligation
+  `rule`/`patch-spec`; `steer` (with `--class`), `route`, `limits`, `merge-in` and the P2 `repair` origin; the growth controls of §2.9 (ruling retirement from `constraints.md`, obligation
   re-derivation at Phase 0, dismissal arc lifetime, residue-index compaction at `start`, `roadmap gc`). Fixture
   (obligations seeded by hand): an initially absent multi-unit journey
   whose foundation merges first, a regression and its repair, a stale audit race, a rejected partial bundle,

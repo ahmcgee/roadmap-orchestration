@@ -1,9 +1,13 @@
-// plan.json, the M1 input contract written by Phase 0. parsePlan checks shape and in-file uniqueness only;
+// plan.json, the input contract written by Phase 0. parsePlan checks shape and in-file uniqueness only;
 // everything that needs the filesystem, git or the specs (spec paths exist, baseline ancestry, resource
-// references, lane argv) is a startup rejection row (src/preflight/startup.ts).
-import { type ArcId, type ResourceName, type Sha, type UnitId, INTEGRATION_SLOT, arcId, resourceName, sha, unitId } from '../core/ids.ts';
+// references, lane argv) is a startup rejection row (src/preflight/startup.ts). M2 adds optional fields only
+// (capacity, pools, unit origin, cpu, contingent edges, re-entry and cut), so the schema literal stays
+// `roadmap/plan-m1` and a 1.0.0-dev.4 plan reads unchanged (LR-1).
+import {
+  type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, INTEGRATION_SLOT, arcId, edgeId, resourceName, rulingId, sha, unitId,
+} from '../core/ids.ts';
 import { type LaneDef, type LaneEnv, laneDef, laneEnv } from '../core/records.ts';
-import { type Read, SchemaError, arrayOf, assertUnique, literal, object, str } from '../core/validate.ts';
+import { type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, str } from '../core/validate.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
   repoPattern,
@@ -21,7 +25,26 @@ export type ToolCommand = Readonly<{ argv: readonly string[]; cwd: RepoPath; env
  */
 export const PROBE_EXIT = { free: 0, ownLabel: 10, foreign: 11 } as const;
 
-export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand }>;
+/**
+ * A declared resource. `pool` (M2): an estate pool of `size` instances `<name>#1..size`, each probed and torn
+ * down with its instance bound (`RESOURCE_INSTANCE_<NAME>=<n>`); a request by name takes one instance.
+ */
+export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand; pool?: Readonly<{ size: number }> }>;
+
+/** Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters. */
+export const UNIT_ORIGINS = ['planned', 'checkpoint'] as const;
+export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
+
+/** A contingent edge (M2): the unit waits until `resolve-edge <id>` records the condition met. */
+export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
+
+/** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
+export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
+export type ReentryPoint = (typeof REENTRY_POINTS)[number];
+/** `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures. */
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }> }>;
+/** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
+export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
 
 export type PlanUnit = Readonly<{
   id: UnitId;
@@ -35,6 +58,13 @@ export type PlanUnit = Readonly<{
    * plan order, never itself.
    */
   after: readonly UnitId[];
+  /** M2: contingent edges ([] when absent); ids unique across the plan. */
+  contingent: readonly ContingentEdge[];
+  origin?: UnitOrigin;
+  /** M2: `@cpu` tokens a build of this unit takes; absent: 4. */
+  cpu?: number;
+  reenters?: Reentry;
+  cut?: Cut;
 }>;
 
 export type PlanM1 = Readonly<{
@@ -56,6 +86,8 @@ export type PlanM1 = Readonly<{
   architectureDigest?: RepoPath;
   direction: string;
   routing?: RoutingLayer;
+  /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
+  capacity?: Readonly<{ cpu?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
   units: readonly PlanUnit[];
@@ -70,7 +102,21 @@ const toolCommand: Read<ToolCommand> = object((f) => ({
 const resourceDecl: Read<ResourceDecl> = object((f) => {
   const name = f.get('name', (v, p) => resourceName(v, p));
   if (name === INTEGRATION_SLOT) throw new SchemaError(`${f.path}.name`, 'a name other than the built-in integration-slot', name);
-  return { name, probe: f.get('probe', toolCommand), teardown: f.get('teardown', toolCommand) };
+  const pool = f.optional('pool', object((g) => ({ size: g.get('size', positive) })));
+  return { name, probe: f.get('probe', toolCommand), teardown: f.get('teardown', toolCommand), ...(pool === undefined ? {} : { pool }) };
+});
+
+const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
+
+const reentry: Read<Reentry> = object((f) => {
+  const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
+  const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
+  return { unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }) };
+});
+
+const cut: Read<Cut> = object((f) => {
+  const ruling = f.optional('ruling', rulingR);
+  return { reason: f.get('reason', str), ...(ruling === undefined ? {} : { ruling }) };
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
@@ -81,11 +127,20 @@ const planUnit: Read<PlanUnit> = object((f) => {
     scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
+    contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],
   };
+  const origin = f.optional('origin', oneOf(UNIT_ORIGINS));
+  const cpu = f.optional('cpu', positive);
+  const reenters = f.optional('reenters', reentry);
+  const cutField = f.optional('cut', cut);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
-  return out;
+  if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
+  return {
+    ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
+    ...(cutField === undefined ? {} : { cut: cutField }),
+  };
 });
 
 /** Field paths in errors start at `plan`, e.g. `plan.units[0].risk`. */
@@ -93,6 +148,10 @@ export function parsePlan(value: unknown): PlanM1 {
   return object((f): PlanM1 => {
     const routing = f.optional('routing', routingLayer);
     const architectureDigest = f.optional('architectureDigest', (v, p) => repoPath(v, p));
+    const capacity = f.optional('capacity', object((g) => {
+      const cpu = g.optional('cpu', positive);
+      return cpu === undefined ? {} : { cpu };
+    }));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -105,6 +164,7 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(architectureDigest === undefined ? {} : { architectureDigest }),
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
+      ...(capacity === undefined ? {} : { capacity }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
@@ -114,11 +174,15 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
+    assertUnique(out.units.flatMap((u) => u.contingent), (e) => e.id, 'plan.units[].contingent');
     out.units.forEach((u, i) => {
       const earlier = out.units.slice(0, i).map((e) => e.id);
       u.after.forEach((id, j) => {
         if (!earlier.includes(id)) throw new SchemaError(`plan.units[${i}].after[${j}]`, `a unit earlier in plan order than ${u.id}`, id);
       });
+      if (u.reenters !== undefined && !earlier.includes(u.reenters.unit)) {
+        throw new SchemaError(`plan.units[${i}].reenters.unit`, `a unit earlier in plan order than ${u.id}`, u.reenters.unit);
+      }
     });
     return out;
   })(value, 'plan');

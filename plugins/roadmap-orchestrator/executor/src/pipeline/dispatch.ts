@@ -31,7 +31,7 @@ import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
 import type { SpecState } from '../core/state.ts';
 import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
 import {
-  type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
+  type BackendErrorClass, type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
 } from '../core/records.ts';
 import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
 import { inputPath, keepInput } from '../input/inforce.ts';
@@ -319,7 +319,7 @@ export function verdictOf(ctx: StageContext, parent: StageParent, called: Backen
   const { result } = called;
   if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, needsUser: null };
   if (result.outcome.kind !== 'success') {
-    const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
+    const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass & BackendErrorClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {
       const backend = runnerFiles(called.invDir, called.inv).read('launch.json')?.argv[0];
       if (backend !== 'claude' && backend !== 'codex') throw new Error(`${called.invDir}: a backend launch whose argv[0] is ${String(backend)}`);
