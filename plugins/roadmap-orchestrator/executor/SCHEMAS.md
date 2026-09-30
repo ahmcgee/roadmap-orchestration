@@ -277,7 +277,7 @@ in the line belongs to `arc`.
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 | `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
 | `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, and for a resource target the fail seq of its own-arc residue; ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
-| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev`: written after a judgment attempt's entry reservation and before its spawn (F1); one per `(unit, stage, attempt)`. A recovered call is consumed against it (`gateRead` at `tip`/`head`, `fingerprintAt` at `tip`) |
+| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; never on a plan-check; absent on a dev.5 fact): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; absent: `fingerprintAt` at `tip`, warned) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
 | `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
 | `implementer-escalated` (M2) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
@@ -497,12 +497,14 @@ expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `
 
 `ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; the spec's cited
 contracts, the architecture doc and its digest when the plan names one, at the gated tip), rulingRevs: [{id, rev}]
-(ascending id; the spec's cited rulings that are active), obligationRevs?: [{id: ObligationId, rev}] (M3: ascending
+(ascending id; the spec's cited rulings that are active, each at its effective revision, M3 Checkpoint A), obligationRevs?: [{id: ObligationId, rev}] (M3: ascending
 id; the selected, non-exempt obligations at the gated tip; absent exactly when there are none, non-empty when
 present, so a fingerprint with none is byte-identical to a dev.5 one; `obligationRevsOf`)}`. Recorded with the
 approval as an `approval` fact. Recomputed at the tip being published onto before `integration.ff`; any mismatch
-re-gates. M1's C-nn ledger has no supersede beyond the withdrawn fold, so every active ruling is at rev 1; a cited
-ruling that is withdrawn leaves the set, which changes the fingerprint. An uncited contract is outside the
+re-gates. A cited ruling that is withdrawn leaves the set, which changes the fingerprint; M1's ledger has no other
+supersede, so there every active ruling is at rev 1. M3 (Checkpoint A): a ruling's rev is `effectiveRulingRevs` over
+the sidecars in force (1 plus, per partial superseder, its own rev plus 1 once it is no longer active), and the
+approval records the fingerprint captured with the gate's `judgment-inputs`, never one taken when the call is read. An uncited contract is outside the
 fingerprint (binding the documents a judgment actually read is backlog).
 
 `DispatchRecord = {unit, specRev, specSha256, scope: RepoPattern[] (sorted), riskFloor, routingRev,
@@ -1109,13 +1111,13 @@ lanes: ArcLaneDef[], obligations: ObligationDef[], mapping: {paths: [{pattern: R
 lane may not set or pass `NODE_OPTIONS`); `laneRevOf(lane)` = first 16 hex of sha256 over its canonical definition.
 `ObligationDef = {id, rev (normative; evidence refreshes never bump it), statement, docRef{path, anchor, quotedText},
 serves: V-n[] (ascending; non-empty in an arc with a vision, checked by A1), witness{lane, testIds (unique,
-non-empty)}|null, proofJudgment{verdict: proves|insufficient, obligationRev, laneRev}|null, deliveredBy: UnitId[]
+non-empty)}|null, proofJudgment{verdict: proves|insufficient, obligationRev, laneRev, witness{lane, testIds}}|null, deliveredBy: UnitId[]
 (non-empty for a future one), activation: future|must-hold, parent?, contracts: RepoPath[], state: active |
 split{children} | waived{ruling} | deferred{ruling} | retired{ruling}}`. The reader checks: ids unique; `witness`
 and `proofJudgment` null exactly on a split parent (H14); a split parent's children exist and name it as `parent`,
 and a `parent` is a split parent listing the child; a witness lane is one of the file's lanes; mapping ids exist. A
-stale proof judgment (its `obligationRev` or `laneRev` no longer the obligation's or the lane's) is the
-classifier's to refuse (A1), not the reader's. `isExempt`: waived, deferred or retired.
+stale proof judgment (its `obligationRev` or `laneRev` no longer the obligation's or the lane's, or its `witness` not
+exactly the obligation's; M3 Checkpoint A) is the classifier's to refuse (A1), not the reader's. `isExempt`: waived, deferred or retired.
 
 **The transition table** (`src/holistic/table.ts`, `obligationEffect(case) → measured | latch | red | discharged |
 exempt`, total; test `table.total`): exempt → exempt; future not completing its `deliveredBy` → measured; future
@@ -1461,3 +1463,28 @@ residues, the snapshot closure):
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot. A
    manifest without `namedBy` (1.0.0-dev.5) verifies by that release's allowlist, warned (scaffolding). Not yet in the
    closure: commands and their receipts, and a dev.5 revision's live ledger (never kept).
+
+**Choices made in M3 Checkpoint A** (fix step AX: judgments and approvals; findings 1, 4, 5, 9 of the batch-A review):
+
+1. **One acquisition order: the fence, then `@cpu`.** Plan-check and gate capture their inputs and write
+   `judgment-inputs` under the fence first, and only then take their `@cpu`×1 entry (`enterJudgment`); a revision
+   holds the fence through its docs publication, whose lanes wait for `@cpu`, so the old order (`@cpu`, then the
+   fence) deadlocked at capacity. A task already cancelled captures nothing. A capture whose `@cpu` wait is then
+   cancelled leaves its `judgment-inputs` for an attempt that never started: the fold lets the next capture for that
+   `(unit, stage, attempt)` replace it, and still refuses a second one for a started attempt. Plan-check's pin
+   (`pinDispatch`) now also precedes its reservation, so a cancelled wait can leave a unit pinned with no attempt
+   (`started()` already counts a pinned unit as started). A routing change or an empty diff records its outcome with
+   no reservation to release.
+2. **The approval records the captured fingerprint.** The gate computes `fingerprintAt(T)` inside its capture and
+   writes it as `judgment-inputs.fingerprint` (additive; a gate spawned by 1.0.0-dev.5 has none and is fingerprinted
+   at its recorded tip when read, warned `judgment-inputs.fingerprint`: scaffolding). `gateRead` takes that
+   fingerprint and records it as the `approval` (the unit branch must still be at its `unitCommit`); ff's re-check
+   compares it with the fingerprint of the inputs then in force, so a ruling withdrawn while the gate ran re-gates.
+3. **Effective ruling revisions.** `rulingRevs[].rev` = `effectiveRulingRevs(sidecars in force)` (src/spec/rulings.ts),
+   default 1: each ruling that partially supersedes it adds its own effective rev, plus 1 once it is no longer active.
+   It only rises as the ledger grows, so an approval citing a ruling a later ruling partially supersedes re-gates. A
+   dev.5 ledger has no sidecars: every rev stays 1 and dev.5 fingerprints read unchanged.
+4. **A proof judgment binds the complete witness definition.** `ProofJudgment` gains `witness{lane, testIds}` (a copy
+   of the obligation's witness it judged, M3-only shape, required); the classifier refuses a proof whose `witness` is
+   not exactly the obligation's (canonical JSON), besides its `obligationRev` and `laneRev`. A grown or changed test
+   set therefore needs a fresh proof even when neither revision moved.

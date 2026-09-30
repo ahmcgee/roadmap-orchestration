@@ -17,29 +17,32 @@
 //
 // The approval fingerprint (R2) = {unitCommit, specRev, contractRevs, rulingRevs, obligationRevs}: contractRevs are
 // the blob ids at T of every cited contract, the architecture doc and its digest when the plan names one,
-// rulingRevs the revision of every cited active C-nn, obligationRevs (M3) the revision of every selected, non-exempt
-// obligation in force (absent when none). Before `integration.ff` it is recomputed at the tip being published onto;
-// any difference re-gates.
+// rulingRevs the effective revision of every cited active C-nn (M3: bumped by each partial supersession of it,
+// `effectiveRulingRevs`), obligationRevs (M3) the revision of every selected, non-exempt obligation in force (absent
+// when none). It is captured with the judgment's other inputs (Checkpoint A), and the approval records exactly that
+// captured fingerprint: what the gate judged, never what moved while it ran. Before `integration.ff` it is recomputed
+// at the tip being published onto; any difference re-gates.
 //
 // M3: the gate grades against the obligations its diff selects (`selectObligations`, src/holistic/impact.ts: the
 // spec's declared ones and repairs, its dependency closure's declared ones, what the diff's paths touch, the future
 // ones it delivers, every must-hold one for an unmapped path), never the vision (R17).
 //
-// Entry and inputs (A1, F1, H2): the gate takes `@cpu`×1 before its first journaled op (stages.ts
-// `enterJudgment`), then reads its inputs and writes `judgment-inputs{tip: T, head}` in one synchronous capture under
-// the revision fence (`captureUnderFence`), before its spawn. A call recovery closed after
-// a crash is consumed against those inputs (`consumeJudgment`): the gate is read at the recorded T and head,
-// and its approval's fingerprint is taken at T, the tip it reviewed, never the tip that moved since; ff then
-// finds a contract another unit's publication changed (`fingerprint-invalid`, a re-gate).
+// Entry and inputs (A1, F1, H2; Checkpoint A): the gate reads its inputs and writes `judgment-inputs{tip: T, head,
+// fingerprint}` in one synchronous capture under the revision fence (`captureUnderFence`), then takes `@cpu`×1
+// (stages.ts `enterJudgment`), then spawns: it never holds `@cpu` while waiting for the fence. A call recovery closed
+// after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
+// ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
+// (`fingerprint-invalid`, a re-gate).
 import { matchesGlob } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { judgmentInputsDefault } from '../core/upgrade.ts';
+import { judgmentFingerprintDefault, judgmentInputsDefault } from '../core/upgrade.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type ObligationRev, specObligations, specRepairs } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
+import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import type { ObligationView } from '../prompts/inputs.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -55,14 +58,14 @@ import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import {
-  type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, dispatchOf, isCancelled, judgmentDeadlineMs,
+  type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, isCancelled, judgmentDeadlineMs,
   judgmentDispatch, unitBranch, verdictOf,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import {
   type PlanCheckDone, type StageDone, architecture, at, changedPremiseFiles, enterJudgment, holisticInForce, inMs, integrationTip, judgmentOutput, judgmentSpawns,
-  ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, start, verdictKind, writeJudgmentInputs,
+  ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, verdictKind, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -78,15 +81,16 @@ export function unitTip(ctx: StageContext, unit: UnitId): Sha {
 /**
  * The fingerprint an approval of `unit` at integration tip `tip` binds to: the unit's commit now, its spec
  * revision now, the blob ids at `tip` of the contracts the spec cites and of the architecture doc (and its
- * digest), and the cited active rulings' revisions. M1's C-nn ledger has no supersede beyond the withdrawn
- * fold (a ruling id listed twice is refused where the ledger is read), so every active ruling is at
- * revision 1; a cited ruling that is withdrawn leaves the set, which changes the fingerprint.
+ * digest), and the cited active rulings' effective revisions: 1, raised by each partial supersession of it
+ * (`effectiveRulingRevs` over the sidecars in force; a dev.5 ledger has none, so every ruling is at 1). A cited
+ * ruling that is withdrawn (fully superseded) leaves the set; both change the fingerprint.
  */
 export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): ApprovalFingerprint {
   const { spec } = loadUnitSpec(ctx, unit);
   const digest = ctx.plan().architectureDigest;
   const paths = [...new Set<RepoPath>([...spec.cites.contracts, ctx.plan().architectureDoc, ...(digest === undefined ? [] : [digest])])].sort();
   const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
+  const revs = effectiveRulingRevs(rulingSidecars(ctx));
   const head = unitTip(ctx, unit.id);
   // Choice 1 of M3 0a: absent exactly when no obligation is selected, so a dev.5 fingerprint reads unchanged.
   const obligationRevs: readonly ObligationRev[] = selected(ctx, unit, tip, head).filter((o) => !isExempt(o)).map((o) => ({ id: o.id, rev: o.rev }));
@@ -94,7 +98,7 @@ export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): Appr
     unitCommit: head,
     specRev: spec.rev,
     contractRevs: paths.map((path) => ({ path, blob: revParse(ctx.repo, `${tip}:${path}`) })),
-    rulingRevs: [...rulings].sort().map((id) => ({ id, rev: 1 })),
+    rulingRevs: [...rulings].sort().map((id) => ({ id, rev: revs.get(id) ?? 1 })),
     ...(obligationRevs.length === 0 ? {} : { obligationRevs }),
   };
 }
@@ -221,15 +225,17 @@ type GateCapture =
   | Readonly<{ kind: 'empty-diff' }>
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
-    kind: 'captured'; tip: Sha; head: Sha; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[]; cwd: AbsPath;
+    kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[]; cwd: AbsPath;
   }>;
 
 export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'gate'), 'gate');
-  const entered = await enterJudgment(ctx, parent);
-  if (isCancelled(entered)) return entered;
+  // A cancelled task captures nothing (its `@cpu` wait, after the capture, would be cancelled at once).
+  const cancelled = cancelledNow(ctx);
+  if (cancelled !== null) return cancelled;
 
-  // H2: every input read and `judgment-inputs` written in one synchronous capture under the revision fence.
+  // H2: every input read, the approval fingerprint among them, and `judgment-inputs` written in one synchronous
+  // capture under the revision fence, BEFORE the `@cpu` entry (Checkpoint A: never hold `@cpu` waiting for the fence).
   const captured = await captureUnderFence(ctx.journal, (): GateCapture => {
     const { spec, sha256 } = loadUnitSpec(ctx, unit);
     const tip = integrationTip(ctx);
@@ -256,32 +262,35 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
       laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
     });
-    writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev });
-    return { kind: 'captured', tip, head, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path };
+    const fingerprint = fingerprintAt(ctx, unit, tip);
+    writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint });
+    return { kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path };
   });
   if (captured.kind !== 'captured') {
-    await releaseJudgment(ctx, parent);
     const done = captured.kind === 'empty-diff' ? record(ctx, parent, 'empty-diff') : record(ctx, parent, 'routing-changed', captured.needsUser);
     return { ...done, session: null, fingerprint: null };
   }
-  const { tip, head, seat } = captured;
+  const entered = await enterJudgment(ctx, parent);
+  if (isCancelled(entered)) return entered;
+  const { fingerprint, seat } = captured;
   const session = freshJudgmentSession();
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [...captured.evidence, ledgerDir(ctx)] },
     system: captured.system, rendered: captured.rendered, schema: captured.schema, cwd: captured.cwd,
     deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(ctx.journal.view, unit.id))),
   });
-  return gateRead(ctx, unit, parent, called, session.id, tip, head);
+  return gateRead(ctx, unit, parent, called, session.id, fingerprint);
 }
 
 /**
  * Records a gate attempt from its call: the live one, or one recovery closed after a crash (`consumeJudgment`,
- * never asked again). `tip` and `head` are the integration tip and unit commit it judged: the approval's
- * fingerprint is taken at `tip`. An approval fact this attempt already recorded is kept, not recorded twice.
+ * never asked again). `fingerprint` is the one captured with the inputs it judged (its `unitCommit` the head it
+ * read): an approval records exactly it, and ff re-checks it against the inputs then in force. An approval fact
+ * this attempt already recorded is kept, not recorded twice.
  */
 export async function gateRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, called: BackendCallOutcome, session: JudgmentSessionId,
-  tip: Sha, head: Sha,
+  fingerprint: ApprovalFingerprint,
 ): Promise<GateDone> {
   // The session has ended: its @cpu goes before anything is recorded.
   await releaseJudgment(ctx, parent);
@@ -299,8 +308,8 @@ export async function gateRead(
   if (out.decision !== 'approve') return done(record(ctx, parent, out.decision));
   const approved = ctx.journal.view.unit(unit.id).approval;
   if (approved !== null && approved.attempt === parent.attempt) return done(record(ctx, parent, 'approve'), approved.fingerprint);
-  const fingerprint = fingerprintAt(ctx, unit, tip);
-  if (fingerprint.unitCommit !== head) throw new Error(`gate of ${unit.id}: the unit branch moved from ${head} during the gate`);
+  const head = unitTip(ctx, unit.id);
+  if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
   return done(record(ctx, parent, 'approve'), fingerprint);
 }
@@ -310,10 +319,11 @@ export async function gateRead(
 
 /**
  * Records a plan-check or gate attempt from the call recovery closed after a crash, against the attempt's
- * durable `judgment-inputs`: a gate is read at the recorded integration tip and unit commit (`gateRead`), so its
- * approval binds the contracts it reviewed, whatever moved since. The unit driver calls it in place of a
- * read at the current tip. An attempt an earlier release spawned has no inputs: the gate is then read at the
- * current tip and unit commit, as that release did (a read-time default, logged once).
+ * durable `judgment-inputs`: a gate's approval records the fingerprint captured with them (`gateRead`), so it
+ * binds what it reviewed, whatever moved since. The unit driver calls it in place of a read at the current tip.
+ * Read-time defaults, each logged once: an attempt 1.0.0-dev.4 or earlier spawned has no inputs, and is
+ * fingerprinted at the current tip, as that release did; one 1.0.0-dev.5 spawned has inputs without a
+ * fingerprint, and is fingerprinted at its recorded tip, as that release did.
  */
 export async function consumeJudgment(
   ctx: StageContext, unit: PlanUnit, parent: StageParent, called: BackendCallOutcome,
@@ -328,9 +338,10 @@ export async function consumeJudgment(
       const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
       if (inputs !== null && inputs.head === null) throw new Error(`gate ${unit.id}#${parent.attempt}: judgment-inputs without a head`);
       if (inputs === null) judgmentInputsDefault(unit.id, 'gate', parent.attempt);
-      const tip = inputs?.tip ?? integrationTip(ctx);
-      const head = inputs?.head ?? unitTip(ctx, unit.id);
-      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, tip, head);
+      else if (inputs.fingerprint === undefined) judgmentFingerprintDefault(unit.id, parent.attempt);
+      const fingerprint = inputs?.fingerprint ?? fingerprintAt(ctx, unit, inputs?.tip ?? integrationTip(ctx));
+      if (inputs !== null && fingerprint.unitCommit !== inputs.head) throw new Error(`gate ${unit.id}#${parent.attempt}: the unit branch moved from ${inputs.head} since its judgment-inputs`);
+      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, fingerprint);
     }
     default:
       throw new Error(`${unit.id} ${parent.stage}#${parent.attempt}: no judgment call to consume`);

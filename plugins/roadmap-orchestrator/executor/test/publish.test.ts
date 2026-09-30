@@ -265,7 +265,7 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
       schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { paths: [] },
       obligations: [{
         id: 'I-1', rev: 1, statement: 'add adds.', docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev }, deliveredBy: [], activation: 'must-hold',
+        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: { lane: 'journey', testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',
         contracts: [], state: { type: 'active' },
       }],
     }));
@@ -283,7 +283,8 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
 function addObligation(r: ArcRun, id: string): void {
   const path = join(r.d.planPath, '..', 'obligations.json');
   const o = JSON.parse(readFileSync(path, 'utf8')) as Json & { obligations: Json[] };
-  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness: { lane: 'journey', testIds: [`t-${id}`] } });
+  const witness = { lane: 'journey', testIds: [`t-${id}`] };
+  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness, proofJudgment: { ...(o.obligations[0]!['proofJudgment'] as Json), witness } });
   writeFileSync(path, JSON.stringify(o));
 }
 

@@ -111,10 +111,11 @@ export type Activation = (typeof ACTIVATIONS)[number];
 export type DocRef = Readonly<{ path: RepoPath; anchor: string; quotedText: string }>;
 export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[] }>;
 /**
- * "This test proves this statement", judged at Phase 0 and bound to both revisions: the obligation's `rev` and
- * the witness lane's `laneRev`. A change of either makes it stale (the classifier asks a fresh one).
+ * "This test proves this statement", judged at Phase 0 and bound to everything it judged: the obligation's `rev`,
+ * the witness lane's `laneRev`, and the complete witness definition (`witness`: the lane id and every test id, in
+ * the obligation's order; Checkpoint A). A change of any makes it stale (the classifier asks a fresh one).
  */
-export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; laneRev: LaneRev }>;
+export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; laneRev: LaneRev; witness: WitnessRef }>;
 
 /** H14: a split parent's witness and proof are null; every other state keeps both. */
 export type ObligationState =
@@ -183,6 +184,7 @@ const proofJudgment: Read<ProofJudgment> = object((f) => ({
   verdict: f.get('verdict', oneOf(['proves', 'insufficient'] as const)),
   obligationRev: f.get('obligationRev', positive),
   laneRev: f.get('laneRev', (v, p) => laneRev(v, p)),
+  witness: f.get('witness', witnessRef),
 }));
 
 const obligationDef: Read<ObligationDef> = object((f) => {

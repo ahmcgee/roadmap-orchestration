@@ -166,7 +166,7 @@ const MINI_VISION: VisionInput = {
 const MINI_OBLIGATION: ObligationDef = {
   id: obligationId('I-1'), rev: 1, statement: 'toFahrenheit(100) returns 212.',
   docRef: { path: repoPath('docs/target.md'), anchor: '#convert', quotedText: 'toFahrenheit(100) returns 212.' }, serves: [visionClauseId('V-1')],
-  witness: { lane: laneId('unit'), testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef') },
+  witness: { lane: laneId('unit'), testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('unit'), testIds: ['convert'] } },
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 };
 const MINI_OBLIGATIONS: readonly ObligationView[] = [{

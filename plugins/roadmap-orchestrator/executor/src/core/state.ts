@@ -795,7 +795,10 @@ export class Fold implements JournalView {
         return;
       case 'judgment-inputs': {
         const key = `${f.unit} ${f.stage}#${f.attempt}`;
-        if (this.#judgmentInputs.has(key)) fail(`second judgment-inputs for ${key}`);
+        // M3 (Checkpoint A): a judgment captures its inputs before its `@cpu` wait, so a wait its signal cancelled leaves
+        // them for an attempt that never started; the next attempt takes that number and its capture replaces them.
+        const started = this.#units.get(f.unit)?.starts.has(`${f.stage}#${f.attempt}`) ?? false;
+        if (this.#judgmentInputs.has(key) && started) fail(`second judgment-inputs for ${key}`);
         const { kind: _kind, ...inputs } = f;
         this.#judgmentInputs.set(key, inputs);
         return;

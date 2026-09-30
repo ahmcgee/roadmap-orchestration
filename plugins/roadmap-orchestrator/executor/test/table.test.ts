@@ -14,7 +14,7 @@ type Raw = Record<string, unknown>;
 function raw(id: string, over: Raw = {}): Raw {
   return {
     id, rev: 1, statement: `statement of ${id}`, docRef: { path: 'docs/target.md', anchor: '#a', quotedText: 'q' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV },
+    witness: { lane: 'journey', testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [id] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' }, ...over,
   };
 }

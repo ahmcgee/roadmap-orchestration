@@ -8,16 +8,21 @@
 // plan-check and gate `@cpu`×1 (`judgmentEntry`, held until the call is read), build the unit's resources and
 // `@cpu`×`buildCpu` (`buildEntry`, held through the build chain to teardown), lanes its first lane's set
 // (lanes.ts `seriesEntry`); none for a legacy arc's judgments. The grant's `reserve` transition is the
-// attempt's first op, so a wait the task's signal cancels (pause, stop) journals nothing (`Cancelled`): no
-// attempt, no counter, no `interrupted`. The chain stages (quiesce → evidence → salvage → teardown) take none
+// attempt's first op, so a wait the task's signal cancels (pause, stop) starts nothing (`Cancelled`): no
+// attempt, no counter, no `interrupted`. A judgment journals facts before it (plan-check's pin, and its
+// `judgment-inputs` capture, below), which a cancelled wait leaves behind. The chain stages (quiesce → evidence → salvage → teardown) take none
 // and ignore the signal. A judgment's inputs are durable before its spawn (`judgment-inputs`, F1).
 //
 // M3 (A19, H2): a judgment's revision-sensitive inputs (the integration tip, the spec, plan, ledger, vision and
-// obligations in force, the prompt rendered from them) are read and its `judgment-inputs` written in one synchronous
-// capture under the revision fence (src/core/fence.ts `captureUnderFence`), so no judgment reads the window between a
-// docs `ff` and its `plan-applied`. The executor's own spec patches (a plan-check redirect, the implementer's
-// decisions) are machine revisions of a spec: each holds the fence (`holdFence`) so it serialises with every other
-// revision. Plan-check reads the vision in force as non-directive context (R17); the gate never does.
+// obligations in force, the prompt rendered from them, a gate's approval fingerprint) are read and its
+// `judgment-inputs` written in one synchronous capture under the revision fence (src/core/fence.ts
+// `captureUnderFence`), so no judgment reads the window between a docs `ff` and its `plan-applied`. One acquisition
+// order (Checkpoint A): the capture comes BEFORE the judgment's `@cpu` entry, so no judgment holds `@cpu` while it
+// waits for the fence (a revision holds the fence through its docs publication, whose lanes wait for `@cpu`). A wait
+// the signal cancels then leaves only the capture, which the next attempt's replaces. The executor's own spec patches
+// (a plan-check redirect, the implementer's decisions) are machine revisions of a spec: each holds the fence
+// (`holdFence`) so it serialises with every other revision. Plan-check reads the vision in force as non-directive
+// context (R17); the gate never does.
 //
 // Outcomes are written through the park table (`record`, src/park/table.ts `stageOutcomeFact`): a retryable
 // park carries its targets (the call's backend, the host, each instance a cleanup failed), a repeat park is
@@ -57,7 +62,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
+import type { ApprovalFingerprint, SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
 import { isLegacy, rulingsFromLiveFile } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -69,10 +74,10 @@ import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.t
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import {
-  type LoadedSpec, OBLIGATIONS_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
+  type LoadedSpec, OBLIGATIONS_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { type Obligations, type Vision, parseObligations, parseVision } from '../holistic/types.ts';
+import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
   ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText, VisionInput,
@@ -93,7 +98,7 @@ import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } fr
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent,
-  backendOf, callBackend, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
+  backendOf, callBackend, cancelledNow, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
   raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
@@ -181,7 +186,10 @@ export async function holdEntry(ctx: StageContext, parent: StageParent): Promise
   return { kind: 'held', reservation: run(ctx, reserved, parent) };
 }
 
-/** A judgment attempt's entry: `@cpu`×1 granted and running, or the wait cancelled (nothing journaled). */
+/**
+ * A judgment attempt's entry: `@cpu`×1 granted and running, or the wait cancelled (nothing journaled). Taken only
+ * after the attempt's capture under the fence (never while waiting for it).
+ */
 export async function enterJudgment(ctx: StageContext, parent: StageParent): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
   const entered = await enter(ctx, stageHolder(parent), judgmentEntry(ctx));
   if (isCancelled(entered)) return entered;
@@ -202,12 +210,13 @@ export async function releaseJudgment(ctx: StageContext, parent: StageParent): P
 }
 
 /**
- * The durable inputs of a judgment attempt (F1), written after its entry reservation and before its backend
- * spawn: what a call recovered after a crash is read against (gate.ts `consumeJudgment`).
+ * The durable inputs of a judgment attempt (F1), written under the fence before its entry reservation and its
+ * backend spawn: what a call recovered after a crash is read against (gate.ts `consumeJudgment`). A gate's carry
+ * its complete approval fingerprint.
  */
 export function writeJudgmentInputs(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: 'plan-check' | 'gate' }>,
-  inputs: Readonly<{ tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev }>,
+  inputs: Readonly<{ tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev; fingerprint?: ApprovalFingerprint }>,
 ): void {
   const applied = ctx.journal.view.planApplied();
   if (applied === null) throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a judgment before any plan revision`);
@@ -261,6 +270,13 @@ export function ledger(ctx: StageContext): readonly Ruling[] {
   const payload = payloadInForce(ctx);
   if (payload === null) return parseRulings(rulingsFromLiveFile(ledgerPath(ctx)).toString('utf8'), ledgerPath(ctx));
   return parseRulings(kept(ctx, payload.manifest.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), ledgerPath(ctx));
+}
+
+/** The ruling sidecars in force (M3); none for a revision a 1.0.0-dev.5 executor wrote. */
+export function rulingSidecars(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): readonly RulingSidecar[] {
+  const payload = payloadInForce(ctx);
+  if (payload === null) return [];
+  return Object.values(payload.manifest.rulings.sidecars).map((sha) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
 }
 
 /** The latest revision's payload, or null for one a 1.0.0-dev.5 executor wrote (no payload). */
@@ -509,14 +525,12 @@ export function planCheckNotes(ctx: StageContext, unit: UnitId): string {
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone | Cancelled> {
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
-  const entered = await enterJudgment(ctx, parent);
-  if (isCancelled(entered)) return entered;
-  // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
-  await removePlanCheckCheckouts(ctx, unit.id, parent);
+  // A cancelled task captures nothing (its `@cpu` wait, after the capture, would be cancelled at once).
+  const cancelled = cancelledNow(ctx);
+  if (cancelled !== null) return cancelled;
   const pin = pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
   const judged = pin.kind === 'pinned' ? judgmentDispatch(ctx, unit.id, 'plan-check') : pin;
   if (pin.kind !== 'pinned' || judged.kind !== 'pinned') {
-    await releaseJudgment(ctx, parent);
     return { ...record(ctx, parent, 'routing-changed', judged.kind === 'pinned' ? null : judged.needsUser), session: null, specRev: spec.rev };
   }
   const pinned = pin.dispatch;
@@ -524,7 +538,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const prompt = promptFor('planCheck', seat.triple.model);
   const session = freshJudgmentSession();
   // H2: the tip, the inputs in force and the prompt rendered from them, captured with `judgment-inputs` under the
-  // fence; the checkouts are then made at the captured commits.
+  // fence before the `@cpu` entry (never held while waiting for the fence); the checkouts are then made at the
+  // captured commits.
   const captured = await captureUnderFence(ctx.journal, () => {
     const now = loadUnitSpec(ctx, unit);
     const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
@@ -540,6 +555,10 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     return { checkouts, rendered };
   });
   const { checkouts, rendered } = captured;
+  const entered = await enterJudgment(ctx, parent);
+  if (isCancelled(entered)) return entered;
+  // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
+  await removePlanCheckCheckouts(ctx, unit.id, parent);
   await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
   const called = await callBackend(ctx, {

@@ -35,7 +35,7 @@ const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, li
 const vision = (rev: number, text: string) => ({ rev, clauses: [{ id: visionClauseId('V-1'), kind: 'purpose' as const, text, rank: null, state: 'active' as const }] });
 const obligation = (id: string, statement: string): ObligationDef => ({
   id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
-  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef') },
+  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('journey'), testIds: ['t1'] } },
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 });
 const observed = (id: string, statement: string, tree: typeof SHA_A) => ({

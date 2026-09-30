@@ -19,7 +19,7 @@
 //   restored   an exempt obligation active again (strengthening)
 //   edited     serves, contracts, deliveredBy, or future → must-hold changed (no ruling needed)
 // Everywhere: `rev` rises by one exactly when the statement, docRef or activation changes; a parent is never
-// changed; a proof judgment bound to another obligation or lane revision is stale; in an arc with a vision every
+// changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
 import type { LaneId, ObligationId, RulingId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -98,8 +98,12 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
   const stale = (o: ObligationDef): void => {
     if (o.witness === null || o.proofJudgment === null) return;
     const rev = laneRevOf(lanes.get(o.witness.lane)!);
-    if (o.proofJudgment.obligationRev !== o.rev || o.proofJudgment.laneRev !== rev) {
-      reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${o.proofJudgment.obligationRev}, lane ${o.proofJudgment.laneRev}; now rev ${o.rev}, lane ${rev})`);
+    const p = o.proofJudgment;
+    if (p.obligationRev !== o.rev || p.laneRev !== rev) {
+      reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${p.obligationRev}, lane ${p.laneRev}; now rev ${o.rev}, lane ${rev})`);
+    }
+    if (canonicalJson(p.witness) !== canonicalJson(o.witness)) {
+      reasons.push(`${o.id}'s proof judgment is stale (judged witness ${canonicalJson(p.witness)}; now ${canonicalJson(o.witness)})`);
     }
   };
   const proves = (o: ObligationDef): void => {

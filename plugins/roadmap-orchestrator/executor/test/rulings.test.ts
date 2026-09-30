@@ -8,7 +8,7 @@ import { type RepoPath, repoPath } from '../src/core/values.ts';
 import { anchorSection, applyContractOps, citeRuling, headingSlug } from '../src/docs/contracts.ts';
 import { renderConstraints } from '../src/docs/constraints.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
-import { type RulingContext, consistencyRevs, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter, validateRuling } from '../src/spec/rulings.ts';
+import { type RulingContext, consistencyRevs, effectiveRulingRevs, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter, validateRuling } from '../src/spec/rulings.ts';
 
 const HEAD = sha('a'.repeat(40));
 const BLOB = sha('b'.repeat(40));
@@ -59,7 +59,7 @@ const OBLIGATIONS: Obligations = parseObligations({
   }],
   obligations: [{
     id: 'I-2', rev: 1, statement: 'money is never silently mis-rounded', docRef: { path: 'docs/money.md', anchor: '#rounding', quotedText: 'half-up' },
-    serves: ['V-2'], witness: { lane: 'journey', testIds: ['rounding'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef' },
+    serves: ['V-2'], witness: { lane: 'journey', testIds: ['rounding'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef', witness: { lane: 'journey', testIds: ['rounding'] } },
     deliveredBy: [], activation: 'must-hold', contracts: ['docs/money.md'], state: { type: 'active' },
   }],
   mapping: { paths: [] },
@@ -232,6 +232,23 @@ describe('landing a ruling', () => {
     assert.equal(ledgerAfter('C-1 — a', sidecar({ supersedes: [{ id: 'C-1', part: 'the cent' }] })), 'C-1 — a\nC-3 — totals round half-even at the cent\n');
     const c1 = sidecar({ id: 'C-1', supersedes: [], docRefs: [{ path: 'docs/target.md', anchor: '#reconcile', quotedText: 'one command', relation: 'consistent' }], contractOps: [] });
     assert.deepEqual(sidecarsAfter([c1], s).map((x) => [x.id, x.status]), [['C-1', 'superseded'], ['C-3', 'active']]);
+  });
+
+  it('rulings.effective-revs: a cited ruling\'s effective revision rises with each partial supersession of it, and again when that one leaves force', () => {
+    const plain = (id: string, supersedes: readonly Record<string, unknown>[] = []): RulingSidecar => sidecar({ id, supersedes });
+    const partial = (id: string, of: string): RulingSidecar => plain(id, [{ id: of, part: 'the cent' }]);
+    // No partial supersession (a dev.5 ledger has no sidecars at all): every ruling is at its first revision.
+    assert.deepEqual([...effectiveRulingRevs([])], []);
+    assert.deepEqual([...effectiveRulingRevs([plain('C-3', [{ id: 'C-1', part: null }])])], [], 'a full supersession withdraws, it does not revise');
+    // C-3 partially supersedes C-1 (a ledger ruling without a sidecar): C-1 moves to 2.
+    const one = effectiveRulingRevs([partial('C-3', 'C-1')]);
+    assert.equal(one.get(rulingId('C-1')), 2);
+    // C-4 partially supersedes C-3 too: C-3 moves to 2, and so C-1 to 3.
+    const two = effectiveRulingRevs([partial('C-3', 'C-1'), partial('C-4', 'C-3')]);
+    assert.deepEqual([two.get(rulingId('C-1')), two.get(rulingId('C-3'))], [3, 2]);
+    // C-5 fully supersedes C-3: its part of C-1's meaning leaves force, and C-1 moves again.
+    const gone = effectiveRulingRevs([{ ...partial('C-3', 'C-1'), status: 'superseded' }, partial('C-4', 'C-3'), plain('C-5', [{ id: 'C-3', part: null }])]);
+    assert.equal(gone.get(rulingId('C-1')), 4);
   });
 });
 

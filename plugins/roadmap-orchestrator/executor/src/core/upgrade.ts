@@ -169,6 +169,14 @@ export function judgmentInputsDefault(unit: UnitId, stage: 'plan-check' | 'gate'
   warnDefaulted('judgment-inputs', `a recovered judgment call without judgment-inputs (spawned by 1.0.0-dev.4 or earlier) is read at the current tip; ${unit} ${stage}#${attempt} and any other`);
 }
 
+/**
+ * A gate's `judgment-inputs` without its captured approval fingerprint (written by 1.0.0-dev.5, before M3 captured
+ * it): the approval of its recovered call is fingerprinted at the recorded tip when the call is read, as dev.5 did.
+ */
+export function judgmentFingerprintDefault(unit: UnitId, attempt: number): void {
+  warnDefaulted('judgment-inputs.fingerprint', `a gate's judgment-inputs without a fingerprint (written by 1.0.0-dev.5) is fingerprinted at its recorded tip when read; ${unit} gate#${attempt} and any other`);
+}
+
 /** A `rerouted` fact (written through 1.0.0-dev.4) is read as `unparked`: the same re-entry at the parked stage. */
 export function rerouteAsUnpark(unit: UnitId): void {
   warnDefaulted('rerouted', `rerouted facts (written through 1.0.0-dev.4) are read as unparked; unit ${unit} and any other`);

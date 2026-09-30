@@ -88,7 +88,7 @@ const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', 
 function obligation(id: string, statement: string, over: Json = {}): Json {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV },
+    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [`t-${id}`] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' }, ...over,
   };
 }
@@ -326,10 +326,15 @@ test('apply.obligation-added: a new obligation is added, rendered into .roadmap/
 test('apply.obligation-witness: a changed witness with a fresh proof is `witness`; a shrunk test set is weakening and needs a ruling', T, async () => {
   const r = holisticArc();
   try {
-    editObligations(r.d, (o) => void (o.obligations[1]!['witness'] = { lane: 'journey', testIds: ['t-I-2', 't-I-2b'] }));
+    // A changed witness takes a fresh proof of exactly that witness (M3 Checkpoint A).
+    const rewitness = (o: { obligations: Record<string, unknown>[] }, i: number, witness: object): void => {
+      o.obligations[i]!['witness'] = witness;
+      o.obligations[i]!['proofJudgment'] = { ...(o.obligations[i]!['proofJudgment'] as object), witness };
+    };
+    editObligations(r.d, (o) => rewitness(o, 1, { lane: 'journey', testIds: ['t-I-2', 't-I-2b'] }));
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-2', edit: 'witness' }]);
-    editObligations(r.d, (o) => void (o.obligations[0]!['witness'] = { lane: 'journey', testIds: ['t-other'] }));
+    editObligations(r.d, (o) => rewitness(o, 0, { lane: 'journey', testIds: ['t-other'] }));
     assert.match(reasonOf((await command(r, applyBody(r.d))).outcome), /I-1 is weakened \(witness no longer names "t-I-1"\) without a ruling in force naming it amended/);
   } finally {
     r.journal.close();
