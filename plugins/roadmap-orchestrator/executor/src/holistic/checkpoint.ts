@@ -4,8 +4,9 @@
 // src/holistic/bundle.ts activates all or nothing. It writes nothing itself.
 //
 // A run (`runCheckpoint`, one call per scheduler turn):
-//   0. Settle what a crash may have cut short after the latest decision (`settleDecided`), and raise `respec-second`
-//      for a design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
+//   0. Settle what a crash may have cut short after the latest decision (`settleLatest`, which the scheduler also runs
+//      once at its start: a crash right after a decision leaves no checkpoint due), and raise `respec-second` for a
+//      design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
 //      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `invalid`: once, the second goes to the owner), or its
@@ -481,7 +482,7 @@ function failedTwice(ctx: CheckpointContext, job: JobId, detail: string) {
 }
 
 /** The latest decided checkpoint, settled again where a crash cut its aftermath short. */
-function settleLatest(ctx: CheckpointContext): void {
+export function settleLatest(ctx: CheckpointContext): void {
   const last = ctx.journal.view.holistic().checkpoints.filter((c) => c.decided !== null).at(-1);
   if (last === undefined || (last.decided!.kind !== 'applied' && last.decided!.kind !== 'no-op')) return;
   const out = outputOf(ctx, last.inputs.job);

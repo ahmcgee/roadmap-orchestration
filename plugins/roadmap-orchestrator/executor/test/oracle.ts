@@ -55,13 +55,44 @@ function publications(run: OracleRun): readonly IntentOf<'integration.ff'>[] {
   });
 }
 
+/** The unit whose latest approval before `seq` names `unitCommit`, or null. */
+function approvedUnit(run: OracleRun, seq: number, unitCommit: string): string | null {
+  const latest = new Map<string, string>();
+  for (const e of run.events) {
+    if (e.seq >= seq) break;
+    if (e.type === 'fact' && e.fact.kind === 'approval') latest.set(e.fact.unit, e.fact.fingerprint.unitCommit);
+  }
+  return [...latest].find(([, c]) => c === unitCommit)?.[0] ?? null;
+}
+
 /**
- * Publication provenance: every published ff made `new` with first parent its T (`old`) and second parent
- * the unit commit its approval named, which is the unit's latest approval fact before the ff; the
- * first-parent chain from the head passes through every publication in order (new, then its T), down to
- * `baseline`, so integration only ever moved forward through the published candidates (and commits others
- * made on top of them); the head is the last publication (or `baseline` when nothing was published), and
- * that commit is the candidate the suite tested, every suite lane at it passing.
+ * A batch ff's members (M3 B2): its chained candidate runs from `new` down to its T along first parents, each commit
+ * merging (second parent) one member's approved unit commit; the members in chain order, and the problems found (a chain
+ * that never reaches T fails loud at the root, whose first parent git cannot name).
+ */
+function batchMembers(run: OracleRun, ff: IntentOf<'integration.ff'>): Readonly<{ units: readonly string[]; problems: readonly string[] }> {
+  const { old } = ff.expect;
+  const seq = run.events.find((e) => e.type === 'intent' && e.op === ff.op)?.seq ?? Infinity;
+  const units: string[] = [];
+  const problems: string[] = [];
+  for (let c = ff.expect.new; c !== old; c = revParse(run.repo, `${c}^1`) as typeof c) {
+    const unit = approvedUnit(run, seq, revParse(run.repo, `${c}^2`));
+    if (unit === null) problems.push(`${ff.op}: ${c}^2 is no member's approved unit commit`);
+    else units.unshift(unit);
+  }
+  if (units.length < 2) problems.push(`${ff.op}: a batch of ${units.length} member(s)`);
+  return { units, problems };
+}
+
+/**
+ * Publication provenance: every published ff made `new` from its T (`old`): a unit's ff has first parent T and
+ * second parent the unit commit its approval named, which is the unit's latest approval fact before the ff; a docs
+ * ff (M3) has first parent T and names its job; a batch ff (M3) is its chained candidate, from `new` down to T along
+ * first parents, each commit merging one member's approved unit commit. The first-parent chain from the head passes
+ * through every publication in order (new, then down to its T), down to `baseline`, so integration only ever moved
+ * forward through the published candidates (and commits others made on top of them); the head is the last
+ * publication (or `baseline` when nothing was published), and that commit is the candidate its lanes tested,
+ * every one at it passing: a unit's suite lanes, or a docs or batch job's own lanes.
  */
 export function provenance(run: OracleRun, integration: string, baseline: string): Verdict {
   const head = revParse(run.repo, `refs/heads/${integration}`);
@@ -71,9 +102,21 @@ export function provenance(run: OracleRun, integration: string, baseline: string
   if (!chain.includes(baseline)) problems.push(`the first-parent chain of ${head} does not reach the baseline ${baseline}`);
   for (const ff of published) {
     const { old } = ff.expect;
-    const fingerprint = unitFfFingerprint(ff.expect);
     const next = ff.expect.new;
-    if (revParse(run.repo, `${next}^1`) !== old) problems.push(`${ff.op}: ${next}^1 is not T ${old}`);
+    const i = chain.indexOf(next);
+    if (ff.expect.subject?.type === 'batch') {
+      problems.push(...batchMembers(run, ff).problems);
+      if (i === -1 || chain.indexOf(old) <= i) problems.push(`${ff.op}: ${next} then, down its chain, ${old} are not on the first-parent chain of ${head}`);
+    } else {
+      if (revParse(run.repo, `${next}^1`) !== old) problems.push(`${ff.op}: ${next}^1 is not T ${old}`);
+      if (i === -1 || chain[i + 1] !== old) problems.push(`${ff.op}: ${next} then ${old} are not on the first-parent chain of ${head}`);
+    }
+    if (ff.expect.subject !== undefined) {
+      const job = ff.expect.subject.type === 'docs' ? ff.expect.subject.pub : ff.expect.subject.job;
+      if (ff.parent.type !== 'job' || ff.parent.job !== job) problems.push(`${ff.op} of ${job} is not parented by its job`);
+      continue;
+    }
+    const fingerprint = unitFfFingerprint(ff.expect);
     if (revParse(run.repo, `${next}^2`) !== fingerprint.unitCommit) problems.push(`${ff.op}: ${next}^2 is not the approved unit commit ${fingerprint.unitCommit}`);
     if (ff.parent.type !== 'stage') {
       problems.push(`${ff.op} has no stage parent`);
@@ -85,8 +128,6 @@ export function provenance(run: OracleRun, integration: string, baseline: string
     if (approval?.type !== 'fact' || approval.fact.kind !== 'approval' || approval.fact.fingerprint.unitCommit !== fingerprint.unitCommit) {
       problems.push(`${ff.op}: the unit commit it publishes is not ${unit}'s latest approval before it`);
     }
-    const i = chain.indexOf(next);
-    if (i === -1 || chain[i + 1] !== old) problems.push(`${ff.op}: ${next} then ${old} are not on the first-parent chain of ${head}`);
   }
   // rev-list lists the newest first, so a later publication sits nearer the head.
   const order = published.map((ff) => chain.indexOf(ff.expect.new));
@@ -97,20 +138,30 @@ export function provenance(run: OracleRun, integration: string, baseline: string
     return verdict(problems, `nothing published; ${integration} at the baseline`);
   }
   if (head !== last.expect.new) problems.push(`the head ${head} is not the last publication ${last.expect.new}`);
-  const tested = spawns(run).filter((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite' && i.expect.subject.at === head);
-  if (tested.length === 0) problems.push(`no suite lane ran at the head ${head}`);
+  const subject = last.expect.subject;
+  const byJob = subject === undefined ? null : subject.type === 'docs' ? subject.pub : subject.job;
+  const tested = spawns(run).filter((i) => {
+    const s = i.expect.subject;
+    if (byJob !== null) return s.purpose === 'journey' && s.owner.type === 'job' && s.owner.job === byJob && s.at === head;
+    return s.purpose === 'lane' && s.set === 'suite' && s.at === head;
+  });
+  if (tested.length === 0) problems.push(`no ${byJob === null ? 'suite lane' : `lane of ${byJob}`} ran at the head ${head}`);
   for (const lane of tested) {
     const inv = invocationId(lane.op, lane.ordinal);
     const result = runnerFiles(invocationDir(run.runDir, inv), inv).read('result.json');
-    if (result === null || result.type !== 'command' || result.verdict !== 'pass') problems.push(`suite lane ${inv} at the head did not pass`);
+    if (result === null || result.type !== 'command' || result.verdict !== 'pass') problems.push(`lane ${inv} at the head did not pass`);
   }
-  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length} passing suite lane(s)`);
+  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length} passing lane(s)`);
 }
 
-/** Each unit published exactly `expected[unit]` times (1 for a merged unit, 0 otherwise). */
+/** Each unit published exactly `expected[unit]` times (1 for a merged unit, 0 otherwise), by its own ff or as a batch member. */
 export function publicationsPerUnit(run: OracleRun, expected: Readonly<Record<string, number>>): Verdict {
   const counts = new Map<string, number>();
-  for (const ff of publications(run)) if (ff.parent.type === 'stage') counts.set(ff.parent.unit, (counts.get(ff.parent.unit) ?? 0) + 1);
+  const count = (unit: string): void => void counts.set(unit, (counts.get(unit) ?? 0) + 1);
+  for (const ff of publications(run)) {
+    if (ff.parent.type === 'stage') count(ff.parent.unit);
+    if (ff.expect.subject?.type === 'batch') for (const u of batchMembers(run, ff).units) count(u);
+  }
   const problems = Object.entries(expected).flatMap(([unit, n]) => ((counts.get(unit) ?? 0) === n ? [] : [`${unit} published ${counts.get(unit) ?? 0} times, expected ${n}`]));
   for (const unit of counts.keys()) if (!(unit in expected)) problems.push(`${unit} published but is not expected`);
   return verdict(problems, `publications per unit ${JSON.stringify(Object.fromEntries(counts))}`);
@@ -172,10 +223,10 @@ export function needsUserExactly(run: OracleRun, expected: readonly string[]): V
   return verdict(problems, `needs-user ${reasons.join(', ') || 'none'}`);
 }
 
-/** The role of a backend invocation (a pipeline backend or a backend smoke), or null for commands. */
+/** The role of a backend invocation (a pipeline backend, a job's lens or checkpoint call, or a backend smoke), or null for commands. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {
   const s = i.expect.subject;
-  if (s.purpose === 'backend') return s.role;
+  if (s.purpose === 'backend' || s.purpose === 'arc-backend') return s.role;
   if (s.purpose === 'smoke' && s.target.type === 'backend') return s.target.role;
   return null;
 }

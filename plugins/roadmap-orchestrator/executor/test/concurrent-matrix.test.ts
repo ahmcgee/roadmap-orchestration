@@ -31,6 +31,16 @@
 // outstanding targets and nextProbeAt unchanged.
 //
 // Also the named tests recover.no-duplicate-writer and residue.own-arc-respawn, at executor level.
+//
+// M3 (B8): the concurrent job rows (test/fixtures/cm-holistic.ts), where a job steps while units are in flight: an
+// audit job and a checkpoint's bundle activation while two units are pinned in live builds, a repair batch's
+// publication while a third unit is pinned in its live build, and a rule's docs publication preempting a unit's
+// candidate. A job's crash points pass no unit, so each cell crashes the occurrence the
+// recording attributes to the job (by its log's records: `sampleJob`), and asserts the op it hit: the log at the crash
+// holds exactly the recording's records of that op's owner (the job, the command, or u1 for the preempting kill), the
+// last one the same. The audit, bundle and batch rows then assert the peers' builds open at the crash and adopted once, and the arc's end
+// as recorded (outcomes, product, every call once, the holistic records); the preempt row asserts safety (one slot
+// holder at a time, the rule applied once with one docs ff, u1 published once onto the recorded tree).
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -55,14 +65,19 @@ import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import {
-  type Boundary, CONCURRENT_BUILD, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE,
-  CONCURRENT_TEARDOWN, crashCells,
+  type Boundary, CONCURRENT_AUDIT, CONCURRENT_BUILD, CONCURRENT_BUNDLE, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PREEMPT,
+  CONCURRENT_BATCH, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
 } from './matrix.ts';
-import { type Trace, UNCRASHED, assertOracle, oracleRun, outcomesOf } from './oracle.ts';
+import {
+  type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryTrace,
+  snapshotVerifies, unitStates, usagePerInvocation,
+} from './oracle.ts';
+import { HOLISTIC_PEERS, type HolisticPeer, type JobRow, STEPPING, layoutHolisticConcurrent, sampleJob } from './fixtures/cm-holistic.ts';
+import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, ownerOf } from './fixtures/pm-holistic.ts';
 import { A, B, C, type Concurrent, type Peer, PEERS, layoutConcurrent } from './fixtures/cm-common.ts';
 import { type ExecRun, journalOf } from './fixtures/exec-common.ts';
 import { type Hook, type Laid, callsMatchSteps, finalReason, supervisedRun } from './fixtures/pm-common.ts';
-import { LABEL_TRACE, appendTrace } from './fixtures/pm-trace.ts';
+import { BATCH_TRACE, LABEL_TRACE, appendTrace, inRevisionAt } from './fixtures/pm-trace.ts';
 import { startCli, startLine, startedGenerations, stateOf } from './fixtures/sup-common.ts';
 
 after(assertNoSurvivors);
@@ -535,7 +550,7 @@ function cellsOf(ref: Reference): readonly CellSpec[] {
 
 test('concurrent crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000 }, async (t) => {
   const started = Date.now();
-  const refs = await Promise.all(PEERS.map((peer) => reference(t, peer)));
+  const [refs, jobRefs] = await Promise.all([Promise.all(PEERS.map((peer) => reference(t, peer))), Promise.all(HOLISTIC_PEERS.map((peer) => jobReference(t, peer)))]);
 
   // Enumeration: A reached exactly its row's labels, and every excluded label is a start's or recovery's.
   for (const ref of refs) {
@@ -546,10 +561,185 @@ test('concurrent crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000
     { name: 'recover.no-duplicate-writer', run: (c) => noDuplicateWriter(c, byPeer.get('build')!) },
     { name: 'residue.own-arc-respawn', run: (c) => ownArcRespawn(c, byPeer.get('residue')!) },
   ];
-  const cells = [...refs.flatMap(cellsOf), ...named];
-  await Promise.all(cells.map((c) => t.test(c.name, CELL, c.run)));
-  t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s: ${refs.map((r) => `${r.peer} ${cellsOf(r).length}`).join(', ')}`);
+  // The job rows: each row's sampled labels are exactly its matrix labels.
+  const jobs = new Map(jobRefs.map((ref) => [ref.peer, ref]));
+  const jobCellSpecs = JOB_ROW_NAMES.flatMap((row) => {
+    const ref = jobs.get(JOB_PEER[row])!;
+    const sampled = sampleJob(row, ref.recordText, ref.snap);
+    assert.deepEqual([...new Set(sampled.map((c) => c.label))].sort(), jobRowLabels(row), `${row}: the sampled labels are the row's`);
+    return sampled.map((c): CellSpec => ({
+      name: `${row} ${jobBoundaryOf(row, c.label)} ${c.label}#${c.occurrence} (${c.owner})`,
+      run: (x) => jobCell(x, ref, row, c),
+    }));
+  });
+  const cells = [...refs.flatMap(cellsOf), ...named, ...jobCellSpecs];
+  const TEMPB8 = process.env['CM_ONLY']; // TEMP-B8
+  await Promise.all(cells.filter((c) => TEMPB8 === undefined || new RegExp(TEMPB8).test(c.name)).map((c) => t.test(c.name, CELL, c.run)));
+  t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s: ${refs.map((r) => `${r.peer} ${cellsOf(r).length}`).join(', ')}, jobs ${jobCellSpecs.length}`);
 });
+
+// ---------------------------------------------------------------------------------------------------
+// The concurrent job rows (M3 B8)
+
+const JOB_ROWS: Readonly<Record<JobRow, string>> = { audit: CONCURRENT_AUDIT, bundle: CONCURRENT_BUNDLE, batch: CONCURRENT_BATCH, preempt: CONCURRENT_PREEMPT };
+const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'bundle', 'batch', 'preempt'];
+/** The scenario each job row steps in. */
+const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', bundle: 'jobs', batch: 'batch', preempt: 'preempt' };
+/** The units whose build is live while the scenario's job steps. */
+const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
+/** The needs-user items every run of the scenario raises: the applied bundle's divergence digest. */
+const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['divergence-digest'], batch: [], preempt: [] };
+const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
+const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
+/** The scenario's units in plan order (the batch scenario admits its repair units after u3). */
+const jobUnits = (peer: HolisticPeer): readonly string[] => (peer === 'jobs' ? [A, B] : peer === 'batch' ? [C, A, B] : [A]);
+
+type JobReference = Readonly<{
+  peer: HolisticPeer; recordText: string; snap: LogSnapshot; reason: ExitReason; repo: string; tree: string; outcomes: Readonly<Record<string, readonly string[]>>;
+}>;
+
+/** The docs ffs published in a log. */
+const docsFfs = (snap: LogSnapshot): number => snap.events.filter((e) => {
+  if (e.type !== 'done' || e.kind !== 'integration.ff' || e.outcome.kind !== 'published') return false;
+  const i = snap.view.latestIntent(e.op);
+  return i.kind === 'integration.ff' && i.expect.subject?.type === 'docs';
+}).length;
+/** The commands applied in a log. */
+const commandsApplied = (snap: LogSnapshot): number => snap.events.filter((e) => e.type === 'done' && e.kind === 'command.apply' && e.outcome.kind === 'applied').length;
+
+async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference> {
+  const c = layoutHolisticConcurrent(t, peer);
+  const { r } = c.laid;
+  const record = join(tmpDir('cm-record'), 'record');
+  await supervisedRun(c.laid, { record, keyed: true });
+  const snap = journalOf(r);
+  const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
+  const ref: JobReference = {
+    peer, recordText: readFileSync(record, 'utf8'), snap, reason: finalReason(r), repo: r.repo, tree: git(r.repo, 'rev-parse', 'main^{tree}'),
+    outcomes: Object.fromEntries(jobUnits(peer).map((u) => [u, outcomesOf(run, u)])),
+  };
+  assert.deepEqual(ref.reason, { kind: 'complete', units: jobUnits(peer).map((u) => ({ result: 'merged', unit: u })) }, `${peer}: the uncrashed run completes`);
+  const m = callsMatchSteps(r);
+  assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, `${peer}: every step called once`);
+  const units = Object.fromEntries(jobUnits(peer).map((u) => [u, 'merged' as const]));
+  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: ref.tree, units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[peer], trace: UNCRASHED });
+  if (peer !== 'preempt') {
+    // The stepping jobs ran while the peers' builds were live.
+    const stepping = JOB_ROW_NAMES.filter((row) => JOB_PEER[row] === peer).map((row) => `job:${STEPPING[row as keyof typeof STEPPING]}`);
+    const window = snap.events.filter((e) => stepping.includes(ownerOf(snap.view, e)));
+    const builds = spawnsOf(snap).filter((i) => LIVE_BUILDS[peer].includes(subjectUnit(i) ?? '') && i.expect.subject.purpose === 'backend' && (i.expect.subject as { role: string }).role === 'build');
+    assert.equal(builds.length, LIVE_BUILDS[peer].length);
+    for (const b of builds) {
+      const done = snap.events.find((e) => e.type === 'done' && e.op === b.op)!;
+      assert.ok(b.seq < window[0]!.seq && done.seq > window.at(-1)!.seq, `${subjectUnit(b)}'s build was live through ${stepping.join(' and ')}`);
+    }
+    if (peer === 'jobs') assert.ok(snap.events.some((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' && e.fact.source?.type === 'bundle'), 'ckpt-1 applied its bundle');
+    if (peer === 'batch') {
+      const ffs = snap.view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'batch');
+      assert.equal(ffs.length, 1, 'u1 and u2 published as one batch');
+      assert.equal(snap.view.holistic().findings.find((f) => f.id === 'F-1')?.state, 'resolved', 'the batch resolved F-1');
+    }
+  } else {
+    assert.equal(ref.outcomes[A]!.filter((o) => o === 'candidate:preempted').length, 1, 'u1\'s candidate was preempted');
+    assert.deepEqual([docsFfs(snap), commandsApplied(snap)], [1, 1], 'the rule applied once with one docs ff');
+  }
+  return ref;
+}
+
+/** Each owner's recovered dones, as `kind:recoveredBy`. */
+function recoveredByOwner(snap: LogSnapshot): ReadonlyMap<string, readonly string[]> {
+  const out = new Map<string, string[]>();
+  for (const e of snap.events) {
+    if (e.type !== 'done' || e.recoveredBy === null) continue;
+    const o = ownerOf(snap.view, e);
+    out.set(o, [...(out.get(o) ?? []), `${e.kind}:${e.recoveredBy}`]);
+  }
+  return out;
+}
+
+/**
+ * One job row cell: the scenario crashed at the sampled occurrence (no unit selector: the recording attributed it to
+ * the job), then the op it hit (the owner's records at the crash), the peers at the crash, and the end.
+ */
+async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Promise<void> {
+  const hc = layoutHolisticConcurrent(t, ref.peer);
+  const { r } = hc.laid;
+  const trigger = writeTrigger(tmpDir('cm-trigger'), { label: c.label, occurrence: c.occurrence });
+  let atCrash: LogSnapshot | null = null;
+  await supervisedRun(hc.laid, { trigger, keyed: true, whileDown: (x) => void (atCrash = journalOf(x)) });
+  assertFired(trigger);
+  if (atCrash === null) throw new Error('the crash was not observed while the executor was down');
+  const crash = atCrash as LogSnapshot;
+
+  // The op the crash hit: its owner's records at the crash are the recording's up to it.
+  const owned = (snap: LogSnapshot) => snap.events.filter((e) => ownerOf(snap.view, e) === c.owner);
+  const mine = owned(crash);
+  assert.equal(mine.length, c.ownerRecords, `the log at the crash holds ${c.ownerRecords} records of ${c.owner}, as the recording had at ${c.label}#${c.occurrence} (${row})`);
+  if (c.ownerRecords > 0) assert.equal(describeRecord(crash, mine.at(-1)!), describeRecord(ref.snap, owned(ref.snap)[c.ownerRecords - 1]!), `${c.owner}'s last record at the crash is the recording's`);
+
+  // The peers at the crash.
+  const crashSeq = crash.events.at(-1)!.seq;
+  if (ref.peer !== 'preempt') {
+    for (const u of LIVE_BUILDS[ref.peer]) {
+      const open = openSpawns(crash, u);
+      assert.ok(open.length === 1 && open[0]!.expect.subject.purpose === 'backend' && (open[0]!.expect.subject as { role: string }).role === 'build', `${u}'s build is live at the crash`);
+    }
+  } else {
+    const kill = crash.events.find((e): e is Event & IntentOf<'proc.kill'> => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt');
+    assert.ok(kill !== undefined, 'the preempting kill of u1\'s candidate lane is in the log at the crash');
+    const lane = crash.view.latestIntent(parseInvocationId(kill.expect.inv).op);
+    assert.ok(lane.kind === 'proc.spawn' && lane.expect.subject.purpose === 'lane' && lane.expect.subject.unit === A && lane.expect.subject.set === 'suite', 'it kills u1\'s candidate suite lane');
+  }
+
+  // The end.
+  assert.equal(stateOf(r).crashes.length, 1, 'one executor crash, which the supervisor restarted');
+  assert.deepEqual(finalReason(r), ref.reason);
+  const m = callsMatchSteps(r);
+  assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
+  const end = journalOf(r);
+  const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
+  for (const u of jobUnits(ref.peer)) assertWorkloadsDisjoint(r, end, u);
+  const units = Object.fromEntries(jobUnits(ref.peer).map((u) => [u, 'merged' as const]));
+  if (ref.peer === 'preempt') {
+    // Safety: the crash may let the candidate go green before the publication (its pin released by the restart).
+    const verdicts = [
+      productTree(run, 'main', ref.tree), provenance(run, 'main', baselineOf(r)), publicationsPerUnit(run, { [A]: 1 }), snapshotVerifies(run),
+      unitStates(run, units), needsUserExactly(run, []), usagePerInvocation(run), noModelIds(run),
+      recoveryTrace(run, { recoveredBy: ['reconciled', 'redone', 'adopted'], required: false, tailDiscarded: c.label === 'log.append.after-partial-write' }),
+    ];
+    assert.deepEqual(verdicts.filter((v) => !v.pass), []);
+    assert.deepEqual([docsFfs(end), commandsApplied(end)], [1, 1], 'the rule applied once with one docs ff');
+    assert.ok(outcomesOf(run, A).filter((o) => o === 'candidate:preempted').length <= 1, 'u1 preempted at most once');
+    void assertPublicationSafe(r, end);
+    return;
+  }
+  // The job's recovery is the label's (a log append's: the record's), the peers' the adoption of their live builds.
+  const cut = ref.snap.events[c.seq - 1]!;
+  const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? LABEL_TRACE[c.label];
+  if (label === undefined) throw new Error(`no recovery trace is declared for ${c.label}`);
+  const by = recoveredByOwner(end);
+  const jobBy = [...by].filter(([o]) => !o.startsWith('unit:')).flatMap(([, v]) => v.map((x) => x.split(':')[1]!));
+  for (const v of jobBy) assert.ok((label.recoveredBy as readonly string[]).includes(v), `the job's op recovered ${v}; ${c.label} allows ${label.recoveredBy.join('|') || 'nothing'}: ${JSON.stringify([...by])}`);
+  if (label.required) assert.ok(jobBy.length > 0, `the job's cut-short op is recovered (${label.recoveredBy.join('|')})`);
+  const peers = LIVE_BUILDS[ref.peer];
+  for (const [o, values] of by) {
+    const u = o.slice('unit:'.length);
+    if (o.startsWith('unit:') && !peers.includes(u)) assert.fail(`${u}: recovered ${values.join(', ')}, but it had no live build at the crash`);
+  }
+  for (const u of peers) {
+    for (const v of by.get(`unit:${u}`) ?? []) assert.ok(v.startsWith('proc.spawn:') && (PEER_RECOVERY as readonly string[]).includes(v.split(':')[1]!), `${u}: recovered ${v}, but only its live build is adopted`);
+    const builds = spawnsOf(end).filter((i) => subjectUnit(i) === u && i.expect.subject.purpose === 'backend' && (i.expect.subject as { role: string }).role === 'build');
+    assert.equal(builds.length, 1, `${u}'s build spawned once`);
+    const done = end.view.doneOf(builds[0]!.op);
+    assert.ok(done !== null && done.recoveredBy !== null && (PEER_RECOVERY as readonly string[]).includes(done.recoveredBy), `${u}'s build, live at the crash, adopted or re-adapted once: ${JSON.stringify(done)}`);
+    assert.ok(builds[0]!.seq < crashSeq, `${u}'s build is the one live at the crash`);
+  }
+  const trace: Trace = { recoveredBy: [...new Set([...label.recoveredBy, ...PEER_RECOVERY])], required: true, tailDiscarded: label.tailDiscarded };
+  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[ref.peer], trace });
+  assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
+  assert.deepEqual(holisticRecords(end), holisticRecords(ref.snap), 'the holistic layer\'s records as uncrashed');
+  assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Named tests

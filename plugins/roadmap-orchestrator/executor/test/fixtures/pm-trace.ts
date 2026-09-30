@@ -65,21 +65,64 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'recover.after-op': NONE,
   // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.
   'complete.after-fact': NONE,
+  // M3 (the holistic row): a digest item's raise, as the needs-user row's.
+  'needsuser.raise.before-publish': R('redone'),
+  'needsuser.raise.after-publish': R('reconciled'),
+  // A job's facts: nothing open; the job resumes from them.
+  'latch.after-fact': NONE,
+  'audit.after-started': NONE,
+  'audit.after-lens': NONE,
+  'audit.before-ended': NONE,
+  'audit.after-ended': NONE,
+  'checkpoint.after-inputs': NONE,
+  'checkpoint.after-call': NONE,
+  'bundle.after-applied': NONE,
+  'bundle.after-decided': NONE,
+  // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
+  'docs.act-start': R('redone'),
+  'docs.after-commit-tree': R('redone'),
+  'docs.act-end': R('reconciled'),
+  'closeout.after-ff': NONE,
+  'closeout.before-published': NONE,
+  'docs.after-snapshot': NONE,
+  // A batch's chained candidate made, the batch not published: nothing open; the batch is abandoned and runs again.
+  'batch.after-candidate': NONE,
 };
+
+/**
+ * Where a batch job's op recovers otherwise than a unit's (M3 B2): a batch ff's intent durable with its CAS not acted
+ * closes unpublished at T (reconciled), for a batch CAS is never redone; the batch runs again as its next attempt.
+ */
+export const BATCH_TRACE: Readonly<Record<string, Trace>> = { 'ff.act-start': R('reconciled') };
 
 /**
  * A journal label's trace, from the record the uncrashed run appended at that occurrence (the executor is
  * the only appender, so its n-th append is seq n). Before the write (or torn in it) the record is lost: a
  * lost done leaves its op open with its act complete (reconciled), a lost usage fact leaves its spawn open
  * (reconciled), a lost intent or other fact leaves nothing open. After the fsync the record is durable: an
- * intent is its op's B2 state, anything else leaves nothing open.
+ * intent is its op's B2 state, anything else leaves nothing open. M3: a fact a `revision.commit` writes inside
+ * its op (its plan-applied, its divergences; `inRevision`: that op was open when the record was appended) leaves
+ * the revision open, lost or durable: recovery finishes it from its kept payload (reconciled).
  */
-export function appendTrace(label: string, e: Event): Trace {
+export function appendTrace(label: string, e: Event, inRevision = false): Trace {
   const tailDiscarded = label === 'log.append.after-partial-write';
+  const revisionFact = e.type === 'fact' && inRevision;
   if (label === 'log.append.after-fsync') {
+    if (revisionFact) return R('reconciled');
     if (e.type !== 'intent') return NONE;
     return R(...(FROM_B2[e.kind] ?? ['redone']));
   }
-  const lostOpen = e.type === 'done' || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
+  const lostOpen = e.type === 'done' || revisionFact || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
   return { recoveredBy: lostOpen ? ['reconciled'] : [], required: lostOpen, tailDiscarded };
+}
+
+/** Whether a `revision.commit` was open (its intent appended, its done not yet) when `seq` was appended, in `events`. */
+export function inRevisionAt(events: readonly Event[], seq: number): boolean {
+  const open = new Set<string>();
+  for (const e of events) {
+    if (e.seq >= seq) break;
+    if (e.type === 'intent' && e.kind === 'revision.commit') open.add(e.op);
+    if ((e.type === 'done' || e.type === 'abort') && open.has(e.op)) open.delete(e.op);
+  }
+  return open.size > 0;
 }

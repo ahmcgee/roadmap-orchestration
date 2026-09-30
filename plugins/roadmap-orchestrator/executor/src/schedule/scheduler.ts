@@ -103,7 +103,7 @@ import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../holistic/audit.ts';
 import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
-import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint } from '../holistic/checkpoint.ts';
+import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
@@ -644,6 +644,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
   const route = designRoute(h);
+  // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
+  // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
+  if (holistic()) settleLatest(h.checkpoint);
 
   const tasks = new Map<UnitId, Task>();
   const jobs = new Map<string, Promise<void>>();

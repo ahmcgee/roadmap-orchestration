@@ -351,23 +351,37 @@ describe('plan-check and the findings store', () => {
 // ---------------------------------------------------------------------------------------------------
 // Crash: mutant.apply (the matrix row MUTANT_APPLY)
 
+/** How recovery closes the apply a crash at each label cut short: redone from its intent, reconciled from the patched tree, or live. */
+const MUTANT_RECOVERED_BY: Readonly<Record<string, string | null>> = {
+  'mutant.act-start': 'redone', 'mutant.after-worktree': 'redone', 'mutant.act-end': 'reconciled', 'mutant.after-done': null,
+};
+
 describe(`matrix row ${MUTANT_APPLY}`, () => {
-  for (const cell of crashCells(MUTANT_APPLY)) {
-    test(`mutant.apply crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
+  // Occurrence 1 is the reproduce's apply at the tip, occurrence 2 the candidate's kill check on the candidate tree.
+  for (const cell of crashCells(MUTANT_APPLY)) for (const occurrence of [1, 2]) {
+    const which = occurrence === 1 ? 'the reproduce' : 'the candidate\'s kill check';
+    test(`mutant.apply crashed at ${cell.boundary} ${cell.label}#${occurrence} (${which}): ${cell.recovery.slice(0, 80)}…`, T, async () => {
       const { d, control } = vacuityArc();
       scriptTree(control, treeWith(d.repo, tipOf(d), STRICT_TEST, MUTANT_PATCH), { outcomes: { t1: 'fail' } });
-      const trigger = writeTrigger(tmpDir('mutant-crash'), { label: cell.label, occurrence: 1 });
+      const trigger = writeTrigger(tmpDir('mutant-crash'), { label: cell.label, occurrence });
       const exit = await runFixture('repair-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
-      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}#${occurrence}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
       assertFired(trigger);
       const r = contextFor(d);
       const w = wire(r);
       try {
+        const crashed = r.journal.view.opsOf('mutant.apply');
+        assert.equal(crashed.length, occurrence, `the crash cut ${which}'s apply short`);
+        const cut = crashed.at(-1)!;
+        assert.equal(cut.parent.type === 'stage' ? cut.parent.stage : null, occurrence === 1 ? 'reproduce' : 'candidate', `the apply cut short is ${which}'s`);
         await recover({ stage: r.ctx, commands: w.commands });
         const applies = r.journal.view.opsOf('mutant.apply');
         assert.ok(applies.length >= 1 && applies.every((i) => r.journal.view.doneOf(i.op)?.kind === 'mutant.apply'), 'recovery closed the apply');
+        assert.equal(r.journal.view.doneOf(cut.op)?.recoveredBy, MUTANT_RECOVERED_BY[cell.label], `the apply cut short at ${cell.label} is closed as its reconciler says`);
         assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
+        assert.equal(r.journal.view.opsOf('mutant.apply').length, 3, 'the stage cut short ran again with one new apply: the reproduce\'s and the kill check\'s, plus the one cut short');
         assert.deepEqual(outcomes(d, 'v1').filter((o) => o.startsWith('reproduce:')), ['reproduce:reproduced'], 'one reproduce outcome');
+        assert.deepEqual(outcomes(d, 'v1').filter((o) => o.startsWith('candidate:')), ['candidate:green'], 'one candidate outcome: its kill check killed the mutant once');
         assert.deepEqual(moves(r), ['F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:resolved']);
         assert.deepEqual(worktrees(r), [], 'no mutant worktree is left');
         assert.deepEqual(r.journal.view.openIntents(), []);

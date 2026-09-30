@@ -91,6 +91,7 @@ export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with 
 export const ADVERSARIAL_TAKEOVER = 'adversarial: cross-arc takeover with a live runner crashed mid-adoption';
 export const PIPELINE_STRAIGHT = 'whole pipeline: one unit straight through (supervised roadmap start)';
 export const PIPELINE_BUMPY = 'whole pipeline: two units through every bumpy branch (supervised roadmap start)';
+export const PIPELINE_HOLISTIC = 'whole pipeline: a holistic arc through baseline, a unit, audits, checkpoints, close-out and completion (supervised roadmap start)';
 export const PIPELINE_RUNNER_DEATH = 'whole pipeline: runner death mid-build';
 export const PIPELINE_SUPERVISOR_DEATH = 'whole pipeline: supervisor death mid-run';
 export const PIPELINE_HOST_DEATH = 'whole pipeline: supervisor and executor death mid-build';
@@ -106,6 +107,15 @@ export const CONCURRENT_LANE = 'concurrent: A through the pipeline, peer B in a 
 export const CONCURRENT_TEARDOWN = 'concurrent: A through the pipeline, peer B in a teardown';
 export const CONCURRENT_PUBLICATION = 'concurrent: A through the pipeline, peer B waiting for the publication slot (in memory)';
 export const CONCURRENT_RESIDUE = 'concurrent: A through the pipeline, peer B in a retryable residue park';
+export const CONCURRENT_AUDIT = 'concurrent job: an audit job stepping (audit-1: its checkout, lens call, evidence, facts), units u1 and u2 in live build runners';
+export const CONCURRENT_BUNDLE = 'concurrent job: a checkpoint job activating a bundle (ckpt-1: its call, its revision, divergence), units u1 and u2 in live build runners';
+export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batch-1: its slot, chained candidate, lanes, batch ff, snapshot), unit u3 in a live build runner';
+export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
+export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs, audit-started, checkpoint-inputs never inside an open revision.commit)';
+export const NOOP_DIVERGENCE = 'no-op divergences (M3 H12: bundle-decided{no-op}, then its interpretation divergences keyed (job, i))';
+export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
+export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
+export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
@@ -141,6 +151,38 @@ const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = 
 /** The bumpy run adds the merge-in's conflicted path. */
 const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], ...COMPLETE_LABELS };
 
+/**
+ * The labels the holistic whole-pipeline row crashes (test/fixtures/pm-holistic.ts `sampleHolistic` selects the
+ * occurrences from a recording run and requires exactly these): the M3-only labels, and the M1 labels the holistic
+ * layer's jobs, a candidate's arc lane and the arc's own records reach.
+ */
+const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
+  B1: ['log.append.before-write', 'log.append.after-partial-write'],
+  B2: [
+    'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
+    'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'checkpoint.after-inputs',
+    'docs.act-start',
+  ],
+  B3: [
+    'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'snapshot.after-commit-tree',
+    'plan.apply.after-inputs', 'audit.after-lens', 'docs.after-commit-tree', 'closeout.after-ff',
+  ],
+  B4: [
+    'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
+    'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
+    'closeout.before-published',
+  ],
+  B5: ['spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact'],
+};
+
+const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
+  B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) is absent after the restart, a torn line discarded once: the job resumes and writes it once (a capture from the same inputs), the arc ends as uncrashed',
+  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens or checkpoint call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the arc ends as uncrashed',
+  B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); the arc ends as uncrashed',
+};
+
 /** A whole-pipeline row's cells: every label at occurrence 1, and 2 where the label repeats. */
 function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[]>>>, recovery: Readonly<Record<Boundary, string>>): Readonly<Record<Boundary, Cell>> {
   const cell = (b: Boundary): Cell => ({ status: 'crash', labels: [...PIPELINE_LABELS[b], ...(extra[b] ?? [])], recovery: recovery[b] });
@@ -154,6 +196,40 @@ const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
   B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the start\'s revision.commit with its plan-applied written closes reconciled, no second fact; the arc ends as uncrashed',
   B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
 };
+
+/** Every label a row here crashes, by the boundary it is crashed at (one boundary per label). */
+const LABEL_BOUNDARY: ReadonlyMap<string, Boundary> = new Map([
+  ...(Object.entries(PIPELINE_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
+  ...(Object.entries(HOLISTIC_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
+  ['kill.after-intent', 'B2'], ['kill.after-cancel', 'B3'], ['kill.after-quiesced', 'B4'], ['kill.after-done', 'B5'],
+  ['docs.after-lanes', 'B4'], ['revision.commit.after-docs', 'B4'], ['batch.after-candidate', 'B4'], ['command.apply.after-effect', 'B4'], ['command.apply.after-receipt', 'B4'],
+]);
+
+/**
+ * A concurrent job row's cells (M3 B8; test/concurrent-matrix.test.ts, test/fixtures/cm-holistic.ts): `labels`, each at
+ * the first occurrence the recording attributes to the stepping job (`sampleJob`), by boundary; `recovery` per
+ * boundary, plus the peers' oracle. A boundary none of them falls on is the job's `none` reason.
+ */
+function jobCells(labels: readonly string[], recovery: Readonly<Record<Boundary, string>>, peers: string, none: string): Readonly<Record<Boundary, Cell>> {
+  const at = (b: Boundary): Cell => {
+    const ls = labels.filter((l) => {
+      const found = LABEL_BOUNDARY.get(l);
+      if (found === undefined) throw new Error(`matrix: no boundary for ${l}`);
+      return found === b;
+    });
+    return ls.length === 0 ? { status: 'excluded', why: none } : { status: 'crash', labels: ls, recovery: `${recovery[b]}; ${peers}` };
+  };
+  return { B1: at('B1'), B2: at('B2'), B3: at('B3'), B4: at('B4'), B5: at('B5') };
+}
+
+/** A job's checkout, evidence and call ops (audit-1's, ckpt-1's): the generic M1 labels a job reaches. */
+const JOB_OPS = [
+  'worktree.create.act-start', 'worktree.add.inside', 'resource.after-intent', 'resource.after-done', 'spawn.after-intent', 'launch.after-launch-json',
+  'launch.after-spawn', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'spawn.after-done', 'evidence.act-start', 'evidence.act-end',
+  'worktree.remove.act-start', 'worktree.remove.inside',
+] as const;
+const LOG_APPENDS = ['log.append.before-write', 'log.append.after-partial-write', 'log.append.after-fsync'] as const;
+const PEERS_IN_BUILDS = 'peers u1 and u2: each build open at the crash, adopted (or re-adapted once it exited) and consumed once, never dispatched again; each unit\'s workloads disjoint; no unit published before the jobs\' story ended';
 
 /**
  * The whole-pipeline labels a concurrent row leaves out: their occurrences in a concurrent run are the start's
@@ -185,9 +261,9 @@ function concurrentCells(peer: string): Readonly<Record<Boundary, Cell>> {
   return { B1: cell('B1'), B2: cell('B2'), B3: cell('B3'), B4: cell('B4'), B5: cell('B5') };
 }
 
-/** The four deterministic fixtures' cells: the uncrashed test, crashed by the bumpy whole-pipeline row. */
-const fixtureCells = (test: string): Readonly<Record<Boundary, Cell>> => {
-  const cell: Cell = { status: 'fixture', test, crashedIn: PIPELINE_BUMPY };
+/** A deterministic fixture's cells: the uncrashed test, crashed by `crashedIn` (the four M1 fixtures: the bumpy whole-pipeline row). */
+const fixtureCells = (test: string, crashedIn: string = PIPELINE_BUMPY): Readonly<Record<Boundary, Cell>> => {
+  const cell: Cell = { status: 'fixture', test, crashedIn };
   return { B1: cell, B2: cell, B3: cell, B4: cell, B5: cell };
 };
 
@@ -910,6 +986,24 @@ export const MATRIX: readonly Row[] = [
     test: 'test/pipeline-matrix.test.ts',
     cells: pipelineCells(MERGEIN_LABELS, PIPELINE_RECOVERY),
   },
+  {
+    // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC): baseline-1, u1 with a journey lane and I-2 latched,
+    // audit-1, ckpt-1 applying a bundle (revision, divergence, digest), audit-2, ckpt-2 an interpretation-only no-op,
+    // the close-out docs-1, arc-completed and the terminal snapshot, through `roadmap start`. Its occurrences are
+    // sampled by context (`sampleHolistic`): each M3-only label at 1 and 2, each log append at each M3 fact kind's
+    // first, every other label at its first occurrence in each job kind, a candidate's arc lane and the arc's own
+    // records after the first job. Each cell asserts the op the crash hit (the log at the crash holds the recording's
+    // records up to it), then the whole-pipeline oracle plus the holistic record counts of the uncrashed run.
+    row: PIPELINE_HOLISTIC,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'crash', labels: HOLISTIC_LABELS.B1, recovery: HOLISTIC_RECOVERY.B1 },
+      B2: { status: 'crash', labels: HOLISTIC_LABELS.B2, recovery: HOLISTIC_RECOVERY.B2 },
+      B3: { status: 'crash', labels: HOLISTIC_LABELS.B3, recovery: HOLISTIC_RECOVERY.B3 },
+      B4: { status: 'crash', labels: HOLISTIC_LABELS.B4, recovery: HOLISTIC_RECOVERY.B4 },
+      B5: { status: 'crash', labels: HOLISTIC_LABELS.B5, recovery: HOLISTIC_RECOVERY.B5 },
+    },
+  },
   // The concurrent rows (M2 step 8; test/fixtures/cm-common.ts): B starts and reaches its pin, then A starts and
   // walks the straight scenario; each cell crashes one of A's occurrences, restarts, and checks A's M1 trace and
   // B's oracle.
@@ -942,6 +1036,66 @@ export const MATRIX: readonly Row[] = [
     row: CONCURRENT_RESIDUE,
     test: 'test/concurrent-matrix.test.ts',
     cells: concurrentCells('the respawn is not refused by its own residue; the park\'s outstanding targets and its nextProbeAt are unchanged (no probe of it before that time but the resume\'s)'),
+  },
+  // The concurrent job rows (M3 B8; test/fixtures/cm-holistic.ts): the jobs scenario (two units pinned in live builds
+  // while `roadmap audit` runs audit-1 and ckpt-1 applies a bundle) and the preempt scenario (a rule's docs publication
+  // preempting u1's candidate); each cell crashes one of the stepping job's occurrences (a job's crash points pass no
+  // unit: the recording attributes the occurrence to the job by its log's records), asserts the op it hit and the peers'
+  // state at the crash, then the end.
+  {
+    row: CONCURRENT_AUDIT,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', ...JOB_OPS], {
+      B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
+      B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
+      B3: 'inside the audit\'s op or after its lens was read: finished or redone; the job resumes, consuming the call it made',
+      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once',
+      B5: 'nothing open: the job runs on from its facts; one audit-ended, the lens called once',
+    }, PEERS_IN_BUILDS, 'no audit label falls on this boundary'),
+  },
+  {
+    row: CONCURRENT_BUNDLE,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: jobCells([...LOG_APPENDS, 'checkpoint.after-inputs', 'checkpoint.after-call', 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'bundle.after-applied', ...JOB_OPS], {
+      B1: 'checkpoint-inputs lost: captured again once; the bundle\'s plan-applied or divergence lost inside its revision.commit: the revision finished from its kept payload (reconciled)',
+      B2: 'the checkpoint\'s open op closed by its reconciler, or checkpoint-inputs durable with nothing asked, or the bundle\'s revision.commit open: the job resumes as ckpt-1, asks once, and the revision is finished from its payload (reconciled) or aborted and activated again; one plan-applied{bundle}',
+      B3: 'inside the checkpoint\'s op, or the revision\'s bytes kept before its commit: finished or redone; the call consumed, never asked again',
+      B4: 'the call read or the revision\'s plan-applied written: consumed and finished (reconciled); one plan-applied, one divergence, one digest',
+      B5: 'nothing open: the aftermath written only where missing',
+    }, PEERS_IN_BUILDS, 'no checkpoint label falls on this boundary'),
+  },
+  {
+    row: CONCURRENT_BATCH,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: jobCells([
+      'resource.after-intent', 'resource.after-done', 'candidate.act-start', 'candidate.after-commit-tree', 'candidate.act-end', 'batch.after-candidate',
+      ...JOB_OPS.filter((l) => !l.startsWith('resource.')), 'evidence.after-partial-copy', ...LOG_APPENDS, 'ff.act-start', 'ff.act-end', 'snapshot.act-start',
+      'snapshot.after-commit-tree', 'snapshot.act-end',
+    ], {
+      B1: 'a batch lane\'s witness lost: the lane runs again and witnesses once more',
+      B2: 'the batch\'s slot reserve, chained candidate.merge, checkout, lane or batch ff durable, not acted: closed (the ff unpublished at T: a batch CAS is never redone), the batch holder abandoned and batch-1 run again as its next attempt, published once',
+      B3: 'inside the chain\'s act, a checkout or a lane: redone to the same commits, or adopted; the batch published once',
+      B4: 'the candidate made (abandoned, run again), or the batch ff moved integration with no done (reconciled published, finishBatch writes the snapshot and releases); both members retired by the one ff',
+      B5: 'nothing open: the batch goes on from its records',
+    }, 'peer u3: its build open at the crash, adopted (or re-adapted once it exited) and consumed once; it merges after the batch; F-1 resolved once', 'no batch label falls on this boundary'),
+  },
+  {
+    row: CONCURRENT_PREEMPT,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: jobCells([
+      'kill.after-intent', 'kill.after-cancel', 'kill.after-quiesced', 'kill.after-done', 'resource.after-intent', 'resource.after-done', 'docs.act-start',
+      'docs.after-commit-tree', 'docs.act-end', 'worktree.create.act-start', 'worktree.add.inside', 'spawn.after-intent', 'launch.after-launch-json',
+      'launch.after-spawn', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'spawn.after-done', 'evidence.act-start',
+      'evidence.after-partial-copy', 'evidence.act-end', 'worktree.remove.act-start', 'worktree.remove.inside', 'docs.after-lanes', 'ff.act-start', 'ff.act-end',
+      'revision.commit.after-docs', ...LOG_APPENDS, 'revision.commit.after-fact', 'snapshot.act-start', 'snapshot.after-commit-tree', 'snapshot.act-end',
+      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt',
+    ], {
+      B1: 'the rule\'s plan-applied lost inside its revision.commit: finished from its payload (reconciled) with the docs ff it published',
+      B2: 'the preempt kill or the publication\'s op open: the kill finished, the candidate\'s slot released, the lane closed; an unpublished docs holder abandoned and the rule re-evaluated and published once',
+      B3: 'inside the kill (cancel written) or the docs commit or a lane: finished or redone; the rule publishes once',
+      B4: 'the kill quiesced, the docs committed or published, the revision\'s fact or the receipt written: reconciled, nothing twice',
+      B5: 'the kill or the snapshot done: the publication finishes and releases the slot',
+    }, 'peer u1 (its candidate preempted, or, when the restart released its pinned lane first, green before the publication): safety, not the uncrashed order: one holder of the slot at a time, the rule applied once with one docs ff, u1 published once onto the tree the uncrashed run ended with', 'no preempt label falls on this boundary'),
   },
   {
     row: PIPELINE_RUNNER_DEATH,
@@ -1191,8 +1345,9 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // The vacuity repair v1 runs to its merge in a child (test/fixtures/repair-child.ts): its reproduce applies F-1's
-    // mutant at the tip (occurrence 1 of each label; its candidate's kill check is occurrence 2); recovery runs, then the
-    // unit driver finishes the unit.
+    // mutant at the tip (occurrence 1 of each label), its candidate's kill check on the candidate tree (occurrence 2);
+    // each label is crashed at both; recovery runs, then the unit driver finishes the unit, the stage cut short (the
+    // reproduce or the candidate) running again with one new apply.
     row: MUTANT_APPLY,
     test: 'test/repair.test.ts',
     cells: {
@@ -1200,22 +1355,22 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['mutant.act-start'],
-        recovery: 'the intent is durable, nothing made: redone (the worktree made, the patch applied), done; the cut-short reproduce runs again as a new attempt, removing that worktree first; one reproduced, the unit merges',
+        recovery: 'the intent is durable, nothing made: redone (the worktree made, the patch applied), done; the cut-short reproduce or candidate runs again as a new attempt, removing that worktree first; one reproduced, one candidate green, the unit merges',
       },
       B3: {
         status: 'crash',
         labels: ['mutant.after-worktree'],
-        recovery: 'the worktree made, the patch not applied: the worktree removed and the act redone; the reproduce runs again, removing the leftover; one reproduced, the unit merges',
+        recovery: 'the worktree made, the patch not applied: the worktree removed and the act redone; the reproduce or candidate runs again, removing the leftover; one reproduced, one candidate green, the unit merges',
       },
       B4: {
         status: 'crash',
         labels: ['mutant.act-end'],
-        recovery: 'the patched worktree is exactly the recorded outcome: done reconciled with the patched tree; the reproduce runs again, removing the leftover; one reproduced, the unit merges',
+        recovery: 'the patched worktree is exactly the recorded outcome: done reconciled with the patched tree; the reproduce or candidate runs again, removing the leftover; one reproduced, one candidate green, the unit merges',
       },
       B5: {
         status: 'crash',
         labels: ['mutant.after-done'],
-        recovery: 'the apply done, its lane never run: no intent open for it; the reproduce runs again as a new attempt, removing the leftover worktree; one reproduced, the unit merges and resolves F-1',
+        recovery: 'the apply done, its lane never run: no intent open for it; the reproduce or candidate runs again as a new attempt, removing the leftover worktree; one reproduced, one candidate green, the unit merges and resolves F-1',
       },
     },
   },
@@ -1305,6 +1460,62 @@ export const MATRIX: readonly Row[] = [
         recovery: 'decided (a no-op) or applied, its aftermath not written: the next run settles it from the recorded output, writing each missing interpretation divergence (job, index), finding disposition and digest once, and asks nothing',
       },
       B5: { status: 'excluded', why: 'the aftermath is idempotent derivations: settling again writes nothing' },
+    },
+  },
+  // M3 plan rows whose crash states other rows' cells reach (plan "Crash safety"): each names its uncrashed evidence and
+  // the row that crashes it.
+  {
+    // Every holistic whole-pipeline cell asserts the fence invariant on the run's log (no capture fact inside an open
+    // revision.commit), and crashes the bundle's revision.commit before the drift audit's capture.
+    row: INPUT_CAPTURE_FENCE,
+    test: 'test/audit.test.ts',
+    cells: fixtureCells('audit.starts-in-ff-window (H2)', PIPELINE_HOLISTIC),
+  },
+  {
+    // The holistic whole-pipeline row crashes ckpt-2's no-op at its bundle-decided append and at bundle.after-decided: the
+    // restart's scheduler settles the lost interpretation divergence (M3 B8 found it lost: nothing re-ran the settle).
+    row: NOOP_DIVERGENCE,
+    test: 'test/checkpoint.test.ts',
+    cells: fixtureCells('noop.interpretation-divergence (H12)', PIPELINE_HOLISTIC),
+  },
+  {
+    // A reverse is a command whose effect commits through revision.commit (src/commands/reverse.ts): its crash states are
+    // the command.apply and revision.commit rows'. Not crashed as a reverse command of its own (a carry-forward).
+    row: REVERSE,
+    test: 'test/revision.test.ts',
+    cells: fixtureCells('reverse.preimage-restores', REVISION_COMMIT),
+  },
+  {
+    // The redo's fingerprint gate is crashed with a stub re-check (ff.test.ts ff.fingerprint-callback-gates-redo, in the
+    // candidate.merge, integration.ff, snapshot.publish row); the finding eligibility half uncrashed (a carry-forward).
+    row: FF_ELIGIBILITY,
+    test: 'test/repair.test.ts',
+    cells: fixtureCells('p1.opened-mid-candidate-blocks-ff', CANDIDATE_FF_SNAPSHOT),
+  },
+  {
+    // test/job-residue-restart.test.ts: job-residue.dead-holder (a job's lane runner started, the executor dead) and
+    // job-residue.retry-crash (the job's reclaim at its disposition), each at occurrence 1; the concurrent batch row
+    // crashes a batch job's lanes and slot.
+    row: JOB_RESIDUE,
+    test: 'test/job-residue-restart.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'a job\'s reservation or lane intent durable, not acted, is the concurrent batch row\'s resource.after-intent and spawn.after-intent cells' },
+      B3: {
+        status: 'crash',
+        labels: ['launch.after-spawn'],
+        recovery: 'the job\'s lane runner started, the executor dead: recovery settles the spawn, the lane\'s cleanup fails into a residue keyed to the job, and the probe reclaims it under the job\'s owner label',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['retry.before-disposition'],
+        recovery: 'the reclaim\'s teardown passed, the disposition not written: recovery reruns it, records one cleaned disposition, releases',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['retry.after-disposition'],
+        recovery: 'the disposition durable, the instance cleaning under the job\'s retry: recovery releases it, no second disposition',
+      },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },

@@ -9,6 +9,12 @@
 // with the recovery trace the label allows. Also: the runner, the supervisor, and supervisor and executor
 // together killed from outside mid-build; and the adversarial rows (a malformed result, a cancellation, a
 // failed publication), each crashed at its own occurrence of its labels.
+//
+// M3 (B8): the holistic row (test/fixtures/pm-holistic.ts), a holistic arc from its baseline to its terminal
+// snapshot. Its occurrences are sampled by the context the recording's log puts them in (`sampleHolistic`), and
+// each cell also asserts the op the crash hit (the log at the crash holds the recording's records up to it), the
+// product without the close-out's run-specific renderings, the holistic layer's records as uncrashed, and the fence
+// (no input capture inside an open revision.commit).
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,12 +29,16 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import {
-  ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH,
+  ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH,
   PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
 } from './matrix.ts';
 import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf } from './oracle.ts';
-import { LABEL_TRACE, NONE, R, appendTrace } from './fixtures/pm-trace.ts';
-import { type ExecRun, SMOKE_DEFAULT, hostFile } from './fixtures/exec-common.ts';
+import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from './fixtures/pm-trace.ts';
+import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from './fixtures/exec-common.ts';
+import {
+  HOLISTIC, HOLISTIC_OUTCOMES, type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, sampleHolistic,
+} from './fixtures/pm-holistic.ts';
+import type { LogSnapshot } from '../src/core/log.ts';
 import {
   BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
   STRAIGHT_OUTCOMES, type Scenario, blockedAt, buildRunner, callsMatchSteps, finalReason, layout, moveIntegration, readRecord, release, supervisedRun,
@@ -54,8 +64,16 @@ const WAIT_MS = 120_000;
 
 type Reference = Readonly<{
   name: string;
+  /** The uncrashed run's repo. */
+  repo: string;
   recorded: Recorded;
+  /** The recording file's lines (pm-record.ts), in order. */
+  recordText: string;
+  /** Every step but the startup smoke is keyed to a unit or job (pm-common.ts RunOptions.keyed). */
+  keyed: boolean;
   events: readonly Event[];
+  /** The uncrashed run's log. */
+  snap: LogSnapshot;
   reason: ExitReason;
   tree: string;
   units: Readonly<Record<string, UnitEnd>>;
@@ -72,23 +90,29 @@ function expected(ref: Reference, r: ExecRun, trace: Trace): Expected {
   return { integration: 'main', baseline: baselineOf(r), tree: ref.tree, units: ref.units, outcomes: ref.outcomes, needsUser: ref.needsUser, trace };
 }
 
-async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly<Record<string, readonly string[]>>): Promise<Reference> {
+type RefOptions = Readonly<{ keyed?: true; needsUser?: readonly string[] }>;
+
+async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly<Record<string, readonly string[]>>, opts: RefOptions = {}): Promise<Reference> {
   const laid = layout(t, s);
   const record = join(tmpDir('pm-record'), 'record');
-  await supervisedRun(laid, { record });
+  await supervisedRun(laid, { record, ...(opts.keyed === undefined ? {} : { keyed: opts.keyed }) });
   const { r } = laid;
   const run = runOf(r);
   const ids = unitIds(r);
   const ref: Reference = {
     name,
+    repo: r.repo,
     recorded: readRecord(record),
+    recordText: readFileSync(record, 'utf8'),
+    keyed: opts.keyed === true,
     events: run.events,
+    snap: journalOf(r),
     reason: finalReason(r),
     tree: git(r.repo, 'rev-parse', 'main^{tree}'),
     // Every unit of every reference scenario merges (the oracle below checks it).
     units: Object.fromEntries(ids.map((u) => [u, 'merged'])),
     outcomes: Object.fromEntries(ids.map((u) => [u, outcomesOf(run, u)])),
-    needsUser: [],
+    needsUser: opts.needsUser ?? [],
   };
   assert.deepEqual(ref.outcomes, outcomes, `${name}: the uncrashed run takes the scenario's path`);
   assert.deepEqual(callsMatchSteps(r), { ...callsMatchSteps(r), calls: callsMatchSteps(r).steps, unmatched: 0 }, `${name}: every step called once`);
@@ -103,7 +127,7 @@ function traceFor(ref: Reference, label: string, occurrence: number): Trace {
   if (label.startsWith('log.append.')) {
     const e = ref.events.find((x) => x.seq === occurrence);
     if (e === undefined) throw new Error(`${ref.name}: no event at seq ${occurrence}`);
-    return appendTrace(label, e);
+    return appendTrace(label, e, inRevisionAt(ref.events, e.seq));
   }
   const t = LABEL_TRACE[label];
   if (t === undefined) throw new Error(`no recovery trace is declared for ${label}`);
@@ -114,17 +138,20 @@ function traceFor(ref: Reference, label: string, occurrence: number): Trace {
 // A crash cell
 
 /** `s` crashed at (label, occurrence): one crash, one restart, and the arc ends as `ref` did, with `trace`. */
-async function crashCell(t: Owner, ref: Reference, s: Scenario, label: string, occurrence: number, trace: Trace, whileDown?: (r: ExecRun) => void): Promise<void> {
+async function crashCell(
+  t: Owner, ref: Reference, s: Scenario, label: string, occurrence: number, trace: Trace, whileDown?: (r: ExecRun) => void, tree: (r: ExecRun) => string = () => ref.tree,
+): Promise<ExecRun> {
   const laid = layout(t, s);
   const { r } = laid;
   const trigger = writeTrigger(tmpDir('pm-trigger'), { label, occurrence });
-  await supervisedRun(laid, { trigger, ...(whileDown === undefined ? {} : { whileDown }) });
+  await supervisedRun(laid, { trigger, ...(whileDown === undefined ? {} : { whileDown }), ...(ref.keyed ? { keyed: true } : {}) });
   assertFired(trigger);
   assert.equal(stateOf(r).crashes.length, 1, 'one executor crash, counted by the supervisor, which restarted it');
   assert.deepEqual(finalReason(r), ref.reason);
   const m = callsMatchSteps(r);
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
-  assertOracle(runOf(r), expected(ref, r, trace));
+  assertOracle(runOf(r), { ...expected(ref, r, trace), tree: tree(r) });
+  return r;
 }
 
 /** Labels of a row's crash cells, as a sorted set. */
@@ -139,7 +166,7 @@ const boundaryOf = (row: string, label: string): Boundary => {
 const invokeSpawns = (events: readonly Event[]): readonly IntentOf<'proc.spawn'>[] =>
   events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose !== 'smoke' ? [e] : []));
 
-type CellSpec = Readonly<{ name: string; run: (t: TestContext) => Promise<void> }>;
+type CellSpec = Readonly<{ name: string; run: (t: TestContext) => Promise<unknown> }>;
 
 /** Every label of a whole-pipeline scenario at occurrence 1, and 2 where it repeats. */
 function pipelineCells(row: string, ref: Reference, s: Scenario): readonly CellSpec[] {
@@ -150,6 +177,30 @@ function pipelineCells(row: string, ref: Reference, s: Scenario): readonly CellS
       run: (t) => crashCell(t, ref, s, label, occurrence, traceFor(ref, label, occurrence)),
     }));
   });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The holistic row
+
+/**
+ * The holistic scenario crashed at one sampled occurrence: the op the crash hit is the recording's (the log at the
+ * crash, read while the supervisor is stopped, holds exactly the records the recording held there, the last the same
+ * record), then the whole-pipeline cell's end, and the holistic layer's records as uncrashed.
+ */
+async function holisticCell(t: Owner, ref: Reference, c: Sampled): Promise<void> {
+  let atCrash: LogSnapshot | null = null;
+  const r = await crashCell(t, ref, HOLISTIC, c.label, c.occurrence, traceFor(ref, c.label, c.occurrence), (x) => void (atCrash = journalOf(x)), (x) => {
+    assert.deepEqual(holisticProduct(x.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
+    return git(x.repo, 'rev-parse', 'main^{tree}');
+  });
+  if (atCrash === null) throw new Error('the crash was not observed while the executor was down');
+  const crash = atCrash as LogSnapshot;
+  const refSnap = ref.snap;
+  assert.equal(crash.events.length, c.durable, `the log at the crash holds ${c.durable} records, as the recording did at ${c.label}#${c.occurrence}`);
+  if (c.durable > 0) assert.equal(describeRecord(crash, crash.events.at(-1)!), describeRecord(refSnap, refSnap.events[c.durable - 1]!), 'the last record at the crash is the recording\'s');
+  const end = journalOf(r);
+  assert.deepEqual(holisticRecords(end), holisticRecords(refSnap), 'the holistic layer\'s records as uncrashed');
+  assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -265,12 +316,13 @@ async function hostDeath(t: Owner, ref: Reference): Promise<void> {
 
 test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000 }, async (t) => {
   const started = Date.now();
-  const [straight, bumpy, malformed, cancel, staleLane] = await Promise.all([
+  const [straight, bumpy, malformed, cancel, staleLane, holistic] = await Promise.all([
     reference(t, 'straight', STRAIGHT, STRAIGHT_OUTCOMES),
     reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES),
     reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
     reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
     reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),
+    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, { keyed: true, needsUser: ['divergence-digest'] }),
   ]);
 
   // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that
@@ -280,6 +332,23 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
     assert.deepEqual([...ref.recorded.others.keys()], ['supervisor.ts'], `${ref.name}: only the executor and the supervisor reach crash points`);
     assert.deepEqual([...ref.recorded.others.get('supervisor.ts')!].sort(), rowLabels(SUPERVISOR_HOST), `${ref.name}: the supervisor's labels are the supervisor/host row's`);
   }
+  // The holistic run: its sampled occurrences crash exactly its row's labels; its story is the one the row names.
+  const sampled = sampleHolistic(holistic.recordText, holistic.snap);
+  assert.deepEqual([...new Set(sampled.map((c) => c.label))].sort(), rowLabels(PIPELINE_HOLISTIC), 'holistic: the sampled labels are the row\'s');
+  assert.deepEqual([...holistic.recorded.others.keys()], ['supervisor.ts'], 'holistic: only the executor and the supervisor reach crash points');
+  assert.deepEqual(holisticRecords(holistic.snap), {
+    counts: {
+      'obligation-latched': 1, 'audit-started': 2, 'audit-ended': 2, 'checkpoint-inputs': 2, 'plan-applied': 2, divergence: 2, 'divergence-digest': 1,
+      'bundle-decided': 1, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1,
+    },
+    audits: ['audit-1', 'audit-2'], ended: [['audit-1', 'completed'], ['audit-2', 'completed']], checkpoints: ['ckpt-1', 'ckpt-2'],
+    divergences: [['D-1', 'ckpt-1'], ['D-2', 'ckpt-2']], terminal: 1, completion: true,
+  }, 'holistic: baseline, u1, audit-1, ckpt-1 applied, audit-2, ckpt-2 a no-op, the close-out, arc-completed, the terminal snapshot');
+  const holisticCells: readonly CellSpec[] = sampled.map((c) => ({
+    name: `holistic ${boundaryOf(PIPELINE_HOLISTIC, c.label)} ${c.label}#${c.occurrence} (${c.why})`,
+    run: (t) => holisticCell(t, holistic, c),
+  }));
+
   // One tree for every one-unit mul scenario: the kill cells' expectations read it from the straight run.
   assert.equal(malformed.tree, straight.tree);
   assert.equal(cancel.tree, straight.tree);
@@ -322,7 +391,8 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
     { name: `${PIPELINE_HOST_DEATH}: B3 kill`, run: (t) => hostDeath(t, straight) },
   ];
 
-  const cells = [...pipelineCells(PIPELINE_STRAIGHT, straight, STRAIGHT), ...pipelineCells(PIPELINE_BUMPY, bumpy, BUMPY), ...adversarial, ...kills];
-  await Promise.all(cells.map((c) => t.test(c.name, CELL, c.run)));
+  const cells = [...pipelineCells(PIPELINE_STRAIGHT, straight, STRAIGHT), ...pipelineCells(PIPELINE_BUMPY, bumpy, BUMPY), ...holisticCells, ...adversarial, ...kills];
+  const TEMPB8 = process.env['PM_ONLY']; // TEMP-B8
+  await Promise.all(cells.filter((c) => TEMPB8 === undefined || new RegExp(TEMPB8).test(c.name)).map((c) => t.test(c.name, CELL, async (x) => void (await c.run(x)))));
   t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s`);
 });
