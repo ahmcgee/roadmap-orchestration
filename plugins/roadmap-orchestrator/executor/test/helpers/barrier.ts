@@ -1,7 +1,7 @@
 // File barriers for cross-process coordination. A child reaching barrier `name` creates
 // `<dir>/<name>.reached` and blocks until `<dir>/<name>.release` exists. The test awaits `.reached`,
 // inspects the world while the child is parked, then releases it. Every wait has a timeout that throws.
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { tmpDir } from './repo.ts';
@@ -21,12 +21,25 @@ function sleepSync(ms: number): void {
   Atomics.wait(sleepCell, 0, 0, ms);
 }
 
-/** Child side: announce the barrier and block until released. Reaching the same barrier twice throws. */
-export function waitAtBarrier(dir: string, name: string, timeoutMs: number): void {
+/** The barrier one unit parks at: concurrent units reaching the "same" barrier each get their own. */
+export const unitBarrierName = (unit: string, name: string): string => `${unit}.${name}`;
+
+/**
+ * Child side: announce the barrier and block until released. Reaching the same barrier twice throws. With
+ * `progressMs`, a `waiting <name>` line goes to stdout that often while parked, as a lane doing real work
+ * would print (the executor's stall watchdog counts output as progress).
+ */
+export function waitAtBarrier(dir: string, name: string, timeoutMs: number, progressMs?: number): void {
   writeFileSync(reachedPath(dir, name), `${process.pid}\n`, { flag: 'wx' });
   const deadline = Date.now() + timeoutMs;
+  let nextProgress = Date.now();
   while (!existsSync(releasePath(dir, name))) {
-    if (Date.now() >= deadline) throw new Error(`barrier ${name} in ${dir}: not released within ${timeoutMs} ms`);
+    const now = Date.now();
+    if (now >= deadline) throw new Error(`barrier ${name} in ${dir}: not released within ${timeoutMs} ms`);
+    if (progressMs !== undefined && now >= nextProgress) {
+      writeSync(1, `waiting ${name}\n`);
+      nextProgress = now + progressMs;
+    }
     sleepSync(POLL_MS);
   }
 }
