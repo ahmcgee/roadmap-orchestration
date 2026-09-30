@@ -5,18 +5,29 @@
 // it leaves holds absolute paths. Each test runs the M1 fixture (evals/m1) on the previous release to a
 // mid-arc point with live state, stops it, then finishes the arc with HEAD's driver (same repo, run dir and
 // host dir; setup does not re-run; the spec inputs stay as the previous release left them) and grades it
-// with HEAD's check.ts: every criterion passes, and the upgrade forced no park and no new session.
+// with HEAD's check.ts: every criterion passes, and the upgrade forced no park and no new session. The
+// previous release (1.0.0-dev.4) scheduled serially, so every arc it started stays legacy under HEAD (M2
+// "Adopted arcs"): no `scheduling: dag`, and no `@cpu` token is ever reserved for it.
 //
 //   upgrade.stop-mid-build     unit `slug` merged; `page-id` stopped mid-build (its Codex thread started, its
 //                              worktree dirty), so held with an interrupted attempt; `resume` queued through
 //                              the previous release's CLI. HEAD continues the same thread.
 //   upgrade.reopen-mid-plan-check
 //                              unit `slug` merged; `page-id` parked at plan-check on a blocking needs-user
-//                              (escalated on its seat and on the escalation seat), its spec edited to rev 2,
-//                              re-opened by `resume page-id` (the needs-user acknowledged), and stopped
-//                              mid-plan-check, so held. HEAD re-runs the plan-check and merges it on rev 2;
-//                              its first start recorded the plan in force (rev 1), and the finished arc
-//                              then classifies an apply adding a unit as accepted.
+//                              (escalated on its seat and on the escalation seat), its spec edited to rev 2 and
+//                              put in force by `roadmap apply` (plan revision 2), re-opened by `resume page-id`
+//                              (the needs-user acknowledged), and stopped mid-plan-check, so held. HEAD re-runs
+//                              the plan-check and merges it on rev 2, recording no plan revision of its own; the
+//                              finished arc then classifies an apply adding a unit as accepted (revision 3).
+//   upgrade.park-adopted       unit `slug` merged; `page-id`'s lane killed by a signal twice (blocked, then its
+//                              retry), so parked `lane-blocked` with no park class; its needs-user acknowledged,
+//                              and the previous release ends the arc. HEAD reads the park as operator-env,
+//                              `resume page-id` (queued through the previous release's CLI) re-runs its lanes,
+//                              which now pass, and it merges.
+//   upgrade.named-cpu-low-host (F18) the plan declares a named resource `cpu`, which both units reserve; `page-id`
+//                              stopped mid-build as in stop-mid-build. HEAD finishes under a one-CPU affinity
+//                              (`taskset -c 0`), where a DAG arc's build of 4 `@cpu` tokens is over capacity: the
+//                              legacy arc is not refused, reserves no `@cpu`, and reserves `cpu` as before.
 //
 // Not covered: a crash mid-op (recovery of the previous release's open intents; the crash matrix covers
 // recovery within one release), a backend parked on a usage limit, the Claude-only profile.
@@ -29,11 +40,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, test } from 'node:test';
 import { isAlive, statOf } from '../src/contain/proc.ts';
 import type { Event } from '../src/core/events.ts';
-import { arcId, unitId } from '../src/core/ids.ts';
+import { arcId, resourceName, unitId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import type { ProcIdentity } from '../src/core/records.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { requirePlanInForce } from '../src/input/inforce.ts';
+import { overCapacity } from '../src/resources/pool.ts';
+import { loadSpec } from '../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../src/pipeline/rounds.ts';
 import type { CheckResult } from '../evals/m1/check.ts';
 import type { Report } from '../evals/m1/driver.ts';
@@ -49,10 +63,10 @@ after(assertNoSurvivors);
 /**
  * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
  * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.3, merged to main as
- * PR #103 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
+ * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.4, merged to main as
+ * PR #104 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
  */
-const PREVIOUS_RELEASE = 'a54c59021974a3525123ed1a4fb7b88aa3779184';
+const PREVIOUS_RELEASE = 'a5dfcbfeb6d49db25937aa5d2e8b1847edbe60fa';
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../', import.meta.url));
@@ -130,14 +144,18 @@ type Phase1 = Readonly<{
   run: readonly string[];
 }>;
 
-/** Lays out the fixture with the previous release's setup and fakes for `m1` then `extra` (raw fake steps). */
-async function preparePrevious(m1: readonly M1Step[], extra: readonly Step[]): Promise<Phase1> {
+/**
+ * Lays out the fixture with the previous release's setup, lets `edit` change its inputs before anything runs, and
+ * writes the fakes for `m1` then `extra` (raw fake steps).
+ */
+async function preparePrevious(m1: readonly M1Step[], extra: readonly Step[], edit: (l: Layout) => void = () => {}): Promise<Phase1> {
   const dir = join(tmpDir('upgrade'), 'fx');
   const setup = await runUntilExit(process.execPath, [join(previous.root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
   assert.equal(setup.code, 0, setup.stderr);
   const l = layout(dir);
   const planArc = (JSON.parse(readFileSync(l.plan, 'utf8')) as { arc: string }).arc;
   assert.equal(planArc, l.arc, 'the previous release lays the fixture out as HEAD\'s evals/m1/layout.ts does; if not, adapt this harness');
+  edit(l);
   // HEAD's driver finishes the run with the host dir under fake/, so the previous release starts it there too.
   const host = join(l.fake, 'host');
   mkdirSync(host, { recursive: true });
@@ -204,12 +222,16 @@ async function stopPrevious(p: Phase1, supervisor: ProcIdentity): Promise<void> 
 
 type Finished = Readonly<{ driver: Exit; report: Report; check: CheckResult; calls: readonly CallRecord[]; after: readonly Event[]; view: JournalView }>;
 
-/** HEAD's driver on the same fixture with `m1` (its smoke prepended), then HEAD's check. */
-async function finishOnHead(p: Phase1, m1: readonly M1Step[]): Promise<Finished> {
+/**
+ * HEAD's driver on the same fixture with `m1` (its smoke prepended), then HEAD's check. `wrap` runs the driver
+ * (and so the supervisor and executors it starts) under a command prefix, e.g. a CPU affinity.
+ */
+async function finishOnHead(p: Phase1, m1: readonly M1Step[], wrap: readonly string[] = []): Promise<Finished> {
   const highWater = journalOf(p).view.highWater();
   const file = join(p.dir, 'head.json');
   writeFileSync(file, JSON.stringify({ steps: m1 }));
-  const driver = await runUntilExit(process.execPath, [join(EVALS, 'driver.ts'), p.dir, '--profile', 'default', '--fake', file], { env: process.env, timeoutMs: PHASE_MS });
+  const [cmd = process.execPath, ...pre] = wrap.length === 0 ? [] : [...wrap, process.execPath];
+  const driver = await runUntilExit(cmd, [...pre, join(EVALS, 'driver.ts'), p.dir, '--profile', 'default', '--fake', file], { env: process.env, timeoutMs: PHASE_MS });
   const report = JSON.parse(readFileSync(p.l.report, 'utf8')) as Report;
   const checked = await runUntilExit(process.execPath, [join(EVALS, 'check.ts'), p.dir], { env: process.env, timeoutMs: CLI_MS });
   const check = JSON.parse(checked.stdout.split('\n')[0]!) as CheckResult;
@@ -234,17 +256,29 @@ function assertFinished(f: Finished): void {
   assert.deepEqual(forced, [], 'the upgrade parked or stopped no unit');
   const raised = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'needsuser.raise' ? [e.expect.id] : []));
   assert.deepEqual(raised, [], 'HEAD raised no needs-user');
+  assertLegacy(f);
+}
+
+/** The previous release's arc stays legacy (serial) under HEAD: no `scheduling: dag`, and no `@cpu` token reserved. */
+function assertLegacy(f: Finished): void {
+  assert.equal(f.view.scheduling(), 'legacy');
+  const cpu = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'resource.transition' ? e.expect.resources.filter((r) => r.startsWith('@cpu#')) : []));
+  assert.deepEqual(cpu, [], 'HEAD reserved no @cpu token for the legacy arc');
 }
 
 /** HEAD's calls after its start-up smoke (Claude, then Codex, under `default`). */
 const SMOKE_CALLS = 2;
 // ---------------------------------------------------------------------------------------------------
 
-test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous release was stopped in, and merges the arc', T, async () => {
-  const c = clean();
+/**
+ * Phase 1 of stop-mid-build: the previous release merges `slug` and is stopped mid-build of `page-id` (held,
+ * interrupted); `resume` is queued through its CLI. Returns the phase and HEAD's steps to finish it (the build
+ * resumed with the continue directive, then the gate).
+ */
+async function stoppedMidBuild(c: Clean, edit?: (l: Layout) => void): Promise<Readonly<{ p: Phase1; head: readonly M1Step[] }>> {
   const files = c.pageId.build.acts.flatMap((a) => (a.type === 'commit' ? [a.files] : []))[0];
   assert.ok(files !== undefined);
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(files as Readonly<Record<string, string>>)]);
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(files as Readonly<Record<string, string>>)], edit);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -260,12 +294,16 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
   const resume = await p.cli(['resume', ...p.run]);
   assert.equal(resume.code, 0, resume.stderr);
+  return { p, head: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] };
+}
 
-  const commit = { ...c.pageId.build, round: 'resume' as const, stdinContains: [CONTINUE_DIRECTIVE] };
+test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous release was stopped in, and merges the arc', T, async () => {
+  const { p, head } = await stoppedMidBuild(clean());
+  const scope = scopeOf(p);
   let f: Finished;
   track(scope);
   try {
-    f = await finishOnHead(p, [commit, c.pageId.gate]);
+    f = await finishOnHead(p, head);
   } finally {
     await teardown(scope);
   }
@@ -285,10 +323,14 @@ test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-open
       const view = journalOf(p).view;
       return view.unit(unitId('page-id')).status === 'park-pending' && view.needsUser().length > 0 ? true : null;
     });
-    // The architect's edit (M1's stand-in for patch-spec): the next rev, one more fact; then `resume page-id`.
+    // The architect's edit: the next rev, one more fact, put in force by `roadmap apply` (a pending revision);
+    // then `resume page-id` re-opens the unit on it.
     const specPath = join(p.l.input, 'page-id.json');
     const spec = JSON.parse(readFileSync(specPath, 'utf8')) as { rev: number; facts: object[] };
     writeFileSync(specPath, `${JSON.stringify({ ...spec, rev: spec.rev + 1, facts: [...spec.facts, { id: 'F2', text: 'Contract one is unambiguous about the empty slug.', state: 'active' }] }, null, 2)}\n`);
+    const apply = await p.cli(['apply', ...p.run]);
+    assert.equal(apply.code, 0, apply.stderr);
+    await until('the previous release applies the revision as plan revision 2', PHASE_MS, () => (journalOf(p).view.planApplied()?.rev === 2 ? true : null));
     const reopen = await p.cli(['resume', 'page-id', ...p.run]);
     assert.equal(reopen.code, 0, reopen.stderr);
     await midCall(p);
@@ -318,13 +360,14 @@ test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-open
 });
 
 /**
- * The previous release kept no plan revisions: HEAD's first start records the files as revision 1 (the
- * upgrade default), and the arc then takes `roadmap apply` like any other: a unit added to its plan
+ * The previous release kept the plan revisions (1 at its start, 2 by its apply): HEAD's start finds its files
+ * in force and records none, and the arc then takes `roadmap apply` like any other: a unit added to its plan
  * classifies as accepted (a dry run: the arc is complete, and no executor runs to apply it).
  */
 async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
   const revisions = f.after.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.rev, e.fact.command]] : []));
-  assert.deepEqual(revisions, [[1, null]], 'HEAD\'s first start recorded the plan in force as revision 1');
+  assert.deepEqual(revisions, [], 'HEAD recorded no plan revision: the previous release\'s revision 2 is in force');
+  assert.equal(f.view.planApplied()?.rev, 2);
   const plan = JSON.parse(readFileSync(p.l.plan, 'utf8')) as { units: { id: string; spec: string }[] };
   const last = plan.units.at(-1)!;
   const spec = JSON.parse(readFileSync(join(p.l.input, last.spec), 'utf8')) as object;
@@ -332,5 +375,97 @@ async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
   writeFileSync(p.l.plan, JSON.stringify({ ...plan, units: [...plan.units, { ...last, id: 'extra', spec: 'extra.json', after: [] }] }));
   const dry = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'apply', '--dry-run', ...p.run], { env: process.env, timeoutMs: CLI_MS });
   assert.equal(dry.code, 0, dry.stderr);
-  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 1, nextRev: 2, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [] });
+  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 2, nextRev: 3, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [] });
 }
+
+// ---------------------------------------------------------------------------------------------------
+// M2 variants (1.0.0-dev.4 → dev.5)
+
+/** Rewrites a JSON input file of the fixture in place. */
+function editJson<T>(path: string, edit: (value: T) => T): void {
+  writeFileSync(path, `${JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as T), null, 2)}\n`);
+}
+
+test('upgrade.park-adopted: a unit the previous release parked lane-blocked is an operator-env park on HEAD; `resume page-id` re-runs its lanes, and it merges', T, async () => {
+  const c = clean();
+  let marker = '';
+  // page-id's lane is killed by a signal (no verdict: blocked) until the marker exists.
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build], [], (l) => {
+    marker = join(l.dir, 'page-id-lane-passes');
+    editJson<{ lanes: { argv: readonly string[] }[] }>(join(l.input, 'page-id.json'), (spec) => ({
+      ...spec,
+      lanes: spec.lanes.map((lane) => ({ ...lane, argv: ['/bin/sh', '-c', '[ -e "$1" ] && exec node --test test/page-id.test.js; kill -KILL $$', 'lane', marker] })),
+    }));
+  });
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    const item = await until('page-id parks on a raised needs-user', PHASE_MS, () => {
+      const view = journalOf(p).view;
+      return view.unit(unitId('page-id')).status === 'park-pending' ? view.needsUser()[0]?.id ?? null : null;
+    });
+    const ack = await p.cli(['ack', item, ...p.run]);
+    assert.equal(ack.code, 0, ack.stderr);
+    // Every unit merged, or parked with its item acknowledged: the previous release ends the arc itself.
+    await until('the previous release ends the arc once the park is acknowledged', PHASE_MS, () => (isAlive(supervisor) ? null : true));
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  const parked = mid.unit(unitId('page-id'));
+  assert.deepEqual([parked.status, parked.decided?.stage, parked.decided?.outcome], ['park-pending', 'lanes', 'blocked']);
+  assert.equal(parked.decided?.park, undefined, 'the previous release wrote no park class');
+  assert.deepEqual(parked.park?.park, { class: 'operator', kind: 'env' }, 'HEAD reads the classless park as operator-env');
+  const resume = await p.cli(['resume', 'page-id', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+  writeFileSync(marker, '');
+
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [c.pageId.gate]);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  assert.deepEqual(f.after.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'unparked' ? [e.fact.unit] : [])), ['page-id'], 'resume page-id unparked it');
+  const ran = f.after.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === 'page-id' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+  assert.deepEqual(ran, ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'], 'HEAD re-ran the lanes, and nothing before them');
+});
+
+test('upgrade.named-cpu-low-host: a legacy plan\'s named resource `cpu` is reserved as before on a one-CPU host; the arc is not refused as over capacity and takes no @cpu', T, async () => {
+  const affinity = spawnSync('taskset', ['-c', '0', process.execPath, '-e', 'process.stdout.write(String(require("node:os").availableParallelism()))'], { encoding: 'utf8' });
+  assert.equal(affinity.status, 0, `taskset: ${affinity.stderr}`);
+  assert.equal(affinity.stdout, '1', 'taskset -c 0 leaves one CPU available');
+  const withCpu = (resources: readonly string[]): readonly string[] => [...resources, 'cpu'];
+  const { p, head } = await stoppedMidBuild(clean(), (l) => {
+    type Plan = { resources: { name: string }[]; units: { spec: string; resources: string[] }[] };
+    editJson<Plan>(l.plan, (plan) => {
+      const [scratch] = plan.resources;
+      assert.ok(scratch !== undefined && plan.resources.length === 1);
+      // The same state-dir resource as `scratch`, under its own owner file.
+      const cpu = JSON.parse(JSON.stringify(scratch).replaceAll('scratch', 'cpu')) as { name: string };
+      assert.equal(cpu.name, 'cpu');
+      for (const u of plan.units) editJson<{ resources: string[] }>(join(l.input, u.spec), (spec) => ({ ...spec, resources: [...withCpu(spec.resources)] }));
+      return { ...plan, resources: [...plan.resources, cpu], units: plan.units.map((u) => ({ ...u, resources: [...withCpu(u.resources)] })) };
+    });
+  });
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, head, ['taskset', '-c', '0']);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  const reserved = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'resource.transition' && e.expect.edge.type === 'reserve' ? [e.expect.resources] : []));
+  assert.ok(reserved.some((units) => units.includes(resourceName('cpu'))), `HEAD reserved the named cpu: ${JSON.stringify(reserved)}`);
+  // What the legacy reading spares it: the same plan, read as a new (DAG) arc on this host, is over capacity.
+  const plan = requirePlanInForce(absPath(p.l.runDir), f.view).plan;
+  const specs = new Map(plan.units.map((u) => [u.id, loadSpec(absPath(join(p.l.input, u.spec)))] as const));
+  assert.ok(overCapacity(plan, { cpu: 1 }, specs, null).length > 0, 'a DAG arc builds with 4 @cpu tokens: over a one-CPU capacity');
+  assert.deepEqual(overCapacity(plan, { cpu: 1 }, specs, f.view), [], 'the legacy arc is never over capacity');
+});

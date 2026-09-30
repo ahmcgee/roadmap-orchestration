@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "role": "planCheck",
+      "answer": {
+        "decision": "approve",
+        "reasons": [
+          "The spec is consistent with contract one and C-1 to C-3."
+        ],
+        "patch": null,
+        "risk": "med",
+        "notes": "",
+        "premises": []
+      }
+    },
+    {
+      "role": "build",
+      "round": "fresh",
+      "acts": [
+        {
+          "type": "commit",
+          "message": "top: add top",
+          "files": {
+            "src/top.js": "import { left } from './left.js';\nimport { right } from './right.js';\n\n/** The top part (.roadmap/contracts/one.md, parts). */\nexport function top() {\n  return `${left()}+${right()}`;\n}\n",
+            "test/top.test.js": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { top } from '../src/top.js';\n\ntest('top joins left and right (A1)', () => {\n  assert.equal(top(), 'base-left+base-right');\n});\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "gate",
+      "answer": {
+        "decision": "approve",
+        "findings": [],
+        "directives": [],
+        "reasons": [
+          "A1 and A2 hold; top imports left and right."
+        ],
+        "premises": []
+      }
+    }
+  ]
+}
