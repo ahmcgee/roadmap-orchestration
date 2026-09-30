@@ -7,16 +7,17 @@ import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import { type CommandContext, applyAtSafePoint, applyCommand, applyControl } from '../src/commands/apply.ts';
 import { incomingPath, pollCommands, readReceipt, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import type { IntentOf } from '../src/core/events.ts';
+import { type IntentOf, probeTargetKey } from '../src/core/events.ts';
 import { type ArcId, type CommandId, arcId, invocationId, needsUserId, opId, opKey, sha, specRev, unitId } from '../src/core/ids.ts';
 import { type OpenJournal, openJournal } from '../src/core/log.ts';
 import type { CommandBody, CommandFile } from '../src/core/records.ts';
-import { absPath, refName } from '../src/core/values.ts';
+import { absPath, isoTimeOf, refName } from '../src/core/values.ts';
 import { readResidues, recordResidue, undispositioned } from '../src/host/residues.ts';
 import { needsUserAckPath, openBlocking, raiseNeedsUser, readNeedsUserAck } from '../src/needsuser.ts';
 import { commandReconciler } from '../src/recover/command.ts';
 import { type SweepHolder, cleanup, reserve, resourceTable, run as runReservation } from '../src/resources/reserve.ts';
 import { ownerLabel } from '../src/resources/teardown.ts';
+import type { Prober } from '../src/schedule/types.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -261,16 +262,94 @@ describe('command queue', () => {
     journal.close();
   });
 
-  it('cmd.resume-parked-rejected: resume <unit> of a unit parked outside plan-check and gate is rejected, naming the re-entry; nothing changes', T, async () => {
+});
+
+describe('resume.per-class: resume <unit> of a parked unit follows its park\'s class (A7)', () => {
+  const resumeU1 = async (ctx: CommandContext) => {
+    const cmd = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
+    await applyAtSafePoint(ctx, poll(ctx));
+    return { cmd, receipt: terminalReceipt(ctx.runDir, cmd.id) };
+  };
+  const unitFacts = (ctx: CommandContext, kind: string) => events(ctx.runDir).filter((e) => e.type === 'fact' && e.fact.kind === kind);
+  /** A prober whose run writes the probe fact with the result `results` names for the target, as the real one does. */
+  const fakeProber = (journal: OpenJournal, results: Readonly<Record<string, 'pass' | 'fail'>>, ran: string[]): Prober => ({
+    due: () => [],
+    run: (job) => {
+      const key = probeTargetKey(job.target);
+      const result = results[key] ?? assert.fail(`no result for probe target ${key}`);
+      ran.push(`${key}@${job.covers.join(',')}`);
+      journal.fact({ kind: 'probe', target: job.target, covers: job.covers, result, nextProbeAt: result === 'pass' ? null : isoTimeOf(new Date(Date.now() + 60_000)) });
+      return Promise.resolve(result);
+    },
+  });
+  const BACKEND = { type: 'backend', backend: 'codex' } as const;
+  const HOST_TARGET = { type: 'host' } as const;
+  const retryablePark = (journal: OpenJournal): number => journal.fact({
+    kind: 'stage-outcome', unit: UNIT, stage: 'build', attempt: 1, outcome: 'process-fault', class: 'park', chargeable: false,
+    park: { class: 'retryable', targets: [BACKEND, HOST_TARGET] },
+  });
+
+  it('operator env (a park 1.0.0-dev.4 wrote at lanes-blocked, read as env): the park\'s needs-user is acknowledged and the unit re-runs its lanes (unparked)', T, async () => {
     const run = newCmdRun();
     const { ctx, journal } = openCommandRun(run);
     journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park', chargeable: false });
-    const resume = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
-    await applyAtSafePoint(ctx, poll(ctx));
-    const rejected = readReceipt(ctx.runDir, resume.id, 'rejected');
-    assert.equal(rejected?.state === 'rejected' && rejected.reason,
-      'unit u1 is parked (lane-blocked) at lanes, which is not re-openable in M1; re-enter it under a new unit id with a branch at the same tip');
+    const item = raiseNeedsUser(ctx.journal, ctx.runDir, {
+      blocking: true, subject: { type: 'unit', unit: UNIT }, reason: 'lane-blocked', summary: 'lane blocked twice', recommendation: 'resume u1', options: [], evidence: [],
+    }, { type: 'stage', unit: UNIT, stage: 'lanes', attempt: 1 });
+    assert.deepEqual(journal.view.unit(UNIT).park?.park, { class: 'operator', kind: 'env' });
+    const { cmd, receipt } = await resumeU1(ctx);
+    assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
+    assert.deepEqual(receipt.verified.slice(-1), ['unit u1 re-entered at lanes']);
+    const u = journal.view.unit(UNIT);
+    assert.deepEqual([u.status, u.stage, u.park], ['active', 'lanes', null]);
+    assert.equal(unitFacts(ctx, 'unparked').length, 1);
+    assert.equal(readNeedsUserAck(ctx.runDir, item)?.command, cmd.id);
+    assert.deepEqual(openBlocking(journal.view), []);
+    journal.close();
+  });
+
+  it('operator design at a stage no revision re-opens: rejected, naming the re-entry; nothing changes', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'candidate', attempt: 1, outcome: 'red', class: 'park', chargeable: false, park: { class: 'operator', kind: 'design' } });
+    const { receipt } = await resumeU1(ctx);
+    assert.equal(receipt?.state === 'rejected' && receipt.reason,
+      'unit u1 is parked (candidate-red) at candidate, a design park no revision re-opens there; re-enter it: a new unit with `reenters: {unit: u1}`, then `roadmap apply`');
     assert.equal(journal.view.unit(UNIT).status, 'park-pending');
+    assert.deepEqual(unitFacts(ctx, 'unparked'), []);
+    journal.close();
+  });
+
+  it('retryable, every target passing: the prober probes each outstanding target now, covering the park, and the probes recover the unit', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    const seq = retryablePark(journal);
+    // One target passed already (a scheduled probe): only the other is probed now.
+    journal.fact({ kind: 'probe', target: BACKEND, covers: [seq], result: 'pass', nextProbeAt: null });
+    const ran: string[] = [];
+    const probing = { ...ctx, probes: { prober: fakeProber(journal, { host: 'pass' }, ran), signal: new AbortController().signal } };
+    const { receipt } = await resumeU1(probing);
+    assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
+    assert.deepEqual(receipt.verified, ['unit u1 recovered: every target of its park passed; it re-runs build']);
+    assert.deepEqual(ran, [`host@${seq}`]);
+    const u = journal.view.unit(UNIT);
+    assert.deepEqual([u.status, u.stage, u.park, u.lastRecovery?.targets], ['active', 'build', null, [BACKEND, HOST_TARGET]]);
+    journal.close();
+  });
+
+  it('retryable, a target still failing: rejected naming it; the park stays with what passed, and the failed probe set its next probe', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    const seq = retryablePark(journal);
+    const ran: string[] = [];
+    const probing = { ...ctx, probes: { prober: fakeProber(journal, { 'backend:codex': 'pass', host: 'fail' }, ran), signal: new AbortController().signal } };
+    const { receipt } = await resumeU1(probing);
+    assert.equal(receipt?.state === 'rejected' && receipt.reason, 'unit u1 is parked (process-fault) at build, retryable: host still failing; probing goes on');
+    assert.deepEqual(ran, [`backend:codex@${seq}`, `host@${seq}`]);
+    const u = journal.view.unit(UNIT);
+    assert.equal(u.status, 'park-pending');
+    assert.deepEqual(u.park?.passed, [BACKEND]);
+    assert.equal(unitFacts(ctx, 'probe').length, 2);
     journal.close();
   });
 });

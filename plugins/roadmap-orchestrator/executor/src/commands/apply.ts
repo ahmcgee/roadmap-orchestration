@@ -15,18 +15,26 @@
 //            another command already acknowledged, or a choice the item does not offer. Control.
 //   resume   unit | all: a `resumed` fact that clears the pause and the hold (the unit re-runs its stage
 //            as a new, uncharged attempt). backend: that backend's smoke alone, then `resumed{backend}`,
-//            which clears its arc-wide park; a failed smoke is rejected. Mutation (safe points only).
-//            `resume <unit>` of a unit parked at a judgment stage (plan-check or gate) re-opens it once the
-//            architect has applied a revision of its spec (`reopen`): an `apply` holds the unit's recorded
-//            spec rev + 1 pending (SCHEMAS.md "Plan in force"); the park's open needs-user is acknowledged by
-//            this command, then a `reopened` fact sends the unit back to plan-check as a new attempt. A unit
-//            parked `routing-changed` needs no spec edit (`reroute`): once the routing in force resolves
-//            its implementer seat to the pinned `implementerSeatRev` (or no build has started), it is
-//            re-pinned under that routing (a `dispatch` fact, when the rev differs), its needs-user is
-//            acknowledged, and a `rerouted` fact re-enters it at the stage it parked at; otherwise it is
-//            rejected. An unedited spec, or any other parked, stopped or merged unit, is rejected with the reason.
-//            A unit both paused and parked: one resume clears the pause and re-opens (or re-routes) it; when
-//            the park cannot re-open yet, the pause alone is cleared and the receipt says why it stays parked.
+//            which clears its park, whatever its class; a failed smoke is rejected. Mutation (scope: all →
+//            the arc, a unit → that unit, a backend → none; src/input/classify.ts `commandScope`).
+//            `resume <unit>` of a parked unit, per the park's class (A7):
+//              retryable       probe now: the prober runs each outstanding target once, covering this park,
+//                              and its `probe` facts recover the unit when every target has passed (the fold
+//                              restores the parked stage); a target that fails keeps the park, rejected
+//                              with the target, and probing goes on on its schedule.
+//              operator env    re-run the parked stage: the park's open needs-user is acknowledged by this
+//                              command, then an `unparked` fact. A unit parked `routing-changed` (`reroute`)
+//                              first needs the routing in force to resolve its implementer seat to the pinned
+//                              `implementerSeatRev` (or no build started): it is re-pinned under that routing
+//                              (a `dispatch` fact, when the rev differs); otherwise it is rejected.
+//              operator design re-open on an applied revision (`reopen`), only at a judgment stage (plan-check
+//                              or gate): an `apply` holds the unit's recorded spec rev + 1 pending (SCHEMAS.md
+//                              "Plan in force"); the park's needs-user is acknowledged, then a `reopened` fact
+//                              sends the unit back to plan-check as a new attempt. Without a revision, or at
+//                              any other stage, rejected: apply a revision, or re-enter the unit.
+//            A stopped or merged unit is rejected with the reason. A unit both paused and parked: one resume
+//            clears the pause and re-opens (or re-runs) it; when the park stays, the pause alone is cleared
+//            and the receipt says why it stays parked.
 //   sweep    re-drives resources an earlier sweep left reserved or cleaning, then, per undispositioned
 //            host residue (in recorded order): take the resource under the sweep holder (reserve when it is
 //            free here; reclaim when it is this arc's own cleanup-failed resource) → the recorded teardown →
@@ -36,30 +44,37 @@
 //   apply    the plan and specs the manifest hashes become the plan in force (`applyPlan`): the files are
 //            re-read and must still hash to the manifest, `expectRev` must be the revision in force, every
 //            change is classified (src/input/classify.ts), the startup rows re-run over the changed units,
-//            and a backend the new routing needs that the old did not passes its smoke; then the bytes are
-//            kept and a `plan-applied` fact written, the postcondition. All or nothing: a rejection lists
-//            every reason. Mutation.
+//            and a backend the new routing needs that the old did not passes its smoke; after those
+//            asynchronous parts the classification runs again, synchronously, just before the commit (A12),
+//            and must find the same changes; then the bytes are kept and a `plan-applied` fact written, the
+//            postcondition. All or nothing: a rejection lists every reason. `reenters` and `cut` are its edit
+//            classes (D3). Mutation.
+//   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
-// wait for a safe point: no open stage-level intent.
+// wait for a safe point: no open stage-level intent (the M1 driver), or their scope drained (the scheduler, A12).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntentOf, OpOutcome, Parent, PlanChange, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
-import { JUDGMENT_STAGES } from '../core/events.ts';
-import { type CommandId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, invocationId, namedResource, opKey } from '../core/ids.ts';
+import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
+import {
+  type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit,
+  resourceInstance,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, CommandFile, NeedsUserAck, PlanManifest, ResidueKey, Stage } from '../core/records.ts';
+import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import { classify } from '../input/classify.ts';
-import { type InputFiles, manifestOf, planInForce, readInputFiles, recordPlan } from '../input/inforce.ts';
+import { type InputFiles, manifestOf, planInForce, readInputFiles, recordPlan, requirePlanInForce } from '../input/inforce.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
@@ -74,6 +89,8 @@ import {
 } from '../resources/reserve.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend, ProfileName } from '../routing/types.ts';
+import type { Prober } from '../schedule/types.ts';
+import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
 
 /**
@@ -91,6 +108,12 @@ export type CommandContext = ResourceContext & Readonly<{
   /** The plan file `apply` re-reads, and its directory (unit spec paths are relative to it). */
   planFile: AbsPath;
   planDir: AbsPath;
+  /**
+   * The prober (src/park/probe.ts) and the run's stop signal, for `resume <unit>` of a retryable park. The
+   * scheduler wires them (M2 step 7b); the M1 driver, which writes no retryable park, has none. Scaffolding:
+   * required once the scheduler builds every command context.
+   */
+  probes?: Readonly<{ prober: Prober; signal: AbortSignal }>;
 }>;
 
 export type CommandOutcome = OpOutcome['command.apply'];
@@ -161,8 +184,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
   const body: CommandBody = command.body;
   switch (body.type) {
     case 'resolve-edge':
+      return resolveEdge(ctx, command.id, body.edge, body.evidence);
     case 'run-only':
-      return { kind: 'rejected', reason: `${body.type} is not applied by this executor yet (M2 step 5)` };
+      return runOnly(ctx, command.id, body.units);
     case 'pause':
       return pause(ctx, command.id, body.target);
     case 'stop': {
@@ -227,23 +251,33 @@ function fileRev(path: AbsPath): number | null {
   }
 }
 
+/** Why a parked unit parked: its park's needs-user reason, or the outcome. */
+function parkReason(f: StageOutcomeFact): string {
+  const decided = decidedBy(f);
+  return decided.kind === 'park' ? decided.reason : f.outcome;
+}
+
+/** The park's open needs-user, acknowledged by this command (unless another already did). */
+function acknowledgePark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): readonly string[] {
+  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
+  if (item === null) return [];
+  const by = ackedBy(ctx, item);
+  return by === null || by === id ? acknowledge(ctx, id, item, null) : [];
+}
+
 /**
- * `resume <unit>` of a parked unit: re-opened when it parked at a judgment stage and the architect has
+ * `resume <unit>` of a design park: re-opened when it parked at a judgment stage and the architect has
  * applied a revision of its spec (pending in the fold); otherwise rejected, saying what would work.
  */
-function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
-  const view = ctx.journal.view;
-  const u = view.unit(unitId);
-  const f = u.decided;
+function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
+  const u = ctx.journal.view.unit(unitId);
   const unit = ctx.plan().units.find((p) => p.id === unitId);
-  if (f === null || unit === undefined) throw new Error(`reopen of ${unitId}: a parked unit without its decided outcome or plan unit`);
-  const decided = decidedBy(f);
-  const reason = decided.kind === 'park' ? decided.reason : f.outcome;
-  const judgment = (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage);
-  if (!judgment) {
+  if (unit === undefined) throw new Error(`reopen of ${unitId}: a parked unit the plan in force does not list`);
+  const reason = parkReason(f);
+  if (!(JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)) {
     return {
       kind: 'rejected',
-      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, which is not re-openable in M1; re-enter it under a new unit id with a branch at the same tip`,
+      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}}\`, then \`roadmap apply\``,
     };
   }
   const known = u.spec;
@@ -258,43 +292,66 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId): Effect {
         : `unit ${unitId} is parked (${reason}); edit its spec ${path} (rev ${known.rev}), set rev ${known.rev + 1}, run \`roadmap apply\`, then resume`,
     };
   }
-  const verified: string[] = [];
-  const item = raisedFor(view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
-  if (item !== null) {
-    const by = ackedBy(ctx, item);
-    if (by === null || by === id) verified.push(...acknowledge(ctx, id, item, null));
-  }
+  const verified = [...acknowledgePark(ctx, id, unitId, f)];
   ctx.journal.fact({ kind: 'reopened', unit: unitId, command: id, specRev: revision.rev, specSha256: revision.sha256 });
   verified.push(`unit ${unitId} re-opened at plan-check on spec rev ${revision.rev}`);
   return { kind: 'applied', verified };
 }
 
 /**
- * `resume <unit>` of a unit parked `routing-changed`: re-pinned under the routing in force and re-entered at
- * the stage it parked at when that routing leaves its implementer seat as pinned (or no build has started);
+ * `resume <unit>` of an env park: the parked stage re-runs (`unparked`). One parked `routing-changed` is first
+ * re-pinned under the routing in force, which must leave its implementer seat as pinned (or no build started);
  * otherwise rejected, saying what would work.
  */
-function reroute(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
-  const pinned = dispatchOf(ctx.journal.view, unitId);
-  const routing = ctx.routing().resolved;
+function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
   const verified: string[] = [];
-  if (pinned.routingRev !== routing.rev) {
-    if (repin(ctx.journal, routing, pinned) === null) {
-      return {
-        kind: 'rejected',
-        reason: `unit ${unitId} is parked (routing-changed) at ${f.stage}: restore the routing of build.${pinned.riskFloor} or re-enter the unit under a new id`,
-      };
+  if (f.outcome === 'routing-changed') {
+    const pinned = dispatchOf(ctx.journal.view, unitId);
+    const routing = ctx.routing().resolved;
+    if (pinned.routingRev !== routing.rev) {
+      if (repin(ctx.journal, routing, pinned) === null) {
+        return {
+          kind: 'rejected',
+          reason: `unit ${unitId} is parked (routing-changed) at ${f.stage}: restore the routing of build.${pinned.riskFloor} or re-enter the unit under a new id`,
+        };
+      }
+      verified.push(`unit ${unitId} re-pinned under routingRev ${routing.rev}`);
     }
-    verified.push(`unit ${unitId} re-pinned under routingRev ${routing.rev}`);
   }
-  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
-  if (item !== null) {
-    const by = ackedBy(ctx, item);
-    if (by === null || by === id) verified.push(...acknowledge(ctx, id, item, null));
-  }
-  ctx.journal.fact({ kind: 'rerouted', unit: unitId, command: id });
+  verified.push(...acknowledgePark(ctx, id, unitId, f));
+  ctx.journal.fact({ kind: 'unparked', unit: unitId, command: id });
   verified.push(`unit ${unitId} re-entered at ${f.stage}`);
   return { kind: 'applied', verified };
+}
+
+/**
+ * `resume <unit>` of a retryable park: each outstanding target probed now, covering this park. The probes'
+ * facts recover it when every target has passed; a failing target keeps it, and probing goes on.
+ */
+async function probeNow(ctx: CommandContext, unitId: UnitId, f: StageOutcomeFact, park: ParkState): Promise<Effect> {
+  if (park.park.class !== 'retryable') throw new Error(`probeNow of unit ${unitId}, whose park is ${park.park.class}`);
+  if (ctx.probes === undefined) throw new Error(`resume of unit ${unitId}'s retryable park: this command context has no prober (the M1 driver writes no retryable park)`);
+  const { prober, signal } = ctx.probes;
+  const passed = new Set(park.passed.map(probeTargetKey));
+  const failed: string[] = [];
+  for (const target of park.park.targets.filter((t) => !passed.has(probeTargetKey(t)))) {
+    if (await prober.run({ target, covers: [park.seq] }, signal) === 'fail') failed.push(probeTargetKey(target));
+  }
+  const after = ctx.journal.view.unit(unitId);
+  if (failed.length === 0) {
+    if (after.status === 'park-pending') throw new Error(`unit ${unitId}: every target of its park at seq ${park.seq} passed, but the fold did not recover it`);
+    return { kind: 'applied', verified: [`unit ${unitId} recovered: every target of its park passed; it re-runs ${f.stage}`] };
+  }
+  return { kind: 'rejected', reason: `unit ${unitId} is parked (${parkReason(f)}) at ${f.stage}, retryable: ${failed.join(', ')} still failing; probing goes on` };
+}
+
+/** `resume <unit>` of a parked unit, per its park's class (A7). */
+async function resumeParked(ctx: CommandContext, id: CommandId, unitId: UnitId): Promise<Effect> {
+  const u = ctx.journal.view.unit(unitId);
+  const f = u.decided;
+  if (f === null || u.park === null) throw new Error(`resume of ${unitId}: a parked unit without its decided outcome or its park`);
+  if (u.park.park.class === 'retryable') return probeNow(ctx, unitId, f, u.park);
+  return u.park.park.kind === 'env' ? unpark(ctx, id, unitId, f) : reopen(ctx, id, unitId, f);
 }
 
 async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
@@ -305,7 +362,7 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       if (view.control().pausedAll) return { kind: 'rejected', reason: 'the whole arc is paused; `resume` without a unit clears it' };
       const u = view.unit(target.unit);
       const paused = view.control().pausedUnits.includes(target.unit);
-      // A unit both paused and parked: one resume re-opens (or re-routes) it and clears the pause. The park's
+      // A unit both paused and parked: one resume re-opens (or re-runs) it and clears the pause. The park's
       // fact goes first; a re-run after a crash between the two finds it and clears the pause alone.
       const unpause = (): readonly string[] => {
         if (!paused) return [];
@@ -317,7 +374,7 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
         return { kind: 'applied', verified: [`unit ${target.unit} re-opened at plan-check on spec rev ${u.reopened.specRev}`, ...unpause()] };
       }
       if (u.status === 'park-pending') {
-        const parked = u.decided?.outcome === 'routing-changed' ? reroute(ctx, id, target.unit, u.decided) : reopen(ctx, id, target.unit);
+        const parked = await resumeParked(ctx, id, target.unit);
         if (parked.kind === 'applied') return { kind: 'applied', verified: [...parked.verified, ...unpause()] };
         if (!paused) return parked;
         // Paused and parked, not re-openable yet: the pause is cleared, the park stays.
@@ -325,6 +382,8 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       }
       if (!paused && u.status === 'stop-pending') return { kind: 'rejected', reason: `unit ${target.unit} stopped the arc; resume does not undo a stop` };
       if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
+      if (!paused && u.status === 'cut') return { kind: 'rejected', reason: `unit ${target.unit} is cut` };
+      if (!paused && u.status === 'superseded') return { kind: 'rejected', reason: `unit ${target.unit} is superseded by ${u.supersededBy}; resume that unit` };
       if (paused || u.status === 'held') ctx.journal.fact({ kind: 'resumed', command: id, target });
       return { kind: 'applied', verified: [`unit ${target.unit} neither paused nor held`] };
     }
@@ -353,7 +412,7 @@ const keyText = (k: ResidueKey): string => `${k.arc}/${k.unit}/${k.inv}/${k.reso
 const recipeOf = (r: ResidueEntry): ResidueRecipe => ({ teardown: r.teardown, label: r.label });
 
 /** The latest teardown invocation of `resource` (the one a cleanup just ran). */
-function lastTeardown(ctx: CommandContext, resource: ResourceName) {
+function lastTeardown(ctx: CommandContext, resource: ResourceInstance) {
   const intent = [...ctx.journal.view.opsOf('proc.spawn')].reverse().find((i) => i.expect.subject.purpose === 'teardown' && i.expect.subject.resource === resource);
   if (intent === undefined) throw new Error(`no teardown invocation of ${resource} after a sweep cleanup`);
   return invocationId(intent.op, intent.ordinal);
@@ -364,7 +423,7 @@ function lastTeardown(ctx: CommandContext, resource: ResourceName) {
  * sweep takes residues in recorded order and stops a resource at its first failure), or, when every one is
  * disposed of already, the last recorded one (its teardown still releases the resource).
  */
-function residueFor(hostResidues: readonly ResidueEntry[], open: readonly ResidueKey[], resource: ResourceName): ResidueEntry {
+function residueFor(hostResidues: readonly ResidueEntry[], open: readonly ResidueKey[], resource: ResourceInstance): ResidueEntry {
   const same = hostResidues.filter((r) => r.key.resource === resource);
   const pending = same.find((r) => open.some((k) => canonicalJson(k) === canonicalJson(r.key)));
   const chosen = pending ?? same[same.length - 1];
@@ -377,11 +436,16 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
   const holder: SweepHolder = { type: 'sweep', command: id };
   const verified: string[] = [];
   const hostResidues = (): ResidueEntry[] => readResidues(ctx.hostDir).flatMap((l) => (l.type === 'residue' ? [l as ResidueEntry] : []));
-  const wanted = (resource: ResourceName): boolean => only === null || resource === only;
+  // `--resource <name>`: that named resource, or every instance of that pool.
+  const wanted = (resource: ResourceInstance): boolean => {
+    if (only === null || resource === only) return true;
+    const p = parseResourceUnit(resource);
+    return p.type === 'instance' && p.pool === only;
+  };
 
   const settle = async (r: ResidueEntry, result: CleanupResult<SweepHolder>): Promise<void> => {
     if (result.kind === 'released') {
-      recordDisposition(ctx.hostDir, { type: 'disposition', key: r.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: lastTeardown(ctx, namedResource(r.key.resource)) } });
+      recordDisposition(ctx.hostDir, { type: 'disposition', key: r.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: lastTeardown(ctx, r.key.resource) } });
       verified.push(`residue ${keyText(r.key)}: cleaned`);
     } else {
       verified.push(`residue ${keyText(r.key)}: teardown failed, left undisposed; ${r.key.resource} stays cleaning under the sweep`);
@@ -390,9 +454,11 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 
   // 1. Resources a sweep (this one after a crash, or an earlier one whose teardown failed) left behind.
   for (const [unit, entry] of resourceTable(ctx.journal.view)) {
-    const resource = namedResource(unit);
     const { status } = entry;
-    if (!wanted(resource) || entry.pending !== null || status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type !== 'sweep') continue;
+    if (entry.pending !== null || status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type !== 'sweep') continue;
+    // A sweep holds only what a residue names: a named resource or a pool instance, never an `@cpu` token.
+    const resource = resourceInstance(unit, `the unit ${unit} a sweep holds`);
+    if (!wanted(resource)) continue;
     if (status.state === 'running') throw new Error(`resource ${resource} is running under sweep ${status.holder.command}; a sweep never runs a workload`);
     const r = residueFor(hostResidues(), undispositioned(ctx.hostDir), resource);
     const recipes = new Map([[resource, recipeOf(r)]]);
@@ -406,7 +472,7 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 
   // 2. Every residue still undisposed, one at a time: at most one sweep reservation per resource name.
   for (const key of undispositioned(ctx.hostDir)) {
-    const resource = namedResource(key.resource);
+    const resource = key.resource;
     if (!wanted(resource)) continue;
     const r = hostResidues().find((x) => canonicalJson(x.key) === canonicalJson(key));
     if (r === undefined) throw new Error(`undispositioned residue ${keyText(key)} has no residue record`);
@@ -529,10 +595,29 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
         const failures = smokeRejections(report);
         if (failures.length > 0) return { kind: 'rejected', reason: rejectedText(failures.map(rowText)) };
       }
+      const moved = revalidate(ctx, verdict);
+      if (moved !== null) return { kind: 'rejected', reason: rejectedText(moved) };
       const fact = recordPlan(ctx.journal, ctx.runDir, verdict.files, id, verdict.changes);
       return { kind: 'applied', verified: appliedText(fact.rev, fact.changes) };
     }
   }
+}
+
+/**
+ * A12: the classification again, synchronously and with nothing awaited before the commit that follows, over
+ * the same files against the log as it is now (the startup rows and the smoke awaited; other work went on).
+ * Why the apply may no longer commit, or null when it classifies to the same changes.
+ */
+function revalidate(ctx: CommandContext, verdict: Extract<ApplyVerdict, { kind: 'accepted' }>): readonly string[] | null {
+  const view = ctx.journal.view;
+  const inForce = requirePlanInForce(ctx.runDir, view);
+  if (inForce.rev !== verdict.rev) return [`stale: the plan in force moved to rev ${inForce.rev} while this apply was evaluated against rev ${verdict.rev}; run it again`];
+  const again = classify({ runDir: ctx.runDir, view, inForce, next: verdict.files, residues: undispositioned(ctx.hostDir), resolve: ctx.resolve });
+  if (again.kind === 'rejected') return again.reasons;
+  if (again.kind === 'unchanged' || canonicalJson(again.changes) !== canonicalJson(verdict.changes)) {
+    return ['the arc moved while this apply was evaluated: its changes classify differently now; run it again'];
+  }
+  return null;
 }
 
 /** A rejected apply's receipt reason: every reason, numbered. */

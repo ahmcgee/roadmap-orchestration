@@ -1,7 +1,9 @@
 // The CLI surface, parsed into a closed Command union so step 13 wires a fixed set of commands. Pure:
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
-import { type ArcId, type NeedsUserId, type PlanRev, type ResourceName, arcId, needsUserId, planRev, resourceName, unitId } from '../core/ids.ts';
+import {
+  type ArcId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, edgeId, needsUserId, planRev, resourceName, unitId,
+} from '../core/ids.ts';
 import type { PauseTarget, ResumeTarget } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { type ProfileName, backend, profileName } from '../routing/types.ts';
@@ -37,7 +39,11 @@ export type Command =
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
   | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
   /** Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. */
-  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; run: RunLocator }>;
+  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; run: RunLocator }>
+  /** A contingent edge's condition is met, on the architect's evidence (M2). */
+  | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
+  /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
+  | Readonly<{ command: 'run-only'; units: readonly UnitId[] | null; run: RunLocator }>;
 
 type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true> }>;
 
@@ -172,8 +178,25 @@ export function parseCommand(argv: readonly string[]): Command {
       if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
       return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), run: locator(p, command) };
     }
+    case 'resolve-edge': {
+      const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);
+      const [edge] = positionals(p, command, 1);
+      if (edge === undefined) throw new CliError('resolve-edge: <edge> is required');
+      const evidence = value(p, 'evidence');
+      if (evidence === undefined || evidence.trim() === '') throw new CliError('resolve-edge: --evidence <text> is required');
+      return { command, edge: arg(command, '<edge>', edgeId, edge), evidence, run: locator(p, command) };
+    }
+    case 'run-only': {
+      const p = parseRest(rest, { ...LOCATOR, clear: 'switch' }, command);
+      const clear = p.flags.has('clear');
+      if ((p.positionals.length === 0) === !clear) throw new CliError('run-only: give either <unit>... or --clear');
+      const units = [...new Set(p.positionals.map((u) => arg(command, '<unit>', unitId, u)))].sort();
+      return { command, units: clear ? null : units, run: locator(p, command) };
+    }
     default:
-      throw new CliError(`unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply`);
+      throw new CliError(
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only`,
+      );
   }
 }
 

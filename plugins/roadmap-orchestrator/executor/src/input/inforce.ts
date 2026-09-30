@@ -55,6 +55,8 @@ export function keptInput(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer 
 
 /** plan.json and the spec.json of each of its units, read from disk: what an apply or a start would put in force. */
 export type InputFiles = Readonly<{
+  /** The plan file read: its directory is where unit spec paths and the rulings ledger resolve. */
+  planFile: AbsPath;
   plan: PlanM1;
   planBytes: Buffer;
   /** Per unit of `plan`: the spec file's path and bytes, or null when the file does not exist. */
@@ -71,7 +73,7 @@ export function readInputFiles(planFile: AbsPath): InputFiles {
     const path = specFilePath(planFile, u);
     return [u.id, { path, bytes: existsSync(path) ? readFileSync(path) : null }] as const;
   }));
-  return { plan, planBytes, specs };
+  return { planFile, plan, planBytes, specs };
 }
 
 /** The manifest of the files, or the units whose spec file is missing. */

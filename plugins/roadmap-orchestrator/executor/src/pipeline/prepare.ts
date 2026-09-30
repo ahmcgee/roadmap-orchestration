@@ -56,8 +56,11 @@ function preparedOps<K extends OpKind>(view: JournalView, unit: UnitId, kind: K)
   return view.opsOf(kind).filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.parent.stage === 'prepare' && view.doneOf(i.op) !== null);
 }
 
-/** Whether `pattern` lies within `envelope`: one of its patterns, or matched by one as a path. */
-const withinEnvelope = (pattern: RepoPattern, envelope: readonly RepoPattern[]): boolean =>
+/**
+ * Whether `pattern` lies within `envelope`: one of its patterns, or matched by one as a path. The apply
+ * classifier's re-entry row uses this same rule (src/input/classify.ts).
+ */
+export const withinEnvelope = (pattern: RepoPattern, envelope: readonly RepoPattern[]): boolean =>
   envelope.some((e) => pattern === e || matchesGlob(pattern, e));
 
 /**
