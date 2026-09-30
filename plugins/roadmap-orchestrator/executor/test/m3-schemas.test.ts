@@ -97,7 +97,7 @@ const OBLIGATIONS = {
   obligations: [
     {
       id: 'I-1', rev: 1, statement: 'a month reconciles in one command', docRef: { path: 'docs/target.md', anchor: '#reconcile', quotedText: 'one command' },
-      serves: ['V-1'], witness: { lane: 'journey', testIds: ['reconcile month'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV },
+      serves: ['V-1'], witness: { lane: 'journey', testIds: ['reconcile month'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['reconcile month'] } },
       deliveredBy: ['parse', 'report'], activation: 'future', contracts: [], state: { type: 'active' },
     },
     {
@@ -106,7 +106,7 @@ const OBLIGATIONS = {
     },
     {
       id: 'I-4', rev: 1, statement: 'totals round half-even', docRef: { path: 'docs/target.md', anchor: '#money', quotedText: 'never mis-rounded' },
-      serves: ['V-2'], witness: { lane: 'journey', testIds: ['half-even'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV },
+      serves: ['V-2'], witness: { lane: 'journey', testIds: ['half-even'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['half-even'] } },
       deliveredBy: [], activation: 'must-hold', parent: 'I-2', contracts: [], state: { type: 'active' },
     },
   ],
@@ -306,6 +306,15 @@ describe('M3 event records', () => {
       roundTrip(fact({ kind: 'stage-outcome', unit: U1, stage: 'reproduce', attempt: 1, outcome: out, class: out === 'reproduced' ? 'advance' : 'park', chargeable: false }));
     }
     for (const out of ['preempted', 'finding-blocked']) roundTrip(fact({ kind: 'stage-outcome', unit: U1, stage: 'candidate', attempt: 4, outcome: out, class: 'advance', chargeable: false }));
+  });
+
+  it('judgment-inputs: a gate\'s carry its captured fingerprint at its head (Checkpoint A); a dev.5 one has none; a plan-check\'s never', () => {
+    const gate = { kind: 'judgment-inputs', unit: U1, stage: 'gate', attempt: 4, tip: A, head: B, specRev: 2, specSha256: H, planRev: 3, routingRev: REV };
+    const fingerprint = { unitCommit: B, specRev: 2, contractRevs: [{ path: 'ARCHITECTURE.md', blob: A }], rulingRevs: [{ id: 'C-1', rev: 2 }] };
+    roundTrip(fact(gate));
+    roundTrip(fact({ ...gate, fingerprint }));
+    refusesFact({ ...gate, fingerprint: { ...fingerprint, unitCommit: A } }, /fingerprint\.unitCommit$/);
+    refusesFact({ ...gate, stage: 'plan-check', head: null, fingerprint }, /\.fingerprint$/);
   });
 });
 

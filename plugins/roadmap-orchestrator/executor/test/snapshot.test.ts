@@ -8,14 +8,20 @@ import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
 import {
-  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, needsUserIdForOp, opKey, planRev, sha, sha256,
+  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, needsUserIdForOp, opKey, planRev, seatRev,
+  sha, sha256, specRev, unitId,
 } from '../src/core/ids.ts';
+import { readJournal } from '../src/core/log.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { type RepoConfig, parseRepoConfig, provenanceStack, resolveRouting } from '../src/routing/layers.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
-import { PLAN_INPUT, SPEC_INPUT, keepInput } from '../src/input/inforce.ts';
-import { type AbsPath, absPath, repoPattern } from '../src/core/values.ts';
+import { PLAN_INPUT, SPEC_INPUT, keepInput, routingProvenanceOf } from '../src/input/inforce.ts';
+import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
 import { git as gitRaw } from '../src/git/git.ts';
 import { parentsOf } from '../src/git/mergein.ts';
-import { type SnapshotPublishRequest, snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
+import {
+  type SnapshotPublishRequest, adoptLegacyProvenance, candidateLaneDir, jobLaneDir, legacyProvenancePath, readLegacyProvenance, snapshotRef, verifySnapshot,
+} from '../src/git/snapshot.ts';
 import { ARC, IDENTITY, cloneRepo, openArc, runOp } from './fixtures/git-common.ts';
 import { UNIT, crashChild8b, recover8b, revOf, sharedBase } from './fixtures/git8b-common.ts';
 import { git, tmpDir } from './helpers/repo.ts';
@@ -178,20 +184,33 @@ const PLAN = {
   resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', scope: ['src/**'], resources: [] }],
 };
 
-type Holistic = Run & Readonly<{ planSha: string; specSha: string; witnessInv: string; witnessFile: string }>;
+type Holistic = Run & Readonly<{ planSha: string; specSha: string; witnessInv: string; witnessFile: string; unreconstructable: readonly string[] }>;
+
+/** The routing rev plan `PLAN` resolves to under the default profile and `config`. */
+const routingRevUnder = (config: RepoConfig | null) =>
+  resolveRouting(provenanceStack(routingProvenanceOf({ profile: 'default' as never, config }, parsePlan(PLAN)), false, null)).rev;
 
 /**
  * The base run plus the records a snapshot must follow beyond it: a 1.0.0-dev.5 `plan-applied` (kept plan and
- * spec, no routing provenance), start.json with its `executor-started`, and a docs job's lane run (or a candidate's)
- * that wrote its witness record in its invocation dir (src/pipeline/lanes.ts `witnessRecordPath`) and was `witnessed`.
+ * spec, no routing provenance) and its dispatch under the routing `ranUnder` resolves to, start.json with its
+ * `executor-started`, and a docs job's lane run that wrote its witness record where src/pipeline/publish.ts keeps it
+ * and was `witnessed`. The dev.5 revision's routing provenance is then adopted under `adoptedUnder`, as a start on
+ * this release does once (`unreconstructable`: what the adoption reported).
  */
-async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Holistic> {
+async function holisticRun(witnessFor: 'job' | 'candidate' = 'job', ranUnder: RepoConfig | null = null, adoptedUnder: RepoConfig | null = ranUnder): Promise<Holistic> {
   const r = await run();
   const planSha = keepInput(r.runDir, Buffer.from(`${JSON.stringify(PLAN)}\n`), PLAN_INPUT);
   const specSha = keepInput(r.runDir, Buffer.from('{"schema":"roadmap/spec-m1"}\n'), SPEC_INPUT);
   writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 1, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
   const journal = openArc(r.runDir);
   journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, planSha256: planSha, specs: { [UNIT]: specSha }, changes: [] } as Fact);
+  journal.fact({
+    kind: 'dispatch',
+    record: {
+      unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha, scope: [repoPattern('src/**')], riskFloor: 'med',
+      routingRev: routingRevUnder(ranUnder), implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()),
+    },
+  });
   journal.fact({ kind: 'executor-started', generation: 1 });
   const job = jobId('docs', 1);
   const spawn = journal.begin({
@@ -199,7 +218,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
     body: () => ({ expect: { subject: { purpose: 'lane', unit: UNIT, lane: laneId('journey'), set: 'suite', at: sha('b'.repeat(40)) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
   });
   const inv = invocationId(spawn.op, 1);
-  const witnessDir = join(r.runDir, 'inv', invocationDirName(inv));
+  const witnessDir = witnessFor === 'job' ? jobLaneDir(r.runDir, job, 'arc', laneId('journey'), invocationDirName(inv)) : candidateLaneDir(r.runDir, UNIT, 1, 'arc', laneId('journey'), invocationDirName(inv));
   mkdirSync(witnessDir, { recursive: true });
   const witness = '{"records":[]}\n';
   writeFileSync(join(witnessDir, 'witness.json'), witness);
@@ -208,7 +227,8 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
     recordsSha256: sha256(sha256Hex(witness)), purpose: 'witness', for: witnessFor === 'job' ? { type: 'job', job } : { type: 'candidate', unit: UNIT, attempt: 1 },
   });
   journal.close();
-  return { ...r, planSha, specSha, witnessInv: invocationDirName(inv), witnessFile: join(witnessDir, 'witness.json') };
+  const unreconstructable = adoptLegacyProvenance(r.runDir, readJournal(r.runDir, ARC).events, adoptedUnder);
+  return { ...r, planSha, specSha, witnessInv: invocationDirName(inv), witnessFile: join(witnessDir, 'witness.json'), unreconstructable };
 }
 
 /** `commit`'s tree with `path` set to `text` (null: removed) and its manifest entry rewritten to match. */
@@ -243,7 +263,9 @@ describe('snapshot closure records', () => {
     for (const p of [`inputs/${r.planSha}.plan.json`, `inputs/${r.specSha}.spec.json`, 'routing-provenance/1.json', 'start.json', `witness/${r.witnessInv}.json`]) {
       assert.ok(paths.includes(p), `${p} is in the snapshot: ${paths.join(', ')}`);
     }
-    const provenance = JSON.parse(git(r.repo, 'show', `${at}:routing-provenance/1.json`)) as { profile: string; planLayer: unknown; unitLayers: unknown };
+    const adopted = JSON.parse(git(r.repo, 'show', `${at}:routing-provenance/1.json`)) as { kind: string; provenance: { profile: string; planLayer: unknown; unitLayers: unknown } };
+    assert.equal(adopted.kind, 'reconstructed');
+    const { provenance } = adopted;
     assert.deepEqual([provenance.profile, provenance.planLayer, provenance.unitLayers], ['default', null, {}], 'rebuilt from start.json\'s profile and the kept plan');
     const manifest = JSON.parse(git(r.repo, 'show', `${at}:manifest.json`)) as { files: { path: string; namedBy: { type: string } }[] };
     assert.equal(manifest.files.find((f) => f.path === `witness/${r.witnessInv}.json`)?.namedBy.type, 'event', 'the witnessed fact names the record');
@@ -260,10 +282,41 @@ describe('snapshot closure records', () => {
     if (dropped.kind === 'mismatch') assert.match(dropped.detail, /^start\.json, which event \d+ names, is not in the snapshot$/);
   });
 
-  it('a named record that cannot be located fails the publication loudly; a candidate\'s witness record is carried as a job\'s', async () => {
+  it('snapshot.dev5-provenance-adopted: a dev.5 revision\'s routing provenance is reconstructed once at adoption from the config in force then; a later binding change never reaches a snapshot; a log that ran under another binding is reported unreconstructable', async () => {
+    const A = parseRepoConfig({ routing: { classes: { efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'high' } } } });
+    const B = parseRepoConfig({ routing: { classes: { efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } } } });
+    assert.notEqual(routingRevUnder(A), routingRevUnder(B));
+    const r = await holisticRun('job', A);
+    assert.deepEqual(r.unreconstructable, []);
+    const adopted = readLegacyProvenance(r.runDir, planRev(1));
+    assert.ok(adopted.kind === 'reconstructed');
+    assert.deepEqual([adopted.provenance.repoConfig.classes, adopted.matched], [A.routing!.classes, [routingRevUnder(A)]]);
+    // The binding changes to B and a later start adopts again: the record is immutable, and every snapshot carries A.
+    const bytes = readFileSync(legacyProvenancePath(r.runDir, planRev(1)), 'utf8');
+    assert.deepEqual(adoptLegacyProvenance(r.runDir, readJournal(r.runDir, ARC).events, B), []);
+    assert.equal(readFileSync(legacyProvenancePath(r.runDir, planRev(1)), 'utf8'), bytes, 'written once');
+    const first = await publish(r);
+    assertSnapshot(r, first);
+    const second = await publish(r);
+    for (const at of [first.post.new, second.post.new]) {
+      const carried = JSON.parse(git(r.repo, 'show', `${at}:routing-provenance/1.json`)) as { provenance: { repoConfig: unknown } };
+      assert.deepEqual(carried.provenance.repoConfig, { seats: null, classes: A.routing!.classes }, 'attributed to A');
+    }
+
+    // Adopted under B while the log ran under A: the configuration then is gone, and the record says so.
+    const lost = await holisticRun('job', A, B);
+    assert.equal(lost.unreconstructable.length, 1);
+    assert.match(lost.unreconstructable[0]!, /^plan rev 1 ran under routing revs [0-9a-f]{16}, which profile default and the repo config at adoption resolve to none of \([0-9a-f]{16}\): the configuration in force then is not recorded$/);
+    assert.equal(readLegacyProvenance(lost.runDir, planRev(1)).kind, 'unreconstructable');
+    const carried = await publish(lost);
+    assertSnapshot(lost, carried);
+    assert.equal((JSON.parse(git(lost.repo, 'show', `${carried.post.new}:routing-provenance/1.json`)) as { kind: string }).kind, 'unreconstructable');
+  });
+
+  it('a named record that cannot be located fails the publication loudly; a candidate\'s witness record is carried from its execution\'s dir', async () => {
     const r = await holisticRun();
     rmSync(r.witnessFile);
-    await assert.rejects(publish(r), /witness\.json does not exist/);
+    await assert.rejects(publish(r), /witness record .*witness\.json does not exist/);
     const c = await holisticRun('candidate');
     const intent = await publish(c);
     assertSnapshot(c, intent);

@@ -37,7 +37,7 @@
 // from the journal and the invocation files (`seriesLedger`, `seriesTree`, `seriesDirty`), never kept in
 // memory, so a restarted executor sees the series exactly as it ran.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { IntentOf, Parent } from '../core/events.ts';
 import {
   type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId,
@@ -49,6 +49,7 @@ import { type ObservationStore, keyOf, observationOf, observationStore, reuse, v
 import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
 import { WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
 import { revParse } from '../git/git.ts';
+import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import {
@@ -611,11 +612,13 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
 // witness run's reporter env (`witnessEnv`), evidence snapshots, cleanup. A red run goes through the red-lane protocol
 // (redlane.ts): the run whose verdict counts is the one recorded.
 //
-// Evidence is per execution and immutable: each run's dir is `<root>/<invocation dir name>/` (its `output`, its
-// declared `tree` evidence, `host.json`). A witness run's reporter writes `witness.lines` in its invocation dir, and its
-// record is kept there as `witness.json` (`witnessRecordPath`), named by the `witnessed` fact of the counted run only
-// (a diagnostic rerun or a voided run is kept, never named), so the observation store (`observations`) holds exactly
-// the verdicts that count.
+// Evidence is per execution and immutable: each run has its own dir, named by its kind, lane and invocation (a job's
+// `jobLaneDir`, a candidate's `candidateLaneDir`, src/git/snapshot.ts), holding its `output`, its declared `tree`
+// evidence and `host.json`. A witness run's reporter writes `witness.lines` there, and its record is kept there as
+// `witness.json` (`witnessDir`), named by the `witnessed` fact of the counted run only (a diagnostic rerun or a voided run
+// is kept, never named), so the observation store (`observations`) holds exactly the verdicts that count. After the last
+// lane the checkout must still be the commit (the checkout's integrity, as a unit's suite): the paths a lane left dirty
+// are snapshotted (`_dirty-<checkout>`) and a moved HEAD recorded, and either refuses the certification (the caller's).
 //
 // Lane reuse (§9): a witness lane whose observation on the tree already exists (all four keys equal, its record's
 // hash checked when it entered the store) is not run again; the series reads the kept record (`reuse` option; the
@@ -656,15 +659,22 @@ export type JourneyEnd =
   /** A unit's series only: its stage was paused, stopped or preempted. */
   | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>;
 
-export type JourneySeries = Readonly<{ end: JourneyEnd; runs: readonly JourneyRun[]; treeSha: Sha }>;
+/**
+ * The checkout after the lanes: the paths they left dirty (tracked or unignored changes, snapshotted under `evidence`)
+ * and the HEAD they moved it to (null: still at the commit). Either refuses certification.
+ */
+export type JourneyCheckout = Readonly<{ dirty: readonly RepoPath[]; movedTo: Sha | null; evidence: AbsPath }>;
 
-/** The reporter's file of a witness run, in its invocation dir. */
+/** `checkout` null: no lane ran, so no checkout was made. */
+export type JourneySeries = Readonly<{ end: JourneyEnd; runs: readonly JourneyRun[]; treeSha: Sha; checkout: JourneyCheckout | null }>;
+
+/** Whether a series' checkout was still its commit after the lanes (a series that made none is). */
+export const intact = (series: JourneySeries): boolean => series.checkout === null || (series.checkout.dirty.length === 0 && series.checkout.movedTo === null);
+
+/** The reporter's file of a witness run, in its execution's dir. */
 const WITNESS_LINES = 'witness.lines';
 /** A job's waits are never cancelled: a job runs to its end once begun. */
 const NEVER = new AbortController().signal;
-
-/** Where a job keeps its lanes' evidence (`<runDir>/evidence/jobs/<job>/`): a journey series' root under it. */
-export const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
 
 /**
  * The checkouts a job created and did not remove (a crash or a restart cut it short): each removed, citing the job's
@@ -686,13 +696,13 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
   }
 }
 
-/** Where a witness run's record is kept: `witness.json` in its invocation dir (what a `witnessed` fact names). */
-export const witnessRecordPath = (runDir: AbsPath, inv: InvocationId): AbsPath => absPath(join(invocationDir(runDir, inv), WITNESS_RECORD_FILE));
+/** Where a witness run's record is kept: `witness.json` in its execution's dir (what a `witnessed` fact names). */
+export const witnessRecordPath = (runDir: AbsPath, fact: Parameters<typeof witnessDir>[1]): AbsPath => absPath(join(witnessDir(runDir, fact), WITNESS_RECORD_FILE));
 
 /** Every certifying observation the log's `witnessed` facts name, the latest per key (src/holistic/observe.ts). */
 export function observations(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ObservationStore {
   return observationStore(ctx.journal.view.holistic().witnessed.flatMap((w) => {
-    const path = witnessRecordPath(ctx.runDir, w.inv);
+    const path = witnessRecordPath(ctx.runDir, w);
     const o = observationOf(w, existsSync(path) ? readFileSync(path, 'utf8') : null);
     return o === null ? [] : [o];
   }));
@@ -732,12 +742,13 @@ type JourneyAttempt = Readonly<{ kind: 'ran'; ran: JourneyRan }> | Readonly<{ ki
 
 /**
  * Runs `lanes` one at a time for `owner` in the detached checkout `checkout` (created before the first lane that runs,
- * removed after the last, citing the series' last evidence snapshot), keeping each run's evidence under `root`. A witness
+ * checked for integrity after the last, then removed citing the series' last evidence snapshot), keeping each run's
+ * evidence in its own execution's dir. A witness
  * lane's counted run becomes a `witness.json` and a `witnessed{purpose: witness}` fact (`for: candidate{unit, attempt}`
  * or `job{job}`). The series ends at the first lane without a verdict, or where `stop` says.
  */
 export async function runJourneySeries(
-  ctx: JourneyContext, owner: JourneyOwner, lanes: readonly JourneyLane[], checkout: WorktreeCreateRequest, root: AbsPath,
+  ctx: JourneyContext, owner: JourneyOwner, lanes: readonly JourneyLane[], checkout: WorktreeCreateRequest,
   opts: Readonly<{ reuse: boolean; stop: (run: JourneyRun) => boolean }>,
 ): Promise<JourneySeries> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a journey series runs in a detached checkout, not on ${checkout.checkout.branch}`);
@@ -754,6 +765,13 @@ export async function runJourneySeries(
   const label = owner.type === 'unit' ? ownerLabel(arc, owner.parent.unit) : jobOwnerLabel(arc, owner.job);
   const worktreeKey = owner.type === 'unit' ? `worktree:${who}:verify` : `worktree:${who}`;
   const store = opts.reuse ? observations(ctx) : null;
+  // Each execution's own evidence dir, named by its invocation once the spawn's intent names it (the launch).
+  const dirOf = (lane: JourneyLane, invDir: string): AbsPath => {
+    const kind = lane.witness === null ? 'suite' : 'arc';
+    return owner.type === 'unit'
+      ? candidateLaneDir(ctx.runDir, owner.parent.unit, owner.parent.attempt, kind, lane.def.id, basename(invDir))
+      : jobLaneDir(ctx.runDir, owner.job, kind, lane.def.id, basename(invDir));
+  };
   const runs: JourneyRun[] = [];
   let lastEvidence: OpId | null = null;
   let end: JourneyEnd = { kind: 'ran' };
@@ -779,14 +797,17 @@ export async function runJourneySeries(
       runDir: ctx.runDir,
       origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
       subject: { purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job } },
-      launch: (invDir) => ({
-        argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(invDir, WITNESS_LINES))), stdinPath: null,
-        stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
-      }),
+      launch: (invDir) => {
+        mkdirSync(dirOf(lane, invDir), { recursive: true });
+        return {
+          argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
+          stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
+        };
+      },
     });
     const endSample = sampleHost();
     const invDir = invocationDir(ctx.runDir, outcome.inv);
-    const dir = absPath(join(root, invocationDirName(outcome.inv)));
+    const dir = dirOf(lane, invDir);
     mkdirSync(dir, { recursive: true });
     let evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, {
       source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
@@ -847,9 +868,9 @@ export async function runJourneySeries(
   const witness = (lane: JourneyLane, r: JourneyRan): WitnessRecord | null => {
     if (lane.witness === null) return null;
     const invDir = invocationDir(ctx.runDir, r.inv);
-    const tests = collectWitness(lane.witness.reporter, { witnessFile: absPath(join(invDir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
+    const tests = collectWitness(lane.witness.reporter, { witnessFile: absPath(join(r.dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
     const record = witnessRecordOf({ lane: lane.witness, envId: laneEnvId(ctx, lane.witness), treeSha, inv: r.inv, purpose: 'witness' }, tests);
-    const recordsSha256 = writeWitnessRecord(invDir, record);
+    const recordsSha256 = writeWitnessRecord(r.dir, record);
     ctx.journal.fact({
       kind: 'witnessed', lane: record.lane, laneRev: record.laneRev, envId: record.envId, treeSha, inv: r.inv, recordsSha256, purpose: 'witness',
       for: owner.type === 'unit' ? { type: 'candidate', unit: owner.parent.unit, attempt: owner.parent.attempt } : { type: 'job', job: owner.job },
@@ -910,10 +931,18 @@ export async function runJourneySeries(
     runs.push(result);
     if (opts.stop(result)) break;
   }
-  if (lastEvidence !== null) {
-    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), worktreeKey, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, lastEvidence) });
+  if (lastEvidence === null) return { end, runs, treeSha, checkout: null };
+  // The checkout's integrity: what the lanes tested must be the commit itself.
+  const dirty = dirtyPaths(checkout.path);
+  const head = revParse(checkout.path, 'HEAD');
+  const seriesRoot = owner.type === 'unit' ? absPath(join(evidenceRoot(ctx.runDir, owner.parent), 'journey')) : jobEvidenceRoot(ctx.runDir, owner.job);
+  const dirtyAt = absPath(join(seriesRoot, `_dirty-${basename(checkout.path)}`));
+  let evidence: OpId = lastEvidence;
+  if (dirty.length > 0) {
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: dirty.map(pathPattern), dest: dirtyAt })).op;
   }
-  return { end, runs, treeSha };
+  await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), worktreeKey, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  return { end, runs, treeSha, checkout: { dirty, movedTo: head === at ? null : head, evidence: dirtyAt } };
 }
 
 /** Whether a journey run counts as red (failed or stalled); a reused observation has no verdict of its own. */

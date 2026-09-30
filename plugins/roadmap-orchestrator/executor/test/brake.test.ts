@@ -67,7 +67,7 @@ describe('the held-claims brake', () => {
         ['journey', { type: 'candidate', unit: 'u1', attempt: w[0]!.for.type === 'candidate' ? w[0]!.for.attempt : 0 }, 'witness'],
       ]);
       assert.equal(journeys(r).length, 3, 'the candidate\'s red lane was rerun once (diagnostic); the tip alone passed at once');
-      for (const f of w) assert.ok(existsSync(witnessRecordPath(r.ctx.runDir, f.inv)), 'the record is kept in its invocation dir');
+      for (const f of w) assert.ok(existsSync(witnessRecordPath(r.ctx.runDir, f)), 'the record is kept in its execution\'s dir');
       const decided = r.journal.view.unit(U1).decided!;
       const fix = candidateBrakeFix(r.ctx, r.unit('u1'), { type: 'stage', unit: U1, stage: 'candidate', attempt: decided.attempt });
       assert.match(fix.directives.join('\n'), /Obligation I-1 must hold on the candidate/);

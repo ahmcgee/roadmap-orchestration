@@ -527,11 +527,15 @@ export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
  * when `request` is null); `cancelled` when the task's signal is aborted first, with nothing journaled.
  */
 export async function enter(ctx: StageContext, holder: UnitAcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
-  if (ctx.signal.aborted) return { kind: 'cancelled', reason: abortReason(ctx.signal) };
+  const cancelled = cancelledNow(ctx);
+  if (cancelled !== null) return cancelled;
   if (request === null) return { kind: 'entered' };
   const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal);
   return grant.kind === 'cancelled' ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : { kind: 'entered' };
 }
+
+/** The task's cancellation when its signal is already aborted (pause, stop), else null. */
+export const cancelledNow = (ctx: StageContext): Cancelled | null => (ctx.signal.aborted ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : null);
 
 /** Where a stage attempt's evidence snapshots go. */
 export const evidenceRoot = (runDir: AbsPath, parent: StageParent): AbsPath =>

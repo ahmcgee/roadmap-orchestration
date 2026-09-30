@@ -277,7 +277,7 @@ in the line belongs to `arc`.
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 | `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
 | `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, and for a resource target the fail seq of its own-arc residue; ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
-| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev`: written after a judgment attempt's entry reservation and before its spawn (F1); one per `(unit, stage, attempt)`. A recovered call is consumed against it (`gateRead` at `tip`/`head`, `fingerprintAt` at `tip`) |
+| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; never on a plan-check; absent on a dev.5 fact): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; absent: `fingerprintAt` at `tip`, warned) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
 | `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
 | `implementer-escalated` (M2) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
@@ -497,12 +497,14 @@ expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `
 
 `ApprovalFingerprint = {unitCommit, specRev, contractRevs: [{path, blob}] (ascending path; the spec's cited
 contracts, the architecture doc and its digest when the plan names one, at the gated tip), rulingRevs: [{id, rev}]
-(ascending id; the spec's cited rulings that are active), obligationRevs?: [{id: ObligationId, rev}] (M3: ascending
+(ascending id; the spec's cited rulings that are active, each at its effective revision, M3 Checkpoint A), obligationRevs?: [{id: ObligationId, rev}] (M3: ascending
 id; the selected, non-exempt obligations at the gated tip; absent exactly when there are none, non-empty when
 present, so a fingerprint with none is byte-identical to a dev.5 one; `obligationRevsOf`)}`. Recorded with the
 approval as an `approval` fact. Recomputed at the tip being published onto before `integration.ff`; any mismatch
-re-gates. M1's C-nn ledger has no supersede beyond the withdrawn fold, so every active ruling is at rev 1; a cited
-ruling that is withdrawn leaves the set, which changes the fingerprint. An uncited contract is outside the
+re-gates. A cited ruling that is withdrawn leaves the set, which changes the fingerprint; M1's ledger has no other
+supersede, so there every active ruling is at rev 1. M3 (Checkpoint A): a ruling's rev is `effectiveRulingRevs` over
+the sidecars in force (1 plus, per partial superseder, its own rev plus 1 once it is no longer active), and the
+approval records the fingerprint captured with the gate's `judgment-inputs`, never one taken when the call is read. An uncited contract is outside the
 fingerprint (binding the documents a judgment actually read is backlog).
 
 `DispatchRecord = {unit, specRev, specSha256, scope: RepoPattern[] (sorted), riskFloor, routingRev,
@@ -1109,13 +1111,13 @@ lanes: ArcLaneDef[], obligations: ObligationDef[], mapping: {paths: [{pattern: R
 lane may not set or pass `NODE_OPTIONS`); `laneRevOf(lane)` = first 16 hex of sha256 over its canonical definition.
 `ObligationDef = {id, rev (normative; evidence refreshes never bump it), statement, docRef{path, anchor, quotedText},
 serves: V-n[] (ascending; non-empty in an arc with a vision, checked by A1), witness{lane, testIds (unique,
-non-empty)}|null, proofJudgment{verdict: proves|insufficient, obligationRev, laneRev}|null, deliveredBy: UnitId[]
+non-empty)}|null, proofJudgment{verdict: proves|insufficient, obligationRev, laneRev, witness{lane, testIds}}|null, deliveredBy: UnitId[]
 (non-empty for a future one), activation: future|must-hold, parent?, contracts: RepoPath[], state: active |
 split{children} | waived{ruling} | deferred{ruling} | retired{ruling}}`. The reader checks: ids unique; `witness`
 and `proofJudgment` null exactly on a split parent (H14); a split parent's children exist and name it as `parent`,
 and a `parent` is a split parent listing the child; a witness lane is one of the file's lanes; mapping ids exist. A
-stale proof judgment (its `obligationRev` or `laneRev` no longer the obligation's or the lane's) is the
-classifier's to refuse (A1), not the reader's. `isExempt`: waived, deferred or retired.
+stale proof judgment (its `obligationRev` or `laneRev` no longer the obligation's or the lane's, or its `witness` not
+exactly the obligation's; M3 Checkpoint A) is the classifier's to refuse (A1), not the reader's. `isExempt`: waived, deferred or retired.
 
 **The transition table** (`src/holistic/table.ts`, `obligationEffect(case) → measured | latch | red | discharged |
 exempt`, total; test `table.total`): exempt → exempt; future not completing its `deliveredBy` → measured; future
@@ -1129,7 +1131,7 @@ candidate): `SelectObligations(ImpactInput{obligations, units[{unit, declared, r
 revised}) → ObligationId[]` (ascending, split closure applied both ways, H14; `revised`: a revision publication's
 added, split or re-witnessed obligations, G12).
 
-**Witness records** (`witness.json` in a lane's evidence dir, B1; `witnessRecord`). `{v, lane, laneRev, envId,
+**Witness records** (`witness.json` in the lane execution's evidence dir, `witnessDir` in src/git/snapshot.ts, see "Choices made in M3 B2"; `witnessRecord`). `{v, lane, laneRev, envId,
 treeSha, inv, runner: Reporter, purpose: witness|mutant, records: [{testId, selected: nat, outcome:
 pass|fail|skip|zero-selected}] (ascending by testId), malformed}`; malformed ⇒ no records (every declared test
 unwitnessed). `ObservationVerdict = held | not-held | partial | unwitnessed`; `ObservationKey = {treeSha, lane,
@@ -1408,14 +1410,12 @@ residues, the snapshot closure):
    every must-hold, as for a unit) plus the revision's added, split and re-witnessed obligations (`revised`), split
    closure applied, read against the revision's own obligations. Green: every suite lane passes and no selected
    obligation's effect is `red` (latched: none; completing: none).
-3. **A job's lanes** (`runJobLanes`, the minimum B2 extends): serial, each under `job{job}` with its declared resources
-   (reserved through `acquireFirst`, probed under the job's owner label), in a detached checkout, spawned as
-   `journey{lane, laneRev, at, owner: job{job}}` (a suite lane too: the frozen `lane` subject names a unit; its
-   `laneRev` is `suiteLaneRev`, 16 hex of sha256 over its canonical definition), evidence under
-   `<runDir>/evidence/jobs/<job>/<lane>/`. An arc lane's reporter output becomes `witness.json` there and a
-   `witnessed{purpose: witness, for: job{job}}` fact (`treeSha` the commit's tree id). A lost or cancelled run ends
-   the series without a verdict. No red-lane protocol yet (B2). `ROADMAP_WITNESS_FILE` is the one `ROADMAP_*` variable
-   a launch.json may declare (src/core/records.ts).
+3. **A job's lanes** (superseded by Checkpoint A's AY and by B2: now `runJourneySeries`, src/pipeline/lanes.ts; see
+   "Choices made in M3 B2"): each under `job{job}` with its declared resources (reserved through `acquireFirst`, probed
+   under the job's owner label), in a detached checkout, spawned as `journey{lane, laneRev, at, owner: job{job}}` (a
+   suite lane too: the frozen `lane` subject names a unit; its `laneRev` is `suiteLaneRev`, 16 hex of sha256 over its
+   canonical definition), an arc lane's run a `witnessed{purpose: witness, for: job{job}}` fact (`treeSha` the commit's
+   tree id). `ROADMAP_WITNESS_FILE` is the one `ROADMAP_*` variable a launch.json may declare (src/core/records.ts).
 4. **Preemption (A7).** The arbiter serves `acquireFirst` waiters (a docs slot, a job's lanes) before every unit
    waiter, in arrival order; a refused one's `onBlocked` runs after the evaluation. A docs publication refused the slot
    preempts its holder when that is a unit candidate with no recorded outcome (`preemptCandidate`,
@@ -1428,7 +1428,7 @@ residues, the snapshot closure):
    not repair (a finding repair repairs its obligation). Checked before a candidate records green (→
    `finding-blocked`), immediately before a unit `ff` intent (the frozen ff vocabulary has no `finding-blocked`: →
    `cas-stale`, whose fresh candidate records it), and by recovery before redoing a unit CAS (`unitRedo`). The
-   known-regression exception (G11) needs a candidate's per-test witness records: B2's, with the candidate's arc lanes.
+   known-regression exception (G11) is B2's (below).
 6. **`rule <record.json>`** (src/commands/rule.ts): the record hashes as the CLI recorded, parses, and passes
    `validateRuling` at the tip; the proposal is the revision in force with `ledgerAfter` and `sidecarsAfter` (a
    superseded sidecar re-serialised with its new status), proposer `rule`, committed through `commitUnderFence`. Then
@@ -1461,3 +1461,123 @@ residues, the snapshot closure):
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot. A
    manifest without `namedBy` (1.0.0-dev.5) verifies by that release's allowlist, warned (scaffolding). Not yet in the
    closure: commands and their receipts, and a dev.5 revision's live ledger (never kept).
+
+**Choices made in M3 Checkpoint A** (fix step AX: judgments and approvals; findings 1, 4, 5, 9 of the batch-A review):
+
+1. **One acquisition order: the fence, then `@cpu`.** Plan-check and gate capture their inputs and write
+   `judgment-inputs` under the fence first, and only then take their `@cpu`×1 entry (`enterJudgment`); a revision
+   holds the fence through its docs publication, whose lanes wait for `@cpu`, so the old order (`@cpu`, then the
+   fence) deadlocked at capacity. A task already cancelled captures nothing. A capture whose `@cpu` wait is then
+   cancelled leaves its `judgment-inputs` for an attempt that never started: the fold lets the next capture for that
+   `(unit, stage, attempt)` replace it, and still refuses a second one for a started attempt. Plan-check's pin
+   (`pinDispatch`) now also precedes its reservation, so a cancelled wait can leave a unit pinned with no attempt
+   (`started()` already counts a pinned unit as started). A routing change or an empty diff records its outcome with
+   no reservation to release.
+2. **The approval records the captured fingerprint.** The gate computes `fingerprintAt(T)` inside its capture and
+   writes it as `judgment-inputs.fingerprint` (additive; a gate spawned by 1.0.0-dev.5 has none and is fingerprinted
+   at its recorded tip when read, warned `judgment-inputs.fingerprint`: scaffolding). `gateRead` takes that
+   fingerprint and records it as the `approval` (the unit branch must still be at its `unitCommit`); ff's re-check
+   compares it with the fingerprint of the inputs then in force, so a ruling withdrawn while the gate ran re-gates.
+3. **Effective ruling revisions.** `rulingRevs[].rev` = `effectiveRulingRevs(sidecars in force)` (src/spec/rulings.ts),
+   default 1: each ruling that partially supersedes it adds its own effective rev, plus 1 once it is no longer active.
+   It only rises as the ledger grows, so an approval citing a ruling a later ruling partially supersedes re-gates. A
+   dev.5 ledger has no sidecars: every rev stays 1 and dev.5 fingerprints read unchanged.
+4. **A proof judgment binds the complete witness definition.** `ProofJudgment` gains `witness{lane, testIds}` (a copy
+   of the obligation's witness it judged, M3-only shape, required); the classifier refuses a proof whose `witness` is
+   not exactly the obligation's (canonical JSON), besides its `obligationRev` and `laneRev`. A grown or changed test
+   set therefore needs a fresh proof even when neither revision moved.
+
+**Choices made in M3 Checkpoint A** (fix step AY: findings 2, 3, 6, 7, 8, 10, 11, 12 of the batch-A review; these
+supersede the A4 items they name):
+
+- **A job lane's evidence (finding 2; A4 item 3).** Each lane execution keeps its evidence in its own dir,
+  `<runDir>/evidence/jobs/<job>/<kind>-<lane>-<seq>-<ordinal>/` (`jobLaneDir`, src/git/snapshot.ts; `kind` is `suite`
+  or `arc`, the suffix the invocation's dir name), made once the spawn's intent names the invocation: a suite lane and
+  an arc lane of one id, or two invocations, never share an evidence dest. An arc lane's reporter writes `witness.lines`
+  there and its `witness.json` is written there, which the snapshot finds from the `witnessed` fact's `lane` and `inv` (always an arc lane).
+  B2 extends this to a unit candidate's journey lanes and moves the job series into src/pipeline/lanes.ts (below).
+- **A job's checkout integrity (finding 3).** After a job's lanes, the detached checkout must still be the commit:
+  tracked or unignored changes (`dirtyPaths`, as a candidate suite) are snapshotted to `<job root>/_dirty-<checkout>` (B2: a job may run several series) before the
+  checkout's removal (which then cites that snapshot), and a HEAD other than the commit is recorded. `JobSeries`
+  carries `checkout: {dirty, movedTo, evidence} | null` (null: no lane ran). A docs publication refuses either,
+  after the series' end and before the suite verdicts.
+- **`rule`'s obligation dispositions (finding 6; A4 item 6).** The proposal also carries the obligations file with
+  the ruling's `waived`, `deferred` and `retired` dispositions applied (`state: {type, ruling: <its id>}`, the file's
+  JSON edited in place); the classifier checks it like any obligation edit, and the publication renders
+  `invariants.md` when the rendering changes. `amended` is no state: it authorizes a later `apply`'s amendment while
+  the ruling is in force. The write-back covers the obligations file (beside the plan, `plan.holistic.obligations`)
+  with the same compare-and-write as the ledger and sidecars.
+- **Startup and a committed command (finding 7).** `settlePlan` (src/preflight/checks.ts, exported) leaves the files
+  for the next start while a `command.apply` is open whose command a `plan-applied` names: its revision is in force,
+  its write-back may be unfinished, and recovery re-runs the command, which finishes it. The open command op is the
+  durable pending-write-back phase; no new record.
+- **A rule on a 1.0.0-dev.5 revision (finding 8; scaffolding).** Before committing a rule whose previous revision
+  has no payload, `rule` keeps the live ledger's hash it evaluated against at
+  `<runDir>/commands/rule-preimages/<command>.json` (`{ledgerSha256}`; such a revision has no sidecars or obligations
+  in force). A run again after a crash past the fact compares the live files with it; a missing one is a bug. Delete
+  with the other dev.5 scaffolding.
+- **`reverse` resolves the recorded preimage (findings 10, 11).** A preimage spec `{u: rev}` is the latest spec of
+  unit `u` at that spec rev the log named before the act's `plan-applied` (a `plan-applied` manifest, `dispatch`,
+  `reopened`, `judgment-inputs`, a done `spec.patch`); obligations are read by the preimage's `obligationsSha256`, not
+  the plan manifest's. A restored dispatched unit's spec is the next rev of its recorded one (replacing any pending
+  revision). Restored obligations are a fresh revision: each obligation both files hold takes the rev in force, plus
+  one when its statement, docRef or activation changes back, and its preimage proof judgment (which judged exactly the
+  restored statement and witness) is bound to that rev, every other proof field kept as the preimage has it. The
+  classifier (`classifyObligations`) validates the result, dispositions and proof freshness included.
+- **dev.5 routing provenance (finding 12; A4 item 9; scaffolding).** `routing-provenance/<rev>.json` is no longer
+  rebuilt at snapshot time. The first start of this release on an arc with dev.5 revisions (adoption, `runChecks`
+  after `settlePlan`, `adoptLegacyProvenance`) persists, write-once, `<runDir>/routing-provenance/<rev>.json` for each
+  dev.5 `plan-applied`: `{kind: reconstructed, provenance, matched}` when the provenance rebuilt from the revision's
+  kept plan, start.json's profile and the adopting start's repo config resolves every routing rev the log recorded
+  while that revision was in force (its backend spawns, its dispatches, its own `routing` change; `matched` lists
+  them), else `{kind: unreconstructable, reason}` (reported on stderr). The snapshot carries these bytes (the run-dir
+  path mirrored), and a missing one fails the snapshot loudly. The executor's live routing of a dev.5 revision in force
+  (src/executor.ts `contexts`) still rebuilds from the config read at each start (not changed here).
+
+**Choices made in M3 B2** (journey lanes, the held-claims brake, latching, the baseline job, the repair batch):
+
+1. **One journey series** (`runJourneySeries`, src/pipeline/lanes.ts) runs every arc lane and a job's suite lanes, for a
+   unit candidate (its candidate stage holder, spawns `journey{owner: unit}`, `witnessed{for: candidate{unit, attempt}}`)
+   or a job (`job{job}`, `acquireFirst`): the red-lane protocol, the checkout's integrity (AY; the dirty paths go to
+   `<series root>/_dirty-<checkout>`), and each execution's own dir: a job's `jobLaneDir`, a candidate's
+   `candidateLaneDir` = `<runDir>/evidence/<unit>/<attempt>-candidate/journey/<kind>-<lane>-<seq>-<ordinal>/` (its runs
+   on the candidate and on the tip alone share the parent). `witness.lines` and `witness.json` live there; `witnessDir`
+   (src/git/snapshot.ts) finds a record from its `witnessed` fact, and a mutant's (B3) has no location yet. Only the
+   run whose verdict counts is `witnessed` (a diagnostic or voided rerun is kept, never named). `publish.ts`'s
+   `runJobLanes` is gone.
+2. **Lane reuse (§9)**: a witness lane whose observation on the tree exists (all four keys, the record's hash) is not
+   run again (`reuse`); the baseline job always runs afresh.
+3. **The brake** (src/pipeline/integrate.ts `heldClaims`, `gradeTree`, `brakeVerdict`): after a green suite, the arc lanes
+   of the selected non-exempt obligations run on the candidate. Clean = checkout intact, no selected effect `red`, every
+   declared repair held, and no lane failure left. A failing test of a future (not latched) or exempt obligation is never
+   graded; one of an unselected must-hold obligation over which an active P1 is open is a background failure; any other
+   failing test (or a red lane with none) is unexplained. Not clean → the same lanes on the tip alone: a blocking failure
+   (a brake red, a repair not held, an unexplained lane, a changed checkout) the tip reproduces → `base-red`, else `red`
+   (charged; `candidateBrakeFix` names the red obligations in the fix round). A repaired obligation's red is never the
+   base's. Background failures only: the tip failing exactly those tests per lane → green (known regression); failing
+   none → `red`; else `base-red`.
+4. **G11's suite-lane half is unreachable**: the frozen plan's suite lanes carry no `reporter`, so the known-regression
+   exception applies to arc-lane witnesses only.
+5. **Latching** (`latchPublished`): after a unit's `ff{published}` (and a batch's), before the snapshot, each future
+   obligation the publication completes and that holds on its tree (the observation store, this host's envId) latches,
+   `unit` the first publishing unit in its `deliveredBy`; a restart re-reading the published ff writes what is missing.
+   Crash label `latch.after-fact` (matrix row LATCH).
+6. **The gate's obligation views** (`observedViews`) carry the observation on the integration tip's tree (the candidate
+   does not exist yet), null when none is there.
+7. **The baseline job** (src/pipeline/baseline.ts): `baselineDue` names `baseline-<n>` while a holistic arc with
+   obligations lacks a witness of every arc lane on the tip by it, or has a problem not raised; `runBaseline` resumes the
+   same job (its leftover checkout removed, only missing lanes run). Problems (a must-hold not held, a future already
+   held: vacuous) raise one blocking `obligation-baseline` parented by the job. The scheduler (B7) calls it before
+   admitting any unit.
+8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` through `acquireFirst` with the job as
+   the reserve's parent (`AcquireFirst`'s 5th parameter, required exactly for a batch holder); one durable `batch-<n>` per
+   finding until it publishes, each attempt reusing it; the chain on `refs/roadmap-run/<arc>/candidate/<batch-n>` (the
+   frozen candidate ref shape; a unit named like a batch job would collide), each chain merge re-made from `merge-tree`
+   of its parents with `commit`'s identity and message. The claims are the union of each member's selection. Red →
+   `red{attributable}`: members whose own selection holds a red obligation, none when anything else is red. Before the ff
+   every member's fingerprint at the tip (`stale{invalid}`) and eligibility (`finding-blocked`). A batch ff's provenance
+   is a first-parent chain of ≥ 2 two-parent merges back to T. Its CAS is never redone by recovery (done unpublished;
+   the batch runs again); a batch holder whose ff published is left holding the slot for `finishBatch` (latches,
+   snapshot, release), any other is abandoned (`abandonBatch`). Crash label `batch.after-candidate` (matrix row
+   BATCH_PUBLICATION). The scheduler (B7) decides when to batch, finishes a held published batch at start, and records
+   the members' outcomes of a red batch.

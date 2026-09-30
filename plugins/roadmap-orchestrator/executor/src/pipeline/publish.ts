@@ -31,8 +31,10 @@
 // published → `finishDocs` (what is missing of docs-covered, snapshot, release); not published → `abandonDocs` (its
 // checkout removed, the slot released), and the source re-evaluates.
 //
-// The lanes run as a journey series under `job{pub}` (src/pipeline/lanes.ts `runJourneySeries`: reserved first of every
-// unit, the red-lane protocol, evidence per execution, a witness record per arc lane run).
+// The lanes run as a journey series under `job{pub}` (src/pipeline/lanes.ts `runJourneySeries`): reserved first of every
+// unit, the red-lane protocol, evidence per lane execution in its own immutable dir (`jobLaneDir`), a witness record per
+// arc lane run, and the checkout's integrity after the lanes: a lane that left it dirty or moved its HEAD is preserved as
+// evidence (`_dirty`) and refuses the certification, since the tree the lanes tested is not the commit that would publish.
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
@@ -45,7 +47,7 @@ import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs } from '../g
 import { capturedEvidence } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
 import { gitRun, refTarget } from '../git/git.ts';
-import { snapshotRequestOf } from '../git/snapshot.ts';
+import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
@@ -65,7 +67,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
 import { preemptCandidate } from './integrate.ts';
-import { type JourneySeries, arcJourneyLane, jobEvidenceRoot, runJourneySeries, suiteJourneyLane } from './lanes.ts';
+import { type JourneySeries, arcJourneyLane, runJourneySeries, suiteJourneyLane } from './lanes.ts';
 import { runOp, runPrepared } from './dispatch.ts';
 import { executorIdentity } from './stages.ts';
 
@@ -284,7 +286,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes));
   const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
   const series = await runJourneySeries(
-    ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit), jobEvidenceRoot(ctx.runDir, pub),
+    ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit),
     { reuse: true, stop: (r) => r.record === null && r.verdict !== 'pass' },
   );
   crashPoint('docs.after-lanes');
@@ -320,6 +322,11 @@ function verdictReason(series: JourneySeries, obligations: Obligations | null, s
     case 'interrupted':
       throw new Error(`a docs publication's lanes are never interrupted (${series.end.reason})`);
   }
+  const tree = series.checkout;
+  if (tree !== null && tree.dirty.length > 0) {
+    return `its lanes changed the checkout they tested (${tree.dirty.join(', ')}; kept at ${tree.evidence}): the tested tree is not the commit it would publish`;
+  }
+  if (tree !== null && tree.movedTo !== null) return `its lanes moved the checkout's HEAD to ${tree.movedTo}: the tested tree is not the commit it would publish`;
   const red = series.runs.find((r) => r.record === null && r.verdict !== 'pass');
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;
   if (obligations === null || selected.size === 0) return null;

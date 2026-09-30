@@ -26,7 +26,8 @@ import { type Obligations, type WitnessRecord, isExempt, witnessRecord } from '.
 import type { PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
-import { type JourneyContext, type JourneyEnd, arcJourneyLane, jobEvidenceRoot, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
+import { jobEvidenceRoot } from '../git/snapshot.ts';
+import { type JourneyContext, type JourneyEnd, arcJourneyLane, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
 import { holisticInForce } from './stages.ts';
 
 export type BaselineContext = JourneyContext & Readonly<{ acquireFirst: AcquireFirst }>;
@@ -57,7 +58,7 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
   const out = new Map<LaneId, WitnessRecord>();
   for (const w of ctx.journal.view.holistic().witnessed) {
     if (w.for.type !== 'job' || w.for.job !== job || w.treeSha !== tree) continue;
-    out.set(w.lane, witnessRecord(JSON.parse(readFileSync(witnessRecordPath(ctx.runDir, w.inv), 'utf8')), 'witness'));
+    out.set(w.lane, witnessRecord(JSON.parse(readFileSync(witnessRecordPath(ctx.runDir, w), 'utf8')), 'witness'));
   }
   return out;
 }
@@ -138,7 +139,7 @@ export async function runBaseline(ctx: BaselineContext): Promise<BaselineOutcome
     const lanes = obligations.lanes.filter((l) => s.missing.includes(l.id)).map(arcJourneyLane);
     const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, lanes, {
       path: baselineWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, job), checkout: { type: 'detached', at: tip },
-    }, jobEvidenceRoot(ctx.runDir, job), { reuse: false, stop: () => false });
+    }, { reuse: false, stop: () => false });
     if (series.end.kind !== 'ran') return { kind: 'incomplete', end: series.end };
   }
   const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));

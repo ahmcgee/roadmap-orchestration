@@ -288,7 +288,13 @@ describe('fold: lineage, cut, build tier, scheduling', () => {
     assert.equal(f.judgmentInputs(U1, 'gate', 3), null);
     assert.deepEqual(f.edgeResolved('e-top' as never), { command: CMD, evidence: 'landed', seq: 2 });
     assert.deepEqual(f.runOnly(), [U2]);
-    refuses([fact(inputs), fact(inputs)], 2, /second judgment-inputs/);
+    // M3 Checkpoint A: the capture precedes the attempt's `@cpu` entry. A capture whose wait was cancelled (no op or
+    // outcome started the attempt) is replaced by the next one for that attempt; a started attempt's is never.
+    const recaptured = { ...inputs, tip: sha('c'.repeat(40)), planRev: 2 };
+    assert.equal(folded([fact(inputs), fact(recaptured)]).judgmentInputs(U1, 'gate', 4)?.tip, recaptured.tip);
+    const gateHolder = { type: 'stage', unit: U1, stage: 'gate', attempt: 4 };
+    const reserve: LogRecord = { ...transitionIntent(2, gateHolder, ['@cpu#1'], { type: 'reserve' }), parent: gateHolder } as LogRecord;
+    refuses([fact(inputs), reserve, fact(recaptured)], 3, /second judgment-inputs/);
     refuses([fact({ kind: 'edge-resolved', edge: 'e', command: CMD, evidence: 'x' }), fact({ kind: 'edge-resolved', edge: 'e', command: CMD, evidence: 'y' })], 2, /already resolved/);
   });
 });

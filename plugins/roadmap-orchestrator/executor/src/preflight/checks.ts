@@ -12,7 +12,11 @@
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
 //                   `obligation-dropped`, reported as plan-change-refused), a start whose files differ applies
 //                   them through the apply core (src/commands/apply.ts `evaluateRevision`, source `start`) or
-//                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first
+//                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first, and so
+//                   is a committed command's write-back (its `command.apply` still open with its revision in force:
+//                   the files may not hold that revision yet, and recovery re-runs the command, which writes it
+//                   back), so the files wait for the next start. Then, on an arc a 1.0.0-dev.5 executor started,
+//                   the adoption of its revisions' routing provenance (src/git/snapshot.ts `adoptLegacyProvenance`)
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -48,6 +52,7 @@ import {
   specBytesOf, specFilePath, specShaInForce,
 } from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
+import { adoptLegacyProvenance } from '../git/snapshot.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
@@ -474,7 +479,7 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): Re
  * classifies them like `roadmap apply` (no command) and refuses what the rules refuse. A respawn runs the plan
  * in force and asks nothing.
  */
-function settlePlan(journal: OpenJournal, context: StartupContext, files: InputFiles | null): readonly Rejection<'plan-change-refused'>[] {
+export function settlePlan(journal: OpenJournal, context: StartupContext, files: InputFiles | null): readonly Rejection<'plan-change-refused'>[] {
   // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
   // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
   const open = openRevision(journal.view);
@@ -499,6 +504,9 @@ function settlePlan(journal: OpenJournal, context: StartupContext, files: InputF
   }
   // A command's or bundle's revision a crash left mid-commit: recovery settles it; the files are settled at the next start.
   if (openRevision(journal.view) !== null) return [];
+  // A command whose revision is in force but which a crash cut short (its write-back of that revision into the files
+  // may be unfinished): recovery re-runs it and finishes the write-back; the files are settled at the next start.
+  if (committedCommand(journal.view)) return [];
   const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase };
   const verdict = evaluateRevision(rctx, files, { type: 'start' });
   switch (verdict.kind) {
@@ -518,6 +526,10 @@ function settlePlan(journal: OpenJournal, context: StartupContext, files: InputF
       return [{ kind: 'plan-change-refused', reasons: verdict.reasons }];
   }
 }
+
+/** Whether a `command.apply` is open whose revision is in force already (a `plan-applied` names its command). */
+const committedCommand = (view: JournalView): boolean =>
+  view.openIntents().some((i) => i.kind === 'command.apply' && view.planAppliedBy(i.expect.command) !== null);
 
 /**
  * The startup row `obligation-dropped` (LR-b, R2), at an arc's first start: the previous arc's published obligations
@@ -583,6 +595,9 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if (mode.length > 0) return refused(mode, claim, journal);
   const planRows = settlePlan(journal, context, source.files);
   if (planRows.length > 0) return refused(planRows, claim, journal);
+  for (const reason of adoptLegacyProvenance(context.runDir, readJournal(context.runDir, plan.arc).events, readRepoConfig(input.repo))) {
+    process.stderr.write(`roadmap: upgrade (routing provenance, H7): ${reason}\n`);
+  }
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
 }

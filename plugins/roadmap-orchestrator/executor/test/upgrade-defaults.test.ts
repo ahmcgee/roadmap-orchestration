@@ -161,6 +161,11 @@ describe('upgrade.defaults-unit (dev.5 → M3)', () => {
       line({ type: 'fact', fact: { kind: 'dispatch', record: { unit: 'a', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: '2026-09-29T12:00:00.000Z' } } }),
       line({ type: 'intent', op: `${ARC}/2`, kind: 'integration.ff', key: 'ff', parent: { type: 'stage', unit: 'a', stage: 'ff', attempt: 5 }, ordinal: 1, deadlineAt: null, expect: { ref: 'refs/heads/main', old: 'a'.repeat(40), new: 'c'.repeat(40), fingerprint: fp }, post: null }),
     ];
+    // A dev.5 gate's judgment-inputs carries no captured fingerprint (M3 Checkpoint A): read as written, defaulted when consumed.
+    const inputs = line({ type: 'fact', fact: { kind: 'judgment-inputs', unit: 'a', stage: 'gate', attempt: 4, tip: 'a'.repeat(40), head: 'b'.repeat(40), specRev: 2, specSha256: H, planRev: 3, routingRev: REV } });
+    assert.equal(serializeEvent(parseEventLine(inputs)), `${inputs}\n`);
+    const parsedInputs = parseEventLine(inputs);
+    assert.ok(parsedInputs.type === 'fact' && parsedInputs.fact.kind === 'judgment-inputs' && parsedInputs.fact.fingerprint === undefined);
     for (const l of dev5) assert.equal(serializeEvent(parseEventLine(l)), `${l}\n`, l);
     const [approval, applied, first, dispatched, ff] = dev5.map(parseEventLine);
     assert.ok(approval?.type === 'fact' && approval.fact.kind === 'approval');

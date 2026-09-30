@@ -11,7 +11,8 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { holisticInForce } from '../src/pipeline/stages.ts';
 import { type BaselineContext, baselineDue, runBaseline } from '../src/pipeline/baseline.ts';
-import { arcJourneyLane, jobEvidenceRoot, runJourneySeries } from '../src/pipeline/lanes.ts';
+import { jobEvidenceRoot } from '../src/git/snapshot.ts';
+import { arcJourneyLane, runJourneySeries } from '../src/pipeline/lanes.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type HolisticOptions, holisticArc } from './fixtures/brake-common.ts';
 import { publishArc, wire } from './fixtures/publish-common.ts';
@@ -94,7 +95,7 @@ describe('the baseline witness (A6)', () => {
       const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
       const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, [arcJourneyLane(lane)], {
         path: absPath(join(tmpDir('baseline-partial'), 'checkout')), checkout: { type: 'detached', at: tip },
-      }, jobEvidenceRoot(r.ctx.runDir, job), { reuse: false, stop: () => false });
+      }, { reuse: false, stop: () => false });
       assert.equal(series.end.kind, 'ran');
       assert.equal(baselineDue(ctx), 'baseline-1', 'the same job is still due');
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
@@ -124,7 +125,7 @@ describe('lane reuse (§9)', () => {
       const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
       const run = (n: number, reuse: boolean) => runJourneySeries(ctx, { type: 'job', job: jobId('audit', 1), acquireFirst: ctx.acquireFirst }, [lane], {
         path: absPath(join(tmpDir('reuse'), `checkout-${n}`)), checkout: { type: 'detached', at: tip },
-      }, jobEvidenceRoot(r.ctx.runDir, jobId('audit', 1)), { reuse, stop: () => false });
+      }, { reuse, stop: () => false });
       const first = await run(1, true);
       assert.equal(first.runs[0]!.inv !== null, true);
       const second = await run(2, true);

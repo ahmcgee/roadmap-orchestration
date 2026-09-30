@@ -70,7 +70,7 @@ export function obligationsJson(opts: Pick<HolisticOptions, 'obligations' | 'map
       const activation = o.activation ?? 'must-hold';
       return {
         id: o.id, rev: 1, statement: `${o.id} holds.`, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: { lane, testIds: [...o.testIds] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never) },
+        witness: { lane, testIds: [...o.testIds] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never), witness: { lane, testIds: [...o.testIds] } },
         deliveredBy: activation === 'future' ? [...(o.deliveredBy ?? [])] : [], activation, contracts: [], state: o.state ?? { type: 'active' },
       };
     }),

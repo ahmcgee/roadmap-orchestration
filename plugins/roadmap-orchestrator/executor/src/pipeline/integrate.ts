@@ -62,6 +62,7 @@ import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, spec
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
 import { planBatchFf, planFf } from '../git/ff.ts';
+import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
 import { unitTransientRules } from '../git/transient.ts';
@@ -85,7 +86,7 @@ import {
 } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
-  type JourneyEnd, type JourneyRun, type Series, arcJourneyLane, jobEvidenceRoot, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
+  type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, intact, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, suiteJourneyLane,
 } from './lanes.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
@@ -334,6 +335,8 @@ export type TreeGrade = Readonly<{
   background: ReadonlyMap<LaneId, readonly string[]>;
   /** Lanes that ran red with a failure nothing explains: a failing test no obligation or P1 accounts for, or no failing test at all. */
   unexplained: readonly LaneId[];
+  /** The checkout was still the commit after the lanes (nothing dirty, HEAD not moved): a tree that changed is never certified. */
+  intact: boolean;
 }>;
 
 /**
@@ -383,23 +386,24 @@ export function gradeTree(
     }
   }
   return {
-    effects, red: [...red].sort(), unexplained: [...unexplained].sort(),
+    effects, red: [...red].sort(), unexplained: [...unexplained].sort(), intact: true,
     background: new Map([...background].map(([lane, tests]) => [lane, [...new Set(tests)].sort()] as const)),
   };
 }
 
-const clean = (g: TreeGrade): boolean => g.red.length === 0 && g.unexplained.length === 0 && g.background.size === 0;
+const clean = (g: TreeGrade): boolean => g.intact && g.red.length === 0 && g.unexplained.length === 0 && g.background.size === 0;
 
 /**
  * A non-clean candidate grade read against the tip alone's (the red-suite path): a blocking failure (a brake red, a
- * repair not held, an unexplained lane) that the tip reproduces → `base-red`, else `red` (charged). An obligation the
+ * repair not held, an unexplained lane, a checkout the lanes changed) that the tip reproduces → `base-red`, else `red` (charged). An obligation the
  * candidate declares it repairs is known not to hold on the tip: its red is the candidate's (`red`), never the base's.
  * Background failures only: the tip failing exactly those tests on each lane → `green` (known regression, R4, G11); the
  * tip failing none of them → `red`; anything else → `base-red`.
  */
 export function brakeVerdict(candidate: TreeGrade, tip: TreeGrade, repairs: ReadonlySet<ObligationId>): 'green' | 'red' | 'base-red' {
-  if (candidate.red.length > 0 || candidate.unexplained.length > 0) {
-    const reproduced = candidate.red.some((id) => !repairs.has(id) && tip.red.includes(id)) || candidate.unexplained.some((l) => tip.unexplained.includes(l));
+  if (!candidate.intact || candidate.red.length > 0 || candidate.unexplained.length > 0) {
+    const reproduced = (!candidate.intact && !tip.intact) || candidate.red.some((id) => !repairs.has(id) && tip.red.includes(id))
+      || candidate.unexplained.some((l) => tip.unexplained.includes(l));
     return reproduced ? 'base-red' : 'red';
   }
   const lanes = [...candidate.background.keys()];
@@ -410,8 +414,11 @@ export function brakeVerdict(candidate: TreeGrade, tip: TreeGrade, repairs: Read
 
 export const journeyWorktree = (root: AbsPath, arc: string, owner: string, which: 'journey' | 'base-journey', attempt: number): AbsPath =>
   absPath(join(root, arc, `${owner}.${which}-${attempt}`));
-/** Where a candidate attempt keeps its journey lanes' evidence: on the candidate, and on the tip alone. */
-export const journeyRoot = (runDir: AbsPath, parent: StageParent, on: 'candidate' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), on === 'candidate' ? 'journey' : 'base-journey'));
+/**
+ * Where a candidate attempt keeps its journey lanes' evidence, on the candidate and on the tip alone: one dir per
+ * execution under it (src/git/snapshot.ts `candidateLaneDir`).
+ */
+export const journeyRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPath(join(evidenceRoot(runDir, parent), 'journey'));
 
 /** A journey series' end read as a candidate outcome, when it has no verdict. */
 function journeyFault(end: JourneyEnd): CandidateEnd | null {
@@ -443,26 +450,26 @@ async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent
   const root = ctx.plan().worktreeRoot;
   const onCandidate = await runJourneySeries(ctx, owner, lanes, {
     path: journeyWorktree(root, ctx.plan().arc, unit.id, 'journey', parent.attempt), checkout: { type: 'detached', at: intent.post.new },
-  }, journeyRoot(ctx.runDir, parent, 'candidate'), { reuse: true, stop: () => false });
+  }, { reuse: true, stop: () => false });
   const fault = journeyFault(onCandidate.end);
   if (fault !== null) return fault;
   const p1 = p1Obligations(ctx.journal.view);
-  const grade = gradeTree(claims, onCandidate.runs, claims.completing, claims.repairs, p1);
+  const grade = { ...gradeTree(claims, onCandidate.runs, claims.completing, claims.repairs, p1), intact: intact(onCandidate) };
   if (clean(grade)) return ended('green');
   if (ctx.signal.reason === 'preempt') return ended('preempted');
   const alone = await runJourneySeries(ctx, owner, lanes, {
     path: journeyWorktree(root, ctx.plan().arc, unit.id, 'base-journey', parent.attempt), checkout: { type: 'detached', at: tip },
-  }, journeyRoot(ctx.runDir, parent, 'base'), { reuse: true, stop: () => false });
+  }, { reuse: true, stop: () => false });
   const baseFault = journeyFault(alone.end);
   if (baseFault !== null) return baseFault;
-  switch (brakeVerdict(grade, gradeTree(claims, alone.runs, new Set(), new Set(), p1), claims.repairs)) {
+  switch (brakeVerdict(grade, { ...gradeTree(claims, alone.runs, new Set(), new Set(), p1), intact: intact(alone) }, claims.repairs)) {
     case 'green':
       return ended('green');
     case 'red':
       return ended('red');
     case 'base-red':
       return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, [
-        candidateSeriesRoot(ctx.runDir, parent), journeyRoot(ctx.runDir, parent, 'candidate'), journeyRoot(ctx.runDir, parent, 'base'),
+        candidateSeriesRoot(ctx.runDir, parent), journeyRoot(ctx.runDir, parent),
       ]));
   }
 }
@@ -487,7 +494,7 @@ export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: Sta
     ...grade.unexplained.map((lane) => `Journey lane ${lane} ran red on the candidate with a failure no obligation explains; read its output and fix the regression.`),
     ...[...grade.background].map(([lane, tests]) => `Journey lane ${lane}: tests ${tests.join(', ')} fail on the candidate but not on the integration tip alone; the change regressed them.`),
   ];
-  const root = journeyRoot(ctx.runDir, parent, 'candidate');
+  const root = journeyRoot(ctx.runDir, parent);
   return { failingEvidenceDirs: existsSync(root) ? [root] : [], directives: directives.length > 0 ? directives : ['The candidate\'s held claims were red; read the journey evidence and fix it.'] };
 }
 
@@ -780,7 +787,6 @@ const NEVER = new AbortController().signal;
 
 const batchCheckout = (root: AbsPath, arc: string, job: JobId, which: 'candidate' | 'base', attempt: number): AbsPath =>
   absPath(join(root, arc, `${job}.${which}-${attempt}`));
-const batchRoot = (runDir: AbsPath, job: JobId, which: 'candidate' | 'base', attempt: number): AbsPath => absPath(join(jobEvidenceRoot(runDir, job), `${which}-${attempt}`));
 
 /** The batch reservations of `finding` (their `reserve` intents, log order): each attempt's holder and its job. */
 function batchReserves(view: JournalView, finding: FindingId): readonly Readonly<{ holder: BatchHolder; job: JobId }>[] {
@@ -870,7 +876,7 @@ export function batchHolderPublished(view: JournalView, holder: BatchHolder): bo
 }
 
 /** The grade of a tree with no claims: nothing selected, nothing failing. */
-const NO_CLAIMS: TreeGrade = { effects: new Map(), red: [], background: new Map(), unexplained: [] };
+const NO_CLAIMS: TreeGrade = { effects: new Map(), red: [], background: new Map(), unexplained: [], intact: true };
 
 /** A batch's suite lanes that ran red count as failures nothing explains (the red-suite path). */
 const withSuite = (g: TreeGrade, runs: readonly JourneyRun[]): TreeGrade =>
@@ -933,25 +939,28 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
   const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
   const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(claims?.lanes ?? []).map(arcJourneyLane)];
   const suiteRed = (r: JourneyRun): boolean => r.record === null && journeyRed(r);
-  const onCandidate = await runJourneySeries(ctx, owner, lanes, candidateWorktreeRequest(cand), batchRoot(ctx.runDir, job, 'candidate', attempt), { reuse: true, stop: suiteRed });
+  const onCandidate = await runJourneySeries(ctx, owner, lanes, candidateWorktreeRequest(cand), { reuse: true, stop: suiteRed });
   if (onCandidate.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: onCandidate.end });
   const p1 = p1Obligations(ctx.journal.view);
   // Outside an arc with obligations only the suite grades.
-  const gradeOn = (runs: readonly JourneyRun[], on: 'candidate' | 'tip'): TreeGrade => withSuite(claims === null ? NO_CLAIMS : on === 'candidate'
-    ? gradeTree(claims, runs, claims.completing, claims.repairs, p1)
-    : gradeTree(claims, runs, new Set(), new Set(), p1), runs);
-  const grade = gradeOn(onCandidate.runs, 'candidate');
+  const gradeOn = (series: JourneySeries, on: 'candidate' | 'tip'): TreeGrade => ({
+    ...withSuite(claims === null ? NO_CLAIMS : on === 'candidate'
+      ? gradeTree(claims, series.runs, claims.completing, claims.repairs, p1)
+      : gradeTree(claims, series.runs, new Set(), new Set(), p1), series.runs),
+    intact: intact(series),
+  });
+  const grade = gradeOn(onCandidate, 'candidate');
   if (!clean(grade)) {
     const alone = await runJourneySeries(ctx, owner, lanes, {
       path: batchCheckout(plan.worktreeRoot, plan.arc, job, 'base', attempt), checkout: { type: 'detached', at: tip },
-    }, batchRoot(ctx.runDir, job, 'base', attempt), { reuse: true, stop: () => false });
+    }, { reuse: true, stop: () => false });
     if (alone.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: alone.end });
-    switch (brakeVerdict(grade, gradeOn(alone.runs, 'tip'), claims?.repairs ?? new Set())) {
+    switch (brakeVerdict(grade, gradeOn(alone, 'tip'), claims?.repairs ?? new Set())) {
       case 'green':
         break;
       case 'red': {
         // A member is attributable when its own selection holds a red obligation and nothing else is red.
-        const attributable = grade.unexplained.length > 0 || grade.background.size > 0 ? [] : sorted.filter((u) => {
+        const attributable = !grade.intact || grade.unexplained.length > 0 || grade.background.size > 0 ? [] : sorted.filter((u) => {
           const own = new Set(selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id));
           return grade.red.some((id) => own.has(id));
         }).map((u) => u.id);
@@ -962,7 +971,7 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
           blocking: true, subject: { type: 'arc' }, reason: 'base-red',
           summary: `Batch ${job} repairing ${finding} is red on ${plan.integrationBranch} at ${tip} alone as well: the base is broken, not the batch. Merges halt.`,
           recommendation: `Repair ${plan.integrationBranch} (or the suite), then acknowledge this item: the batch runs again.`,
-          options: [], evidence: [batchRoot(ctx.runDir, job, 'candidate', attempt), batchRoot(ctx.runDir, job, 'base', attempt)],
+          options: [], evidence: [jobEvidenceRoot(ctx.runDir, job)],
         } });
     }
   }

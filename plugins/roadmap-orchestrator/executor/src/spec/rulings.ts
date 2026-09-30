@@ -163,6 +163,24 @@ export function ledgerAfter(text: string, s: RulingSidecar): string {
   return `${body === '' || body.endsWith('\n') ? body : `${body}\n`}${s.id} — ${s.statement}\n`;
 }
 
+/**
+ * The effective revision of every ruling a ruling in force partially supersedes, from the sidecars in force (absent:
+ * 1; Checkpoint A): what an approval fingerprint's
+ * `rulingRevs` binds, so it changes whenever a cited ruling's meaning does. 1, plus for each ruling that partially
+ * supersedes it that ruling's own effective revision, plus 1 once that ruling is itself no longer active (its part
+ * of the meaning went with it). It only rises as the ledger grows: a landing adds a term, a status only leaves
+ * `active`. Full supersession needs no term (the ruling leaves the active set, which the fingerprint sees).
+ */
+export function effectiveRulingRevs(sidecars: readonly RulingSidecar[]): ReadonlyMap<RulingId, number> {
+  const revs = new Map<RulingId, number>();
+  const rev = (id: RulingId): number => revs.get(id) ?? 1;
+  // A superseding ruling is always a later id (the ledger's next C-n): descending, its own revision is final first.
+  for (const s of [...sidecars].sort((a, b) => rulingNumber(b.id) - rulingNumber(a.id))) {
+    for (const t of s.supersedes) if (t.part !== null) revs.set(t.id, rev(t.id) + rev(s.id) + (s.status === 'active' ? 0 : 1));
+  }
+  return revs;
+}
+
 /** The sidecars in force with `s` landed: each one it fully supersedes marked `superseded`, `s` added; ascending by id. */
 export function sidecarsAfter(sidecars: readonly RulingSidecar[], s: RulingSidecar): readonly RulingSidecar[] {
   const folded = new Set<string>(s.supersedes.filter((t) => t.part === null).map((t) => t.id));

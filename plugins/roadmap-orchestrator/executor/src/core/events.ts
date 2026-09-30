@@ -468,6 +468,12 @@ export type JudgmentInputs = Readonly<{
   specSha256: Sha256Hex;
   planRev: PlanRev;
   routingRev: RoutingRev;
+  /**
+   * M3 (Checkpoint A): the gate's complete approval fingerprint, captured with its other inputs under the revision
+   * fence; an approval records exactly it. Absent on a plan-check's, and on a gate's a 1.0.0-dev.5 executor wrote
+   * (read-time default: taken at the recorded tip when the call is read, `judgmentFingerprintDefault`).
+   */
+  fingerprint?: ApprovalFingerprint;
 }>;
 
 export type Fact =
@@ -1377,7 +1383,11 @@ export const fact: Read<Fact> = tagged('kind', {
       planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
     };
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
-    return out;
+    const fingerprint = f.optional('fingerprint', approvalFingerprint);
+    if (fingerprint === undefined) return out;
+    if (out.stage !== 'gate') throw new SchemaError(`${f.path}.fingerprint`, 'absent on a plan-check', fingerprint);
+    if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
+    return { ...out, fingerprint };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),
