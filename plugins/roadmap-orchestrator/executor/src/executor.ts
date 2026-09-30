@@ -48,11 +48,12 @@ import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type Sha256Hex, hostNeedsUserId } from './core/ids.ts';
+import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
   type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RunStart,
 } from './core/records.ts';
+import { routingProvenanceOf } from './core/upgrade.ts';
 import { type Read, arrayOf, literal, object } from './core/validate.ts';
 import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
@@ -61,7 +62,7 @@ import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
 import { readHostSample } from './host/sample.ts';
-import { requirePlanInForce } from './input/inforce.ts';
+import { requirePlanInForce, routingProvenanceOf as provenanceOf } from './input/inforce.ts';
 import type { PlanM1 } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
 import { type ProberHandle, createProber } from './park/probe.ts';
@@ -74,7 +75,7 @@ import {
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
 import { DOCS_NOT_YET } from './recover/revision.ts';
-import { type ResolvedRouting, planStack, resolveRouting } from './routing/layers.ts';
+import { type ResolvedRouting, provenanceStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
@@ -271,7 +272,7 @@ async function consumeRecovered(x: Exec): Promise<void> {
 // The contexts: the plan and routing in force are read from the log at each call
 
 /**
- * The contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing()` its resolution under
+ * The contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing(unit)` its resolution under
  * the start's profile and repo config, both read at each call, so an apply takes effect at the next one; each
  * plan revision is parsed and resolved once (the one cache of the plan in force). The stage context's
  * `acquire` is the run's arbiter and its signal is never aborted: each unit's task gets its own
@@ -279,18 +280,30 @@ async function consumeRecovered(x: Exec): Promise<void> {
  */
 function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
-  const resolve = (plan: PlanM1): ResolvedRouting => resolveRouting(planStack(profile, config, plan));
-  const cache = new Map<Sha256Hex, Readonly<{ plan: PlanM1; routing: ResolvedRouting }>>();
-  const inForce = (): Readonly<{ plan: PlanM1; routing: ResolvedRouting }> => {
+  // H7 (M3 step A3): each revision's routing resolves from the provenance its plan-applied recorded (a 1.0.0-dev.5
+  // revision's is rebuilt from its plan, the profile and the repo config read at start), per unit (its layer on top).
+  type Entry = Readonly<{ plan: PlanM1; routing: (unit: UnitId | null) => ResolvedRouting }>;
+  const cache = new Map<string, Entry>();
+  const inForce = (): Entry => {
     const fact = journal.view.planApplied();
-    const known = fact === null ? undefined : cache.get(fact.planSha256);
+    const key = fact === null ? '' : `${fact.rev}:${fact.planSha256}`;
+    const known = cache.get(key);
     if (known !== undefined) return known;
-    const { plan, manifest } = requirePlanInForce(context.runDir, journal.view);
-    const entry = { plan, routing: resolve(plan) };
-    cache.set(manifest.planSha256, entry);
+    const { plan, fact: applied } = requirePlanInForce(context.runDir, journal.view);
+    const provenance = routingProvenanceOf(applied, () => provenanceOf({ profile, config }, plan));
+    const resolved = new Map<UnitId | null, ResolvedRouting>();
+    const routingOf = (unit: UnitId | null): ResolvedRouting => {
+      const hit = resolved.get(unit);
+      if (hit !== undefined) return hit;
+      const r = resolveRouting(provenanceStack(provenance, plan.holistic !== undefined, unit));
+      resolved.set(unit, r);
+      return r;
+    };
+    const entry = { plan, routing: routingOf };
+    cache.set(key, entry);
     return entry;
   };
-  const routing = (): ResolvedRouting => inForce().routing;
+  const routing = (unit: UnitId | null): ResolvedRouting => inForce().routing(unit);
   const base = {
     journal, containment: containmentFor(detectContainmentMode()), runDir: context.runDir, repo: context.repo, hostDir: context.hostDir,
     planDir: absPath(dirname(context.planFile)),
@@ -315,7 +328,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     routingBase: { profile, config },
     docs: DOCS_NOT_YET,
     plan: () => inForce().plan,
-    routing: () => ({ profile, resolved: routing() }),
+    routing: (unit) => ({ profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };

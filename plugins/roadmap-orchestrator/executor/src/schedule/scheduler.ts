@@ -312,7 +312,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   });
 
   const admitWaiting = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>): void => {
-    const admit = admitter(x.stage.routing().table);
+    const admit = admitter((u) => x.stage.routing(u).table);
     const input = admissionInput(blocking, mutations);
     for (const task of tasks.values()) {
       const w = task.waiting;
@@ -350,7 +350,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   const startReady = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>): void => {
-    for (const r of ready({ ...admissionInput(blocking, mutations), routing: x.stage.routing().table })) {
+    for (const r of ready({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table })) {
       if (tasks.has(r.unit.id) || blocking.some((b) => holdsUnit(b, r.unit.id))) continue;
       startTask(r.unit);
     }

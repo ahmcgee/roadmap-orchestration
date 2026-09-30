@@ -10,8 +10,10 @@
 //   unit order                  the started units keep their relative order (G3); a legacy arc keeps dev.4's
 //                               rule, the started units first in their order (its frontier is plan order)
 //   an undispatched unit        any plan field and its spec, now
-//   a dispatched unit's plan    scope, risk, resources, spec path and a new `after`: refused (dropping an
-//                               `after` is allowed)
+//   a dispatched unit's plan    scope, a lower risk, resources, spec path and a new `after`: refused (dropping an
+//                               `after` is allowed; M3: a higher risk is re-pinned at dispatch, step A3)
+//   risk floor (M3, A3)         an undispatched unit's risk below its Phase-0 floor (its risk in the first revision that
+//                               planned it): refused unless its spec cites an active ruling that applies to it
 //   a dispatched unit's spec    lane evidenceGlobs/evidenceExcludes at its rev: in force at once (`evidence`);
 //                               the next rev (`revision`), scope and resources unchanged: pending until the
 //                               unit re-opens on it (an in-flight unit at its next stage boundary that allows
@@ -85,16 +87,17 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
 import { type ResolvedRouting, unsupportedSeats } from '../routing/layers.ts';
-import { UNIT_ROLES } from '../routing/types.ts';
+import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
+import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
 import {
-  type InForce, type InputFiles, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
+  type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
 } from './inforce.ts';
-import { type PlanM1, type PlanUnit, boundsOf } from './plan.ts';
+import { type PlanM1, type PlanUnit, boundsOf, parsePlan } from './plan.ts';
 
 /**
  * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
@@ -244,6 +247,38 @@ function rulingReason(ledger: Ledger, ruling: RulingId, what: string): string | 
   const r = ledger.rulings.find((x) => x.id === ruling);
   if (r === undefined) return `${what} cites ruling ${ruling}, which the ledger ${ledger.path} does not hold`;
   return r.status === 'withdrawn' ? `${what} cites ruling ${ruling}, which ${r.by} withdrew` : null;
+}
+
+const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.indexOf(a) > RISK_TIERS.indexOf(b);
+
+/**
+ * A unit's Phase-0 risk floor: its risk in the first plan revision that planned it (read from the kept plans the log's
+ * revisions name); null for a unit the plan in force does not hold yet (its risk is its floor).
+ */
+function phase0Risk(input: ClassifyInput, unit: UnitId): RiskTier | null {
+  for (const e of readJournal(input.runDir, input.view.arc).events) {
+    if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
+    const bytes = keptInput(input.runDir, e.fact.planSha256, PLAN_INPUT);
+    if (bytes === null) throw new Error(`plan rev ${e.fact.rev} names plan ${e.fact.planSha256}, which is not kept`);
+    const planned = parsePlan(JSON.parse(bytes.toString('utf8'))).units.find((u) => u.id === unit);
+    if (planned !== undefined) return planned.risk;
+  }
+  return null;
+}
+
+/**
+ * Why `unit`'s risk may not be what the revision sets (DESIGN §2.3 `route`): below its Phase-0 floor without its spec
+ * citing an active ruling that applies to it. Null when allowed.
+ */
+function riskFloorReason(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, ledger: Ledger): string | null {
+  const floor = phase0Risk(input, unit.id);
+  if (floor === null || !riskAbove(floor, unit.risk)) return null;
+  const ruled = (spec?.cites.rulings ?? []).some((id) => {
+    const s = inputs.sidecars.find((x) => x.id === id);
+    return rulingReason(ledger, id, `unit ${unit.id}'s risk`) === null && s !== undefined && s.status === 'active'
+      && s.appliesTo.type === 'units' && s.appliesTo.units.includes(unit.id);
+  });
+  return ruled ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs its spec to cite an active ruling for ${unit.id}`;
 }
 
 /** Whether the unit is in a task (A12, as the log shows it): active past its first dispatch and not paused, or with an attempt a crash cut short. */
@@ -500,11 +535,19 @@ export function classify(input: ClassifyInput): Classified {
     }
     const pinned = view.dispatchOf(unit.id) !== null;
     if (!same(entryOf(was), entryOf(unit))) {
+      // M3 (DESIGN §2.3 `route`, step A3): a unit's risk may rise at any time (a dispatched unit is re-pinned at the
+      // higher floor, and one whose implementer seat that moves after its build started parks `routing-changed`); it
+      // never goes below its Phase-0 floor (its risk when it was planned) without a ruling for it.
+      // (A dispatched unit's lower risk is refused below as a fixed field.)
+      const lowered = pinned ? null : riskFloorReason(input, unit, spec, inputs, ledger);
+      if (lowered !== null) reasons.push(lowered);
       if (!pinned) {
-        changes.push({ type: 'unit-changed', unit: unit.id });
-        scoped.add(unit.id);
+        if (lowered === null) {
+          changes.push({ type: 'unit-changed', unit: unit.id });
+          scoped.add(unit.id);
+        }
       } else {
-        const fixed = (['spec', 'risk', 'resources'] as const).filter((k) => !same(was[k], unit[k]));
+        const fixed = (['spec', 'risk', 'resources'] as const).filter((k) => !same(was[k], unit[k]) && !(k === 'risk' && riskAbove(unit.risk, was.risk)));
         const added = unit.after.filter((a) => !was.after.includes(a));
         const growth = same(was.scope, unit.scope) ? null : scopeGrowthReason(unit.id, 'scope', 'its scope may not change', was.scope, unit.scope, spec, inputs);
         for (const k of fixed) reasons.push(`unit ${unit.id} is dispatched: its ${k} may not change`);

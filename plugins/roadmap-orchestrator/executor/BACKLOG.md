@@ -135,7 +135,7 @@ None.
   and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
   without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
 - Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4),
-  `steer` and `merge-in` (A3), `audit` and `close-admissions` (B7) in `src/commands/apply.ts`; `gc` failing in
+  `audit` and `close-admissions` (B7) in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s); `gc` failing in
   `src/cli/main.ts` (A5b); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
   B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
   `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`

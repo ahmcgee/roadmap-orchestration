@@ -29,6 +29,11 @@
 // or in flight by the driver itself, on a spec revision an `apply` left pending, at the first boundary whose
 // next stage starts from a clean worktree (`reentryAllowed`).
 //
+// M3 (step A3): a command may set an entry outside the table (`UnitState.entry`), which runs before anything the
+// latest decision says: `steer <u>` a steer round (a fresh implementer session with the architect's brief, R11; the
+// pass then goes build chain → lanes → gate and exits by the table's steer rows), `merge-in <u>` the unit's lanes at
+// its merged commit.
+//
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
@@ -38,7 +43,7 @@ import { scan } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type UnitId, invocationId } from '../core/ids.ts';
-import type { UnitState } from '../core/state.ts';
+import type { EntryPoint, UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
@@ -53,7 +58,7 @@ import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { prepare } from './prepare.ts';
 import {
-  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound,
+  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, steerBrief,
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, quiesce, record,
@@ -119,6 +124,9 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : reason === 'steered'
+      ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
+        + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
       : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
@@ -211,12 +219,31 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
  * since, the continue of that attempt's last invocation (a hold is only ever recorded from a call's result).
  */
 function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
-  const of = decidedInput(ctx, unit, round, f);
+  return continued(ctx, unit, decidedInput(ctx, unit, round, f));
+}
+
+/** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */
+function continued(ctx: StageContext, unit: PlanUnit, of: DecidedRound): RoundInput {
   const held = ctx.journal.view.unit(unit.id).interrupted;
   if (held === null) return of;
   const called = recordedCall(ctx, stageParent(held));
   if (held.stage !== 'build' || called === null || called.kind !== 'result') throw new Error(`unit ${unit.id}: ${held.stage} attempt ${held.attempt} was interrupted before a build, or without a call result`);
   return { kind: 'continue', of, interrupted: called.inv };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Entries a command set (M3: steer, merge-in)
+
+/** Where an entry sends the unit, as the table's target: a steer round is read as a fresh build's (`decidedRound`). */
+const entryTarget = (entry: EntryPoint): Target => (entry.kind === 'steer' ? { stage: 'build', round: 'fresh' } : { stage: 'lanes' });
+
+/**
+ * Runs the stage an entry names: a steer round (R11: a fresh session, the brief kept by the command, the budget as its
+ * window; the continue of it after a pause), or a merge-in's lanes at the merged unit commit.
+ */
+async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): Promise<StageDone<OutcomeStage> | Cancelled> {
+  if (entry.kind === 'merge-in') return lanes(ctx, unit, unitTip(ctx, unit.id));
+  return build(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
 }
 
 /** Runs the stage `target` names, from inputs read back from the journal. */
@@ -321,9 +348,10 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   // A lost implementer call that may have changed the tree is consumed too (salvaged and verified); any
   // other lost call is not: its stage runs again.
   if (called === null || (called.kind === 'lost' && !(open.stage === 'build' && called.treeEffects))) return null;
-  const decided = f === null ? null : decidedBy(f);
+  const entry = ctx.journal.view.unit(unit.id).entry;
+  const decided = entry !== null || f === null ? null : decidedBy(f);
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
-  const target: Target = decided === null ? { stage: 'plan-check' } : decided.target;
+  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? { stage: 'plan-check' } : decided.target;
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
     case 'plan-check':
@@ -361,6 +389,7 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const consumed = await consume(ctx, unit);
   if (consumed !== null) return consumed;
   const u = ctx.journal.view.unit(unit.id);
+  if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
   const f = u.decided;
   // Before a decision: a re-entry prepares first (its lineage not yet prepared), anything else plan-checks.
   if (f === null) return after(ctx, unit, u.lineage !== null && !u.lineage.prepared ? await prepare(ctx, unit) : await planCheck(ctx, unit));
@@ -384,8 +413,10 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
  * running anything; null for any other unit. The scheduler raises a restarted arc's due items from it.
  */
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
-  const f = ctx.journal.view.unit(unit.id).decided;
-  if (f === null) return null;
+  const u = ctx.journal.view.unit(unit.id);
+  const f = u.decided;
+  // An entry a command set runs next, whatever the decision before it (M3).
+  if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
   if (decided.kind === 'park') return { kind: 'parked', needsUser: haltNeedsUser(ctx, unit, 'park', decided.reason, factSummary(f)) };
   if (decided.kind === 'stop') return { kind: 'stopped', needsUser: haltNeedsUser(ctx, unit, 'stop', decided.reason, factSummary(f)) };
@@ -399,7 +430,7 @@ export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResul
  * build or publication.
  */
 export function reentryAllowed(u: UnitState): boolean {
-  if (u.status !== 'active' || u.open !== null) return false;
+  if (u.status !== 'active' || u.open !== null || u.entry !== null) return false;
   if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage)) return false;
   if (u.decided === null) return true;
   const d = decidedBy(u.decided);

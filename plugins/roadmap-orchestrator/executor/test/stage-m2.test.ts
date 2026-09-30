@@ -132,7 +132,7 @@ test('gate.judgment-inputs: plan-check and gate write their inputs after the ent
       assert.equal(f.head, f.stage === 'gate' ? git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)) : null);
       assert.equal(f.specRev, 1);
       assert.equal(f.planRev, planRevNow);
-      assert.equal(f.routingRev, r.ctx.routing().rev);
+      assert.equal(f.routingRev, r.ctx.routing(null).rev);
       assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), { unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev });
       const ops = events.filter((x) => x.type === 'intent' && ofAttempt(x.parent, f));
       const reserve = ops.find((x) => x.type === 'intent' && x.kind === 'resource.transition' && x.expect.edge.type === 'reserve')!;
@@ -465,7 +465,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
       stage: ctx,
       commands: {
         ...ctx, hostEnv: backendEnv(ctx.hostEnv), laneEnv: ctx.hostEnv, planFile: absPath(join(run.planDir, 'plan.json')),
-        routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing() }), probes: testProbes(ctx),
+        routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing(null) }), probes: testProbes(ctx),
       },
     });
     const u = journal.view.unit(U1);
@@ -545,7 +545,7 @@ test('rounds.d4-through-driver: red, a stalled fix round, then the next build la
   assert.equal(s.tier, 'high', 'the round sits on build.high');
   const launch = launchOf(run, escalated);
   assert.equal(launch.argv[0], 'claude');
-  assert.ok(launch.argv.includes(run.ctx.routing().table.build.high.model), 'build.high\'s model');
+  assert.ok(launch.argv.includes(run.ctx.routing(null).table.build.high.model), 'build.high\'s model');
   assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'fresh', 'a fresh session: the seat moved');
   const fact = runEvents(run).find((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated');
   assert.ok(fact !== undefined && fact.type === 'fact' && fact.fact.kind === 'implementer-escalated');

@@ -80,6 +80,16 @@ export type Lineage = Readonly<{ reenters: UnitId; root: UnitId; prepared: boole
 /** A spec revision the log recorded for a unit: its `rev` and the sha256 of the file's bytes. */
 export type SpecState = Readonly<{ rev: SpecRev; sha256: Sha256Hex }>;
 
+/**
+ * M3 (step A3): where an architect's command sends a unit next, outside the transition table, until the stage it
+ * names records an outcome that is not a hold. `steer` (R11): one steer round, the build of a fresh session with
+ * the brief (`steered`); `merge-in`: its lanes, after the integration tip was merged into its branch (`merged-in`).
+ * `seq` is the fact's.
+ */
+export type EntryPoint =
+  | Readonly<{ kind: 'steer'; seq: number; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
+  | Readonly<{ kind: 'merge-in'; seq: number; command: CommandId }>;
+
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
   unit: UnitId;
@@ -147,6 +157,14 @@ export type UnitState = Readonly<{
   supersededBy: UnitId | null;
   /** M3 (`limits`): the bounds its latest dispatch record pins (`DEFAULT_BOUNDS` before one, or when it names none). */
   bounds: Bounds;
+  /** M3: the entry a `steered` or `merged-in` fact set, until its stage records an outcome that is not a hold; else null. */
+  entry: EntryPoint | null;
+  /**
+   * M3 (R11): the steer pass in progress, from `steered` to its exit (the transition table's steer rows): its seq and
+   * whether a green exit goes on (`--resume`). Cleared by an outcome that parks, stops or retires the unit, and by a
+   * gate outcome that advances it. Null otherwise.
+   */
+  steering: Readonly<{ seq: number; resume: boolean }> | null;
 }>;
 
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
@@ -155,7 +173,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds,
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
   };
 }
 
@@ -163,6 +181,9 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
 export function maxTier(a: RiskTier, b: RiskTier | null): RiskTier {
   return b !== null && RISK_TIERS.indexOf(b) > RISK_TIERS.indexOf(a) ? b : a;
 }
+
+/** The stage an entry point runs (M3): a steer's round is a build, a merge-in re-enters at lanes. */
+export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
 
 /** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
 export const redirectsSinceEdit = (u: UnitState): number => u.counters.redirects - u.redirectBase;
@@ -417,6 +438,9 @@ export class Fold implements JournalView {
   readonly #units = new Map<UnitId, UnitEntry>();
   /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
   readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
+  /** M3: the seq of each unit's latest dispatch fact, and of the latest `plan-applied` recording it `unit-changed`. */
+  readonly #pinSeq = new Map<UnitId, number>();
+  readonly #unitChangedSeq = new Map<UnitId, number>();
   /** The spec the unit's dispatch facts name: its first pin's (a re-pin keeps it; see the `dispatch` case). */
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterEntry>();
@@ -695,8 +719,13 @@ export class Fold implements JournalView {
       case 'dispatch': {
         const { unit, scope, riskFloor } = f.record;
         const prev = this.#dispatches.get(unit)?.at(-1);
-        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2).
-        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) fail(`dispatch of ${unit} changes its pinned scope`);
+        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2). M3: the scope
+        // grows only by a ruled scope-growth apply, a `unit-changed` revision of the unit since its previous pin.
+        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) {
+          const grown = prev.scope.every((p) => scope.includes(p));
+          if (!grown || (this.#unitChangedSeq.get(unit) ?? -1) < (this.#pinSeq.get(unit) ?? -1)) fail(`dispatch of ${unit} changes its pinned scope`);
+        }
+        this.#pinSeq.set(unit, at.seq);
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }
@@ -735,6 +764,14 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
+        // ends where it parks, stops or retires the unit, or where its gate advances it.
+        const entry = u.state.entry;
+        if (entry !== null && f.class !== 'hold' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
+        if (f.class !== 'hold') {
+          const ends = f.class === 'park' || f.class === 'stop' || f.class === 'retire' || (f.stage === 'gate' && f.class === 'advance');
+          u.state = { ...u.state, entry: null, steering: ends ? null : u.state.steering };
+        }
         u.state = afterStageOutcome(u.state, f);
         if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
@@ -775,7 +812,7 @@ export class Fold implements JournalView {
         if (state.buildTier === null) return fail(`implementer-escalated for ${f.unit}, which was never dispatched`);
         if (state.buildTier !== f.from) fail(`implementer-escalated for ${f.unit} from ${f.from}; its build tier is ${state.buildTier}`);
         // G1: only while a charged round is left in the budget.
-        if (state.counters.chargeableFailures >= CHARGEABLE_BOUND) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
+        if (state.counters.chargeableFailures >= state.bounds.chargeable) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
         const u = this.#unit(f.unit, 'build');
         u.state = { ...u.state, buildTier: f.to };
         return;
@@ -822,6 +859,7 @@ export class Fold implements JournalView {
         return;
       case 'plan-applied':
         this.#planAppliedFact(f, at.seq, fail);
+        for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
         return;
       default:
         this.#holisticFact(f, fail, at);
@@ -937,11 +975,13 @@ export class Fold implements JournalView {
       case 'steered': {
         const { kind: _k, ...rest } = f;
         this.#steered.push({ ...rest, seq });
+        this.#steer(f, seq, fail);
         return;
       }
       case 'merged-in': {
         const { kind: _k, ...rest } = f;
         this.#mergedIn.push({ ...rest, seq });
+        this.#mergeIn(f, seq, fail);
         return;
       }
       case 'audit-requested': {
@@ -1093,6 +1133,42 @@ export class Fold implements JournalView {
     if (u === undefined || u.state.status !== 'park-pending' || decided === null || park === null) return fail(`unpark of unit ${unit}, which is not parked`);
     if (park.park.class !== 'operator' || park.park.kind !== 'env') fail(`unpark of unit ${unit}, whose park is ${canonicalJson(park.park)}, not operator env`);
     this.#restoreParked(u, null);
+  }
+
+  /**
+   * `steer <u>` (M3, R11): of a parked unit, or of a re-entry whose preparation decided its next stage and that has not
+   * started it. The unit is active again at a steer round (`entry`), in a steer pass (`steering`); its park and any
+   * approval are gone (approvals are invalidated); its decision stays, as the pre-steer state (a steer park that is
+   * resumed restores the decision before that park).
+   */
+  #steer(f: Extract<Fact, { kind: 'steered' }>, seq: number, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`steered unit ${f.unit}, which was never dispatched`);
+    const s = u.state;
+    const preparing = s.status === 'active' && s.decided?.stage === 'prepare';
+    if (!(s.status === 'park-pending' || preparing) || s.open !== null || s.entry !== null) {
+      fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
+    }
+    u.state = {
+      ...s, status: 'active', park: null, interrupted: null, approval: null,
+      entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
+    };
+  }
+
+  /**
+   * `merge-in <u>` (M3): the integration tip was merged into the unit's branch, so its next stage is its lanes
+   * (`entry`), whatever it had decided; its approval and any interruption are gone. A parked unit is active again; a
+   * held one stays held until resumed.
+   */
+  #mergeIn(f: Extract<Fact, { kind: 'merged-in' }>, seq: number, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`merged-in unit ${f.unit}, which was never dispatched`);
+    const s = u.state;
+    if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
+    u.state = {
+      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, approval: null,
+      entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
+    };
   }
 
   /** The unit re-runs the stage its park decided at: decision and interruption as before the park. */

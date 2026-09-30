@@ -57,8 +57,12 @@
 //   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
 //            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
-//   rule, steer, merge-in, audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET`
-//            implements each, it is rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
+//   steer    (M3, R11) src/commands/steer.ts: a parked or preparing unit's steer round, its `--class` a revision of
+//            its routing layer. Mutation, scope {u}.
+//   merge-in (M3) src/commands/mergein.ts: the integration tip merged into a unit's branch; a conflict is rejected with
+//            no act; the unit re-enters at its lanes. Mutation, scope {u}.
+//   rule, audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET` implements each, it is
+//            rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -112,18 +116,21 @@ import type { ProberHandle } from '../park/probe.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
+import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
+import { steer } from './steer.ts';
 
 /**
  * Everything an effect may touch: the reservation cycle's context, plus what a backend smoke and an apply
- * need. `plan()` and `routing()` are the plan in force and its routing, read at each call.
+ * need. `plan()` and `routing(unit)` are the plan in force and its routing, read at each call.
  */
 export type CommandContext = ResourceContext & Readonly<{
   /** The backend workload environment (`backendEnv(process.env)`), for the smokes of `resume --backend` and `apply`. */
   hostEnv: Readonly<Record<string, string>>;
   /** The executor's own environment: an apply's lane rows resolve against it. */
   laneEnv: Readonly<Record<string, string | undefined>>;
-  routing: () => SmokeRouting;
+  /** The routing in force: a unit's (its layer on the arc's stack), or the arc's for null. */
+  routing: (unit: UnitId | null) => SmokeRouting;
   /** The arc's profile and the repo config it read at start: every revision's routings and provenance resolve under them. */
   routingBase: RoutingBase;
   /** The plan file `apply` re-reads, and its directory (unit spec paths are relative to it). */
@@ -225,18 +232,20 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return applyPlan(ctx, command.id, body);
     case 'reverse':
       return reverse(ctx, command.id, body.divergence);
-    case 'rule':
     case 'steer':
+      return steer(ctx, command.id, body);
     case 'merge-in':
+      return mergeIn(ctx, command.id, body.unit);
+    case 'rule':
     case 'audit':
     case 'close-admissions':
       return { kind: 'rejected', reason: `${body.type}: not implemented (step ${NOT_YET[body.type]})` };
   }
 }
 
-/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,steer,mergein,audit,admissions}.ts). */
-const NOT_YET = { rule: 'A4', steer: 'A3', 'merge-in': 'A3', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
-  Readonly<Record<'rule' | 'steer' | 'merge-in' | 'audit' | 'close-admissions', string>>;
+/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,audit,admissions}.ts). */
+const NOT_YET = { rule: 'A4', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
+  Readonly<Record<'rule' | 'audit' | 'close-admissions', string>>;
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
   const view = ctx.journal.view;
@@ -292,7 +301,7 @@ function parkReason(f: StageOutcomeFact): string {
 }
 
 /** The park's open needs-user, acknowledged by this command (unless another already did). */
-function acknowledgePark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): readonly string[] {
+export function acknowledgePark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): readonly string[] {
   const item = raisedFor(ctx.journal.view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
   if (item === null) return [];
   const by = ackedBy(ctx, item);
@@ -341,7 +350,8 @@ function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   const verified: string[] = [];
   if (f.outcome === 'routing-changed') {
     const pinned = dispatchOf(ctx.journal.view, unitId);
-    const routing = ctx.routing().resolved;
+    // The unit's own routing (its layer on the arc's stack), which its implementer seat was pinned under.
+    const routing = ctx.routing(unitId).resolved;
     if (pinned.routingRev !== routing.rev) {
       if (repin(ctx.journal, routing, pinned) === null) {
         return {

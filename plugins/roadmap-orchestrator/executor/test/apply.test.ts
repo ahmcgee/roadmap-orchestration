@@ -169,10 +169,10 @@ const ROWS: readonly Row[] = [
   { name: 'an undispatched unit\'s plan entry: now', edit: (d) => editPlan(d, (p) => void (p.units[1]!['risk'] = 'high')), expect: () => [{ type: 'unit-changed', unit: unitId('u2') }] },
   { name: 'an undispatched unit\'s spec: now', edit: (d) => editSpec(d, 'u2', addClause), expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)] },
   {
-    name: 'a dispatched unit\'s risk and scope: refused',
+    name: 'a dispatched unit\'s lower risk and its scope: refused (M3: its risk may rise)',
     setup: (r) => pin(r, 'u1'),
     edit: (d) => editPlan(d, (p) => {
-      p.units[0]!['risk'] = 'high';
+      p.units[0]!['risk'] = 'low';
       p.units[0]!['scope'] = ['src/**'];
     }),
     expect: [/unit u1 is dispatched: its risk may not change/, /unit u1 is dispatched: its scope may not change/],

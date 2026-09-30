@@ -36,6 +36,9 @@
 //   below otherwise). `reproduce` is a vacuity repair's first stage. A candidate `preempted` by a docs publication
 //   (A7) or `finding-blocked` by an active P1 (G10) goes back to the candidate stage uncharged; admission holds it
 //   there while the P1 blocks it.
+// - M3 step A3 (R11): a steered unit's pass (`UnitState.steering`) exits in `steerExit`, uncharged: a red series or a
+//   gate revise parks `steered` instead of a fix round, and so does a green gate unless the steer said `--resume`.
+//   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
 import {
   type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
   type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
@@ -334,7 +337,24 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
   }
 }
 
+/**
+ * The steer pass's exits (M3 step A3, R11: one pass): while the unit is steering, a red or not-certified series and a
+ * gate revise end the pass instead of a fix round, and so does a gate approve unless the steer said `--resume`; each
+ * parks `steered`, uncharged, operator env (`resume <unit>` re-runs the parked stage with the pass over, so the table
+ * rules again). Null for every other outcome, which the table decides as always.
+ */
+function steerExit(u: UnitState, o: StageOutcome): Decision | null {
+  if (u.steering === null) return null;
+  const ends = (o.stage === 'lanes' && (o.kind === 'red' || o.kind === 'not-certified'))
+    || (o.stage === 'gate' && (o.kind === 'revise' || (o.kind === 'approve' && !u.steering.resume)));
+  if (!ends) return null;
+  const why = o.kind === 'approve' ? ': the steer pass is green; review it, then resume the unit or steer it again' : ': the steer pass ends here';
+  return halt('park', 'steered', o, why, 'env');
+}
+
 function decide(u: UnitState, o: StageOutcome): Decision {
+  const exit = steerExit(u, o);
+  if (exit !== null) return exit;
   const d = apply(u, o, ruleOf(o), '');
   if (d.chargeable && u.counters.chargeableFailures + 1 >= u.bounds.chargeable) {
     return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${u.bounds.chargeable}`, 'design', true);
@@ -423,6 +443,12 @@ function haltReasonOf(rule: Rule<OutcomeStage>): NeedsUserReason {
   }
 }
 
+/** Whether a parking fact is a steer pass's exit (`steerExit`): the table's rule for its outcome does not park there. */
+function isSteerExit(fact: StageOutcomeFact, rule: Rule<OutcomeStage>): boolean {
+  if (rule.do === 'go') return true;
+  return rule.do === 'bounded' && fact.stage === 'gate' && fact.park?.class === 'operator' && fact.park.kind === 'env';
+}
+
 /**
  * The decision a recorded `stage-outcome` fact carries, from its class and the table. A pure function of
  * the fact, so a restarted driver continues exactly where the log says: the counters that chose the class
@@ -446,8 +472,11 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
       return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build' | 'prepare'>) };
     case 'park':
     case 'stop':
-      // A chargeable park is only ever the bound (decide); every other halt carries its rule's reason.
-      return { kind: fact.class, reason: fact.chargeable ? 'chargeable-bound' : haltReasonOf(rule) };
+      // A chargeable park is only ever the bound (decide); a steer exit is a park where the table's rule goes on (an
+      // env park of a bounded revise: the table's own revise park is design); every other halt carries its rule's reason.
+      if (fact.chargeable) return { kind: fact.class, reason: 'chargeable-bound' };
+      if (fact.class === 'park' && isSteerExit(fact, rule)) return { kind: 'park', reason: 'steered' };
+      return { kind: fact.class, reason: haltReasonOf(rule) };
     case 'retire':
       return { kind: 'retire' };
     case 'hold':

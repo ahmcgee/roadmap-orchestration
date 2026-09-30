@@ -411,8 +411,10 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
     if (deps.length > 0 || edges.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, edges }) };
   }
   const next = nextStage(u);
-  if (next?.kind === 'admission' && x.routing !== null) {
-    const a = admitter(x.routing)({
+  const table = x.routing;
+  if (next?.kind === 'admission' && table !== null) {
+    // The arc's table for every unit (B9: a unit's own layer, once status resolves per unit).
+    const a = admitter(() => table)({
       view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
     });
     if (a.kind === 'wait') {

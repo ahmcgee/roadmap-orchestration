@@ -73,6 +73,8 @@ export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
+export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer snapshot, steered)';
+export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -669,6 +671,56 @@ export const MATRIX: readonly Row[] = [
         recovery: 'plan-applied written, its divergences and done not: recovery appends only what is missing; done reconciled; one plan-applied',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the commit: nothing is open for recovery' },
+    },
+  },
+  {
+    // `steer u1 --class frontier` of a unit parked after its build, applied by a child (test/fixtures/steer-child.ts);
+    // recovery (src/recover/recover.ts) finishes what the crash left, then the command's reconciler.
+    row: STEER,
+    test: 'test/steer.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler applies the whole effect once: one class revision, the brief kept, one pre-steer snapshot, one steered fact, the applied receipt',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['revision.commit.after-intent', 'revision.commit.after-fact'],
+        recovery: 'the class revision is open or its fact written: recovery finishes it from its payload (one plan-applied naming the command), then the reconciler finds it (planAppliedBy) and writes the brief, the snapshot and the one steered fact',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'the steered fact is written (the postcondition): nothing is applied twice; the applied receipt is written if missing, or read; the unit then runs its one steer round',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the steer round that follows is the driver\'s (steer.round-uncharged)' },
+    },
+  },
+  {
+    // `merge-in u1` of a unit parked after its lanes, the integration tip advanced cleanly beside it, applied by a
+    // child (test/fixtures/mergein-child.ts); recovery finishes the open mergein.prepare, then the command's reconciler.
+    row: MERGE_IN,
+    test: 'test/mergein.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler plans the merge again (merge-tree), acts once, writes the one merged-in fact and the applied receipt',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['mergein.act-start', 'mergein.after-commit-tree', 'mergein.after-cas'],
+        recovery: 'the command\'s mergein.prepare is open: its reconciler redoes it (HEAD = old: the same SHA) or finishes it (HEAD = the merge); the command\'s reconciler then finds it done and writes the one merged-in fact',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['mergein.act-end', 'command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'the merge is made (and done after recovery), or the merged-in fact written: nothing is merged twice; one merged-in fact, the applied receipt; the unit re-enters at its lanes',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the lanes that follow are the driver\'s (mergein.reenters-lanes)' },
     },
   },
   {

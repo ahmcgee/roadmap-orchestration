@@ -1227,7 +1227,7 @@ constants in the table (`Bounded.bound` names the field) and in the fold's charg
 **Commands** (M3 bodies; scopes per the plan's table, `commandScope` in `src/input/classify.ts`): `rule{path,
 sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
 `merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
-its effect is rejected `<type>: not implemented (step X)`: `rule` A4 (`reverse` since A2), `steer` and `merge-in` A3, `audit`
+its effect is rejected `<type>: not implemented (step X)`: `rule` A4 (`reverse` since A2, `steer` and `merge-in` since A3), `audit`
 and `close-admissions` B7 (`NOT_YET`, `src/commands/apply.ts`); `gc` (A5b) fails in the CLI.
 
 **Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
@@ -1343,3 +1343,42 @@ work, whose queue is empty, whose head is in integration history and whose ref v
    artifact again refuses it. A dispatched unit's restored spec is the next rev of its recorded one.
 9. **`obligation-dropped`** is reported as `plan-change-refused` (one `obligation-dropped: …` reason per id) at an
    arc's first start (`obligationDropped`).
+
+**Choices made in M3 A3** (per-unit routing, limits in force, `steer`, `merge-in`, fenced captures):
+
+1. **A unit's routing** is the arc's stack with the unit's layer on top (`provenanceStack(provenance, holistic,
+   unit)`, src/routing/layers.ts): `StageContext.routing(unit | null)` and `CommandContext.routing(unit | null)`
+   resolve it, in the executor from the `routingProvenance` of the revision in force (a dev.5 revision's rebuilt,
+   `routingProvenanceOf`), never a live config. A unit without a layer has the arc's routingRev. Admission reads each
+   unit's table (`admitter((unit) => table)`); `status` still reads the arc's (B9).
+2. **Every dispatch record since dev.6** carries `transientRules: 'm3'` and `bounds: boundsOf(plan, unit)`
+   (`firstPin`); a re-pin copies both unless the plan in force changed the bounds. The dispatch check re-pins when
+   the unit's routingRev, its bounds, its scope (a ruled growth: the fold admits a scope containing the previous one
+   when a `unit-changed` revision of the unit followed the previous pin) or its planned risk (raised) changed; a moved
+   implementer seat after a build started parks `routing-changed`. Windows: fresh build `freshBuildMin`,
+   fix/resume/resolve `editAllowanceMin` (+ the lane series), judgment `judgmentDeadlineMin`, steer `budgetMin`.
+3. **Entries outside the table** (`UnitState.entry`, `EntryPoint`, src/core/state.ts): `steered` (a parked unit, or a
+   re-entry whose `prepare` decided and did not start) sets `{kind: steer}`; `merged-in` (an active, held or parked
+   dispatched unit) sets `{kind: merge-in}`. The entry's stage (`ENTRY_STAGE`: build, lanes) runs next (`nextStage`);
+   its first outcome that is not a hold clears it. Both void the approval and clear the park; a held unit stays held.
+   `UnitState.steering {seq, resume}` marks the steer pass until it parks, stops, retires or its gate advances.
+4. **The steer pass's exits** (`steerExit`, src/pipeline/transitions.ts): lanes `red`/`not-certified` and gate
+   `revise` park `steered`; gate `approve` parks `steered` unless `resume`; each operator `env`, uncharged, so
+   `resume <u>` re-runs the parked stage with the pass over. `decidedBy` reads such a park back as `steered` (a park
+   where the table's rule goes on, or an env park of the gate's bounded revise).
+5. **The steer round** is a fresh implementer session (`STEER_DIRECTIVE` and the brief, kept as
+   `inputs/<sha256>.brief.md`), re-pinned whatever its seat (`steerDispatch`); its report is read as a fresh build's.
+   `--class c` commits a revision setting the unit's layer `build.<build tier>` = c (proposer `apply`, source the
+   command); the live plan file is not written back.
+6. **`merge-in`** plans with the op's own prepare (`merge-tree`); a conflict, or a branch already containing the tip,
+   is rejected before any intent. Its `mergein.prepare` op is parented by the command.
+7. **Fenced captures (H2)**: plan-check and gate read their inputs, render their prompt and write `judgment-inputs` in
+   one `captureUnderFence`; plan-check's checkouts are made after it, at the captured commits. The executor's spec
+   patches (a redirect, the decisions) hold the fence (`holdFence`). A judgment's library reads the ledger in force
+   (kept bytes; a dev.5 revision's live file).
+8. **The gate's obligations**: `selectObligations` over the obligations in force, the unit's declared ones and
+   repairs (a finding repair: its finding's obligation), its `after` closure's declared ones and its diff's paths;
+   observations are null until B2. The fingerprint's `obligationRevs` are the selected non-exempt ones.
+9. **The risk floor** (DESIGN §2.3 `route`): a unit's risk below its Phase-0 floor (its risk in the first revision
+   that planned it) is refused unless its spec cites an active ruling whose sidecar applies to it; a dispatched unit's
+   risk may rise (re-pinned at dispatch).

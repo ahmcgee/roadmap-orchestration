@@ -11,7 +11,7 @@ import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarge
 import type { UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
-import type { UnitState } from '../core/state.ts';
+import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { isLegacy, legacyNext } from '../core/upgrade.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
@@ -32,9 +32,11 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
 /**
  * The stage a unit runs next, from its latest decided outcome: plan-check before one (or after a reopen), and
  * `prepare` for a re-entry that has not prepared yet. null when the decision ends the unit's stages (a park,
- * a stop or a retire). A chain stage runs without admission (F5).
+ * a stop or a retire). A chain stage runs without admission (F5). M3: an entry a command set goes first (a steer's
+ * round is a build, a merge-in's lanes: `ENTRY_STAGE`).
  */
 export function nextStage(u: UnitState): NextStage | null {
+  if (u.entry !== null) return { kind: 'admission', stage: ENTRY_STAGE[u.entry.kind] };
   if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : 'plan-check' };
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return null;
@@ -84,12 +86,12 @@ const scopeCovers = (scope: CommandScope, unit: UnitId): boolean =>
   scope.type === 'arc' || (scope.type === 'units' && scope.units.includes(unit));
 
 /**
- * `admit` under the routing in force: every constraint that holds for the unit's stage now, or admit. Pause,
+ * `admit` under the routing in force (each unit's, M3: its layer on the arc's stack): every constraint that holds for the unit's stage now, or admit. Pause,
  * drain and run-only hold per unit; a parked backend (any class) and a tripped breaker only for the stages
  * that need them; `base-red` for candidates; recovery-required, log-corrupt, the supervisor crash limit and
  * host items for every stage (A17).
  */
-export function admitter(routing: RoutingTable): Admit {
+export function admitter(routing: (unit: UnitId) => RoutingTable): Admit {
   return ({ view, unit, stage, blocking, drains, tripped }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const control = view.control();
@@ -98,7 +100,7 @@ export function admitter(routing: RoutingTable): Admit {
     for (const d of drains) if (scopeCovers(d.scope, unit.id)) c.push({ type: 'drain', command: d.command });
     const only = view.runOnly();
     if (only !== null && !only.includes(unit.id)) c.push({ type: 'run-only' });
-    const backend = backendOf(routing, view.unit(unit.id), unit, stage);
+    const backend = backendOf(routing(unit.id), view.unit(unit.id), unit, stage);
     for (const p of view.backendParks()) if (p.backend === backend) c.push({ type: 'backend-parked', backend, class: p.class });
     for (const t of tripped) if (breakerBlocks(t, stage, backend)) c.push({ type: 'breaker', target: t });
     if (stage === 'candidate' && blocking.some((b) => b.reason === 'base-red')) c.push({ type: 'base-red' });
@@ -142,7 +144,7 @@ export function rankOf(view: JournalView, plan: PlanM1, id: UnitId): Rank {
 // Readiness
 
 /** What `ready` reads: admission's inputs for the arc and the routing in force. */
-export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: RoutingTable }>;
+export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing: (unit: UnitId) => RoutingTable }>;
 
 export type ReadyUnit = Readonly<{ unit: PlanUnit; stage: AdmissionStage; rank: Rank }>;
 

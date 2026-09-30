@@ -253,7 +253,7 @@ test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routi
     const fact = lastApplied(r);
     assert.deepEqual(fact.changes, [{ type: 'routing', routingRev: expected, unit: U1 }]);
     assert.deepEqual(fact.routingProvenance?.unitLayers, { u1: { gate: { med: 'summit' } } });
-    assert.notEqual(expected, r.ctx.routing().rev, 'the unit routing differs from the arc routing');
+    assert.notEqual(expected, r.ctx.routing(null).rev, 'the unit routing differs from the arc routing');
   } finally {
     r.journal.close();
   }
