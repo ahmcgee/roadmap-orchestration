@@ -8,9 +8,13 @@
 // effective: a latched future obligation is published `must-hold`.
 import type { ObligationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
+import { repoPath } from '../core/values.ts';
 import { type ObligationDef, type Obligations, parseObligations } from '../holistic/types.ts';
 
 export const OBLIGATIONS_BLOCK_INFO = 'json roadmap-obligations';
+
+/** Where the rendering lives in the product tree (the docs publication writes it, A2, A8). */
+export const INVARIANTS_DOC = repoPath('.roadmap/invariants.md');
 
 const code = (v: string): string => `\`${v}\``;
 const list = (items: readonly string[]): string => (items.length === 0 ? '(none)' : items.join(', '));

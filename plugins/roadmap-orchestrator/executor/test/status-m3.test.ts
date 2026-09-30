@@ -15,9 +15,10 @@ import {
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { legacyProvenancePath, snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
-import { type ArcLaneDef, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
 import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
-import { RULING_INPUT, commitRevisionNow, keepInput, keptPayload } from '../src/input/inforce.ts';
+import { RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keptPayload } from '../src/input/inforce.ts';
+import { ledgerAfter } from '../src/spec/rulings.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
@@ -194,7 +195,8 @@ describe('status M3', () => {
       assert.deepEqual(s.findings.active, [{ id: 'F-1', lens: 'invariants', severity: 'P1', state: 'open', owner: null, obligation: 'I-1', claim: 'I-1 is broken' }]);
       assert.deepEqual(s.findings.metrics, [{ id: 'F-1', lens: 'invariants', severity: 'P1', gateHadPassed: true, disposition: null, merged: false, timeToResolveMs: null }]);
 
-      // A checkpoint of generation 1 runs a lane; an audit is owed: the completion predicate names every gap.
+      // A checkpoint of generation 1 runs a lane; an audit-owed item is raised: the completion predicate (the scheduler's
+      // `completionBlockers`) names every gap, the running checkpoint among them.
       checkpointInputs(r, 1, 1);
       journeySpawn(r, 'ckpt-1', lanesOf(r).get('journey')!, t2);
       const owed = item(r, 'audit-owed', false);
@@ -202,12 +204,14 @@ describe('status M3', () => {
       s = statusOf(r);
       assert.ok((s.audit?.checkpointLaneMinutes ?? 0) > 0, 'a running checkpoint lane counts to now');
       assert.deepEqual(s.owed, { audits: [owed] });
-      assert.deepEqual(s.completion.unmet, ['units-open', 'obligations-not-discharged', 'coverage-outstanding', 'audit-owed', 'generation-not-quiescent']);
+      assert.deepEqual(s.completion.unmet, [
+        'units-open', 'baseline-owed', 'coverage-outstanding', 'checkpoint-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+      ]);
       r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 1), outcome: { kind: 'no-op' } } as unknown as Fact);
       ack(r, owed);
       s = statusOf(r);
       assert.deepEqual(s.owed, { audits: [] });
-      assert.deepEqual(s.completion.unmet, ['units-open', 'obligations-not-discharged', 'coverage-outstanding'], 'a no-op checkpoint makes generation 1 quiescent');
+      assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'coverage-outstanding', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
       assert.equal(s.run.state, 'no-owner', 'a holistic arc is complete only through arc-completed');
       noModelIds(s);
     } finally {
@@ -227,13 +231,16 @@ describe('status M3', () => {
       const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'checkpoint', job: 'ckpt-1' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
       const rulingSha = keepInput(r.ctx.runDir, Buffer.from(`${JSON.stringify(record)}\n`), RULING_INPUT);
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
+      // The revision lands C-2 in the ledger with its sidecar, as `rule` and a bundle's activation do.
+      const ledgerText = readFileSync(join(r.ctx.runDir, 'inputs', `${prev.manifest.rulings.ledgerSha256}.${RULINGS_INPUT}`), 'utf8');
+      const ledgerSha256 = keepInput(r.ctx.runDir, Buffer.from(ledgerAfter(ledgerText, parseRulingSidecar(record))), RULINGS_INPUT);
       const draft = (what: string) => ({
         job: jobId('ckpt', 1), type: 'interpretation', from: 'V-1', what, cites: ['V-1'], evidence: ['scripted evidence'],
         preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'nothing to undo', kind: 'none' },
       }) as const;
       commitRevisionNow(r.journal, r.ctx.runDir, {
         ...prev, source: { type: 'bundle', job: jobId('ckpt', 1) }, base: planRev(1), rev: planRev(2),
-        manifest: { ...prev.manifest, rulings: { ...prev.manifest.rulings, sidecars: { ...prev.manifest.rulings.sidecars, 'C-2': rulingSha } } },
+        manifest: { ...prev.manifest, rulings: { ledgerSha256, sidecars: { ...prev.manifest.rulings.sidecars, 'C-2': rulingSha } } },
         changes: [{ type: 'unit-cut', unit: U('u2') }, { type: 'limits', unit: null }], dispositions: [],
         divergences: [draft('trust means tested'), draft('helpers stay small')],
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });

@@ -84,6 +84,7 @@ export const MUTANT_APPLY = 'mutant.apply: a vacuity repair\'s reproduce (M3 B3:
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
+export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -135,8 +136,10 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   ],
   B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
 };
+/** A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot). */
+const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact'] };
 /** The bumpy run adds the merge-in's conflicted path. */
-const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'] };
+const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], ...COMPLETE_LABELS };
 
 /** A whole-pipeline row's cells: every label at occurrence 1, and 2 where the label repeats. */
 function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[]>>>, recovery: Readonly<Record<Boundary, string>>): Readonly<Record<Boundary, Cell>> {
@@ -897,7 +900,7 @@ export const MATRIX: readonly Row[] = [
     // supervisor restarts it; the oracle (test/oracle.ts) compares the end with the uncrashed run.
     row: PIPELINE_STRAIGHT,
     test: 'test/pipeline-matrix.test.ts',
-    cells: pipelineCells({}, PIPELINE_RECOVERY),
+    cells: pipelineCells(COMPLETE_LABELS, PIPELINE_RECOVERY),
   },
   {
     // The bumpy scenario (pm-common.ts BUMPY): u1 redirect, red lane + fix, gate revise; u2 integration moved
@@ -1213,6 +1216,31 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['mutant.after-done'],
         recovery: 'the apply done, its lane never run: no intent open for it; the reproduce runs again as a new attempt, removing the leftover worktree; one reproduced, the unit merges and resolves F-1',
+      },
+    },
+  },
+  {
+    // A completing arc runs under the scheduler in a child (test/fixtures/sched-m3-child.ts) through its close-out; recovery
+    // runs, then the scheduler again: the arc completes once.
+    row: TERMINAL_SNAPSHOT,
+    test: 'test/scheduler-m3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the close-out\'s docs.commit, slot and lanes before its ff are the docs publication row\'s crash points: an unpublished docs holder is abandoned (abandonDocs) and the close-out runs again as the next docs-n' },
+      B3: {
+        status: 'crash',
+        labels: ['closeout.after-ff'],
+        recovery: 'the close-out ff published, the slot still held by its docs holder: recovery finishes it (finishDocs: the plan in force names no such pub, so docs-covered and docs-published, then the snapshot and the release); the scheduler finds the close-out done and completes: one docs-published, one arc-completed, one terminal snapshot',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['closeout.before-published'],
+        recovery: 'docs-covered written, docs-published not: recovery\'s finishDocs writes only docs-published, the snapshot and the release; the arc completes once',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['complete.after-fact'],
+        recovery: 'arc-completed written, its terminal snapshot not: the next start publishes the terminal snapshot (the completion still active, the fact is not written again) and the run ends complete',
       },
     },
   },

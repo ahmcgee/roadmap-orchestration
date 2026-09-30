@@ -133,13 +133,18 @@ None.
 
 ## Scaffolding to delete
 
+- `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
+  `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.
+- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: `adoptedProvenance` in `src/executor.ts` (a
+  dev.5 revision's routing from its adoption record, its rebuild for an unreconstructable one) and `sched.json`'s absent
+  `jobQueue` read as empty (`schedFile`, `src/schedule/scheduler.ts`).
 - The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.5 is in flight:
   `revisionSourceOf` (a `plan-applied` without `source`, and the field's optionality), `transientRulesOf` and the
   dev.5 transient rules it selects (the five `.roadmap/` entries, no scope check; step A4's branch), `applyInputsOf`
   and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15), `rulingsFromLiveFile` (a revision
   without `rulingsSha256`), and `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4),
-  `audit` and `close-admissions` (B7) in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s; A5b deleted
+- Interim M3 shims (step 0a), deleted by the step named: the `NOT_YET` rejections of `rule` (A4)
+  in `src/commands/apply.ts` (A3 deleted `steer` and `merge-in`'s, B7 `audit` and `close-admissions`'; A5b deleted
   `gc`'s failure in `src/cli/main.ts`); the lens and checkpoint rows `unsupported` in `src/prompts/index.ts` (`ARC_ROLE_UNSUPPORTED`,
   B4); `DOCS_NOT_YET`, the executor's refusing `DocsPublisher` (`src/recover/revision.ts`, A4); the recovery throws for `docs.commit` (A4) and `mutant.apply` (B3) in
   `src/recover/recover.ts`; the `docs` (A4), `batch` (B2) and `job` (A4) holder throws in `settleHolder`

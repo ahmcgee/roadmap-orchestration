@@ -49,7 +49,12 @@ export type Arbiter = Readonly<{
   wake: () => void;
   /** The units' waiters (a job's are not a unit's queue position). */
   waiting: () => readonly WaiterView[];
+  /** M3 (B7): the jobs' waiters (a docs publication's slot, a batch's slot, a job's lanes), served first, in arrival order. */
+  waitingFirst: () => readonly FirstWaiterView[];
 }>;
+
+/** A job's waiter as `sched.json` lists it, in the order the arbiter serves them (before every unit). */
+export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean }>;
 
 type Waiter<H extends AcquiringHolder> = {
   readonly request: ResourceRequest;
@@ -161,5 +166,11 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request) }));
   };
 
-  return { acquire, acquireFirst, wake, waiting };
+  const waitingFirst = (): readonly FirstWaiterView[] => {
+    const plan = ctx.plan();
+    const table = resourceTable(ctx.journal.view);
+    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request) }));
+  };
+
+  return { acquire, acquireFirst, wake, waiting, waitingFirst };
 }

@@ -495,7 +495,35 @@ async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent
  */
 export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: StageParent): FixRound {
   const cand = latestCandidate(ctx, unit.id);
-  const claims = unitClaims(ctx, unit, cand.expect.integrationTip, cand.expect.unitCommit);
+  return brakeFix(ctx, unit, cand, cand.expect.unitCommit, journeyRoot(ctx.runDir, parent));
+}
+
+/**
+ * M3 (B7): the fix round of a member of a red repair batch the scheduler attributed to it (`red{attributable}`): the
+ * obligations its own selection left red on the batch candidate, with the batch job's evidence.
+ */
+export function batchMemberFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>): FixRound {
+  const member = cand.expect.batch?.members.find((m) => m.unit === unit.id);
+  if (member === undefined) throw new Error(`unit ${unit.id} is no member of the batch candidate ${cand.op}`);
+  return brakeFix(ctx, unit, cand, member.unitCommit, jobEvidenceRoot(ctx.runDir, cand.expect.batch!.job));
+}
+
+/**
+ * M3 (B7): the batch candidate a unit's candidate attempt `parent` recorded its outcome for: none when the attempt merged
+ * a candidate of its own, else the latest batch candidate naming the unit a member (the scheduler records a red batch's
+ * outcome for each member at a candidate attempt that ran nothing itself).
+ */
+export function memberBatchCandidate(view: JournalView, parent: StageParent): IntentOf<'candidate.merge'> | null {
+  const same = canonicalJson(parent);
+  if (view.opsOf('candidate.merge').some((i) => canonicalJson(i.parent) === same)) return null;
+  const batch = view.opsOf('candidate.merge').filter((i) => i.expect.batch?.members.some((m) => m.unit === parent.unit) === true && view.doneOf(i.op) !== null).at(-1);
+  if (batch === undefined) throw new Error(`unit ${parent.unit}: candidate attempt ${parent.attempt} merged no candidate, and no batch names it`);
+  return batch;
+}
+
+/** The fix round of a candidate `cand` whose held claims were red for `unit` (at its commit `head`), evidence under `root`. */
+function brakeFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>, head: Sha, root: AbsPath): FixRound {
+  const claims = unitClaims(ctx, unit, cand.expect.integrationTip, head);
   if (claims === null) throw new Error(`unit ${unit.id}: a red candidate with a green suite outside a holistic arc`);
   const runs = observedRuns(ctx, claims, cand.post.new);
   const grade = gradeTree(claims, runs, claims.completing, claims.repairs, p1Obligations(ctx.journal.view));
@@ -509,7 +537,6 @@ export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: Sta
     ...grade.unexplained.map((lane) => `Journey lane ${lane} ran red on the candidate with a failure no obligation explains; read its output and fix the regression.`),
     ...[...grade.background].map(([lane, tests]) => `Journey lane ${lane}: tests ${tests.join(', ')} fail on the candidate but not on the integration tip alone; the change regressed them.`),
   ];
-  const root = journeyRoot(ctx.runDir, parent);
   return { failingEvidenceDirs: existsSync(root) ? [root] : [], directives: directives.length > 0 ? directives : ['The candidate\'s held claims were red; read the journey evidence and fix it.'] };
 }
 

@@ -10,6 +10,14 @@
 // The fold records each raise with its `blocking` flag and each acknowledgement, so `openBlocking` (the
 // terminal predicate's input) is a pure function of the log. Items outside the journal (the supervisor's and a
 // refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
+//
+// M3 (B7; the OR rulings): whether an M3 item blocks is fixed by its reason (`m3Blocking`), and a raise that disagrees
+// fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`, `new-finding-draining`, `steered`,
+// `not-reproduced`, `owner-request` (A16: only the owner may act) and `respec-second` (OR-Q1). Non-blocking
+// (`NON_BLOCKING_M3_REASONS`): `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never
+// halt units), `audit-owed` and `divergence-digest`. Blocking means the arc is not `complete` while the item is open
+// (§2.10); what an open item holds back from admission is admission's (src/schedule/ready.ts) and, for
+// `obligation-baseline` (every admission under holistic until it is answered), the scheduler's.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
@@ -19,7 +27,8 @@ import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserI
 import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import {
-  type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord, type NeedsUserContent,
+  NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
+  type NeedsUserContent,
 } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
@@ -37,12 +46,25 @@ export const needsUserBytes = (record: NeedsUserRecord): string => canonicalJson
 
 const fileSha = (path: AbsPath): Sha256Hex => sha256(sha256Hex(readFileSync(path)));
 
+/** The M3 reasons (every reason from `obligation-baseline` on); an earlier reason's raiser decides whether it blocks. */
+const M3_REASONS: readonly NeedsUserReason[] = NEEDS_USER_REASONS.slice(NEEDS_USER_REASONS.indexOf('obligation-baseline'));
+
+/** Whether an item with `reason` is raised blocking: fixed for an M3 reason (the OR rulings), null for an earlier one. */
+export function m3Blocking(reason: NeedsUserReason): boolean | null {
+  if (!M3_REASONS.includes(reason)) return null;
+  return !(NON_BLOCKING_M3_REASONS as readonly NeedsUserReason[]).includes(reason);
+}
+
 /**
  * Raises one needs-user item; returns once `needs-user/<id>.json` is durable and the op is done. `parent` is
  * what the item answers for: the stage attempt whose outcome parked or stopped the unit, the op a recovery
  * parked, or the arc. The executor reads it back to raise each such item once (`raisedFor`).
  */
 export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: NeedsUserContent, parent: Parent): NeedsUserId {
+  const blocking = m3Blocking(content.reason);
+  if (blocking !== null && blocking !== content.blocking) {
+    throw new Error(`a ${content.reason} needs-user is raised ${blocking ? 'blocking' : 'non-blocking'}, not ${content.blocking ? 'blocking' : 'non-blocking'}`);
+  }
   durableMkdir(join(runDir, NEEDS_USER_DIR, STAGED_DIR));
   let id: NeedsUserId | null = null;
   const { op } = journal.begin({

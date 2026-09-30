@@ -778,7 +778,8 @@ job wakes it; it never awaits long work, it only starts tasks and jobs and reads
    escalations and breakers); with nothing running and no mutation pending, the run ends `complete` when every
    unit is merged, cut, superseded or parked operator (a retryable park is still probed, so it is not settled),
    no own-arc residue is left (`JournalView.residues()`: it is probed until reclaimed, `arcSettled`) and no
-   blocking needs-user is open;
+   blocking needs-user is open (M3: a holistic arc runs its jobs here and ends by the completion predicate, `arc-completed`
+   and the terminal snapshot; see "Choices made in M3 B7");
 5. waiting tasks admitted, and a task started for every ready unit without one (`ready`, src/schedule/ready.ts);
 6. the arbiter re-evaluated (also woken by every release), then `sched.json` rewritten when it changed.
 
@@ -808,9 +809,11 @@ releases the host: its supervisor does, after it exited.
 
 **`sched.json`** (run dir, `SCHED_FILE`, derived, non-authoritative: never read for a decision; a restart
 rebuilds everything in it in memory): `{v, arc, pid, tasks[{unit, state: TaskState}], queue[{unit, stage,
-attempt, publication, request{named, pools, cpu, publication}, envBlocked}], drains[{command, scope}]}`, written
-by the executor `pid` (atomically, only when it changed): every unit with a task, the arbiter's waiters in the
-order it serves them, and the pending mutations' scopes. `status` reads it only while that `pid` is the run's live
+attempt, publication, request{named, pools, cpu, publication}, envBlocked}], jobQueue[{holder: docs{pub} |
+batch{finding, attempt} | job{job}, request, envBlocked}] (M3 B7), drains[{command, scope}]}`, written by the executor
+`pid` (atomically, only when it changed): every unit with a task, the arbiter's unit waiters in the order it serves
+them, its job waiters (served before every unit, in arrival order; a 1.0.0-dev.5 executor's file has no `jobQueue`,
+read as empty), and the pending mutations' scopes. `status` reads it only while that `pid` is the run's live
 executor.
 
 ## Supervisor and handshake (step 14a)
@@ -1234,10 +1237,9 @@ constants in the table (`Bounded.bound` names the field) and in the fold's charg
 
 **Commands** (M3 bodies; scopes per the plan's table, `commandScope` in `src/input/classify.ts`): `rule{path,
 sha256}` (none), `reverse{divergence}` (arc), `steer{unit, brief{path, sha256}, budgetMin, class|null, resume}` ({u}),
-`merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Until the step that implements each,
-its effect is rejected `<type>: not implemented (step X)`: `audit` and `close-admissions` B7 (`NOT_YET`,
-`src/commands/apply.ts`; `reverse` since A2, `steer` and `merge-in` since A3, `rule` since A4). `gc` runs since A5b
-(`src/commands/gc.ts`).
+`merge-in{unit}` ({u}), `audit{lenses|null}` (none), `close-admissions` (none). Each runs since the step that
+implemented it: `reverse` A2, `steer` and `merge-in` A3, `rule` A4, `audit` and `close-admissions` B7
+(`src/commands/{audit,admissions}.ts`). `gc` runs since A5b (`src/commands/gc.ts`).
 
 **Needs-user reasons** (M3). Blocking: `obligation-baseline`, `finding-p1-escalated`, `new-finding-draining`,
 `steered`, `not-reproduced`, `owner-request`, `respec-second`. Non-blocking (`NON_BLOCKING_M3_REASONS`):
@@ -1426,7 +1428,7 @@ residues, the snapshot closure):
    src/pipeline/integrate.ts); a candidate past green (its ff and snapshot chain) is waited for. The preempted
    candidate's lanes see `preempt` as their cancel reason (`LaneCancel`, src/pipeline/redlane.ts); every lane of the
    attempt that is running or starts later is killed `proc.kill{reason: preempt}`; the stage records `preempted`
-   (uncharged) and releases the slot. `sched.json`'s queue lists unit waiters only.
+   (uncharged) and releases the slot. `sched.json`'s queue lists unit waiters only (B7 adds `jobQueue`).
 5. **Eligibility (G10)** is `findingBlocking` (src/pipeline/integrate.ts), read from the fold's findings: an active
    (open, owned or fixed-on-branch) P1 over an obligation of the approval's `obligationRevs` that the unit's spec does
    not repair (a finding repair repairs its obligation). Checked before a candidate records green (→
@@ -1806,13 +1808,94 @@ src/pipeline/dispatch.ts `callArcRole`):
 8. **`run.state`** gains `draining` (a live executor that would be `running`, with admissions closed). A holistic arc is
    `complete` only while its `arc-completed` is active (A20); an arc without the layer completes as in M2.
    **`completion`** `{planRev, head, active, sealed, notSealed, unmet}`: `sealed` is A5b's `sealingOf` (its reason or
-   mismatch detail in `notSealed`); `unmet` names the §2.10 conditions that fail now (`COMPLETION_CONDITIONS`: units
-   open, obligations not discharged, blocking items, pending commands, coverage outstanding, audit owed, the latest
-   generation not quiescent under the vision in force (B6 `quiescentGenerations`), residues). The close-out publication
-   is not among them (B7's).
+   mismatch detail in `notSealed`); `unmet` names the §2.10 clauses that fail now: since B7's follow-up it is the
+   scheduler's `completionBlockers` itself (one rule; see "Choices made in M3 B7" item 1).
 9. **`host.log`** `{bytes, events, foldMs, compactionDue}`: the size of `events.jsonl`, the events folded, the fold's
    wall time in ms, and whether either compaction trigger (50 MB, 2 s) is reached. Two status reads differ only by
    `foldMs`.
 10. **`commands.pending`** is `pendingCommandIds` (A5b); the receipts are listed from the receipts dir.
 11. **`watch`** is unchanged in code: every raised item, blocking or not, is a `needs-user` line, so the M3 kinds wake
     the Monitor as any other (test `watch.m3-kinds`).
+
+**Choices made in M3 B7** (the scheduler joins the holistic layer; src/schedule/scheduler.ts, src/executor.ts,
+src/needsuser.ts, src/commands/{audit,admissions}.ts):
+
+1. **`complete`** (every arc, B7 follow-up lead ruling) is `completionBlockers(h, {blocking, pending})` empty, a closed list
+   in this order: `units-open` (holistic: a unit neither merged, cut nor superseded, a parked unit is never complete,
+   §2.10; without the layer: a unit M2 does not settle, an operator park settling), `blocking-items`, `pending-commands`,
+   `residues`, `baseline-owed`, `audit-pending` (running or due), `coverage-outstanding` (a lens of L, `coverageOf` at the
+   head), `audit-owed` (the cadence owes a trigger), `checkpoint-pending`, `generation-not-quiescent` (the latest
+   generation any audit or checkpoint recorded, under the vision in force; none recorded: vacuous), `close-out` (item 2),
+   `obligations-not-discharged` (a non-exempt obligation, split parents through their children, whose latest observation
+   on the head's tree, in whichever environment ran it, is missing or not held). Without the layer the holistic clauses
+   and the close-out are vacuous. The scheduler evaluates it only with nothing running and no mutation pending; `status`'s
+   `completion.unmet` is the same function over a read-only view of the arc (`readOnlyContexts`: every writing or
+   process-running member throws), so there is one rule.
+2. **The close-out publication (A8)** is `publishCloseOut` (src/pipeline/publish.ts): its renderings are
+   `constraints.md` in `close-out` mode and `invariants.md` (latched obligations must-hold) from the inputs in force; the
+   files differing from the head are published like a revision's docs (slot `docs{pub}`, `docs.commit`, transient check,
+   the suite and every arc lane, the brake over every non-exempt obligation, `ff{docs}`), then `finishDocs`:
+   `docs-covered{pub, T → D}` (always docs-only), `docs-published{pub, source: close-out, commit}`, the snapshot, the
+   release. With nothing to change it runs every arc lane on the head alone under `job{docs-n}` (reusing observations:
+   when all are observed it writes nothing and names no job) and publishes nothing. It is done while the head is the
+   latest close-out's commit, or has nothing to change. An arc without the layer has no close-out (its in-tree documents
+   are not the executor's renderings: a 1.0.0-dev.5 fixture's hand-written `constraints.md` stays as it is). The scheduler starts it only when every other clause holds and no
+   obligation is observed not held on the head. `finishDocs` tells a close-out from a revision's publication by the plan in
+   force not naming its pub (a close-out never runs inside a revision). A refused close-out raises a blocking `base-red`
+   (subject arc) parented by `job{pub}`: its lanes were red on the head plus renderings only; acknowledging it runs the
+   next close-out. Crash labels `closeout.after-ff`, `closeout.before-published`.
+3. **Completion (A20, G8).** Every arc, holistic or not (so `gc` can seal any completed arc), writes
+   `arc-completed{planRev, head, highWater, units (merged, ascending)}` once while
+   an active completion does not already record the plan rev and head, then the terminal snapshot (`snapshot.publish`,
+   parent `{type: arc}`); the run ends `complete`. At every start, a completion no done arc-parented snapshot covers
+   (its `highWater` below the fact's seq) gets its terminal snapshot first (crash label `complete.after-fact`). A restart
+   of a completed arc ends `complete` at once, writing nothing. An arc with no `plan-applied` (started before
+   1.0.0-dev.3) completes without the fact, warned (scaffolding).
+4. **The holistic jobs** run on three tracks, one job each at a time: `holistic` (the baseline while owed, else the
+   checkpoint while due or running, else the audit while due or running), `batch`, `closeout`. A run that waits on a
+   condition a command changes (a skip for a parked backend or a paused arc, an interrupted call, nothing due) is asked
+   again after `HOLISTIC_RETRY_MS` (5 × POLL_MS). A run whose lane gave no verdict (a baseline or audit `incomplete`, a
+   batch's or close-out's `no-verdict`, an occupied batch lane aside, which raises its item) is retried on the
+   retryable-park backoff (`noVerdictDelayMs` over `PROBE_BACKOFF_MIN`: 1, 2, 4, 8, 16, then every 30 minutes); once
+   the episode (consecutive such runs of the track) is `PARK_ESCALATE_MS` (6 h) old, one non-blocking `park-escalated`
+   item parented by the job (`escalateNoVerdict`, raised once per job, D2); progress ends the episode. The park machinery
+   itself is unit-bound (park facts, probes), so this is its smallest equivalent: the episode is in memory (a restart
+   starts a new one). The audit's clock is `processClock` of the scheduler's start. At most once per POLL_MS the loop
+   raises the findings' items (`raiseFindingItems`) and an owed audit's (`raiseAuditOwed` over the cadence).
+5. **The baseline hold (A6).** While the baseline is owed (`baselineOwed`), running, or its blocking `obligation-baseline`
+   is unacknowledged, no unit is admitted to any stage (chains run on). `baselineOwed` guards B2's `baselineDue`, which
+   reads the tip now: a baseline job that witnessed every arc lane on a tree the tip has since left is done.
+6. **Design parks (OR-Q1)** raise their own item through `raiseResult`'s route (`designParkRoute`): `checkpoint` and
+   `respec-second` raise none; `park-item` raises it; `respecified` re-opens a judgment-stage park on its pending revision
+   (`reopened{command: null}`, the pending revision's command), raises none for a unit a planned unit re-enters, and
+   raises the item otherwise (a respec the unit cannot re-open on). `raiseHalted` re-reads the route every iteration.
+   B6 raises `respec-second` only inside `runCheckpoint`, so a second design park whose item is unraised makes the
+   checkpoint job run (it raises it and decides nothing).
+7. **Repair batches (R7).** For an active finding at least two active, unpublished units repair directly (`F-n`), the
+   approved ones waiting at their candidate are held there while any other of them is not; once all wait (none
+   finding-blocked, no item of the finding's batches open) they are one `publishBatch`. `settleBatch` records the
+   outcome: published → the members' retire runs in a task each (unit.ts: a retired unit's step is its retire); `red` →
+   each attributable member records a candidate `red` at an attempt that ran nothing itself, and its fix round
+   (`memberBatchCandidate`, `batchMemberFix`, src/pipeline/integrate.ts) names the red obligations of its own selection
+   on the batch candidate with the batch job's evidence; `refused{transient-violation, unit}` → that member's
+   `transient-violation`; a red nothing attributes, any other refusal, `base-red`, `foreign-move` or an occupied lane →
+   one blocking item (the outcome's, or `candidate-red`, subject arc) parented by the attempt's slot reservation, and the
+   finding's members wait for its acknowledgement (`batchSuspended`); `stale{invalid}` → those members leave batching
+   (in memory, until their approval changes) and take their own candidate, whose ff re-gates them; `finding-blocked`
+   and other `no-verdict`s retry. A crash-cut published batch is finished at the scheduler's start (`finishBatch`).
+8. **Pause and stop.** A pause kills the paused unit's backend, lane, journey and mutant invocations. A stop (control
+   applies at once, §2.3; B7 follow-up lead ruling) kills backend, lane, smoke, journey, mutant and arc-backend (lens and
+   checkpoint) invocations: a killed lens call abandons its audit, which runs again later (the spend accepted). A docs
+   publication's lanes (`job{docs-n}`: a revision's or the close-out's) are never killed: a critical section, run to its
+   end like a publication chain.
+9. **`sched.json`** gains `jobQueue` (the arbiter's first-served waiters, `waitingFirst`, src/schedule/arbiter.ts).
+10. **Routing provenance (lead ruling).** The executor's contexts resolve a 1.0.0-dev.5 revision from its adoption record
+    (`readLegacyProvenance`, persisted by `runChecks`); an `unreconstructable` one resolves from this start's repo config
+    as dev.5 did, warned on stderr (scaffolding). After recovery the executor writes the findings' moves
+    (`syncRepairs`).
+11. **Needs-user items.** An M3 reason's blocking flag is fixed (`m3Blocking`: every M3 reason but
+    `NON_BLOCKING_M3_REASONS` blocks); a raise that disagrees throws. A blocking M3 item blocks `complete`; only
+    `obligation-baseline` also holds admission (item 5).
+12. **Commands.** `audit` refuses an arc without the layer and a lens outside L, and writes `audit-requested` once per
+    command; `close-admissions` refuses while draining (by another command) and writes `admissions-closed` once. The
+    in-tree document paths are `CONSTRAINTS_DOC` (src/docs/constraints.ts) and `INVARIANTS_DOC` (src/docs/invariants.ts).
