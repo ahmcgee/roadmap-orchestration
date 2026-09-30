@@ -75,6 +75,12 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
+  same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
+  outlasts a working day with nobody noticing.
+- **The paid M2 fixture's aging criterion is vacuous** (no waiter reaches promotion in its story; the free
+  `prio.bypass-promotion` test covers the rule). Trigger: a real arc where a planned unit waits behind more than
+  3 merges, or a change to rank.
 - Codex resume collision is matched on `thread already` from arc 1, with no captured sample. Trigger: a sample.
 - Adopting a live runner across arcs holds the recovery lock until that runner exits, which can outlast
   `start`'s wait. Trigger: a `start` timeout from it.
