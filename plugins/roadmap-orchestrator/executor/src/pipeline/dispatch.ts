@@ -15,16 +15,19 @@
 //   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only).
 // - The backend call: prompt text and schema are content-addressed input files written before the spawn
 //   intent; the launch names the role and routingRev, never the model, except in argv (launch.json is the
-//   one executor-written file allowed a model id). The workload env is `backendEnv(host)` plus the unit's
-//   owner label, so whatever the backend starts carries it.
+//   one executor-written file allowed a model id). The workload env is `backendEnv(host)`; the implementer's
+//   adds the unit's owner label and the pool instances its build holds (F7), so whatever it starts carries them.
 // - The verdict: a cancel for pause or stop is an interruption, not a fault; a failed call whose backend
-//   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`) and holds the
-//   stage (lead ruling: outcome != success AND class in {usage-limit, capacity}); platform or backend
-//   error entries on a success are informational.
+//   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`, its seq the park's
+//   epoch) and holds the stage with that park as the hold's cause (G5; lead ruling: outcome != success AND
+//   class in {usage-limit, capacity}); platform or backend error entries on a success are informational.
+// - A resume, fix or continue round that ends `process-fault` with nothing on stdout never had its session
+//   persisted (`sessionNeverPersisted`; rounds.ts re-runs it fresh).
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes } from '../backends/argv.ts';
 import {
-  BACKEND_PARK_CLASSES, type BackendParkClass, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
+  BACKEND_PARK_CLASSES, type BackendParkClass, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
 import { type ArcId, type InvocationId, type RoutingRev, type SeatRev, type UnitId, opKey, seatRev } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
@@ -37,14 +40,15 @@ import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, bra
 import { inputPath, keepInput } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
-import type { ResourceContext } from '../resources/reserve.ts';
+import { instanceEnv } from '../resources/pool.ts';
+import { type ResourceContext, holderUnits } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
 import { type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type SeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
-import { judgmentSeat } from './transitions.ts';
+import { type BuildRound, judgmentSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
@@ -248,6 +252,39 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
   }
 }
 
+/** `RESOURCE_INSTANCE_<POOL>` for each pool instance the build attempt `parent` holds (none outside a build). */
+function buildInstanceEnv(ctx: StageContext, parent: StageParent): Readonly<Record<string, string>> {
+  if (parent.stage !== 'build') return {};
+  return instanceEnv(holderUnits(ctx.journal.view, { type: 'stage', unit: parent.unit, stage: 'build', attempt: parent.attempt }));
+}
+
+/** The build rounds that resume an existing session: only they can find it was never persisted. */
+export const RESUMING_ROUNDS = ['resume', 'fix', 'continue'] as const satisfies readonly (BuildRound | 'continue')[];
+
+/**
+ * A resume, fix or continue round whose call ended `process-fault` with no complete JSON line on its stdout:
+ * the CLI never got as far as its session, so the session it was told to resume was never persisted. Such
+ * a round re-runs once, uncharged, as a fresh session on the kept worktree (src/pipeline/rounds.ts).
+ */
+export function sessionNeverPersisted(round: BuildRound | 'continue', called: BackendCallOutcome): boolean {
+  if (!(RESUMING_ROUNDS as readonly string[]).includes(round)) return false;
+  if (called.kind !== 'result' || called.result.outcome.kind !== 'process-fault') return false;
+  const path = join(called.invDir, STDOUT_FILE);
+  return !existsSync(path) || !hasCompleteJsonLine(readFileSync(path, 'utf8'));
+}
+
+/** Whether `text` holds a `\n`-terminated line that parses as JSON. */
+function hasCompleteJsonLine(text: string): boolean {
+  return text.split('\n').slice(0, -1).some((line) => {
+    try {
+      JSON.parse(line);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * One backend call of a unit's stage, through `invoke` (proc.spawn{purpose: backend}). A call lost with its
  * runner is retried once, uncharged, as the op's next invocation with the same deadline (the plan's
@@ -262,8 +299,9 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
-  // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none.
-  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit) } : backendEnv(ctx.hostEnv);
+  // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none. It
+  // is bound to the pool instances its build holds (F7), as its lanes, probes and teardowns are.
+  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit), ...buildInstanceEnv(ctx, spec.parent) } : backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
@@ -288,20 +326,23 @@ export type Interruption = 'pause' | 'stop' | BackendParkClass;
 
 /**
  * A call read for the transition table. `interrupted` never charges. A backend park is already recorded
- * when this returns, and carries the one arc-wide needs-user it calls for (the caller has it written).
+ * when this returns: `cause` names it (G5), and the stage records it in its hold, so a passing probe of that
+ * park, or `resume --backend`, releases exactly this hold; null for a pause or stop. `needsUser` is the one
+ * arc-wide item a usage-limit park calls for (the caller has it written); a capacity park is retryable, so
+ * the prober recovers it and nobody is asked.
  */
 export type BackendVerdict =
   | Readonly<{ kind: 'success'; value: JsonValue; result: BackendResult }>
   | Readonly<{ kind: 'refusal' | 'malformed' | 'process-fault'; detail: string }>
-  | Readonly<{ kind: 'interrupted'; reason: Interruption; needsUser: NeedsUserContent | null }>;
+  | Readonly<{ kind: 'interrupted'; reason: Interruption; cause: HoldCause | null; needsUser: NeedsUserContent | null }>;
 
-/** The arc-wide needs-user of a backend park. Names the backend and the role's stage, never a model. */
-function backendParkNeedsUser(parent: StageParent, backend: Backend, park: BackendParkClass, called: BackendCallOutcome): NeedsUserContent {
+/** The arc-wide needs-user of a usage-limit park (D4: no auto-retry). Names the backend and the role's stage, never a model. */
+function usageLimitNeedsUser(parent: StageParent, backend: Backend, called: BackendCallOutcome): NeedsUserContent {
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'usage-limit',
-    summary: `The ${backend} backend reported a ${park} error at ${parent.stage} of unit ${parent.unit} (${called.inv}); it is parked arc-wide. `
+    summary: `The ${backend} backend reported a usage-limit error at ${parent.stage} of unit ${parent.unit} (${called.inv}); it is parked arc-wide. `
       + `Stages that need it wait; unit ${parent.unit} holds at ${parent.stage}, uncharged.`,
     recommendation: `When the limit has reset, run \`roadmap resume --backend ${backend}\`: it re-runs the ${backend} smoke before unparking.`,
     options: [],
@@ -311,20 +352,21 @@ function backendParkNeedsUser(parent: StageParent, backend: Backend, park: Backe
 
 /**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
- * usage-limit/capacity park (outcome != success with such an error: `backend-park` fact, arc-wide), then the
- * outcome itself.
+ * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
+ * is the park's epoch and the hold's cause), then the outcome itself.
  */
 export function verdictOf(ctx: StageContext, parent: StageParent, called: BackendCallOutcome): BackendVerdict {
   if (called.kind === 'lost') return { kind: 'process-fault', detail: `${called.inv} was lost with its runner` };
   const { result } = called;
-  if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, needsUser: null };
+  if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
   if (result.outcome.kind !== 'success') {
     const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass & BackendErrorClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {
       const backend = runnerFiles(called.invDir, called.inv).read('launch.json')?.argv[0];
       if (backend !== 'claude' && backend !== 'codex') throw new Error(`${called.invDir}: a backend launch whose argv[0] is ${String(backend)}`);
-      ctx.journal.fact({ kind: 'backend-park', backend, class: park, inv: called.inv });
-      return { kind: 'interrupted', reason: park, needsUser: backendParkNeedsUser(parent, backend, park, called) };
+      const parkSeq = ctx.journal.fact({ kind: 'backend-park', backend, class: park, inv: called.inv });
+      const needsUser = park === 'usage-limit' ? usageLimitNeedsUser(parent, backend, called) : null;
+      return { kind: 'interrupted', reason: park, cause: { type: 'backend', backend, parkSeq }, needsUser };
     }
   }
   switch (result.outcome.kind) {
