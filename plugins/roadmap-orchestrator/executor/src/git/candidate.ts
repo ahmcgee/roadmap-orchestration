@@ -12,7 +12,7 @@
 // The candidate worktree is a separate `worktree.create` op, detached at the new commit
 // (`candidateWorktreeRequest`), run by the caller once this op is done; its own reconciler covers it.
 import { crashPoint } from '../core/crash.ts';
-import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
+import { type CommitInputs, type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import type { ArcId, Sha, UnitId } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { type AbsPath, type RefName, type RepoPath, refName } from '../core/values.ts';
@@ -87,14 +87,14 @@ function prepare(repo: AbsPath, plan: CandidatePlan): IntentBody<'candidate.merg
 function act(repo: AbsPath, intent: IntentOf<'candidate.merge'>): void {
   const { ref, old, commit } = intent.expect;
   const next = intent.post.new;
-  crashPoint('candidate.act-start');
+  crashPoint('candidate.act-start', parentUnit(intent.parent));
   const at = refTarget(repo, ref);
   if (at !== old) throw new CandidateStateError(ref, `at ${at ?? 'nothing'}, recorded old ${old ?? 'absent'}`);
   const made = commitTree(repo, commit);
   if (made !== next) throw new CandidateStateError(ref, `commit ${made}, recorded ${next}`);
-  crashPoint('candidate.after-commit-tree');
+  crashPoint('candidate.after-commit-tree', parentUnit(intent.parent));
   updateRefCas(repo, ref, next, old ?? 'absent');
-  crashPoint('candidate.act-end');
+  crashPoint('candidate.act-end', parentUnit(intent.parent));
 }
 
 /** null when the postcondition holds: ref = new, new's parents [T, unitCommit]. */

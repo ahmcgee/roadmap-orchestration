@@ -37,10 +37,10 @@ export function appendFailedCleanupResidues(
   for (const { resource, teardown } of edge.residues) {
     const recipe = recipes.get(resource);
     if (recipe === undefined) throw new Error(`${intent.op}: no teardown recipe for failed resource ${resource}`);
-    crashPoint('residue.before-host-append');
+    crashPoint('residue.before-host-append', holder.unit);
     recordResidue(hostDir, { type: 'residue', key: { arc, unit: holder.unit, inv: teardown, resource }, teardown: recipe.teardown, label: recipe.label });
   }
-  crashPoint('residue.after-host-append');
+  crashPoint('residue.after-host-append', holder.unit);
 }
 
 /** Recovery of an open `fail` transition: residues (idempotently), then the done the caller records. */

@@ -173,14 +173,15 @@ function journalTransition(
     deadlineAt: null,
     body: () => ({ expect: { holder, resources, edge }, post: null }),
   });
-  crashPoint('resource.after-intent');
+  const unit = 'unit' in holder ? holder.unit : undefined;
+  crashPoint('resource.after-intent', unit);
   if (edge.type === 'fail') {
     const intent = view.latestIntent(op);
     if (intent.kind !== 'resource.transition') throw new Error(`${op} is a ${intent.kind}`);
     appendFailedCleanupResidues(ctx.hostDir, intent, recipes);
   }
   ctx.journal.done(op, 'resource.transition', { kind: 'transitioned' }, null);
-  crashPoint('resource.after-done');
+  crashPoint('resource.after-done', unit);
 }
 
 /** Any transition but `fail` (only `cleanup` takes it, for a stage holder) and `reclaim` (a sweep's or a retry's). */
@@ -405,9 +406,9 @@ export async function retryReclaim(ctx: ResourceContext, holder: RetryHolder, in
   const run = await teardown(ctx, holder.unit, instance, { teardown: residue.entry.teardown, label: residue.entry.label }, parent);
   if (!run.clean) return 'fail';
   if (residue.open) {
-    crashPoint('retry.before-disposition');
+    crashPoint('retry.before-disposition', holder.unit);
     recordDisposition(ctx.hostDir, { type: 'disposition', key: residue.entry.key, disposition: 'cleaned', by: { arc: ctx.journal.view.arc, inv: run.inv } });
-    crashPoint('retry.after-disposition');
+    crashPoint('retry.after-disposition', holder.unit);
   }
   transition(ctx, holder, [instance], { type: 'release' }, parent);
   return 'pass';

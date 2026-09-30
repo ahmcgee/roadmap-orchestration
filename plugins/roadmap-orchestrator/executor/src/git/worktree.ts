@@ -5,7 +5,7 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpOutcome, WorktreeCheckout } from '../core/events.ts';
+import { type IntentOf, type OpOutcome, type WorktreeCheckout, parentUnit } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -70,7 +70,7 @@ function prepareCreate(repo: AbsPath, request: WorktreeCreateRequest): IntentBod
 
 function actCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): void {
   const { path, checkout } = intent.expect;
-  crashPoint('worktree.create.act-start');
+  crashPoint('worktree.create.act-start', parentUnit(intent.parent));
   if (checkout.type === 'detached') {
     worktreeAdd(repo, path, { type: 'detached', at: checkout.at });
   } else {
@@ -85,7 +85,7 @@ function actCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): void {
       worktreeAdd(repo, path, { type: 'existing-branch', branch: checkout.branch });
     }
   }
-  crashPoint('worktree.add.inside');
+  crashPoint('worktree.add.inside', parentUnit(intent.parent));
 }
 
 function verifyCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): OpOutcome['worktree.create'] {
@@ -123,9 +123,9 @@ function prepareRemove(repo: AbsPath, request: WorktreeRemoveRequest): IntentBod
 
 function actRemove(repo: AbsPath, intent: IntentOf<'worktree.remove'>): void {
   const { path } = intent.expect;
-  crashPoint('worktree.remove.act-start');
+  crashPoint('worktree.remove.act-start', parentUnit(intent.parent));
   if (worktreeList(repo).some((e) => e.path === path)) worktreeRemove(repo, path);
-  crashPoint('worktree.remove.inside');
+  crashPoint('worktree.remove.inside', parentUnit(intent.parent));
   worktreePrune(repo);
 }
 

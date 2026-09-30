@@ -13,7 +13,7 @@ import { isAlive, identityOf, signal } from '../contain/proc.ts';
 import { ENV_TEST_CRASH, invocationEnv } from '../contain/session.ts';
 import { crashPoint, crashTriggerFromEnv } from '../core/crash.ts';
 import { durableMkdir } from '../core/fsx.ts';
-import { type Sha256Hex, sha256 } from '../core/ids.ts';
+import { type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
 import type { RunnerFiles } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { CancelReason, ExitFile, LaunchFile, ProcIdentity } from '../core/records.ts';
@@ -53,12 +53,15 @@ function runnerEnv(launch: LaunchFile): Record<string, string> {
 
 export type RunnerHandle = Readonly<{ files: RunnerFiles; launch: LaunchFile; runner: ProcIdentity }>;
 
-/** Writes launch.json (write-once) into `invDir` and starts the runner. Returns once the runner exists. */
-export function startRunner(invDir: AbsPath, launch: LaunchFile): RunnerHandle {
+/**
+ * Writes launch.json (write-once) into `invDir` and starts the runner. Returns once the runner exists. `unit`: the
+ * unit whose stage launches it, for crash attribution (G8).
+ */
+export function startRunner(invDir: AbsPath, launch: LaunchFile, unit?: UnitId): RunnerHandle {
   durableMkdir(invDir);
   const files = runnerFiles(invDir, launch.inv);
   files.write('launch.json', launch);
-  crashPoint('launch.after-launch-json');
+  crashPoint('launch.after-launch-json', unit);
   const log = openSync(join(invDir, RUNNER_LOG), 'wx');
   const child = spawn(process.execPath, [RUNNER_SCRIPT, invDir], {
     cwd: invDir,
@@ -71,7 +74,7 @@ export function startRunner(invDir: AbsPath, launch: LaunchFile): RunnerHandle {
   // Unreaped until the event loop runs, so the stat is readable even if the runner already exited.
   const { pid, start } = identityOf(child.pid);
   child.unref();
-  crashPoint('launch.after-spawn');
+  crashPoint('launch.after-spawn', unit);
   return { files, launch, runner: { pid, start } };
 }
 

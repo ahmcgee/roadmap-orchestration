@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import { type CommitInputs, type Event, type IntentOf, type OpOutcome, parseEventLine } from '../core/events.ts';
+import { type CommitInputs, type Event, type IntentOf, type OpOutcome, parentUnit, parseEventLine } from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import { type ArcId, type OpId, type Sha, type Sha256Hex, type UnitId, arcId, parseOpId, sha, sha256 } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
@@ -244,15 +244,15 @@ function prepare(repo: AbsPath, request: SnapshotPublishRequest): IntentBody<'sn
 function act(repo: AbsPath, intent: IntentOf<'snapshot.publish'>): void {
   const { ref, old, commit } = intent.expect;
   const next = intent.post.new;
-  crashPoint('snapshot.act-start');
+  crashPoint('snapshot.act-start', parentUnit(intent.parent));
   const at = refTarget(repo, ref);
   if (at !== old) throw new SnapshotStateError(ref, `at ${at ?? 'nothing'}, recorded old ${old ?? 'absent'}`);
   if (catFileType(repo, commit.tree) !== 'tree') throw new SnapshotStateError(ref, `recorded tree ${commit.tree} is missing`);
   const made = commitTree(repo, commit);
   if (made !== next) throw new SnapshotStateError(ref, `commit ${made}, recorded ${next}`);
-  crashPoint('snapshot.after-commit-tree');
+  crashPoint('snapshot.after-commit-tree', parentUnit(intent.parent));
   updateRefCas(repo, ref, next, old ?? 'absent');
-  crashPoint('snapshot.act-end');
+  crashPoint('snapshot.act-end', parentUnit(intent.parent));
 }
 
 /** null when the postcondition holds: ref = new, and its tree verifies against its own manifest at the recorded mark. */

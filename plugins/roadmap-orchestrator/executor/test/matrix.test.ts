@@ -13,13 +13,24 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const boundaries = Object.keys(BOUNDARIES) as Boundary[];
 const cellsOf = (row: (typeof MATRIX)[number]) => boundaries.map((b) => ({ boundary: b, cell: row.cells[b] }));
 
-/** Every label a `crashPoint('...')` call in src/ names. */
+/** Every label a `crashPoint('...')` or `crashPoint('...', unit)` call in src/ names (G8: a call site may pass its unit). */
 function sourceLabels(): ReadonlySet<string> {
   const dir = join(ROOT, 'src');
   const files = readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.ts'));
   const labels = new Set<string>();
   for (const f of files) {
-    for (const m of readFileSync(join(f.parentPath, f.name), 'utf8').matchAll(/crashPoint\('([^']+)'\)/g)) labels.add(m[1]!);
+    for (const m of readFileSync(join(f.parentPath, f.name), 'utf8').matchAll(/crashPoint\('([^']+)'(?:\)|, )/g)) labels.add(m[1]!);
+  }
+  return labels;
+}
+
+/** Every label a call in src/ passes a unit to (`crashPoint('...', unit)`, G8). */
+function unitLabels(): ReadonlySet<string> {
+  const dir = join(ROOT, 'src');
+  const files = readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.ts'));
+  const labels = new Set<string>();
+  for (const f of files) {
+    for (const m of readFileSync(join(f.parentPath, f.name), 'utf8').matchAll(/crashPoint\('([^']+)', /g)) labels.add(m[1]!);
   }
   return labels;
 }
@@ -44,6 +55,13 @@ test('matrix.labels-exist: every label a cell crashes is a crashPoint call in sr
 test('matrix.labels-covered: every crashPoint label in src/ is crashed by at least one cell', () => {
   const cited = new Set(MATRIX.flatMap((r) => crashCells(r.row).map((c) => c.label)));
   assert.deepEqual([...sourceLabels()].filter((l) => !cited.has(l)).sort(), []);
+});
+
+test('matrix.unit-labels: every label a concurrent row crashes is passed its unit at a call site, so a unit-qualified selector reaches it', () => {
+  const withUnit = unitLabels();
+  const concurrent = MATRIX.filter((r) => r.row.startsWith('concurrent: ')).flatMap((r) => crashCells(r.row).map((c) => c.label));
+  assert.ok(concurrent.length > 0);
+  assert.deepEqual([...new Set(concurrent.filter((l) => !withUnit.has(l)))], []);
 });
 
 test('matrix.test-files-exist: every row names at least one test file, and each exists', () => {

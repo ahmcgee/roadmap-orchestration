@@ -10,7 +10,7 @@
 //   `unpublished`; the caller re-checks the fingerprint and makes a fresh candidate (or re-gates).
 // - `foreign`: anything else (integration rewound or rewritten): the caller stops with a needs-user.
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpOutcome } from '../core/events.ts';
+import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
@@ -104,12 +104,12 @@ export function planFf(repo: AbsPath, request: FfRequest): FfDecision {
 
 function act(repo: AbsPath, intent: IntentOf<'integration.ff'>): void {
   const { ref, old } = intent.expect;
-  crashPoint('ff.act-start');
+  crashPoint('ff.act-start', parentUnit(intent.parent));
   // A CAS that loses to a mover is an answer (verify classifies it); a CAS that fails with the ref still
   // at old is a real failure.
   const r = gitRun(repo, ['update-ref', ref, intent.expect.new, old], { okCodes: [0, 128] });
   if (r.code !== 0 && refTarget(repo, ref) === old) throw new GitError(['update-ref', ref, intent.expect.new, old], r.code, 'CAS failed with the ref still at old');
-  crashPoint('ff.act-end');
+  crashPoint('ff.act-end', parentUnit(intent.parent));
 }
 
 function verify(repo: AbsPath, intent: IntentOf<'integration.ff'>): OpOutcome['integration.ff'] {

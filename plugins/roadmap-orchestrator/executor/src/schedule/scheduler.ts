@@ -12,7 +12,8 @@
 //   4. raise the needs-user items now due: a halted unit's (an operator park, a stop) and the park
 //      schedule's (escalations, breakers; src/park/schedule.ts); then, with nothing running and no mutation
 //      pending, end `complete` if every unit is settled and no blocking item is open;
-//   5. start a task for every ready unit without one (`ready`), and admit waiting tasks (`admitter`);
+//   5. start a task for every active unit without one whose next stage is a chain (a recovered park's), then for
+//      every ready unit without one (`ready`), and admit waiting tasks (`admitter`);
 //   6. re-evaluate the arbiter (it is also woken by every release: a task's or a job's end).
 // Jobs and tasks never block polling: the loop only starts them and reads their ends.
 //
@@ -27,7 +28,8 @@
 //
 // Start and restart (G2): before the loop's first iteration a task is started for every unit whose decided
 // next stage is a chain stage (recovery kept a green publication's slot; a build's chain has its reservation
-// cleaned), whatever pause or readiness says, and for every merged unit (its retire is re-runnable).
+// cleaned), whatever pause or readiness says, and for every merged unit (its retire is re-runnable). Step 5
+// does the same for a unit a recovered retryable park returned to a chain stage (a teardown or a salvage).
 //
 // Pause: `pause <u>` aborts u's task (its waits end: an entry reservation, a later lane's set, a clear host) and
 // kills u's live backend and lane invocations, which their stage records as `interrupted`; `pause --all` does
@@ -268,6 +270,19 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     }
   };
 
+  /**
+   * A task for every active unit without one whose decided next stage is a chain stage: at a start (G2), and
+   * when a retryable park on a chain stage recovers (a teardown's cleanup-failed, a salvage's commit-failed: the
+   * fold returns the unit to that stage, F9). Chains are never gated, so `ready` (admission stages) never offers
+   * them.
+   */
+  const startChains = (): void => {
+    for (const unit of plan().units) {
+      const u = view().unit(unit.id);
+      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u)?.kind === 'chain') startTask(unit);
+    }
+  };
+
   const startReady = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>): void => {
     for (const r of ready({ ...admissionInput(blocking, mutations), routing: x.stage.routing().table })) {
       if (tasks.has(r.unit.id) || blocking.some((b) => holdsUnit(b, r.unit.id))) continue;
@@ -400,10 +415,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // The loop
 
   // G2: pending chains first (and merged units' retires), before any mutation, whatever pause or readiness says.
-  for (const unit of plan().units) {
-    const u = view().unit(unit.id);
-    if (u.status === 'retired' || (u.status === 'active' && nextStage(u)?.kind === 'chain')) startTask(unit);
-  }
+  for (const unit of plan().units) if (view().unit(unit.id).status === 'retired') startTask(unit);
+  startChains();
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
@@ -440,7 +453,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const blocking = blockingItems(runDir, view());
       const idle = tasks.size === 0 && jobs.size === 0 && mutations.length === 0;
       if (idle && blocking.length === 0 && plan().units.every((u) => unitSettled(view(), u.id))) return { kind: 'complete', units: summary() };
-      // 5. Waiting tasks admitted, then tasks for ready units (each reaches its first gate at once).
+      // 5. Chains a recovered park returned a unit to, waiting tasks admitted, then tasks for ready units (each
+      //    reaches its first gate at once).
+      startChains();
       admitWaiting(blocking, mutations);
       startReady(blocking, mutations);
       admitWaiting(blocking, mutations);

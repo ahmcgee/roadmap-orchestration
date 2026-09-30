@@ -8,7 +8,8 @@
 // probe: occupant absent → 0, own label → 10, another's → 11 (the PROBE_EXIT contract).
 // teardown: removes the occupant when it carries the caller's label, logging `leave`. Beside the instances,
 //   `<stateDir>/<pool>.teardown-fails-once`, when present, is consumed by the next teardown, which then
-//   exits 1 removing nothing: a teardown that fails exactly once.
+//   exits 1 removing nothing: a teardown that fails exactly once. A count n > 1 in it fails the next n
+//   teardowns, one each.
 // hold: the lane workload. Claims the instance (a second owner logs `conflict` and exits 1), parks at the
 //   per-unit barrier if one is named (emitting progress), then releases the instance.
 // Every call appends `<cmd> <pool>#<n> <label>` to `<stateDir>/calls.log`.
@@ -41,7 +42,9 @@ if (cmd === 'probe') {
 if (cmd === 'teardown') {
   const once = join(stateDir, `${pool}.teardown-fails-once`);
   if (existsSync(once)) {
-    rmSync(once);
+    const left = Number(readFileSync(once, 'utf8').trim() || '1');
+    if (left > 1) writeFileSync(once, String(left - 1));
+    else rmSync(once);
     process.stderr.write(`estate: teardown of ${pool}#${n} fails once\n`);
     process.exit(1);
   }
