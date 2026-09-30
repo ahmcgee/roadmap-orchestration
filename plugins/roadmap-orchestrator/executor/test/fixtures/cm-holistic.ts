@@ -1,36 +1,38 @@
 // The concurrent crash matrix's M3 scenarios (test/concurrent-matrix.test.ts; M3 B8): an arc's job steps while its units
 // are in flight, run by the real supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed
 // per unit and per job. A job's crash points pass no unit: a cell selects the occurrence the recording attributes to
-// the job (by its log's records, pm-holistic.ts `contextOf`), and asserts the op the crash hit is the job's.
+// the job (by its log's records, pm-holistic.ts `ownerOf`), and asserts the op the crash hit is the job's. The
+// watcher queues the architect's commands (`audit`, `apply`, `rule`) as the CLI does, in its own process.
 //
 //   jobs     two units, u1 and u2, each parked in a live build runner (the fake implementer at barrier `<unit>.build`),
-//            while `roadmap audit` runs audit-1 (the journey lane, its vision lens) and its checkpoint ckpt-1 applies a
-//            bundle (an arc-wide limits op: the revision, its divergence, the digest item). The builds are released once
-//            the digest is raised (the bundle's last record), or when a crashed executor's successor has started (its
-//            recovery adopts a pinned runner by waiting for it); each unit's spec lane then parks (cm-pin.ts) until the drift audit audit-2's
-//            no-op checkpoint ckpt-2 is decided, so no unit publishes before the jobs' story is over, crashed or not.
-//            Then both merge, the final audit audit-3 and ckpt-3 (no-ops), the close-out, completion.
-//   preempt  u1's candidate parks in a suite lane holding the publication slot before green (cm-pin.ts at `c-pin`) when
-//            `roadmap rule` lands C-2 with a contract op: its docs publication preempts the candidate (the kill of its
-//            lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto the new tip and merges. The pin is
-//            released once the candidate is preempted (the publication's own suite runs the lane too), or when a
-//            crashed executor's successor has started: a crash before the preemption can then let the candidate go
-//            green first (safety, not the uncrashed order, is claimed).
-//   batch    u3 parked in a live build runner while `roadmap audit` runs audit-1, whose lens opens F-1 (a P1 over I-2),
-//            and ckpt-1 decides a no-op; then the architect admits the repair units u1 and u2 (each repairing F-1) with
-//            `roadmap apply`; both approved, they publish as one batch (batch-1: its slot, the chained candidate, its
+//            while an `audit` command runs audit-1 (its vision lens) and its checkpoint ckpt-1 applies a bundle (an
+//            arc-wide limits op: the revision, its divergence, the digest item). The builds are released once the digest
+//            is raised (the bundle's last record), or when a crashed executor's successor has started (its recovery
+//            adopts a pinned runner by waiting for it); each unit's spec lane then parks (cm-pin.ts) until the drift
+//            audit audit-2's no-op checkpoint ckpt-2 is decided, so no unit publishes before the jobs' story is over,
+//            crashed or not. Then both merge, the final audit audit-3 and ckpt-3 (no-ops), the close-out, completion.
+//   batch    u3 parked in a live build runner while an `audit` command runs audit-1, whose lens opens F-1 (a P1 over
+//            I-2), and ckpt-1 decides a no-op; then the architect admits the repair units u1 and u2 (each repairing F-1)
+//            with an `apply`; both approved, they publish as one batch (batch-1: its slot, the chained candidate, its
 //            lanes, the batch ff, its snapshot), resolving F-1. u3's build is released once the batch ff is done, or when
 //            a crashed executor's successor has started. Then u3 merges, the final audit and checkpoint, the close-out.
+//   preempt  u1's candidate parks in a suite lane holding the publication slot before green (the `c-pin` lane, which
+//            parks on its first run only) when a `rule` lands C-2 with a contract op: its docs publication preempts the
+//            candidate (the kill of its lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto the new
+//            tip, is gated again (the contract its approval bound changed) and merges. A crashed executor's successor
+//            releases the parked run (its recovery adopts it by waiting for it): a crash before the preemption can then
+//            let the candidate go green first (safety, not the uncrashed order, is claimed).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { submitCommand } from '../../src/commands/queue.ts';
 import { arcId, sha } from '../../src/core/ids.ts';
+import type { LogSnapshot } from '../../src/core/log.ts';
 import type { CommandBody } from '../../src/core/records.ts';
-import { bytesSha256 } from '../../src/spec/spec.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseRulingSidecar } from '../../src/holistic/types.ts';
 import { rulingContextAt } from '../../src/pipeline/publish.ts';
 import { consistencyRevs } from '../../src/spec/rulings.ts';
+import { bytesSha256 } from '../../src/spec/spec.ts';
 import { release } from '../helpers/barrier.ts';
 import { checkpointAnswer, checkpointStep, lensStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
@@ -38,13 +40,12 @@ import type { Owner } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import type { LogSnapshot } from '../../src/core/log.ts';
 import { VISION, obligationsJson } from './brake-common.ts';
-import { type Sampled, ownerOf, sampleBy } from './pm-holistic.ts';
 import { restarted } from './cm-common.ts';
 import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
 import type { Hook, Laid } from './pm-common.ts';
-import { API_OP } from './publish-common.ts';
+import { type Sampled, ownerOf, sampleBy } from './pm-holistic.ts';
+import { API_OP, barrierSuite } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
 import { MUL, MUL_LANE, SUITE_LANE, appendSteps, applyBody, codexStep, gateStep } from './unit-common.ts';
 
@@ -206,15 +207,17 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     ];
     return { peer, laid: { r, barriers, hooks } };
   }
-  const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { id: 'c-pin', argv: [process.execPath, CM_PIN, barriers, 'c-pin'] }] });
+  // The pin parks on its first run only (publish-common.ts `barrierSuite`): the preempting kill ends that run, and every
+  // later run (the publication's own suite, u1's fresh candidate) passes at once.
+  const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { ...barrierSuite(barriers), id: 'c-pin' }] });
   // The contract op changes a contract the approval bound: u1's green candidate onto the new tip is fingerprint-invalid, and a second gate approves.
   appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })])]);
   const hooks: readonly Hook[] = [
-    once('rule', () => existsSync(join(barriers, 'c-pin.reached')), () => {
+    once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
       const path = ruleC2(r);
       submit(r, { type: 'rule', path: absPath(path), sha256: bytesSha256(readFileSync(path)) });
     }),
-    once('release', () => factsNow(r, 'stage-outcome').some((f) => f['outcome'] === 'preempted') || restarted(r), () => release(barriers, 'c-pin')),
+    once('release', () => restarted(r), () => writeFileSync(join(barriers, 'lane.release'), '')),
   ];
   return { peer, laid: { r, barriers, hooks } };
 }

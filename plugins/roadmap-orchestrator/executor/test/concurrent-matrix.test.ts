@@ -573,8 +573,7 @@ test('concurrent crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000
     }));
   });
   const cells = [...refs.flatMap(cellsOf), ...named, ...jobCellSpecs];
-  const TEMPB8 = process.env['CM_ONLY']; // TEMP-B8
-  await Promise.all(cells.filter((c) => TEMPB8 === undefined || new RegExp(TEMPB8).test(c.name)).map((c) => t.test(c.name, CELL, c.run)));
+  await Promise.all(cells.map((c) => t.test(c.name, CELL, c.run)));
   t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s: ${refs.map((r) => `${r.peer} ${cellsOf(r).length}`).join(', ')}, jobs ${jobCellSpecs.length}`);
 });
 

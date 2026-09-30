@@ -392,7 +392,6 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
   ];
 
   const cells = [...pipelineCells(PIPELINE_STRAIGHT, straight, STRAIGHT), ...pipelineCells(PIPELINE_BUMPY, bumpy, BUMPY), ...holisticCells, ...adversarial, ...kills];
-  const TEMPB8 = process.env['PM_ONLY']; // TEMP-B8
-  await Promise.all(cells.filter((c) => TEMPB8 === undefined || new RegExp(TEMPB8).test(c.name)).map((c) => t.test(c.name, CELL, async (x) => void (await c.run(x)))));
+  await Promise.all(cells.map((c) => t.test(c.name, CELL, async (x) => void (await c.run(x)))));
   t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s`);
 });
