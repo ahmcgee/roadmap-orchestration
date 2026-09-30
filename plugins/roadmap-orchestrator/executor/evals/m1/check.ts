@@ -16,8 +16,9 @@
 //                        high-water mark is at or after the last integration.ff done
 //   judgment-fresh       no judgment invocation's launch argv resumes; every judgment session id is distinct
 //   meter-covers-calls   exactly one usage fact (meter or usage-unavailable) per backend invocation, none other
-//   no-model-ids         no model id in any run-dir file outside inv/*/launch.json and captured backend output
-//                        (stdout, stderr, the Codex -o file), nor in the snapshot ref (the state.no-model-ids scope)
+//   no-model-ids         no model id in any run-dir file outside inv/*/launch.json, the routing-provenance records
+//                        (routing configuration) and captured backend output (stdout, stderr, the Codex -o file), nor
+//                        in the snapshot ref's files in that scope (the state.no-model-ids scope)
 //
 // The non-exercised list names the branches of the pipeline this run's journal shows no trace of; the
 // cannot-show list is fixed: what no run of this fixture can demonstrate.
@@ -226,10 +227,15 @@ function filesUnder(dir: string): readonly string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort();
 }
 
-/** The state.no-model-ids scope (SCHEMAS.md, owner ruling 2): launch inputs and captured backend output are out. */
+/**
+ * The state.no-model-ids scope (SCHEMAS.md, owner ruling 2): launch inputs, routing configuration (a 1.0.0-dev.5
+ * revision's adopted `routing-provenance/<rev>.json`, which may name a repo class binding's model) and captured backend
+ * output are out. The snapshot ref mirrors run-dir paths, so one scope serves both.
+ */
 function inScope(path: string): boolean {
   const name = basename(path);
   if (name === 'stdout' || name === 'stderr' || name === 'last.json') return false;
+  if (path.startsWith('routing-provenance/')) return false;
   return !(path.startsWith('inv/') && name === 'launch.json');
 }
 
@@ -243,7 +249,7 @@ function noModelIds(run: Run): Verdict {
   for (const path of filesUnder(run.runDir).filter(inScope)) scan(path, readFileSync(join(run.runDir, path), 'utf8'));
   const ref = snapshotRef(run.arc);
   if (refTarget(run.repo, ref) !== null) {
-    for (const path of git(run.repo, ['ls-tree', '-r', '--name-only', ref]).split('\n').filter((p) => p !== '')) scan(`${ref}:${path}`, git(run.repo, ['show', `${ref}:${path}`]));
+    for (const path of git(run.repo, ['ls-tree', '-r', '--name-only', ref]).split('\n').filter((p) => p !== '' && inScope(p))) scan(`${ref}:${path}`, git(run.repo, ['show', `${ref}:${path}`]));
   }
   return { pass: hits.length === 0, detail: hits.length > 0 ? hits.join('; ') : `${checked} files scanned` };
 }
