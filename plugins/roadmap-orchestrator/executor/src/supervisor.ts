@@ -8,7 +8,7 @@
 // `{kind: claimed, generation}` per claim it holds, or the refused exit line when it cannot claim.
 //
 //   claim (claimHost, under the recovery lock; a takeover of another arc reconciles that arc's surviving
-//   invocations first, recover.ts) → per executor:
+//   invocations first, recover.ts) → residue-index compaction (src/host/compact.ts, once per start) → per executor:
 //     spawn `node src/entry/executor.ts` (claim in argv; stdio to `executor.<generation>.out|.err`; every
 //     executor after one of this supervisor's generations was ready is a `--respawn`: it runs the plan in
 //     force and ignores unapplied plan edits; before that, a respawn is a start that reads the files, since
@@ -33,13 +33,14 @@
 // plan's 2/10/60 s sequence ends at the needs-user on the third crash.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { identityOf, signal } from './contain/proc.ts';
 import { crashPoint } from './core/crash.ts';
-import { atomicJson, canonicalJson as fileJson, exclusivePublish, readJson } from './core/fsx.ts';
+import { atomicJson, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
+import { LogCorruptError } from './core/log.ts';
 import { supervisorNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
 import {
@@ -53,6 +54,7 @@ import {
   EXIT_REASON_FILE, HEARTBEAT_FILE, type RefusedReason, executorArgv, exitLine, raiseClaimRefusal, refusedOf, refusedReason, writeFileNeedsUser,
   writeRejection,
 } from './executor.ts';
+import { compactResidues } from './host/compact.ts';
 import { hostPath, openHostDir } from './host/hostdir.ts';
 import { selfIdentity } from './host/liveness.ts';
 import { claimHost, releaseHost, renewClaim } from './host/lock.ts';
@@ -109,6 +111,47 @@ export const supervisorLine: Read<SupervisorLine> = tagged<'claimed' | 'refused'
 
 function emit(line: SupervisorLine): void {
   process.stdout.write(`${canonicalJson(line)}\n`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Generation files: what each generation leaves in the host dir, pruned by `roadmap gc` (A5b)
+
+const GENERATION_FILE = /^(?:handshake|supervisor\.ready|supervisor\.failed)\.([1-9][0-9]*)$|^executor\.([1-9][0-9]*)\.(?:out|err)$/;
+const SUPERVISOR_OUT = /^supervisor\.([0-9a-f]{16})\.out$/;
+
+/** The generations a supervisor's stdout log claimed, from its complete lines. */
+function claimedGenerations(out: AbsPath): readonly number[] {
+  const lines = readFileSync(out, 'utf8').split('\n');
+  lines.pop();
+  return lines.flatMap((text) => {
+    const line = supervisorLine(JSON.parse(text), out);
+    return line.kind === 'claimed' ? [line.generation] : [];
+  });
+}
+
+/**
+ * Deletes the host files of every generation before the last `keep` issued, `claim` (the caller's, held) being the
+ * last: `handshake.<g>`, `supervisor.ready|failed.<g>`, `executor.<g>.out|err`, and a supervisor's
+ * `supervisor.<token>.out|err` once the newest generation it claimed is among them. A supervisor log that claimed
+ * nothing (a refused start, or one still starting) is left. Returns the names deleted, sorted.
+ */
+export function pruneGenerationFiles(dir: AbsPath, claim: HostLockClaim, keep: number): readonly string[] {
+  if (!Number.isInteger(keep) || keep < 1) throw new Error(`keep ${keep}: the held generation is always kept`);
+  const oldest = claim.generation - keep + 1;
+  const doomed: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const g = GENERATION_FILE.exec(name);
+    if (g !== null) {
+      if (Number(g[1] ?? g[2]) < oldest) doomed.push(name);
+      continue;
+    }
+    const s = SUPERVISOR_OUT.exec(name);
+    if (s === null) continue;
+    const claimed = claimedGenerations(hostPath(dir, name));
+    if (claimed.length > 0 && Math.max(...claimed) < oldest) doomed.push(name, `supervisor.${s[1]}.err`);
+  }
+  for (const name of doomed) durableUnlink(hostPath(dir, name));
+  return doomed.sort();
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -264,6 +307,21 @@ function crashLimitContent(crashes: readonly IsoTime[], evidence: readonly AbsPa
   };
 }
 
+/**
+ * Residue-index compaction (src/host/compact.ts), once per start, after the claim and before any executor. Arcs are
+ * located in this repo's runtime dir. A corrupt index is left as it is: the executor's startup row reads it and
+ * refuses `log-corrupt` the way it always has. What was compacted goes to the supervisor's stderr.
+ */
+function compactAtStart(dir: AbsPath, commonDir: AbsPath): void {
+  try {
+    const done = compactResidues(dir, (arc) => runDirOf(commonDir, arc));
+    if (done.kind === 'compacted') process.stderr.write(`residues compacted: ${done.dropped} disposed pairs archived in ${done.archive}, ${done.kept} lines kept\n`);
+  } catch (error) {
+    if (!(error instanceof LogCorruptError)) throw error;
+    process.stderr.write(`residues not compacted: ${error.message}\n`);
+  }
+}
+
 function refuse(rejections: readonly StartupRejection[]): number {
   const reason = refusedOf(rejections);
   emit(reason);
@@ -286,6 +344,8 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
     }
     return refuse([r]);
   }
+
+  compactAtStart(dir, gitCommonDir(args.repo));
 
   const staleMs = args.heartbeatStaleMs ?? HEARTBEAT_STALE_MS;
   let claim = claimed.claim;

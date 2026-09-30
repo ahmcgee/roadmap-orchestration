@@ -1,6 +1,6 @@
 // The host directory: one per machine, shared by every arc, holding the host lock, the owner record, the
-// recovery lock, the last issued generation, the handshake and supervisor files, and the residue index
-// (SCHEMAS.md "Host files").
+// recovery lock, the last issued generation, the handshake and supervisor files, and the residue index with the
+// archives its compactions left (SCHEMAS.md "Host files").
 // Every host function takes the directory as a parameter; production passes HOST_DIR, tests a temp dir.
 import { join } from 'node:path';
 import { durableMkdir } from '../core/fsx.ts';
