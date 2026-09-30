@@ -31,7 +31,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
-import { type OpId, type UnitId, invocationId, namedResource } from '../core/ids.ts';
+import { type OpId, type ResourceInstance, type UnitId, invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
@@ -39,17 +39,16 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { raisedFor, reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { type Reservation, type StageHolder, lockOrder, resourceTable, sameHolder } from '../resources/reserve.ts';
-import { stageRecipes } from '../resources/teardown.ts';
-import { type StageContext, type StageParent, dispatchOf, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
+import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
+import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { gate, gateDirectives, gateRead, unitTip } from './gate.ts';
 import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { type DecidedRound, type RoundInput, candidateFixRound, gateReviseRound, laneFixRound, failingLaneDirectives } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, integrationTip, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead, quiesce, record,
-  recordedCall, salvage, teardown,
+  type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, integrationTip, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, planCheckRead,
+  quiesce, record, recordedCall, salvage, teardown,
 } from './stages.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -170,12 +169,7 @@ const stageParent = (f: StageOutcomeFact): StageParent => ({ type: 'stage', unit
 
 /** The reservation `holder` still holds running, rebuilt from the resource table; null when it holds none. */
 function heldBy(ctx: StageContext, holder: StageHolder): Reservation<'running', StageHolder> | null {
-  const resources = [...resourceTable(ctx.journal.view)]
-    .filter(([, e]) => e.pending === null && e.status.state === 'running' && sameHolder(e.status.holder, holder))
-    .map(([r]) => namedResource(r));
-  if (resources.length === 0) return null;
-  const ordered = lockOrder(resources);
-  return { state: 'running', holder, resources: ordered, recipes: stageRecipes(ctx.plan(), ctx.repo, holder.unit, ordered) };
+  return holderUnits(ctx.journal.view, holder).length === 0 ? null : heldReservation(ctx, holder, 'running');
 }
 
 /** The unit's latest successful build: its invocation (the last of its attempt: a collided resume retries), dirs and held reservation. */
@@ -251,7 +245,7 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
 }
 
 /** Runs the stage `target` names, from inputs read back from the journal. */
-async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']>> {
+async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
     case 'plan-check':
       return planCheck(ctx, unit);
@@ -308,8 +302,9 @@ async function retire(ctx: StageContext, unit: PlanUnit): Promise<void> {
 // ---------------------------------------------------------------------------------------------------
 // The driver
 
-/** What a finished stage leads to, for the loop: on to the next stage, or the unit's result. */
-async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<Target['stage']>): Promise<Step> {
+/** What a finished stage leads to, for the loop: on to the next stage, or the unit's result (a stage that never started: held). */
+async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<Target['stage']> | Cancelled): Promise<Step> {
+  if (isCancelled(done)) return { kind: 'held', needsUser: null };
   const next: Next = done.next;
   switch (next.kind) {
     case 'stage':
@@ -362,8 +357,8 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
     case 'build': {
       const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: open.attempt };
       // Recovery cleaned the dead attempt's reservation; a teardown that failed there is this attempt's outcome.
-      const failed = [...resourceTable(ctx.journal.view).values()].some((e) => e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder));
-      if (failed) return record(ctx, at(parent, 'build'), 'cleanup-failed');
+      const failed = [...resourceTable(ctx.journal.view)].flatMap(([r, e]) => (e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder) ? [r as ResourceInstance] : []));
+      if (failed.length > 0) return record(ctx, at(parent, 'build'), 'cleanup-failed', null, failedFacts(failed));
       return buildRead(ctx, unit, at(parent, 'build'), target.round, called, heldBy(ctx, holder));
     }
     default:

@@ -21,7 +21,7 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, setupUnit, spawnIntents } from './fixtures/stage-common.ts';
+import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const RED_GREEN = fileURLToPath(new URL('./fakes/red-green.ts', import.meta.url));
@@ -47,7 +47,7 @@ const PARENT: StageParent = { type: 'stage', unit: U1, stage: 'lanes', attempt: 
 /** The unit's spec series at the base commit, run straight through `runLaneSeries` with `rt`. */
 function series(run: StageRun, rt: LaneRuntime, ctx: StageContext = run.ctx): Promise<Series> {
   const checkout = { path: absPath(join(tmpDir('lanes-m2-tree'), 'tree')), checkout: { type: 'detached', at: run.base } } as const;
-  return runLaneSeries(ctx, PARENT, laneOrder(loadUnitSpec(run.ctx, run.unit).spec), 'spec', checkout, specSeriesRoot(ctx.runDir, PARENT), rt);
+  return runLaneSeries(ctx, PARENT, laneOrder(loadUnitSpec(run.ctx, run.unit).spec), 'spec', checkout, specSeriesRoot(ctx.runDir, PARENT), rt, false);
 }
 
 const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortSignal = new AbortController().signal, acquire: Acquire = reserveNow(ctx)): LaneRuntime => ({
@@ -58,7 +58,7 @@ const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ct
 
 test('lanes.flake-red-green: red then green on the diagnostic rerun is red, flaky, charged; both runs kept; the fix round is told', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'red');
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
   const fact = outcomeFacts(run).at(-1)!;
@@ -100,7 +100,7 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun is red, flak
 
 test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads the first run', T, async () => {
   const run = laneRun([{ id: 'broken', argv: ['sh', '-c', 'echo "not ok 1 - add" >&2; exit 1'] }]);
-  const done = await lanes(run.ctx, run.unit, run.base);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'red');
   const [record] = done.ledger;
   assert.ok(record !== undefined && record.diagnostic !== null);
@@ -173,7 +173,7 @@ test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool inst
   const spec = loadUnitSpec(run.ctx, run.unit).spec;
   const specLanes = laneOrder(spec).map((l) => (l.id === 'estate1' ? { ...l, argv: l.argv.map((a) => (a === 'STATE' ? stateDir : a)) } : l));
   const checkout = { path: absPath(join(tmpDir('lanes-m2-tree'), 'tree')), checkout: { type: 'detached', at: run.base } } as const;
-  const done = await runLaneSeries(ctx, PARENT, specLanes, 'spec', checkout, specSeriesRoot(runDir, PARENT), runtime(ctx, () => CLEAR));
+  const done = await runLaneSeries(ctx, PARENT, specLanes, 'spec', checkout, specSeriesRoot(runDir, PARENT), runtime(ctx, () => CLEAR), false);
   try {
     assert.equal(done.end.kind, 'green', JSON.stringify(done.end));
     const spawns = journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'lane');

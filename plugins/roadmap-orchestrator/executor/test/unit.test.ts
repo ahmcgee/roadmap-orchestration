@@ -270,19 +270,22 @@ test('unit.reentrant: a driver killed between two stages is restarted on the sam
   assert.ok(calls.every((c) => c.step !== null));
 });
 
-test('unit.reentrant-mid-stage: a driver killed inside ff after the publication closed reads it back on restart and publishes once', T, async () => {
+test('unit.reentrant-mid-stage: a driver killed inside ff once the publication acted; recovery closes it, and the restart reads it back and publishes once', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
-  // resource.after-done: the slot's reserve, run, clean, release in the candidate stage (1-4), then in ff (5-8).
-  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'resource.after-done', occurrence: 8 });
+  // The publication moved integration; the executor dies before its done (M2: nothing of the slot is journaled
+  // inside ff any more, the candidate's publication holds it through ff and snapshot).
+  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'ff.act-end', occurrence: 1 });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(first.signal, 'SIGKILL', first.stderr);
   assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 9), 'killed inside ff, before its outcome');
-  const second = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  // The restart recovers first (the integration.ff op is closed, the publication keeps the slot), then drives.
+  const second = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
   assert.deepEqual(outcomes(d), STRAIGHT);
   assert.equal(intents(d.runDir, 'integration.ff').length, 1, 'published once');
+  assert.equal(outcomes(d).filter((o) => o === 'ff:published').length, 1, 'ff attempted once more, reading the closed op back');
 });
 
 test('unit.reentrant-after-mergein: a driver killed after the merge-in, before the conflict was recorded, does not merge in again', T, async () => {
@@ -295,8 +298,9 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
       gateStep({ decision: 'approve' }),
     ],
   });
-  // resource.after-done 4: the candidate stage's slot released after the merge-in, before its outcome.
-  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'resource.after-done', occurrence: 4 });
+  // mergein.act-end: the merge-in done in the tree, before its done and the candidate's outcome (M2: the
+  // candidate's publication releases the slot only after the outcome, so no slot transition sits in between).
+  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'mergein.act-end', occurrence: 1 });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const running = runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   await reached(d.scenarioDir, 'gate', 60_000);
@@ -307,7 +311,8 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
   assert.equal(first.signal, 'SIGKILL', first.stderr);
   assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 8), 'killed inside the candidate stage');
   assert.equal(intents(d.runDir, 'mergein.prepare').length, 1);
-  const second = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  // The restart recovers first (the merge-in op closed, the abandoned candidate's slot released), then drives.
+  const second = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
   assert.equal(outcomes(d)[8], 'candidate:conflict');

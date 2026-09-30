@@ -22,7 +22,7 @@ import { type StageOutcome, outcomeFact } from '../src/pipeline/transitions.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 import { contextFor, setupArc, unitWorktreePath } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -42,7 +42,7 @@ const escalatedFacts = (run: StageRun): readonly Fact[] => readJournal(run.runDi
 
 /** build → quiesce → evidence → salvage → teardown; returns the salvage SHA. */
 async function buildToLanes(run: StageRun, input: RoundInput): Promise<LanesDone['at']> {
-  const b = await build(run.ctx, run.unit, input);
+  const b = started(await build(run.ctx, run.unit, input));
   assert.ok(b.run !== null, `build ${b.outcome.kind}`);
   quiesce(run.ctx, U1, b.run);
   await evidence(run.ctx, run.unit, b.run);
@@ -107,13 +107,13 @@ test('rounds.d4-decide: a fix round after a stalled one escalates to build.high 
       codexBuild([{ type: 'commit', message: 'not the fix', files: { 'src/notes.md': 'Tried.\n' } }], { argv: ['exec', 'resume'] }),
     ],
   });
-  await planCheck(lanesRun.ctx, lanesRun.unit);
-  const red1 = await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, { kind: 'fresh' }));
+  started(await planCheck(lanesRun.ctx, lanesRun.unit));
+  const red1 = started(await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, { kind: 'fresh' })));
   assert.equal(red1.outcome.kind, 'red');
   assert.ok(red1.fix !== null);
   const fixAttempt = lanesRun.journal.view.unit(U1).counters.attempts + 1;
   assert.equal(escalateImplementer(lanesRun.ctx, U1, fixAttempt, red1.fix), 'med', 'the first fix round follows no stalled round');
-  const red2 = await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, red1.fix));
+  const red2 = started(await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, red1.fix)));
   assert.equal(red2.outcome.kind, 'red');
   assert.ok(red2.fix !== null);
   const lanesLog = readJournal(lanesRun.runDir, lanesRun.journal.view.arc);
@@ -179,8 +179,8 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
       }),
     ],
   });
-  await planCheck(run.ctx, run.unit);
-  const red = await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' }));
+  started(await planCheck(run.ctx, run.unit));
+  const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
   assert.equal(red.outcome.kind, 'red');
   assert.ok(red.fix !== null && red.fix.kind === 'fix');
   const input: RoundInput = { ...red.fix, fix: { ...red.fix.fix, directives: [...red.fix.fix.directives, 'Fix the add lane.'] } };

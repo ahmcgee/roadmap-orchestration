@@ -4,21 +4,36 @@
 // the fold derives. Counters are never kept here: the attempt number and every counter come from
 // `JournalView.unit`, so a restart sees exactly what the log says.
 //
+// Every stage a unit is admitted into takes its entry reservation before its first journaled op (A1, F6):
+// plan-check and gate `@cpu`×1 (`judgmentEntry`, held until the call is read), build the unit's resources and
+// `@cpu`×`buildCpu` (`buildEntry`, held through the build chain to teardown), lanes its first lane's set
+// (lanes.ts `seriesEntry`); none for a legacy arc's judgments. The grant's `reserve` transition is the
+// attempt's first op, so a wait the task's signal cancels (pause, stop) journals nothing (`Cancelled`): no
+// attempt, no counter, no `interrupted`. The chain stages (quiesce → evidence → salvage → teardown) take none
+// and ignore the signal. A judgment's inputs are durable before its spawn (`judgment-inputs`, F1).
+//
+// Outcomes are written through the park table (`record`, src/park/table.ts `stageOutcomeFact`): a retryable
+// park carries its targets (the call's backend, the host, each instance a cleanup failed), a repeat park is
+// operator with an `env-blocked` item, and a hold carries its backend-park cause (G5).
+//
 //   plan-check  fresh judgment session (never a resume) → approve | redirect (spec.patch, rev+1) |
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
 //               envelope, and may cite only plan contracts and ledger rulings; a raised risk re-pins the
 //               dispatch record. The session reads detached checkouts of the integration tip (its cwd) and
 //               of the unit branch when one exists, created for the attempt and removed when it is read.
-//   build       the implementer round (rounds.ts) under the unit's declared resources, held from reserve
-//               to teardown; prompt: fast lanes only, the worktree, the evidence dir, the pinned scope, the
-//               approving plan-check's notes. A resolve round, or the continue of one, must leave the
-//               merge-in committed.
+//   build       the implementer round (rounds.ts) under its entry reservation, held from reserve to
+//               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only, the
+//               worktree, the evidence dir, the pinned scope, the approving plan-check's notes. A resumed
+//               session that never persisted re-runs once, fresh (`callRound`). A resolve round, or the
+//               continue of one, must leave the merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
 //               the spec's decisions (spec.patch by the executor).
 //   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
-//               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks.
+//               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks. A
+//               failed salvage cleans the build's reservation, and the instances that cleanup failed join the
+//               park's targets (G6).
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate.
 //
@@ -27,14 +42,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
-import type { IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
+import type { HoldCause, IntentOf, OpKind, OutcomeStage, StageOutcomeKind } from '../core/events.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type InvocationId, type JudgmentSessionId, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId, rulingId,
+  type InvocationId, type JudgmentSessionId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
+import { isLegacy } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
@@ -53,25 +69,30 @@ import type {
 import {
   DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
+import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole } from '../routing/types.ts';
+import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
-import { type Reservation, type StageHolder, cleanup, fastLanes, reserve, run } from '../resources/reserve.ts';
+import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
+import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling, loadRulings } from '../spec/rulings.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../spec/patch.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendVerdict, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, evidenceRoot,
-  implementerDispatch, judgmentDispatch, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf,
-  verificationWorktree, workDir,
+  type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent,
+  backendOf, callBackend, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDispatch, nonEmpty, pinDispatch, raiseRisk,
+  riskAbove, runOp, runPrepared, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type VerificationTree, dirtyPaths, laneOrder, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries,
-  specSeriesRoot,
+  type LaneRecord, type VerificationTree, dirtyPaths, laneOrder, laneRuntime, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries,
+  seriesEntry, specSeriesRoot,
 } from './lanes.ts';
-import { type DecidedRound, type RoundInput, callImplementer, decidedRound, laneFixRound, prepareRound } from './rounds.ts';
+import {
+  type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, escalateImplementer, laneFixRound, prepareRound,
+} from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
@@ -88,16 +109,100 @@ export function start(ctx: StageContext, unit: UnitId, stage: OutcomeStage): Sta
   return { type: 'stage', unit, stage, attempt: ctx.journal.view.unit(unit).counters.attempts + 1 };
 }
 
-/** Records the attempt's stage-outcome fact and returns the decision the table makes from the fold's state. */
+/**
+ * Records the attempt's stage-outcome fact and returns the decision the table makes from the fold's state. The
+ * fact goes through the park table (`stageOutcomeFact`): a retryable park names its targets from `facts` (the
+ * call's backend, the instances a cleanup failed), and a hold its backend-park `cause` (G5). A retryable park
+ * that repeats within PARK_REPEAT_MS of a recovery on one of its targets is written operator, and its item's
+ * reason becomes `env-blocked` (`repeatNeedsUser`), both in `next` and in the stage's own content.
+ */
 export function record<S extends OutcomeStage>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, kind: StageOutcomeKind<S>, needsUser: NeedsUserContent | null = null,
+  facts: ParkFacts = NO_PARK_FACTS, cause?: HoldCause,
 ): StageDone<S> {
   const outcome = { stage: parent.stage, kind } as Extract<StageOutcome, Readonly<{ stage: S }>>;
   const u = ctx.journal.view.unit(parent.unit);
   const next = transition(u, outcome);
-  ctx.journal.fact(outcomeFact(u, outcome, parent.attempt));
-  return { attempt: parent.attempt, outcome, next, needsUser };
+  const parked = stageOutcomeFact(u, outcome, parent.attempt, facts, new Date(), cause);
+  ctx.journal.fact(parked.fact);
+  if (!parked.repeat) return { attempt: parent.attempt, outcome, next, needsUser };
+  if (next.kind !== 'park') throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a repeat park the table decides as ${next.kind}`);
+  const repeat = repeatNeedsUser(u, parked.fact, next.needsUser);
+  return { attempt: parent.attempt, outcome, next: { ...next, needsUser: repeat }, needsUser: needsUser === null ? null : { ...needsUser, ...repeat } };
 }
+
+/** The park facts of a cleanup: the instances it failed. */
+export const failedFacts = (failed: readonly ResourceInstance[]): ParkFacts => ({ backend: null, failed });
+
+// ---------------------------------------------------------------------------------------------------
+// Entry reservations (A1, F6)
+
+/** The holder a stage attempt reserves under. */
+export const stageHolder = (parent: StageParent): StageHolder => ({ type: 'stage', unit: parent.unit, stage: parent.stage, attempt: parent.attempt });
+
+/** A judgment's entry reservation: `@cpu`×1, none for a legacy arc. */
+export const judgmentEntry = (ctx: StageContext): ResourceRequest | null =>
+  nonEmpty({ named: [], pools: [], cpu: isLegacy(ctx.journal.view) ? 0 : CPU_COST.judgment, publication: false });
+
+/** A build's entry reservation: the unit's declared resources and its `@cpu` (`buildCpu`; none for a legacy arc). */
+export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null =>
+  nonEmpty(requestOf(ctx.plan(), unit.resources, isLegacy(ctx.journal.view) ? 0 : buildCpu(unit)));
+
+/** What an attempt holds once its entry grant is probed and running, or why it may not run. */
+export type Held =
+  | Readonly<{ kind: 'held'; reservation: Reservation<'running', StageHolder> | null }>
+  | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
+  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
+
+/**
+ * After its entry grant: the occupancy probe of every instance the attempt reserved (none for `@cpu`), then
+ * `run`. A parked probe cleans the reservation up. `held` with null when the attempt reserved nothing.
+ */
+export async function holdEntry(ctx: StageContext, parent: StageParent): Promise<Held> {
+  const holder = stageHolder(parent);
+  if (holderUnits(ctx.journal.view, holder).length === 0) return { kind: 'held', reservation: null };
+  const reserved = heldReservation(ctx, holder, 'reserved');
+  const occupancy = await probe(ctx, reserved, parent);
+  if (occupancy.kind === 'parked') {
+    const cleaned = await cleanup(ctx, reserved, parent);
+    return cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser };
+  }
+  return { kind: 'held', reservation: run(ctx, reserved, parent) };
+}
+
+/** A judgment attempt's entry: `@cpu`×1 granted and running, or the wait cancelled (nothing journaled). */
+export async function enterJudgment(ctx: StageContext, parent: StageParent): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
+  const entered = await enter(ctx, stageHolder(parent), judgmentEntry(ctx));
+  if (isCancelled(entered)) return entered;
+  if ((await holdEntry(ctx, parent)).kind !== 'held') throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a judgment's @cpu has no probe, so it cannot be occupied`);
+  return entered;
+}
+
+/**
+ * Releases what a judgment attempt still holds (its `@cpu` token, which has no teardown, so its cleanup cannot
+ * fail): once its call is read, or before it records an outcome without one. Nothing when it holds nothing (a
+ * legacy arc's, or a call recovered after a crash, whose dead holder recovery released).
+ */
+export async function releaseJudgment(ctx: StageContext, parent: StageParent): Promise<void> {
+  const holder = stageHolder(parent);
+  if (holderUnits(ctx.journal.view, holder).length === 0) return;
+  const cleaned = await cleanup(ctx, heldReservation(ctx, holder, 'running'), parent);
+  if (cleaned.kind !== 'released') throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: its judgment reservation was not released: ${cleaned.kind}`);
+}
+
+/**
+ * The durable inputs of a judgment attempt (F1), written after its entry reservation and before its backend
+ * spawn: what a call recovered after a crash is read against (gate.ts `consumeJudgment`).
+ */
+export function writeJudgmentInputs(
+  ctx: StageContext, parent: StageParent & Readonly<{ stage: 'plan-check' | 'gate' }>,
+  inputs: Readonly<{ tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev }>,
+): void {
+  const applied = ctx.journal.view.planApplied();
+  if (applied === null) throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a judgment before any plan revision`);
+  ctx.journal.fact({ kind: 'judgment-inputs', unit: parent.unit, stage: parent.stage, attempt: parent.attempt, ...inputs, planRev: applied.rev });
+}
+
 
 export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParent & Readonly<{ stage: S }> => {
   if (p.stage !== stage) throw new Error(`a ${p.stage} attempt used as ${stage}`);
@@ -191,11 +296,15 @@ export const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));
 
 type JudgmentOrBuild = 'plan-check' | 'build' | 'gate';
 
-/** Records a call that did not succeed: interrupted (hold), refusal, malformed or process fault. */
+/**
+ * Records a call that did not succeed: interrupted (a hold, with its backend-park cause, G5), refusal, malformed,
+ * or a process fault (a retryable park on the call's backend).
+ */
 export function verdictKind<S extends JudgmentOrBuild>(
-  ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, v: Exclude<BackendVerdict, Readonly<{ kind: 'success' }>>,
+  ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, v: Exclude<BackendVerdict, Readonly<{ kind: 'success' }>>, called: BackendCallOutcome,
 ): StageDone<S> {
-  if (v.kind === 'interrupted') return record(ctx, parent, 'interrupted' as StageOutcomeKind<S>, v.needsUser);
+  if (v.kind === 'interrupted') return record(ctx, parent, 'interrupted' as StageOutcomeKind<S>, v.needsUser, NO_PARK_FACTS, v.cause ?? undefined);
+  if (v.kind === 'process-fault') return record(ctx, parent, 'process-fault' as StageOutcomeKind<S>, null, { backend: backendOf(called), failed: [] });
   return record(ctx, parent, v.kind as StageOutcomeKind<S>);
 }
 
@@ -343,14 +452,17 @@ export function planCheckNotes(ctx: StageContext, unit: UnitId): string {
   return '';
 }
 
-export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone> {
+export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone | Cancelled> {
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
+  const entered = await enterJudgment(ctx, parent);
+  if (isCancelled(entered)) return entered;
   // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
   await removePlanCheckCheckouts(ctx, unit.id, parent);
   const pin = pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
   const judged = pin.kind === 'pinned' ? judgmentDispatch(ctx, unit.id, 'plan-check') : pin;
   if (pin.kind !== 'pinned' || judged.kind !== 'pinned') {
+    await releaseJudgment(ctx, parent);
     return { ...record(ctx, parent, 'routing-changed', judged.kind === 'pinned' ? null : judged.needsUser), session: null, specRev: spec.rev };
   }
   const pinned = pin.dispatch;
@@ -366,6 +478,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
   });
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
+  writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev });
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: dirs },
     system: prompt.system, rendered, schema: prompt.schema, cwd: checkouts.tip.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
@@ -388,8 +501,9 @@ function unknownCites(ctx: StageContext, patch: PlanCheckOutput['patch']): boole
 export async function planCheckRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'plan-check' }>, called: BackendCallOutcome, session: JudgmentSessionId,
 ): Promise<PlanCheckDone> {
-  // The session has ended (or never ran): its checkouts go before anything is recorded.
+  // The session has ended (or never ran): its checkouts and its @cpu go before anything is recorded.
   await removePlanCheckCheckouts(ctx, unit.id, parent);
+  await releaseJudgment(ctx, parent);
   const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
   const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;
   // The spec this judgment read: the file, or, once its redirect patched it, what the patch replaced.
@@ -398,7 +512,7 @@ export async function planCheckRead(
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const done = (d: StageDone<'plan-check'>): PlanCheckDone => ({ ...d, session, specRev });
   const v = verdictOf(ctx, parent, called);
-  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v));
+  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v, called));
 
   let out: PlanCheckOutput;
   try {
@@ -464,7 +578,7 @@ export type BuildRun = Readonly<{
   branch: RefName;
   /** The implementer's evidence dir (decisions.json). */
   workDir: AbsPath;
-  /** Held from reserve to teardown; null when the unit declares no resources. */
+  /** The build's entry reservation, held from reserve to teardown; null when it reserved nothing (a legacy arc's unit without resources). */
   reservation: Reservation<'running', StageHolder> | null;
 }>;
 
@@ -473,44 +587,44 @@ export type BuildDone = StageDone<'build'> & Readonly<{ run: BuildRun | null }>;
 const activeFastLanes = (spec: SpecM1): readonly FastLane[] =>
   fastLanes(spec).filter((l) => l.state === 'active') as readonly (FastLane & Readonly<{ state: 'active' }>)[];
 
-export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone> {
-  const { spec } = loadUnitSpec(ctx, unit);
+export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'build'), 'build');
+  const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
+  if (isCancelled(entered)) return entered;
   const failed = (d: StageDone<'build'>): BuildDone => ({ ...d, run: null });
+  const held = await holdEntry(ctx, parent);
+  if (held.kind === 'occupied') return failed(record(ctx, parent, 'occupied', held.needsUser));
+  if (held.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(held.failed)));
+  // G1: a stalled fix round moves the seat to build.high before the seat is chosen.
+  escalateImplementer(ctx, unit.id, parent.attempt, input);
   const seated = implementerDispatch(ctx, unit.id);
-  if (seated.kind !== 'pinned') return failed(record(ctx, parent, 'routing-changed', seated.needsUser));
+  if (seated.kind !== 'pinned') {
+    const cleaned = held.reservation === null ? null : await cleanup(ctx, held.reservation, parent);
+    if (cleaned?.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)));
+    return failed(record(ctx, parent, 'routing-changed', seated.needsUser));
+  }
+  const { spec } = loadUnitSpec(ctx, unit);
   const dispatch = seated.dispatch;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const round = await prepareRound(ctx, dispatch, input, parent);
 
-  let held: Reservation<'running', StageHolder> | null = null;
-  if (unit.resources.length > 0) {
-    const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: parent.attempt };
-    const reserved = reserve(ctx, holder, unit.resources, parent);
-    // M1 runs one unit at a time and every holder releases before its stage ends: a busy resource is a leak.
-    if (reserved.state === 'refused') throw new Error(`build of ${unit.id}: resources ${reserved.busy.join(', ')} are held by another`);
-    const occupancy = await probe(ctx, reserved, parent);
-    if (occupancy.kind === 'parked') {
-      const cleaned = await cleanup(ctx, reserved, parent);
-      return failed(cleaned.kind === 'cleanup-failed' ? record(ctx, parent, 'cleanup-failed') : record(ctx, parent, 'occupied', occupancy.needsUser));
-    }
-    held = run(ctx, reserved, parent);
-  }
-
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
   const prompt = promptFor('build', dispatch.triple.model);
-  const rendered = prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...library(ctx, spec, integrationTip(ctx)),
-    planCheckNotes: planCheckNotes(ctx, unit.id),
-    fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: round.fixRound,
-  });
-  const called = await callImplementer(ctx, {
+  const lib = library(ctx, spec, integrationTip(ctx));
+  const callFor = (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
-    request: { kind: 'implementer', dispatch, session: round.session, evidenceDirs: [work, ...round.evidenceDirs, ledgerDir(ctx)] },
-    system: prompt.system, rendered, schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
+    request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs, ledgerDir(ctx)] },
+    system: prompt.system,
+    rendered: prompt.render({
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
+      planCheckNotes: planCheckNotes(ctx, unit.id),
+      fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: call.fixRound,
+    }),
+    schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
-  return buildRead(ctx, unit, parent, decidedRound(input), called, held);
+  const called = await callRound(ctx, round, callFor);
+  return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
 }
 
 /**
@@ -549,10 +663,11 @@ export async function buildRead(
     return { ...record(ctx, parent, 'success'), run };
   }
   // Nothing downstream runs after a failed build, so its resources are cleaned now (the workload is quiescent).
-  if (held !== null && (await cleanup(ctx, held, parent)).kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed'));
+  const cleaned = held === null ? null : await cleanup(ctx, held, parent);
+  if (cleaned?.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)));
   // Lost again after its retry, with no effect on the tree.
-  if (called.kind === 'lost') return failed(record(ctx, parent, 'lost'));
-  return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v));
+  if (called.kind === 'lost') return failed(record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [] }));
+  return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v, called));
 }
 
 /** The unit's latest merge-in: the conflicted one a resolve round resolves. */
@@ -673,9 +788,10 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
       : error instanceof SalvageStateError || error instanceof GitError ? 'commit-failed' : null;
     if (kind === null) throw error;
     // Refused before any intent: the tree is untouched and preserved for the architect. The unit parks, so
-    // teardown never runs: the build's resources are cleaned here (a failure leaves its residue durable).
-    if (run.reservation !== null) await cleanup(ctx, run.reservation, parent);
-    return { ...record(ctx, parent, kind), sha: null };
+    // teardown never runs: the build's resources are cleaned here (a failure leaves its residue durable), and
+    // the instances it failed join the park's targets (G6).
+    const cleaned = run.reservation === null ? null : await cleanup(ctx, run.reservation, parent);
+    return { ...record(ctx, parent, kind, null, failedFacts(cleaned?.kind === 'cleanup-failed' ? cleaned.failed : [])), sha: null };
   }
   const next = prepared === null
     ? revParse(run.worktree, 'HEAD')
@@ -691,7 +807,7 @@ export async function teardown(ctx: StageContext, unit: UnitId, run: BuildRun): 
   const parent = at(start(ctx, unit, 'teardown'), 'teardown');
   if (run.reservation === null) return record(ctx, parent, 'released');
   const cleaned = await cleanup(ctx, run.reservation, parent);
-  return record(ctx, parent, cleaned.kind === 'released' ? 'released' : 'cleanup-failed');
+  return cleaned.kind === 'released' ? record(ctx, parent, 'released') : record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -713,18 +829,23 @@ export function laneGlobs(ctx: StageContext, spec: SpecM1): readonly RepoPattern
   return unique([...spec.lanes, ...ctx.plan().suite.lanes].flatMap((l) => l.evidenceGlobs));
 }
 
-export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone> {
+export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {
   const { spec } = loadUnitSpec(ctx, unit);
+  const order = laneOrder(spec);
   const parent = at(start(ctx, unit.id, 'lanes'), 'lanes');
+  const entry = seriesEntry(ctx, order);
+  const entered = await enter(ctx, stageHolder(parent), entry);
+  if (isCancelled(entered)) return entered;
   // A checkout an earlier attempt left (a crash cut its stage short) goes first: this series makes its own.
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
-  const series = await runLaneSeries(ctx, parent, laneOrder(spec), 'spec', checkout, specSeriesRoot(ctx.runDir, parent));
+  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), laneRuntime(ctx, unit.id), entry !== null);
   const { end } = series;
   const kind: StageOutcomeKind<'lanes'> = end.kind === 'green' ? (series.dirty.length > 0 ? 'not-certified' : 'green') : end.kind;
   const keep = kind === 'green' ? series.tree : null;
   if (series.tree !== null && keep === null) await removeVerificationTree(ctx, series.tree, parent);
   const fix = kind === 'red' || kind === 'not-certified' ? laneFixRound(series.ledger, series.dirty, salvaged) : null;
   const needsUser = end.kind === 'occupied' ? end.needsUser : null;
-  return { ...record(ctx, parent, kind, needsUser), at: salvaged, ledger: series.ledger, verification: keep, fix };
+  const facts = failedFacts(end.kind === 'cleanup-failed' ? end.failed : []);
+  return { ...record(ctx, parent, kind, needsUser, facts), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

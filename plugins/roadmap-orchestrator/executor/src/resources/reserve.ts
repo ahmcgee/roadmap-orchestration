@@ -36,7 +36,7 @@
 import { crashPoint } from '../core/crash.ts';
 import type { Holder, Parent, ResourceEdge } from '../core/events.ts';
 import {
-  type InvocationId, type OpKey, type ResourceInstance, type ResourceName, type ResourceUnit, compareResourceUnits, opKey,
+  type InvocationId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -49,7 +49,7 @@ import { type ProcContext, killWorkload } from '../pipeline/invoke.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { type ResidueRecipe, appendFailedCleanupResidues } from '../recover/residue.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { allocate, requestOf } from './pool.ts';
+import { allocate } from './pool.ts';
 import { type TeardownRun, stageRecipes, teardown } from './teardown.ts';
 
 export type StageHolder = Extract<Holder, { type: 'stage' }>;
@@ -220,19 +220,16 @@ function recordFailedCleanup(
 /**
  * Reserves a request's whole set in lock order, or nothing (`allocate`: every named resource and the slot free,
  * the lowest free instance of each pool, the lowest free `@cpu` tokens). Synchronous: the arbiter grants through
- * it. Every name must be declared in the plan or be the slot (startup refuses an unknown one, so it is a bug here).
- *
- * `request` as an array of declared names is the M1 call form (no `@cpu`), kept until the stages reserve their
- * entry requests (interim, M2 step 7a deletes it).
+ * it. Every name must be declared in the plan or be the slot (startup refuses an unknown one, so it is a bug here);
+ * `requestOf` (pool.ts) builds a request from declared names.
  */
 export function reserve<H extends AcquiringHolder>(
   ctx: ResourceContext,
   holder: H,
-  request: ResourceRequest | readonly ResourceName[],
+  req: ResourceRequest,
   parent: Parent,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
-  const req = isRequest(request) ? request : requestOf(plan, request, 0);
   if (holder.type === 'publication' && !(req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0)) {
     throw new Error(`a publication holder reserves integration-slot alone, not ${canonicalJson(req)}`);
   }
@@ -241,8 +238,6 @@ export function reserve<H extends AcquiringHolder>(
   journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map());
   return { state: 'reserved', holder, resources: got.units, recipes: stageRecipes(plan, ctx.repo, holder.unit, got.units) };
 }
-
-const isRequest = (r: ResourceRequest | readonly ResourceName[]): r is ResourceRequest => !Array.isArray(r);
 
 /**
  * The handle of what `holder` holds in `state` (every unit it holds must be in it), rebuilt from the table: after

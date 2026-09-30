@@ -38,7 +38,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
-import { type InvocationId, type LaneId, type OpId, type ResourceUnit, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { type InvocationId, type LaneId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
@@ -106,7 +106,7 @@ export type SeriesEnd =
   | Readonly<{ kind: 'blocked'; lane: LaneRecord | null; detail: string }>
   | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
-  | Readonly<{ kind: 'cleanup-failed'; failed: readonly string[] }>;
+  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
 
 export type Series = Readonly<{
   end: SeriesEnd;
@@ -126,8 +126,9 @@ export type Series = Readonly<{
 export type LaneRuntime = Readonly<{ acquire: Acquire; rank: () => Rank; signal: AbortSignal; sampleHost: () => HostSample }>;
 
 /**
- * An `acquire` that reserves at once and fails loud on a busy resource: serial dispatch, where every holder
- * releases before its stage ends, so a busy resource is a leak. A cancelled signal is honoured.
+ * An `acquire` that reserves at once and fails loud on a busy resource, for a context with one unit in flight
+ * (the tests', and the serial arc's until the scheduler's arbiter replaces it), where a busy resource is a leak.
+ * A cancelled signal is honoured.
  */
 export function reserveNow(ctx: ResourceContext): Acquire {
   return (request, holder, _rank, signal) => {
@@ -140,17 +141,9 @@ export function reserveNow(ctx: ResourceContext): Acquire {
   };
 }
 
-/**
- * The runtime of a series whose stage does not yet thread its own (interim: M2 step 7a passes the stage's
- * arbiter `acquire`, rank and signal): `reserveNow`, a signal nothing aborts, the real host sampler.
- */
-export function serialLaneRuntime(ctx: ResourceContext): LaneRuntime {
-  return {
-    acquire: reserveNow(ctx),
-    rank: () => { throw new Error('reserveNow never ranks a waiter'); },
-    signal: new AbortController().signal,
-    sampleHost: readHostSample,
-  };
+/** The runtime a stage gives its series: the context's `acquire`, the unit's rank, the task signal, the real host sampler. */
+export function laneRuntime(ctx: StageContext, unit: UnitId): LaneRuntime {
+  return { acquire: ctx.acquire, rank: () => ctx.rank(unit), signal: ctx.signal, sampleHost: readHostSample };
 }
 
 /** Fast lanes first, then estate; declared order within a tier. */
@@ -377,14 +370,23 @@ function runEnd(r: Ran): SeriesEnd | null {
 }
 
 /**
+ * A series' entry reservation (F6): its first lane's set, which the lanes stage takes before its first journaled
+ * op and hands to `runLaneSeries` as `entered`. Null when the series has no lane or its first lane asks for nothing.
+ */
+export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): ResourceRequest | null {
+  const first = lanes[0];
+  return first === undefined ? null : laneRequest(ctx, first);
+}
+
+/**
  * Runs `lanes` (in series order) one at a time, each under its reservation, in the detached checkout
  * `checkout` names, created just before the first lane, keeping evidence under `root`. The caller records
- * the stage outcome; the checkout stays for the caller to keep or remove. `rt` defaults to the interim
- * `serialLaneRuntime` until the stages thread their own (M2 step 7a).
+ * the stage outcome; the checkout stays for the caller to keep or remove. `entered`: the stage already holds
+ * the first lane's set (`seriesEntry`), reserved, so its first run takes no reservation of its own.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
-  rt: LaneRuntime = serialLaneRuntime(ctx),
+  rt: LaneRuntime, entered: boolean,
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -396,13 +398,19 @@ export async function runLaneSeries(
   // Written by each run (`attempt`): the series' last done evidence snapshot.
   const last: { evidence: OpId | null } = { evidence: null };
   let end: SeriesEnd = { kind: 'green' };
+  if (entered && seriesEntry(ctx, lanes) === null) throw new Error(`series ${parent.unit} ${parent.stage}#${parent.attempt}: entered, but its first lane asks for nothing`);
+  // The stage's entry reservation, for the first run of the first lane only.
+  let entry = entered;
 
   const attempt = async (lane: LaneDef, which: Which): Promise<Attempt> => {
     const request = laneRequest(ctx, lane);
     let held: Reservation<'running', StageHolder> | null = null;
     if (request !== null) {
-      const grant = await rt.acquire(request, holder, rt.rank, rt.signal);
-      if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: abortReason(rt.signal) }, ran: null };
+      if (!entry) {
+        const grant = await rt.acquire(request, holder, rt.rank, rt.signal);
+        if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: abortReason(rt.signal) }, ran: null };
+      }
+      entry = false;
       const reserved = heldReservation(ctx, holder, 'reserved');
       const occupancy = await probe(ctx, reserved, parent);
       if (occupancy.kind === 'parked') {

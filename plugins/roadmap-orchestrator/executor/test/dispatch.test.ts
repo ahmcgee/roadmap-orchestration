@@ -11,7 +11,7 @@ import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import { MODEL_IDS, type RoutingLayer, routingLayer } from '../src/routing/types.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const SPEC_1 = { rev: specRev(1), sha256: sha256('1'.repeat(64)) };
@@ -38,7 +38,7 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
 
 test('dispatch.risk-raise: a plan-check that raises the risk records a new dispatch fact; every later seat follows it', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve', risk: 'high' })], risk: 'low' });
-  const done = await planCheck(run.ctx, run.unit);
+  const done = started(await planCheck(run.ctx, run.unit));
   assert.equal(done.outcome.kind, 'approve');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.seat === 'high', 'the build sits on the raised seat');
   const [low, high] = dispatches(run);
@@ -56,7 +56,7 @@ test('dispatch.repin-before-build: a routing change before any build re-pins the
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' })] });
   seated(pinDispatch(run.ctx, run.unit, SPEC_1));
   const changed = rerouted(run, { build: { med: 'frontier' }, planCheck: { med: 'summit' } });
-  const done = await planCheck(changed, run.unit);
+  const done = started(await planCheck(changed, run.unit));
   assert.equal(done.outcome.kind, 'approve');
   const [first, repinned] = dispatches(run);
   assert.equal(repinned?.routingRev, changed.routing().rev);
@@ -68,8 +68,8 @@ test('dispatch.repin-before-build: a routing change before any build re-pins the
 /** A unit whose fresh build ran (malformed, so the next step is the build's resume round). */
 async function builtOnce(extra: readonly Parameters<typeof setupUnit>[0]['steps'][number][]): Promise<StageRun> {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'exitZeroNoop' }] }, ...extra] });
-  await planCheck(run.ctx, run.unit);
-  const malformed = await build(run.ctx, run.unit, { kind: 'fresh' });
+  started(await planCheck(run.ctx, run.unit));
+  const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   return run;
 }

@@ -16,6 +16,7 @@ import { readResidues, recordResidue, undispositioned } from '../src/host/residu
 import { needsUserAckPath, openBlocking, raiseNeedsUser, readNeedsUserAck } from '../src/needsuser.ts';
 import { commandReconciler } from '../src/recover/command.ts';
 import { type SweepHolder, cleanup, reserve, resourceTable, run as runReservation } from '../src/resources/reserve.ts';
+import { requestOf } from '../src/resources/pool.ts';
 import { ownerLabel } from '../src/resources/teardown.ts';
 import type { Prober } from '../src/schedule/types.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -439,7 +440,7 @@ describe('sweep', () => {
     const { ctx, journal } = openCommandRun(run);
     writeFileSync(join(run.stateDir, 'queue.teardown-fails'), '');
     const holder = stageHolder('build');
-    const reserved = reserve(ctx, holder, [QUEUE], stageParent(holder));
+    const reserved = reserve(ctx, holder, requestOf(ctx.plan(), [QUEUE], 0), stageParent(holder));
     if (reserved.state === 'refused') assert.fail('queue is free');
     const cleaned = await cleanup(ctx, runReservation(ctx, reserved, stageParent(holder)), stageParent(holder));
     assert.equal(cleaned.kind, 'cleanup-failed');

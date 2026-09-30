@@ -26,6 +26,7 @@ import { pinDispatch, repin } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
+import { requestOf } from '../src/resources/pool.ts';
 import { commandReconciler } from '../src/recover/command.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
@@ -329,7 +330,7 @@ const ROWS: readonly Row[] = [
 /** Reserves `db` for u1's build, as its reservation does. */
 function reserveDb(r: ArcRun): void {
   const holder: StageHolder = { type: 'stage', unit: U1, stage: 'build', attempt: 1 };
-  assert.equal(reserve(r.ctx, holder, [resourceName('db')], { ...holder }).state, 'reserved');
+  assert.equal(reserve(r.ctx, holder, requestOf(r.ctx.plan(), [resourceName('db')], 0), { ...holder }).state, 'reserved');
 }
 
 /**
@@ -499,7 +500,7 @@ const M2_ROWS: readonly Row[] = [
     before: withEst,
     setup: (r) => {
       const holder: StageHolder = { type: 'stage', unit: U1, stage: 'build', attempt: 1 };
-      assert.equal(reserve(r.ctx, holder, [resourceName('est')], { ...holder }).state, 'reserved');
+      assert.equal(reserve(r.ctx, holder, requestOf(r.ctx.plan(), [resourceName('est')], 0), { ...holder }).state, 'reserved');
     },
     edit: resizeEst(1),
     expect: [/^resource est is held \(est#1 reserved\); its declaration may not change until it is free and swept$/],

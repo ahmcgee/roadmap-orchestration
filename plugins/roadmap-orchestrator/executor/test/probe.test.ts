@@ -9,6 +9,7 @@ import { absPath } from '../src/core/values.ts';
 import { undispositioned } from '../src/host/residues.ts';
 import { type Occupancy, probe } from '../src/resources/probe.ts';
 import { type CleanupResult, type StageHolder, cleanup, reserve } from '../src/resources/reserve.ts';
+import { requestOf } from '../src/resources/pool.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { DB, QUEUE, type ResRun, calls, newRun, openRun, stageHolder, stageParent, tableOf, transitions } from './fixtures/res-plan.ts';
 
@@ -21,7 +22,7 @@ const called = (r: ResRun): readonly string[] => calls(r).map((c) => c.split(' '
 /** Reserve the build's set, probe it, then clean up; returns the verdict and the cleanup result. */
 async function probeCycle(r: ResRun): Promise<Readonly<{ verdict: Occupancy; cleaned: CleanupResult<StageHolder> }>> {
   const { ctx, journal } = openRun(r);
-  const res = reserve(ctx, holder, [DB, QUEUE], stageParent(holder));
+  const res = reserve(ctx, holder, requestOf(ctx.plan(), [DB, QUEUE], 0), stageParent(holder));
   assert.ok(res.state === 'reserved');
   const verdict = await probe(ctx, res, stageParent(holder));
   const cleaned = await cleanup(ctx, res, stageParent(holder));

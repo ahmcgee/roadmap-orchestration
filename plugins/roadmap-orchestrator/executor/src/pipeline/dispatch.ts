@@ -21,8 +21,8 @@
 //   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`, its seq the park's
 //   epoch) and holds the stage with that park as the hold's cause (G5; lead ruling: outcome != success AND
 //   class in {usage-limit, capacity}); platform or backend error entries on a success are informational.
-// - A resume, fix or continue round that ends `process-fault` with nothing on stdout never had its session
-//   persisted (`sessionNeverPersisted`; rounds.ts re-runs it fresh).
+// - An implementer call that resumes a session and ends `process-fault` with no complete JSON line on stdout
+//   never had its session persisted (`sessionNeverPersisted`; rounds.ts `callRound` re-runs it fresh).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes } from '../backends/argv.ts';
@@ -41,14 +41,16 @@ import { inputPath, keepInput } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
-import { type ResourceContext, holderUnits } from '../resources/reserve.ts';
+import { type AcquiringHolder, type ResourceContext, holderUnits } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
 import { type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type SeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
+import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
+import { abortReason } from './redlane.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
-import { type BuildRound, judgmentSeat } from './transitions.ts';
+import { judgmentSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
@@ -61,6 +63,19 @@ export type StageContext = ResourceContext & Readonly<{
   hostEnv: Readonly<Record<string, string | undefined>>;
   /** The plan file's directory: unit spec paths and the rulings ledger are relative to it. */
   planDir: AbsPath;
+  /**
+   * How a stage takes a reservation (its entry reservation, a lane's set, a publication): the scheduler's
+   * arbiter (`createArbiter(...).acquire`), or in a test `reserveNow` (lanes.ts), which grants at once and fails
+   * loud on a busy resource.
+   */
+  acquire: Acquire;
+  /** The rank a unit's waiter is served by, read fresh at each arbiter evaluation (`rankOf` over the log). */
+  rank: (unit: UnitId) => Rank;
+  /**
+   * The unit's task signal, aborted with reason `pause` or `stop` (`abortReason`, redlane.ts): it cancels a
+   * stage's waits (an entry reservation, a later lane's set, a clear host). Never aborted outside a unit's task.
+   */
+  signal: AbortSignal;
 }>;
 
 /** Judgment deadline per invocation. Default, unmeasured: re-derive once arc 2 has measured judgments. */
@@ -187,12 +202,20 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
 }
 
-/** The implementer's seat: the unit's (possibly plan-check-raised) risk floor, for every round of the unit. */
+/**
+ * The implementer's seat: the unit's build tier (`UnitState.buildTier`), which is its (possibly plan-check-raised)
+ * risk floor until an `implementer-escalated` fact moves it to `high` (A11, G1: journaled by
+ * `escalateImplementer` before this is called). On the floor the seat's rev is the pinned `implementerSeatRev`;
+ * escalated, it is `build.high`'s under the routing in force.
+ */
 export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<ImplementerDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
   if (pinned.kind !== 'pinned') return pinned;
-  const { riskFloor, routingRev, implementerSeatRev: seatRev } = pinned.dispatch;
-  return { kind: 'pinned', dispatch: { role: 'build', tier: riskFloor, triple: ctx.routing().table.build[riskFloor], routingRev, seatRev } };
+  const { riskFloor, routingRev, implementerSeatRev: floorSeat } = pinned.dispatch;
+  const tier = ctx.journal.view.unit(unit).buildTier;
+  if (tier === null) throw new Error(`unit ${unit} is dispatched but has no build tier`);
+  const seat = tier === riskFloor ? floorSeat : implementerSeatRev(ctx.routing(), tier);
+  return { kind: 'pinned', dispatch: { role: 'build', tier, triple: ctx.routing().table.build[tier], routingRev, seatRev: seat } };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -258,31 +281,29 @@ function buildInstanceEnv(ctx: StageContext, parent: StageParent): Readonly<Reco
   return instanceEnv(holderUnits(ctx.journal.view, { type: 'stage', unit: parent.unit, stage: 'build', attempt: parent.attempt }));
 }
 
-/** The build rounds that resume an existing session: only they can find it was never persisted. */
-export const RESUMING_ROUNDS = ['resume', 'fix', 'continue'] as const satisfies readonly (BuildRound | 'continue')[];
-
 /**
- * A resume, fix or continue round whose call ended `process-fault` with no complete JSON line on its stdout:
- * the CLI never got as far as its session, so the session it was told to resume was never persisted. Such
- * a round re-runs once, uncharged, as a fresh session on the kept worktree (src/pipeline/rounds.ts).
+ * An implementer call that resumed a session (a fix, resume, resolve or continue round, or a reopen's respec
+ * round) and ended `process-fault` with no complete JSON line on its stdout: the CLI never got as far as its
+ * session, so the session it was told to resume was never persisted. Such a round re-runs once, uncharged, as a
+ * fresh session on the kept worktree (rounds.ts `callRound`). A fresh session has nothing to resume.
  */
-export function sessionNeverPersisted(round: BuildRound | 'continue', called: BackendCallOutcome): boolean {
-  if (!(RESUMING_ROUNDS as readonly string[]).includes(round)) return false;
+export function sessionNeverPersisted(spec: BackendCallSpec, called: BackendCallOutcome): boolean {
+  const { request } = spec;
+  if (request.kind !== 'implementer' || request.session.mode !== 'resume') return false;
   if (called.kind !== 'result' || called.result.outcome.kind !== 'process-fault') return false;
   const path = join(called.invDir, STDOUT_FILE);
-  return !existsSync(path) || !hasCompleteJsonLine(readFileSync(path, 'utf8'));
+  return !existsSync(path) || !readFileSync(path, 'utf8').split('\n').slice(0, -1).some(isJsonLine);
 }
 
-/** Whether `text` holds a `\n`-terminated line that parses as JSON. */
-function hasCompleteJsonLine(text: string): boolean {
-  return text.split('\n').slice(0, -1).some((line) => {
-    try {
-      JSON.parse(line);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+/** A line holding one JSON object or array: an event or result a backend prints. */
+function isJsonLine(line: string): boolean {
+  try {
+    const value: unknown = JSON.parse(line);
+    return typeof value === 'object' && value !== null;
+  } catch (error) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
 }
 
 /**
@@ -350,6 +371,13 @@ function usageLimitNeedsUser(parent: StageParent, backend: Backend, called: Back
   };
 }
 
+/** The backend a call ran on, from its launch.json (argv[0]): what a backend park or a `process-fault` park targets. */
+export function backendOf(called: BackendCallOutcome): Backend {
+  const backend = runnerFiles(called.invDir, called.inv).read('launch.json')?.argv[0];
+  if (backend !== 'claude' && backend !== 'codex') throw new Error(`${called.invDir}: a backend launch whose argv[0] is ${String(backend)}`);
+  return backend;
+}
+
 /**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
  * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
@@ -362,8 +390,7 @@ export function verdictOf(ctx: StageContext, parent: StageParent, called: Backen
   if (result.outcome.kind !== 'success') {
     const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass & BackendErrorClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {
-      const backend = runnerFiles(called.invDir, called.inv).read('launch.json')?.argv[0];
-      if (backend !== 'claude' && backend !== 'codex') throw new Error(`${called.invDir}: a backend launch whose argv[0] is ${String(backend)}`);
+      const backend = backendOf(called);
       const parkSeq = ctx.journal.fact({ kind: 'backend-park', backend, class: park, inv: called.inv });
       const needsUser = park === 'usage-limit' ? usageLimitNeedsUser(parent, backend, called) : null;
       return { kind: 'interrupted', reason: park, cause: { type: 'backend', backend, parkSeq }, needsUser };
@@ -393,6 +420,34 @@ export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, at
   absPath(join(root, arc, `${unit}.verify-${attempt}`));
 
 export type StageParent = Extract<Parent, { type: 'stage' }>;
+
+// ---------------------------------------------------------------------------------------------------
+// Entry reservations (A1, F6)
+
+/**
+ * A stage attempt that never started: the unit's task signal was aborted (pause or stop) before its entry
+ * reservation was granted, so nothing was journaled: no attempt, no counter, no `interrupted` fact. The stage
+ * runs again, fresh, when the unit is admitted again.
+ */
+export type Cancelled = Readonly<{ kind: 'cancelled'; reason: 'pause' | 'stop' }>;
+
+export const isCancelled = <T extends object>(done: T | Cancelled): done is Cancelled => 'kind' in done && done.kind === 'cancelled';
+
+/** A request, or null when it asks for nothing (a legacy arc's judgment, a build of a unit with no resources there). */
+export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
+  r.named.length === 0 && r.pools.length === 0 && r.cpu === 0 && !r.publication ? null : r;
+
+/**
+ * Takes a stage attempt's entry reservation (A1, F6) under `holder`, before the attempt's first journaled op:
+ * the grant's `reserve` transition is that op, parented by the attempt. `entered` once it is granted (at once
+ * when `request` is null); `cancelled` when the task's signal is aborted first, with nothing journaled.
+ */
+export async function enter(ctx: StageContext, holder: AcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
+  if (ctx.signal.aborted) return { kind: 'cancelled', reason: abortReason(ctx.signal) };
+  if (request === null) return { kind: 'entered' };
+  const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal);
+  return grant.kind === 'cancelled' ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : { kind: 'entered' };
+}
 
 /** Where a stage attempt's evidence snapshots go. */
 export const evidenceRoot = (runDir: AbsPath, parent: StageParent): AbsPath =>

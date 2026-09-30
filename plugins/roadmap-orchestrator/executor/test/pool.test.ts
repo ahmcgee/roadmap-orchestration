@@ -211,8 +211,8 @@ describe('res.legacy-named-cpu', () => {
     const { ctx, journal } = openPoolRun(r);
     const legacyCtx = { ...ctx, plan: () => plan };
     const u1 = holderOf('u1');
-    // The M1 call form (a name list) is what a legacy arc's stages reserve: the named `cpu`, never a token.
-    const got = granted(reserve(legacyCtx, u1, [cpu], stageParent(u1)));
+    // A legacy arc's stages request their names with no `@cpu` (stages.ts `buildEntry`): the named `cpu`, never a token.
+    const got = granted(reserve(legacyCtx, u1, requestOf(plan, [cpu], 0), stageParent(u1)));
     assert.deepEqual(got.resources, [cpu]);
     assert.deepEqual([...resourceTable(journal.view).keys()], [cpu] as ResourceUnit[]);
     journal.close();

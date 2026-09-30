@@ -17,6 +17,7 @@ import { tmpDir } from '../helpers/repo.ts';
 import { type Step, writeScenario } from '../helpers/scenario.ts';
 import { newRun, openPoolRun } from './pool-plan.ts';
 import type { ResRun } from './res-plan.ts';
+import { serialRuntime } from './stage-common.ts';
 
 /** Everything a child needs to rebuild the same prober context, as plain JSON. */
 export type ProbeRun = ResRun & Readonly<{ binDir: string; planDir: string }>;
@@ -38,7 +39,7 @@ export function openProbeRun(r: ProbeRun): OpenedProbe {
   const host = { sample: CLEAR };
   const planDir = absPath(r.planDir);
   const ctx: ProberContext = {
-    ...resources, routing: () => resolved, hostEnv, planDir, profile: 'claude-only', sample: () => host.sample,
+    ...resources, routing: () => resolved, hostEnv, planDir, profile: 'claude-only', sample: () => host.sample, ...serialRuntime(resources),
   };
   const recovery: RecoveryContext = {
     stage: ctx,

@@ -77,6 +77,7 @@ import type { PlanM1, PlanUnit } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from './needsuser.ts';
 import { type ArcResult, runArc } from './pipeline/arc.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
+import { reserveNow } from './pipeline/lanes.ts';
 import { invocationDir, killWorkload } from './pipeline/invoke.ts';
 import { consume, dispatchBlock, step } from './pipeline/unit.ts';
 import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
@@ -88,6 +89,7 @@ import { recover } from './recover/recover.ts';
 import { recoverReservations } from './recover/resource.ts';
 import { type ResolvedRouting, arcStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
+import { rankOf } from './schedule/ready.ts';
 import { runnerFiles } from './runner/files.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
@@ -352,11 +354,16 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     journal, containment: containmentFor(detectContainmentMode()), runDir: context.runDir, repo: context.repo, hostDir: context.hostDir,
     planDir: absPath(dirname(context.planFile)),
   };
+  const resources = { ...base, plan: () => inForce().plan };
+  // The serial arc has one unit in flight: its reservations are granted at once (a busy resource is a leak)
+  // until the scheduler's arbiter replaces `reserveNow` (M2 step 7b). Each run's signal is its own (`runWithControl`).
   const stage: StageContext = {
-    ...base,
+    ...resources,
     hostEnv: args.env,
-    plan: () => inForce().plan,
     routing,
+    acquire: reserveNow(resources),
+    rank: (unit) => rankOf(journal.view, inForce().plan, unit),
+    signal: new AbortController().signal,
   };
   const commands: CommandContext = {
     ...base,
@@ -462,7 +469,7 @@ async function runWithControl(x: Exec): Promise<ArcResult> {
   const atBoundary = async (): Promise<void> => {
     await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, x.journal.view.arc));
   };
-  const running = runArc(x.stage, abort.signal, (unit, content) => raiseParked(x, unit, content), atBoundary).finally(() => {
+  const running = runArc({ ...x.stage, signal: abort.signal }, abort.signal, (unit, content) => raiseParked(x, unit, content), atBoundary).finally(() => {
     finished = true;
   });
   // Settles when the arc does, without rethrowing here: `running` is returned and rethrows to the caller.
@@ -473,7 +480,7 @@ async function runWithControl(x: Exec): Promise<ArcResult> {
     await applyControl(x.commands, pollCommands(x.stage.runDir, x.journal.view.arc));
     const reason = interruption(x);
     if (reason === null) continue;
-    abort.abort();
+    abort.abort(reason);
     await interruptLive(x, reason);
   }
   return running;

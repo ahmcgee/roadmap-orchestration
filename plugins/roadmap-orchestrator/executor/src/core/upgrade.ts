@@ -160,6 +160,14 @@ export function legacyParkRecord(f: StageOutcomeFact): ParkRecord {
   return { class: 'operator', kind: f.chargeable || DESIGN_PARK_OUTCOMES.has(f.outcome) ? 'design' : 'env' };
 }
 
+/**
+ * A judgment attempt spawned by 1.0.0-dev.4 or earlier has no `judgment-inputs` fact: its recovered call is read
+ * at the current integration tip and unit commit, as that release read it.
+ */
+export function judgmentInputsDefault(unit: UnitId, stage: 'plan-check' | 'gate', attempt: number): void {
+  warnDefaulted('judgment-inputs', `a recovered judgment call without judgment-inputs (spawned by 1.0.0-dev.4 or earlier) is read at the current tip; ${unit} ${stage}#${attempt} and any other`);
+}
+
 /** A `rerouted` fact (written through 1.0.0-dev.4) is read as `unparked`: the same re-entry at the parked stage. */
 export function rerouteAsUnpark(unit: UnitId): void {
   warnDefaulted('rerouted', `rerouted facts (written through 1.0.0-dev.4) are read as unparked; unit ${unit} and any other`);

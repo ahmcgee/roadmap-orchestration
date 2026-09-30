@@ -7,14 +7,14 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import type { ProbeTarget, StageOutcomeFact } from '../src/core/events.ts';
-import { commandId, invocationId, opId, poolInstance, sha256, specRev, unitId } from '../src/core/ids.ts';
-import type { BackendResult } from '../src/core/records.ts';
+import { commandId, implementerSessionId, invocationId, opId, poolInstance, sha256, specRev, unitId } from '../src/core/ids.ts';
+import type { BackendResult, ImplementerSession, JudgmentSession } from '../src/core/records.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { readResidues, undispositioned } from '../src/host/residues.ts';
 import { createProber } from '../src/park/probe.ts';
 import { dueJobs } from '../src/park/schedule.ts';
 import {
-  type BackendCallOutcome, callBackend, implementerDispatch, judgmentDispatch, pinDispatch, sessionNeverPersisted, verdictOf,
+  type BackendCallOutcome, type BackendCallSpec, callBackend, implementerDispatch, judgmentDispatch, pinDispatch, sessionNeverPersisted, verdictOf,
 } from '../src/pipeline/dispatch.ts';
 import { outcomeFact } from '../src/pipeline/transitions.ts';
 import { SMOKE_SCHEMA } from '../src/preflight/smoke.ts';
@@ -289,7 +289,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     journal.close();
   });
 
-  it('sessionNeverPersisted: a resuming round\'s process fault with no complete JSON line on stdout, and nothing else', () => {
+  it('sessionNeverPersisted: a resumed session\'s process fault with no complete JSON object line on stdout, and nothing else', () => {
     const dir = tmpDir('npers');
     const inv = invocationId(opId('arc-1' as never, 3), 1);
     const called = (stdout: string | null, kind: 'process-fault' | 'malformed'): BackendCallOutcome => {
@@ -298,15 +298,22 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
       if (stdout !== null) writeFileSync(join(invDir, 'stdout'), stdout);
       return { kind: 'result', inv, invDir: absPath(invDir), result: { outcome: { kind, detail: 'exit 1' } } as unknown as BackendResult };
     };
-    for (const round of ['resume', 'fix', 'continue'] as const) {
-      assert.equal(sessionNeverPersisted(round, called('', 'process-fault')), true, round);
-      assert.equal(sessionNeverPersisted(round, called(null, 'process-fault')), true, `${round}: no stdout file`);
-      assert.equal(sessionNeverPersisted(round, called('{"type":"sys', 'process-fault')), true, `${round}: a torn line is not complete`);
-      assert.equal(sessionNeverPersisted(round, called('{"type":"system"}\n', 'process-fault')), false, `${round}: the CLI got going`);
-      assert.equal(sessionNeverPersisted(round, called('', 'malformed')), false);
+    // Only the request's kind and session are read.
+    const implementer = (session: ImplementerSession): BackendCallSpec => ({ request: { kind: 'implementer', session } }) as unknown as BackendCallSpec;
+    const id = implementerSessionId('0f5b1c2e-8d3a-4c6e-9f1a-2b3c4d5e6f70');
+    for (const session of [{ backend: 'claude', mode: 'resume', id }, { backend: 'codex', mode: 'resume', id }] as const) {
+      const spec = implementer(session);
+      assert.equal(sessionNeverPersisted(spec, called('', 'process-fault')), true, session.backend);
+      assert.equal(sessionNeverPersisted(spec, called(null, 'process-fault')), true, `${session.backend}: no stdout file`);
+      assert.equal(sessionNeverPersisted(spec, called('{"type":"sys', 'process-fault')), true, `${session.backend}: a torn line is not complete`);
+      assert.equal(sessionNeverPersisted(spec, called('42\n', 'process-fault')), true, `${session.backend}: a JSON line that is no event is not the CLI going`);
+      assert.equal(sessionNeverPersisted(spec, called('{"type":"system"}\n', 'process-fault')), false, `${session.backend}: the CLI got going`);
+      assert.equal(sessionNeverPersisted(spec, called('', 'malformed')), false);
+      assert.equal(sessionNeverPersisted(spec, { kind: 'lost', inv, invDir: absPath(dir), treeEffects: false }), false);
     }
-    assert.equal(sessionNeverPersisted('fresh', called('', 'process-fault')), false, 'a fresh session has nothing to resume');
-    assert.equal(sessionNeverPersisted('resolve', called('', 'process-fault')), false);
-    assert.equal(sessionNeverPersisted('fix', { kind: 'lost', inv, invDir: absPath(dir), treeEffects: false }), false);
+    assert.equal(sessionNeverPersisted(implementer(freshClaudeImplementerSession()), called('', 'process-fault')), false, 'a fresh session has nothing to resume');
+    assert.equal(sessionNeverPersisted(implementer({ backend: 'codex', mode: 'fresh' }), called('', 'process-fault')), false);
+    const judgment = { request: { kind: 'judgment', session: freshJudgmentSession() satisfies JudgmentSession } } as unknown as BackendCallSpec;
+    assert.equal(sessionNeverPersisted(judgment, called('', 'process-fault')), false, 'a judgment never resumes');
   });
 });

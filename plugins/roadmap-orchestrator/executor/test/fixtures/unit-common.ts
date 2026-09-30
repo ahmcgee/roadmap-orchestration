@@ -25,7 +25,7 @@ import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
-import { BUILD_REPORT, type LaneJson } from './stage-common.ts';
+import { BUILD_REPORT, type LaneJson, recordDagPlan, serialRuntime } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -50,6 +50,8 @@ export type ArcOptions = Readonly<{
   suite?: readonly LaneJson[];
   /** The integration tip's `add`: fixed (green suite at T, the default) or broken (red at T). */
   base?: 'green' | 'red';
+  /** An arc started on M2 (`scheduling: 'dag'`: `@cpu` entry reservations); default a legacy arc's first revision. */
+  dag?: true;
 }>;
 
 /** Everything needed to rebuild the arc's StageContext, as JSON (for a child executor). */
@@ -62,6 +64,8 @@ export type ArcDescriptor = Readonly<{
   binDir: string;
   scenarioPath: string;
   scenarioDir: string;
+  /** Revision 1 schedules a DAG (`ArcOptions.dag`), as contextFor records it. */
+  dag?: true;
 }>;
 
 function laneJson(l: LaneJson): Record<string, unknown> {
@@ -105,7 +109,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   const scenario = writeScenario(scenarioDir, opts.steps);
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
-    binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
+    binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(opts.dag === true ? { dag: true } : {}),
   };
 }
 
@@ -116,14 +120,21 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
-  if (journal.view.planApplied() === null) recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, []);
+  if (journal.view.planApplied() === null) {
+    if (d.dag === true) recordDagPlan(journal, absPath(d.runDir), absPath(d.planPath));
+    else recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, []);
+  }
   const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
-  const ctx: StageContext = {
+  const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
+  };
+  const ctx: StageContext = {
+    ...resources,
     routing: () => routing,
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
+    ...serialRuntime(resources),
   };
   const unit = (id: string): PlanUnit => {
     const u = plan.units.find((x) => x.id === unitId(id));

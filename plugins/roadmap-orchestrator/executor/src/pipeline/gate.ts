@@ -19,9 +19,16 @@
 // blob ids at T of every cited contract, the architecture doc and its digest when the plan names one,
 // rulingRevs the revision of every cited active C-nn. Before `integration.ff` it is recomputed at the tip
 // being published onto; any difference re-gates.
+//
+// Entry and inputs (A1, F1): the gate takes `@cpu`×1 before its first journaled op (stages.ts
+// `enterJudgment`), and writes `judgment-inputs{tip: T, head}` before its spawn. A call recovery closed after
+// a crash is consumed against those inputs (`consumeJudgment`): the gate is read at the recorded T and head,
+// and its approval's fingerprint is taken at T, the tip it reviewed, never the tip that moved since; ff then
+// finds a contract another unit's publication changed (`fingerprint-invalid`, a re-gate).
 import { matchesGlob } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf } from '../core/events.ts';
+import { judgmentInputsDefault } from '../core/upgrade.ts';
 import { type JudgmentSessionId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
@@ -36,13 +43,14 @@ import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, judgmentDispatch, unitBranch, verdictOf,
+  type BackendCallOutcome, type Cancelled, JUDGMENT_DEADLINE_MS, type StageContext, type StageParent, callBackend, dispatchOf, isCancelled, judgmentDispatch,
+  unitBranch, verdictOf,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import {
-  type StageDone, architecture, at, changedPremiseFiles, inMs, integrationTip, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec,
-  planCheckNotes, record, start, verdictKind,
+  type PlanCheckDone, type StageDone, architecture, at, changedPremiseFiles, enterJudgment, inMs, integrationTip, judgmentOutput, judgmentSpawns, ledger,
+  ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, start, verdictKind, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -146,16 +154,21 @@ function buildEvidence(ctx: StageContext, unit: UnitId): readonly AbsPath[] {
   return snaps.filter((i) => i.parent.type === 'stage' && i.parent.attempt === attempt).map((i) => i.expect.dest);
 }
 
-export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone> {
-  const { spec } = loadUnitSpec(ctx, unit);
+export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone | Cancelled> {
+  const { spec, sha256 } = loadUnitSpec(ctx, unit);
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const parent = at(start(ctx, unit.id, 'gate'), 'gate');
+  const entered = await enterJudgment(ctx, parent);
+  if (isCancelled(entered)) return entered;
 
   const tip = integrationTip(ctx);
   const head = unitTip(ctx, unit.id);
   const paths = unitDiffPaths(ctx.repo, tip, head);
   // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
-  if (paths.length === 0) return { ...record(ctx, parent, 'empty-diff'), session: null, fingerprint: null };
+  if (paths.length === 0) {
+    await releaseJudgment(ctx, parent);
+    return { ...record(ctx, parent, 'empty-diff'), session: null, fingerprint: null };
+  }
 
   const series = latestSeries(ctx.journal.view, unit.id, 'spec');
   const tree = series === null ? null : seriesTree(ctx.journal.view, series);
@@ -166,7 +179,10 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
   const growth = paths.filter((p) => !pinned.scope.some((g) => matchesGlob(p, g)));
 
   const seated = judgmentDispatch(ctx, unit.id, 'gate');
-  if (seated.kind !== 'pinned') return { ...record(ctx, parent, 'routing-changed', seated.needsUser), session: null, fingerprint: null };
+  if (seated.kind !== 'pinned') {
+    await releaseJudgment(ctx, parent);
+    return { ...record(ctx, parent, 'routing-changed', seated.needsUser), session: null, fingerprint: null };
+  }
   const seat = seated.dispatch;
   const prompt = promptFor('gate', seat.triple.model);
   const session = freshJudgmentSession();
@@ -176,6 +192,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
     diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
     laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
   });
+  writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev });
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [...evidence, ledgerDir(ctx)] },
     system: prompt.system, rendered, schema: prompt.schema, cwd: tree.path, deadlineAt: inMs(JUDGMENT_DEADLINE_MS),
@@ -184,17 +201,19 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone>
 }
 
 /**
- * Records a gate attempt from its call: the live one, or one recovery closed after a crash (consumed by
- * the driver, never asked again). `tip` and `head` are the integration tip and unit commit it judged. An
- * approval fact this attempt already recorded is kept, not recorded twice.
+ * Records a gate attempt from its call: the live one, or one recovery closed after a crash (`consumeJudgment`,
+ * never asked again). `tip` and `head` are the integration tip and unit commit it judged: the approval's
+ * fingerprint is taken at `tip`. An approval fact this attempt already recorded is kept, not recorded twice.
  */
-export function gateRead(
+export async function gateRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, called: BackendCallOutcome, session: JudgmentSessionId,
   tip: Sha, head: Sha,
-): GateDone {
+): Promise<GateDone> {
+  // The session has ended: its @cpu goes before anything is recorded.
+  await releaseJudgment(ctx, parent);
   const done = (d: StageDone<'gate'>, fingerprint: ApprovalFingerprint | null = null): GateDone => ({ ...d, session, fingerprint });
   const v = verdictOf(ctx, parent, called);
-  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v));
+  if (v.kind !== 'success') return done(verdictKind(ctx, parent, v, called));
 
   let out: GateOutput;
   try {
@@ -210,4 +229,36 @@ export function gateRead(
   if (fingerprint.unitCommit !== head) throw new Error(`gate of ${unit.id}: the unit branch moved from ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
   return done(record(ctx, parent, 'approve'), fingerprint);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A judgment call a crash left unrecorded (F1)
+
+/**
+ * Records a plan-check or gate attempt from the call recovery closed after a crash, against the attempt's
+ * durable `judgment-inputs`: a gate is read at the recorded integration tip and unit commit (`gateRead`), so its
+ * approval binds the contracts it reviewed, whatever moved since. The unit driver calls it in place of a
+ * read at the current tip. An attempt an earlier release spawned has no inputs: the gate is then read at the
+ * current tip and unit commit, as that release did (a read-time default, logged once).
+ */
+export async function consumeJudgment(
+  ctx: StageContext, unit: PlanUnit, parent: StageParent, called: BackendCallOutcome,
+): Promise<PlanCheckDone | GateDone> {
+  if (called.kind === 'lost') throw new Error(`${called.inv}: a lost judgment call is never consumed`);
+  const { result } = called;
+  if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${parent.stage}`);
+  switch (parent.stage) {
+    case 'plan-check':
+      return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
+    case 'gate': {
+      const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
+      if (inputs !== null && inputs.head === null) throw new Error(`gate ${unit.id}#${parent.attempt}: judgment-inputs without a head`);
+      if (inputs === null) judgmentInputsDefault(unit.id, 'gate', parent.attempt);
+      const tip = inputs?.tip ?? integrationTip(ctx);
+      const head = inputs?.head ?? unitTip(ctx, unit.id);
+      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, tip, head);
+    }
+    default:
+      throw new Error(`${unit.id} ${parent.stage}#${parent.attempt}: no judgment call to consume`);
+  }
 }

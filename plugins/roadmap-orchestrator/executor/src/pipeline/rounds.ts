@@ -39,8 +39,9 @@
 //
 // Session never persisted. A round that resumes a session (a fix, resume or resolve round, a continue, a
 // reopen's respec round) whose call ends `process-fault` with no complete JSON line on stdout never got its
-// session going: it re-runs once, uncharged, as a new invocation of the same attempt, fresh on the kept
-// worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`, `callRound`).
+// session going (`sessionNeverPersisted`, dispatch.ts): it re-runs once, uncharged, as a new invocation of the
+// same attempt, fresh on the kept worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`,
+// `callRound`).
 //
 // Stalled rounds and escalation (A11, D4, G1). A fix round is stalled when the failure that asks for the next
 // fix round fails a lane that also failed in the failure that asked for it, or the gate revised both times
@@ -68,7 +69,7 @@ import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, t
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type LogSnapshot, readJournal } from '../core/log.ts';
-import { type ImplementerSession, STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
+import { type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { CHARGEABLE_BOUND } from '../core/state.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { RiskTier } from '../routing/types.ts';
@@ -78,8 +79,8 @@ import { type FixRound, ignoredText } from '../prompts/inputs.ts';
 import { DECISIONS_FILE } from '../prompts/schemas.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, runOp, unitBranch,
-  unitWorktree,
+  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, runOp,
+  sessionNeverPersisted, unitBranch, unitWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
@@ -218,20 +219,27 @@ export type SeatedSession = Readonly<{ id: ImplementerSessionId; seatRev: SeatRe
 
 /**
  * The implementer seat a build spawn ran on: the `implementerSeatRev` of the unit's dispatch fact it was
- * spawned under (the spawn names that fact's `routingRev` and floor as its own `routingRev` and `tier`).
+ * spawned under (the spawn names that fact's `routingRev` and floor as its own `routingRev` and `tier`). An
+ * escalated spawn (A11: its tier above every floor pinned under its rev) sat on `build.<tier>`: its rev under the
+ * routing in force when that is the spawn's, else null, as no record holds an earlier routing's seat (its session
+ * is then not resumed: a fresh one is told the worktree holds the work).
  */
-function spawnSeatRev(ctx: StageContext, intent: IntentOf<'proc.spawn'>): SeatRev {
+function spawnSeatRev(ctx: StageContext, intent: IntentOf<'proc.spawn'>): SeatRev | null {
   const s = intent.expect.subject;
   if (s.purpose !== 'backend' || s.role !== 'build') throw new Error(`${intent.op}: not a build spawn`);
-  const pinned = ctx.journal.view.dispatchesOf(s.unit).filter((d) => d.routingRev === s.routingRev && d.riskFloor === s.tier).at(-1);
-  if (pinned === undefined) throw new Error(`${intent.op}: a build spawn under routingRev ${s.routingRev} at ${s.tier} with no dispatch fact of ${s.unit} pinning it`);
-  return pinned.implementerSeatRev;
+  const underRev = ctx.journal.view.dispatchesOf(s.unit).filter((d) => d.routingRev === s.routingRev);
+  if (underRev.length === 0) throw new Error(`${intent.op}: a build spawn under routingRev ${s.routingRev} with no dispatch fact of ${s.unit} under it`);
+  const pinned = underRev.filter((d) => d.riskFloor === s.tier).at(-1);
+  if (pinned !== undefined) return pinned.implementerSeatRev;
+  return ctx.routing().rev === s.routingRev ? implementerSeatRev(ctx.routing(), s.tier) : null;
 }
 
-/** The session of build invocation `inv` with its seat, or null when it has no session. */
+/** The session of build invocation `inv` with its seat, or null when it has no session (or no seat that can be proven). */
 function seatedSessionOf(ctx: StageContext, intent: IntentOf<'proc.spawn'>, inv: InvocationId): SeatedSession | null {
   const id = invocationSession(ctx, inv);
-  return id === null ? null : { id, seatRev: spawnSeatRev(ctx, intent) };
+  if (id === null) return null;
+  const seatRev = spawnSeatRev(ctx, intent);
+  return seatRev === null ? null : { id, seatRev };
 }
 
 /** The session of the unit's latest build invocation that has one, with its seat, from the log and `invocationSession`. */
@@ -326,30 +334,6 @@ export async function callImplementer(ctx: StageContext, spec: BackendCallSpec):
   if (!resumeCollided(spec, first)) return first;
   await sleep(COLLISION_RETRY_DELAY_MS);
   return callBackend(ctx, spec);
-}
-
-/**
- * A resumed session that never got going: the call ended `process-fault` with no complete JSON line on its
- * stdout (the backend printed nothing it could have recorded a session in). Local to rounds.ts until M2
- * step 3's predicate in dispatch.ts is reconciled with it.
- */
-export function sessionNeverPersisted(spec: BackendCallSpec, called: BackendCallOutcome): boolean {
-  const { request } = spec;
-  if (request.kind !== 'implementer' || request.session.mode !== 'resume') return false;
-  if (called.kind !== 'result' || called.result.outcome.kind !== 'process-fault') return false;
-  const lines = readFileSync(join(called.invDir, STDOUT_FILE), 'utf8').split('\n').slice(0, -1);
-  return !lines.some(isJsonLine);
-}
-
-/** A line holding one JSON object or array: an event or result a backend prints. */
-function isJsonLine(line: string): boolean {
-  try {
-    const value: unknown = JSON.parse(line);
-    return typeof value === 'object' && value !== null;
-  } catch (error) {
-    if (error instanceof SyntaxError) return false;
-    throw error;
-  }
 }
 
 /**

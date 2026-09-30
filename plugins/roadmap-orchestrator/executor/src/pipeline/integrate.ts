@@ -1,8 +1,19 @@
 // The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md §3 "Merge"):
 // candidate → suite lanes → ff-only publication → snapshot, so the tested head is the published head.
 //
-//   candidate  holds `integration-slot` (last in lock order) for the whole stage; each suite lane
-//              reserves its own resources inside the series. `planCandidate` (transient check, merge-tree,
+// The publication transaction (A2, F3): the candidate takes `integration-slot` as its entry reservation, under
+// the holder `publication{unit, attempt}` (the candidate's attempt), before its first journaled op, and the
+// slot stays that holder's, durably in the journal, through `ff` and `snapshot`: no competitor can take it
+// between the stages. It is released after the stage records any candidate outcome but `green`, after ff
+// records `cas-stale`, `fingerprint-invalid` or `foreign-move`, and after snapshot records its outcome; ff and
+// snapshot assert the unit's publication holds it. Recording first means a crash between the two leaves the
+// slot to recovery, which keeps it exactly while the unit's decided next stage is ff or snapshot. Once green,
+// ff and snapshot are mandatory chain stages that pause and stop wait for; before green, a pause or stop
+// abandons the candidate (its suite killed or its lane wait cancelled: `interrupted`, the slot released).
+//
+//   candidate  holds `integration-slot` (last in lock order) under its publication; each suite lane
+//              reserves its own resources inside the series (the one hold-and-wait, A1), and a red suite
+//              lane goes through the red-lane protocol (redlane.ts). `planCandidate` (transient check, merge-tree,
 //              prefix guard) → `candidate.merge` onto the current tip T → the candidate checkout, detached
 //              (`candidateWorktreeRequest`) → the plan's suite, serially and verbatim. Outcomes:
 //              - a transient violation or prefix collision: refused, a scope-growth fix round (C, trigger);
@@ -12,7 +23,7 @@
 //                detached checkout: red there too → `base-red` (uncharged), else a fix round (C);
 //              - green → ff.
 //   ff         the approval fingerprint recomputed at the tip being published onto; `planFf`, then
-//              `integration.ff` by CAS under the slot. published → snapshot · the tip advanced with the
+//              `integration.ff` by CAS under the publication's slot. published → snapshot · the tip advanced with the
 //              approval intact → a fresh candidate, no new gate · the approval no longer holds → re-gate
 //              · integration rewound or an executor-owned ref moved by another → stop, needs-user.
 //   snapshot   `snapshot.publish` of the run's records at the journal's high-water mark (the ff done
@@ -26,7 +37,7 @@
 // from the journal rather than repeated.
 import { join } from 'node:path';
 import type { IntentOf, OpOutcome } from '../core/events.ts';
-import { INTEGRATION_SLOT, type Sha, type UnitId } from '../core/ids.ts';
+import { INTEGRATION_SLOT, type ResourceInstance, type Sha, type UnitId } from '../core/ids.ts';
 import type { ApprovalFingerprint, NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planCandidate } from '../git/candidate.ts';
@@ -36,12 +47,14 @@ import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { reentryRecommendation } from '../needsuser.ts';
-import { probe } from '../resources/probe.ts';
-import { type Reservation, type StageHolder, cleanup, reserve, run } from '../resources/reserve.ts';
-import { type StageContext, type StageParent, evidenceRoot, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
+import { type PublicationHolder, type Reservation, cleanup, entryOf, heldReservation, resourceTable, run } from '../resources/reserve.ts';
+import type { ResourceRequest } from '../schedule/types.ts';
+import {
+  type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
+} from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, unitTip } from './gate.ts';
-import { type Series, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
-import { type StageDone, at, executorIdentity, keptSpecPath, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type Series, laneRuntime, removeVerificationTree, runLaneSeries, seriesOrder } from './lanes.ts';
+import { type StageDone, at, executorIdentity, failedFacts, keptSpecPath, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
@@ -57,21 +70,27 @@ function approvalOf(ctx: StageContext, unit: UnitId): ApprovalFingerprint {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The slot
+// The publication (A2)
 
-async function inSlot<T>(ctx: StageContext, parent: StageParent, body: () => Promise<T>): Promise<T> {
-  const holder: StageHolder = { type: 'stage', unit: parent.unit, stage: parent.stage, attempt: parent.attempt };
-  const reserved = reserve(ctx, holder, [INTEGRATION_SLOT], parent);
-  // M1 runs one unit at a time and every holder releases before its stage ends: a busy slot is a leak.
-  if (reserved.state === 'refused') throw new Error(`${parent.stage} of ${parent.unit}: the integration slot is held by another`);
-  // The slot declares no probe: the cycle's probe finds it clear without running anything.
-  if ((await probe(ctx, reserved, parent)).kind !== 'clear') throw new Error('the integration slot has no probe, so it cannot be occupied');
-  const held: Reservation<'running', StageHolder> = run(ctx, reserved, parent);
-  const out = await body();
-  // Nothing tears the slot down, so its cleanup cannot fail.
+/** What a publication reserves: `integration-slot`, alone. */
+export const PUBLICATION: ResourceRequest = { named: [], pools: [], cpu: 0, publication: true };
+
+/**
+ * The slot as `unit`'s publication holds it, running: what ff and snapshot publish under. Throws when anything
+ * else holds it, or it is not running: the publication never lapses between the candidate and the snapshot.
+ */
+export function heldPublication(ctx: StageContext, unit: UnitId): Reservation<'running', PublicationHolder> {
+  const { status, pending } = entryOf(resourceTable(ctx.journal.view), INTEGRATION_SLOT);
+  if (pending !== null || status.state !== 'running' || status.holder.type !== 'publication' || status.holder.unit !== unit) {
+    throw new Error(`publication of ${unit}: ${INTEGRATION_SLOT} is ${status.state}${status.state === 'free' ? '' : ` under ${JSON.stringify(status.holder)}`}${pending === null ? '' : ` (${pending.op} open)`}, not running under the unit's publication`);
+  }
+  return heldReservation(ctx, status.holder, 'running');
+}
+
+/** Ends the publication: the slot released (it has no teardown, so its cleanup cannot fail). */
+async function releasePublication(ctx: StageContext, held: Reservation<'running', PublicationHolder>, parent: StageParent): Promise<void> {
   const cleaned = await cleanup(ctx, held, parent);
-  if (cleaned.kind !== 'released') throw new Error(`the integration slot of ${parent.unit} was not released: ${cleaned.kind}`);
-  return out;
+  if (cleaned.kind !== 'released') throw new Error(`the integration slot of ${held.holder.unit} was not released: ${cleaned.kind}`);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -80,7 +99,11 @@ async function inSlot<T>(ctx: StageContext, parent: StageParent, body: () => Pro
 type CandidateEnd = Readonly<{
   kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted';
   needsUser: NeedsUserContent | null;
+  /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
+  failed: readonly ResourceInstance[];
 }>;
+
+const ended = (kind: CandidateEnd['kind'], needsUser: NeedsUserContent | null = null): CandidateEnd => ({ kind, needsUser, failed: [] });
 
 function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): CandidateRequest {
   const { spec } = loadUnitSpec(ctx, unit);
@@ -101,10 +124,11 @@ function seriesFault(series: Series): CandidateEnd | null {
       return null;
     case 'blocked':
     case 'interrupted':
+      return ended(series.end.kind);
     case 'cleanup-failed':
-      return { kind: series.end.kind, needsUser: null };
+      return { kind: 'cleanup-failed', needsUser: null, failed: series.end.failed };
     case 'occupied':
-      return { kind: 'occupied', needsUser: series.end.needsUser };
+      return ended('occupied', series.end.needsUser);
   }
 }
 
@@ -112,9 +136,12 @@ function seriesFault(series: Series): CandidateEnd | null {
 export const candidateSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPath(join(evidenceRoot(runDir, parent), 'candidate'));
 const baseSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPath(join(evidenceRoot(runDir, parent), 'base'));
 
-/** A suite series on `checkout`, its checkout removed afterwards (citing the series' evidence). */
+/**
+ * A suite series on `checkout`, its checkout removed afterwards (citing the series' evidence). Its lanes take
+ * their own sets while the publication holds the slot (the one hold-and-wait, A1).
+ */
 async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeCreateRequest, root: AbsPath): Promise<Series> {
-  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root);
+  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root, laneRuntime(ctx, parent.unit), false);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -126,19 +153,19 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
   switch (decision.kind) {
     case 'transient-violation':
     case 'prefix-collision':
-      return { kind: 'transient-violation', needsUser: null };
+      return ended('transient-violation');
     case 'conflict': {
       // Integration merged into the unit branch in its worktree: MERGE_HEAD = T, the conflicts left for the
       // resolve round. A merge-tree conflict of (T, unit) is a conflict of (unit, T), so this merge conflicts.
       // A restart that cut the stage short after the merge-in finds it prepared and does not merge again.
       const prepared = latestMergein(ctx, unit.id);
-      if (prepared !== null && ctx.journal.view.doneOf(prepared.op) !== null && classifyMergein(prepared).kind === 'conflicted') return { kind: 'conflict', needsUser: null };
+      if (prepared !== null && ctx.journal.view.doneOf(prepared.op) !== null && classifyMergein(prepared).kind === 'conflicted') return ended('conflict');
       await runOp(ctx.journal, mergeinOp(ctx.repo), `mergein:${unit.id}`, parent, {
         worktree: unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id), branch: unitBranch(ctx.plan().arc, unit.id),
         integration: branchRef(ctx.plan().integrationBranch), identity: executorIdentity(),
         message: `roadmap ${ctx.plan().arc}: merge ${ctx.plan().integrationBranch} into unit ${unit.id}\n`,
       });
-      return { kind: 'conflict', needsUser: null };
+      return ended('conflict');
     }
     case 'merge': {
       const op = candidateMergeOp(ctx.repo);
@@ -146,14 +173,14 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent));
       const fault = seriesFault(onCandidate);
       if (fault !== null) return fault;
-      if (!failed(onCandidate)) return { kind: 'green', needsUser: null };
+      if (!failed(onCandidate)) return ended('green');
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
       const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent));
       const baseFault = seriesFault(alone);
       if (baseFault !== null) return baseFault;
-      if (!failed(alone)) return { kind: 'red', needsUser: null };
-      return { kind: 'base-red', needsUser: baseRedNeedsUser(ctx, unit.id, tip, [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]) };
+      if (!failed(alone)) return ended('red');
+      return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]));
     }
   }
 }
@@ -171,13 +198,20 @@ function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha, evidence: r
   };
 }
 
-export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'candidate'>> {
+export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'candidate'> | Cancelled> {
   const parent = at(start(ctx, unit.id, 'candidate'), 'candidate');
   const approved = approvalOf(ctx, unit.id);
   const request = candidateRequest(ctx, unit, parent.attempt);
   if (approved.unitCommit !== request.unitCommit) throw new Error(`candidate of ${unit.id}: the approval binds ${approved.unitCommit}, the branch is at ${request.unitCommit}`);
-  const end = await inSlot(ctx, parent, () => integrate(ctx, unit, parent, planCandidate(ctx.repo, request)));
-  return record(ctx, parent, end.kind, end.needsUser);
+  const holder: PublicationHolder = { type: 'publication', unit: unit.id, attempt: parent.attempt };
+  const entered = await enter(ctx, holder, PUBLICATION);
+  if (isCancelled(entered)) return entered;
+  // The slot declares no probe: nothing can occupy it.
+  const held = run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
+  const end = await integrate(ctx, unit, parent, planCandidate(ctx.repo, request));
+  const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed));
+  if (end.kind !== 'green') await releasePublication(ctx, held, parent);
+  return done;
 }
 
 /** The unit's latest done candidate.merge: the commit its suite tested. */
@@ -222,6 +256,14 @@ function foreignMoveNeedsUser(ctx: StageContext, unit: UnitId, detail: string): 
 }
 
 export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff'>> {
+  const held = heldPublication(ctx, unit.id);
+  const done = await publish(ctx, unit);
+  // Published: the slot stays the publication's through snapshot. Any other outcome ends it.
+  if (done.outcome.kind !== 'published') await releasePublication(ctx, held, { type: 'stage', unit: unit.id, stage: 'ff', attempt: done.attempt });
+  return done;
+}
+
+async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff'>> {
   const parent = at(start(ctx, unit.id, 'ff'), 'ff');
   const fingerprint = approvalOf(ctx, unit.id);
   const cand = latestCandidate(ctx, unit.id);
@@ -253,7 +295,7 @@ export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'
     case 'ff': {
       if (!holds(cand.expect.integrationTip)) return record(ctx, parent, 'fingerprint-invalid');
       const op = integrationFfOp(ctx.repo, fingerprintValid(ctx, unit));
-      const intent = await inSlot(ctx, parent, () => runPrepared(ctx.journal, op, `integration:${ctx.plan().arc}`, parent, decision.body));
+      const intent = await runPrepared(ctx.journal, op, `integration:${ctx.plan().arc}`, parent, decision.body);
       const done = ctx.journal.view.doneOf(intent.op);
       if (done === null || done.kind !== 'integration.ff') throw new Error(`integration.ff ${intent.op} has no done record`);
       return closed(done.outcome);
@@ -265,6 +307,7 @@ export async function ff(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'
 // snapshot
 
 export async function snapshot(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'snapshot'>> {
+  const held = heldPublication(ctx, unit.id);
   const parent = at(start(ctx, unit.id, 'snapshot'), 'snapshot');
   await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, {
     arc: ctx.plan().arc,
@@ -276,5 +319,7 @@ export async function snapshot(ctx: StageContext, unit: PlanUnit): Promise<Stage
     identity: executorIdentity(),
     message: `roadmap ${ctx.plan().arc}: snapshot after publishing unit ${unit.id}\n`,
   });
-  return record(ctx, parent, 'published');
+  const done = record(ctx, parent, 'published');
+  await releasePublication(ctx, held, parent);
+  return done;
 }
