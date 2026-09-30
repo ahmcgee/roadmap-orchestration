@@ -92,7 +92,7 @@ import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
 import { atomicJson, canonicalJson } from '../core/fsx.ts';
 import {
-  type ArcId, type CommandId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type UnitId, arcId, commandId, findingId,
+  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type UnitId, arcId, commandId, findingId,
   invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
 } from '../core/ids.ts';
 import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
@@ -107,8 +107,8 @@ import { type CheckpointContext, type DesignParkRoute, checkpointPending, design
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
-import { isExempt, laneRevOf } from '../holistic/types.ts';
-import { type Observation, verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
+import { keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
@@ -120,7 +120,7 @@ import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
 import { type StageContext, runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { observations } from '../pipeline/lanes.ts';
+import { laneEnvId, observations } from '../pipeline/lanes.ts';
 import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
 import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
@@ -283,7 +283,15 @@ export function arcSettled(view: JournalView, units: readonly Readonly<{ id: Uni
 // The holistic layer's contexts
 
 /** The contexts the holistic jobs run under: the audit's (a clock, the arbiter's first-served waits), the checkpoint's, the docs'. */
-export type HolisticContexts = Readonly<{ audit: AuditContext; checkpoint: CheckpointContext; docs: DocsContext }>;
+export type HolisticContexts = Readonly<{
+  audit: AuditContext; checkpoint: CheckpointContext; docs: DocsContext;
+  /**
+   * The executor's environment identity of an arc lane (§2.8: an observation counts only on its tree, lane revision and
+   * environment): the running executor's own (`laneEnvId`); a reader outside it (`status`), the one the executor
+   * recorded (`recordedLaneEnv`); null when none is recorded.
+   */
+  laneEnv: (lane: ArcLaneDef) => EnvId | null;
+}>;
 
 /** The holistic contexts over a run's stage and command contexts and its arbiter. */
 export function holisticContexts(
@@ -294,7 +302,18 @@ export function holisticContexts(
     audit,
     checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs },
     docs: { ...x.stage, planFile: x.commands.planFile, arbiter: x.arbiter },
+    laneEnv: (lane) => laneEnvId(x.stage, lane),
   };
+}
+
+/**
+ * The environment identity the executor recorded for `lane`: its latest `witnessed` fact of the lane at the lane's
+ * current revision (any tree, any owner), or null when the executor never witnessed it there. What a reader outside the
+ * executor (`status`) takes as the executor's environment, whatever its own process's environment is.
+ */
+export function recordedLaneEnv(view: JournalView, lane: ArcLaneDef): EnvId | null {
+  const rev = laneRevOf(lane);
+  return view.holistic().witnessed.filter((w) => w.purpose === 'witness' && w.lane === lane.id && w.laneRev === rev).at(-1)?.envId ?? null;
 }
 
 /** OR-Q1: what a unit's design park waits for (null outside a holistic arc, or for any other park). */
@@ -393,28 +412,26 @@ const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integr
 
 /**
  * Every non-exempt obligation (split parents through their children) on `head`: held, one not observed there, or one not
- * held. Each witness is read from the latest observation of its lane (at its rev) on the head's tree, in whichever
- * environment ran it (the scheduler and `status` read the same rule).
+ * held. §2.8's reuse rule, strict: a witness counts only from the observation of its lane on the head's tree at the lane's
+ * revision in the executor's environment (`laneEnv`: all four keys, its record's hash checked); another environment's
+ * observation does not discharge.
  */
-export function obligationsOn(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>, head: Sha): 'discharged' | 'unobserved' | 'not-held' {
+export function obligationsOn(
+  ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null,
+): 'discharged' | 'unobserved' | 'not-held' {
   const { obligations } = holisticInForce(ctx);
   if (obligations === null) return 'discharged';
   const tree = revParse(ctx.repo, `${head}^{tree}`);
-  const latest = new Map<string, Observation>();
-  for (const o of observations(ctx).values()) {
-    if (o.key.treeSha !== tree) continue;
-    const k = `${o.key.lane}/${o.key.laneRev}`;
-    const seen = latest.get(k);
-    if (seen === undefined || o.seq > seen.seq) latest.set(k, o);
-  }
+  const store = observations(ctx);
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   let unobserved = false;
   for (const o of obligations.obligations) {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const found = latest.get(`${lane.id}/${laneRevOf(lane)}`);
-    if (found === undefined) unobserved = true;
+    const env = laneEnv(lane);
+    const found = env === null ? null : reuse(store, keyOf(tree, lane, env));
+    if (found === null) unobserved = true;
     else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
   }
   return unobserved ? 'unobserved' : 'discharged';
@@ -462,7 +479,7 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
   if (g > 0 && !quiescentGenerations(fold, vision).has(g)) out.add('generation-not-quiescent');
   if (closeOutState(h, head) === 'due') out.add('close-out');
-  if (obligationsOn(ctx, head) !== 'discharged') out.add('obligations-not-discharged');
+  if (obligationsOn(ctx, head, h.laneEnv) !== 'discharged') out.add('obligations-not-discharged');
   return COMPLETION_BLOCKERS.filter((b) => out.has(b));
 }
 
@@ -490,7 +507,7 @@ export function readOnlyContexts(x: Readonly<{
   };
   const arbiter: Arbiter = { acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };
   const commands = { planFile: x.planFile, routingBase: x.routingBase, docs: refuse('published docs') } as const;
-  return holisticContexts({ stage, commands, arbiter });
+  return { ...holisticContexts({ stage, commands, arbiter }), laneEnv: (lane) => recordedLaneEnv(x.view, lane) };
 }
 
 /** G8: whether a terminal snapshot (parent `arc`) covers the completion at `seq`. */
@@ -1068,7 +1085,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       return { kind: 'complete', units: summary() };
     }
     const closing = blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged');
-    if (closing && obligationsOn(x.stage, integrationHeadNow(x.stage)) !== 'not-held') startCloseOut();
+    if (closing && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held') startCloseOut();
     return null;
   };
 
