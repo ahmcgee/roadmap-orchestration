@@ -154,12 +154,13 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
 
 test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async (t) => {
   const check = planCheckStep({ decision: 'approve' });
+  // u1 and u2 are independent, so they run at once (an M2 arc schedules a DAG): each unit's calls take its own steps.
+  const of = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
-      { ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step,
-      mulBuild(), gateStep({ decision: 'approve' }),
+      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })]),
+      ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step, mulBuild(), gateStep({ decision: 'approve' })]),
     ],
   });
   // What a supervisor's crash limit and a refused claim leave: host-level, blocking, outside the journal.
@@ -182,6 +183,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
 
   // u1 parks on a unit-scoped item while u2 runs: running, and the acknowledged host items are gone.
   await reached(r.scenarioDir, 'u2check', 60_000);
+  await until(() => openBlocking(journalOf(r).view).length === 1, 60_000, 'u1 to park, u2 still at its plan-check');
   const [item] = openBlocking(journalOf(r).view);
   assert.ok(item !== undefined);
   const mid = await statusOf(r);

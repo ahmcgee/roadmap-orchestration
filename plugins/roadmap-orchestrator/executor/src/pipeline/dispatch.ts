@@ -123,13 +123,17 @@ function buildStarted(view: JournalView, unit: UnitId): boolean {
 
 /**
  * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
- * change: no build has started for it, or its implementer seat hashes the same; null when it cannot. The
- * stages call it when the rev in force differs from the pinned one, and so does `resume <unit>` of a unit
- * parked `routing-changed` (commands/apply.ts).
+ * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) still binds it; null
+ * when it cannot. On the floor that is the pinned `implementerSeatRev`. An escalated unit (A11) no longer
+ * builds on its floor, so a change there is absorbed; its `build.high` seat is not pinned, and its session
+ * resumes only under the routing it ran on (rounds.ts `spawnSeatRev`), else a fresh one is told the worktree
+ * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
+ * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
  */
 export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord): DispatchRecord | null {
   const seat = implementerSeatRev(routing, record.riskFloor);
-  if (seat !== record.implementerSeatRev && buildStarted(journal.view, record.unit)) return null;
+  const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
+  if (onFloor && seat !== record.implementerSeatRev && buildStarted(journal.view, record.unit)) return null;
   const next: DispatchRecord = { ...record, routingRev: routing.rev, implementerSeatRev: seat, at: now() };
   journal.fact({ kind: 'dispatch', record: next });
   return next;

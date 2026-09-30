@@ -11,11 +11,13 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
 import { U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
 
 test('merge.base-red: the suite is red on the candidate and on T alone; the unit parks with an uncharged base-red needs-user', T, async () => {

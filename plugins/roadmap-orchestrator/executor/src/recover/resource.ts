@@ -24,7 +24,7 @@
 //   sweep        re-driven by its command's reconciliation (command.apply, step 13), which knows the residues
 //                it sweeps; here only its open transition is closed.
 import type { Holder, IntentOf, Parent } from '../core/events.ts';
-import type { ResourceInstance, ResourceUnit } from '../core/ids.ts';
+import { type ResourceInstance, type ResourceUnit, compareResourceUnits } from '../core/ids.ts';
 import type { Disposition, Reconciler } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -94,6 +94,8 @@ function heldBy(ctx: ResourceContext, holder: Holder): ReadonlyMap<HeldState, re
     if (status.state === 'free' || status.state === 'cleanup-failed' || !sameHolder(status.holder, holder)) continue;
     held.set(status.state, [...(held.get(status.state) ?? []), unit]);
   }
+  // The table is in first-transition order; a transition names its units in lock order.
+  for (const units of held.values()) units.sort(compareResourceUnits);
   return held;
 }
 

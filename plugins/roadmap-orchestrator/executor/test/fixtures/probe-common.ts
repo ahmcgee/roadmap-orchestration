@@ -8,7 +8,7 @@ import type { Journal } from '../../src/core/interfaces.ts';
 import type { OpenJournal } from '../../src/core/log.ts';
 import { absPath, isoTimeOf, repoPattern } from '../../src/core/values.ts';
 import type { HostSample } from '../../src/host/sample.ts';
-import type { ProberContext } from '../../src/park/probe.ts';
+import { type ProberContext, createProber } from '../../src/park/probe.ts';
 import { backendEnv } from '../../src/preflight/smoke.ts';
 import type { RecoveryContext } from '../../src/recover/recover.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
@@ -46,6 +46,7 @@ export function openProbeRun(r: ProbeRun): OpenedProbe {
     commands: {
       ...resources, hostEnv: backendEnv(hostEnv), laneEnv: hostEnv, routing: () => ({ profile: 'claude-only', resolved }),
       resolve: () => resolved, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
+      probes: { prober: createProber(ctx), signal: new AbortController().signal },
     },
   };
   return { ctx, recovery, journal, host };

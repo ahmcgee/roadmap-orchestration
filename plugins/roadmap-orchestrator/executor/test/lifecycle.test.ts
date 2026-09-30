@@ -14,22 +14,24 @@ import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import { type NeedsUserId, commandId, invocationId, unitId } from '../src/core/ids.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
-import { runArc } from '../src/pipeline/arc.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { NO_SESSION_NOTE, RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { keptSpecPath } from '../src/pipeline/stages.ts';
-import { heldAfter, runUnit, step } from '../src/pipeline/unit.ts';
+import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { absPath } from '../src/core/values.ts';
+import { legacyNext } from '../src/core/upgrade.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, testProbes } from './fixtures/stage-common.ts';
 import { type ArcRun, MUL, U1, applyBody, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** The executor's writer for a parked unit's item: parented by the attempt that parked it. */
@@ -44,6 +46,7 @@ async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx
   const ctx: CommandContext = {
     ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
     resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+    probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
   return { id: file.id, outcome: await applyCommand(ctx, file) };
@@ -294,29 +297,28 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
   }
 });
 
-test('arc.after-waits-for-ack: a unit with `after` is not dispatched while the unit it names is parked with its item open; the ack releases it', T, async () => {
+test('arc.after-waits-for-ack: on a legacy arc a unit with `after` is not dispatched while the unit it names is parked with its item open; the ack releases it', T, async () => {
   const d = setupArc({
     units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }],
     steps: [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
   });
   const r = contextFor(d);
   try {
-    const items: NeedsUserId[] = [];
-    const held = await runArc(r.ctx, live(), (unit, content) => items.push(raiseParked(r, unit, content)));
-    assert.ok(held.kind === 'held' && held.unit === U2, JSON.stringify(held));
+    // A legacy arc (dev.4's serial frontier, G4): the scheduler raises u1's item and then waits at u2.
+    const s = startScheduler(r);
+    const item = await haltItem(r, U1);
+    // Several scheduler polls later u2 is still undispatched: the frontier holds it after u1.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
     assert.equal(r.journal.view.dispatchOf(U2), null, 'no dispatch fact for the held unit');
     assert.equal(r.journal.view.unit(U2).counters.attempts, 0);
-    assert.deepEqual(heldAfter(r.journal.view, r.unit('u2')), [U1]);
+    assert.deepEqual(legacyNext(r.journal.view, r.ctx.plan().units), { unit: U2, block: 'unit u2 is held after u1' });
     assert.equal(readCalls(d.scenarioPath).length, 2);
 
-    const [item] = items;
-    assert.ok(item !== undefined);
-    assert.equal((await command(r, { type: 'ack', needsUser: item, choice: null })).outcome.kind, 'applied');
-    assert.deepEqual(heldAfter(r.journal.view, r.unit('u2')), []);
-    // The arc hands over every parked unit it finds; u1's item is raised already.
-    const done = await runArc(r.ctx, live(), (unit) => assert.equal(unit, U1));
-    assert.ok(done.kind === 'terminal');
-    assert.deepEqual(done.units.map((s) => [s.unit, s.result.kind]), [['u1', 'parked'], ['u2', 'merged']]);
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
+    // The ack releases u2, which runs to merge; the arc is then complete.
+    const done = await s.end;
+    assert.ok(done.kind === 'complete', JSON.stringify(done));
+    assert.deepEqual(done.units.map((u) => [u.unit, u.result]), [['u1', 'parked'], ['u2', 'merged']]);
     assert.deepEqual(outcomes(d, 'u2'), STRAIGHT);
   } finally {
     r.journal.close();

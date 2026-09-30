@@ -1,4 +1,4 @@
-// The serial unit driver (src/pipeline/unit.ts) and arc (src/pipeline/arc.ts), integrated and fake-backed:
+// The unit driver (src/pipeline/unit.ts), and a legacy arc under the scheduler, integrated and fake-backed:
 // real processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the
 // deterministic fixtures of this step (conflict → merge-in → resolve; red candidate → fix → fresh gate →
 // green) and the named tests ff.exact-head, snapshot.after-publish, unit.decisions-appended,
@@ -8,15 +8,15 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { invocationId } from '../src/core/ids.ts';
+import { invocationId, unitId } from '../src/core/ids.ts';
 import { EVENTS_FILE, STATE_FILE } from '../src/core/log.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
-import { runArc } from '../src/pipeline/arc.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
 import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
-import { type UnitResult, runUnit } from '../src/pipeline/unit.ts';
+import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
+import { recordOf } from '../src/needsuser.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
@@ -24,14 +24,16 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
   ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
+import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const live = (): AbortSignal => new AbortController().signal;
+/** Every stage admitted at once: the unit runs on its own. */
+const live = (): Gate => admitAll;
 
 /** Every stage of a unit that merges first time, in order. */
 const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
@@ -320,7 +322,7 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
   assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
 });
 
-test('arc.serial-terminal: units run in plan order; one merges, one parks with a blocking needs-user, and the arc is terminal', T, async () => {
+test('arc.serial-terminal: a legacy arc under the scheduler runs its units in plan order; one merges, one parks with a blocking needs-user raised as it parks, and once it is acknowledged the arc is complete', T, async () => {
   const d = setupArc({
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
@@ -330,23 +332,21 @@ test('arc.serial-terminal: units run in plan order; one merges, one parks with a
   });
   const r = contextFor(d);
   try {
-    const parkedUnits: string[] = [];
-    const result = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
-    assert.deepEqual(parkedUnits, ['u2'], 'the park was handed over as it happened');
-    assert.equal(result.kind, 'terminal');
-    assert.ok(result.kind === 'terminal');
-    assert.deepEqual(result.units.map((s) => [s.unit, s.result.kind]), [['u1', 'merged'], ['u2', 'parked']]);
-    const parked = result.units[1]!.result;
-    assert.ok(parked.kind === 'parked');
-    assert.equal(parked.needsUser.blocking, true);
-    assert.equal(parked.needsUser.reason, 'escalation');
-    assert.deepEqual(parked.needsUser.subject, { type: 'unit', unit: 'u2' });
+    const s = startScheduler(r);
+    // The park's item is raised as it happens, while the run goes on (it waits on that item).
+    const item = await haltItem(r, unitId('u2'));
+    assert.deepEqual(outcomes(d), STRAIGHT, 'u1 ran first, to its merge');
+    const content = recordOf(r.ctx.runDir, item);
+    assert.equal(content.blocking, true);
+    assert.equal(content.reason, 'escalation');
+    assert.deepEqual(content.subject, { type: 'unit', unit: 'u2' });
     assert.deepEqual(outcomes(d, 'u2'), ['plan-check:escalate', 'plan-check:escalate']);
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
+    const result = await s.end;
+    assert.deepEqual(result, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'parked', needsUser: item }] });
     // A second run finds the arc where the log left it: nothing runs again.
     const calls = readCalls(d.scenarioPath).length;
-    const again = await runArc(r.ctx, live(), (unit) => parkedUnits.push(unit));
-    assert.ok(again.kind === 'terminal');
-    assert.deepEqual(again.units.map((s) => [s.unit, s.result.kind, s.result.kind === 'parked' && s.result.needsUser.reason]), [['u1', 'merged', false], ['u2', 'parked', 'escalation']]);
+    assert.deepEqual(await startScheduler(r).end, result);
     assert.equal(readCalls(d.scenarioPath).length, calls);
   } finally {
     r.journal.close();

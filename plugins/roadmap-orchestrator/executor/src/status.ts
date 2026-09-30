@@ -34,21 +34,20 @@ import { readJson } from './core/fsx.ts';
 import { type ArcId, type CommandId, type NeedsUserId, type PlanRev, type RoutingRev, type Sha256Hex, type UnitId, commandId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { readJournal } from './core/log.ts';
-import { warnPlanFromFile } from './core/upgrade.ts';
+import { legacyNext, warnPlanFromFile } from './core/upgrade.ts';
 import { PLAN_INPUT, keptInput, planInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
 import type { AbsPath, IsoTime } from './core/values.ts';
-import {
-  HEARTBEAT_FILE, REJECTION_FILE, START_FILE, fileNeedsUser, holdsArc, nextUnit, openBlockingItems, recordOf,
-} from './executor.ts';
+import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
+import { fileNeedsUser, openBlockingItems, recordOf } from './needsuser.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from './input/plan.ts';
 import { type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
-import { dispatchBlock, heldAfter } from './pipeline/unit.ts';
+import { effectiveDependency } from './schedule/graph.ts';
 import { type SeatSources, arcStack, resolveRouting } from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, PROFILES, type ProfileName, type RiskTier, type SeatRef,
@@ -170,17 +169,26 @@ function routingView(start: Readonly<{ record: RunStart; plan: PlanM1 }> | null)
   return { profile: start.record.profile, rev: r.rev, seats: r.classes, sources: r.sources, bindings: r.bindings };
 }
 
+// M1's serial reading of the run, kept until M2 step 9 derives `run.state` from the scheduler's view: the
+// earliest unsettled unit in plan order is the one "next" (`legacyNext`, dev.4's frontier), and a blocking item
+// holds the run when it is not about a unit, names that unit or a unit it waits `after` (merged-only on an M2
+// arc, D1: only the architect releases it), or no unit is left.
 function stateOf(runDir: AbsPath, view: JournalView, planUnits: readonly PlanUnit[], owner: OwnerState, rejection: RejectionFile | null): ArcState {
   const units = planUnits.map((u) => u.id);
   const open = openBlockingItems(runDir, view);
   const blocking = open.length > 0;
   if (owner.state === 'alive') {
-    const next = nextUnit(units, view);
-    if (open.some((id) => holdsArc(recordOf(runDir, id), next))) return 'parked';
+    const frontier = legacyNext(view, planUnits);
+    const next = frontier?.unit ?? null;
+    const waitsOn = planUnits.find((u) => u.id === next)?.after.map((d) => effectiveDependency(view, d)) ?? [];
+    const holds = (id: NeedsUserId): boolean => {
+      const { subject } = recordOf(runDir, id);
+      return next === null || subject.type !== 'unit' || subject.unit === next || waitsOn.includes(subject.unit);
+    };
+    if (open.some(holds)) return 'parked';
     if (view.openIntents().some((i) => i.parent.type === 'stage')) return 'running';
-    const unit = planUnits.find((u) => u.id === next);
-    if (unit === undefined) return 'running';
-    return view.unit(unit.id).status === 'held' || dispatchBlock(view, unit) !== null ? 'held' : 'running';
+    if (frontier === null) return 'running';
+    return view.unit(frontier.unit).status === 'held' || frontier.block !== null ? 'held' : 'running';
   }
   if (rejection !== null) return 'refused';
   const settled = units.length > 0 && units.every((u) => ['retired', 'park-pending'].includes(view.unit(u).status));
@@ -212,7 +220,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     run: { state: stateOf(runDir, view, planUnits, owner, rejection), owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
     units: planUnits.map((unit) => {
       const u = view.unit(unit.id);
-      const after = u.status === 'active' ? heldAfter(view, unit) : [];
+      const after = u.status === 'active' ? unit.after.filter((d) => view.unit(effectiveDependency(view, d)).status !== 'retired') : [];
       return {
         unit: unit.id, stage: u.stage, status: after.length > 0 ? `held-after:${after.join(',')}` : u.status, attempts: u.counters.attempts,
         chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, unit.id),

@@ -14,8 +14,9 @@
 //            the fold uses to tell open items from acknowledged ones. Rejected for an unknown id, an id
 //            another command already acknowledged, or a choice the item does not offer. Control.
 //   resume   unit | all: a `resumed` fact that clears the pause and the hold (the unit re-runs its stage
-//            as a new, uncharged attempt). backend: that backend's smoke alone, then `resumed{backend}`,
-//            which clears its park, whatever its class; a failed smoke is rejected. Mutation (scope: all →
+//            as a new, uncharged attempt). backend: that backend's smoke alone through the prober
+//            (`resumeBackend`, one job per target), then `resumed{backend}`, which clears its park, whatever
+//            its class; a failed smoke is rejected (`smoke-failed: …`). Mutation (scope: all →
 //            the arc, a unit → that unit, a backend → none; src/input/classify.ts `commandScope`).
 //            `resume <unit>` of a parked unit, per the park's class (A7):
 //              retryable       probe now: the prober runs each outstanding target once, covering this park,
@@ -53,7 +54,9 @@
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
-// wait for a safe point: no open stage-level intent (the M1 driver), or their scope drained (the scheduler, A12).
+// wait for their scope to drain (the scheduler, A12; src/schedule/scheduler.ts). A stop cancels a mutation's
+// smoke: the run's stop signal ends the effect before its receipt, and the next start's recovery applies the
+// command from its open op (src/recover/command.ts).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntentOf, OpOutcome, Parent, PlanChange, StageOutcomeFact } from '../core/events.ts';
@@ -89,7 +92,7 @@ import {
 } from '../resources/reserve.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend, ProfileName } from '../routing/types.ts';
-import type { Prober } from '../schedule/types.ts';
+import type { ProberHandle } from '../park/probe.ts';
 import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
 
@@ -109,11 +112,10 @@ export type CommandContext = ResourceContext & Readonly<{
   planFile: AbsPath;
   planDir: AbsPath;
   /**
-   * The prober (src/park/probe.ts) and the run's stop signal, for `resume <unit>` of a retryable park. The
-   * scheduler wires them (M2 step 7b); the M1 driver, which writes no retryable park, has none. Scaffolding:
-   * required once the scheduler builds every command context.
+   * The prober (src/park/probe.ts), through which `resume <unit>` of a retryable park probes and `resume
+   * --backend` smokes, and the run's stop signal, which ends an effect cut short by a stop before its receipt.
    */
-  probes?: Readonly<{ prober: Prober; signal: AbortSignal }>;
+  probes: Readonly<{ prober: ProberHandle; signal: AbortSignal }>;
 }>;
 
 export type CommandOutcome = OpOutcome['command.apply'];
@@ -330,7 +332,6 @@ function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
  */
 async function probeNow(ctx: CommandContext, unitId: UnitId, f: StageOutcomeFact, park: ParkState): Promise<Effect> {
   if (park.park.class !== 'retryable') throw new Error(`probeNow of unit ${unitId}, whose park is ${park.park.class}`);
-  if (ctx.probes === undefined) throw new Error(`resume of unit ${unitId}'s retryable park: this command context has no prober (the M1 driver writes no retryable park)`);
   const { prober, signal } = ctx.probes;
   const passed = new Set(park.passed.map(probeTargetKey));
   const failed: string[] = [];
@@ -394,13 +395,15 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       return { kind: 'applied', verified: ['no unit paused or held'] };
     }
     case 'backend': {
-      if (view.parkedBackends().includes(target.backend)) {
-        const report = await smokeBackends(ctx.routing(), { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, [target.backend]);
-        const failures = smokeRejections(report);
-        if (failures.length > 0) return { kind: 'rejected', reason: `smoke-failed: ${failures.map((f) => `${f.problem}: ${f.detail}`).join('; ')}` };
-        ctx.journal.fact({ kind: 'resumed', command: id, target });
+      const resumed = await ctx.probes.prober.resumeBackend(target.backend, id, ctx.probes.signal);
+      switch (resumed.kind) {
+        case 'smoke-failed':
+          return { kind: 'rejected', reason: `smoke-failed: ${resumed.detail}` };
+        case 'resumed':
+          return { kind: 'applied', verified: [`backend ${target.backend} resumed: its smoke passed`] };
+        case 'not-parked':
+          return { kind: 'applied', verified: [`backend ${target.backend} not parked`] };
       }
-      return { kind: 'applied', verified: [`backend ${target.backend} not parked`] };
     }
   }
 }
@@ -592,6 +595,8 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
     case 'accepted': {
       if (verdict.smoke.length > 0 && verdict.routing !== null) {
         const report = await smokeBackends({ profile: ctx.routing().profile, resolved: verdict.routing }, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, verdict.smoke);
+        // A stop killed the smoke: no verdict on the apply, whose op the next start's recovery finishes.
+        ctx.probes.signal.throwIfAborted();
         const failures = smokeRejections(report);
         if (failures.length > 0) return { kind: 'rejected', reason: rejectedText(failures.map(rowText)) };
       }
@@ -646,7 +651,11 @@ export function applyControl(ctx: CommandContext, pending: readonly CommandFile[
   return applyAll(ctx, pending.filter((c) => isControl(c.body)));
 }
 
-/** Mutations, in id order, only at a safe point: no open stage-level intent. The driver calls it between stages. */
+/**
+ * Mutations, in id order, only at a safe point: no open stage-level intent. The control-only phase applies
+ * them so, before recovery has closed what a crashed executor left open; the scheduler applies each once its
+ * scope has drained (A12).
+ */
 export function applyAtSafePoint(ctx: CommandContext, pending: readonly CommandFile[]): Promise<ControlResult> {
   const busy = ctx.journal.view.openIntents().find((i) => i.parent.type === 'stage');
   if (busy !== undefined) return Promise.resolve({ kind: 'deferred', reason: `${busy.kind} ${busy.op} of a stage is open` });

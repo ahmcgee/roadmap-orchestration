@@ -1,6 +1,7 @@
 // upgrade.defaults-unit: the 1.0.0-dev.4 → M2 read-time defaults in src/core/upgrade.ts, unit by unit: the
 // park class of a pre-M2 park, the legacy flag, and `legacyNext`, which must equal dev.4's own frontier
-// (`nextUnit` and `dispatchBlock`, still in the tree until M2 step 7b) on every constructed log.
+// (`nextUnit` and `dispatchBlock`, copied below verbatim from 1.0.0-dev.4 as the oracle, since M2 step 7b
+// removed them from the tree) on every constructed log.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
@@ -8,9 +9,9 @@ import { type UnitId, commandId, needsUserId, opId, opKey, planRev, seatRev, sha
 import { Fold } from '../src/core/state.ts';
 import { isLegacy, legacyNext, legacyParkRecord } from '../src/core/upgrade.ts';
 import { absPath, isoTime, planPath, repoPattern } from '../src/core/values.ts';
-import { nextUnit } from '../src/executor.ts';
+import type { JournalView } from '../src/core/interfaces.ts';
 import type { PlanUnit } from '../src/input/plan.ts';
-import { dispatchBlock } from '../src/pipeline/unit.ts';
+import { raisedFor } from '../src/needsuser.ts';
 import { ARC, H, REV, chain } from './fixtures/log-records.ts';
 
 const A = unitId('a');
@@ -45,6 +46,34 @@ function folded(records: readonly LogRecord[]): Fold {
 
 const plan = (...units: readonly (readonly [UnitId, readonly UnitId[]])[]): readonly PlanUnit[] =>
   units.map(([id, after]) => ({ id, spec: planPath(`specs/${id}.json`), risk: 'med', scope: [repoPattern('src/**')], resources: [], after, contingent: [] }));
+
+// ---------------------------------------------------------------------------------------------------
+// The oracle: 1.0.0-dev.4's `nextUnit` (src/executor.ts) and `settledForAfter`/`dispatchBlock`
+// (src/pipeline/unit.ts), as that release had them.
+
+function nextUnit(units: readonly UnitId[], view: JournalView): UnitId | null {
+  return units.find((u) => {
+    const s = view.unit(u).status;
+    return s !== 'retired' && s !== 'park-pending';
+  }) ?? null;
+}
+
+function settledForAfter(view: JournalView, id: UnitId): boolean {
+  const u = view.unit(id);
+  if (u.status === 'retired') return true;
+  if (u.status !== 'park-pending' || u.decided === null) return false;
+  const item = raisedFor(view, { type: 'stage', unit: id, stage: u.decided.stage, attempt: u.decided.attempt });
+  return item !== null && view.ackOf(item) !== null;
+}
+
+function dispatchBlock(view: JournalView, unit: PlanUnit): string | null {
+  const c = view.control();
+  if (c.pausedAll) return 'the arc is paused';
+  if (c.pausedUnits.includes(unit.id)) return `unit ${unit.id} is paused`;
+  const after = unit.after.filter((id) => !settledForAfter(view, id));
+  if (after.length > 0) return `unit ${unit.id} is held after ${after.join(', ')}`;
+  return null;
+}
 
 /** dev.4's frontier, from the dev.4 functions themselves. */
 function dev4(view: Fold, units: readonly PlanUnit[]): ReturnType<typeof legacyNext> {

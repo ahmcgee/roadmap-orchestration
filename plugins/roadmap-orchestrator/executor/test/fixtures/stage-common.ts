@@ -14,7 +14,7 @@ import { type OpenJournal, openJournal } from '../../src/core/log.ts';
 import { type LaunchFile, RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { keepInputFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { keepInputFiles, readInputFiles } from '../../src/input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
@@ -26,6 +26,10 @@ import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor, events } from './invoke-specs.ts';
+import type { CommandContext } from '../../src/commands/apply.ts';
+import { readHostSample } from '../../src/host/sample.ts';
+import { createProber } from '../../src/park/probe.ts';
+import type { Gate } from '../../src/pipeline/unit.ts';
 
 export const U1: UnitId = unitId('u1');
 export const DB = 'db';
@@ -87,10 +91,27 @@ function laneJson(l: LaneJson): Record<string, unknown> {
   };
 }
 
+/**
+ * Records the plan file as revision 1 of a legacy arc (no `scheduling`), as 1.0.0-dev.4 did: the serial
+ * frontier and no `@cpu` requests. Tests of one serial unit keep this default; a first start on M2 records a DAG.
+ */
+export function recordLegacyPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath): void {
+  const manifest = keepInputFiles(runDir, readInputFiles(planPath));
+  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [] });
+}
+
 /** Records the plan file as revision 1 of an arc started on M2 (`scheduling: 'dag'`), as an M2 first start does. */
 export function recordDagPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath): void {
   const manifest = keepInputFiles(runDir, readInputFiles(planPath));
   journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
+}
+
+/** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */
+export const admitAll: Gate = () => Promise.resolve(true);
+
+/** A command context's prober and stop signal, as the executor wires them: the real prober over `ctx`, a signal nothing aborts. */
+export function testProbes(ctx: StageContext, profile: ProfileName = 'default'): CommandContext['probes'] {
+  return { prober: createProber({ ...ctx, profile, sample: readHostSample }), signal: new AbortController().signal };
 }
 
 /**
@@ -148,7 +169,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
   if (opts.dag === true) recordDagPlan(journal, absPath(runDir), planPath);
-  else recordPlan(journal, absPath(runDir), readInputFiles(planPath), null, []);
+  else recordLegacyPlan(journal, absPath(runDir), planPath);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const resources = {

@@ -16,27 +16,16 @@
 //   (clears the stop marker) → control-only phase (below) → recovery (recover.ts), which closes a smoke
 //   spawn a crashed start left open like any other → the outcomes of the stage attempts whose backend call
 //   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
-//   refusal exits `refused` as above, after readiness) → the command loop:
+//   refusal exits `refused` as above, after readiness; on a respawn a failed backend is parked instead, A18)
+//   → the scheduler (src/schedule/scheduler.ts), which runs every unit that may run, each in its own task,
+//   applies commands as they arrive (control at once, mutations once their scope drains), probes parks,
+//   raises what is due, and returns `complete` or `stop`.
 //
-//     control commands (pause, stop, ack) → mutations (resume, sweep, apply) at this safe point → needs-user due
-//     → stop marker: stop · a unit stop-pending: stop · everything settled and no open blocking needs-user:
-//     complete · a blocking needs-user that holds the arc, the next unit held, or the next unit blocked
-//     (`dispatchBlock`: the arc or the unit paused, or a unit it runs `after` unsettled): wait (poll 1 s)
-//     · otherwise run the arc, which itself stops at the first blocked unit before dispatching it.
-//
-//   A blocking needs-user holds the arc only when it is arc-wide (a host or arc subject, or a reason in
-//   ARC_WIDE_REASONS) or concerns the next unit; a unit-scoped park lets later units run (lead ruling 14a).
-//   Blocking items include the file-only ones outside the journal: the supervisor's `sup-<gen>-<n>` and a
-//   refused claim's `host-<kind>-<n>`, both host-level (`fileNeedsUser`).
-//
-//   While the arc runs, control commands keep applying every poll, and mutations apply at every stage
-//   boundary (the safe point after a stage's outcome), so an apply, resume or sweep never waits for the arc
-//   to return and nothing live is killed for one. The context's `plan` and `routing` are the plan in force
-//   and its routing, read from the log at each call (`plan()`, `routing()`), so an apply takes effect at the next one.
-//   A pause or stop aborts the arc's signal
-//   and cancels the live backend or lane invocation of the running stage (`proc.kill{pause|stop}`); the
-//   stage records `interrupted` (a hold) and the arc returns. A stop then cleans whatever a stage still
-//   holds and exits `stop`; a pause waits in the loop for `resume` or `stop`.
+//   The contexts' `plan` and `routing` are the plan in force and its routing, read from the log at each call
+//   (`plan()`, `routing()`), so an apply takes effect at the next one. One arbiter serves every reservation of
+//   the run, and one prober every probe (the scheduler's jobs, `resume <unit>` of a retryable park, `resume
+//   --backend`). The run's stop controller is aborted by the scheduler when the run stops: it ends a probe or
+//   a mutation's smoke the stop killed.
 //
 // Control-only (`--control-only`, after a supervisor crash-limit exit, R19): before recovery, the executor
 // applies control commands (ack, stop, pause) and mutations at the safe point (sweep, resume), and goes on to
@@ -46,24 +35,23 @@
 // The executor never releases the host: it writes exit.reason.json and exits, and its supervisor releases
 // the claim after it has exited. Any other end is a crash: a thrown error, no exit reason.
 //
-// Needs-user content the driver returns is written here with `raiseNeedsUser`, parented by the stage attempt
-// that decided it, so an item is raised once however often the arc is re-read (`raisedFor`). A park's item
-// is raised the moment the arc hands it over (`runArc`'s `onParked`), while later units still run.
+// Needs-user content the driver returns is written with `raiseNeedsUser` (the scheduler's `raiseResult`),
+// parented by the stage attempt that decided it, so an item is raised once however often the arc is re-read
+// (`raisedFor`). Blocking items include the file-only ones outside the journal: the supervisor's
+// `sup-<gen>-<n>` and a refused claim's `host-<kind>-<n>` (`writeFileNeedsUser` here; read by needsuser.ts).
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommandContext } from './commands/apply.ts';
-import { applyAtSafePoint, applyCommand, applyControl } from './commands/apply.ts';
+import { applyAtSafePoint, applyCommand } from './commands/apply.ts';
 import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
-import type { Parent, StageOutcomeFact } from './core/events.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type Sha256Hex, type UnitId, hostNeedsUserId, invocationId, needsUserId } from './core/ids.ts';
-import type { JournalView } from './core/interfaces.ts';
+import { type ArcId, type NeedsUserId, type Sha256Hex, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserReason, type NeedsUserRecord, type RunStart,
+  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RunStart,
 } from './core/records.ts';
 import { type Read, arrayOf, literal, object } from './core/validate.ts';
 import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
@@ -72,25 +60,24 @@ import { hostPath, openHostDir } from './host/hostdir.ts';
 import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
+import { readHostSample } from './host/sample.ts';
 import { requirePlanInForce } from './input/inforce.ts';
-import type { PlanM1, PlanUnit } from './input/plan.ts';
-import { NEEDS_USER_DIR, needsUserPath, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from './needsuser.ts';
-import { type ArcResult, runArc } from './pipeline/arc.ts';
+import type { PlanM1 } from './input/plan.ts';
+import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
+import { type ProberHandle, createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
-import { reserveNow } from './pipeline/lanes.ts';
-import { invocationDir, killWorkload } from './pipeline/invoke.ts';
-import { consume, dispatchBlock, step } from './pipeline/unit.ts';
+import { consume } from './pipeline/unit.ts';
 import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { recoverReservations } from './recover/resource.ts';
 import { type ResolvedRouting, arcStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
+import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
-import { runnerFiles } from './runner/files.ts';
+import { type SchedulerEnd, raiseResult, schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';
@@ -103,9 +90,6 @@ export const EXIT_REASON_FILE = 'exit.reason.json';
 export const HEARTBEAT_MS = 10_000;
 /** How long an executor waits for its supervisor's handshake before refusing. */
 export const HANDSHAKE_TIMEOUT_MS = 30_000;
-
-/** Reasons whose blocking needs-user holds the whole arc, whatever unit it names (lead ruling 14a). */
-export const ARC_WIDE_REASONS = ['usage-limit', 'recovery-required', 'foreign-ref-move', 'residue'] as const satisfies readonly NeedsUserReason[];
 
 export type ExecutorArgs = Readonly<{
   repo: AbsPath;
@@ -123,14 +107,13 @@ export type ExecutorArgs = Readonly<{
   respawn: boolean;
 }>;
 
-export type UnitSummary = Readonly<{ unit: UnitId; result: 'merged' } | { unit: UnitId; result: 'parked'; needsUser: NeedsUserId }>;
-
-/** Why a run ended on purpose. Anything else is a thrown error: a crash, which the supervisor counts. */
+/**
+ * Why a run ended on purpose: the scheduler's `complete` (every unit merged, cut, superseded, or parked with
+ * its needs-user acknowledged) or `stop`, or a refused start. Anything else is a thrown error: a crash, which
+ * the supervisor counts.
+ */
 export type ExitReason =
-  /** Every unit merged, or parked with its needs-user acknowledged. */
-  | Readonly<{ kind: 'complete'; units: readonly UnitSummary[] }>
-  /** A `stop` command, or a unit whose outcome stopped the arc (its needs-user is raised). */
-  | Readonly<{ kind: 'stop'; cause: 'command' | 'unit'; needsUser: NeedsUserId | null }>
+  | SchedulerEnd
   | Readonly<{ kind: 'refused'; rejections: readonly StartupRejection[]; exitCode: typeof EXIT_REFUSED | typeof EXIT_HOST_BUSY }>;
 
 export type RefusedReason = Extract<ExitReason, { kind: 'refused' }>;
@@ -179,12 +162,10 @@ export function writeRejection(runDir: AbsPath, rejections: readonly StartupReje
 // ---------------------------------------------------------------------------------------------------
 // Needs-user items outside the journal (sup-<gen>-<n>, host-<slug>)
 
-const FILE_ITEM = /^(sup-[0-9]+-[0-9]+|host-[a-z0-9-]+)\.json$/;
-
 /**
  * Writes a host-level blocking needs-user as a file (write-once), outside any journal: the supervisor's
  * crash limit and a refused claim have no open journal to raise through. The executor reads them back with
- * `fileNeedsUser`, and `ack` answers them like any item (the ack fact takes any id form).
+ * `fileNeedsUser` (needsuser.ts), and `ack` answers them like any item (the ack fact takes any id form).
  */
 export function writeFileNeedsUser(runDir: AbsPath, arc: ArcId, id: NeedsUserId, content: NeedsUserContent): void {
   durableMkdir(join(runDir, NEEDS_USER_DIR));
@@ -221,43 +202,6 @@ export function raiseClaimRefusal(runDir: AbsPath, arc: ArcId, rejection: ClaimR
   return id;
 }
 
-/** The file-only items (sup-*, host-*) that no ack in the log answers, ascending id. */
-export function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly NeedsUserRecord[] {
-  const dir = join(runDir, NEEDS_USER_DIR);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).sort().flatMap((name) => {
-    const m = FILE_ITEM.exec(name);
-    if (m === null) return [];
-    const id = needsUserId(m[1]);
-    const record = readNeedsUser(runDir, id);
-    if (record === null) throw new Error(`needs-user ${name} vanished while it was listed`);
-    return view.ackOf(id) === null ? [record] : [];
-  });
-}
-
-/** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
-export function openBlockingItems(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
-  return [...openBlocking(view), ...fileNeedsUser(runDir, view).filter((r) => r.blocking).map((r) => r.id)];
-}
-
-/** The unit the serial arc works on next: the first in plan order that is neither merged nor parked. */
-export function nextUnit(units: readonly UnitId[], view: JournalView): UnitId | null {
-  return units.find((u) => {
-    const s = view.unit(u).status;
-    return s !== 'retired' && s !== 'park-pending';
-  }) ?? null;
-}
-
-/**
- * Whether an open blocking item holds the arc (lead ruling 14a): it is arc-wide (a host or arc subject, or a
- * reason in ARC_WIDE_REASONS), or it names the unit that would run next, or no unit is left to run.
- */
-export function holdsArc(record: NeedsUserRecord, next: UnitId | null): boolean {
-  if (next === null || record.subject.type !== 'unit') return true;
-  if ((ARC_WIDE_REASONS as readonly NeedsUserReason[]).includes(record.reason)) return true;
-  return record.subject.unit === next;
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Start
 
@@ -292,7 +236,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     await consumeRecovered(x);
     const smoked = await smokeCheck(checks, args.env);
     if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
-    const reason = await drive(x);
+    const reason = await schedule(x);
     writeExitReason(args.hostDir, claim, reason.kind);
     return reason;
   } finally {
@@ -312,19 +256,13 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
 
 /**
  * Records, at startup, the outcome of every stage attempt whose backend call recovery closed (`consume` in
- * unit.ts), and raises the needs-user it decides. Done before the command loop, so a unit that a pause
- * holds does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
+ * unit.ts), and raises the needs-user it decides. Done before the scheduler, so a unit that a pause holds
+ * does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
  */
 async function consumeRecovered(x: Exec): Promise<void> {
   for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
-    if (s === null) continue;
-    if (s.kind === 'parked' || s.kind === 'stopped') {
-      const parent = decidedParent(x.journal.view, unit.id);
-      if (raisedFor(x.journal.view, parent) === null) raiseNeedsUser(x.journal, x.stage.runDir, s.needsUser, parent);
-    } else if (s.kind === 'held' && s.needsUser !== null) {
-      await raiseDue(x, { kind: 'held', unit: unit.id, needsUser: s.needsUser, settled: [] });
-    }
+    if (s !== null && s.kind !== 'continue') raiseResult(x.stage, unit.id, s);
   }
 }
 
@@ -332,9 +270,11 @@ async function consumeRecovered(x: Exec): Promise<void> {
 // The contexts: the plan and routing in force are read from the log at each call
 
 /**
- * The stage and command contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing()` its
- * resolution under the start's profile and repo config, both read at each call, so an apply takes effect at
- * the next one; each plan revision is parsed and resolved once (the one cache of the plan in force).
+ * The contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing()` its resolution under
+ * the start's profile and repo config, both read at each call, so an apply takes effect at the next one; each
+ * plan revision is parsed and resolved once (the one cache of the plan in force). The stage context's
+ * `acquire` is the run's arbiter and its signal is never aborted: each unit's task gets its own
+ * (src/schedule/scheduler.ts). The prober and the run's stop controller serve the commands too.
  */
 function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
@@ -355,16 +295,17 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     planDir: absPath(dirname(context.planFile)),
   };
   const resources = { ...base, plan: () => inForce().plan };
-  // The serial arc has one unit in flight: its reservations are granted at once (a busy resource is a leak)
-  // until the scheduler's arbiter replaces `reserveNow` (M2 step 7b). Each run's signal is its own (`runWithControl`).
+  const arbiter = createArbiter(resources);
   const stage: StageContext = {
     ...resources,
     hostEnv: args.env,
     routing,
-    acquire: reserveNow(resources),
+    acquire: arbiter.acquire,
     rank: (unit) => rankOf(journal.view, inForce().plan, unit),
     signal: new AbortController().signal,
   };
+  const prober = createProber({ ...stage, profile, sample: readHostSample });
+  const stop = new AbortController();
   const commands: CommandContext = {
     ...base,
     hostEnv: backendEnv(args.env),
@@ -373,25 +314,17 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     resolve,
     plan: () => inForce().plan,
     routing: () => ({ profile, resolved: routing() }),
+    probes: { prober, signal: stop.signal },
   };
-  return { stage, commands, journal };
+  return { stage, commands, journal, arbiter, prober, stop };
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The command loop
+// Control-only
 
-type Exec = Readonly<{ stage: StageContext; commands: CommandContext; journal: OpenJournal }>;
-
-/** Control commands now (deferred only inside an integration.ff), then mutations if nothing of a stage is open. */
-async function applyCommands(x: Exec): Promise<void> {
-  const arc = x.journal.view.arc;
-  await applyControl(x.commands, pollCommands(x.stage.runDir, arc));
-  await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc));
-}
-
-function blockingOpen(x: Exec): readonly NeedsUserId[] {
-  return openBlockingItems(x.stage.runDir, x.journal.view);
-}
+type Exec = Readonly<{
+  stage: StageContext; commands: CommandContext; journal: OpenJournal; arbiter: Arbiter; prober: ProberHandle; stop: AbortController;
+}>;
 
 /**
  * The control-only phase: before recovery, so nobody is inside an integration.ff and control commands apply
@@ -408,179 +341,9 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
     }
     await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc).filter((c) => !open.has(c.id)));
     if (x.journal.view.control().stop !== null) return { kind: 'stop', cause: 'command', needsUser: null };
-    if (blockingOpen(x).length === 0) return null;
+    if (openBlockingItems(x.stage.runDir, x.journal.view).length === 0) return null;
     await sleep(POLL_MS);
   }
-}
-
-function currentUnit(x: Exec): PlanUnit | null {
-  const next = nextUnit(x.stage.plan().units.map((u) => u.id), x.journal.view);
-  return x.stage.plan().units.find((u) => u.id === next) ?? null;
-}
-
-/** What a pause or stop asks of the running arc, per the durable markers. */
-function interruption(x: Exec): 'pause' | 'stop' | null {
-  const c = x.journal.view.control();
-  if (c.stop !== null) return 'stop';
-  const current = currentUnit(x);
-  if (c.pausedAll || (current !== null && c.pausedUnits.includes(current.id))) return 'pause';
-  return null;
-}
-
-/** The needs-user record of a raised id; its file must exist. */
-export function recordOf(runDir: AbsPath, id: NeedsUserId): NeedsUserRecord {
-  const record = readNeedsUser(runDir, id);
-  if (record === null) throw new Error(`needs-user ${id} is raised but ${needsUserPath(runDir, id)} does not exist`);
-  return record;
-}
-
-/** Why the loop does not dispatch now, or null when it may. */
-function waitReason(x: Exec, current: PlanUnit): string | null {
-  const view = x.journal.view;
-  const holding = blockingOpen(x).filter((id) => holdsArc(recordOf(x.stage.runDir, id), current.id));
-  if (holding.length > 0) return `blocking needs-user ${holding.join(', ')}`;
-  if (view.unit(current.id).status === 'held') return `unit ${current.id} is held`;
-  return dispatchBlock(view, current);
-}
-
-async function drive(x: Exec): Promise<ExitReason> {
-  for (;;) {
-    await applyCommands(x);
-    await raiseDue(x, null);
-    const view = x.journal.view;
-    if (view.control().stop !== null) return stopRun(x, { kind: 'stop', cause: 'command', needsUser: null });
-    const stopped = x.stage.plan().units.find((u) => view.unit(u.id).status === 'stop-pending');
-    if (stopped !== undefined) return stopRun(x, { kind: 'stop', cause: 'unit', needsUser: raisedFor(view, decidedParent(view, stopped.id)) });
-    const current = currentUnit(x);
-    if (current === null && blockingOpen(x).length === 0) return { kind: 'complete', units: summary(x) };
-    if (current === null || waitReason(x, current) !== null) {
-      await sleep(POLL_MS);
-      continue;
-    }
-    await raiseDue(x, await runWithControl(x));
-  }
-}
-
-/** Runs the arc while applying control commands every poll; a pause or stop interrupts the running stage. */
-async function runWithControl(x: Exec): Promise<ArcResult> {
-  const abort = new AbortController();
-  let finished = false;
-  // Mutations at each stage boundary; control commands meanwhile, below.
-  const atBoundary = async (): Promise<void> => {
-    await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, x.journal.view.arc));
-  };
-  const running = runArc({ ...x.stage, signal: abort.signal }, abort.signal, (unit, content) => raiseParked(x, unit, content), atBoundary).finally(() => {
-    finished = true;
-  });
-  // Settles when the arc does, without rethrowing here: `running` is returned and rethrows to the caller.
-  const ended = running.then(() => undefined, () => undefined);
-  while (!finished) {
-    await Promise.race([ended, sleep(POLL_MS)]);
-    if (finished) break;
-    await applyControl(x.commands, pollCommands(x.stage.runDir, x.journal.view.arc));
-    const reason = interruption(x);
-    if (reason === null) continue;
-    abort.abort(reason);
-    await interruptLive(x, reason);
-  }
-  return running;
-}
-
-/**
- * Cancels every live backend or lane invocation of a stage through `proc.kill{reason}`, once each. Probes and
- * teardowns run to their end: a cleanup is never cut short. An invocation whose runner has not written
- * runner.json yet is left for the next poll (its runner may not have exec'd, so it cannot be found yet).
- */
-async function interruptLive(x: Exec, reason: 'pause' | 'stop'): Promise<void> {
-  const view = x.journal.view;
-  for (const intent of view.openIntents()) {
-    if (intent.kind !== 'proc.spawn' || intent.parent.type !== 'stage') continue;
-    const { purpose } = intent.expect.subject;
-    if (purpose !== 'backend' && purpose !== 'lane') continue;
-    const inv = invocationId(intent.op, intent.ordinal);
-    if (view.opsOf('proc.kill').some((k) => k.expect.inv === inv && k.expect.reason === reason)) continue;
-    const files = runnerFiles(invocationDir(x.stage.runDir, inv), inv);
-    if (files.read('runner.json') === null || files.read('exit.json') !== null) continue;
-    await killWorkload(x.stage, { inv, scope: 'invocation', reason });
-  }
-}
-
-/** A stop: whatever a stage still holds is cleaned (an interrupted stage cleans its own), then the run ends. */
-async function stopRun(x: Exec, reason: Extract<ExitReason, { kind: 'stop' }>): Promise<ExitReason> {
-  await recoverReservations(x.stage);
-  return reason;
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Needs-user
-
-/** The stage attempt whose outcome decided the unit's park or stop: what its needs-user is parented by. */
-function decidedParent(view: JournalView, unit: UnitId): Parent {
-  const f: StageOutcomeFact | null = view.unit(unit).decided;
-  if (f === null) throw new Error(`unit ${unit} has no decided outcome`);
-  return { type: 'stage', unit, stage: f.stage, attempt: f.attempt };
-}
-
-/** The content the arc returned for `unit`, if this result carries one. */
-function contentOf(result: ArcResult | null, unit: UnitId): NeedsUserContent | null {
-  if (result === null) return null;
-  switch (result.kind) {
-    case 'terminal': {
-      const s = result.units.find((u) => u.unit === unit)?.result;
-      return s?.kind === 'parked' ? s.needsUser : null;
-    }
-    case 'held':
-      return null;
-    case 'stopped':
-      return result.unit === unit ? result.needsUser : null;
-  }
-}
-
-/**
- * A parked unit's needs-user, raised as the arc hands it over (`runArc`'s `onParked`), so the item is open
- * while later units run; parented by the attempt that parked the unit, so it is raised once.
- */
-function raiseParked(x: Exec, unit: UnitId, content: NeedsUserContent): void {
-  const { journal, runDir } = x.stage;
-  const parent = decidedParent(journal.view, unit);
-  if (raisedFor(journal.view, parent) === null) raiseNeedsUser(journal, runDir, content, parent);
-}
-
-/**
- * Writes every needs-user now due, once: each parked or stopped unit's not yet raised (content from
- * `result` when the arc just decided it, else re-read from the driver, which returns it without running
- * anything), and a held unit's arc-wide item (a backend park), parented by the held attempt.
- */
-async function raiseDue(x: Exec, result: ArcResult | null): Promise<void> {
-  const { journal, runDir } = x.stage;
-  for (const unit of x.stage.plan().units) {
-    const status = journal.view.unit(unit.id).status;
-    if (status !== 'park-pending' && status !== 'stop-pending') continue;
-    const parent = decidedParent(journal.view, unit.id);
-    if (raisedFor(journal.view, parent) !== null) continue;
-    let content = contentOf(result, unit.id);
-    if (content === null) {
-      const s = await step(x.stage, unit);
-      if (s.kind !== 'parked' && s.kind !== 'stopped') throw new Error(`unit ${unit.id} is ${status}, but the driver says ${s.kind}`);
-      content = s.needsUser;
-    }
-    raiseNeedsUser(journal, runDir, content, parent);
-  }
-  if (result?.kind === 'held' && result.needsUser !== null) {
-    const u = journal.view.unit(result.unit);
-    const parent: Parent = { type: 'stage', unit: result.unit, stage: u.stage, attempt: u.counters.attempts };
-    if (raisedFor(journal.view, parent) === null) raiseNeedsUser(journal, runDir, result.needsUser, parent);
-  }
-}
-
-function summary(x: Exec): readonly UnitSummary[] {
-  const view = x.journal.view;
-  return x.stage.plan().units.map((u): UnitSummary => {
-    if (view.unit(u.id).status === 'retired') return { unit: u.id, result: 'merged' };
-    const id = raisedFor(view, decidedParent(view, u.id));
-    if (id === null) throw new Error(`unit ${u.id} is parked without its needs-user`);
-    return { unit: u.id, result: 'parked', needsUser: id };
-  });
 }
 
 // ---------------------------------------------------------------------------------------------------

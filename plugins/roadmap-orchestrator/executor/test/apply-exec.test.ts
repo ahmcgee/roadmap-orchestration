@@ -1,19 +1,18 @@
 // `roadmap apply` against a running executor, through the real CLI as child processes, fake-backed (the
-// executor tests' harness): an apply is applied at the next stage boundary, never by killing what runs; the
-// plan in force changes what the arc does next. Named tests: apply.exec-add-unit-mid-build,
+// executor tests' harness): a mutation applies once the units in its scope are idle or at an admission
+// boundary (A12), never by killing what runs; the plan in force changes what the arc does next. Named tests: apply.exec-add-unit-mid-build,
 // apply.exec-revision-in-flight, apply.exec-routing-parks, apply.exec-resume-at-boundary,
 // apply.exec-respawn-ignores-unapplied-edit; the crash cells of the matrix row "start: a later start whose files
 // change the plan".
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { after, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
 import { type CommandId, commandId, unitId } from '../src/core/ids.ts';
 import { terminalReceipt } from '../src/commands/queue.ts';
 import { absPath } from '../src/core/values.ts';
-import { RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE, RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
 import { type CodexAct, type Step, readCalls } from './helpers/scenario.ts';
@@ -50,11 +49,11 @@ function editSpec(r: ExecRun, unit: string, edit: (spec: Json) => void): void {
   writeFileSync(specPath(r, unit), JSON.stringify(spec));
 }
 
-/** Adds unit `id` after the others, its spec a copy of u1's. */
-function addUnit(r: ExecRun, id: string): void {
+/** Adds unit `id` after the others in plan order (and, with `after`, after those units in the graph), its spec a copy of u1's. */
+function addUnit(r: ExecRun, id: string, after: readonly string[] = []): void {
   const spec = JSON.parse(readFileSync(specPath(r, 'u1'), 'utf8')) as Json;
   writeFileSync(specPath(r, id), JSON.stringify({ ...spec, unit: id, rev: 1 }));
-  editPlan(r, (p) => void p.units.push({ ...p.units[0]!, id, spec: `${id}.json` }));
+  editPlan(r, (p) => void p.units.push({ ...p.units[0]!, id, spec: `${id}.json`, ...(after.length > 0 ? { after } : {}) }));
 }
 
 /** `roadmap apply`: the id of the command it queued. */
@@ -85,10 +84,8 @@ function blockedBuild(name: string, threadId?: string, acts: readonly CodexAct[]
   return threadId === undefined ? step : ({ ...step, threadId } as Step);
 }
 
-/** Waits a few command polls: long enough for a command to have been applied, were it applied mid-stage. */
-const polls = (): Promise<void> => sleep(2_500);
 
-test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied at the build\'s stage boundary, nothing killed; the arc dispatches it after u1', T, async (t) => {
+test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied at once (its scope is the new unit, which is idle; A12), nothing killed; the arc dispatches it after u1, the `after` it names', T, async (t) => {
   const r = setupExec(t, {
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1'), gateStep({ decision: 'approve' }),
@@ -97,10 +94,10 @@ test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied 
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
-  addUnit(r, 'u2');
+  addUnit(r, 'u2', ['u1']);
   const id = await apply(r);
-  await polls();
-  assert.equal(receiptOf(r, id), null, 'mid-stage, the apply waits for the stage boundary');
+  await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the apply to apply while u1 still builds');
+  assert.equal(journalOf(r).view.unit(U1).decided?.stage, 'plan-check', 'u1\'s build has recorded nothing yet');
   release(r.scenarioDir, 'build1');
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
@@ -108,7 +105,8 @@ test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied 
   assert.equal(receiptOf(r, id)?.state, 'applied');
   assert.deepEqual(kills(r), [], 'no proc.kill: the running build was not interrupted');
   const fact = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
-  assert.ok(outcomeSeq(r, 'u1', 'build') < fact && fact < outcomeSeq(r, 'u1', 'quiesce'), 'applied at the boundary right after the build');
+  assert.ok(fact < outcomeSeq(r, 'u1', 'build'), 'applied while the build ran');
+  assert.ok(outcomeSeq(r, 'u1', 'snapshot') < outcomeSeq(r, 'u2', 'plan-check'), 'u2 dispatched once u1 merged');
   assert.deepEqual(outcomes(r, 'u1'), STRAIGHT);
   assert.deepEqual(outcomes(r, 'u2'), STRAIGHT);
   const s = await statusOf(r);
@@ -116,13 +114,16 @@ test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied 
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
 });
 
-test('apply.exec-revision-in-flight: rev + 1 of the building unit\'s spec is held to a boundary that allows re-entry (before lanes), then the unit re-enters plan-check on it, keeping its implementer session; the build\'s decisions are not patched onto the spec meanwhile', T, async (t) => {
+test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-build: idle, so the apply lands at once, A12) is held to a boundary that allows re-entry (before lanes), past the continued build, then the unit re-enters plan-check on it, keeping its implementer session; the build\'s decisions are not patched onto the spec meanwhile', T, async (t) => {
   const thread = '00000000-0000-4000-8000-0000000a9917';
   const r = setupExec(t, { steps: [] });
   const decisions = JSON.stringify({ decisions: [{ id: 'D1', text: 'mul multiplies with the * operator.' }] });
+  const write = { type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: decisions } as const;
   appendSteps(r, [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }),
-      blockedBuild('build1', thread, [{ type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: decisions }]),
+      // The thread is reported first, so the paused exec's continue resumes it.
+      blockedBuild('build1', thread, [{ type: 'threadStarted' }, write]),
+      codexStep([write], { argv: ['exec', 'resume', thread], stdinContains: [CONTINUE_DIRECTIVE] }),
       planCheckStep({ decision: 'approve' }),
       codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [RESPEC_DIRECTIVE, 'mul(0, 5) is 0'] }),
       gateStep({ decision: 'approve' }),
@@ -133,18 +134,22 @@ test('apply.exec-revision-in-flight: rev + 1 of the building unit\'s spec is hel
     s['acceptance'] = [...(s['acceptance'] as Json[]), { id: 'A2', clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' }];
     s['rev'] = 2;
   });
+  await cli(r, ['pause', 'u1']);
+  await until(() => outcomes(r).includes('build:interrupted'), WAIT_MS, 'the build to be interrupted');
   const id = await apply(r);
-  release(r.scenarioDir, 'build1');
+  await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the apply to land while u1 is held');
+  assert.equal(receiptOf(r, id)?.state, 'applied');
+  assert.equal(journalOf(r).view.unit(U1).pendingRevision?.rev, 2, 'held pending: a continued build does not re-enter');
+  await cli(r, ['resume', 'u1']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-  assert.equal(receiptOf(r, id)?.state, 'applied');
-  assert.deepEqual(kills(r), []);
-  // The build's own chain (quiesce → teardown) ran on rev 1; the unit re-entered before its lanes.
-  assert.deepEqual(outcomes(r), [...STRAIGHT.slice(0, 6), ...STRAIGHT]);
+  assert.deepEqual(kills(r).map((k) => k.expect.reason), ['pause']);
+  // The continued build's chain (quiesce → teardown) ran on rev 1; the unit re-entered before its lanes.
+  assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1, 6), ...STRAIGHT]);
   const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
   const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 2);
-  assert.ok(outcomeSeq(r, 'u1', 'build') < applied && applied < outcomeSeq(r, 'u1', 'quiesce'), 'applied at the first boundary');
+  assert.ok(outcomeSeq(r, 'u1', 'build') < applied && applied < outcomeSeq(r, 'u1', 'build', 2), 'applied while the unit was held');
   assert.ok(outcomeSeq(r, 'u1', 'teardown') < reopened && reopened < outcomeSeq(r, 'u1', 'plan-check', 2), 're-opened at the boundary before lanes');
   const { view } = journalOf(r);
   assert.equal(view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the revision');
@@ -172,9 +177,9 @@ test('apply.exec-routing-parks: a routing apply that moves the building unit\'s 
   assert.equal(reasonOf(exit).kind, 'stop');
 });
 
-test('apply.exec-resume-at-boundary: a resume queued while another unit builds applies at that build\'s stage boundary, not when the arc returns', T, async (t) => {
+test('apply.exec-resume-at-boundary: a pause and a resume of an idle unit (u2, after u1) apply while another unit builds: their scope is u2 alone (A12), not a boundary of u1', T, async (t) => {
   const r = setupExec(t, {
-    units: [{ id: 'u1' }, { id: 'u2' }],
+    units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }],
     steps: [
       ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1'), gateStep({ decision: 'approve' }),
       planCheckStep({ decision: 'approve' }), mulBuild({ 'src/extra.js': 'export const extra = 1;\n' }), gateStep({ decision: 'approve' }),
@@ -185,12 +190,13 @@ test('apply.exec-resume-at-boundary: a resume queued while another unit builds a
   await cli(r, ['pause', 'u2']);
   await until(() => journalOf(r).view.control().pausedUnits.includes(unitId('u2')), WAIT_MS, 'u2 paused');
   await cli(r, ['resume', 'u2']);
+  await until(() => journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'resumed'), WAIT_MS, 'u2 resumed, u1 still building');
   release(r.scenarioDir, 'build1');
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
   const resumed = seqOf(r, (f) => f.kind === 'resumed');
-  assert.ok(outcomeSeq(r, 'u1', 'build') < resumed && resumed < outcomeSeq(r, 'u1', 'quiesce'), 'the resume applied at the boundary after u1\'s build');
+  assert.ok(resumed < outcomeSeq(r, 'u1', 'build'), 'the resume applied while u1\'s build ran');
   assert.deepEqual(kills(r), [], 'the pause of u2 killed nothing of u1');
 });
 
@@ -219,7 +225,8 @@ test('apply.exec-respawn-ignores-unapplied-edit: after an executor crash the res
   assert.ok(reason.kind === 'refused');
   assert.deepEqual(reason.rejections, [{
     kind: 'plan-change-refused',
-    reasons: ['unit u1 has started; it cannot be removed', 'the units that have started (u1) must stay first in plan order, in their order'],
+    // An M2 arc (a DAG) keeps only the started units' relative order (G3), which dropping u1 leaves intact.
+    reasons: ['unit u1 has started; it cannot be removed'],
   }]);
 });
 

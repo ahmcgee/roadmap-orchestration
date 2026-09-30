@@ -531,12 +531,12 @@ describe('startup.plan-in-force', () => {
     const rejections = refusedWith(result as Checked, 'plan-change-refused', 78);
     assert.ok(result.kind === 'refused' && result.claim !== null);
     releaseHost(s.hostDir, result.claim);
+    // A first start on M2 schedules a DAG, whose started units keep only their relative order (G3): no prefix reason.
     assert.deepEqual(rejections, [{
       kind: 'plan-change-refused',
       reasons: [
         `worktreeRoot may never change (in force: ${String(s.plan['worktreeRoot'])}; plan.json: ${moved})`,
         'unit u1 has started; it cannot be removed',
-        'the units that have started (u1) must stay first in plan order, in their order',
       ],
     }]);
     assert.equal(startupRejection(JSON.parse(JSON.stringify(rejections[0])), 'r').kind, 'plan-change-refused', 'the row round-trips');

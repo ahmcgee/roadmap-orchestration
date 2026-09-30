@@ -135,7 +135,8 @@ export const STRAIGHT_OUTCOMES = {
  * suite's evidence, a fresh gate approves, and the candidate publishes.
  */
 export const BUMPY: Scenario = {
-  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE] }] }),
+  // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
+  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }] }),
   steps: (r) => [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
     { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },

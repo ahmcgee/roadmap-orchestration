@@ -16,7 +16,7 @@ import type { JsonValue } from '../../src/core/json.ts';
 import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { manifestOf, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { manifestOf, readInputFiles } from '../../src/input/inforce.ts';
 import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
@@ -25,7 +25,7 @@ import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
-import { BUILD_REPORT, type LaneJson, recordDagPlan, serialRuntime } from './stage-common.ts';
+import { BUILD_REPORT, type LaneJson, recordDagPlan, recordLegacyPlan, serialRuntime, testProbes } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -122,7 +122,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
     if (d.dag === true) recordDagPlan(journal, absPath(d.runDir), absPath(d.planPath));
-    else recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, []);
+    else recordLegacyPlan(journal, absPath(d.runDir), absPath(d.planPath));
   }
   const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const resources = {
@@ -152,6 +152,7 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
   return {
     ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
     resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+    probes: testProbes(stage),
   };
 }
 

@@ -18,7 +18,7 @@ import { commandReconciler } from '../src/recover/command.ts';
 import { type SweepHolder, cleanup, reserve, resourceTable, run as runReservation } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { ownerLabel } from '../src/resources/teardown.ts';
-import type { Prober } from '../src/schedule/types.ts';
+import type { ProberHandle } from '../src/park/probe.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -273,8 +273,10 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
   };
   const unitFacts = (ctx: CommandContext, kind: string) => events(ctx.runDir).filter((e) => e.type === 'fact' && e.fact.kind === kind);
   /** A prober whose run writes the probe fact with the result `results` names for the target, as the real one does. */
-  const fakeProber = (journal: OpenJournal, results: Readonly<Record<string, 'pass' | 'fail'>>, ran: string[]): Prober => ({
+  const fakeProber = (journal: OpenJournal, results: Readonly<Record<string, 'pass' | 'fail'>>, ran: string[]): ProberHandle => ({
     due: () => [],
+    running: () => [],
+    resumeBackend: () => assert.fail('no resume --backend here'),
     run: (job) => {
       const key = probeTargetKey(job.target);
       const result = results[key] ?? assert.fail(`no result for probe target ${key}`);

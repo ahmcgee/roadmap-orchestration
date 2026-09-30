@@ -20,11 +20,16 @@ const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.met
 
 type Call = Readonly<{ as: FakeName; argv: readonly string[]; cwd: string; stdin: string; env: Record<string, string> }>;
 
-/** The unit a call belongs to: the owner label `<arc>/<unit>`, else the cwd's basename (see Step). */
+/**
+ * The unit a call belongs to: the owner label `<arc>/<unit>`, else the cwd's basename up to its first dot
+ * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.plan-check-<n>` or `<unit>.verify-<n>`,
+ * and unit ids are slugs, which have no dot.
+ */
 export function callUnit(env: Readonly<Record<string, string>>, cwd: string): string | null {
   const owner = env['RESOURCE_OWNER'];
   if (owner !== undefined) return owner.slice(owner.lastIndexOf('/') + 1);
-  return basename(cwd) === '' ? null : basename(cwd);
+  const name = basename(cwd).split('.')[0] ?? '';
+  return name === '' ? null : name;
 }
 
 function parseArgs(raw: readonly string[]): { scenario: string; as: FakeName; argv: readonly string[] } {

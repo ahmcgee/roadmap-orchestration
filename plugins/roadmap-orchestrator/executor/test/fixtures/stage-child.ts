@@ -4,12 +4,13 @@
 import { runUnit } from '../../src/pipeline/unit.ts';
 import { recover } from '../../src/recover/recover.ts';
 import { recoveryContext } from './rec-common.ts';
+import { admitAll } from './stage-common.ts';
 import { type ArcDescriptor, contextFor } from './unit-common.ts';
 
 const [json, id] = process.argv.slice(2);
 if (json === undefined || id === undefined) throw new Error(`usage: stage-child <arc descriptor json> <unit>, got ${JSON.stringify(process.argv.slice(2))}`);
 const r = contextFor(JSON.parse(json) as ArcDescriptor);
 await recover(recoveryContext(r));
-const result = await runUnit(r.ctx, r.unit(id), new AbortController().signal);
+const result = await runUnit(r.ctx, r.unit(id), admitAll);
 process.stdout.write(`${JSON.stringify(result)}\n`);
 r.journal.close();

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { absPath } from '../../src/core/values.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import { type ResRun, openRun } from './res-plan.ts';
+import { serialRuntime, testProbes } from './stage-common.ts';
 
 export type CmdRun = ResRun & Readonly<{ binDir: string }>;
 
@@ -17,15 +18,19 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; jou
   const routing = { profile: 'default' as const, resolved: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }) };
   const home = process.env['HOME'];
   if (home === undefined) throw new Error('tests need HOME');
+  const hostEnv = { PATH: run.binDir, HOME: home };
+  const planDir = absPath(run.repo);
+  const stage = { ...ctx, hostEnv, planDir, routing: () => routing.resolved, ...serialRuntime(ctx) };
   return {
     journal,
     ctx: {
       ...ctx,
-      hostEnv: { PATH: run.binDir, HOME: home },
-      planDir: absPath(run.repo),
+      hostEnv,
+      planDir,
       laneEnv: {}, planFile: absPath(join(run.repo, 'plan.json')),
       resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
       routing: () => routing,
+      probes: testProbes(stage),
     },
   };
 }

@@ -37,6 +37,7 @@ import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scen
 import { release } from './helpers/barrier.ts';
 import { BARRIER, recoveryContext, strandedCall } from './fixtures/rec-common.ts';
 import {
+  admitAll, testProbes,
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, planCheckStep, serialRuntime, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { type ArcDescriptor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
@@ -80,7 +81,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
   const d = setupArc({ steps: STRAIGHT, dag: DAG });
   const r = contextFor(d);
   try {
-    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
     assert.ok([...resourceTable(r.journal.view).values()].every((e) => e.status.state === 'free'), 'nothing held once merged');
   } finally {
     r.journal.close();
@@ -463,7 +464,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
       stage: ctx,
       commands: {
         ...ctx, hostEnv: backendEnv(ctx.hostEnv), laneEnv: ctx.hostEnv, planFile: absPath(join(run.planDir, 'plan.json')),
-        resolve: () => ctx.routing(), routing: () => ({ profile: 'default', resolved: ctx.routing() }),
+        resolve: () => ctx.routing(), routing: () => ({ profile: 'default', resolved: ctx.routing() }), probes: testProbes(ctx),
       },
     });
     const u = journal.view.unit(U1);
