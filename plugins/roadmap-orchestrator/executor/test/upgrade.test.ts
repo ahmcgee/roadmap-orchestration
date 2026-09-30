@@ -76,8 +76,9 @@
 //                              go, the dev.5 pair stays byte for byte; recovery releases it and the arc merges.
 //   upgrade.opt-in-holistic    stopped mid-build, `page-id` left held; on HEAD the architect's
 //                              `apply` adds `holistic` (a vision, one must-hold obligation witnessed by a node-test
-//                              lane, L = {invariants}), then `resume page-id`: the baseline job, the brake on
-//                              `page-id`'s candidate, the final audit and a no-op checkpoint, `arc-completed`.
+//                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
+//                              a no-op checkpoint, the brake on `page-id`'s candidate, the final audit and a no-op
+//                              checkpoint, the close-out, `arc-completed`.
 //
 // Not covered: a backend parked on a usage limit, the Claude-only profile.
 import assert from 'node:assert/strict';
@@ -352,17 +353,14 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
   return { driver, report, check, calls, after: events.filter((e) => e.seq > highWater), view };
 }
 
-/**
- * Every check.ts criterion passes but `failing` (named with the reason in the caller), both units merged, one HEAD
- * generation ran it, and the upgrade forced no park.
- */
-function assertFinished(f: Finished, failing: readonly string[] = []): void {
+/** Every check.ts criterion passes, both units merged, one HEAD generation ran it, and the upgrade forced no park. */
+function assertFinished(f: Finished): void {
   assert.equal(f.driver.code, 0, `driver: ${f.driver.stdout} ${f.driver.stderr}`);
   assert.equal(f.report.endedBy, 'exit');
   assert.equal(f.report.generation, f.report.start.ready?.generation, 'HEAD\'s executor was not restarted');
   assert.ok((f.report.generation ?? 0) > 1, 'HEAD ran a later host generation than the previous release');
   assert.deepEqual(f.report.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
-  assert.deepEqual(f.check.criteria.filter((c) => !c.pass).map((c) => c.name), failing, JSON.stringify(f.check.criteria));
+  assert.deepEqual(f.check.criteria.filter((c) => !c.pass), [], JSON.stringify(f.check.criteria));
   assert.equal(f.check.criteria.length, 8);
   const forced = f.after.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && ['park', 'stop'].includes(e.fact.class) ? [`${e.fact.unit} ${e.fact.stage} ${e.fact.outcome}`] : []));
   assert.deepEqual(forced, [], 'the upgrade parked or stopped no unit');
@@ -794,11 +792,7 @@ test('upgrade.dev5-spend-by-model: dev.5\'s revision is adopted with its routing
   } finally {
     await teardown(scope);
   }
-  // check.ts predates routing provenance: its no-model-ids scan counts the adoption record, which is routing
-  // configuration (CLAUDE.md: model ids appear only there). Every hit must be in that record.
-  assertFinished(f, ['no-model-ids']);
-  const hits = f.check.criteria.find((c) => c.name === 'no-model-ids')!.detail.split('; ');
-  assert.ok(hits.every((h) => /^gpt-5\.6-sol in (refs\/roadmap\/[^:]+:)?routing-provenance\/1\.json$/.test(h)), hits.join('; '));
+  assertFinished(f);
   const adopted = JSON.parse(readFileSync(join(p.l.runDir, 'routing-provenance', '1.json'), 'utf8')) as { kind: string; provenance: { repoConfig: { classes: object } }; matched: unknown[] };
   assert.equal(adopted.kind, 'reconstructed');
   assert.deepEqual(adopted.provenance.repoConfig.classes, { efficient: EFFICIENT });
@@ -1060,13 +1054,14 @@ function obligations(): unknown {
   };
 }
 
-test('upgrade.opt-in-holistic: an architect apply adds `holistic` to a dev.5 arc mid-run: the baseline job, the brake on page-id\'s candidate, the final audit and a no-op checkpoint, arc-completed', T, async () => {
+test('upgrade.opt-in-holistic: an architect apply adds `holistic` to a dev.5 arc mid-run: the baseline job, the drift audit, the brake on page-id\'s candidate, the final audit, no-op checkpoints, arc-completed', T, async () => {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle.
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
+  // The opt-in revision triggers a drift audit (audit-1, L ∩ {drift, vision} empty: all of L), whose checkpoint is
+  // ckpt-1; page-id's publication leaves the final audit (audit-2) and its checkpoint (ckpt-2).
   const steps: readonly Step[] = [
     ...headFakeSteps({ steps: head }, 'default'),
-    lensStep('audit-1', 'invariants'),
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+    ...(['1', '2'] as const).flatMap((n) => [lensStep(`audit-${n}`, 'invariants'), checkpointStep(`ckpt-${n}`, checkpointAnswer({ decision: 'no-op' }))]),
   ];
   let id = '';
   const scope = scopeOf(p);
@@ -1093,7 +1088,8 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to a dev.5 arc
   assert.ok(witnessed.some((w) => w.for.type === 'job' && w.for.job.startsWith('baseline-')), 'the baseline job witnessed the arc lanes');
   assert.ok(witnessed.some((w) => w.for.type === 'candidate' && w.for.unit === 'page-id'), 'page-id\'s candidate ran the brake');
   assert.ok(factsOf(r.after, 'audit-ended').some((a) => a.outcome === 'completed' && a.covered.some((cv) => cv.lens === 'invariants')), 'an audit covered the invariants lens');
-  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => b.outcome), [{ type: 'no-op' }]);
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-1', { kind: 'no-op' }], ['ckpt-2', { kind: 'no-op' }]]);
+  assert.deepEqual(factsOf(r.after, 'audit-started').map((a) => [a.job, a.triggers.map((t) => t.type)]), [['audit-1', ['drift']], ['audit-2', ['final']]]);
   const [completed] = factsOf(r.after, 'arc-completed');
   assert.ok(completed !== undefined);
   assert.equal(completed.planRev, 2);

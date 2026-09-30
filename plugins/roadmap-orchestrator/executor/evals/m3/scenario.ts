@@ -140,7 +140,7 @@ const NO_OP = checkpointAnswer({ decision: 'no-op' });
 const JOB_STEPS: readonly Step[] = [
   lensStep('audit-1', 'vision'),
   lensStep('audit-1', 'invariants'),
-  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS, progressMs: 5_000 }]),
+  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
   checkpointStep('ckpt-3', REPAIR_BUNDLE),
   lensStep('audit-2', 'vision'),
