@@ -1,4 +1,4 @@
-// `roadmap watch` (src/watch.ts): needs-user items, acknowledgements and owner liveness as JSON lines.
+// `roadmap watch` (src/watch.ts): needs-user items, acknowledgements, owner liveness and the parallel view as JSON lines.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -47,7 +47,7 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
 
   const lines: Line[] = [];
   const stop = new AbortController();
-  const watching = watch(runDir, hostDir, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+  const watching = watch(runDir, arc, hostDir, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
   try {
     await until(lines, (l) => l['event'] === 'owner' && l['state'] === 'alive', 2_000, 'owner alive');
 
@@ -71,7 +71,12 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
     assert.deepEqual(await until(lines, (l) => l['event'] === 'owner' && l['state'] === 'dead', 2_000, 'owner dead'), { event: 'owner', state: 'dead', generation: claim.generation, pid });
     assert.ok(Date.now() - diedAt < 2_000);
     // Each item once, the owner once per change.
-    assert.deepEqual(lines.map((l) => `${l['event']}${l['state'] === undefined ? '' : ` ${l['state']}`}`), ['owner alive', 'needs-user', 'ack', 'owner dead']);
+    const others = lines.filter((l) => l['event'] !== 'units');
+    assert.deepEqual(others.map((l) => `${l['event']}${l['state'] === undefined ? '' : ` ${l['state']}`}`), ['owner alive', 'needs-user', 'ack', 'owner dead']);
+    // The parallel view once per change: no plan yet, so no units; the open item parks the run, the dead owner leaves it ownerless.
+    const views = lines.filter((l) => l['event'] === 'units');
+    assert.deepEqual(views.map((l) => l['run']), ['running', 'parked', 'no-owner']);
+    assert.ok(views.every((l) => JSON.stringify(l['units']) === '{}'));
   } finally {
     stop.abort();
     await watching;

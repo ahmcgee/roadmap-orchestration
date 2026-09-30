@@ -210,8 +210,8 @@ export function legacyNext(view: JournalView, units: readonly PlanUnit[]): Legac
   return { unit: next.id, block: after.length > 0 ? `unit ${next.id} is held after ${after.join(', ')}` : null };
 }
 
-/** dev.4's `settledForAfter`: merged, or parked with the blocking needs-user of its park acknowledged. */
-function legacySettled(view: JournalView, id: UnitId): boolean {
+/** dev.4's `settledForAfter`: merged, or parked with the blocking needs-user of its park acknowledged. `status` lists the unsettled. */
+export function legacySettled(view: JournalView, id: UnitId): boolean {
   const u = view.unit(id);
   if (u.status === 'superseded' && u.supersededBy !== null) return legacySettled(view, u.supersededBy);
   if (u.status === 'retired' || u.status === 'cut') return true;

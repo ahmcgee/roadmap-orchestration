@@ -13,7 +13,10 @@
 //      schedule's (escalations, breakers; src/park/schedule.ts); then, with nothing running and no mutation
 //      pending, end `complete` if every unit is settled and no blocking item is open;
 //   5. start a task for every ready unit without one (`ready`), and admit waiting tasks (`admitter`);
-//   6. re-evaluate the arbiter (it is also woken by every release: a task's or a job's end).
+//   6. re-evaluate the arbiter (it is also woken by every release: a task's or a job's end), then write the
+//      derived `sched.json` (`SCHED_FILE`) when it changed: each task's state, the arbiter's queue and the
+//      pending mutations' scopes, for `status` only. Nothing reads it for a decision; a restart rebuilds all
+//      of it in memory.
 // Jobs and tasks never block polling: the loop only starts them and reads their ends.
 //
 // A task runs its unit's stage loop (`runUnit`) with a per-task StageContext: the arbiter's `acquire`, the
@@ -42,10 +45,14 @@
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS } from '../commands/queue.ts';
+import { join } from 'node:path';
 import { type Parent, probeTargetKey } from '../core/events.ts';
-import { type CommandId, type InvocationId, type NeedsUserId, type UnitId, invocationId } from '../core/ids.ts';
+import { atomicJson, canonicalJson } from '../core/fsx.ts';
+import { type ArcId, type CommandId, type InvocationId, type NeedsUserId, type UnitId, arcId, commandId, invocationId, resourceName, unitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandFile } from '../core/records.ts';
+import { type CommandFile, STAGES, type Stage } from '../core/records.ts';
+import { type Read, arrayOf, bool, literal, nat, object, oneOf, positive, tagged, version } from '../core/validate.ts';
+import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { commandScope } from '../input/classify.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type BlockingItem, blockingItems, holdsUnit, raiseNeedsUser, raisedFor } from '../needsuser.ts';
@@ -55,10 +62,59 @@ import type { StageContext } from '../pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
 import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
 import { recoverReservations } from '../recover/resource.ts';
+import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter } from './arbiter.ts';
 import { admitter, nextStage, rankOf, ready } from './ready.ts';
-import type { AdmissionStage, CommandScope, TaskState } from './types.ts';
+import type { AdmissionStage, CommandScope, ResourceRequest, TaskState } from './types.ts';
+
+// ---------------------------------------------------------------------------------------------------
+// sched.json: the scheduler's in-memory view, for `status` only
+
+/** The derived scheduler view in the run dir, rewritten on change. Non-authoritative: never read for a decision. */
+export const SCHED_FILE = 'sched.json';
+
+const TASK_STATES = ['idle', 'awaiting-admission', 'in-stage', 'in-chain'] as const satisfies readonly TaskState[];
+
+/** One waiter of the arbiter, in the order it serves them: the unit, the stage attempt it waits for, what it asks. */
+export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean }>;
+
+/**
+ * `sched.json`: written by the executor process `pid` (status trusts it only while that executor owns the
+ * run). `tasks`: every unit with a task (a unit without one is idle). `queue`: the arbiter's waiters, served
+ * first to last. `drains`: the pending mutations, in submission order, with their scopes (A12).
+ */
+export type SchedFile = Readonly<{
+  v: SchemaVersion;
+  arc: ArcId;
+  pid: number;
+  tasks: readonly Readonly<{ unit: UnitId; state: TaskState }>[];
+  queue: readonly QueueEntry[];
+  drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
+}>;
+
+const units: Read<readonly UnitId[]> = arrayOf((v, p) => unitId(v, p));
+const request: Read<ResourceRequest> = object((f) => ({
+  named: f.get('named', arrayOf((v, p) => resourceName(v, p))), pools: f.get('pools', arrayOf((v, p) => resourceName(v, p))),
+  cpu: f.get('cpu', nat), publication: f.get('publication', bool),
+}));
+const scope: Read<CommandScope> = tagged('type', {
+  arc: object((f): CommandScope => ({ type: f.get('type', literal('arc')) })),
+  units: object((f): CommandScope => ({ type: f.get('type', literal('units')), units: f.get('units', units) })),
+  none: object((f): CommandScope => ({ type: f.get('type', literal('none')) })),
+});
+
+export const schedFile: Read<SchedFile> = object((f) => ({
+  v: f.get('v', version),
+  arc: f.get('arc', (v, p) => arcId(v, p)),
+  pid: f.get('pid', positive),
+  tasks: f.get('tasks', arrayOf(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), state: g.get('state', oneOf(TASK_STATES)) })))),
+  queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
+    unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
+    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool),
+  })))),
+  drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
+}));
 
 /** How a unit ended the run. */
 export type UnitSummary =
@@ -397,6 +453,26 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   });
 
   // -------------------------------------------------------------------------------------------------
+  // The derived view (`sched.json`), rewritten only when it changed
+
+  let published: string | null = null;
+  const publishSched = (pending: SchedFile['drains']): void => {
+    const file: SchedFile = {
+      v: SCHEMA_VERSION, arc: view().arc, pid: process.pid,
+      tasks: [...tasks.values()].map((t) => ({ unit: t.unit, state: t.state })).sort((a, b) => (a.unit < b.unit ? -1 : 1)),
+      queue: arbiter.waiting().map((w) => ({
+        unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.holder.type === 'publication', request: w.request,
+        envBlocked: w.envBlocked,
+      })),
+      drains: pending,
+    };
+    const text = canonicalJson(file);
+    if (text === published) return;
+    atomicJson(join(runDir, SCHED_FILE), file);
+    published = text;
+  };
+
+  // -------------------------------------------------------------------------------------------------
   // The loop
 
   // G2: pending chains first (and merged units' retires), before any mutation, whatever pause or readiness says.
@@ -408,6 +484,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   for (;;) {
     if (failures.length > 0) throw failures[0];
     const arc = view().arc;
+    /** The pending mutations' scopes, for sched.json: none while stopping (nothing will apply). */
+    let drains: SchedFile['drains'] = [];
     // 1. Control, then what pause and stop ask of the tasks.
     await applyControl(x.commands, pollCommands(runDir, arc));
     if (stopping === null) {
@@ -431,6 +509,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       }
     } else {
       const mutations = pendingMutations(pollCommands(runDir, arc));
+      drains = mutations.map((m) => ({ command: m.command.id, scope: m.scope }));
       // 2. Mutations whose scope is clear.
       startMutations(mutations);
       // 3. Due probes.
@@ -445,8 +524,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       startReady(blocking, mutations);
       admitWaiting(blocking, mutations);
     }
-    // 6. The arbiter.
+    // 6. The arbiter, then the derived view.
     arbiter.wake();
+    publishSched(drains);
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => wakeup?.(), POLL_MS);
       wakeup = (): void => {

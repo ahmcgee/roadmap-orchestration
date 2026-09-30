@@ -570,8 +570,8 @@ profile and repo config) from the log at each call. `roadmap apply` and a `start
 ways a revision comes into force; an unapplied edit is ignored, also by a respawn.
 
 `roadmap apply [--expect-rev n] [--dry-run]` hashes the plan file the arc started with (`start.json`) and every
-unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a mutation, so at a safe point: a
-stage boundary or between arc passes; nothing live is killed): the plan in force's `rev` must equal `expectRev`
+unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a mutation, so once its scope has drained
+(A12, "Executor, status, recovery"); nothing live is killed): the plan in force's `rev` must equal `expectRev`
 when given (`stale: …`); the files are re-read and must hash to the manifest (`the files changed since …`); every
 change is classified against the plan in force and the log (`src/input/classify.ts`); the startup rows re-run
 (`applyRows`: `plan-invalid` and `spec-lane-unrunnable` over the units whose entry or spec changed, all units when a
@@ -595,7 +595,7 @@ The rules (`PlanChange` names what each accepted change is):
 | Unit order | the started units stay first, in their order | `order` (of the others) |
 | An undispatched unit | any plan field and its spec, now | `unit-changed`, `spec{edit: undispatched}` |
 | A dispatched unit's plan entry | `spec` path, `risk`, `scope`, `resources` and a new `after`: refused; dropping an `after`: now | `unit-changed` |
-| A dispatched unit's spec | lane `evidenceGlobs`/`evidenceExcludes` only, at its rev: in force at once; rev + 1 with scope and resources unchanged: pending until it re-opens (in flight: at its next boundary whose next stage is plan-check, lanes, gate or a fresh or fix build, via `reopened`; parked at plan-check or gate: by `resume <unit>`); the recorded spec again: a pending revision withdrawn; anything else, and any edit of a merged, approved or publishing, stopped, or otherwise parked unit: refused | `spec{edit: evidence \| revision \| withdrawn, specRev, specSha256}` |
+| A dispatched unit's spec | lane `evidenceGlobs`/`evidenceExcludes` only, at its rev: in force at once; rev + 1 with scope and resources unchanged: pending until it re-opens (in flight: at its next boundary whose next stage is plan-check, lanes, gate or a fresh or fix build, via `reopened`; parked at plan-check or gate: by `resume <unit>`); the recorded spec again: a pending revision withdrawn; anything else, and any edit of a merged, approved or publishing, stopped, or otherwise parked unit: refused. A revision at or below a recorded rev that the executor's own `spec.patch` set (the implementer's decisions appended at evidence, which can land while the revision is unapplied, A12) is refused naming that revision, where its bytes are kept, and the rev to set on top of it (lead ruling: no auto-rebase) | `spec{edit: evidence \| revision \| withdrawn, specRev, specSha256}` |
 | Routing | re-resolved; unsupported seats refused; a newly seated backend smoked; a moved implementer seat then parks its unit `routing-changed` at its next dispatch (the mid-unit routing ruling) | `routing{routingRev}` |
 | Resource declaration | add: now; change or remove: refused while the resource is held (not free, or a transition open) or an undisposed residue names it | `resource{resource, edit: added \| changed \| removed}` |
 | Suite lanes | now (the next candidate runs them); refused while a candidate op is open or a unit is active past a candidate attempt | `suite` |
@@ -665,8 +665,11 @@ passes, read by `status` to re-resolve routing tables); `status.rejection.json` 
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
 
 Control commands (`CONTROL_COMMANDS = pause, stop, ack`) apply immediately, waiting only for an
-`integration.ff` critical section; mutations (`resume`, `sweep`, `apply`) apply at safe points (no open
-stage-parented intent): at every stage boundary of the running unit, and between arc passes. `NeedsUserReason` is a closed list in `records.ts`; add members by request.
+`integration.ff` critical section. Mutations (`resume`, `sweep`, `apply`, `resolve-edge`, `run-only`) apply once
+their scope has drained (A12): every unit in the command's `CommandScope` has a task that is `idle` or
+`awaiting-admission` (none in a stage or a chain), and no earlier pending mutation overlaps it; while a mutation
+is pending, admission into its scope waits (`drain`). An open stage-parented intent no longer defines the safe
+point. `NeedsUserReason` is a closed list in `records.ts`; add members by request.
 
 Step 13 (`src/commands/{queue,apply}.ts`, `src/needsuser.ts`): the CLI mints `cmd-<12 hex ms clock><4 random
 hex>`, so id order is submission order, and writes the incoming file by temp + `link` (atomic, write-once;
@@ -693,7 +696,7 @@ answers for: the stage attempt whose outcome parked or stopped a unit (`{stage, 
 unit's `decided` fact; a backend park's by the held attempt), the op a recovery parked (`{op}`), or the arc.
 `raisedFor(view, parent)` finds it, so the executor raises each item once however often it re-reads the arc.
 
-## Executor, status, recovery (step 13b)
+## Executor, status, recovery (step 13b; the scheduler since M2 step 7b)
 
 `runExecutor(args) → ExitReason = complete{units} | stop{cause: command|unit, needsUser} | refused{rejections,
 exitCode: 78|75}`; any other end is a thrown error, a crash, which the supervisor counts and which writes no
@@ -702,22 +705,54 @@ exit reason. The executor prints the reason as one canonical JSON line on its st
 `start.json`, heartbeat, `executor-started` → the control-only phase when started `--control-only` → `recover` →
 the outcome of every stage attempt whose backend call recovery closed is recorded (the adopted-build rule below,
 at startup, so a paused unit needs one `resume`; lead ruling 14c) → `smokeCheck` (refused as above, after
-readiness) → the command loop:
-control commands, then mutations at the safe point, then due needs-user items; exit `stop` on the stop marker
-or a stop-pending unit (after cleaning what a stage still holds); exit `complete` when every unit is merged or
-parked and no blocking needs-user is open; wait (poll 1 s) while a blocking needs-user holds the arc (arc-wide:
-a host or arc subject, or reason `usage-limit`, `recovery-required`, `foreign-ref-move`, `residue`; or it names
-the next unit; lead ruling 14a: a unit-scoped park lets later units run), the next unit is held, or the next
-unit is blocked (`dispatchBlock`, `src/pipeline/unit.ts`: the arc or the unit paused, or a unit it runs `after`
-neither merged nor parked-and-acknowledged); otherwise `runArc`, which picks each next unit from the plan in force
-and applies mutations at every stage boundary (after `unit.after-stage`), so an apply, resume or sweep never waits
-for the arc to return. The unit driver checks `dispatchBlock` itself
-before a unit's first stage and between stages, so the arc stops at a blocked unit with no `dispatch` fact and no
-invocation (arc-1 feedback item 16), and every unit after it waits too (M1 is serial). Blocking items include the file-only `sup-<gen>-<n>` and
-`host-<kind>-<n>` (host-level; `ack` answers them like any other, the ack fact taking any id form). While the arc runs, control commands apply
-every poll; a pause or stop aborts its signal and cancels the running stage's live backend or lane invocation
-by `proc.kill{pause|stop}` (once each, after its runner wrote runner.json), which the stage records as
-`interrupted` (hold). The executor never releases the host: its supervisor does, after it exited.
+readiness; on a `--respawn` a failed backend is parked `outage` instead, A18) → `schedule`
+(`src/schedule/scheduler.ts`), which returns `complete` or `stop`. One arbiter serves every reservation of the
+run and one prober every probe; the contexts read `plan()` and `routing()` (the plan in force) from the log at each call.
+
+**The scheduler** (M2 "Scheduler model"). One non-reentrant loop, every `POLL_MS` (1 s) or sooner when a task or
+job wakes it; it never awaits long work, it only starts tasks and jobs and reads their ends. Each iteration:
+1. control commands, synchronously as facts; the kills a pause or stop asks for (`proc.kill{pause|stop}` of each
+   live invocation, once, after its runner wrote runner.json) start as tracked jobs;
+2. one job per pending mutation whose scope has drained (above); a command with a running job, or whose
+   `command.apply` a crashed executor left open (recovery's), is never started again;
+3. the due probe jobs (`prober.due`), at most one per target, none on a target a running `resume` probes;
+4. the due needs-user items (a halted unit's park or stop, once per deciding attempt; the park schedule's
+   escalations and breakers); with nothing running and no mutation pending, the run ends `complete` when every
+   unit is merged, cut, superseded or parked operator (a retryable park is still probed, so it is not settled)
+   and no blocking needs-user is open;
+5. waiting tasks admitted, and a task started for every ready unit without one (`ready`, src/schedule/ready.ts);
+6. the arbiter re-evaluated (also woken by every release), then `sched.json` rewritten when it changed.
+
+A task runs its unit's stage loop (`runUnit`, `src/pipeline/unit.ts`) with its own abort signal; at most one task
+per unit. `TaskState` (memory only): `idle`, `awaiting-admission` (at an admission boundary), `in-stage`,
+`in-chain`. Admission boundaries sit before `prepare`, `plan-check`, `build`, `lanes`, `gate` and `candidate`; there
+`admit` (A17) is re-checked for every task: a pause, a stop, or a unit no longer active (cut, superseded,
+re-opened) ends the task holding nothing; any other constraint (a drain, a parked backend, a tripped breaker,
+run-only, base-red, a blocking item holding every admission, or an open blocking item about the unit) keeps it
+waiting. Each stage then takes its entry reservation from the arbiter before its first journaled op (F6); a wait
+cancelled by pause or stop journals nothing. Chains (`quiesce → evidence → salvage → teardown` after a build,
+`ff → snapshot` in a green publication) are never gated: they run to completion under pause, drain and stop.
+A DAG arc's unit is ready when active, every `after` dependency merged (D1, followed to its lineage head once
+that prepared, F15), every contingent edge resolved, and its next stage admitted; a legacy arc offers only its
+serial frontier (`legacyNext`). Before the first iteration a task is started for every unit whose next stage is a
+chain stage, and for every merged unit (its retire is re-runnable), whatever pause says (G2).
+
+Pause and stop are per unit or arc-wide markers in the log. `pause <u>` aborts u's task and kills u's live
+backend and lane invocations (recorded `interrupted`, a hold); `pause --all` does so for every unit; paused units
+are not admitted. Stop (the `stop` command, or a unit whose outcome stops the arc) aborts every task, kills every
+live backend, lane and smoke invocation (a probe's too), lets teardowns, reclaims and chains finish, then
+`recoverReservations` and the run ends `stop`. Control commands keep applying meanwhile. Blocking items include
+the file-only `sup-<gen>-<n>` and `host-<kind>-<n>` (host-level; `ack` answers them like any other, the ack fact
+taking any id form); a host item, `recovery-required`, `log-corrupt` and `supervisor-crash-limit` hold every
+admission, `base-red` holds candidates, and an item about a unit holds that unit only. The executor never
+releases the host: its supervisor does, after it exited.
+
+**`sched.json`** (run dir, `SCHED_FILE`, derived, non-authoritative: never read for a decision; a restart
+rebuilds everything in it in memory): `{v, arc, pid, tasks[{unit, state: TaskState}], queue[{unit, stage,
+attempt, publication, request{named, pools, cpu, publication}, envBlocked}], drains[{command, scope}]}`, written
+by the executor `pid` (atomically, only when it changed): every unit with a task, the arbiter's waiters in the
+order it serves them, and the pending mutations' scopes. `status` reads it only while that `pid` is the run's live
+executor.
 
 ## Supervisor and handshake (step 14a)
 
@@ -774,23 +809,54 @@ settle, never dispatch). Unreconciled: a corrupt log, a survivor whose launch.js
 survivor left after the pass.
 
 `status(runDir, arc, hostDir) → Status` (`src/status.ts`, `roadmap status [--repo --arc]`, JSON only): `arc`;
-`run{state: running|held|parked|complete|refused|no-owner, owner, heartbeatAt}`; `units[{unit, stage, status,
-attempts, chargeableFailures, risk, seat{role, tier}|null}]` (the plan in force's units); `plan{rev, planSha256}|null` (the
-plan in force; an arc with none yet reads its plan file, warned); `routing{profile, rev, seats: ClassTable, sources, bindings}|null`
-(the latest start's profile resolved under the current repo config and the plan in force; classes only, no model id); `needsUser[{id, reason, blocking}]` (unacknowledged, the log's
-items and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `run.state` is `parked` only when an open blocking item
-holds the arc by the executor's rule (`holdsArc`: arc-wide, naming the next unit, or no unit left to run), so a unit-scoped
-park while later units run is `running` (step 14b); otherwise `running` while a stage is in flight (an open
-stage-parented intent) or the next unit may start, and `held` only when the next unit is held or blocked
-(`dispatchBlock`), so a pause of another unit does not make a running arc `held`; a unit's `status` is
-`held-after:<ids>` while units it runs `after` hold it;
-`commands{pending[{id, type}], receipts[]}` (the last 10 terminal receipts); `spend{byRole, byModel{models,
-unresolvedRevs}, bySmoke}` (every total: `calls, input, output, cacheRead, cacheWrite, turns, costUsd,
-unavailable`; `bySmoke` per backend and revision, in no role or model total); `host.containment{mode, guarantee}`; `parkedBackends`; `rejection`. The log is read with
-`readJournal` (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left
-out). `byModel` is the only place a model id appears: seat totals (`meterOf(...).bySeat`) looked up in each
-revision's table, re-resolved from every plan revision the log applied and the repo config under every built-in
-profile.
+`run{state: running|held|parked|blocked|complete|refused|no-owner, owner, heartbeatAt}`; `units[…]` (the plan in
+force's units, below); `edges`; `runOnly: UnitId[]|null`; `legacy: bool` (`scheduling() = legacy`); `plan{rev,
+planSha256}|null` (the plan in force; an arc with none yet reads its plan file, warned); `routing{profile, rev,
+seats: ClassTable, sources, bindings}|null` (the latest start's profile resolved under the current repo config and
+the plan in force; classes only, no model id); `needsUser[{id, reason, blocking}]` (unacknowledged, the log's items
+and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `commands{pending[{id, type}], receipts[]}` (the
+last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, bySmoke}` (every total: `calls, input,
+output, cacheRead, cacheWrite, turns, costUsd, unavailable`; `bySmoke` per backend and revision, in no role or
+model total); `host{…}` (below); `parkedBackends`; `rejection`. The log is read with `readJournal`
+(`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
+the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
+id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, re-resolved from every plan
+revision the log applied and the repo config under every built-in profile.
+
+A unit line: `{unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}|null}` (`status` is the
+fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are not merged), and since M2:
+- `state`, the first that holds: `merged | cut | superseded` (its status); `parked` (park-pending); `blocked`
+  (stop-pending, an open blocking needs-user about it, or an `after` dependency parked, stopped or cut: D1);
+  `held` (an interrupted stage, or admission waits on a pause); `running | preparing` (its task is in a stage or
+  chain; `preparing` for a re-entry's `prepare`; without `sched.json`, an open attempt under a live executor);
+  `waiting` (its task waits in the arbiter's queue, or it waits on dependencies or contingent edges; a legacy
+  arc's later units wait on the serial frontier); `awaiting-admission` (its next stage is not admitted now);
+  `ready` (it may start);
+- `waitingFor{deps, edges, resources: ResourceRequest|null, envBlocked, admission: AdmissionConstraint[],
+  drainFor: CommandId[]}|null`;
+- `holds`: every resource unit held or in transition by one of its holders (stage, publication, retry);
+- `priority{origin, waitStartSeq, bypassMerges, promoted}|null` (`rankOf`, active units only);
+- `park{class, kind? (operator), targets, outstanding, nextProbeAt (null: due now), escalateAt|null}|null`;
+- `lineage{reenters, root, prepared}|null`, `supersededBy|null`, `buildTier` (a tier, never a model);
+- `running{stage, attempt, elapsed (ms since the attempt's first op, or null), deadline (the earliest of its open
+  ops'), resources (= holds)}|null`, set exactly when `state` is `running` or `preparing`.
+
+`edges`: `after{unit, on, effective (effectiveDependency), met}` and `contingent{unit, edge, condition, resolved}`
+per unit of the plan in force. `host`: `containment{mode, guarantee}`; `resources[{resource, state, holder|null,
+pending}]` (every unit not free or with a transition open); `pools{<pool>: {size, used, dirty}}` (`@cpu` and each
+declared pool); `queue` (`sched.json`'s, empty without a live executor); `probes[{target, parks (the seqs a probe
+now covers), nextProbeAt (null: due now), lastResult|null, tripped}]` (every target with a current retryable park,
+`probeTargets`); `backends[{backend, parkSeq, class}]`.
+
+`run.state`: without a live executor, `refused` (the latest start was refused), `complete` (every unit merged, cut,
+superseded or parked operator, and no blocking needs-user open) or `no-owner`. With one, the first that holds:
+`running` (a unit runs, prepares, is ready, waits in the arbiter's queue, or waits only on a drain), `held` (a unit
+is held or waits on a pause), `parked` (a blocking needs-user is open), `blocked` (work remains that nothing can
+move: parks being probed, run-only, an unresolved edge, a dead dependency, a tripped breaker), else `running`.
+
+`roadmap watch` streams `needs-user`, `ack` and `owner` events and `{event: units, run: <run.state>, units:
+{<unit>: <compact state>}}` on change (`running:build#3`, `waiting:deps=u1`, `waiting:resources`,
+`awaiting-admission:drain`, `held:paused`, `parked:retryable`, `merged`, …).
 
 ## Cross-module interfaces (`src/core/interfaces.ts`)
 

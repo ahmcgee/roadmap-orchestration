@@ -4,7 +4,8 @@
 // hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.upgrade-queued-resume, apply.crash-cells, apply.recovered-after-start; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
-// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope.
+// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
+// apply.stale-after-evidence-revision.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,7 +13,7 @@ import { describe, test } from 'node:test';
 import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
 import { pollCommands, readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, PlanChange } from '../src/core/events.ts';
-import { type UnitId, arcId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, routingRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, routingRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
 import type { CommandBody, ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
@@ -22,13 +23,14 @@ import { type Classified, classify, commandScope } from '../src/input/classify.t
 import {
   PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, specShaInForce,
 } from '../src/input/inforce.ts';
-import { pinDispatch, repin } from '../src/pipeline/dispatch.ts';
+import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { commandReconciler } from '../src/recover/command.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -676,6 +678,50 @@ async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: str
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
   return { id: file.id, outcome: await applyCommand(commandContextFor(r), file) };
 }
+
+test('apply.stale-after-evidence-revision: an architect\'s revision written while the build ran, applied after its evidence stage appended the implementer\'s decisions (the executor\'s rev 2), is refused naming that revision; re-applied on top of it, it is pending', T, async () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
+  const r = contextFor(d);
+  try {
+    inFlight(r);
+    const onRev1 = readFileSync(specPath(d, 'u1'), 'utf8');
+    // The build's evidence stage appends the implementer's decisions: the executor's revision, rev 2.
+    const { path, spec, sha256 } = loadUnitSpec(r.ctx, r.unit('u1'));
+    const attempt = r.journal.view.unit(U1).counters.attempts + 1;
+    await runOp(r.journal, specPatchOp(r.ctx.runDir), 'spec:u1', { type: 'stage', unit: U1, stage: 'evidence', attempt }, {
+      path, oldSha256: sha256,
+      patch: { expectRev: spec.rev, by: { role: 'executor', inv: invocationIdOf(`${d.arc}/9#1`) }, ops: [{ op: 'add', section: 'decisions', item: { id: clauseId('D1'), text: 'mul is exported from src/mul.js' } }] },
+    });
+    r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'evidence', attempt, outcome: 'captured', class: 'advance', chargeable: false } as Fact);
+    const recorded = r.journal.view.unit(U1).spec;
+    assert.equal(recorded?.rev, 2, 'the machine revision is the unit\'s spec in force');
+
+    // The architect wrote rev 2 on rev 1 while the build ran; applied now, it is stale.
+    writeFileSync(specPath(d, 'u1'), onRev1);
+    revise(d);
+    const kept = join(r.ctx.runDir, 'inputs', `${recorded!.sha256}.${SPEC_INPUT}`);
+    assert.deepEqual(classifyNow(r), {
+      kind: 'rejected',
+      reasons: [
+        `unit u1: its spec ${specPath(d, 'u1')} is at rev 2, but the unit's spec is now rev 2, a revision the executor wrote from the build's evidence `
+        + `(the implementer's recorded decisions, appended at evidence attempt ${attempt}) before your edit was applied; `
+        + `re-apply your edit on top of rev 2 (kept at ${kept}) and set rev 3`,
+      ],
+    });
+
+    // Re-applied on top of rev 2, as the refusal says: a pending revision.
+    writeFileSync(specPath(d, 'u1'), readFileSync(kept));
+    editSpec(d, 'u1', (s) => {
+      addClause(s);
+      s['rev'] = 3;
+    });
+    const v = classifyNow(r);
+    assert.equal(v.kind, 'accepted', JSON.stringify(v));
+    if (v.kind === 'accepted') assert.deepEqual(v.changes, [specChange(d, 'u1', 'revision', 3)]);
+  } finally {
+    r.journal.close();
+  }
+});
 
 test('apply.rejections: a stale expectRev, files changed since they were hashed, and a startup row over the changed units each reject the whole apply; then it applies, and a re-run is a no-op', T, async () => {
   const d = setupArc({ steps: [] });

@@ -99,7 +99,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const run = locate(command.run, hostDir);
       const stop = new AbortController();
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
-      await watch(run.runDir, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
+      await watch(run.runDir, run.arc, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
       return;
     }
     case 'start': {

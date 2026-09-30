@@ -1,46 +1,51 @@
-// `roadmap watch`: the architect agent's event stream for one run. It polls the run's `needs-user/` dir and
-// the host owner's liveness and prints one JSON line per event on stdout (agent-facing: minimal, no prose).
-// It runs until its signal aborts it (the CLI wires SIGINT and SIGTERM); the watching agent owns the timeout.
+// `roadmap watch`: the architect agent's event stream for one run. It polls the run's `needs-user/` dir, the
+// host owner's liveness and the parallel view, and prints one JSON line per event on stdout (agent-facing:
+// minimal, no prose). It runs until its signal aborts it (the CLI wires SIGINT and SIGTERM); the watching
+// agent owns the timeout.
 //
 //   {"event":"needs-user","id","blocking","reason","subject","summary"}   a raised item (present at start, or new)
 //   {"event":"ack","id","command","choice"}                                an acknowledgement file
 //   {"event":"owner","state":"alive"|"dead"|"none","generation","pid"}     on the first poll and every change
+//   {"event":"units","run":<run.state>,"units":{<unit>:<state>}}           on the first poll and every change
 //
-// Owner liveness is the host claim's: this run's claim (host.lock names this run dir) with host.owner.json
-// naming a live executor on the claim's boot is `alive`; a claim for this run whose executor is gone (or
-// never spawned) is `dead`; no claim for this run is `none`.
-import { existsSync, readdirSync } from 'node:fs';
+// A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
+// `waiting:resources`, `awaiting-admission:paused`, `parked:retryable`, `merged`… The view is re-derived
+// only when the log, sched.json, the needs-user dir or the owner changed. Owner liveness is `status`'s
+// (`ownerState`).
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { needsUserId } from './core/ids.ts';
+import { type ArcId, needsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
+import { EVENTS_FILE } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
-import { readClaim } from './host/lock.ts';
-import { isAlive } from './host/liveness.ts';
-import { readOwner } from './host/owner.ts';
 import { NEEDS_USER_DIR, readNeedsUser, readNeedsUserAck } from './needsuser.ts';
+import { SCHED_FILE } from './schedule/scheduler.ts';
+import { ownerState, unitStates } from './status.ts';
 
 export const WATCH_POLL_MS = 500;
 
 const ITEM = /^((?:nu|sup|host)-[a-z0-9-]+)\.json$/;
 const ACK = /^((?:nu|sup|host)-[a-z0-9-]+)\.ack\.json$/;
 
-export type OwnerState = Readonly<{ state: 'alive' | 'dead' | 'none'; generation: number | null; pid: number | null }>;
-
-export function ownerState(runDir: AbsPath, hostDir: AbsPath): OwnerState {
-  const claim = readClaim(hostDir);
-  if (claim === null || claim.runDir !== runDir) return { state: 'none', generation: null, pid: null };
-  const owner = readOwner(hostDir);
-  const executor = owner !== null && owner.nonce === claim.nonce ? owner.executor : null;
-  if (executor === null) return { state: 'dead', generation: claim.generation, pid: null };
-  return { state: isAlive(executor, claim.bootId) ? 'alive' : 'dead', generation: claim.generation, pid: executor.pid };
+/** What the parallel view is derived from, cheaply: when none of it changed, neither did the view. */
+function viewKey(runDir: AbsPath, names: readonly string[], owner: string): string {
+  const stamp = (name: string): string => {
+    const path = join(runDir, name);
+    if (!existsSync(path)) return '-';
+    const s = statSync(path);
+    return `${s.size}@${s.mtimeMs}`;
+  };
+  return `${stamp(EVENTS_FILE)} ${stamp(SCHED_FILE)} ${names.length} ${owner}`;
 }
 
 /** Polls until `signal` aborts; `emit` receives each event line (without its newline). */
-export async function watch(runDir: AbsPath, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal): Promise<void> {
+export async function watch(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal): Promise<void> {
   const seenItems = new Set<string>();
   const seenAcks = new Set<string>();
   let owner: string | null = null;
+  let key: string | null = null;
+  let units: string | null = null;
   const dir = join(runDir, NEEDS_USER_DIR);
   while (!signal.aborted) {
     const names = existsSync(dir) ? readdirSync(dir).sort() : [];
@@ -64,6 +69,15 @@ export async function watch(runDir: AbsPath, hostDir: AbsPath, emit: (line: stri
     if (state !== owner) {
       owner = state;
       emit(state);
+    }
+    const next = viewKey(runDir, names, state);
+    if (next !== key) {
+      key = next;
+      const line = canonicalJson({ event: 'units', ...unitStates(runDir, arc, hostDir) });
+      if (line !== units) {
+        units = line;
+        emit(line);
+      }
     }
     try {
       await sleep(WATCH_POLL_MS, undefined, { signal });

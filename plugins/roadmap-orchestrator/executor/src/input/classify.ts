@@ -40,7 +40,7 @@
 // its classification.
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PlanChange, PlanField } from '../core/events.ts';
+import type { IntentOf, PlanChange, PlanField } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import { type ResourceName, type ResourceUnit, type RulingId, type UnitId, parseResourceUnit } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
@@ -60,7 +60,7 @@ import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { loadRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
-import { type InForce, type InputFiles, SPEC_INPUT, keptInput, manifestOf, planInForce, readInputFiles } from './inforce.ts';
+import { type InForce, type InputFiles, SPEC_INPUT, inputPath, keptInput, manifestOf, planInForce, readInputFiles } from './inforce.ts';
 import type { PlanM1, PlanUnit } from './plan.ts';
 
 export type Classified =
@@ -100,6 +100,29 @@ export function approvedOrPublishing(u: UnitState): boolean {
 /** Whether the unit ever started a stage or was pinned: it may no longer be removed. */
 export const started = (view: JournalView, unit: UnitId): boolean => view.dispatchOf(unit) !== null || view.unit(unit).counters.attempts > 0;
 
+/**
+ * The executor's own revision that set the unit's recorded spec, or null when the architect's did: the
+ * implementer's recorded decisions appended at the evidence stage (`spec.patch` by `executor`, lead ruling,
+ * step 12). Since A12 it can land while an architect's revision is still unapplied, taking the rev that
+ * revision meant to set.
+ */
+function machineRevision(view: JournalView, unit: UnitId, recorded: Readonly<{ sha256: string }>): IntentOf<'spec.patch'> | null {
+  return view.opsOf('spec.patch').find((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.expect.patch.by.role === 'executor'
+    && view.doneOf(i.op) !== null && i.post.newSha256 === recorded.sha256) ?? null;
+}
+
+/**
+ * Why an architect's revision at `rev` is stale because the executor's machine revision took that rev first
+ * (lead ruling: kept a rejection, no auto-rebase): it names the intervening revision and where its bytes are.
+ */
+function staleAfterMachineRevision(runDir: AbsPath, unit: UnitId, path: AbsPath, rev: number, machine: IntentOf<'spec.patch'>): string {
+  const { newRev, newSha256 } = machine.post;
+  const at = machine.parent.type === 'stage' ? `${machine.parent.stage} attempt ${machine.parent.attempt}` : 'a stage';
+  return `unit ${unit}: its spec ${path} is at rev ${rev}, but the unit's spec is now rev ${newRev}, a revision the executor wrote from `
+    + `the build's evidence (the implementer's recorded decisions, appended at ${at}) before your edit was applied; `
+    + `re-apply your edit on top of rev ${newRev} (kept at ${inputPath(runDir, newSha256, SPEC_INPUT)}) and set rev ${newRev + 1}`;
+}
+
 /** The spec change of a dispatched unit, or why it is refused; null when the file is the unit's spec. */
 function dispatchedSpec(
   input: ClassifyInput, unit: PlanUnit, u: UnitState, path: AbsPath, bytes: Buffer, spec: SpecM1,
@@ -126,6 +149,8 @@ function dispatchedSpec(
   if (!same(was.scope, spec.scope) || !same(was.resources, spec.resources)) {
     return `unit ${unit.id} is dispatched: its spec's scope and resources may not change`;
   }
+  const machine = spec.rev <= recorded.rev && !(spec.rev === recorded.rev && sameBesidesEvidence(was, spec)) ? machineRevision(input.view, unit.id, recorded) : null;
+  if (machine !== null) return staleAfterMachineRevision(input.runDir, unit.id, path, spec.rev, machine);
   if (spec.rev === recorded.rev) {
     if (!sameBesidesEvidence(was, spec)) {
       return `unit ${unit.id}: its spec ${path} changed but is still at rev ${recorded.rev}; a revision sets rev ${recorded.rev + 1} `
