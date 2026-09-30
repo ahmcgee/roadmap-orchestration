@@ -8,9 +8,11 @@
 //                only when it covers exactly the current epoch and the class is retryable.
 //   host         a clear host sample and the smoke's shell command, then each covered park's local check:
 //                the host sample for a blocked lane, `git -C <worktree> status` for a salvage (G7).
-//   resource{i}  the reclaim order under the parked attempt's `retry` holder (`retryReclaim`: reclaim →
-//                teardown → the residue's `cleaned` disposition → release), then the fact; a pass is written
-//                only once the instance is free and its residue disposed.
+//   resource{i}  the reclaim order under the residue's `retry` holder (`retryHolderOf`: the reclaim in progress's,
+//                else the attempt whose cleanup failed, as the residue key names it) — `retryReclaim`: reclaim →
+//                teardown → the residue's `cleaned` disposition → release — then the fact; a pass is written only
+//                once the instance is free and its residue disposed. The same whether a unit park names the
+//                instance, a residue alone does (a failed cleanup no stage outcome parked), or both.
 // A job cancelled by its signal records nothing: its target is probed again when next due.
 //
 // `resumeBackend` is `resume --backend b` through the prober: b's smoke under the same one-job-per-target
@@ -18,13 +20,14 @@
 import { existsSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
 import { type ProbeTarget, probeTargetKey } from '../core/events.ts';
-import type { CommandId } from '../core/ids.ts';
+import type { CommandId, ResourceInstance } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
 import { gitRun } from '../git/git.ts';
 import { type HostSample, isClear } from '../host/sample.ts';
 import { type StageContext, unitWorktree } from '../pipeline/dispatch.ts';
 import { backendEnv, invokeCommand, probeSmoke, smokeDir, smokePassed, smokeRejections, type InvocationContext } from '../preflight/smoke.ts';
-import { retryReclaim } from '../resources/reserve.ts';
+import { type RetryHolder, retryReclaim } from '../resources/reserve.ts';
 import type { Backend, ProfileName } from '../routing/types.ts';
 import type { ProbeJob, Prober } from '../schedule/types.ts';
 import { dueJobs, nextProbeAt, retryableParks } from './schedule.ts';
@@ -80,15 +83,28 @@ async function hostCheck(ctx: ProberContext, covers: readonly number[]): Promise
   return coveredParks(ctx, covers).every((u) => localCheck(ctx, u));
 }
 
-async function resourceCheck(ctx: ProberContext, target: Extract<ProbeTarget, { type: 'resource' }>, covers: readonly number[]): Promise<boolean> {
-  let pass = true;
-  for (const unit of coveredParks(ctx, covers)) {
-    const d = unit.decided;
-    if (d === null) throw new Error(`unit ${unit.unit} is parked with no decision`);
-    const answer = await retryReclaim(ctx, { type: 'retry', unit: unit.unit, stage: d.stage, attempt: d.attempt }, target.instance, { type: 'arc' });
-    pass &&= answer === 'pass';
+/**
+ * The holder a probe reclaims `instance` under: the `retry` holder already cleaning it (a reclaim a failed teardown
+ * or a crash left), else one keyed by the attempt whose cleanup left the residue (`ResidueState.holder`: the
+ * residue key's unit, and the stage attempt whose fail named the key's teardown). Null once it is released.
+ */
+export function retryHolderOf(view: JournalView, instance: ResourceInstance): RetryHolder | null {
+  const status = view.resources().get(instance)?.status;
+  if (status === undefined || status.state === 'free') return null;
+  if (status.state === 'cleaning' && status.holder.type === 'retry') return status.holder;
+  const residue = view.residues().find((r) => r.key.resource === instance);
+  if (status.state !== 'cleanup-failed' || residue === undefined) {
+    throw new Error(`a probe of ${instance}, which is ${status.state} under ${JSON.stringify(status.holder)}${residue === undefined ? ' with no residue' : ''}`);
   }
-  return pass;
+  const { unit, stage, attempt } = residue.holder;
+  return { type: 'retry', unit, stage, attempt };
+}
+
+async function resourceCheck(ctx: ProberContext, target: Extract<ProbeTarget, { type: 'resource' }>): Promise<boolean> {
+  const holder = retryHolderOf(ctx.journal.view, target.instance);
+  // Released: the reclaim order finished (a crash came before the probe fact), or a sweep took the residue.
+  if (holder === null) return true;
+  return (await retryReclaim(ctx, holder, target.instance, { type: 'arc' })) === 'pass';
 }
 
 async function check(ctx: ProberContext, job: ProbeJob): Promise<boolean> {
@@ -98,7 +114,7 @@ async function check(ctx: ProberContext, job: ProbeJob): Promise<boolean> {
     case 'host':
       return hostCheck(ctx, job.covers);
     case 'resource':
-      return resourceCheck(ctx, job.target, job.covers);
+      return resourceCheck(ctx, job.target);
   }
 }
 

@@ -91,6 +91,30 @@ describe('fold: the resource table (JournalView.resources)', () => {
     assert.deepEqual(f.resources().get('estate#1' as never)?.status, { state: 'cleaning', holder: retry });
     refuses([...failed, transitionIntent(7, { type: 'publication', unit: U1, attempt: 1 }, ['estate#1'], { type: 'reclaim' }, 'resources:p'), transitionDone(7)], 8, /reclaim by a publication holder/);
   });
+
+  it('residues(): a done fail records its residue until the instance is released; a probe may cover the fail seq of its own instance only', () => {
+    const teardown = invocationId(opId(ARC, 5), 1);
+    const failed: LogRecord[] = [
+      transitionIntent(1, stageHolder, ['estate#1'], { type: 'reserve' }), transitionDone(1),
+      transitionIntent(3, stageHolder, ['estate#1'], { type: 'clean', from: 'reserved' }), transitionDone(3),
+      transitionIntent(5, stageHolder, ['estate#1'], { type: 'fail', residues: [{ resource: 'estate#1', teardown }] }),
+    ];
+    assert.deepEqual(folded(failed).residues(), [], 'not before the fail is done');
+    const f = folded([...failed, transitionDone(5)]);
+    assert.deepEqual(f.residues().map((r) => [r.key, r.holder, r.fail, r.failSeq]), [
+      [{ arc: ARC, unit: U1, inv: teardown, resource: 'estate#1' }, stageHolder, opId(ARC, 5), 5],
+    ]);
+    const retry = { type: 'retry', unit: U1, stage: 'build', attempt: 1 };
+    const reclaimed = [...failed, transitionDone(5), transitionIntent(7, retry, ['estate#1'], { type: 'reclaim' }, 'resources:r'), transitionDone(7)];
+    assert.equal(folded(reclaimed).residues().length, 1, 'still the residue while the reclaim cleans it');
+    const released = folded([...reclaimed, transitionIntent(9, retry, ['estate#1'], { type: 'release' }, 'resources:r'), transitionDone(9)]);
+    assert.deepEqual(released.residues(), []);
+
+    const covered = folded([...failed, transitionDone(5), probe({ type: 'resource', instance: 'estate#1' }, [5], 'fail')]);
+    assert.deepEqual(covered.probes().map((p) => p.covers), [[5]]);
+    refuses([...failed, transitionDone(5), probe({ type: 'resource', instance: 'estate#2' }, [5], 'pass')], 7, /covers the failed cleanup at seq 5, which left no residue on it/);
+    refuses([...failed, transitionDone(5), probe({ type: 'host' }, [5], 'pass')], 7, /covers the failed cleanup at seq 5/);
+  });
 });
 
 describe('fold: parks (A7, F9, F10, G7)', () => {

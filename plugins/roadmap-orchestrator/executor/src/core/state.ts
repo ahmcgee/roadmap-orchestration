@@ -12,12 +12,12 @@ import {
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type ArcId, type CommandId, type EdgeId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type ResourceUnit,
+  type ArcId, type CommandId, type EdgeId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit,
   type RoutingRev, type Sha256Hex, type SpecRev, type UnitId, compareResourceUnits, parseInvocationId, parseOpId,
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import type { ApprovalFingerprint, ContainmentMode, DispatchRecord, Stage } from './records.ts';
+import type { ApprovalFingerprint, ContainmentMode, DispatchRecord, ResidueKey, Stage } from './records.ts';
 import { legacyParkRecord, repinNamesSpec, rerouteAsUnpark } from './upgrade.ts';
 import type { IsoTime } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
@@ -263,6 +263,15 @@ export function afterEdge(status: ResourceStatus, holder: Holder, edge: Resource
  */
 export type BackendParkState = Readonly<{ backend: Backend; seq: number; class: BackendParkClass }>;
 
+/**
+ * An own-arc residue as the log proves it (A9; SCHEMAS.md "M2: parks", residue probing): the residue a done
+ * `resource.transition{fail}` recorded on an instance that no `release` has followed since. `key` is its host
+ * index key, `holder` the stage attempt whose cleanup failed, `fail` that transition's op and `failSeq` its seq
+ * (what a probe of the instance covers for it), and `at` the time of its done. A residue disposed of but not yet released (a
+ * crash in the reclaim order) is still here: the reclaim order ends with the release.
+ */
+export type ResidueState = Readonly<{ key: ResidueKey; holder: Extract<Holder, { type: 'stage' }>; fail: OpId; failSeq: number; at: IsoTime }>;
+
 /** The latest probe of one target, with the time its fact was written. */
 export type ProbeState = Extract<Fact, { kind: 'probe' }> & Readonly<{ seq: number; at: IsoTime }>;
 
@@ -357,6 +366,9 @@ export class Fold implements JournalView {
   readonly #unitParkSeqs = new Map<number, UnitId>();
   readonly #backendParkSeqs = new Map<number, Backend>();
   readonly #resources = new Map<ResourceUnit, ResourceEntry>();
+  /** Own-arc residues by instance (`ResidueState`), and every fail transition's seq → the instances it failed. */
+  readonly #residues = new Map<ResourceInstance, ResidueState>();
+  readonly #failSeqs = new Map<number, readonly ResourceInstance[]>();
   readonly #probes = new Map<string, ProbeState>();
   readonly #judgmentInputs = new Map<string, JudgmentInputs>();
   readonly #resolvedEdges = new Map<EdgeId, EdgeResolvedState>();
@@ -390,7 +402,7 @@ export class Fold implements JournalView {
         this.#intent(event, fail);
         break;
       case 'done':
-        this.#done(event, event.seq, fail);
+        this.#done(event, { seq: event.seq, at: event.at }, fail);
         break;
       case 'abort':
         this.#abort(event, fail);
@@ -478,7 +490,7 @@ export class Fold implements JournalView {
     this.#openByKey.delete(entry.latest.key);
   }
 
-  #done(r: DoneRecord, seq: number, fail: (detail: string) => never): void {
+  #done(r: DoneRecord, { seq, at }: Readonly<{ seq: number; at: IsoTime }>, fail: (detail: string) => never): void {
     const entry = this.#openEntry(r.op, 'done', fail);
     const intent = entry.latest;
     if (r.kind !== intent.kind) fail(`done of kind ${r.kind} for ${r.op}, an intent of kind ${intent.kind}`);
@@ -493,6 +505,7 @@ export class Fold implements JournalView {
     }
     this.#close(entry, { type: 'done', record: r });
     for (const [res, status] of moved) this.#resources.set(res, { status, pending: null });
+    if (intent.kind === 'resource.transition') this.#residuesAfter(intent, at, fail);
     if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
     // A unit's publication is its ff stage's; an ff under another parent (the git primitives' own tests) publishes no unit.
     if (intent.kind === 'integration.ff' && r.kind === 'integration.ff' && r.outcome.kind === 'published' && intent.parent.type === 'stage') {
@@ -502,6 +515,19 @@ export class Fold implements JournalView {
     if (intent.kind === 'spec.patch' && intent.parent.type === 'stage') {
       const u = this.#unit(intent.parent.unit, intent.parent.stage);
       u.state = { ...u.state, spec: { rev: intent.post.newRev, sha256: intent.post.newSha256 } };
+    }
+  }
+
+  /** A done `fail` records its residues; a `release` ends the residue of each instance it frees. */
+  #residuesAfter(intent: IntentOf<'resource.transition'>, at: IsoTime, fail: (detail: string) => never): void {
+    const { holder, resources, edge } = intent.expect;
+    if (edge.type === 'release') for (const res of resources) this.#residues.delete(res as ResourceInstance);
+    if (edge.type !== 'fail') return;
+    if (holder.type !== 'stage') return fail(`${intent.op}: a fail transition held by ${canonicalJson(holder)}; only a stage holder records residues`);
+    const failSeq = parseOpId(intent.op).seq;
+    this.#failSeqs.set(failSeq, edge.residues.map((r) => r.resource));
+    for (const r of edge.residues) {
+      this.#residues.set(r.resource, { key: { arc: this.arc, unit: holder.unit, inv: r.teardown, resource: r.resource }, holder, fail: intent.op, failSeq, at });
     }
   }
 
@@ -815,6 +841,12 @@ export class Fold implements JournalView {
     const clear: Backend[] = [];
     const passed: [UnitEntry, ParkState][] = [];
     for (const seq of f.covers) {
+      const failed = this.#failSeqs.get(seq);
+      if (failed !== undefined) {
+        // A residue's cover: its fail transition, which recovers nothing (the reclaim order already ran).
+        if (f.target.type !== 'resource' || !failed.includes(f.target.instance)) fail(`probe of ${key} covers the failed cleanup at seq ${seq}, which left no residue on it`);
+        continue;
+      }
       const unit = this.#unitParkSeqs.get(seq);
       const backend = this.#backendParkSeqs.get(seq);
       if (unit === undefined && backend === undefined) return fail(`probe of ${key} covers seq ${seq}, which parked nothing`);
@@ -1005,6 +1037,10 @@ export class Fold implements JournalView {
 
   resources(): ReadonlyMap<ResourceUnit, ResourceEntry> {
     return this.#resources;
+  }
+
+  residues(): readonly ResidueState[] {
+    return [...this.#residues].sort(([a], [b]) => compareResourceUnits(a, b)).map(([, r]) => r);
   }
 
   probes(): readonly ProbeState[] {

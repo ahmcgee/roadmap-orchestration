@@ -107,9 +107,9 @@ test('evals-m2.setup-valid: setup lays out a plan parsePlan accepts, specs the v
   writeFileSync(join(l.barriers, `left.${ESTATE_HOLD}.2.release`), '');
   assert.equal(estate(l, 'left', 1, ['hold', l.estate, l.barriers, ESTATE_HOLD, '2', '60000']).status, 0, 'every round released: the lane passes straight through');
   assert.equal(existsSync(join(l.barriers, `left.${ESTATE_HOLD}.2.reached`)), false, 'round 2 was never waited at');
-  writeFileSync(teardownFailsOnce(l), '');
+  writeFileSync(teardownFailsOnce(l, 2), '');
   assert.equal(estate(l, 'left', 2, ['teardown', l.estate]).status, 1, 'the armed teardown fails');
-  assert.equal(existsSync(teardownFailsOnce(l)), false, 'consuming its marker');
+  assert.equal(existsSync(teardownFailsOnce(l, 2)), false, 'consuming its marker');
   assert.equal(estate(l, 'left', 2, ['teardown', l.estate]).status, 0, 'once');
   assert.deepEqual(readFileSync(join(instanceDir(l, 1), 'history.log'), 'utf8').split('\n').filter((x) => x !== '').map((x) => x.split(' ')[0]), ['enter', 'leave', 'enter', 'leave']);
 });
@@ -158,7 +158,8 @@ describe('evals-m2: the fake-backed fixture run', () => {
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.criteria.length, 14);
     assert.match(criterion(checked, 'no-overlap').detail, /both instances at once: true/);
-    assert.match(criterion(checked, 'cleanup-survival').detail, /lanes [0-9]+ estate#2: parked seq [0-9]+, probe pass seq [0-9]+, re-ran as lanes/);
+    assert.match(criterion(checked, 'cleanup-survival').detail, /live [a-z0-9]+ lanes [0-9]+ estate#2: parked seq [0-9]+, probe pass seq [0-9]+, re-ran as lanes/);
+    assert.match(criterion(checked, 'cleanup-survival').detail, /recovery [a-z0-9]+ lanes [0-9]+ estate#1: failed seq [0-9]+, probe pass seq [0-9]+, re-ran as lanes/);
     assert.deepEqual(checked.result.notExercised, [...BRANCHES], 'the fake story takes none of the branches M2 covers elsewhere');
     // Every step of the story was played, each by a call that matched it.
     const scenario = join(layout(fx.dir).fake, 'scenario.json');

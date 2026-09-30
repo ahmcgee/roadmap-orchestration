@@ -97,7 +97,8 @@ node evals/m2/check.ts /var/tmp/m2-default
 - `driver.ts <dir> --profile default` queues `run-only base left right top` before `start` (it creates the run
   dir for the queue), then applies each device once its condition holds in `status`, the log or the barrier
   files: SIGKILL of the executor while `left` and `right` both hold an instance at `estate-hold` round 1;
-  round 1 released once the supervisor's respawn owns the run; instance #2's teardown armed to fail, then round
+  round 1 released once the supervisor's respawn owns the run, instance #1's teardown armed to fail first (so
+  recovery's cleanup of its killed holder fails: a residue no park names); instance #2's teardown armed to fail, then round
   2 released, once both hold the pool again after recovery; `resolve-edge e-top` once `left` merged; `pause
   right` once `right` waits at `right-hold` with its registry edit committed; `right-hold` released and
   `urgent` added to `run-only` once `status` shows `right` held with nothing running; once `urgent` merged, a
@@ -110,9 +111,9 @@ node evals/m2/check.ts /var/tmp/m2-default
 - `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
   failed criterion. M2: `no-overlap` (no resource unit granted while held or dirty; the pool and `@cpu` never
   over size; both instances in use at once), `single-owner` (each instance's history shows one owner at a
-  time), `aging` (the graded property, F17, folding the log event by event), `cleanup-survival` (residue →
-  retryable park → reclaim → `cleaned` in the host index → the stage runs again and the unit or its lineage
-  merges; nothing left dirty; the respawn started and was not refused), `reentry` (`urgent` kept out by
+  time), `aging` (the graded property, F17, folding the log event by event), `cleanup-survival` (on the live path residue →
+  retryable park, in recovery a residue with no park → reclaim under the residue's attempt → `cleaned` in the host
+  index → the stage runs again and the unit or its lineage merges; nothing left dirty; the respawn started and was not refused), `reentry` (`urgent` kept out by
   `run-only` until `right` was held; the conflict; `right2` prepared `conflicted`, resolved in a fresh session
   and merged with both registrations; counters inherited; `top` dispatched after `right2` published),
   `no-duplicate-writer` (per-unit workload ops disjoint; one outcome and at most one successful backend result

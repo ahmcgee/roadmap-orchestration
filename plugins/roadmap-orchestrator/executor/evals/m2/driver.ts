@@ -17,14 +17,16 @@
 //   kill        once `left` and `right` both wait at `estate-hold` round 1 (their `.reached` files), status
 //               shows the pool's two instances used and both units running lanes: SIGKILL the executor (status'
 //               owner pid). Their lane runners live on: the respawned executor's recovery adopts them
-//   respawn     once the supervisor's respawned generation owns the run: release round 1 of both. Recovery
-//               then cleans the dead holders' reservations (both teardowns pass) and the units run their
+//   respawn     once the supervisor's respawned generation owns the run: arm instance #1's teardown-fails-once
+//               marker, then release round 1 of both. Recovery then cleans the dead holders' reservations:
+//               #2's teardown passes, #1's fails in recovery's cleanup of the killed holder, a residue no stage
+//               outcome parks, which the residue's own probe reclaims; and the units run their
 //               lanes again
 //   teardown    once both wait at `estate-hold` round 2, status showing both instances used again: arm
 //               instance #2's teardown-fails-once marker, then release round 2. The holder of #2 fails its
 //               cleanup on the live path: a residue, a retryable park on `resource{estate#2}`, whose probe
 //               reclaims it (reclaim → teardown → `cleaned` → release), and the unit runs its lanes again. Armed
-//               here, not at setup, so the failure never lands in recovery's cleanup of the killed holders
+//               here, not at setup, so this failure lands on the live path, not in recovery's cleanup
 //   edge        once `left` is merged: `resolve-edge e-top`
 //   pause       once `right` waits at `right-hold`, after its edit commit (the driver reads the shared line
 //               on `right`'s branch): `pause right`. The pause kills the lane, which records the lanes stage
@@ -272,6 +274,7 @@ function fire(l: Layout, c: Cli, run: readonly string[], d: Devices, s: Status):
   }
   if (d.respawn === null) {
     if (owner.state === 'alive' && owner.generation !== null && owner.generation > d.kill.generation) {
+      writeFileSync(teardownFailsOnce(l, 1), '', { flag: 'wx' });
       for (const u of ['left', 'right']) release(l, u, ESTATE_HOLD, 1);
       d.respawn = { generation: owner.generation, at: now() };
     }
@@ -279,7 +282,7 @@ function fire(l: Layout, c: Cli, run: readonly string[], d: Devices, s: Status):
   }
   if (d.teardown === null) {
     if (!bothHold(l, s, 2) || owner.state !== 'alive') return null;
-    writeFileSync(teardownFailsOnce(l), '', { flag: 'wx' });
+    writeFileSync(teardownFailsOnce(l, 2), '', { flag: 'wx' });
     for (const u of ['left', 'right']) release(l, u, ESTATE_HOLD, 2);
     d.teardown = { at: now() };
     return null;

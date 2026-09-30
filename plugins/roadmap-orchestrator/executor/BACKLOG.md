@@ -99,6 +99,10 @@ None.
   spec at the recorded rev is taken as `evidence` and one at rev + 1 as a revision, with scope and resources
   unchecked; a log whose last re-pin set a re-opened unit back to its first rev records a spurious pending revision,
   so that unit re-opens once more. Trigger: either seen on a real upgraded arc.
+- A `sweep` whose teardown fails leaves the instance cleaning under the sweep with its residue undisposed. That
+  residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
+  `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the
+  fix would let the prober take a sweep-held residue or have the sweep hand it back as cleanup-failed.
 
 ## Scaffolding to delete
 

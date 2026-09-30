@@ -11,7 +11,7 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, ProbeState, ResourceEntry, Scheduling, UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -69,6 +69,11 @@ export interface JournalView {
    * state after its last done transition and the transition open on it. Absent units are free.
    */
   resources(): ReadonlyMap<ResourceUnit, ResourceEntry>;
+  /**
+   * M2: this arc's residues the log proves (`ResidueState`): each fail transition's residue whose instance no release
+   * has followed, in lock order of the instance. Undisposed own-arc residues are among them.
+   */
+  residues(): readonly ResidueState[];
   /** M2: the latest `probe` fact per target, ascending by `probeTargetKey`. */
   probes(): readonly ProbeState[];
   /** M2: what a judgment stage attempt was admitted with (`judgment-inputs`), or null before its fact. */

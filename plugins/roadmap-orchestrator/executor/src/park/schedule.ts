@@ -1,26 +1,35 @@
 // The park schedule (M2, A8, D2; SCHEMAS.md "Park schedule"): when each probe target is due, the backoff each
 // failed probe records (`nextProbeAt`), escalation after 6 h, and the breaker. All of it is derived from the
-// log: the parks (`UnitState.park`), backend parks and the latest probe per target. Nothing here runs a probe
-// (src/park/probe.ts does); `raiseDue` raises the non-blocking items the schedule calls for, once each.
+// log: the parks (`UnitState.park`), backend parks, the arc's own residues (`JournalView.residues()`) and the
+// latest probe per target. Nothing here runs a probe (src/park/probe.ts does); `raiseDue` raises the
+// non-blocking items the schedule calls for, once each.
 //
-// - Due: a target is due when a current park it is outstanding for has no probe yet (the first probe runs at
-//   once, and a park that arrived after the latest probe started is probed at once too, G7), or when its
-//   latest probe failed and its `nextProbeAt` has passed. A backend under a usage-limit park is never probed
-//   (D4: no auto-retry); `resume --backend` clears it.
+// - Targets: every target a current park is outstanding for, and `resource{i}` for every own-arc residue a probe
+//   reclaims (`residueTargets`: its instance cleanup-failed, or cleaning under a `retry` holder), whether or not a
+//   park names it. Residue repair is keyed to the residue: a failed cleanup that no stage outcome parked (recovery's
+//   cleanup of a killed holder) is probed all the same. A job covers the park seqs and the residue's fail seq, so
+//   a park on the same instance shares the one job.
+// - Due: a target is due when something it covers has no probe yet (the first probe runs at once, and a park that
+//   arrived after the latest probe started is probed at once too, G7), or when its latest probe failed and its
+//   `nextProbeAt` has passed. A backend under a usage-limit park is never probed (D4: no auto-retry);
+//   `resume --backend` clears it.
 // - Backoff: a probe that fails where the previous one (covering some of the same parks) failed too waits
 //   one step longer: 1, 2, 4, 8, 16, 30, 30… minutes. The step is read back from the previous fact's
 //   interval, so a restart keeps it.
 // - Escalation: a retryable unit park unrecovered PARK_ESCALATE_MS after it parked raises one non-blocking
-//   `park-escalated` item; probing goes on at the cap (D2).
+//   `park-escalated` item; probing goes on at the cap (D2). So does a residue target no park is outstanding on,
+//   PARK_ESCALATE_MS after its failed cleanup: an item about the resource (subject arc), parented by the fail
+//   transition's op.
 // - Breaker: BREAKER_UNITS distinct units parked on one target within BREAKER_WINDOW_MS of each other trip
 //   it while those parks are outstanding; admission reads `trippedTargets` (A17), and one non-blocking
-//   `env-blocked` item is raised per trip.
+//   `env-blocked` item is raised per trip. A residue parks no unit, so it counts toward no trip; its instance is
+//   withheld from every reservation until reclaimed anyway.
 import { type Parent, type ProbeTarget, RETRYABLE_BACKEND_PARKS, probeTargetKey } from '../core/events.ts';
 import type { NeedsUserId, UnitId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { NeedsUserContent, NeedsUserReason } from '../core/records.ts';
-import type { ParkState, ProbeState, UnitState } from '../core/state.ts';
+import type { ParkState, ProbeState, ResidueState, UnitState } from '../core/state.ts';
 import { type AbsPath, type IsoTime, isoTimeOf } from '../core/values.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import {
@@ -60,12 +69,28 @@ export function parkParent(unit: UnitState): Extract<Parent, { type: 'stage' }> 
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Residues
+
+/**
+ * The own-arc residues a probe reclaims, in lock order: the instance is cleanup-failed (no reclaim yet), or cleaning
+ * under a `retry` holder (a reclaim whose teardown failed again, or a crash inside the reclaim order). A residue a
+ * sweep holds is its command's to finish.
+ */
+export function residueTargets(view: JournalView): readonly ResidueState[] {
+  return view.residues().filter((r) => {
+    const status = view.resources().get(r.key.resource)?.status;
+    if (status === undefined || status.state === 'free') throw new Error(`residue ${canonicalJson(r.key)} on a free instance`);
+    return status.state === 'cleanup-failed' || (status.state === 'cleaning' && status.holder.type === 'retry');
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Due probes and backoff
 
 /**
- * Every target a current park is outstanding for, with the park seqs a probe started now would cover: the
- * unit parks, and the backend's own park while its class is retryable. A usage-limited backend is left out
- * altogether (D4).
+ * Every target a current park is outstanding for or an own-arc residue names, with the seqs a probe started now
+ * would cover: the unit parks, the backend's own park while its class is retryable, and each residue's fail seq.
+ * A usage-limited backend is left out altogether (D4).
  */
 export function probeTargets(view: JournalView): readonly ProbeJob[] {
   const jobs = new Map<string, { target: ProbeTarget; covers: Set<number> }>();
@@ -76,6 +101,7 @@ export function probeTargets(view: JournalView): readonly ProbeJob[] {
     jobs.set(key, job);
   };
   for (const p of retryableParks(view)) for (const t of p.outstanding) add(t, p.park.seq);
+  for (const r of residueTargets(view)) add({ type: 'resource', instance: r.key.resource }, r.failSeq);
   const limited = new Set<string>();
   for (const b of view.backendParks()) {
     const target: ProbeTarget = { type: 'backend', backend: b.backend };
@@ -150,6 +176,36 @@ export function escalationsDue(view: JournalView, now: Date): readonly DueItem[]
   });
 }
 
+/** An escalation of a residue no park speaks for: parented by its fail transition's op, about the arc. */
+export type ResidueDueItem = Readonly<{ parent: Extract<Parent, { type: 'op' }>; content: NeedsUserContent }>;
+
+/**
+ * The residue escalations due at `now`: one per residue target at least PARK_ESCALATE_MS past its failed cleanup
+ * on which no current retryable park is outstanding (that park's own escalation speaks for the instance).
+ */
+export function residueEscalationsDue(view: JournalView, now: Date): readonly ResidueDueItem[] {
+  const parked = new Set(retryableParks(view).flatMap((p) => p.outstanding.map(probeTargetKey)));
+  return residueTargets(view).filter((r) => Date.parse(r.at) + PARK_ESCALATE_MS <= now.getTime()).flatMap((r) => {
+    const target = probeTargetKey({ type: 'resource', instance: r.key.resource });
+    if (parked.has(target)) return [];
+    const { unit, stage, attempt } = r.holder;
+    return [{
+      parent: { type: 'op', op: r.fail },
+      content: {
+        blocking: false,
+        subject: { type: 'arc' },
+        reason: 'park-escalated',
+        summary: `Resource ${r.key.resource} has been dirty since ${r.at}, more than 6 h: the cleanup of unit ${unit}'s ${stage} attempt ${attempt} `
+          + `failed (teardown ${r.key.inv}) and no probe has reclaimed it since. It is probed every 30 minutes, and the arc does not complete until it is clean.`,
+        recommendation: `Check what keeps ${target} failing its teardown (\`roadmap status\` shows its last probe under host.probes). `
+          + `Nothing else needs doing: a passing probe reclaims it on its own.`,
+        options: [],
+        evidence: [],
+      },
+    }];
+  });
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The breaker
 
@@ -213,12 +269,13 @@ function raisedWith(view: JournalView, runDir: AbsPath, parent: Parent, reason: 
 
 /**
  * Raises the schedule's items due at `now` that are not raised yet: each escalation (parented by its park's
- * attempt), and one `env-blocked` item per trip (parented by the trip's latest park; a trip whose parks
- * already carry one raises nothing). Synchronous, like every raise. Returns the ids raised.
+ * attempt, or a residue's by its fail transition), and one `env-blocked` item per trip (parented by the trip's
+ * latest park; a trip whose parks already carry one raises nothing). Synchronous, like every raise. Returns the
+ * ids raised.
  */
 export function raiseDue(journal: Journal, runDir: AbsPath, now: Date): readonly NeedsUserId[] {
   const raised: NeedsUserId[] = [];
-  for (const item of escalationsDue(journal.view, now)) {
+  for (const item of [...escalationsDue(journal.view, now), ...residueEscalationsDue(journal.view, now)]) {
     if (raisedWith(journal.view, runDir, item.parent, 'park-escalated')) continue;
     raised.push(raiseNeedsUser(journal, runDir, item.content, item.parent));
   }

@@ -238,7 +238,7 @@ in the line belongs to `arc`.
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 | `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
-| `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
+| `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, and for a resource target the fail seq of its own-arc residue; ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
 | `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev`: written after a judgment attempt's entry reservation and before its spawn (F1); one per `(unit, stage, attempt)`. A recovered call is consumed against it (`gateRead` at `tip`/`head`, `fingerprintAt` at `tip`) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
 | `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
@@ -315,8 +315,9 @@ unit not retired, cut or superseded; `unit-reentered` of a parked or held unit, 
 listed in the fact's manifest; a re-entering unit's first dispatch does not lower its lineage's floor; no
 dispatch or stage outcome of a cut or superseded unit; `prepare` only for a re-entering unit; a hold's `cause`
 names a `backend-park` fact of that backend; `unparked` only of an operator-env park; a `probe` covers only park
-seqs (each a unit park the target belongs to, or a park of that backend), and a unit park it covers is
-retryable; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
+seqs (each a unit park the target belongs to, or a park of that backend) and, for a resource target, the seq of a
+`resource.transition{fail}` whose residues name its instance, and a unit park it covers is retryable; a `fail`
+transition is held by a stage; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
 `judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` is a derived cache, never read for a
 decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
 facts keyed by op/inv, so they cannot be lost or double-counted.
@@ -357,7 +358,7 @@ The invocation is `op#ordinal`; its launch.json is written after the intent is d
 `launchSha256`.
 
 `Holder = stage{unit, stage, attempt} | sweep{command} | retry{unit, stage, attempt} | publication{unit, attempt}`
-(M2 adds the last two: a retryable park's probe reclaiming its unit's own residue, keyed by the parked attempt;
+(M2 adds the last two: a probe reclaiming its unit's own residue, keyed by the stage attempt whose cleanup failed;
 the publication transaction, A2). `ResourceEdge`: `reserve` (free→reserved), `run`
 (reserved→running), `clean{from: reserved|running}` (→cleaning), `release` (cleaning→free), `fail{residues:
 [{resource: ResourceInstance, teardown: InvocationId}]}` (cleaning→cleanup-failed; one residue per transitioned resource,
@@ -718,8 +719,9 @@ job wakes it; it never awaits long work, it only starts tasks and jobs and reads
 3. the due probe jobs (`prober.due`), at most one per target, none on a target a running `resume` probes;
 4. the due needs-user items (a halted unit's park or stop, once per deciding attempt; the park schedule's
    escalations and breakers); with nothing running and no mutation pending, the run ends `complete` when every
-   unit is merged, cut, superseded or parked operator (a retryable park is still probed, so it is not settled)
-   and no blocking needs-user is open;
+   unit is merged, cut, superseded or parked operator (a retryable park is still probed, so it is not settled),
+   no own-arc residue is left (`JournalView.residues()`: it is probed until reclaimed, `arcSettled`) and no
+   blocking needs-user is open;
 5. waiting tasks admitted, and a task started for every ready unit without one (`ready`, src/schedule/ready.ts);
 6. the arbiter re-evaluated (also woken by every release), then `sched.json` rewritten when it changed.
 
@@ -845,14 +847,14 @@ fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are n
 per unit of the plan in force. `host`: `containment{mode, guarantee}`; `resources[{resource, state, holder|null,
 pending}]` (every unit not free or with a transition open); `pools{<pool>: {size, used, dirty}}` (`@cpu` and each
 declared pool); `queue` (`sched.json`'s, empty without a live executor); `probes[{target, parks (the seqs a probe
-now covers), nextProbeAt (null: due now), lastResult|null, tripped}]` (every target with a current retryable park,
-`probeTargets`); `backends[{backend, parkSeq, class}]`.
+now covers: park seqs and a residue's fail seq), nextProbeAt (null: due now), lastResult|null, tripped}]` (every
+target with a current retryable park or an own-arc residue, `probeTargets`); `backends[{backend, parkSeq, class}]`.
 
 `run.state`: without a live executor, `refused` (the latest start was refused), `complete` (every unit merged, cut,
-superseded or parked operator, and no blocking needs-user open) or `no-owner`. With one, the first that holds:
+superseded or parked operator, no own-arc residue left, and no blocking needs-user open) or `no-owner`. With one, the first that holds:
 `running` (a unit runs, prepares, is ready, waits in the arbiter's queue, or waits only on a drain), `held` (a unit
 is held or waits on a pause), `parked` (a blocking needs-user is open), `blocked` (work remains that nothing can
-move: parks being probed, run-only, an unresolved edge, a dead dependency, a tripped breaker), else `running`.
+move: parks or own-arc residues being probed, run-only, an unresolved edge, a dead dependency, a tripped breaker), else `running`.
 
 `roadmap watch` streams `needs-user`, `ack` and `owner` events and `{event: units, run: <run.state>, units:
 {<unit>: <compact state>}}` on change (`running:build#3`, `waiting:deps=u1`, `waiting:resources`,
@@ -863,7 +865,7 @@ move: parks being probed, run-only, an unresolved edge, a dead dependency, a tri
 | Interface | Shape | Implemented in |
 |---|---|---|
 | `Journal` | `begin(NewIntent<K>) → Durable{op, inv, seq}` (allocates `op = <arc>/<seq>`, ordinal 1, then calls `body(op, inv)`); `retry(op, kind, body(inv))` (next ordinal; inherits key, parent, deadlineAt); `done`, `abort`, `fact` → durable seq; `view: JournalView` | step 2 |
-| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, dispatchesOf(unit) → DispatchRecord[] (every dispatch fact, log order), parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode(), planApplied() → the latest plan-applied fact\|null, planAppliedBy(command), plannedUnits()`; M2: `backendParks() → [{backend, seq, class}]`, `resources() → Map<ResourceUnit, {status, pending}>` (the incremental table), `probes()` (the latest probe per target), `judgmentInputs(unit, stage, attempt)`, `edgeResolved(edge)`, `runOnly()`, `scheduling() → dag\|legacy\|null`, `decidedSeq(unit) → number\|null` (the seq of `unit(id).decided`), `publications() → [{unit, seq}]` (each `integration.ff{published}` with its done seq, log order), `addedSeq(unit) → number\|null` (the first `plan-applied` naming it); the last three feed rank (F17) | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13; `planApplied`, `planAppliedBy`, `plannedUnits`: apply) |
+| `JournalView` | `arc, highWater(), openIntents(), latestIntent(op), doneOf(op), opsOf(kind), usageRecorded(inv), unit(id) → UnitState, dispatchOf(unit) → DispatchRecord\|null, dispatchesOf(unit) → DispatchRecord[] (every dispatch fact, log order), parkedBackends(), needsUser() → [{id, blocking, ack}], ackOf(id), control() → {stop, pausedAll, pausedUnits}, containmentMode(), planApplied() → the latest plan-applied fact\|null, planAppliedBy(command), plannedUnits()`; M2: `backendParks() → [{backend, seq, class}]`, `resources() → Map<ResourceUnit, {status, pending}>` (the incremental table), `probes()` (the latest probe per target), `residues() → ResidueState[]` (below, "Residue probing"), `judgmentInputs(unit, stage, attempt)`, `edgeResolved(edge)`, `runOnly()`, `scheduling() → dag\|legacy\|null`, `decidedSeq(unit) → number\|null` (the seq of `unit(id).decided`), `publications() → [{unit, seq}]` (each `integration.ff{published}` with its done seq, log order), `addedSeq(unit) → number\|null` (the first `plan-applied` naming it); the last three feed rank (F17) | step 2 (`opsOf`: 10; `unit`, `dispatchOf`, `parkedBackends`: 11b; `needsUser`, `ackOf`, `control`, `containmentMode`: 13; `planApplied`, `planAppliedBy`, `plannedUnits`: apply) |
 | `Containment` | `mode, launch(launch, invDir), members(WorkloadRef), kill(WorkloadRef, reason, graceMs), empty(WorkloadRef)` | 3a, 3b |
 | `RunnerFiles` | `invDir, inv, read(name) → file\|null, write(name, file)`; `RunnerFileMap` keys the five files | 3a |
 | `Adapter` | `(AdapterInput{launch, exit, stdoutPath, stderrPath}) → ResultFile`; pure over files | 4 |
@@ -952,10 +954,27 @@ resource{instance: ResourceInstance}` (one per failed instance, F10; `probeTarge
 `resource:<i>`). A park at seq P recovers when every target has a `probe{result: pass}` whose `covers` includes P;
 the fold then restores `decided`/`interrupted` to their pre-park values (the parked stage re-runs) and records
 `lastRecovery`. A pass covering a park that is no longer current changes nothing (stale); a cover of a seq that
-parked nothing, of an operator park, or of a park that does not target the probed target is refused. A host
+parked nothing (other than a resource target's residue fail seq, below), of an operator park, or of a park that
+does not target the probed target is refused. A host
 probe's `covers` are the parks it ran each local check for, fixed when it starts (G7). The resource target's
 pass is written only after its reclaim order completed. `unparked` re-runs an operator-env park; a design park
 needs `reopened` or a re-entry.
+
+**Residue probing (lead ruling 2026-09-30).** Residue repair is keyed to the residue, not to a park: a failed
+cleanup that no stage outcome parks (recovery's cleanup of a killed holder, whose attempt gets no outcome) is
+probed all the same. The fold keeps `ResidueState = {key: ResidueKey, holder: stage{unit, stage, attempt}, fail:
+OpId, failSeq, at}` per instance: set by a done `fail` (its op, seq and done time; the key is this arc's, the
+holder's unit, the residue's teardown and instance), dropped by the instance's next `release` (so a residue
+disposed but not yet released stays until the reclaim order ends). `residueTargets` are those whose instance is
+`cleanup-failed` or `cleaning` under a `retry` holder (a sweep's is its command's). Each is a `resource{instance}`
+probe target whether or not a park names it; its job covers the residue's `failSeq` beside any park seqs, so a
+unit park on the same instance shares the one job, the same backoff and the same `probe` fact. The job reclaims
+under `retryHolderOf`: the `retry` holder already cleaning the instance, else `retry{holder.unit, holder.stage,
+holder.attempt}` from the residue (the frozen holder shape expresses it; nothing is added). A residue no current
+retryable park is outstanding on escalates `PARK_ESCALATE_MS` after `at`: one non-blocking `park-escalated`, subject
+`arc`, parented `op{fail}`. A residue parks no unit, so it counts toward no breaker trip (its instance is withheld
+from every reservation until reclaimed). The run does not end `complete` while any residue is left, and `status`
+shows each under `host.probes`. An adopted dev.4 arc's cleanup-failed resources are residues like any other.
 
 **Park schedule (step 3 implements).** `PROBE_BACKOFF_MIN = [0, 1, 2, 4, 8, 16, 30]` then 30 repeatedly (each
 failed probe's `nextProbeAt`); `PARK_ESCALATE_MS` 6 h → a non-blocking `park-escalated` needs-user, probing continues

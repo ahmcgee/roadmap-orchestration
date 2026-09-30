@@ -171,7 +171,7 @@ describe('prober: host and resource targets (G7, F2)', () => {
     journal.close();
   });
 
-  it('a resource target runs the reclaim order under the parked attempt\'s retry holder, then records the pass', T, async () => {
+  it('a resource target runs the reclaim order under the residue\'s retry holder (the attempt whose cleanup failed), then records the pass', T, async () => {
     const r = newProbeRun([]);
     const { ctx, journal } = openProbeRun(r);
     writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
@@ -189,7 +189,10 @@ describe('prober: host and resource targets (G7, F2)', () => {
 
     const prober = createProber(ctx);
     const [job] = prober.due(journal.view, new Date());
-    assert.deepEqual(job, { target: { type: 'resource', instance }, covers: [p] });
+    // One job for the instance: it covers the residue (its fail transition's seq) and the park on it.
+    const [residue] = journal.view.residues();
+    assert.ok(residue !== undefined && residue.key.resource === instance);
+    assert.deepEqual(job, { target: { type: 'resource', instance }, covers: [residue.failSeq, p] });
     assert.equal(await prober.run(job!, signal()), 'pass');
     assert.equal(journal.view.unit(U1).status, 'active');
     assert.deepEqual(undispositioned(absPath(r.hostDir)), [], 'disposed before the pass');

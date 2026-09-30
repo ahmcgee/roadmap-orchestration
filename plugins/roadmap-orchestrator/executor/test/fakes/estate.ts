@@ -9,7 +9,8 @@
 // teardown: removes the occupant when it carries the caller's label, logging `leave`. Beside the instances,
 //   `<stateDir>/<pool>.teardown-fails-once`, when present, is consumed by the next teardown, which then
 //   exits 1 removing nothing: a teardown that fails exactly once. A count n > 1 in it fails the next n
-//   teardowns, one each.
+//   teardowns, one each. `<stateDir>/<pool>#<n>.teardown-fails-once` does the same for that instance's
+//   teardowns only, and is read first.
 // hold: the lane workload. Claims the instance (a second owner logs `conflict` and exits 1), parks at the
 //   per-unit barrier if one is named (emitting progress), then releases the instance.
 // Every call appends `<cmd> <pool>#<n> <label>` to `<stateDir>/calls.log`.
@@ -40,7 +41,8 @@ if (cmd === 'probe') {
   process.exit(held === null ? 0 : held === label ? 10 : 11);
 }
 if (cmd === 'teardown') {
-  const once = join(stateDir, `${pool}.teardown-fails-once`);
+  const own = join(stateDir, `${pool}#${n}.teardown-fails-once`);
+  const once = existsSync(own) ? own : join(stateDir, `${pool}.teardown-fails-once`);
   if (existsSync(once)) {
     const left = Number(readFileSync(once, 'utf8').trim() || '1');
     if (left > 1) writeFileSync(once, String(left - 1));

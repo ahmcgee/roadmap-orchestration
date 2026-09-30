@@ -11,7 +11,7 @@
 //   3. start the probe jobs that are due (`prober.due`), at most one per target;
 //   4. raise the needs-user items now due: a halted unit's (an operator park, a stop) and the park
 //      schedule's (escalations, breakers; src/park/schedule.ts); then, with nothing running and no mutation
-//      pending, end `complete` if every unit is settled and no blocking item is open;
+//      pending, end `complete` if every unit is settled, no own-arc residue is left and no blocking item is open;
 //   5. start a task for every active unit without one whose next stage is a chain (a recovered park's), then for
 //      every ready unit without one (`ready`), and admit waiting tasks (`admitter`);
 //   6. re-evaluate the arbiter (it is also woken by every release: a task's or a job's end), then write the
@@ -42,8 +42,9 @@
 // `recoverReservations` cleans what a stage still holds, and the run ends `stop`.
 //
 // The run ends `complete` when nothing runs and every unit is merged, cut, superseded or parked for the
-// architect (an operator park: a retryable park is probed until it recovers, so it is not settled), and no
-// blocking needs-user is open.
+// architect (an operator park: a retryable park is probed until it recovers, so it is not settled), no own-arc
+// residue is left (`JournalView.residues()`: its probes go on until it is reclaimed, so a failed cleanup that
+// parked nothing never ends an arc dirty), and no blocking needs-user is open.
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS } from '../commands/queue.ts';
@@ -185,6 +186,15 @@ const operatorPark = (view: JournalView, unit: UnitId): boolean => view.unit(uni
 export function unitSettled(view: JournalView, unit: UnitId): boolean {
   const s = view.unit(unit).status;
   return s === 'retired' || s === 'cut' || s === 'superseded' || (s === 'park-pending' && operatorPark(view, unit));
+}
+
+/**
+ * Whether the arc may end `complete` (blocking items aside): every unit settled and no own-arc residue left. A
+ * residue is probed until reclaimed whether or not a park names it, so the arc waits for it (`status` shows it
+ * under `host.probes`).
+ */
+export function arcSettled(view: JournalView, units: readonly Readonly<{ id: UnitId }>[]): boolean {
+  return units.every((u) => unitSettled(view, u.id)) && view.residues().length === 0;
 }
 
 /**
@@ -531,7 +541,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       raiseHalted();
       const blocking = blockingItems(runDir, view());
       const idle = tasks.size === 0 && jobs.size === 0 && mutations.length === 0;
-      if (idle && blocking.length === 0 && plan().units.every((u) => unitSettled(view(), u.id))) return { kind: 'complete', units: summary() };
+      if (idle && blocking.length === 0 && arcSettled(view(), plan().units)) return { kind: 'complete', units: summary() };
       // 5. Chains a recovered park returned a unit to, waiting tasks admitted, then tasks for ready units (each
       //    reaches its first gate at once).
       startChains();

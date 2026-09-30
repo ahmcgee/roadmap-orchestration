@@ -56,8 +56,8 @@ export type CommitInputs<P extends readonly Sha[]> = Readonly<{
 }>;
 
 /**
- * Who holds a reservation: a unit's stage attempt, or a sweep command; since M2 also `retry` (a retryable
- * park's probe reclaiming the unit's own residue, keyed by the parked attempt) and `publication` (the unit's
+ * Who holds a reservation: a unit's stage attempt, or a sweep command; since M2 also `retry` (a probe
+ * reclaiming the unit's own residue, keyed by the stage attempt whose cleanup failed) and `publication` (the unit's
  * candidate attempt, holding `integration-slot` from candidate start through `ff` and `snapshot`; A2).
  */
 export type Holder =
@@ -65,7 +65,7 @@ export type Holder =
   | Readonly<{ type: 'sweep'; command: CommandId }>
   | Readonly<{ type: 'retry'; unit: UnitId; stage: Stage; attempt: number }>
   | Readonly<{ type: 'publication'; unit: UnitId; attempt: number }>;
-/** The holders that may take `reclaim`: a sweep, or a retryable park's probe reclaiming its own residue. */
+/** The holders that may take `reclaim`: a sweep, or a probe reclaiming the arc's own residue. */
 export const RECLAIM_HOLDERS = ['sweep', 'retry'] as const satisfies readonly Holder['type'][];
 
 /**
@@ -411,8 +411,9 @@ export type Fact =
    */
   | Readonly<{ kind: 'unparked'; unit: UnitId; command: CommandId }>
   /**
-   * A retryable park's probe (M2): `target` checked for the parks at seqs `covers` (unit parks' stage-outcome
-   * seqs, or a backend park's seq; sorted, non-empty). A pass recovers the parks it covers once every target
+   * A probe (M2): `target` checked for the seqs `covers` (sorted, non-empty): unit parks' stage-outcome seqs, a
+   * backend park's seq, and for a resource target the seq of the `resource.transition{fail}` that left an own-arc
+   * residue on it (residue probing, which needs no park). A pass recovers the parks it covers once every target
    * of each has passed; `nextProbeAt` is when a failed target is probed again (null exactly on a pass).
    */
   | Readonly<{ kind: 'probe'; target: ProbeTarget; covers: readonly number[]; result: 'pass' | 'fail'; nextProbeAt: IsoTime | null }>

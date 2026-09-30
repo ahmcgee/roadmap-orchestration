@@ -11,10 +11,12 @@
 //   aging                the graded property (F17): folding the log event by event, every grant made while a
 //                        waiter U is promoted, of a resource U waits for, goes to a unit promoted before U
 //                        (older by `compareRank`). Vacuous when no waiter was promoted (listed not exercised)
-//   cleanup-survival     at least one cleanup failed; each residue: its stage parked retryable on that instance,
-//                        its park's `retry` holder reclaimed and released it, a probe pass covers the park, the
-//                        host index disposes it `cleaned`, the unit ran the stage again and merged (or its lineage
-//                        did); nothing is left undisposed or cleanup-failed; the respawn after the driver's
+//   cleanup-survival     a cleanup failed on the live path and one in recovery's cleanup of a killed holder; each
+//                        residue: on the live path its stage parked retryable on that instance, in recovery its
+//                        killed attempt has no outcome; the residue's attempt's `retry` holder reclaimed and
+//                        released it, a probe pass covers the park (live) or the residue's fail seq (recovery),
+//                        the host index disposes it `cleaned`, the unit ran the stage again and merged (or its
+//                        lineage did); nothing is left undisposed or cleanup-failed; the respawn after the driver's
 //                        SIGKILL started (executor-started of its generation) and was not refused
 //   reentry              the driver's merge-tree conflict; `right2` re-entered `right` (plan-applied), prepared
 //                        `conflicted`, ran its resolve round as a fresh session, merged with both registrations
@@ -33,7 +35,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { type Event, type Fact, type Holder, type IntentOf, prevHash, parseEventLine, probeTargetKey } from '../../src/core/events.ts';
-import { type ArcId, type OpId, type UnitId, arcId, invocationId, unitId } from '../../src/core/ids.ts';
+import { type ArcId, type OpId, type UnitId, arcId, invocationId, parseOpId, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { canonicalJson } from '../../src/core/json.ts';
 import { readJournal } from '../../src/core/log.ts';
@@ -244,35 +246,51 @@ function cleanupSurvival(run: Run): Verdict {
   const lines: string[] = [];
   const all = transitions(run);
   const fails = all.filter((i) => i.expect.edge.type === 'fail');
-  if (fails.length === 0) problems.push('no cleanup failed: the device did not fire');
   const residues = readResidues(run.hostDir);
+  const paths = { live: 0, recovery: 0 };
   for (const f of fails) {
     const holder = f.expect.holder;
     if (holder.type !== 'stage' || f.expect.edge.type !== 'fail') {
-      problems.push(`seq ${f.seq}: a cleanup of ${canonicalJson(holder)} failed, which is no stage's (a residue no park reclaims)`);
+      problems.push(`seq ${f.seq}: a cleanup of ${canonicalJson(holder)} failed, which is no stage's (a residue no probe reclaims)`);
       continue;
     }
+    // The live path parks the attempt on the instance; recovery's cleanup of a killed holder (parent arc) parks
+    // nothing, and the residue is probed on its own (covered by its fail seq).
+    const path = f.parent.type === 'arc' ? 'recovery' : 'live';
+    paths[path]++;
+    const park = outcomes(run).find((o) => o.unit === holder.unit && o.stage === holder.stage && o.attempt === holder.attempt);
     for (const r of f.expect.edge.residues) {
-      const where = `${holder.unit} ${holder.stage} ${holder.attempt} ${r.resource}`;
-      const park = outcomes(run).find((o) => o.unit === holder.unit && o.stage === holder.stage && o.attempt === holder.attempt);
-      if (park?.outcome !== 'cleanup-failed' || park.park?.class !== 'retryable' || !park.park.targets.some((t) => t.type === 'resource' && t.instance === r.resource)) {
-        problems.push(`${where}: the attempt did not park retryable on ${r.resource} (${JSON.stringify(park)})`);
-        continue;
+      const where = `${path} ${holder.unit} ${holder.stage} ${holder.attempt} ${r.resource}`;
+      let covered: number;
+      if (path === 'live') {
+        if (park?.outcome !== 'cleanup-failed' || park.park?.class !== 'retryable' || !park.park.targets.some((t) => t.type === 'resource' && t.instance === r.resource)) {
+          problems.push(`${where}: the attempt did not park retryable on ${r.resource} (${JSON.stringify(park)})`);
+          continue;
+        }
+        covered = park.seq;
+      } else {
+        if (park !== undefined) problems.push(`${where}: the killed attempt has an outcome (${JSON.stringify(park)})`);
+        covered = parseOpId(f.op).seq;
       }
-      const retry = all.filter((i) => i.seq > f.seq && i.expect.holder.type === 'retry' && i.expect.holder.unit === holder.unit && i.expect.resources.includes(r.resource));
+      const retry = all.filter((i) => i.seq > f.seq && i.expect.holder.type === 'retry' && i.expect.resources.includes(r.resource));
+      if (retry.some((i) => canonicalJson(i.expect.holder) !== canonicalJson({ ...holder, type: 'retry' }))) {
+        problems.push(`${where}: reclaimed under ${retry.map((i) => canonicalJson(i.expect.holder)).join(', ')}, not the residue's attempt`);
+      }
       const edges = retry.map((i) => i.expect.edge.type);
       if (edges[0] !== 'reclaim' || !edges.includes('release')) problems.push(`${where}: the retry holder's edges are ${edges.join(', ') || 'none'}, not reclaim … release`);
-      const pass = factsOf(run, 'probe').find((p) => p.result === 'pass' && probeTargetKey(p.target) === `resource:${r.resource}` && p.covers.includes(park.seq));
-      if (pass === undefined) problems.push(`${where}: no passing probe covers the park at seq ${park.seq}`);
+      const pass = factsOf(run, 'probe').find((p) => p.result === 'pass' && probeTargetKey(p.target) === `resource:${r.resource}` && p.covers.includes(covered));
+      if (pass === undefined) problems.push(`${where}: no passing probe covers seq ${covered}`);
       const cleaned = residues.some((d) => d.type === 'disposition' && d.disposition === 'cleaned' && d.key.arc === run.arc && d.key.resource === r.resource && d.key.inv === r.teardown);
       if (!cleaned) problems.push(`${where}: the host index never disposed residue ${r.teardown} cleaned`);
       const again = outcomes(run).find((o) => o.unit === holder.unit && o.stage === holder.stage && o.attempt > holder.attempt);
       if (again === undefined) problems.push(`${where}: the unit never ran ${holder.stage} again`);
       const merged = run.view.unit(holder.unit).status === 'retired' || run.view.unit(run.view.unit(holder.unit).supersededBy ?? holder.unit).status === 'retired';
       if (!merged) problems.push(`${where}: the unit did not merge`);
-      lines.push(`${where}: parked seq ${park.seq}, probe pass seq ${pass?.seq}, re-ran as ${again?.stage} ${again?.attempt} (${again?.outcome})`);
+      lines.push(`${where}: ${path === 'live' ? 'parked' : 'failed'} seq ${covered}, probe pass seq ${pass?.seq}, re-ran as ${again?.stage} ${again?.attempt} (${again?.outcome})`);
     }
   }
+  if (paths.live === 0) problems.push('no cleanup failed on the live path: the teardown device did not fire');
+  if (paths.recovery === 0) problems.push('no cleanup failed in recovery: the respawn device did not fire');
   const undisposed = undispositioned(run.hostDir).filter((k) => k.arc === run.arc);
   if (undisposed.length > 0) problems.push(`undisposed residues at the end: ${undisposed.map((k) => `${k.unit} ${k.resource} ${k.inv}`).join(', ')}`);
   const dirty = [...resourceTable(run.view).entries()].filter(([, e]) => e.status.state === 'cleanup-failed').map(([u]) => u);

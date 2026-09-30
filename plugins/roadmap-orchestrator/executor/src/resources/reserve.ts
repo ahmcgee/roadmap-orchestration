@@ -27,9 +27,10 @@
 //                                 failed cleanup (its residues are keyed by its unit).
 //   publication{unit, attempt}    the candidate attempt, holding `integration-slot` from candidate start
 //                                 through `ff` and `snapshot` (A2). It declares no teardown and never fails.
-//   retry{unit, stage, attempt}   a retryable park's probe reclaiming the unit's own residue (keyed by the
-//                                 parked attempt): reclaim → teardown → the residue's `cleaned` disposition →
-//                                 release (F2), so a released instance is never dirty (`retryReclaim`).
+//   retry{unit, stage, attempt}   a probe reclaiming the unit's own residue (keyed by the stage attempt whose
+//                                 cleanup failed, as the residue key names it): reclaim → teardown → the
+//                                 residue's `cleaned` disposition → release (F2), so a released instance is
+//                                 never dirty (`retryReclaim`).
 //   sweep{command}                a `sweep` command. It never runs a workload and never records a failed
 //                                 cleanup: what it could not clean stays `cleaning` and its residue undisposed.
 // A retry or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
@@ -377,11 +378,11 @@ function ownResidue(ctx: ResourceContext, holder: RetryHolder, instance: Resourc
 }
 
 /**
- * Reclaims one of the unit's own cleanup-failed instances under `holder` (the parked attempt), in the order that
+ * Reclaims one of the unit's own cleanup-failed instances under `holder` (the attempt whose cleanup failed), in the order that
  * keeps a released instance clean (F2): `reclaim` (cleanup-failed→cleaning) → the residue's recorded teardown
  * (its instance binding included) → on pass the residue's `cleaned` disposition in the host index → `release`.
  * A failed teardown leaves the instance cleaning under `holder` and the residue undisposed: the next probe of the
- * same park resumes from there. Idempotent from every point, so recovery and a later probe call it again after a
+ * instance resumes from there. Idempotent from every point, so recovery and a later probe call it again after a
  * crash. `pass` means the instance is free and its residue disposed; the caller then writes the `probe` fact.
  */
 export async function retryReclaim(ctx: ResourceContext, holder: RetryHolder, instance: ResourceInstance, parent: Parent): Promise<'pass' | 'fail'> {

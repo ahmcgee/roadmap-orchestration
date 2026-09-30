@@ -9,8 +9,8 @@
 //   cleaning             → settle any teardown invocation still open, then rerun every teardown as a new
 //                          op (a fresh deadline: a retried ordinal would inherit a deadline that may have
 //                          passed while the executor was down) → release, or fail with residues first.
-//   cleanup-failed       → never released by recovery; a `sweep` command (commands/apply.ts) or a retryable
-//                          park's probe (`retryReclaim`) reclaims it.
+//   cleanup-failed       → never released by recovery; a `sweep` command (commands/apply.ts) or the probe of
+//                          its residue (`retryReclaim`, whether or not a park names it) reclaims it.
 //
 // Per holder (M2):
 //   stage        as above. Recipes are bound to the holder's whole set (F7), exactly as the live cycle bound
@@ -20,7 +20,7 @@
 //                settled and the slot is cleaned and released.
 //   retry        found cleaning: the reclaim order resumes (`retryReclaim`: the recorded teardown again, the
 //                `cleaned` disposition unless recorded, then release). A failed teardown leaves it cleaning for
-//                the park's next probe.
+//                the instance's next probe.
 //   sweep        re-driven by its command's reconciliation (command.apply, step 13), which knows the residues
 //                it sweeps; here only its open transition is closed.
 import type { Holder, IntentOf, Parent } from '../core/events.ts';

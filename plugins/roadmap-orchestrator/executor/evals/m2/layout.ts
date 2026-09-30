@@ -76,7 +76,7 @@ export function layout(dir: string): Layout {
 }
 
 export const instanceDir = (l: Layout, n: number): string => join(l.estate, `${POOL}#${n}`);
-/** The marker instance #2's next teardown consumes, failing (estate.ts). */
-export const teardownFailsOnce = (l: Layout): string => join(l.estate, `${POOL}#2.teardown-fails-once`);
+/** The marker instance #n's next teardown consumes, failing (estate.ts). */
+export const teardownFailsOnce = (l: Layout, n: number): string => join(l.estate, `${POOL}#${n}.teardown-fails-once`);
 export const barrierFile = (l: Layout, unit: string, name: string, round: number, what: 'reached' | 'release'): string =>
   join(l.barriers, `${unit}.${name}.${round}.${what}`);

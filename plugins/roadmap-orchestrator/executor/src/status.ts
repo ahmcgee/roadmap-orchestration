@@ -30,13 +30,13 @@
 //
 // `run.state` (§2.10), the first that holds:
 //   no live executor: refused (the latest start was refused), complete (every unit merged, cut, superseded or
-//   parked for the architect, and no blocking needs-user open), no-owner (work remains);
+//   parked for the architect, no own-arc residue left, and no blocking needs-user open), no-owner (work remains);
 //   a live executor:
 //     running   some unit runs, prepares, is ready, waits for resources, or waits only on a draining mutation
 //     held      nothing moves, and some unit is held or waits on a pause
 //     parked    nothing moves, and a blocking needs-user is open
-//     blocked   nothing moves, and work remains (parks being probed, run-only, an unresolved edge, a dead
-//               dependency, a tripped breaker)
+//     blocked   nothing moves, and work remains (parks or own-arc residues being probed, run-only, an
+//               unresolved edge, a dead dependency, a tripped breaker)
 //     running   otherwise (every unit settled: the executor is about to end)
 //
 // `needsUser` lists every unacknowledged item: those the log raised, and the file-only ones outside it (the
@@ -71,7 +71,7 @@ import { judgmentSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { admitter, nextStage, rankOf } from './schedule/ready.ts';
-import { type QueueEntry, SCHED_FILE, type SchedFile, schedFile, unitSettled } from './schedule/scheduler.ts';
+import { type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import { type ResolvedRouting, type SeatSources, arcStack, resolveRouting } from './routing/layers.ts';
 import {
@@ -190,7 +190,10 @@ export type EdgeView =
   | Readonly<{ type: 'after'; unit: UnitId; on: UnitId; effective: UnitId; met: boolean }>
   | Readonly<{ type: 'contingent'; unit: UnitId; edge: EdgeId; condition: string; resolved: boolean }>;
 
-/** A probe target with current parks: the park seqs a probe now covers, its backoff, last result and breaker. */
+/**
+ * A probe target with current parks or an own-arc residue: the seqs a probe now covers (`parks`: park seqs, and a
+ * residue's fail seq), its backoff, last result and breaker.
+ */
 export type ProbeView = Readonly<{ target: ProbeTarget; parks: readonly number[]; nextProbeAt: IsoTime | null; lastResult: 'pass' | 'fail' | null; tripped: boolean }>;
 
 export type HostView = Readonly<{
@@ -504,11 +507,11 @@ function runStateOf(view: JournalView, lines: readonly UnitStatusLine[], owner: 
     if (lines.some(moving)) return 'running';
     if (lines.some((l) => l.state === 'held')) return 'held';
     if (blocking.length > 0) return 'parked';
-    if (lines.some((l) => !unitSettled(view, l.unit))) return 'blocked';
+    if (lines.some((l) => !unitSettled(view, l.unit)) || view.residues().length > 0) return 'blocked';
     return 'running';
   }
   if (rejection !== null) return 'refused';
-  const settled = lines.length > 0 && lines.every((l) => unitSettled(view, l.unit));
+  const settled = lines.length > 0 && arcSettled(view, lines.map((l) => ({ id: l.unit })));
   return settled && blocking.length === 0 ? 'complete' : 'no-owner';
 }
 
