@@ -81,6 +81,8 @@ export const PREEMPT = 'docs publication preempting a candidate before green (M3
 export const LATCH = 'obligation-latched after a unit ff{published}, before its snapshot (M3 B2)';
 export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot under batch{finding, attempt}, chained candidate, job lanes, batch ff, finish)';
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
+export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
+export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -1210,6 +1212,40 @@ export const MATRIX: readonly Row[] = [
         labels: ['audit.after-ended'],
         recovery: 'the audit ended: nothing to resume; no audit is due; no call was asked twice',
       },
+    },
+  },
+  {
+    row: CHECKPOINT_JOB,
+    test: 'test/checkpoint.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['checkpoint.after-inputs'],
+        recovery: 'checkpoint-inputs durable, nothing asked: the job resumes as ckpt-1 from its recorded inputs (no second capture), asks once, and decides once',
+      },
+      B3: { status: 'excluded', why: 'the call is a proc.spawn: its runner-exit cells (spawn.*) cover a crash inside it; the job consumes the recorded call on resume' },
+      B4: {
+        status: 'crash',
+        labels: ['checkpoint.after-call'],
+        recovery: 'the call read, nothing decided: the job resumes, consumes the recorded call (no second call), activates once',
+      },
+      B5: { status: 'excluded', why: 'the decision is the job\'s last record: the BUNDLE_ACTIVATE row covers what follows it' },
+    },
+  },
+  {
+    row: BUNDLE_ACTIVATE,
+    test: 'test/checkpoint.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'an applied bundle commits through revision.commit, whose crash cells are the REVISION_COMMIT row\'s; the job resumes undecided when it aborted' },
+      B3: { status: 'excluded', why: 'the activation holds the fence and awaits only the revision\'s docs publication, covered by the docs publication rows' },
+      B4: {
+        status: 'crash',
+        labels: ['bundle.after-decided', 'bundle.after-applied'],
+        recovery: 'decided (a no-op) or applied, its aftermath not written: the next run settles it from the recorded output, writing each missing interpretation divergence (job, index), finding disposition and digest once, and asks nothing',
+      },
+      B5: { status: 'excluded', why: 'the aftermath is idempotent derivations: settling again writes nothing' },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },
