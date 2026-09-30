@@ -65,6 +65,7 @@ export const SPEC_PATCH = 'spec.patch';
 export const RESIDUE_ORDERING = 'resource.transition fail + residue';
 export const RESERVE_CYCLE = 'resource.transition reserve/run/clean/release';
 export const RETRY_RECLAIM = 'resource.transition retry reclaim (M2: reclaim → teardown → disposition → release)';
+export const RESIDUE_COMPACT = 'residue-index compaction at start (M3: tmp → link archive → rename)';
 export const PROBE_JOB = 'probe job (M2: smoke spawn → probe fact)';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
@@ -489,6 +490,33 @@ export const MATRIX: readonly Row[] = [
         labels: ['retry.after-disposition', 'resource.after-done'],
         recovery: 'the disposition is durable, the instance still cleaning under the retry: recovery reruns the idempotent teardown and releases without a second disposition',
       },
+    },
+  },
+  {
+    // M3 step A5a. The scenario (test/fixtures/compact-child.ts): a start's compaction of an index over the
+    // threshold. Recovery is the next start's compaction; the oracle: the index verifies at every crash and reads
+    // the same residues and dispositions, then compacts to the same kept lines, with one archive byte-identical
+    // to the index before compaction.
+    row: RESIDUE_COMPACT,
+    test: 'test/compact.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'compaction journals nothing: the tmp is written before anything reads it, and the index is replaced by one rename' },
+      B2: {
+        status: 'crash',
+        labels: ['residue.compact.after-tmp'],
+        recovery: 'the index is unchanged beside a stray tmp; the next compaction removes the tmp and compacts',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['residue.compact.after-link'],
+        recovery: 'the archive is linked to the unchanged index; the next compaction finds it (same inode) and completes',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['residue.compact.after-rename'],
+        recovery: 'the index is compacted; the next compaction is below the threshold and changes nothing',
+      },
+      B5: { status: 'excluded', why: 'the rename is the last act: after it the compaction is complete (B4)' },
     },
   },
   {
