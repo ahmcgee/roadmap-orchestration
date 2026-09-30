@@ -1585,12 +1585,13 @@ supersede the A4 items they name):
 **Choices made in M3 B3** (the findings store, P1 blocking, repair and vacuity reproduction):
 
 1. **The store** is the log (`finding-opened`, `finding-transition`); src/holistic/findings.ts decides what is written.
-   `openFinding(draft)`: a key matching an active finding merges (nothing written); one matching a finding ruled
+   `openFinding(journal, draft) → {opened|merged, id} | {suppressed, by}` (the one store: audits, code, plan-check, the
+   checkpoint; `FindingDraft` is the fact without id and key, plus `cause`): a key matching an active finding merges (nothing written); one matching a finding ruled
    `dismissed` is suppressed unless the draft cites, with a different non-null blob, a path the dismissal cited
    (`evidenceChanged`); a resolved, deferred or accepted key opens anew. A dismissal lasts the arc's lifetime: it is read
-   from the arc's own log only, never carried into the next arc. A vacuity finding's patch is kept first as
+   from the arc's own log only, never carried into the next arc. A vacuity finding's patch is kept first (`keepMutantPatch`) as
    `inputs/<patchSha256>.patch` (`MUTANT_PATCH_INPUT`, src/git/mutant.ts), which the snapshot closure carries (named by
-   the `finding-opened`). Code's witness P1 has one stable cause per obligation (`witnessFindingDraft`); plan-check's
+   the `finding-opened`). Code's witness P1 has one stable cause per obligation (`witnessFindingDraft`: `witness not held`, citing its `serves`); plan-check's
    vision conflict is `visionConflictDraft` (cause `<unit>: <note>`).
 2. **Ownership (R5)** is derived and written by `syncRepairs` (src/pipeline/reproduce.ts, over `ownershipMoves`): the
    first unit in plan order whose spec names the finding (`repairs` F-n) and is neither published nor cut or superseded
@@ -1646,3 +1647,58 @@ supersede the A4 items they name):
     capture → `@cpu` window keeps the rev, and a redirect patches the spec in force at it; any other mismatch fails
     loud); each `visionConflict` opens a P3 `plan-check` finding (a re-read merges); a conflict citing a clause that is
     not an active clause of the vision in force (or with no vision) is `malformed`.
+
+**Choices made in M3 B5** (the cadence audit, coverage, the arc roles' call; src/holistic/{audit,cadence,coverage}.ts,
+src/pipeline/dispatch.ts `callArcRole`):
+
+1. **Coverage (H3, lead ruling 2026-09-30).** A lens's watermark starts at the arc's base (the integration head at the
+   revision that turned the arc holistic: its docs publication's head when it published, else the head its
+   `revision.commit` found) and follows, from wherever it stands, each range an audit covered for that lens and each
+   docs-only edge (`docs-covered{U→D}`, applied only once the watermark reaches U, kept until then; A17, H8). A vision
+   revision clears every coverage recorded before it (audits started under an older vision, docs edges before it), so
+   the next audit of each lens at X covers everything up to X from the base, exactly as a first audit would: no merged
+   range survives a vision change unaudited, at no extra call. The integration history is read from the published
+   `integration.ff`s (a docs one at its intent's seq, a unit's or batch's at its done's seq, `publications()`).
+2. **Triggers** are events after the last completed audit's start (or the latest vision revision): `cadence` (N counted
+   publications: unit, batch, and a revision's docs publication carrying contract ops; never a docs-only one),
+   `unwitnessed` (R8: a publication's selected future-not-latched or exempt obligations with no observation on its tree
+   or verdict `unwitnessed`, recomputed with `selected` over the ff's old..new), `drift` (a revision from a bundle, or
+   whose ledger/sidecars, a non-evidence spec, obligations, mapping, vision or `holistic` changed; never an executor's or
+   an arc's first), `wall-clock` (`wallClockMin` since the latest audit start or unit publication, while a plan unit is
+   not retired, cut or superseded), `requested` (its lenses ∩ L, or L), `final` (no work left and some lens in L
+   outstanding: those lenses only). drift runs L ∩ {drift, vision} (or L); every other trigger runs L. An audit records
+   every owed trigger (coalesced).
+3. **Due:** no audit running, and a trigger is fresh (its event after the latest audit start), the wall-clock trigger
+   fired, `final` holds after a completed audit (or before any), or `wallClockMin` passed since the latest start with
+   triggers owed. So an abandoned audit is not retried at once for the same triggers; with no work left the retry is the
+   final trigger alone. A due audit is skipped, writing nothing, while the lens seat's backend is parked or the arc is
+   paused or stopped.
+4. **Owed (OR-Q2/3):** owed for 2N counted publications or 2 × `wallClockMin` since the last completed audit started
+   (or the vision revision): one non-blocking `audit-owed` per episode, parented by that audit's job (`{type: arc}`
+   before one) and found again by parent and reason (a `job{audit-n}` parent for an audit not yet started would name,
+   and so bump, the next audit id).
+5. **Time:** `Clock(seq)` is minutes since the fact at seq; `processClock` times a fact from when this process first saw
+   it (older facts from the process start), so a restart delays a wall-clock trigger, never fires one early.
+6. **Generation:** a bundle revision's drift audit takes its checkpoint's generation + 1; any other audit one more than
+   the highest generation any audit or checkpoint recorded.
+7. **The run:** capture (cadence recomputed inside `captureUnderFence`; `highWater` the log just before it); the arc
+   lanes as a journey series under `job{audit-n}` (observations reused); code opens a P1 (`lens: witness`, cause
+   `witness not held`) for each must-hold or latched obligation `not-held` on the audited tree; the lenses serially, the
+   vision first, each `@cpu`×1 under the job holder through `acquireFirst`, in a detached checkout `<job>.lenses`,
+   reading the recorded vision, obligations and ledger by their kept bytes, every plan contract at the audited SHA in
+   full, owner branch diffs from `diffBase`. A lens call is `arc-backend{role: lens, tier: arc, routingRev, job,
+   attempt}`, `attempt` its place in the run order; a resumed job consumes a recorded call (`recordedArcCall`) and asks
+   again only for a lost one. A lens's refusal, malformed report or fault abandons the audit after the rest; a usage
+   limit or capacity parks the backend (`verdictOf` with a job parent; the usage-limit item parented by the spawn op)
+   and stops it. The lens checkout is removed (citing an evidence snapshot) before `audit-ended`, so a crash never
+   strands it. `covered` lists only lenses that reported with a non-empty range, from their watermark at the capture to
+   the audited SHA. Crash labels `audit.after-started`, `audit.after-lens`, `audit.before-ended`, `audit.after-ended`
+   (matrix row AUDIT_JOB).
+8. **Race:** `rewitnessP1s` re-runs, on the head when it moved past the audited SHA, the lanes of the active P1s over an
+   obligation the audit named, under the same job. `runAudit` calls it at its end; the checkpoint (B6) calls it again
+   before its capture.
+9. **Findings from audits** go through B3's store (`openFinding`, src/holistic/findings.ts; see "Choices made in M3 B3"
+   item 1); the ids it opened or merged and the suppressed count are `audit-ended{findings, suppressed}`.
+   `gateHadPassed`: a unit had published before the audit started. A vision-lens P1 is recorded P2; unknown obligation
+   and clause ids are dropped; a vacuity mutant is kept content-addressed (`.patch`) only on a known lane.
+10. **Smoke and argv:** the claude-judgment role is any `FreshRole`, so a probe can call `lens.arc` or `checkpoint.arc`.

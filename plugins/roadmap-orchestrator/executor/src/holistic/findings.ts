@@ -6,7 +6,7 @@
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc). A vacuity finding's mutant patch
-//   is kept content-addressed (`inputs/<sha256>.patch`, src/git/mutant.ts) before its fact names it.
+//   is kept content-addressed first (`keepMutantPatch`, `inputs/<sha256>.patch`), so its fact names kept bytes.
 // - **States (R5).** `open → owned → fixed-on-branch → resolved`, or `ruled`. Ownership follows the units that repair a
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
@@ -23,8 +23,8 @@
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
 import { canonicalJson } from '../core/json.ts';
-import type { Event, Parent } from '../core/events.ts';
-import type { FindingId, JobId, LaneId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { Event, HolisticFact, Parent } from '../core/events.ts';
+import type { FindingId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -41,30 +41,24 @@ import {
 // ---------------------------------------------------------------------------------------------------
 // Opening and dedupe
 
-/** A finding before its id: what a lens, code over a witness, or plan-check (R17) reports. `cause` feeds the key. */
-export type FindingDraft = Readonly<{
-  lens: FindingLens;
-  severity: FindingSeverity;
-  obligation: ObligationId | null;
-  visionClauses: readonly VisionClauseId[];
-  claim: string;
-  cause: string;
-  evidence: readonly FindingEvidence[];
-  /** A vacuity finding's mutant: the patch text (a unified diff against the repo root) and the lane that should kill it. */
-  mutant: Readonly<{ patch: string; lane: LaneId }> | null;
-  source: FindingSource;
-  gateHadPassed: boolean;
-}>;
+/**
+ * A finding before its id and key: what a lens, code over a witness, or plan-check (R17) reports. `cause` feeds the key
+ * and is not recorded. A vacuity finding's mutant patch is already kept (`keepMutantPatch`).
+ */
+export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }>, 'kind' | 'id' | 'key'> & Readonly<{ cause: string }>;
+
+/** Keeps a mutant's patch (a unified diff against the repo root) as `inputs/<sha256>.patch`; its sha names it. */
+export const keepMutantPatch = (runDir: AbsPath, patch: string): Sha256Hex => keepInput(runDir, Buffer.from(patch, 'utf8'), MUTANT_PATCH_INPUT);
 
 const ACTIVE: ReadonlySet<FindingStateName> = new Set(['open', 'owned', 'fixed-on-branch']);
 /** Open, owned or fixed-on-branch: not yet resolved or ruled. */
 export const isActive = (f: FindingState): boolean => ACTIVE.has(f.state);
 
-/** How a draft enters the store: a new finding, merged into the active one with its key, or suppressed by a dismissal. */
-export type FindingAdmission =
+/** How a draft enters the store (pure): a new finding, merged into the active one with its key, or suppressed by a dismissal. */
+type FindingAdmission =
   | Readonly<{ kind: 'open'; key: Sha256Hex }>
-  | Readonly<{ kind: 'merge'; into: FindingId }>
-  | Readonly<{ kind: 'suppressed'; dismissal: FindingId }>;
+  | Readonly<{ kind: 'merged'; id: FindingId }>
+  | Readonly<{ kind: 'suppressed'; by: FindingId }>;
 
 /** Whether `after` cites a path `before` cited, naming a different blob: new evidence that lifts a dismissal. */
 export function evidenceChanged(before: readonly FindingEvidence[], after: readonly FindingEvidence[]): boolean {
@@ -77,44 +71,39 @@ const dismissed = (f: FindingState): boolean => f.state === 'ruled' && f.last?.s
 /** The dedupe decision for a draft with `key` and `evidence` against the arc's findings. Pure. */
 export function admissionOf(findings: readonly FindingState[], key: Sha256Hex, evidence: readonly FindingEvidence[]): FindingAdmission {
   const active = findings.find((f) => f.key === key && isActive(f));
-  if (active !== undefined) return { kind: 'merge', into: active.id };
+  if (active !== undefined) return { kind: 'merged', id: active.id };
   const dismissal = findings.filter((f) => f.key === key && dismissed(f)).at(-1);
-  if (dismissal !== undefined && !evidenceChanged(dismissal.evidence, evidence)) return { kind: 'suppressed', dismissal: dismissal.id };
+  if (dismissal !== undefined && !evidenceChanged(dismissal.evidence, evidence)) return { kind: 'suppressed', by: dismissal.id };
   return { kind: 'open', key };
 }
 
-export type Opened =
-  | Readonly<{ kind: 'opened'; id: FindingId }>
-  | Readonly<{ kind: 'merged'; into: FindingId }>
-  | Readonly<{ kind: 'suppressed'; dismissal: FindingId }>;
+/** What `openFinding` did: a new finding, merged into the active one (nothing written), or suppressed by a dismissal. */
+export type FindingOpen = Readonly<{ kind: 'opened' | 'merged'; id: FindingId }> | Readonly<{ kind: 'suppressed'; by: FindingId }>;
 
 /**
  * Opens a finding from `draft` (a `finding-opened` fact with the next id), or merges or suppresses it (nothing written).
- * A vacuity finding's patch is kept first, so the fact never names bytes the run dir lacks.
+ * The one store every opener uses (audits, code's witness P1s, plan-check, the checkpoint).
  */
-export function openFinding(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>, draft: FindingDraft): Opened {
-  const view = ctx.journal.view;
+export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen {
   const key = findingKey(draft.lens, draft.obligation, draft.cause);
-  const admission = admissionOf(view.holistic().findings, key, draft.evidence);
-  if (admission.kind === 'merge') return { kind: 'merged', into: admission.into };
-  if (admission.kind === 'suppressed') return admission;
-  const mutant = draft.mutant === null ? null : { patchSha256: keepInput(ctx.runDir, Buffer.from(draft.mutant.patch, 'utf8'), MUTANT_PATCH_INPUT), lane: draft.mutant.lane };
-  const id = view.nextFindingId();
-  ctx.journal.fact({
-    kind: 'finding-opened', id, key, lens: draft.lens, severity: draft.severity, obligation: draft.obligation,
-    visionClauses: [...new Set(draft.visionClauses)].sort(), claim: draft.claim, evidence: draft.evidence, mutant, source: draft.source,
-    gateHadPassed: draft.gateHadPassed,
-  });
+  const admission = admissionOf(journal.view.holistic().findings, key, draft.evidence);
+  if (admission.kind !== 'open') return admission;
+  const id = journal.view.nextFindingId();
+  const { cause: _cause, ...fields } = draft;
+  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: [...new Set(draft.visionClauses)].sort() });
   return { kind: 'opened', id };
 }
 
-/** Code's P1 over a must-hold obligation not held on an audit snapshot (`lens: witness`); one stable cause per obligation. */
+/**
+ * Code's P1 over a must-hold (or latched) obligation not held on an audit snapshot (`lens: witness`): one stable cause
+ * per obligation, citing the clauses it serves.
+ */
 export function witnessFindingDraft(input: Readonly<{
-  obligation: ObligationId; job: JobId; claim: string; evidence: readonly FindingEvidence[]; gateHadPassed: boolean;
+  obligation: ObligationId; serves: readonly VisionClauseId[]; job: JobId; claim: string; evidence: readonly FindingEvidence[]; gateHadPassed: boolean;
 }>): FindingDraft {
   return {
-    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: [], claim: input.claim,
-    cause: 'must-hold obligation not held on an audit snapshot', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
+    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: [...input.serves].sort(), claim: input.claim,
+    cause: 'witness not held', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
   };
 }
 

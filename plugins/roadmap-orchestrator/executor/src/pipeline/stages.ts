@@ -619,7 +619,7 @@ export async function planCheckRead(
   if (out.visionConflict.length > 0) {
     const active = new Set((holisticInForce(ctx).vision?.clauses ?? []).filter((c) => c.state === 'active').map((c) => c.id));
     if (out.visionConflict.some((v) => v.clauses.some((c) => !active.has(c)))) return done(record(ctx, parent, 'malformed'));
-    for (const v of out.visionConflict) openFinding(ctx, visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: v.clauses, note: v.note }));
+    for (const v of out.visionConflict) openFinding(ctx.journal, visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: v.clauses, note: v.note }));
   }
   // R2: the judgment may raise the floor, never lower it, and a redirect may not widen the envelope.
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));

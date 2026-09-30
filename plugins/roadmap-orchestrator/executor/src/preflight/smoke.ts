@@ -34,7 +34,7 @@ import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResolvedRouting, seatsInForce } from '../routing/layers.ts';
 import {
-  BACKENDS, type Backend, type JudgmentRole, type ProfileName, type Role, type Seat as SeatName, type SeatRef, atSeat, seatRef,
+  BACKENDS, type Backend, type FreshRole, type ProfileName, type Role, type Seat as SeatName, type SeatRef, atSeat, seatRef,
 } from '../routing/types.ts';
 import { chargeOf, usageFact } from '../pipeline/invoke.ts';
 import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
@@ -106,9 +106,12 @@ export function backendEnv(host: Readonly<Record<string, string | undefined>>): 
 
 export type SmokeSubject = Extract<SpawnSubject, { purpose: 'smoke' }>;
 
-/** A backend call before its invocation dir exists: the builder fills in the paths that live there. */
+/**
+ * A backend call before its invocation dir exists: the builder fills in the paths that live there. A judgment call's
+ * role is any fresh read-only role, the arc roles included (M3), so a probe can call `lens.arc` or `checkpoint.arc`.
+ */
 export type CallRequest =
-  | Readonly<{ kind: 'claude-judgment'; role: JudgmentRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
+  | Readonly<{ kind: 'claude-judgment'; role: FreshRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'codex-build'; triple: CodexTriple; session: CodexSession }>;
 

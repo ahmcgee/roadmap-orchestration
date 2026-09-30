@@ -113,7 +113,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(moves(r), ['F-1:owned{v1}', 'F-1:ruled']);
       assert.deepEqual(worktrees(r), []);
       // A dismissed finding is not raised again without new evidence.
-      assert.deepEqual(openFinding(r.ctx, { ...vacuityDraftOf(), source: { type: 'job', job: jobId('audit', 2) } }), { kind: 'suppressed', dismissal: 'F-1' });
+      assert.deepEqual(openFinding(r.journal, { ...vacuityDraftOf(r.ctx.runDir), source: { type: 'job', job: jobId('audit', 2) } }), { kind: 'suppressed', by: 'F-1' });
     } finally {
       r.journal.close();
     }
@@ -218,7 +218,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
     const r = contextFor(d);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
-      assert.deepEqual(openFinding(r.ctx, witnessDraft('I-1')), { kind: 'opened', id: 'F-1' });
+      assert.deepEqual(openFinding(r.journal, witnessDraft('I-1')), { kind: 'opened', id: 'F-1' });
       await step(r.ctx, r.unit('u1'));
       assert.equal(outcomes(d, 'u1').at(-1), 'ff:cas-stale', 'the eligibility re-check runs before the ff intent');
       assert.deepEqual(r.journal.view.opsOf('integration.ff'), [], 'no ff was begun');

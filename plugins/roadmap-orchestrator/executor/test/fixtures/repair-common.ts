@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { arcId, laneId, obligationId } from '../../src/core/ids.ts';
 import { openJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
-import { type FindingDraft, openFinding } from '../../src/holistic/findings.ts';
+import { type FindingDraft, keepMutantPatch, openFinding } from '../../src/holistic/findings.ts';
 import { git } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { type HolisticArc, holisticArc } from './brake-common.ts';
@@ -21,7 +21,7 @@ export const openBefore = (...drafts: readonly FindingDraft[]) => (d: ArcDescrip
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   try {
     for (const draft of drafts) {
-      const r = openFinding({ journal, runDir: absPath(d.runDir) }, draft);
+      const r = openFinding(journal, draft);
       if (r.kind !== 'opened') throw new Error(`the fixture's finding did not open: ${JSON.stringify(r)}`);
     }
   } finally {
@@ -45,9 +45,9 @@ export const MUTANT_PATCH = [
 export const STALE_PATCH = MUTANT_PATCH.replace('-  return a + b;', '-  return a * b;');
 
 /** A vacuity finding over I-1 whose mutant runs on the `journey` lane. */
-export const vacuityDraft = (patch: string = MUTANT_PATCH): FindingDraft => ({
+export const vacuityDraft = (runDir: string, patch: string = MUTANT_PATCH): FindingDraft => ({
   lens: 'vacuity', severity: 'P2', obligation: obligationId('I-1'), visionClauses: [], claim: 'I-1\'s witness passes when add subtracts', cause: 'add is never checked',
-  evidence: [], mutant: { patch, lane: laneId('journey') }, source: { type: 'job', job: 'audit-1' as never }, gateHadPassed: true,
+  evidence: [], mutant: { patchSha256: keepMutantPatch(absPath(runDir), patch), lane: laneId('journey') }, source: { type: 'job', job: 'audit-1' as never }, gateHadPassed: true,
 });
 
 /** A witness P1 over `obligation`, as code opens it on an audit snapshot. */
@@ -79,7 +79,7 @@ export function vacuityArc(opts: Readonly<{ patch?: string; more?: readonly Step
     obligations: [{ id: 'I-1', testIds: ['t1'] }],
     mapping: MAPPED,
     trees: { '*': { outcomes: { t1: 'pass' } } },
-    beforeStart: openBefore(vacuityDraft(opts.patch)),
+    beforeStart: (d) => openBefore(vacuityDraft(d.runDir, opts.patch))(d),
   });
 }
 

@@ -12,7 +12,7 @@ import { Fold } from '../src/core/state.ts';
 import { absPath, isoTime } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
 import {
-  type FindingDraft, type RepairUnit, batchable, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
+  type FindingDraft, type RepairUnit, batchable, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
   visionConflictDraft, witnessFindingDraft,
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
@@ -35,30 +35,30 @@ describe('opening and dedupe', () => {
     const runDir = absPath(tmpDir('findings-dedupe'));
     const j = openJournal(runDir, ARC);
     try {
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft()), { kind: 'opened', id: 'F-1' });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ claim: 'the same, worded otherwise', source: { type: 'job', job: jobId('audit', 2) } })), { kind: 'merged', into: 'F-1' });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ cause: 'another cause' })), { kind: 'opened', id: 'F-2' });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ lens: 'drift' })), { kind: 'opened', id: 'F-3' }, 'the lens is part of the key');
+      assert.deepEqual(openFinding(j, draft()), { kind: 'opened', id: 'F-1' });
+      assert.deepEqual(openFinding(j, draft({ claim: 'the same, worded otherwise', source: { type: 'job', job: jobId('audit', 2) } })), { kind: 'merged', id: 'F-1' });
+      assert.deepEqual(openFinding(j, draft({ cause: 'another cause' })), { kind: 'opened', id: 'F-2' });
+      assert.deepEqual(openFinding(j, draft({ lens: 'drift' })), { kind: 'opened', id: 'F-3' }, 'the lens is part of the key');
       const opened = j.view.holistic().findings;
       assert.deepEqual(opened.map((f) => [f.id, f.state]), [['F-1', 'open'], ['F-2', 'open'], ['F-3', 'open']]);
       assert.notEqual(opened[0]!.key, opened[1]!.key);
 
       ruleFinding(j, findingId('F-1'), 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft()), { kind: 'suppressed', dismissal: 'F-1' });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ evidence: [{ path: 'src/other.js', blob: B2 }] })), { kind: 'suppressed', dismissal: 'F-1' },
+      assert.deepEqual(openFinding(j, draft()), { kind: 'suppressed', by: 'F-1' });
+      assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/other.js', blob: B2 }] })), { kind: 'suppressed', by: 'F-1' },
         'a path the dismissal did not cite is not a changed blob');
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ evidence: [{ path: 'src/parse.js', blob: null }] })), { kind: 'suppressed', dismissal: 'F-1' });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ evidence: [{ path: 'src/parse.js', blob: B2 }] })), { kind: 'opened', id: 'F-4' },
+      assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/parse.js', blob: null }] })), { kind: 'suppressed', by: 'F-1' });
+      assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/parse.js', blob: B2 }] })), { kind: 'opened', id: 'F-4' },
         'the cited blob changed: new evidence re-raises it');
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ evidence: [{ path: 'src/parse.js', blob: B2 }] })), { kind: 'merged', into: 'F-4' });
+      assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/parse.js', blob: B2 }] })), { kind: 'merged', id: 'F-4' });
 
       // A resolved or deferred finding is not a dismissal: its key opens again.
       ruleFinding(j, findingId('F-2'), 'deferred', { type: 'checkpoint', job: jobId('ckpt', 1) });
-      assert.deepEqual(openFinding({ journal: j, runDir }, draft({ cause: 'another cause' })), { kind: 'opened', id: 'F-5' });
+      assert.deepEqual(openFinding(j, draft({ cause: 'another cause' })), { kind: 'opened', id: 'F-5' });
 
-      // A vacuity finding's patch is kept before its fact names it.
+      // A vacuity finding's patch is kept (keepMutantPatch) before its fact names it.
       const patch = 'diff --git a/src/add.js b/src/add.js\n';
-      const v = openFinding({ journal: j, runDir }, draft({ lens: 'vacuity', cause: 'add is never checked', mutant: { patch, lane: laneId('journey') } }));
+      const v = openFinding(j, draft({ lens: 'vacuity', cause: 'add is never checked', mutant: { patchSha256: keepMutantPatch(runDir, patch), lane: laneId('journey') } }));
       assert.deepEqual(v, { kind: 'opened', id: 'F-6' });
       const f6 = j.view.holistic().findings.find((f) => f.id === 'F-6')!;
       assert.deepEqual(f6.mutant, { patchSha256: sha256(createHash('sha256').update(patch, 'utf8').digest('hex')), lane: 'journey' });
@@ -72,14 +72,14 @@ describe('opening and dedupe', () => {
     const runDir = absPath(tmpDir('findings-arc-a'));
     const a = openJournal(runDir, ARC);
     try {
-      assert.deepEqual(openFinding({ journal: a, runDir }, draft()), { kind: 'opened', id: 'F-1' });
+      assert.deepEqual(openFinding(a, draft()), { kind: 'opened', id: 'F-1' });
       ruleFinding(a, findingId('F-1'), 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
     } finally {
       a.close();
     }
     const again = openJournal(runDir, ARC);
     try {
-      for (let n = 0; n < 3; n++) assert.deepEqual(openFinding({ journal: again, runDir }, draft()), { kind: 'suppressed', dismissal: 'F-1' }, 'after a restart, still suppressed');
+      for (let n = 0; n < 3; n++) assert.deepEqual(openFinding(again, draft()), { kind: 'suppressed', by: 'F-1' }, 'after a restart, still suppressed');
       assert.equal(again.view.holistic().findings.length, 1);
     } finally {
       again.close();
@@ -87,15 +87,15 @@ describe('opening and dedupe', () => {
     const nextDir = absPath(tmpDir('findings-arc-b'));
     const b = openJournal(nextDir, arcId('arc-2'));
     try {
-      assert.deepEqual(openFinding({ journal: b, runDir: nextDir }, draft()), { kind: 'opened', id: 'F-1' }, 'the next arc starts with no dismissal');
+      assert.deepEqual(openFinding(b, draft()), { kind: 'opened', id: 'F-1' }, 'the next arc starts with no dismissal');
     } finally {
       b.close();
     }
   });
 
   it('findings.drafts: code\'s witness P1 has one stable cause per obligation; a plan-check vision conflict is a P3 from its attempt', () => {
-    const w1 = witnessFindingDraft({ obligation: I1, job: jobId('audit', 1), claim: 'I-1 not held at a', evidence: [], gateHadPassed: true });
-    const w2 = witnessFindingDraft({ obligation: I1, job: jobId('audit', 2), claim: 'I-1 not held at b', evidence: [], gateHadPassed: false });
+    const w1 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 1), claim: 'I-1 not held at a', evidence: [], gateHadPassed: true });
+    const w2 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 2), claim: 'I-1 not held at b', evidence: [], gateHadPassed: false });
     assert.equal(w1.cause, w2.cause);
     assert.deepEqual([w1.lens, w1.severity, w1.obligation], ['witness', 'P1', 'I-1']);
     const c = visionConflictDraft({ unit: U1, attempt: 2, clauses: ['V-2' as never, 'V-1' as never], note: 'A2 accepts any input' });
