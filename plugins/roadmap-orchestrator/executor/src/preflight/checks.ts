@@ -9,8 +9,12 @@
 //                                                                            (pure: no effect yet)
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
-//                   plan in force (`settlePlan`): a first start records the files, a start whose files differ
-//                   applies them by the apply rules or refuses (plan-change-refused)
+//                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
+//                   `obligation-dropped`, reported as plan-change-refused), a start whose files differ applies
+//                   them through the apply core (src/commands/apply.ts `evaluateRevision`, source `start`) or
+//                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first
+//
+// M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
 // A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
 //
@@ -33,11 +37,15 @@ import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
-import { ownArcResidue, undispositioned, undispositionedResidueCheck } from '../host/residues.ts';
+import { ownArcResidue, undispositionedResidueCheck } from '../host/residues.ts';
 import type { ClaimOutcome } from '../host/lock.ts';
+import { evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
+import { parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
-import { classify } from '../input/classify.ts';
-import { type InputFiles, planInForce, readInputFiles, recordPlan, specBytesOf, specFilePath, specShaInForce } from '../input/inforce.ts';
+import {
+  type InputFiles, type RoutingBase, commitRevisionNow, openRevision, planInForce, readInputFiles, recordPlan, specBytesOf, specFilePath, specShaInForce,
+} from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
@@ -225,6 +233,34 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
     return out;
   },
 };
+
+/**
+ * M3: the revisioned inputs besides plan and specs, as the files hold them (a start, not a respawn): each ruling
+ * sidecar, the obligations and the vision load (`plan-invalid`, schema).
+ */
+export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[] {
+  const out: Rejection<'plan-invalid'>[] = [];
+  const load = (field: string, path: string, bytes: Buffer | null, parse: (v: unknown) => unknown): void => {
+    if (bytes === null) {
+      out.push({ kind: 'plan-invalid', problem: { type: 'schema', field, detail: `${path} does not exist` } });
+      return;
+    }
+    try {
+      parse(JSON.parse(bytes.toString('utf8')));
+    } catch (error) {
+      if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
+      out.push({ kind: 'plan-invalid', problem: { type: 'schema', field, detail: `${path}: ${error.message}` } });
+    }
+  };
+  for (const [id, s] of files.sidecars) {
+    load(`rulings sidecar ${id}`, s.path, s.bytes, (v) => {
+      if (parseRulingSidecar(v).id !== id) throw new SchemaError(s.path, `the sidecar of ${id}`, v);
+    });
+  }
+  if (files.obligations !== null) load('plan.holistic.obligations', files.obligations.path, files.obligations.bytes, parseObligations);
+  if (files.vision !== null) load('plan.holistic.vision', files.vision.path, files.vision.bytes, parseVision);
+  return out;
+}
 
 /** The arc's log, read-only (the checks run before the journal opens), or `corrupt` (group 4 refuses it as log-corrupt). */
 function arcLog(context: StartupContext): JournalView | 'corrupt' {
@@ -443,26 +479,50 @@ function settlePlan(journal: OpenJournal, context: StartupContext, files: InputF
     if (inForce === null) throw new Error('a respawn with no plan in force reads the files');
     return [];
   }
+  const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo) };
   if (inForce === null) {
     // A fresh arc records the files as they are; one a release without plan revisions ran, as that release ran them.
     const baseline = earlierReleaseBaseline(journal.view, files, context.planFile);
     if ('reasons' in baseline) return [{ kind: 'plan-change-refused', reasons: baseline.reasons }];
-    recordPlan(journal, context.runDir, files, null, baseline.changes);
+    const dropped = obligationDropped(context, files);
+    if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
+    recordPlan(journal, context.runDir, files, baseline.changes, routingBase);
     return [];
   }
-  const verdict = classify({
-    runDir: context.runDir, view: journal.view, inForce, next: files, residues: undispositioned(context.hostDir),
-    resolve: (plan) => routingOf(context.profile, context.repo, plan),
-  });
+  // A revision a crash left mid-commit: recovery settles it before anything runs; the files are settled at the next start.
+  if (openRevision(journal.view) !== null) return [];
+  const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase };
+  const verdict = evaluateRevision(rctx, files, { type: 'start' });
   switch (verdict.kind) {
     case 'unchanged':
       return [];
     case 'accepted':
-      recordPlan(journal, context.runDir, files, null, verdict.changes);
+      if (verdict.draft.publication !== null) {
+        return [{
+          kind: 'plan-change-refused',
+          reasons: ['the changed files need a docs publication (their obligations or rulings render into .roadmap/): start on the plan in force, then `roadmap apply` them'],
+        }];
+      }
+      keepRevision(context.runDir, verdict);
+      commitRevisionNow(journal, context.runDir, payloadOf(verdict.draft, { type: 'start' }), { type: 'arc' });
       return [];
     case 'rejected':
       return [{ kind: 'plan-change-refused', reasons: verdict.reasons }];
   }
+}
+
+/**
+ * The startup row `obligation-dropped` (LR-b, R2), at an arc's first start: the previous arc's published obligations
+ * (the JSON block of `.roadmap/invariants.md` in the baseline tree) diffed by I-nn against the obligations file; a
+ * missing or weakened id no Phase-0 ruling dispositions is refused (src/holistic/rederive.ts). Reported as a refused
+ * plan (`plan-change-refused`), one reason per id.
+ */
+export function obligationDropped(context: StartupContext, files: InputFiles): readonly string[] {
+  const shown = gitRun(context.repo, ['show', `${context.plan.baseline}:.roadmap/invariants.md`], { okCodes: [0, 128] });
+  const baseline = shown.code === 0 ? shown.stdout : null;
+  const next = files.obligations?.bytes === null || files.obligations === null ? null : parseObligations(JSON.parse(files.obligations.bytes.toString('utf8')));
+  const rulings = [...files.sidecars.values()].map((s) => parseRulingSidecar(JSON.parse(s.bytes.toString('utf8'))));
+  return rederive(baseline, next, rulings);
 }
 
 export async function runChecks(input: StartInput): Promise<StartChecks> {
@@ -483,7 +543,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, runDir: runDirOf(gitCommonDir(input.repo), plan.arc), hostDir: input.hostDir,
   };
-  const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context))];
+  const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.files === null ? [] : revisionInputRows(source.files))];
   if (inputRows.length > 0) return refused(inputRows);
 
   // 2. environment

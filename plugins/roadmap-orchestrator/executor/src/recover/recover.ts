@@ -6,6 +6,9 @@
 //   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge,
 //               integration.ff, snapshot.publish: the reconciler reads the postcondition and returns a
 //               disposition this module applies (done, redo through the op's own act and verify, abort).
+//   revisions   revision.commit (M3, G1): after the git ops, so its docs `ff` is closed; before the command ops, so
+//               an apply's re-run finds its revision in force or re-evaluates (src/recover/revision.ts). An abort
+//               raises nothing: its source re-evaluates.
 //   resources   recoverReservations: open transitions closed, dead holders' reservations cleaned.
 //   files       spec.patch, needsuser.raise, command.apply.
 //
@@ -47,6 +50,7 @@ import { specPatchOp } from '../spec/patch.ts';
 import { commandReconciler } from './command.ts';
 import { killReconciler } from './kill.ts';
 import { recoverReservations } from './resource.ts';
+import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
 import {
   candidateMergeOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
@@ -209,7 +213,6 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
     case 'mutant.apply':
       throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step B3)`);
     case 'revision.commit':
-      throw new Error(`${intent.kind} ${intent.op}: recovery not implemented (step A2)`);
     case 'proc.spawn':
     case 'proc.kill':
     case 'resource.transition':
@@ -239,6 +242,17 @@ async function pass(ctx: RecoveryContext): Promise<readonly Recovered[]> {
   for (const intent of openOf(s.journal, ['proc.spawn'])) await track(intent, async () => (await spawn(intent as IntentOf<'proc.spawn'>, s.journal.view)).kind);
 
   for (const kind of GIT_KINDS) for (const intent of openOf(s.journal, [kind])) await track(intent, () => step(ctx, intent));
+
+  const revision = revisionReconciler(s.runDir, s.journal);
+  for (const intent of openOf(s.journal, ['revision.commit'])) {
+    await track(intent, async () => {
+      const commit = intent as IntentOf<'revision.commit'>;
+      const d = await revision(commit, s.journal.view);
+      if (d.kind === 'done') s.journal.done(commit.op, 'revision.commit', d.outcome, 'reconciled');
+      else s.journal.abort(commit.op, 'recovery', d.detail);
+      return d.kind;
+    });
+  }
 
   const transitions = openOf(s.journal, ['resource.transition']);
   crashPoint('recover.before-op');

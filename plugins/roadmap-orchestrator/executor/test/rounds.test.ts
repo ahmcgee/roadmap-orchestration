@@ -145,9 +145,9 @@ test('rounds.fresh-resolve: after a re-entry\'s conflicted preparation, the reso
   const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: Record<string, unknown>[] };
   plan.units.push({ ...plan.units[0], id: 'u2', spec: 'u2.json', reenters: { unit: 'u1' } });
   writeFileSync(d.planPath, JSON.stringify(plan));
-  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, [
+  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [
     { type: 'unit-added', unit: U2 }, { type: 'unit-reentered', unit: U2, reenters: U1, reset: false },
-  ]);
+  ], { profile: 'default', config: null });
   r.journal.close();
 
   const run = contextFor(d);

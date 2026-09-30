@@ -21,6 +21,7 @@ import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { absPath } from '../src/core/values.ts';
 import { legacyNext } from '../src/core/upgrade.ts';
+import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -45,7 +46,7 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
 async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const ctx: CommandContext = {
     ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
-    resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+    routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);

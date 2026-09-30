@@ -6,6 +6,7 @@ import type { CommandContext } from '../../src/commands/apply.ts';
 import type { OpenJournal } from '../../src/core/log.ts';
 import { join } from 'node:path';
 import { absPath } from '../../src/core/values.ts';
+import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import { type ResRun, openRun } from './res-plan.ts';
 import { serialRuntime, testProbes } from './stage-common.ts';
@@ -28,7 +29,7 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; jou
       hostEnv,
       planDir,
       laneEnv: {}, planFile: absPath(join(run.repo, 'plan.json')),
-      resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+      routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
       routing: () => routing,
       probes: testProbes(stage),
     },

@@ -73,6 +73,7 @@ import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
+import { DOCS_NOT_YET } from './recover/revision.ts';
 import { type ResolvedRouting, planStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
@@ -311,7 +312,8 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     hostEnv: backendEnv(args.env),
     laneEnv: args.env,
     planFile: context.planFile,
-    resolve,
+    routingBase: { profile, config },
+    docs: DOCS_NOT_YET,
     plan: () => inForce().plan,
     routing: () => ({ profile, resolved: routing() }),
     probes: { prober, signal: stop.signal },

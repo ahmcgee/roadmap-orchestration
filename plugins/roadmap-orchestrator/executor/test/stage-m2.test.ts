@@ -26,6 +26,7 @@ import {
 } from '../src/pipeline/stages.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { cpuCapacity } from '../src/resources/pool.ts';
 import { cleanup, heldReservation, reserve, resourceTable } from '../src/resources/reserve.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
@@ -464,7 +465,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
       stage: ctx,
       commands: {
         ...ctx, hostEnv: backendEnv(ctx.hostEnv), laneEnv: ctx.hostEnv, planFile: absPath(join(run.planDir, 'plan.json')),
-        resolve: () => ctx.routing(), routing: () => ({ profile: 'default', resolved: ctx.routing() }), probes: testProbes(ctx),
+        routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing() }), probes: testProbes(ctx),
       },
     });
     const u = journal.view.unit(U1);

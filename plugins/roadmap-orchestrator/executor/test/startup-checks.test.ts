@@ -24,7 +24,7 @@ import { type PreviousArcVerdict, claimHost, releaseHost } from '../src/host/loc
 import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
-import { type StartChecks, type StartInput, gitCommonDir, routingOf, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import { type StartChecks, type StartInput, gitCommonDir, readRepoConfig, runChecks, smokeCheck } from '../src/preflight/checks.ts';
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection, type StartupRejectionKind, exitCodeFor, startupRejection } from '../src/preflight/startup.ts';
@@ -505,8 +505,8 @@ describe('startup.plan-in-force', () => {
     let verdict: Awaited<ReturnType<typeof evaluateApply>>;
     try {
       verdict = await evaluateApply({
-        runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, repo: s.repo, planFile: s.planFile, profile: 'default',
-        resolve: (plan) => routingOf('default', s.repo, plan), laneEnv: process.env, manifest: null, expectRev: null,
+        runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, repo: s.repo, planFile: s.planFile, routingBase: { profile: 'default', config: readRepoConfig(s.repo) },
+        laneEnv: process.env, manifest: null, expectRev: null,
       });
     } finally {
       j.close();

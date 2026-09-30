@@ -42,17 +42,23 @@
 //            release and the residue's `cleaned` disposition. A failed teardown leaves the resource
 //            cleaning under the sweep and the residue undisposed (a sweep records no failure), and the
 //            receipt says so. A resource another holder has is left alone. Mutation.
-//   apply    the plan and specs the manifest hashes become the plan in force (`applyPlan`): the files are
-//            re-read and must still hash to the manifest, `expectRev` must be the revision in force, every
-//            change is classified (src/input/classify.ts), the startup rows re-run over the changed units,
-//            and a backend the new routing needs that the old did not passes its smoke; after those
-//            asynchronous parts the classification runs again, synchronously, just before the commit (A12),
-//            and must find the same changes; then the bytes are kept and a `plan-applied` fact written, the
-//            postcondition. All or nothing: a rejection lists every reason. `reenters` and `cut` are its edit
-//            classes (D3). Mutation.
+//   apply    the inputs the manifest hashes (plan, specs, and since M3 the ledger with its sidecars, the
+//            obligations and the vision; a dev.5 command's plan manifest by its legacy reading, G15) become the
+//            revision in force (`applyPlan`): the files are re-read and must still hash to the manifest,
+//            `expectRev` must be the revision in force, and without it a revision in force from a bundle or the
+//            executor refuses it (stale base, A4); the apply core evaluates it (`evaluateRevision`: every change
+//            classified, src/input/classify.ts, and its payload built), the startup rows re-run over the changed
+//            units, and a backend a new routing needs that the old did not passes its smoke; after those
+//            asynchronous parts, under the revision fence (A19), the evaluation runs again, synchronously, and
+//            must build the same payload (`commitUnderFence`); then the bytes are kept and the revision committed
+//            (src/recover/revision.ts: payload, `revision.commit`, docs publication, `plan-applied`), the
+//            postcondition. All or nothing: a rejection lists every reason. `reenters`, `cut`, `route`,
+//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c). Mutation.
+//   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
+//            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
-//   rule, reverse, steer, merge-in, audit, close-admissions (M3): frozen in step 0a; until the step named in
-//            `NOT_YET` implements each, it is rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
+//   rule, steer, merge-in, audit, close-admissions (M3): frozen in step 0a; until the step named in `NOT_YET`
+//            implements each, it is rejected `not implemented (step X)` (BACKLOG "Scaffolding to delete").
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -61,26 +67,33 @@
 // command from its open op (src/recover/command.ts).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { IntentOf, OpOutcome, Parent, PlanChange, StageOutcomeFact } from '../core/events.ts';
+import type { IntentOf, OpOutcome, Parent, PlanAppliedFact, PlanChange, RevisionPayload, RevisionSource, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
+import { holdFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
 import {
   type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit,
-  resourceInstance,
+  planRev, resourceInstance,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, CommandFile, NeedsUserAck, PlanManifest, ResidueKey, Stage } from '../core/records.ts';
+import { type ApplyManifest, type CommandBody, type CommandFile, type NeedsUserAck, type ResidueKey, type Stage, isRevisionManifest } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
+import { revisionSourceOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
-import { SpecFileError, parseSpec } from '../spec/spec.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
+import { renderConstraints } from '../docs/constraints.ts';
+import { renderInvariants } from '../docs/invariants.ts';
+import type { ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
+import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
+import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import { classify } from '../input/classify.ts';
-import { type InputFiles, manifestOf, planInForce, readInputFiles, recordPlan, requirePlanInForce } from '../input/inforce.ts';
-import type { PlanM1 } from '../input/plan.ts';
+import { type NextInputs, type Proposer, applyProposal, classify } from '../input/classify.ts';
+import {
+  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepInput, keepRevisionFiles, planInForce, planManifestOf, planRouting,
+  readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
+} from '../input/inforce.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -88,15 +101,18 @@ import { applyRows } from '../preflight/checks.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
+import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
 import {
   type CleanupResult, type Reservation, type ResourceContext, type SweepHolder, cleanup, entryOf, finishCleanup, reclaimForSweep,
   reserveForSweep, resourceTable,
 } from '../resources/reserve.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
-import type { Backend, ProfileName } from '../routing/types.ts';
+import type { Backend } from '../routing/types.ts';
 import type { ProberHandle } from '../park/probe.ts';
+import { parseRulings } from '../spec/rulings.ts';
 import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
+import { reverse } from './reverse.ts';
 
 /**
  * Everything an effect may touch: the reservation cycle's context, plus what a backend smoke and an apply
@@ -108,8 +124,8 @@ export type CommandContext = ResourceContext & Readonly<{
   /** The executor's own environment: an apply's lane rows resolve against it. */
   laneEnv: Readonly<Record<string, string | undefined>>;
   routing: () => SmokeRouting;
-  /** The routing of a plan under the arc's profile and repo config. */
-  resolve: (plan: PlanM1) => ResolvedRouting;
+  /** The arc's profile and the repo config it read at start: every revision's routings and provenance resolve under them. */
+  routingBase: RoutingBase;
   /** The plan file `apply` re-reads, and its directory (unit spec paths are relative to it). */
   planFile: AbsPath;
   planDir: AbsPath;
@@ -118,12 +134,14 @@ export type CommandContext = ResourceContext & Readonly<{
    * --backend` smokes, and the run's stop signal, which ends an effect cut short by a stop before its receipt.
    */
   probes: Readonly<{ prober: ProberHandle; signal: AbortSignal }>;
+  /** M3 (A4): a revision's docs publication (src/pipeline/publish.ts). */
+  docs: DocsPublisher;
 }>;
 
 export type CommandOutcome = OpOutcome['command.apply'];
 
 /** What an effect established: the postconditions it verified, or why the command is refused. */
-type Effect = Readonly<{ kind: 'applied'; verified: readonly string[] }> | Readonly<{ kind: 'rejected'; reason: string }>;
+export type Effect = Readonly<{ kind: 'applied'; verified: readonly string[] }> | Readonly<{ kind: 'rejected'; reason: string }>;
 
 const keyOf = (id: CommandId) => opKey(`command:${id}`);
 export const parentOf = (id: CommandId): Parent => ({ type: 'command', command: id });
@@ -205,8 +223,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return sweep(ctx, command.id, body.resource);
     case 'apply':
       return applyPlan(ctx, command.id, body);
-    case 'rule':
     case 'reverse':
+      return reverse(ctx, command.id, body.divergence);
+    case 'rule':
     case 'steer':
     case 'merge-in':
     case 'audit':
@@ -215,9 +234,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
   }
 }
 
-/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,reverse,steer,mergein,audit,admissions}.ts). */
-const NOT_YET = { rule: 'A4', reverse: 'A2', steer: 'A3', 'merge-in': 'A3', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
-  Readonly<Record<'rule' | 'reverse' | 'steer' | 'merge-in' | 'audit' | 'close-admissions', string>>;
+/** Interim (M3 0a): the step that implements each M3 command's effect (src/commands/{rule,steer,mergein,audit,admissions}.ts). */
+const NOT_YET = { rule: 'A4', steer: 'A3', 'merge-in': 'A3', audit: 'B7', 'close-admissions': 'B7' } as const satisfies
+  Readonly<Record<'rule' | 'steer' | 'merge-in' | 'audit' | 'close-admissions', string>>;
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
   const view = ctx.journal.view;
@@ -511,35 +530,139 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 }
 
 // ---------------------------------------------------------------------------------------------------
-// apply
+// apply, and the apply core every revision shares (G1)
+
+/** What a revision is evaluated against: the log and run dir, the host's residues, the plan file, the arc's routing base. */
+export type RevisionContext = Readonly<{ runDir: AbsPath; view: JournalView; hostDir: AbsPath; planFile: AbsPath; routingBase: RoutingBase }>;
+
+/** A payload before its source: what a dry run shows and a commit completes (`payloadOf`). */
+export type RevisionDraft = Omit<RevisionPayload, 'source'>;
+/** An executor-rendered document of a revision's docs publication, with its bytes (kept at commit). */
+export type Render = Readonly<{ path: RepoPath; bytes: Buffer }>;
+
+export type RevisionVerdict =
+  | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
+  | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
+  | Readonly<{
+    kind: 'accepted'; draft: RevisionDraft; next: InputFiles; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[]; renders: readonly Render[];
+  }>;
+
+/** The rendered documents of the revision (A2, §2.9): `constraints.md` when its rulings change, `invariants.md` when its obligations do. */
+const CONSTRAINTS_DOC = repoPath('.roadmap/constraints.md');
+const INVARIANTS_DOC = repoPath('.roadmap/invariants.md');
+
+/**
+ * The docs publication a revision needs (A2): the in-tree documents code renders from the inputs it changes, each only
+ * when its rendering changes, and the contract ops of the sidecars it lands; null when there is nothing to publish.
+ */
+function publicationOf(view: JournalView, revision: RevisionInForce, inputs: NextInputs): Readonly<{ renders: readonly Render[]; contractOps: readonly ContractOp[] }> {
+  const renders: Render[] = [];
+  const latched = view.holistic().latched.map((l) => l.obligation);
+  if (inputs.changed.rulings) {
+    const before = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'the ledger in force'), [...revision.sidecars.values()].map((s) => s.sidecar), 'living');
+    const after = renderConstraints(inputs.ledger, inputs.sidecars, 'living');
+    if (after !== before) renders.push({ path: CONSTRAINTS_DOC, bytes: Buffer.from(after, 'utf8') });
+  }
+  if (inputs.changed.obligations && inputs.obligations !== null) {
+    const before = revision.obligations === null ? null : renderInvariants(revision.obligations.value, latched);
+    const after = renderInvariants(inputs.obligations, latched);
+    if (after !== before) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(after, 'utf8') });
+  }
+  const contractOps = inputs.sidecars.filter((s) => !revision.sidecars.has(s.id)).flatMap((s) => s.contractOps);
+  return { renders, contractOps };
+}
+
+/**
+ * The preimage of what a revision touches in the obligations (H13): the plan rev it is based on and the obligations'
+ * bytes before it; nothing else is touched by an obligation edit.
+ */
+const obligationsPreimage = (inForce: InForce, revision: RevisionInForce): Preimage =>
+  ({ planRev: inForce.rev, specs: {}, obligationsSha256: revision.obligations?.sha256 ?? null, ledgerSha256: null, contracts: [] });
+
+/**
+ * The apply core (G1, A2): evaluates a proposal (the files an `apply` or a start read; the plan in force plus a
+ * bundle's ops; the ledger plus a `rule`'s sidecar; a divergence's preimage for `reverse`) against the plan in force,
+ * synchronously and without effect: the classifier (src/input/classify.ts), then the payload's publication plan and
+ * divergences. A caller evaluates once, runs what it must await (the startup rows, a smoke), then takes the fence
+ * (src/core/fence.ts) and evaluates again: a draft that differs is stale. `proposer` is who proposes it; a
+ * bundle's cites and evidence back the `split-dropped` divergences its splits record (H14).
+ */
+export function evaluateRevision(
+  ctx: RevisionContext, proposal: InputFiles, proposer: Proposer,
+): RevisionVerdict {
+  const inForce = requirePlanInForce(ctx.runDir, ctx.view);
+  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const verdict = classify({
+    runDir: ctx.runDir, view: ctx.view, inForce, revision, next: proposal, residues: undispositioned(ctx.hostDir), routing: ctx.routingBase, proposer,
+  });
+  if (verdict.kind === 'rejected') return verdict;
+  if (verdict.kind === 'unchanged') return { kind: 'unchanged', rev: inForce.rev };
+  const manifest = revisionManifestOf(proposal);
+  if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
+  const publication = publicationOf(ctx.view, revision, verdict.inputs);
+  const divergences: DivergenceDraft[] = verdict.dropped.map((d) => {
+    if (proposer.type !== 'bundle') throw new Error(`a split dropping text proposed by ${proposer.type}: the classifier refuses it`);
+    return {
+      job: proposer.job, type: 'split-dropped', from: `${d.obligation} (plan rev ${inForce.rev})`, what: `the split of ${d.obligation} drops ${d.sentences.map((t) => JSON.stringify(t)).join(', ')}`,
+      cites: [...proposer.cites].sort(), evidence: proposer.evidence, preimage: obligationsPreimage(inForce, revision),
+      compensation: { hint: `\`roadmap reverse\` restores the obligations before the split of ${d.obligation}`, kind: 'restore-revision' },
+    };
+  });
+  const draft: RevisionDraft = {
+    v: SCHEMA_VERSION, base: inForce.rev, rev: planRev(inForce.rev + 1), manifest, changes: verdict.changes, dispositions: verdict.dispositions, divergences,
+    publication: publication.renders.length === 0 && publication.contractOps.length === 0
+      ? null
+      : { renders: publication.renders.map((r) => ({ path: r.path, sha256: bytesSha256(r.bytes) })).sort((a, b) => (a.path < b.path ? -1 : 1)), contractOps: publication.contractOps },
+    routingProvenance: routingProvenanceOf(ctx.routingBase, proposal.plan),
+  };
+  return { kind: 'accepted', draft, next: proposal, scoped: verdict.scoped, routings: verdict.routings, renders: publication.renders };
+}
+
+/** A draft committed from `source`. */
+export const payloadOf = (draft: RevisionDraft, source: RevisionSource): RevisionPayload => ({ ...draft, source });
+
+/** Keeps every byte an accepted revision's payload names: its inputs and its renders. */
+export function keepRevision(runDir: AbsPath, verdict: Extract<RevisionVerdict, { kind: 'accepted' }>): void {
+  const manifest = keepRevisionFiles(runDir, verdict.next);
+  if (canonicalJson(manifest) !== canonicalJson(verdict.draft.manifest)) throw new Error('the kept revision inputs do not hash to its evaluated manifest');
+  for (const r of verdict.renders) keepInput(runDir, r.bytes, RENDER_INPUT);
+}
 
 /** What an apply needs to evaluate the files, in the executor or read-only (`apply --dry-run`). */
-export type ApplyInput = Readonly<{
-  runDir: AbsPath;
-  view: JournalView;
-  hostDir: AbsPath;
+export type ApplyInput = RevisionContext & Readonly<{
   repo: AbsPath;
-  planFile: AbsPath;
-  profile: ProfileName;
-  resolve: (plan: PlanM1) => ResolvedRouting;
   laneEnv: Readonly<Record<string, string | undefined>>;
   /** The manifest the command carries (null for a dry run, which hashes the files itself), and its expectRev. */
-  manifest: PlanManifest | null;
+  manifest: ApplyManifest | null;
   expectRev: PlanRev | null;
 }>;
 
 export type ApplyVerdict =
   | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
   | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
-  /** `smoke`: backends the new routing seats that the routing in force did not; they must pass a smoke first. */
-  | Readonly<{ kind: 'accepted'; rev: PlanRev; files: InputFiles; changes: readonly PlanChange[]; smoke: readonly Backend[]; routing: ResolvedRouting | null }>;
+  /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
+  | Readonly<{ kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[] }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
 const rowText = (r: StartupRejection): string => canonicalJson(r);
 
 /**
- * Evaluates an apply without effect: the expected revision, the files against the manifest, the classifier,
- * then the startup rows over the changed units. Every reason found at a step is reported together.
+ * A4: without `--expect-rev`, an apply is refused when the revision in force came from a non-architect source (a
+ * bundle or the executor): the architect's files would silently revert its act.
+ */
+function staleBase(inForce: InForce, expectRev: PlanRev | null): string | null {
+  if (expectRev !== null) return null;
+  const source = revisionSourceOf(inForce.fact);
+  if (source.type !== 'bundle' && source.type !== 'executor') return null;
+  const by = source.type === 'bundle' ? `checkpoint bundle ${source.job}` : `the executor (${source.inv})`;
+  return `stale base: plan rev ${inForce.rev} in force came from ${by}, not an architect; re-read the plan, specs and inputs in force, `
+    + `edit on top of them, and apply with --expect-rev ${inForce.rev}`;
+}
+
+/**
+ * Evaluates an apply without effect: the expected revision and the stale base (A4), the files against the manifest
+ * (a dev.5 command's by its legacy reading, G15), the apply core, then the startup rows over the changed units. Every
+ * reason found at a step is reported together.
  */
 export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   const inForce = planInForce(input.runDir, input.view);
@@ -549,6 +672,8 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if (input.expectRev !== null && input.expectRev !== inForce.rev) {
     return { kind: 'rejected', reasons: [`stale: --expect-rev ${input.expectRev}, but the plan in force is rev ${inForce.rev}`] };
   }
+  const stale = staleBase(inForce, input.expectRev);
+  if (stale !== null) return { kind: 'rejected', reasons: [stale] };
   let files: InputFiles;
   try {
     files = readInputFiles(input.planFile);
@@ -556,49 +681,50 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
     if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
     return { kind: 'rejected', reasons: [`${input.planFile} does not load: ${error.message}`] };
   }
-  const manifest = manifestOf(files);
-  if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing.map((u) => `unit ${u}: its spec ${files.specs.get(u)?.path} does not exist`) };
-  if (input.manifest !== null && canonicalJson(input.manifest) !== canonicalJson(manifest)) {
-    return { kind: 'rejected', reasons: [manifestMismatch(input.planFile, input.manifest, manifest, files)] };
+  let proposal: InputFiles = files;
+  if (input.manifest !== null) {
+    const p = applyProposal(files, input.manifest);
+    if ('reasons' in p) return { kind: 'rejected', reasons: p.reasons };
+    proposal = p.next;
+  } else {
+    const m = revisionManifestOf(files);
+    if ('missing' in m) return { kind: 'rejected', reasons: m.missing };
   }
-  const verdict = classify({ runDir: input.runDir, view: input.view, inForce, next: files, residues: undispositioned(input.hostDir), resolve: input.resolve });
-  if (verdict.kind !== 'accepted') return verdict.kind === 'unchanged' ? { kind: 'unchanged', rev: inForce.rev } : verdict;
+  const verdict = evaluateRevision(input, proposal, { type: 'apply' });
+  if (verdict.kind !== 'accepted') return verdict;
   const context: StartupContext = {
-    repo: input.repo, planFile: input.planFile, plan: files.plan, specOf: (u) => files.specs.get(u.id)?.bytes ?? null, profile: input.profile,
+    repo: input.repo, planFile: input.planFile, plan: proposal.plan, specOf: (u) => proposal.specs.get(u.id)?.bytes ?? null, profile: input.routingBase.profile,
     runDir: input.runDir, hostDir: input.hostDir,
   };
-  const rows = await applyRows(context, verdict.scoped, verdict.routing !== null, input.laneEnv);
+  const routingChanged = verdict.routings.length > 0 || verdict.draft.changes.some((c) => c.type === 'holistic');
+  const rows = await applyRows(context, verdict.scoped, routingChanged, input.laneEnv);
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
-  const before = backendsOf(input.resolve(inForce.plan));
-  const smoke = verdict.routing === null ? [] : backendsOf(verdict.routing).filter((b) => !before.includes(b));
-  return { kind: 'accepted', rev: inForce.rev, files, changes: verdict.changes, smoke, routing: verdict.routing };
+  const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
+  const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
+  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke };
 }
 
-/** Which files no longer hash to what the command's manifest recorded. */
-function manifestMismatch(planFile: AbsPath, expected: PlanManifest, actual: PlanManifest, files: InputFiles): string {
-  const differ: string[] = [];
-  if (expected.planSha256 !== actual.planSha256) differ.push(planFile);
-  const units = new Set([...Object.keys(expected.specs), ...Object.keys(actual.specs)] as UnitId[]);
-  for (const u of [...units].sort()) {
-    if (expected.specs[u] !== actual.specs[u]) differ.push(files.specs.get(u)?.path ?? `the spec of ${u} (no longer in the plan)`);
-  }
-  return `the files changed since \`roadmap apply\` hashed them: ${differ.join(', ')}; run it again`;
+/** The apply's manifest is the revision in force already (a dev.5 command's: its plan and specs). */
+function alreadyInForce(ctx: CommandContext, manifest: ApplyManifest): PlanRev | null {
+  const inForce = planInForce(ctx.runDir, ctx.journal.view);
+  if (inForce === null) return null;
+  const m = revisionInForce(ctx.runDir, inForce, ctx.planFile).manifest;
+  const same = isRevisionManifest(manifest) ? canonicalJson(m) === canonicalJson(manifest) : canonicalJson(planManifestOf(m)) === canonicalJson(planManifestOf(manifest));
+  return same ? inForce.rev : null;
 }
 
-/** The manifest's plan and specs, verified, classified and smoked, then in force: `plan-applied` is the postcondition. */
+/** The manifest's inputs, verified, evaluated and smoked, then committed through the fence: `plan-applied` is the postcondition. */
 async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { type: 'apply' }>): Promise<Effect> {
   // Run again after a crash past the fact: it is the postcondition.
   const done = ctx.journal.view.planAppliedBy(id);
   if (done !== null) return { kind: 'applied', verified: appliedText(done.rev, done.changes) };
   // Its content in force already, put there by another (a start after a crash that cut this apply short
   // between keeping the bytes and its fact reads the same files): applied, whatever revision it expected.
-  const inForce = ctx.journal.view.planApplied();
-  if (inForce !== null && canonicalJson({ planSha256: inForce.planSha256, specs: inForce.specs }) === canonicalJson(body.manifest)) {
-    return { kind: 'applied', verified: [`the files are the plan in force already (rev ${inForce.rev}): nothing to apply`] };
-  }
+  const inForceRev = alreadyInForce(ctx, body.manifest);
+  if (inForceRev !== null) return { kind: 'applied', verified: [`the files are the plan in force already (rev ${inForceRev}): nothing to apply`] };
   const verdict = await evaluateApply({
-    runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: ctx.planFile, profile: ctx.routing().profile,
-    resolve: ctx.resolve, laneEnv: ctx.laneEnv, manifest: body.manifest, expectRev: body.expectRev,
+    runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: ctx.planFile, routingBase: ctx.routingBase,
+    laneEnv: ctx.laneEnv, manifest: body.manifest, expectRev: body.expectRev,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -606,41 +732,55 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
     case 'unchanged':
       return { kind: 'applied', verified: [`the files are the plan in force (rev ${verdict.rev}): nothing to apply`] };
     case 'accepted': {
-      if (verdict.smoke.length > 0 && verdict.routing !== null) {
-        const report = await smokeBackends({ profile: ctx.routing().profile, resolved: verdict.routing }, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, verdict.smoke);
+      // Each newly seated backend smoked once, under a routing that seats it.
+      const smoked = new Set<Backend>();
+      for (const resolved of verdict.evaluated.routings) {
+        const need = backendsOf(resolved).filter((b) => verdict.smoke.includes(b) && !smoked.has(b));
+        if (need.length === 0) continue;
+        for (const b of need) smoked.add(b);
+        const report = await smokeBackends({ profile: ctx.routingBase.profile, resolved }, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, need);
         // A stop killed the smoke: no verdict on the apply, whose op the next start's recovery finishes.
         ctx.probes.signal.throwIfAborted();
         const failures = smokeRejections(report);
         if (failures.length > 0) return { kind: 'rejected', reason: rejectedText(failures.map(rowText)) };
       }
-      const moved = revalidate(ctx, verdict);
-      if (moved !== null) return { kind: 'rejected', reason: rejectedText(moved) };
-      const fact = recordPlan(ctx.journal, ctx.runDir, verdict.files, id, verdict.changes);
-      return { kind: 'applied', verified: appliedText(fact.rev, fact.changes) };
+      const committed = await commitUnderFence(ctx, verdict.evaluated, { type: 'apply' }, { type: 'command', command: id }, parentOf(id));
+      if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
+      return { kind: 'applied', verified: appliedText(committed.fact.rev, committed.fact.changes) };
     }
   }
 }
 
 /**
- * A12: the classification again, synchronously and with nothing awaited before the commit that follows, over
- * the same files against the log as it is now (the startup rows and the smoke awaited; other work went on).
- * Why the apply may no longer commit, or null when it classifies to the same changes.
+ * A12, A19: under the fence, the proposal evaluated again, synchronously and with nothing awaited before the commit
+ * begins, against the log as it is now (the startup rows and the smoke awaited; other work went on); then the commit
+ * (src/recover/revision.ts). Why it may no longer commit, or the fact it wrote.
  */
-function revalidate(ctx: CommandContext, verdict: Extract<ApplyVerdict, { kind: 'accepted' }>): readonly string[] | null {
-  const view = ctx.journal.view;
-  const inForce = requirePlanInForce(ctx.runDir, view);
-  if (inForce.rev !== verdict.rev) return [`stale: the plan in force moved to rev ${inForce.rev} while this apply was evaluated against rev ${verdict.rev}; run it again`];
-  const again = classify({ runDir: ctx.runDir, view, inForce, next: verdict.files, residues: undispositioned(ctx.hostDir), resolve: ctx.resolve });
-  if (again.kind === 'rejected') return again.reasons;
-  if (again.kind === 'unchanged' || canonicalJson(again.changes) !== canonicalJson(verdict.changes)) {
-    return ['the arc moved while this apply was evaluated: its changes classify differently now; run it again'];
+export async function commitUnderFence(
+  ctx: CommandContext, evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>, proposer: Proposer, source: RevisionSource, parent: Parent,
+): Promise<Readonly<{ kind: 'applied'; fact: PlanAppliedFact }> | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>> {
+  const hold = await holdFence(ctx.journal);
+  try {
+    const rctx: RevisionContext = { runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+    const again = evaluateRevision(rctx, evaluated.next, proposer);
+    if (again.kind === 'rejected') return again;
+    if (again.kind === 'accepted' && again.draft.base !== evaluated.draft.base) {
+      return { kind: 'rejected', reasons: [`stale: the plan in force moved to rev ${again.draft.base} while this revision was evaluated against rev ${evaluated.draft.base}; run it again`] };
+    }
+    if (again.kind === 'unchanged' || canonicalJson(again.draft) !== canonicalJson(evaluated.draft)) {
+      return { kind: 'rejected', reasons: ['the arc moved while this revision was evaluated: it evaluates differently now; run it again'] };
+    }
+    keepRevision(ctx.runDir, again);
+    const committed = await commitRevision({ journal: ctx.journal, runDir: ctx.runDir, docs: ctx.docs }, payloadOf(again.draft, source), parent);
+    return committed.kind === 'applied' ? committed : { kind: 'rejected', reasons: [committed.reason] };
+  } finally {
+    hold.release();
   }
-  return null;
 }
 
-/** A rejected apply's receipt reason: every reason, numbered. */
-export const rejectedText = (reasons: readonly string[]): string =>
-  `apply rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
+/** A rejected revision's receipt reason (an `apply`'s, a `reverse`'s): every reason, numbered. */
+export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' = 'apply'): string =>
+  `${what} rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
 
 const appliedText = (rev: PlanRev, changes: readonly PlanChange[]): readonly string[] =>
   [`plan rev ${rev} in force`, ...changes.map((c) => canonicalJson(c))];
