@@ -1488,3 +1488,49 @@ residues, the snapshot closure):
    of the obligation's witness it judged, M3-only shape, required); the classifier refuses a proof whose `witness` is
    not exactly the obligation's (canonical JSON), besides its `obligationRev` and `laneRev`. A grown or changed test
    set therefore needs a fresh proof even when neither revision moved.
+
+**Choices made in M3 Checkpoint A** (fix step AY: findings 2, 3, 6, 7, 8, 10, 11, 12 of the batch-A review; these
+supersede the A4 items they name):
+
+- **A job lane's evidence (finding 2; A4 item 3).** Each lane execution keeps its evidence in its own dir,
+  `<runDir>/evidence/jobs/<job>/<kind>-<lane>-<seq>-<ordinal>/` (`jobLaneDir`, src/git/snapshot.ts; `kind` is `suite`
+  or `arc`, the suffix the invocation's dir name), made once the spawn's intent names the invocation: a suite lane and
+  an arc lane of one id, or two invocations, never share an evidence dest. An arc lane's reporter writes `witness.lines`
+  there and its `witness.json` is written there, which the snapshot finds from the `witnessed` fact's `lane` and `inv` (always an arc lane).
+- **A job's checkout integrity (finding 3).** After a job's lanes, the detached checkout must still be the commit:
+  tracked or unignored changes (`dirtyPaths`, as a candidate suite) are snapshotted to `<job root>/_dirty` before the
+  checkout's removal (which then cites that snapshot), and a HEAD other than the commit is recorded. `JobSeries`
+  carries `checkout: {dirty, movedTo, evidence} | null` (null: no lane ran). A docs publication refuses either,
+  after the series' end and before the suite verdicts.
+- **`rule`'s obligation dispositions (finding 6; A4 item 6).** The proposal also carries the obligations file with
+  the ruling's `waived`, `deferred` and `retired` dispositions applied (`state: {type, ruling: <its id>}`, the file's
+  JSON edited in place); the classifier checks it like any obligation edit, and the publication renders
+  `invariants.md` when the rendering changes. `amended` is no state: it authorizes a later `apply`'s amendment while
+  the ruling is in force. The write-back covers the obligations file (beside the plan, `plan.holistic.obligations`)
+  with the same compare-and-write as the ledger and sidecars.
+- **Startup and a committed command (finding 7).** `settlePlan` (src/preflight/checks.ts, exported) leaves the files
+  for the next start while a `command.apply` is open whose command a `plan-applied` names: its revision is in force,
+  its write-back may be unfinished, and recovery re-runs the command, which finishes it. The open command op is the
+  durable pending-write-back phase; no new record.
+- **A rule on a 1.0.0-dev.5 revision (finding 8; scaffolding).** Before committing a rule whose previous revision
+  has no payload, `rule` keeps the live ledger's hash it evaluated against at
+  `<runDir>/commands/rule-preimages/<command>.json` (`{ledgerSha256}`; such a revision has no sidecars or obligations
+  in force). A run again after a crash past the fact compares the live files with it; a missing one is a bug. Delete
+  with the other dev.5 scaffolding.
+- **`reverse` resolves the recorded preimage (findings 10, 11).** A preimage spec `{u: rev}` is the latest spec of
+  unit `u` at that spec rev the log named before the act's `plan-applied` (a `plan-applied` manifest, `dispatch`,
+  `reopened`, `judgment-inputs`, a done `spec.patch`); obligations are read by the preimage's `obligationsSha256`, not
+  the plan manifest's. A restored dispatched unit's spec is the next rev of its recorded one (replacing any pending
+  revision). Restored obligations are a fresh revision: each obligation both files hold takes the rev in force, plus
+  one when its statement, docRef or activation changes back, and its preimage proof judgment (which judged exactly the
+  restored statement and witness) is bound to that rev, every other proof field kept as the preimage has it. The
+  classifier (`classifyObligations`) validates the result, dispositions and proof freshness included.
+- **dev.5 routing provenance (finding 12; A4 item 9; scaffolding).** `routing-provenance/<rev>.json` is no longer
+  rebuilt at snapshot time. The first start of this release on an arc with dev.5 revisions (adoption, `runChecks`
+  after `settlePlan`, `adoptLegacyProvenance`) persists, write-once, `<runDir>/routing-provenance/<rev>.json` for each
+  dev.5 `plan-applied`: `{kind: reconstructed, provenance, matched}` when the provenance rebuilt from the revision's
+  kept plan, start.json's profile and the adopting start's repo config resolves every routing rev the log recorded
+  while that revision was in force (its backend spawns, its dispatches, its own `routing` change; `matched` lists
+  them), else `{kind: unreconstructable, reason}` (reported on stderr). The snapshot carries these bytes (the run-dir
+  path mirrored), and a missing one fails the snapshot loudly. The executor's live routing of a dev.5 revision in force
+  (src/executor.ts `contexts`) still rebuilds from the config read at each start (not changed here).

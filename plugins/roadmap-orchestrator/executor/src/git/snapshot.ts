@@ -12,7 +12,8 @@
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
 // |                                        | inputs, sidecars, renders), a `spec.patch` done, a `dispatch`,      |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief) |
-// | `routing-provenance/<rev>.json`        | a 1.0.0-dev.5 `plan-applied` (none recorded): rebuilt here (H7)     |
+// | `routing-provenance/<rev>.json`        | a 1.0.0-dev.5 `plan-applied` (none recorded): reconstructed once at |
+// |                                        | adoption (`adoptLegacyProvenance`, H7), or why it cannot be          |
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
@@ -20,10 +21,11 @@
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
 //
-// Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, `events.jsonl`,
-// `state.json`), so the run dir's records are restored by copying the tree into it. A job's lane run keeps its
-// `witness.json` at `<runDir>/evidence/jobs/<job>/<lane>/` (src/pipeline/publish.ts); a candidate's (B2) and a
-// mutant's (B3) have no writer yet, and a `witnessed` fact for one is refused loudly.
+// Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `routing-provenance/`, `start.json`,
+// `events.jsonl`, `state.json`), so the run dir's records are restored by copying the tree into it. A job's lane run keeps its
+// `witness.json` in its own execution's dir, `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`,
+// written by src/pipeline/publish.ts); a candidate's (B2) and a mutant's (B3) have no writer yet, and a `witnessed`
+// fact for one is refused loudly.
 //
 // `manifest.json` lists every other file's sha256, size and naming record (`namedBy`: the log itself, an event
 // seq, or another item's path) with the arc and the high-water mark. `verifySnapshot` recomputes the closure from
@@ -32,38 +34,38 @@
 //
 // The blobs and the tree are written at prepare; the commit (parent = the old ref, or none) has recorded inputs,
 // so act and any redo make the same id; the ref moves by CAS.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-  type CommitInputs, type Event, type IntentOf, type IntentRecord, type OpOutcome, type PlanAppliedFact, type RevisionPayload, parentUnit, parseEventLine,
+  type CommitInputs, type Event, type IntentOf, type IntentRecord, type OpOutcome, type RevisionPayload, parentUnit, parseEventLine,
   parseRevisionPayload,
 } from '../core/events.ts';
-import { canonicalJson as fileJson } from '../core/fsx.ts';
+import { exclusivePublish, canonicalJson as fileJson } from '../core/fsx.ts';
 import {
-  type ArcId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, parseOpId, sha, sha256,
+  type ArcId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type PlanRev, type RoutingRev, type Sha, type Sha256Hex, arcId, invocationDirName,
+  invocationId, parseOpId, routingRev, sha, sha256,
 } from '../core/ids.ts';
 import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
 import { runStart } from '../core/records.ts';
 import { fold } from '../core/state.ts';
-import { routingProvenanceOf as recordedProvenance } from '../core/upgrade.ts';
-import { Fields, type Read, SchemaError, literal, nat, object, positive, sortedBy, tagged, version } from '../core/validate.ts';
+import { Fields, type Read, SchemaError, arrayOf, literal, nat, object, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { START_FILE } from '../executor.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
+  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT, type RoutingBase, SPEC_INPUT, VISION_INPUT, inputPath,
   routingProvenanceOf as rebuiltProvenance,
 } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
 import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
-import { readRepoConfig } from '../preflight/checks.ts';
-import { routingProvenance } from '../routing/types.ts';
+import { provenanceStack, resolveRouting } from '../routing/layers.ts';
+import { type RoutingProvenance, routingProvenance } from '../routing/types.ts';
 import { manifestPath } from './evidence.ts';
 import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
@@ -143,13 +145,13 @@ export const snapshotManifest: Read<SnapshotManifest> = (value, path) => {
 type Source =
   | Readonly<{ type: 'log' }>
   | Readonly<{ type: 'fold' }>
-  /** A 1.0.0-dev.5 revision's routing provenance, rebuilt from its plan, start.json's profile and the repo config (H7). */
-  | Readonly<{ type: 'provenance'; fact: PlanAppliedFact }>
+  /** A 1.0.0-dev.5 revision's routing provenance, as its adoption persisted it (`adoptLegacyProvenance`, H7). */
+  | Readonly<{ type: 'provenance'; rev: PlanRev }>
   | Readonly<{ type: 'input'; sha256: Sha256Hex; ext: string }>
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' }>
-  /** A job's lane run keeps its record at `<job evidence root>/<lane>/witness.json` (src/pipeline/publish.ts). */
-  | Readonly<{ type: 'witness'; job: JobId; lane: LaneId }>
+  /** A job's arc lane run keeps its record in its execution's dir (`jobLaneDir`): `<dir>/witness.json`. */
+  | Readonly<{ type: 'witness'; job: JobId; lane: LaneId; inv: InvocationId }>
   | Readonly<{ type: 'file'; path: AbsPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
 
@@ -233,7 +235,7 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
         if (f.rulingsSha256 !== undefined) input(f.rulingsSha256, RULINGS_INPUT, by);
         if (f.obligationsSha256 !== undefined) input(f.obligationsSha256, OBLIGATIONS_INPUT, by);
         if (f.visionSha256 !== undefined) input(f.visionSha256, VISION_INPUT, by);
-        if (f.routingProvenance === undefined) add({ path: repoPath(`routing-provenance/${f.rev}.json`), namedBy: by, sha256: null, source: { type: 'provenance', fact: f } });
+        if (f.routingProvenance === undefined) add({ path: repoPath(`${PROVENANCE_DIR}/${f.rev}.json`), namedBy: by, sha256: null, source: { type: 'provenance', rev: f.rev } });
         break;
       case 'dispatch':
         input(f.record.specSha256, SPEC_INPUT, by);
@@ -248,7 +250,7 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
       case 'witnessed':
         // Only a job's lane runs witness so far (the docs publication); a candidate's is step B2's, a mutant's B3's.
         if (f.for.type !== 'job') throw new Error(`snapshot: witnessed ${f.inv} (event ${e.seq}) is for a ${f.for.type}: not implemented (step ${f.for.type === 'candidate' ? 'B2' : 'B3'})`);
-        add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'witness', job: f.for.job, lane: f.lane } });
+        add({ path: repoPath(`witness/${invocationDirName(f.inv)}.json`), namedBy: by, sha256: f.recordsSha256, source: { type: 'witness', job: f.for.job, lane: f.lane, inv: f.inv } });
         break;
       case 'needs-user-acked':
         add({ path: repoPath(`${NEEDS_USER_DIR}/${f.id}.ack.json`), namedBy: by, sha256: null, source: { type: 'ack', id: f.id } });
@@ -264,6 +266,90 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
     add({ path: repoPath(START_FILE), namedBy: { type: 'event', seq: started.seq }, sha256: null, source: { type: 'start' }, generation: started.generation });
   }
   return [...items.values()];
+}
+
+// ---------------------------------------------------------------------------------------------------
+// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"; H7): a 1.0.0-dev.5 `plan-applied` records no routing
+// provenance. The first start of this release on such an arc (adoption, src/preflight/checks.ts) reconstructs each
+// one once, from the revision's kept plan, start.json's profile (the dev.5 start's) and the repo config read at that
+// start, and checks it against every routing revision the log recorded under that revision (the backend spawns and
+// dispatches it ran, its own `routing` change): all match → `reconstructed`; any differs → `unreconstructable`, with
+// why, since the configuration in force then is gone. The record is written once and never rewritten: every later
+// snapshot carries these bytes, never the live repo config. Delete once no arc started on 1.0.0-dev.5 is in flight.
+
+const PROVENANCE_DIR = 'routing-provenance';
+
+export type LegacyProvenance =
+  | Readonly<{ kind: 'reconstructed'; provenance: RoutingProvenance; matched: readonly RoutingRev[] }>
+  | Readonly<{ kind: 'unreconstructable'; reason: string }>;
+
+const legacyProvenance: Read<LegacyProvenance> = tagged('kind', {
+  reconstructed: object((f): LegacyProvenance => ({
+    kind: f.get('kind', literal('reconstructed')), provenance: f.get('provenance', routingProvenance),
+    matched: f.get('matched', arrayOf((v, p) => routingRev(v, p))),
+  })),
+  unreconstructable: object((f): LegacyProvenance => ({ kind: f.get('kind', literal('unreconstructable')), reason: f.get('reason', str) })),
+});
+
+export const legacyProvenancePath = (runDir: AbsPath, rev: PlanRev): AbsPath => absPath(join(runDir, PROVENANCE_DIR, `${rev}.json`));
+
+/** The persisted record of a 1.0.0-dev.5 revision's routing provenance; a missing one (the arc was never adopted) is a bug. */
+export function readLegacyProvenance(runDir: AbsPath, rev: PlanRev): LegacyProvenance {
+  const path = legacyProvenancePath(runDir, rev);
+  return legacyProvenance(JSON.parse(mustRead(path, `the routing provenance of 1.0.0-dev.5 plan rev ${rev}`).toString('utf8')), path);
+}
+
+/** The routing revisions the log recorded while each 1.0.0-dev.5 revision was in force (its own `routing` change included). */
+function recordedRoutingRevs(events: readonly Event[]): ReadonlyMap<PlanRev, ReadonlySet<RoutingRev>> {
+  const out = new Map<PlanRev, Set<RoutingRev>>();
+  let current: Set<RoutingRev> | null = null;
+  for (const e of events) {
+    if (e.type === 'fact' && e.fact.kind === 'plan-applied') {
+      current = e.fact.routingProvenance === undefined ? new Set() : null;
+      if (current !== null) out.set(e.fact.rev, current);
+      for (const c of e.fact.changes) if (c.type === 'routing') current?.add(c.routingRev);
+      continue;
+    }
+    if (current === null) continue;
+    if (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'backend') current.add(e.expect.subject.routingRev);
+    if (e.type === 'fact' && e.fact.kind === 'dispatch') current.add(e.fact.record.routingRev);
+  }
+  return out;
+}
+
+/**
+ * Adoption (H7): persists the routing provenance of every 1.0.0-dev.5 revision `events` names that has none persisted
+ * yet, reconstructed under start.json's profile and `config` (the repo config the adopting start read). Returns why
+ * each revision it found unreconstructable is.
+ */
+export function adoptLegacyProvenance(runDir: AbsPath, events: readonly Event[], config: RoutingBase['config']): readonly string[] {
+  const recorded = recordedRoutingRevs(events);
+  const pending = [...recorded].filter(([rev]) => !existsSync(legacyProvenancePath(runDir, rev)));
+  if (pending.length === 0) return [];
+  const startPath = join(runDir, START_FILE);
+  const profile = runStart(JSON.parse(mustRead(startPath, 'start.json (a 1.0.0-dev.5 revision\'s routing is reconstructed under its profile)').toString('utf8')), startPath).profile;
+  const facts = new Map(events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.rev, e.fact] as const] : [])));
+  const out: string[] = [];
+  for (const [rev, revs] of pending) {
+    const fact = facts.get(rev)!;
+    const plan = parsePlan(JSON.parse(mustRead(inputPath(runDir, fact.planSha256, PLAN_INPUT), `plan rev ${rev}`).toString('utf8')));
+    const provenance = rebuiltProvenance({ profile, config }, plan);
+    const holistic = plan.holistic !== undefined;
+    const rebuilt = new Set([null, ...plan.units.map((u) => u.id)].map((u) => resolveRouting(provenanceStack(provenance, holistic, u)).rev));
+    const foreign = [...revs].filter((r) => !rebuilt.has(r)).sort();
+    const record: LegacyProvenance = foreign.length === 0
+      ? { kind: 'reconstructed', provenance, matched: [...revs].sort() }
+      : {
+        kind: 'unreconstructable',
+        reason: `plan rev ${rev} ran under routing revs ${foreign.join(', ')}, which profile ${profile} and the repo config at adoption resolve to none of `
+          + `(${[...rebuilt].sort().join(', ')}): the configuration in force then is not recorded`,
+      };
+    if (record.kind === 'unreconstructable') out.push(record.reason);
+    const path = legacyProvenancePath(runDir, rev);
+    mkdirSync(dirname(path), { recursive: true });
+    exclusivePublish(path, fileJson(record));
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -309,27 +395,34 @@ const mustRead = (path: string, what: string): Buffer => {
   return readFileSync(path);
 };
 
-/** A job's evidence root, `<runDir>/evidence/jobs/<job>`: src/pipeline/publish.ts `jobEvidenceRoot` owns it (not imported: a cycle). */
-const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
+/** Where a job keeps its lanes' evidence (src/pipeline/publish.ts): `<runDir>/evidence/jobs/<job>`. */
+export const jobEvidenceRoot = (runDir: AbsPath, job: JobId): AbsPath => absPath(join(runDir, 'evidence', 'jobs', job));
+
+/** A job lane's kind: a suite lane, or an arc lane (whose run is a witness). Lane ids are unique only within each. */
+export type JobLaneKind = 'suite' | 'arc';
+
+/**
+ * One lane execution's evidence dir, `<job root>/<kind>-<lane>-<seq>-<ordinal>` (`invDir`: its invocation's dir name,
+ * `invocationDirName`): immutable, since no other execution (the other kind's lane of the same id, another invocation
+ * or attempt) shares its invocation.
+ */
+export const jobLaneDir = (runDir: AbsPath, job: JobId, kind: JobLaneKind, lane: LaneId, invDir: string): AbsPath =>
+  absPath(join(jobEvidenceRoot(runDir, job), `${kind}-${lane}-${invDir}`));
 
 /** Collects the closure at `request.highWater` from the run dir: every named file must exist and hash as its record says. */
-export function collectSnapshot(repo: AbsPath, request: SnapshotPublishRequest): Collected {
+export function collectSnapshot(request: SnapshotPublishRequest): Collected {
   const { arc, runDir, highWater } = request;
   const { bytes: log, events } = eventsPrefix(runDir, highWater);
   const payloadOf = (s: Sha256Hex): RevisionPayload => parseRevisionPayload(JSON.parse(mustRead(inputPath(runDir, s, REVISION_INPUT), 'revision payload').toString('utf8')));
   const startPath = join(runDir, START_FILE);
-  const start = () => runStart(JSON.parse(mustRead(startPath, 'start.json (a 1.0.0-dev.5 revision\'s routing is rebuilt from its profile)').toString('utf8')), startPath);
   const bytesOf = (source: Source): Buffer | null => {
     switch (source.type) {
       case 'log':
         return log;
       case 'fold':
         return Buffer.from(fileJson(fold(arc, events)), 'utf8');
-      case 'provenance': {
-        const plan = parsePlan(JSON.parse(mustRead(inputPath(runDir, source.fact.planSha256, PLAN_INPUT), `plan rev ${source.fact.rev}`).toString('utf8')));
-        const profile = start().profile;
-        return Buffer.from(fileJson(recordedProvenance(source.fact, () => rebuiltProvenance({ profile, config: readRepoConfig(repo) }, plan))), 'utf8');
-      }
+      case 'provenance':
+        return mustRead(legacyProvenancePath(runDir, source.rev), `the routing provenance of 1.0.0-dev.5 plan rev ${source.rev} (a start on this release reconstructs it at adoption)`);
       case 'input':
         return mustRead(inputPath(runDir, source.sha256, source.ext), 'kept input');
       case 'start':
@@ -339,7 +432,7 @@ export function collectSnapshot(repo: AbsPath, request: SnapshotPublishRequest):
         return source.file === 'reads.json' && !existsSync(path) ? null : mustRead(path, `${source.inv}'s`);
       }
       case 'witness':
-        return mustRead(join(jobEvidenceRoot(runDir, source.job), source.lane, WITNESS_RECORD_FILE), `${source.job}'s ${source.lane} witness record`);
+        return mustRead(join(jobLaneDir(runDir, source.job, 'arc', source.lane, invocationDirName(source.inv)), WITNESS_RECORD_FILE), `${source.job}'s ${source.lane} witness record (${source.inv})`);
       case 'file':
         return mustRead(source.path, 'named record');
       case 'ack':
@@ -366,7 +459,7 @@ function namingProblem(item: Item, bytes: Buffer): string | null {
     const generation = runStart(JSON.parse(bytes.toString('utf8')), item.path).generation;
     if (generation !== item.generation) return `${item.path} is generation ${generation}, ${namer(item.namedBy)} started generation ${item.generation}`;
   }
-  if (item.source.type === 'provenance') routingProvenance(JSON.parse(bytes.toString('utf8')), item.path);
+  if (item.source.type === 'provenance') legacyProvenance(JSON.parse(bytes.toString('utf8')), item.path);
   return null;
 }
 
@@ -492,7 +585,7 @@ function warnLegacy(commit: Sha): void {
 
 function prepare(repo: AbsPath, request: SnapshotPublishRequest): IntentBody<'snapshot.publish'> {
   const ref = snapshotRef(request.arc);
-  const collected = collectSnapshot(repo, request);
+  const collected = collectSnapshot(request);
   const files = new Map([...collected].map(([path, { bytes }]) => [path, bytes] as const));
   const manifestBytes = Buffer.from(canonicalJson(manifestOf(request.arc, request.highWater, collected)), 'utf8');
   files.set(repoPath(SNAPSHOT_MANIFEST), manifestBytes);
