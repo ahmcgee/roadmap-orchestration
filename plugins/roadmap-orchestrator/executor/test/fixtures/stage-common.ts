@@ -10,7 +10,8 @@ import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
 import { type Sha, type UnitId, arcId, invocationId, planRev, sha, unitId } from '../../src/core/ids.ts';
 import type { Journal } from '../../src/core/interfaces.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
+import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
+import { adoptLegacyProvenance } from '../../src/git/snapshot.ts';
 import { atomicJson } from '../../src/core/fsx.ts';
 import { type LaunchFile, RUNNER_FILE_READERS, type RunStart } from '../../src/core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../../src/core/values.ts';
@@ -96,7 +97,8 @@ function laneJson(l: LaneJson): Record<string, unknown> {
 
 /**
  * Writes start.json as the executor does before any stage runs (src/executor.ts `runExecutor`): generation 1, the
- * repo, the plan file and the profile. A snapshot rebuilds a 1.0.0-dev.5 revision's routing provenance from it (H7).
+ * repo, the plan file and the profile. A 1.0.0-dev.5 revision's routing provenance is reconstructed under its
+ * profile when this release adopts the arc (H7, `adopted`).
  */
 function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
   const start: RunStart = { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo, planFile: planPath, profile };
@@ -111,6 +113,17 @@ export function recordLegacyPlan(journal: Journal, runDir: AbsPath, planPath: Ab
   writeStart(runDir, repo, planPath, profile);
   const manifest = keepInputFiles(runDir, readInputFiles(planPath));
   journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [] });
+  adopted(journal, runDir);
+}
+
+/**
+ * The revision these fixtures record is shaped as the release that wrote it did (no payload, no routing provenance),
+ * so the arc is one this release adopted: its first start reconstructs that revision's routing provenance under the
+ * repo config (none here) before anything else runs (src/preflight/checks.ts `runChecks`, H7).
+ */
+function adopted(journal: Journal, runDir: AbsPath): void {
+  const unreconstructable = adoptLegacyProvenance(runDir, readJournal(runDir, journal.view.arc).events, null);
+  if (unreconstructable.length > 0) throw new Error(`the fixture's revision is unreconstructable: ${unreconstructable.join('; ')}`);
 }
 
 /** Records the plan file as revision 1 of an arc started on M2 (`scheduling: 'dag'`), as an M2 first start does. */
@@ -118,6 +131,7 @@ export function recordDagPlan(journal: Journal, runDir: AbsPath, planPath: AbsPa
   writeStart(runDir, repo, planPath, profile);
   const manifest = keepInputFiles(runDir, readInputFiles(planPath));
   journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
+  adopted(journal, runDir);
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */

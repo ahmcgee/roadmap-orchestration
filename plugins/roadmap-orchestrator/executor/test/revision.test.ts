@@ -745,7 +745,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const revision = revisionInForce(r.ctx.runDir, inForce, absPath(d.planPath));
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath));
-    const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV } }), OBLIGATIONS.obligations[1]] };
+    const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
     const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'] };
     const v = evaluateRevision(rctxOf(r), { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(amended)) } }, proposer);
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -763,7 +763,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(d.planPath)).obligations!.value;
     const i1 = now.obligations.find((o) => o.id === 'I-1')!;
-    assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3, laneRev: LANE_REV }]);
+    assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } }]);
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'disposed' }], JSON.stringify(lastApplied(r).changes));
   } finally {
     r.journal.close();
