@@ -24,10 +24,8 @@
 //            let the candidate go green first (safety, not the uncrashed order, is claimed).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { submitCommand } from '../../src/commands/queue.ts';
-import { arcId, sha } from '../../src/core/ids.ts';
+import { sha } from '../../src/core/ids.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import type { CommandBody } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseRulingSidecar } from '../../src/holistic/types.ts';
 import { rulingContextAt } from '../../src/pipeline/publish.ts';
@@ -41,7 +39,7 @@ import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
 import { VISION, obligationsJson } from './brake-common.ts';
-import { restarted } from './cm-common.ts';
+import { restarted, submit } from './cm-common.ts';
 import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
 import type { Hook, Laid } from './pm-common.ts';
 import { type Sampled, ownerOf, sampleBy } from './pm-holistic.ts';
@@ -74,12 +72,6 @@ const build = (files: Readonly<Record<string, string>>, barrier?: string): Step 
   codexStep([...(barrier === undefined ? [] : [{ type: 'barrier' as const, name: barrier, timeoutMs: PIN_TIMEOUT_MS, perUnit: true as const }]), { type: 'commit', message: 'add work', files }], { argv: ['exec', '-C'] });
 const pinLane = (barriers: string, name: string): Json =>
   ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' });
-
-/**
- * Queues a command as `roadmap <command>` does (src/cli/main.ts `submit`), in this process: the CLI's own process start
- * is no part of what these rows crash, and on a loaded host it outlives the hook's patience.
- */
-const submit = (r: ExecRun, body: CommandBody): void => void submitCommand(absPath(r.runDir), arcId(r.arc), body);
 
 /** The log's facts of `kind` so far (none before the log exists). */
 const factsNow = (r: ExecRun, kind: string): readonly Json[] =>

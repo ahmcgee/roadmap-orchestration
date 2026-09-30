@@ -21,12 +21,16 @@
 // again without parking.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { submitCommand } from '../../src/commands/queue.ts';
+import { arcId, edgeId, unitId } from '../../src/core/ids.ts';
+import type { CommandBody } from '../../src/core/records.ts';
+import { absPath } from '../../src/core/values.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import type { CodexAct, Step } from '../helpers/scenario.ts';
 import { release } from '../helpers/barrier.ts';
-import { type ExecRun, SMOKE_DEFAULT, cli, journalOf, setupExec } from './exec-common.ts';
+import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
 import { type Hook, type Laid, STRAIGHT } from './pm-common.ts';
 import type { LaneJson } from './stage-common.ts';
 import { planCheckStep } from './stage-common.ts';
@@ -94,7 +98,14 @@ export const residueParked = (r: ExecRun): boolean =>
   existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'probe' && e.fact.target.type === 'resource' && e.fact.result === 'fail');
 
 const once = (name: string, when: () => boolean, act: () => Promise<unknown> | void): Hook => ({ name, when, act: async () => void (await act()) });
-const resolveEdge = (r: ExecRun, edge: string) => cli(r, ['resolve-edge', edge, '--evidence', `${edge}: the peer is pinned`]);
+
+/**
+ * Queues a command as its `roadmap` CLI command does (src/cli/main.ts `submit`), in the watcher's own process: the
+ * CLI's process start is no part of what the matrix crashes, and on a loaded host (the full suite beside the matrix)
+ * it can outlive the hook's patience.
+ */
+export const submit = (r: ExecRun, body: CommandBody): void => void submitCommand(absPath(r.runDir), arcId(r.arc), body);
+const resolveEdge = (r: ExecRun, edge: string): void => submit(r, { type: 'resolve-edge', edge: edgeId(edge), evidence: `${edge}: the peer is pinned` });
 
 // ---------------------------------------------------------------------------------------------------
 // The scenarios
@@ -179,7 +190,7 @@ export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
     ],
     residue: [
       once('a-go', () => residueParked(r), () => resolveEdge(r, 'a-go')),
-      once('resume', () => merged(r, A), async () => void (await cli(r, ['resume', B]))),
+      once('resume', () => merged(r, A), () => submit(r, { type: 'resume', target: { type: 'unit', unit: unitId(B) } })),
     ],
   };
   return { peer, laid: { r, barriers, hooks: hooks[peer] }, stateDir };
