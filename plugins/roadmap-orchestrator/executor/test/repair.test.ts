@@ -2,7 +2,7 @@
 // tree). Named tests: reproduce.reproduced, reproduce.not-reproduced, reproduce.inapplicable, mutant.kill-in-candidate,
 // mutant.survivor-red, p1.blocks-selecting, p1.repair-exempt, p1.opened-mid-candidate-blocks-ff (G10), repair.batch
 // (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
-// cells of the matrix row MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
+// cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +27,7 @@ import { admitter } from '../src/schedule/ready.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
-import { MUTANT_APPLY, crashCells } from './matrix.ts';
+import { FF_ELIGIBILITY, MUTANT_APPLY, crashCells } from './matrix.ts';
 import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
@@ -270,6 +270,82 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
       r.journal.close();
     }
   });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Crash: the eligibility half of a unit ff's redo (G10; src/pipeline/integrate.ts `unitRedo`, src/recover/ff.ts). The cells
+// are the matrix row's (test/matrix.ts FF_ELIGIBILITY): u1 (selecting I-1) run by a child (unit-child.ts) to its ff and
+// crashed there; while no executor runs a P1 over I-1 is opened (or not: the control); then the recovery engine, then
+// the unit driver in process.
+
+describe(`matrix row ${FF_ELIGIBILITY}`, () => {
+  const cells = crashCells(FF_ELIGIBILITY);
+  type Case = Readonly<{ label: string; p1: boolean; name: string }>;
+  const CASES: readonly Case[] = [
+    { label: 'ff.act-start', p1: true, name: 'ff-eligibility.p1-blocks-redo: the CAS never happened and a P1 over I-1 opened while down: the ff is done unpublished at T (reconciled), never redone; the driver records ff:cas-stale, its fresh candidate finding-blocked, and nothing publishes until the P1 is ruled' },
+    { label: 'ff.act-start', p1: false, name: 'ff-eligibility.control-redone: the CAS never happened, no P1: the ff is redone (published, redone) and the unit finishes once' },
+    { label: 'ff.act-end', p1: true, name: 'ff-eligibility.published-stands: the CAS happened, then a P1 over I-1 opened: done published (reconciled); a P1 cannot undo a publication' },
+  ];
+
+  test('ff-eligibility.cells: the row crashes the unit ff\'s act at its start and end, and every case crashes a row label', () => {
+    assert.deepEqual(cells.map((c) => `${c.boundary} ${c.label}`), ['B2 ff.act-start', 'B4 ff.act-end']);
+    assert.deepEqual([...new Set(CASES.map((c) => c.label))], cells.map((c) => c.label));
+  });
+
+  for (const c of CASES) {
+    const cell = cells.find((x) => x.label === c.label)!;
+    test(`${c.name} (${cell.boundary} ${cell.label})`, T, async () => {
+      const { d } = holisticArc({
+        steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
+        units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: { '*': { outcomes: { t1: 'pass' } } },
+      });
+      const tip = git(d.repo, 'rev-parse', 'main');
+      const trigger = writeTrigger(tmpDir('ff-eligibility-crash'), { label: c.label, occurrence: 1 });
+      const exit = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
+      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${c.label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+      assertFired(trigger);
+      const r = contextFor(d);
+      const w = wire(r);
+      try {
+        const [ff, ...more] = r.journal.view.opsOf('integration.ff');
+        assert.ok(ff !== undefined && more.length === 0, 'one unit ff');
+        assert.equal(r.journal.view.doneOf(ff.op), null, 'the crash left it open');
+        assert.equal(git(d.repo, 'rev-parse', 'main'), c.label === 'ff.act-start' ? tip : ff.expect.new, 'the CAS happened only past act-start');
+        if (c.p1) assert.deepEqual(openFinding(r.journal, witnessDraft('I-1')), { kind: 'opened', id: 'F-1' }, 'the P1 is opened while no executor runs');
+
+        await recover({ stage: r.ctx, commands: w.commands });
+        const done = r.journal.view.doneOf(ff.op);
+        assert.ok(done !== null && done.kind === 'integration.ff');
+        assert.deepEqual(r.journal.view.openIntents(), []);
+
+        if (c.label === 'ff.act-start' && c.p1) {
+          assert.deepEqual([done.outcome, done.recoveredBy], [{ kind: 'unpublished', tip }, 'reconciled'], 'not redone: done unpublished at T');
+          assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'nothing published');
+          await step(r.ctx, r.unit('u1'));
+          assert.equal(outcomes(d, 'u1').at(-1), 'ff:cas-stale', 'the ff stage reads its unpublished ff back');
+          await step(r.ctx, r.unit('u1'));
+          assert.equal(outcomes(d, 'u1').at(-1), 'candidate:finding-blocked', 'the fresh candidate is held by the P1');
+          assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'no second ff was begun');
+          assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'still nothing published');
+          assert.deepEqual(r.journal.view.publications(), []);
+          assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'uncharged');
+          ruleFinding(r.journal, F1, 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+          assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d, 'u1').join(' '));
+        } else {
+          assert.deepEqual([done.outcome, done.recoveredBy], [{ kind: 'published' }, c.label === 'ff.act-start' ? 'redone' : 'reconciled']);
+          assert.equal(git(d.repo, 'rev-parse', 'main'), ff.expect.new, 'published at the tested candidate');
+          assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d, 'u1').join(' '));
+          assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'published by the one ff');
+          assert.deepEqual(outcomes(d, 'u1').filter((o) => o.startsWith('ff:')), ['ff:published']);
+          if (c.p1) assert.equal(finding(r).state, 'open', 'the P1 stays open: it blocks later candidates, not this publication');
+        }
+        assert.deepEqual(r.journal.view.publications().map((p) => p.unit), ['u1'], 'u1 published once');
+        assert.deepEqual(r.journal.view.openIntents(), []);
+      } finally {
+        r.journal.close();
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------

@@ -541,4 +541,47 @@ describe(`matrix row ${TERMINAL_SNAPSHOT}`, () => {
       }
     });
   }
+
+  // Each label once per completion (counted with test/fixtures/pm-record.ts). The arc's second completion, after an
+  // admitting apply reopened it, reaches complete.after-fact again with the first completion's terminal snapshot already
+  // published: that snapshot covers only the first fact, so the restart publishes a second. The close-out is not
+  // reached again here (the head already holds its renderings); a later close-out is the same finishDocs by its own pub.
+  test('complete.terminal-snapshot: crashed at B5 complete.after-fact#2 (the second completion, after a reopen): the restart publishes the second terminal snapshot, the first not counted', T, async () => {
+    const d = completingArc();
+    const setup = contextFor(d);
+    try {
+      await runToComplete(setup);
+      addUnit(d, 'u2');
+      appendSteps(d, [...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP)]);
+      const out = await applyCommand(wired(setup).commands, submitCommand(setup.ctx.runDir, setup.journal.view.arc, applyBody(d)));
+      assert.equal(out.kind, 'applied', JSON.stringify(out));
+    } finally {
+      setup.journal.close();
+    }
+    const trigger = writeTrigger(tmpDir('complete-crash'), { label: 'complete.after-fact', occurrence: 1 });
+    const exit = await runFixture('sched-m3-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
+    assert.equal(exit.signal, 'SIGKILL', `the child must crash at complete.after-fact: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+    assertFired(trigger);
+    const r = contextFor(d);
+    try {
+      const [first, second] = factsOf(r, 'arc-completed');
+      assert.ok(first !== undefined && second !== undefined);
+      assert.equal(terminalSnapshots(r).length, 1, 'the crash left the second fact without its snapshot');
+      assert.ok(terminalSnapshots(r)[0]!.expect.highWater < second.seq);
+      const w = wired(r);
+      await recover({ stage: w.stage, commands: w.commands });
+      await runToComplete(r, ['u1', 'u2']);
+      const completed = factsOf(r, 'arc-completed');
+      assert.equal(completed.length, 2, 'the second completion written once');
+      assert.deepEqual(completed[1]!.units, ['u1', 'u2']);
+      const snaps = terminalSnapshots(r);
+      assert.equal(snaps.length, 2, 'one terminal snapshot per completion');
+      assert.ok(snaps[1]!.expect.highWater >= completed[1]!.seq);
+      assert.equal(factsOf(r, 'docs-published').length, 1);
+      assert.equal(r.journal.view.holistic().completion?.active, true);
+      assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally {
+      r.journal.close();
+    }
+  });
 });

@@ -4,8 +4,10 @@
 //   job-residue.failed-cleanup-restart   a job's failed cleanup leaves a job-owned residue durable in the host
 //                                        index; across a restart recovery leaves it cleanup-failed; the probe of
 //                                        the residue reclaims it under the job's own holder: released, `cleaned`
-//   job-residue.retry-crash              the job's reclaim crashed at retry.before-/after-disposition: recovery
-//                                        resumes the reclaim order (a job holder cleaning with a residue on it)
+//   matrix row JOB_RESIDUE               the job's cycle with a failing teardown and its reclaim, crashed at every
+//                                        occurrence of the row's labels: recovery cleans a dead job's set, closes
+//                                        an open fail with its job-owned residue, or resumes the reclaim order (a
+//                                        job holder cleaning with a residue on it); the probe reclaims the rest
 //   job-residue.dead-holder              a job that died with its lane running: recovery settles the lane spawn,
 //                                        cleans, reruns the teardown under the job's owner label, and releases,
 //                                        or fails with a job-owned residue that the probe then reclaims
@@ -13,6 +15,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { after, describe, it } from 'node:test';
 import type { Event, IntentOf } from '../src/core/events.ts';
 import { arcId, jobId, poolInstance } from '../src/core/ids.ts';
@@ -33,6 +36,7 @@ import { events } from './fixtures/invoke-specs.ts';
 import { ESTATE } from './fixtures/pool-plan.ts';
 import { newProbeRun, openProbeRun } from './fixtures/probe-common.ts';
 import { type ResRun, newRun, tableOf } from './fixtures/res-plan.ts';
+import { JOB_RESIDUE, crashCells } from './matrix.ts';
 
 after(assertNoSurvivors);
 
@@ -130,29 +134,105 @@ describe('job-residue.failed-cleanup-restart', () => {
   });
 });
 
-describe('job-residue.retry-crash', { concurrency: 2 }, () => {
-  for (const label of ['retry.before-disposition', 'retry.after-disposition']) {
-    it(`${label}: recovery resumes the job's reclaim order (teardown, disposition unless recorded, release)`, T, async () => {
-      const r = newRun();
-      await ok('recover', r); // creates the state dir and an empty log
-      writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
-      const trigger = writeTrigger(tmpDir('trigger'), { label, occurrence: 1 });
-      const exit = await child('retry', r, trigger);
-      assert.equal(exit.signal, 'SIGKILL', `the reclaim did not crash at ${label}: ${exit.stderr}`);
-      assertFired(trigger);
-      const { view } = readJournal(absPath(r.runDir), arcId(r.arc));
-      assert.deepEqual(view.resources().get(INSTANCE)?.status, { state: 'cleaning', holder: HOLDER }, 'the job holds it cleaning, reclaiming');
-      assert.equal(undispositioned(absPath(r.hostDir)).length, label === 'retry.before-disposition' ? 1 : 0);
+/**
+ * Every occurrence of the row's labels in the `retry` scenario (job-child.ts, the teardown failing once): reserve, run,
+ * clean, its teardown (spawn 1), fail with the job-owned residue, reclaim, its teardown (spawn 2), the cleaned
+ * disposition, release. `job-residue.occurrences` checks this table against a recording run.
+ */
+const RETRY_OCCURRENCES: Readonly<Record<string, number>> = {
+  'resource.after-intent': 6, 'residue.before-host-append': 1, 'launch.after-spawn': 2, 'retry.before-disposition': 1,
+  'residue.after-host-append': 1, 'retry.after-disposition': 1, 'resource.after-done': 6,
+};
+const MOVES = ['job reserve', 'job run', 'job clean', 'job fail', 'job reclaim', 'job release'];
 
-      await ok('recover', r);
-      assertReclaimed(r);
-      assert.deepEqual(moves(r), ['job reserve', 'job run', 'job clean', 'job fail', 'job reclaim', 'job release']);
-      // Recovery and the probe are idempotent.
-      const before = events(r.runDir).length;
-      await ok('recover', r);
-      assert.equal(await ok('reclaim', r), 'pass');
-      assert.equal(events(r.runDir).length, before, 'nothing left to do');
+/**
+ * What recovery leaves after a crash at (label, occurrence) of the `retry` scenario. Before the residue is durable
+ * (reserve, run, clean, or the fail open or done), the dead job's set is cleaned or its fail closed with the residue:
+ * the first teardown is the one that fails, so the instance ends cleanup-failed with one job-owned residue for the
+ * probe to reclaim. With the cleanup's teardown launched, recovery waits out the failing runner and reruns the
+ * teardown, which passes: released, no residue. From the reclaim on, the instance is cleaning with the job's residue
+ * on it: recovery resumes the reclaim order to the release (or closes the release).
+ */
+function afterRecovery(label: string, occurrence: number): Readonly<{ state: 'cleanup-failed' | 'free'; residue: boolean; moves: readonly string[] }> {
+  if (label === 'launch.after-spawn') {
+    return occurrence === 1 ? { state: 'free', residue: false, moves: ['job reserve', 'job run', 'job clean', 'job release'] } : { state: 'free', residue: true, moves: MOVES };
+  }
+  // Crashed at the reserve, the set is cleaned without ever running.
+  if (label.startsWith('resource.')) return { state: occurrence <= 4 ? 'cleanup-failed' : 'free', residue: true, moves: occurrence === 1 ? MOVES.filter((m) => m !== 'job run') : MOVES };
+  if (label.startsWith('residue.')) return { state: 'cleanup-failed', residue: true, moves: MOVES };
+  if (label.startsWith('retry.')) return { state: 'free', residue: true, moves: MOVES };
+  throw new Error(`no expectation for ${label}`);
+}
+
+describe(`matrix row ${JOB_RESIDUE}`, { concurrency: 4 }, () => {
+  it('job-residue.occurrences: the retry scenario reaches each of the row\'s labels exactly as often as its cells crash it', T, async () => {
+    const r = newRun();
+    await ok('recover', r);
+    writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
+    const record = join(tmpDir('record'), 'points');
+    const exit = await runFixture('job-child.ts', ['retry', JSON.stringify(r)], {
+      env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(join(import.meta.dirname, 'fixtures', 'pm-record.ts')).href}`, PM_RECORD: record },
+      timeoutMs: CHILD_TIMEOUT_MS,
     });
+    assert.equal(exit.code, 0, exit.stderr);
+    const labels = readFileSync(record, 'utf8').trim().split('\n').map((l) => l.split(' ')[2]);
+    const counts = Object.fromEntries([...new Set(crashCells(JOB_RESIDUE).map((c) => c.label))].map((l) => [l, labels.filter((x) => x === l).length]));
+    assert.deepEqual(counts, RETRY_OCCURRENCES);
+  });
+
+  for (const cell of crashCells(JOB_RESIDUE)) {
+    for (let occurrence = 1; occurrence <= (RETRY_OCCURRENCES[cell.label] ?? 0); occurrence += 1) {
+      it(`job-residue.crash ${cell.boundary} ${cell.label}#${occurrence}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
+        const r = newRun();
+        await ok('recover', r); // creates the state dir and an empty log
+        writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
+        const trigger = writeTrigger(tmpDir('trigger'), { label: cell.label, occurrence });
+        const exit = await child('retry', r, trigger);
+        assert.equal(exit.signal, 'SIGKILL', `the scenario did not crash at ${cell.label}#${occurrence}: ${exit.stderr}`);
+        assertFired(trigger);
+        const { view } = readJournal(absPath(r.runDir), arcId(r.arc));
+        // The op the crash cut short is open (a residue append is inside its fail transition), or none is.
+        const open = view.openIntents().map((i) => [i.kind, i.op] as const);
+        const opKind = cell.label === 'launch.after-spawn' ? 'proc.spawn' : cell.label.startsWith('residue.') || cell.label === 'resource.after-intent' ? 'resource.transition' : null;
+        assert.deepEqual(open.map(([kind]) => kind), opKind === null ? [] : [opKind]);
+        if (cell.label.startsWith('retry.')) {
+          assert.deepEqual(view.resources().get(INSTANCE)?.status, { state: 'cleaning', holder: HOLDER }, 'the job holds it cleaning, reclaiming');
+          assert.equal(undispositioned(absPath(r.hostDir)).length, cell.label === 'retry.before-disposition' ? 1 : 0);
+        }
+
+        await ok('recover', r);
+        const expected = afterRecovery(cell.label, occurrence);
+        // tableOf also asserts nothing is left open.
+        assert.deepEqual(Object.fromEntries(tableOf(r)), { [INSTANCE]: expected.state === 'free' ? { state: 'free' } : { state: 'cleanup-failed', holder: HOLDER } });
+        const recovered = readJournal(absPath(r.runDir), arcId(r.arc)).view;
+        // An open transition is closed as it stands (reconciled); an open spawn as its runner is found (src/recover/spawn.ts:
+        // adopted while alive, else its result certified or re-derived; which one depends on how far the runner got).
+        for (const [kind, op] of open) {
+          const by = recovered.doneOf(op)?.recoveredBy ?? null;
+          assert.ok(kind === 'resource.transition' ? by === 'reconciled' : by !== null, `${kind} ${op}: recoveredBy ${by}`);
+        }
+        if (expected.state === 'cleanup-failed') {
+          const [key, ...more] = undispositioned(absPath(r.hostDir));
+          assert.deepEqual(more, []);
+          assert.equal(key?.job, JOB, 'the residue is job-owned');
+          // The residue's probe after the restart.
+          assert.equal(await ok('reclaim', r), 'pass');
+        }
+        if (expected.residue) assertReclaimed(r);
+        else {
+          assert.deepEqual(Object.fromEntries(tableOf(r)), { [INSTANCE]: { state: 'free' } });
+          assert.deepEqual(residueLines(r), []);
+        }
+        assert.deepEqual(moves(r), expected.moves);
+        const owner = jobOwnerLabel(arcId(r.arc), JOB);
+        assert.ok(estateCalls(r).every((c) => c === `teardown ${owner}`), JSON.stringify(estateCalls(r)));
+        // Recovery and the probe are idempotent.
+        const before = events(r.runDir).length;
+        await ok('recover', r);
+        assert.equal(await ok('reclaim', r), 'pass');
+        assert.equal(events(r.runDir).length, before, 'nothing left to do');
+      });
+    }
   }
 });
 

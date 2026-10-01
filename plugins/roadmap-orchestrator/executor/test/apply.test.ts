@@ -28,7 +28,7 @@ import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
-import { commandReconciler } from '../src/recover/command.ts';
+import { recover } from '../src/recover/recover.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
@@ -38,6 +38,8 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { PLAN_APPLY, crashCells } from './matrix.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { followingContext } from './fixtures/steer-common.ts';
 import { type ArcDescriptor, type ArcRun, type UnitSpecJson, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: 60_000 };
@@ -938,11 +940,24 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
         const open = r.journal.view.openIntents().filter((i) => i.kind === 'command.apply');
         assert.equal(open.length, 1, 'the op is open');
         const intent = open[0] as IntentOf<'command.apply'>;
-        const ctx = commandContextFor(r);
-        const disposition = await commandReconciler(ctx)(intent, r.journal.view);
-        assert.ok(disposition.kind === 'done' && disposition.outcome.kind === 'applied', JSON.stringify(disposition));
-        r.journal.done(intent.op, 'command.apply', disposition.outcome, 'reconciled');
-        assert.equal(readReceipt(ctx.runDir, file.id, 'applied')?.state, 'applied');
+        assert.equal(readReceipt(r.ctx.runDir, file.id, 'applied')?.state, cell.label === 'command.apply.after-receipt' ? 'applied' : undefined);
+        const f = followingContext(r);
+        const ctx = commandContextFor(r, f);
+        const mark = events(d.runDir).length;
+        await recover({ stage: f, commands: ctx });
+
+        // The recovery engine closed the op (reconciled). Crashed before the revision, the reconciler commits it as a
+        // new op of its own (done in the ordinary way); crashed after, it commits nothing.
+        assert.deepEqual(r.journal.view.openIntents(), []);
+        const commits = r.journal.view.opsOf('revision.commit');
+        assert.equal(commits.length, 1, 'one revision.commit');
+        const committed = cell.boundary === 'B4' ? [] : [['revision.commit', commits[0]!.op, null]];
+        const written = events(d.runDir).slice(mark).flatMap((e) => (e.type === 'done' ? [[e.kind, e.op, e.recoveredBy]] : []));
+        assert.deepEqual(written, [...committed, ['command.apply', intent.op, 'reconciled']]);
+        const done = r.journal.view.doneOf(intent.op);
+        assert.ok(done?.kind === 'command.apply' && done.outcome.kind === 'applied', JSON.stringify(done));
+        const receipt = readReceipt(ctx.runDir, file.id, 'applied');
+        assert.ok(receipt?.state === 'applied' && receipt.op === intent.op, JSON.stringify(receipt));
         assert.deepEqual(pollCommands(ctx.runDir, r.journal.view.arc), []);
         const facts = applied(d);
         assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, file.id]], 'exactly one fact for the apply');
@@ -969,10 +984,10 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
       // A manual start reads the same files: its classification puts them in force as rev 2 (no command).
       accept(r);
       const intent = r.journal.view.openIntents().find((i) => i.kind === 'command.apply') as IntentOf<'command.apply'>;
-      const ctx = commandContextFor(r);
-      const disposition = await commandReconciler(ctx)(intent, r.journal.view);
-      assert.ok(disposition.kind === 'done' && disposition.outcome.kind === 'applied', JSON.stringify(disposition));
-      r.journal.done(intent.op, 'command.apply', disposition.outcome, 'reconciled');
+      const f = followingContext(r);
+      const ctx = commandContextFor(r, f);
+      await recover({ stage: f, commands: ctx });
+      assert.equal(r.journal.view.doneOf(intent.op)?.recoveredBy, 'reconciled');
       const receipt = readReceipt(ctx.runDir, file.id, 'applied');
       assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, ['the files are the plan in force already (rev 2): nothing to apply']);
       assert.deepEqual(applied(d).map((f) => [f.rev, f.command]), [[1, null], [2, null]], 'no second fact');

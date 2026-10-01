@@ -764,7 +764,7 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['revision.commit.after-intent'],
-        recovery: 'the payload is kept and named, no docs ff: the commit is aborted (no needs-user) and the apply re-evaluates and commits once: one plan-applied, one docs ff',
+        recovery: 'the payload is kept and named, no docs ff: the commit is aborted (no needs-user) and the apply re-evaluates and commits once (that commit done live): one plan-applied, one docs ff; the command done reconciled',
       },
       B3: {
         status: 'crash',
@@ -789,17 +789,17 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['command.apply.before-effect'],
-        recovery: 'accepted receipt only, op open: the reconciler applies the whole effect once: one class revision, the brief kept, one pre-steer snapshot, one steered fact, the applied receipt',
+        recovery: 'accepted receipt only, op open: the reconciler applies the whole effect once (the class revision\'s commit and the snapshot done live): one class revision, the brief kept, one pre-steer snapshot, one steered fact, the applied receipt; the command done reconciled',
       },
       B3: {
         status: 'crash',
         labels: ['revision.commit.after-intent', 'revision.commit.after-fact'],
-        recovery: 'the class revision is open or its fact written: recovery finishes it from its payload (one plan-applied naming the command), then the reconciler finds it (planAppliedBy) and writes the brief, the snapshot and the one steered fact',
+        recovery: 'the class revision is open or its fact written: recovery finishes it from its payload (one plan-applied naming the command; commit done reconciled, no needs-user), then the reconciler finds it (planAppliedBy) and writes the brief, the snapshot (done live) and the one steered fact; the command done reconciled',
       },
       B4: {
         status: 'crash',
         labels: ['command.apply.after-effect', 'command.apply.after-receipt'],
-        recovery: 'the steered fact is written (the postcondition): nothing is applied twice; the applied receipt is written if missing, or read; the unit then runs its one steer round',
+        recovery: 'the steered fact is written (the postcondition; commit and snapshot done live): nothing is applied twice; the applied receipt is written if missing, or read; the command done reconciled; the unit then runs its one steer round',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the steer round that follows is the driver\'s (steer.round-uncharged)' },
     },
@@ -814,17 +814,17 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['command.apply.before-effect'],
-        recovery: 'accepted receipt only, op open: the reconciler plans the merge again (merge-tree), acts once, writes the one merged-in fact and the applied receipt',
+        recovery: 'accepted receipt only, op open: the reconciler plans the merge again (merge-tree), acts once (mergein.prepare done live), writes the one merged-in fact and the applied receipt; the command done reconciled',
       },
       B3: {
         status: 'crash',
         labels: ['mergein.act-start', 'mergein.after-commit-tree', 'mergein.after-cas'],
-        recovery: 'the command\'s mergein.prepare is open: its reconciler redoes it (HEAD = old: the same SHA) or finishes it (HEAD = the merge); the command\'s reconciler then finds it done and writes the one merged-in fact',
+        recovery: 'the command\'s mergein.prepare is open: its reconciler redoes it (HEAD = old: the same SHA; done redone) or finishes it (after-cas, HEAD = the merge; done reconciled); the command\'s reconciler then finds it done and writes the one merged-in fact; the command done reconciled',
       },
       B4: {
         status: 'crash',
         labels: ['mergein.act-end', 'command.apply.after-effect', 'command.apply.after-receipt'],
-        recovery: 'the merge is made (and done after recovery), or the merged-in fact written: nothing is merged twice; one merged-in fact, the applied receipt; the unit re-enters at its lanes',
+        recovery: 'the merge is made (act-end: mergein.prepare done reconciled after recovery; else done live), or the merged-in fact written: nothing is merged twice; one merged-in fact, the applied receipt; the command done reconciled; the unit re-enters at its lanes',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the lanes that follow are the driver\'s (mergein.reenters-lanes)' },
     },
@@ -1237,7 +1237,8 @@ export const MATRIX: readonly Row[] = [
   {
     // `rule` landing C-2 with a contract op (so its docs publication commits constraints.md and contracts/api.md), applied
     // by a child with the real publisher (test/fixtures/publish-child.ts); the whole recovery runs, its command
-    // reconciler with the real publisher too.
+    // reconciler with the real publisher too. Each label occurs once in the run (the recording mode lists them), so
+    // each is crashed at occurrence 1; the command.apply the crash leaves open is closed reconciled in every cell.
     row: DOCS_PUBLICATION,
     test: 'test/publish.test.ts',
     cells: {
@@ -1250,23 +1251,25 @@ export const MATRIX: readonly Row[] = [
       B3: {
         status: 'crash',
         labels: ['docs.after-commit-tree', 'ff.act-start'],
-        recovery: 'docs.commit mid-act: redone to the same commit, then aborted with its revision and republished as docs-2; the docs ff mid-act: redone (a docs ff has no unit to re-check), the revision appended from its payload with docs-1, then finishDocs (docs-covered where docs-only, snapshot, release)',
+        recovery: 'docs.commit mid-act: redone to the same commit, then aborted with its revision and republished as docs-2; the docs ff mid-act: redone (a docs ff has no unit to re-check), the revision appended from its payload with docs-1 (its revision.commit closed reconciled), then finishDocs (docs-covered where docs-only, snapshot, release)',
       },
       B4: {
         status: 'crash',
         labels: ['docs.act-end', 'docs.after-lanes', 'ff.act-end', 'revision.commit.after-docs'],
-        recovery: 'before its ff (committed, or its lanes run): abandoned and republished as docs-2; its ff published (done or not): the revision appended from its payload exactly with docs-1, never reclassified, then finishDocs; one plan-applied either way',
+        recovery: 'before its ff (committed: the docs.commit closed reconciled; or its lanes run): the revision aborted, abandoned and republished as docs-2; its ff published (done or not; an open ff closed reconciled): the revision appended from its payload exactly with docs-1 (its revision.commit closed reconciled), never reclassified, then finishDocs; one plan-applied either way',
       },
       B5: {
         status: 'crash',
         labels: ['revision.commit.after-fact', 'docs.after-snapshot'],
-        recovery: 'plan-applied written: the commit closed reconciled, then finishDocs writes only what is missing (one snapshot) and releases the slot; the rule finds its fact and writes the ledger back',
+        recovery: 'plan-applied written: the revision.commit closed reconciled (after its fact) or already done (after the snapshot), then finishDocs writes only what is missing (one snapshot) and releases the slot; the rule finds its fact and writes the ledger back',
       },
     },
   },
   {
     // Unit u1's candidate parks in its suite lane (a barrier) holding the slot before green; `rule` is applied in the
-    // same child (test/fixtures/publish-child.ts), preempting it: the kill of its lane with reason `preempt` is crashed.
+    // same child (test/fixtures/publish-child.ts), preempting it: the kill of its lane with reason `preempt` is crashed (each
+    // kill.* label occurs once, at occurrence 1). In every cell the lane's spawn is closed redone, the rule's revision.commit
+    // (waiting for the slot) aborted and re-evaluated, and u1's candidate records green only after the publication.
     row: PREEMPT,
     test: 'test/publish.test.ts',
     cells: {
@@ -1274,12 +1277,12 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['kill.after-intent'],
-        recovery: 'the preempt kill is open, the lane alive: the kill is finished, the lane closed, the candidate\'s slot released (it never recorded green), the rule re-evaluates and publishes once; the unit then runs a fresh candidate and merges',
+        recovery: 'the preempt kill is open, the lane alive: the kill redone, the lane closed, the candidate\'s slot released (it never recorded green), the rule re-evaluates and publishes once; the unit then runs a fresh candidate and merges',
       },
       B3: {
         status: 'crash',
         labels: ['kill.after-cancel'],
-        recovery: 'cancel.json written: the kill is finished or reconciled, the candidate abandoned, the slot released; the rule publishes once, then the unit merges',
+        recovery: 'cancel.json written: the kill redone (its runner not yet gone) or reconciled, the candidate abandoned, the slot released; the rule publishes once, then the unit merges',
       },
       B4: {
         status: 'crash',
@@ -1289,13 +1292,14 @@ export const MATRIX: readonly Row[] = [
       B5: {
         status: 'crash',
         labels: ['kill.after-done'],
-        recovery: 'the kill is done, the candidate\'s outcome not recorded: its slot released by recovery; the rule publishes once, then the unit merges',
+        recovery: 'the kill is done (live), the candidate\'s outcome not recorded: its slot released by recovery; the rule publishes once, then the unit merges',
       },
     },
   },
   {
     // u1 completes future obligation I-2 (held on its candidate) and runs to its merge in a child
-    // (test/fixtures/brake-child.ts); the whole recovery runs, then the unit driver finishes the unit.
+    // (test/fixtures/brake-child.ts); the whole recovery runs, then the unit driver finishes the unit. Each label occurs
+    // once in the run (occurrence 1).
     row: LATCH,
     test: 'test/brake.test.ts',
     cells: {
@@ -1305,18 +1309,21 @@ export const MATRIX: readonly Row[] = [
       B4: {
         status: 'crash',
         labels: ['ff.act-end'],
-        recovery: 'the ff moved integration, its done not written: reconciled published; the ff stage runs again, reads the published ff back and writes the missing latch; one obligation-latched, before the snapshot',
+        recovery: 'the ff moved integration, its done not written: reconciled published; the ff stage runs again, reads the published ff back and writes the missing latch; one ff, one publication, one obligation-latched, before the snapshot',
       },
       B5: {
         status: 'crash',
         labels: ['latch.after-fact'],
-        recovery: 'the latch is durable, the ff stage outcome not: the stage runs again, reads the published ff back, writes no second latch, records published; the snapshot follows',
+        recovery: 'the latch is durable, the ff stage outcome not (its ff done live, nothing open): the stage runs again, reads the published ff back, writes no second latch, records published; one ff, one publication; the snapshot follows',
       },
     },
   },
   {
     // Two approved units repairing F-1 publish as one batch in a child (test/fixtures/batch-child.ts); recovery runs, then
     // a published batch is finished (`finishBatch`) and any other runs again as the next attempt of the same job.
+    // resource.after-intent is crashed at occurrences 1-6 (the slot's reserve and run, the first lane's reserve, run,
+    // clean and release under job{batch-1}) and 11-12 (the slot's clean and release after the ff); 7-10, the second
+    // lane's same four edges, repeat 3-6. Every other label occurs once (occurrence 1).
     row: BATCH_PUBLICATION,
     test: 'test/batch.test.ts',
     cells: {
@@ -1324,17 +1331,17 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['resource.after-intent', 'candidate.act-start', 'ff.act-start'],
-        recovery: 'the slot reserve, the chained candidate.merge or the batch ff is durable, not acted: closed (the reserve done, the merge redone to its recorded chain, the ff done unpublished at T: a batch CAS is never redone); the batch holder abandoned (checkouts removed, slot released); the batch runs again as attempt 2 of batch-1 and publishes once',
+        recovery: 'a transition, the chained candidate.merge or the batch ff is durable, not acted: closed (the transition reconciled, the merge redone to its recorded chain, the ff reconciled unpublished at T: a batch CAS is never redone); before the ff, the batch holder abandoned (checkouts removed, slot released) and the batch runs again as attempt 2 of batch-1 and publishes once; the slot\'s clean after the ff leaves it cleaning for finishBatch, which writes nothing twice and releases it; its release leaves the batch complete',
       },
       B3: {
         status: 'crash',
         labels: ['candidate.after-commit-tree'],
-        recovery: 'inside the chain\'s act: redone to the same commits; the batch abandoned and run again as the same job, published once',
+        recovery: 'inside the chain\'s act: the merge redone to the same commits; the batch abandoned and run again as attempt 2 of batch-1, published once',
       },
       B4: {
         status: 'crash',
         labels: ['batch.after-candidate', 'ff.act-end'],
-        recovery: 'the candidate made (abandoned, run again) or the ff moved integration with no done: reconciled published, the batch holder left holding the slot; finishBatch writes the snapshot and releases it; both members retired by the one ff',
+        recovery: 'the candidate made, nothing open (abandoned, run again as attempt 2) or the ff moved integration with no done: reconciled published, the batch holder left holding the slot; finishBatch writes the snapshot and releases it; both members retired by the one ff',
       },
       B5: {
         status: 'crash',
@@ -1376,7 +1383,9 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // A completing arc runs under the scheduler in a child (test/fixtures/sched-m3-child.ts) through its close-out; recovery
-    // runs, then the scheduler again: the arc completes once.
+    // runs, then the scheduler again: the arc completes once. Each label is reached once per completion; B5 is also
+    // crashed at the arc's second completion after a reopen (complete.after-fact#2: the first terminal snapshot does not
+    // cover the second fact).
     row: TERMINAL_SNAPSHOT,
     test: 'test/scheduler-m3.test.ts',
     cells: {
@@ -1401,7 +1410,9 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // A requested audit of two lenses runs in a child (test/fixtures/audit-child.ts); recovery runs, then the audit is run
-    // again: a running audit resumes as the same job from its recorded inputs.
+    // again: a running audit resumes as the same job from its recorded inputs. spawn.after-runner-exit is crashed at
+    // occurrence 1 (the arc lane) and 2 (the vision lens call; 3, the invariants call, repeats it), audit.after-lens at 1
+    // and 2 (after each lens's read); every other label occurs once (occurrence 1).
     row: AUDIT_JOB,
     test: 'test/audit.test.ts',
     cells: {
@@ -1414,7 +1425,7 @@ export const MATRIX: readonly Row[] = [
       B3: {
         status: 'crash',
         labels: ['spawn.after-runner-exit', 'audit.after-lens'],
-        recovery: 'inside the job: its arc lane settled by recovery (re-run, no witnessed fact before), or the first lens read with its findings opened; the job resumes, consumes the call it already made and asks only the next lens; one audit-ended',
+        recovery: 'inside the job: its arc lane\'s spawn closed redone and the lane run again on resume (no witnessed fact before); or a lens call\'s spawn closed redone (its result re-derived from exit.json), consumed on resume and never asked again; or a lens read (the first, or both) with its findings opened; the job resumes, consumes the calls it already made and asks only the rest; one audit-ended',
       },
       B4: {
         status: 'crash',
@@ -1429,6 +1440,9 @@ export const MATRIX: readonly Row[] = [
     },
   },
   {
+    // A checkpoint after a completed audit runs in a child (test/fixtures/checkpoint-child.ts); recovery runs, then the
+    // checkpoint again. Each label is reached once per checkpoint; this row and BUNDLE_ACTIVATE crash every cell at the
+    // arc's first checkpoint and at its second (`#2`: ckpt-1 applied with its digest open, then ckpt-2 crashed).
     row: CHECKPOINT_JOB,
     test: 'test/checkpoint.test.ts',
     cells: {
@@ -1479,42 +1493,83 @@ export const MATRIX: readonly Row[] = [
     cells: fixtureCells('noop.interpretation-divergence (H12)', PIPELINE_HOLISTIC),
   },
   {
-    // A reverse is a command whose effect commits through revision.commit (src/commands/reverse.ts): its crash states are
-    // the command.apply and revision.commit rows'. Not crashed as a reverse command of its own (a carry-forward).
+    // `reverse D-1` of a checkpoint's bundle revision that admitted u2 (compensation restore-revision, a plan-only
+    // preimage: no docs publication), applied by a child (test/fixtures/revision-child.ts); the whole recovery runs.
+    // Every label is reached once (one command, one compensating commit), so occurrence 1 is the only one.
     row: REVERSE,
     test: 'test/revision.test.ts',
-    cells: fixtureCells('reverse.preimage-restores', REVISION_COMMIT),
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler runs the reverse once: one compensating plan-applied naming the command, its commit done live (recoveredBy null), the preimage plan in force, the applied receipt; command done reconciled',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact'],
+        recovery: 'the payload kept with no commit: the reverse re-evaluates and commits once (commit done live); the commit open, its plan-applied written or not: the revision reconciler appends only what is missing from the payload (no docs step, no needs-user; commit done reconciled), then the reverse finds its fact (planAppliedBy); one plan-applied, the applied receipt; command done reconciled',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'the compensating revision is committed (done live): nothing is reversed twice; the applied receipt is written if missing, or read; command done reconciled',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
   },
   {
-    // The redo's fingerprint gate is crashed with a stub re-check (ff.test.ts ff.fingerprint-callback-gates-redo, in the
-    // candidate.merge, integration.ff, snapshot.publish row); the finding eligibility half uncrashed (a carry-forward).
+    // u1 (selecting I-1) run by a child (test/fixtures/unit-child.ts) to its ff and crashed there; while no executor runs a
+    // P1 over I-1 is opened (B2 also crashed without it, the control); the recovery engine's ff redo re-checks with the
+    // real `unitRedo` (src/pipeline/integrate.ts), then the unit driver runs. The fingerprint half is crashed with a stub
+    // re-check (ff.test.ts ff.fingerprint-callback-gates-redo, in the candidate.merge, integration.ff, snapshot.publish row).
     row: FF_ELIGIBILITY,
     test: 'test/repair.test.ts',
-    cells: fixtureCells('p1.opened-mid-candidate-blocks-ff', CANDIDATE_FF_SNAPSHOT),
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['ff.act-start'],
+        recovery: 'the CAS never happened: with a P1 over I-1 opened while down the ff is not redone (done unpublished at T, reconciled); the driver records ff:cas-stale, its fresh candidate finding-blocked (uncharged), and it publishes only once the P1 is ruled; without the P1 it is redone (published, redone) and the unit finishes once',
+      },
+      B3: { status: 'excluded', why: 'the act is one update-ref CAS: no point inside it' },
+      B4: {
+        status: 'crash',
+        labels: ['ff.act-end'],
+        recovery: 'the CAS happened, then a P1 over I-1 opened: done published (reconciled), the P1 left open; a P1 cannot undo a publication; the driver reads ff:published and finishes once',
+      },
+      B5: { status: 'excluded', why: EXCLUDED_B5_OP },
+    },
   },
   {
-    // test/job-residue-restart.test.ts: job-residue.dead-holder (a job's lane runner started, the executor dead) and
-    // job-residue.retry-crash (the job's reclaim at its disposition), each at occurrence 1; the concurrent batch row
+    // test/job-residue-restart.test.ts: every occurrence of every label in the `retry` scenario (test/fixtures/job-child.ts:
+    // job audit-1 reserves estate#1, runs, its teardown fails into a job-owned residue, then the job reclaims it), counted
+    // by a recording run (job-residue.occurrences); recovery is the resources phase, then the residue's probe.
+    // job-residue.dead-holder crashes launch.after-spawn at the job's lane (the `lane` scenario); the concurrent batch row
     // crashes a batch job's lanes and slot.
     row: JOB_RESIDUE,
     test: 'test/job-residue-restart.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'a job\'s reservation or lane intent durable, not acted, is the concurrent batch row\'s resource.after-intent and spawn.after-intent cells' },
+      B2: {
+        status: 'crash',
+        labels: ['resource.after-intent', 'residue.before-host-append'],
+        recovery: 'reserve, run or clean open: the dead job\'s set is cleaned under its owner label (cleaning with no residue of its own is a live run\'s clean) and its first teardown fails into one job-owned residue; an open fail is closed with its residue appended once; reclaim or release open: the instance, cleaning with the job\'s residue, resumes the reclaim order; the probe reclaims what is cleanup-failed; one cleaned disposition, free',
+      },
       B3: {
         status: 'crash',
         labels: ['launch.after-spawn'],
-        recovery: 'the job\'s lane runner started, the executor dead: recovery settles the spawn, the lane\'s cleanup fails into a residue keyed to the job, and the probe reclaims it under the job\'s owner label',
+        recovery: 'a job\'s runner started, the executor dead (its lane, the cleanup\'s teardown, the reclaim\'s): recovery settles the spawn and reruns the teardown under the job\'s owner label: released, or (a failed lane cleanup) a job-owned residue the probe reclaims; the reclaim\'s resumes its order',
       },
       B4: {
         status: 'crash',
-        labels: ['retry.before-disposition'],
-        recovery: 'the reclaim\'s teardown passed, the disposition not written: recovery reruns it, records one cleaned disposition, releases',
+        labels: ['retry.before-disposition', 'residue.after-host-append'],
+        recovery: 'the reclaim\'s teardown passed, the disposition not written: recovery reruns it, records one cleaned disposition, releases; the fail\'s residue durable, its done not: closed with nothing appended, the probe reclaims it',
       },
       B5: {
         status: 'crash',
-        labels: ['retry.after-disposition'],
-        recovery: 'the disposition durable, the instance cleaning under the job\'s retry: recovery releases it, no second disposition',
+        labels: ['retry.after-disposition', 'resource.after-done'],
+        recovery: 'the disposition durable, the instance cleaning under the job\'s retry: recovery releases it, no second disposition; after each transition\'s done the holder\'s state is recovered as at B2, nothing open',
       },
     },
   },

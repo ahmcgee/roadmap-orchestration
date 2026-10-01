@@ -29,7 +29,7 @@ import { readCalls } from './helpers/scenario.ts';
 import { AUDIT_JOB, crashCells } from './matrix.ts';
 import { auditArc, auditContext, factsOf, mapped, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
 import { VISION } from './fixtures/brake-common.ts';
-import { API_OP, barrierSuite, ruleRecord, submitRule } from './fixtures/publish-common.ts';
+import { API_OP, barrierSuite, closedAs, ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll } from './fixtures/stage-common.ts';
 import { type ArcRun, applyBody, contextFor, stepUntil } from './fixtures/unit-common.ts';
 
@@ -479,25 +479,58 @@ describe('coverage', () => {
 // Crash: the audit job (the matrix row AUDIT_JOB)
 
 describe(`matrix row ${AUDIT_JOB}`, () => {
-  for (const cell of crashCells(AUDIT_JOB)) {
-    test(`audit crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
+  /**
+   * The occurrences crashed per label (the recording mode lists them for this audit's one process): spawn.after-runner-exit
+   * #1 is the arc lane's, #2 the first lens call's (vision); #3, the second lens call's, is a pure repeat of #2 (a lens
+   * call whose result is unread, the earlier lens's read already durable as audit.after-lens#1 leaves it). audit.after-lens
+   * #1 follows the first lens's read, #2 the second's (every lens read, the checkout not yet removed).
+   */
+  const OCCURRENCES: Readonly<Record<string, readonly number[]>> = { 'spawn.after-runner-exit': [1, 2], 'audit.after-lens': [1, 2] };
+  /**
+   * How recovery closes the ops each crash leaves open (closedAs), per `label#occurrence`: a spawn whose runner exited
+   * before its result was certified is redone (the result re-derived from exit.json, never asked again); the job's own
+   * records leave nothing open.
+   */
+  const CLOSED: Readonly<Record<string, readonly string[]>> = {
+    'audit.after-started#1': [], 'spawn.after-runner-exit#1': ['proc.spawn:redone'], 'spawn.after-runner-exit#2': ['proc.spawn:redone'],
+    'audit.after-lens#1': [], 'audit.after-lens#2': [], 'audit.before-ended#1': [], 'audit.after-ended#1': [],
+  };
+  /** The lens calls asked before each crash; the resumed job asks only the rest. */
+  const LENSES_ASKED: Readonly<Record<string, readonly string[]>> = {
+    'audit.after-started#1': [], 'spawn.after-runner-exit#1': [], 'spawn.after-runner-exit#2': ['vision'], 'audit.after-lens#1': ['vision'],
+    'audit.after-lens#2': ['vision', 'invariants'], 'audit.before-ended#1': ['vision', 'invariants'], 'audit.after-ended#1': ['vision', 'invariants'],
+  };
+  /** The job's arc lane spawns: the lane cut short at its runner's exit runs again on resume (no witnessed fact before). */
+  const laneSpawns = (r: ArcRun): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length;
+  for (const cell of crashCells(AUDIT_JOB)) for (const occurrence of OCCURRENCES[cell.label] ?? [1]) {
+    test(`audit crashed at ${cell.boundary} ${cell.label}#${occurrence}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
       const { d } = auditArc({ steps: [lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] } });
       const setup = contextFor(d);
       requestAudit(setup);
       setup.journal.close();
-      const trigger = writeTrigger(tmpDir('audit-crash'), { label: cell.label, occurrence: 1 });
+      const trigger = writeTrigger(tmpDir('audit-crash'), { label: cell.label, occurrence });
       const exit = await runFixture('audit-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
-      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}#${occurrence}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
       assertFired(trigger);
       const r = contextFor(d);
+      const open = r.journal.view.openIntents();
+      const callsBefore = lensCalls(r).map((c) => c.lens);
       const { ctx, w } = auditContext(r);
       try {
         await recover({ stage: ctx, commands: w.commands });
+        const closed = closedAs(r.journal.view, open);
+        const expected = CLOSED[`${cell.label}#${occurrence}`];
+        if (expected === undefined) throw new Error(`no expectation for ${cell.label}#${occurrence}`);
+        assert.deepEqual(closed, expected, 'the ops the crash left open, as recovery closed them');
+        // The occurrence crashed is the one named: the arc lane's spawn, then the vision lens call's.
+        if (cell.label === 'spawn.after-runner-exit') assert.deepEqual(open.map((i) => (i.kind === 'proc.spawn' ? i.expect.subject.purpose : i.kind)), [occurrence === 1 ? 'journey' : 'arc-backend']);
+        assert.deepEqual(callsBefore, LENSES_ASKED[`${cell.label}#${occurrence}`], 'the lens calls made before the crash');
         const out = await runAudit(ctx);
         if (cell.label === 'audit.after-ended') assert.deepEqual(out, { kind: 'none' });
         else assert.ok(out.kind === 'ended' && out.outcome === 'completed' && out.job === 'audit-1', JSON.stringify(out));
         assert.deepEqual([started(r).length, ended(r).map((e) => e.outcome)], [1, ['completed']]);
         assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'invariants'], 'no lens asked twice');
+        assert.equal(laneSpawns(r), cell.label === 'spawn.after-runner-exit' && occurrence === 1 ? 2 : 1, 'the arc lane runs again only when cut short');
         assert.deepEqual(r.journal.view.openIntents(), []);
         assert.equal(git(d.repo, 'worktree', 'list', '--porcelain').includes('audit-1.'), false, 'no audit checkout left');
         assert.deepEqual(await runAudit(ctx), { kind: 'none' });

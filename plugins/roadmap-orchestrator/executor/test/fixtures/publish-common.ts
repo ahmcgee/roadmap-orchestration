@@ -1,13 +1,16 @@
 // Shared by the docs publication tests (test/publish.test.ts) and their child (publish-child.ts): a unit-common arc
 // whose first revision an M3 start recorded (payload, `revision.commit`), a command context whose docs publisher is
 // the real one (src/pipeline/publish.ts) over one arbiter the unit's stages share, and `rule` records whose
-// consistency is judged at the current tip (fresh, G21).
+// consistency is judged at the current tip (fresh, G21). Also `closedAs`, how recovery closed the ops a crash left open,
+// which the crash tests of the docs publication, latch, batch and audit rows compare to their row's recovery text.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CommandContext } from '../../src/commands/apply.ts';
 import { submitCommand } from '../../src/commands/queue.ts';
 import { openJournal } from '../../src/core/log.ts';
 import { arcId, sha } from '../../src/core/ids.ts';
+import type { IntentRecord } from '../../src/core/events.ts';
+import type { JournalView } from '../../src/core/interfaces.ts';
 import type { CommandFile } from '../../src/core/records.ts';
 import { absPath, isoTimeOf } from '../../src/core/values.ts';
 import { atomicJson } from '../../src/core/fsx.ts';
@@ -97,3 +100,15 @@ export function submitRule(r: ArcRun, record: Record<string, unknown>): CommandF
   return submitCommand(r.ctx.runDir, r.ctx.plan().arc, { type: 'rule', path: absPath(path), sha256: bytesSha256(bytes) });
 }
 
+
+/**
+ * How each of `ops` (the intents a crash left open) stands after recovery: `<kind>:<recoveredBy>` once closed (`live`
+ * for a null recoveredBy), `<kind>:aborted`, or `<kind>:open`. Crash tests compare it to the row's recovery text.
+ */
+export function closedAs(view: JournalView, ops: readonly IntentRecord[]): readonly string[] {
+  const open = new Set(view.openIntents().map((i) => i.op));
+  return ops.map((i) => {
+    const done = view.doneOf(i.op);
+    return `${i.kind}:${done !== null ? (done.recoveredBy ?? 'live') : open.has(i.op) ? 'open' : 'aborted'}`;
+  });
+}

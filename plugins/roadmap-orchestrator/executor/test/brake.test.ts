@@ -24,7 +24,7 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { LATCH, crashCells } from './matrix.ts';
 import { candidateTree, holisticArc, tipTree } from './fixtures/brake-common.ts';
-import { wire } from './fixtures/publish-common.ts';
+import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Step } from './helpers/scenario.ts';
 import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, contextFor, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
@@ -231,6 +231,14 @@ describe('impact mapping', () => {
 // Crash: the latch (the matrix row LATCH)
 
 describe(`matrix row ${LATCH}`, () => {
+  /**
+   * How recovery closes the ops each crash leaves open (closedAs), and how the one unit ff stands after the run: cut
+   * short after its act, the ff is reconciled published; once done, it was live and nothing is open.
+   */
+  const AFTER: Readonly<Record<string, Readonly<{ closed: readonly string[]; ff: string }>>> = {
+    'ff.act-end': { closed: ['integration.ff:reconciled'], ff: 'integration.ff:reconciled' },
+    'latch.after-fact': { closed: [], ff: 'integration.ff:live' },
+  };
   for (const cell of crashCells(LATCH)) {
     test(`latch crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
       const { d } = holisticArc({
@@ -243,10 +251,20 @@ describe(`matrix row ${LATCH}`, () => {
       assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
       assertFired(trigger);
       const r = contextFor(d);
+      const open = r.journal.view.openIntents();
       const w = wire(r);
       try {
         await recover({ stage: r.ctx, commands: w.commands });
+        const closed = closedAs(r.journal.view, open);
         assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+        const [ff, ...moreFfs] = r.journal.view.opsOf('integration.ff');
+        const ffDone = ff === undefined ? null : r.journal.view.doneOf(ff.op);
+        const expected = AFTER[cell.label];
+        if (expected === undefined) throw new Error(`no expectation for ${cell.label}`);
+        assert.deepEqual(closed, expected.closed, 'the ops the crash left open, as recovery closed them');
+        assert.ok(ff !== undefined && moreFfs.length === 0 && ffDone?.kind === 'integration.ff' && ffDone.outcome.kind === 'published', 'one ff, published');
+        assert.equal(closedAs(r.journal.view, [ff])[0], expected.ff);
+        assert.deepEqual(r.journal.view.publications().map((p) => p.unit), ['u1'], 'one publication');
         assert.deepEqual(latched(r), [['I-2', 'u1']], 'one latch');
         const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
         const latchSeq = events.find((e) => e.type === 'fact' && e.fact.kind === 'obligation-latched')!.seq;

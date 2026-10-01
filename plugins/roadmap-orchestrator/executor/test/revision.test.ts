@@ -8,7 +8,8 @@
 // startup.obligation-dropped, apply.legacy-manifest-queued, apply.legacy-manifest-open, reverse.preimage-restores,
 // reverse.conflict-refused, reverse.repair-unit-refused, reverse.spec-preimage-exact, reverse.obligation-fresh-rev,
 // split.checkpoint-drop-divergence, fence.capture-waits,
-// revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells).
+// revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells),
+// reverse.crash-cells (the REVERSE matrix row's cells).
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -16,7 +17,7 @@ import { describe, test } from 'node:test';
 import {
   type CommandContext, type CommandOutcome, type RevisionContext, applyCommand, commitUnderFence, evaluateRevision, keepRevision, payloadOf,
 } from '../src/commands/apply.ts';
-import { newCommandId, readReceipt, submitCommand } from '../src/commands/queue.ts';
+import { newCommandId, readReceipt, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
 import { captureUnderFence, holdFence } from '../src/core/fence.ts';
 import type { Fact, IntentOf, PlanAppliedFact } from '../src/core/events.ts';
 import {
@@ -45,7 +46,7 @@ import { commandReconciler } from '../src/recover/command.ts';
 import { recover } from '../src/recover/recover.ts';
 import { bytesSha256 as fileSha256Bytes, fileSha256, parseSpec } from '../src/spec/spec.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
-import { REVISION_COMMIT, crashCells } from './matrix.ts';
+import { REVERSE, REVISION_COMMIT, crashCells } from './matrix.ts';
 import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -847,6 +848,10 @@ describe(`matrix row ${REVISION_COMMIT}`, () => {
         assert.equal(r.journal.view.opsOf('integration.ff').length, 0, 'no ff');
         await recover({ stage: r.ctx, commands: ctxOf(r) });
         assert.equal(r.journal.view.doneOf(open.op), null, 'the crashed commit is aborted, not done');
+        assert.deepEqual(r.journal.view.opsOf('needsuser.raise'), [], 'the abort raises no needs-user: its source re-evaluates');
+        const commits = r.journal.view.opsOf('revision.commit').filter((i) => i.expect.source.type === 'command');
+        assert.equal(commits.length, 2, 'the aborted commit and the re-evaluated one');
+        assert.equal(r.journal.view.doneOf(commits[1]!.op)?.recoveredBy, null, 'the re-evaluated commit is done live inside the command\'s reconciler');
         assert.deepEqual(applied(r).map((f) => [f.rev, f.command]), [[1, null], [2, id]]);
         assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'one docs ff, by the re-evaluated commit');
       },
@@ -864,6 +869,7 @@ describe(`matrix row ${REVISION_COMMIT}`, () => {
         assert.deepEqual(fact.changes, payload.changes);
         assert.equal(canonicalJson(fact.routingProvenance), canonicalJson(payload.routingProvenance));
         assert.equal(r.journal.view.doneOf(open.op)?.kind, 'revision.commit', 'the commit is done');
+        assert.equal(r.journal.view.doneOf(open.op)?.recoveredBy, 'reconciled', 'closed by recovery from its payload');
         assert.equal(r.journal.view.opsOf('integration.ff').length, 1, 'the one docs ff');
         assert.equal(git(r.d.repo, 'rev-parse', branchRef(branchName('main'))), head);
       },
@@ -893,6 +899,79 @@ describe(`matrix row ${REVISION_COMMIT}`, () => {
         await c.check(r, id);
         assert.equal(readReceipt(r.ctx.runDir, id as never, 'applied')?.state, 'applied');
         assert.deepEqual(r.journal.view.openIntents(), [], 'recovery leaves nothing open');
+        const apply = r.journal.view.opsOf('command.apply').filter((i) => i.expect.command === id);
+        assert.equal(apply.length, 1);
+        assert.equal(r.journal.view.doneOf(apply[0]!.op)?.recoveredBy, 'reconciled', 'the command\'s op is closed by its reconciler');
+      } finally {
+        r.journal.close();
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Crash: `reverse D-1` (H13), a compensating revision with no docs step. The cells are the matrix row's (test/matrix.ts
+// REVERSE); each label is reached once in the child.
+
+describe(`matrix row ${REVERSE}`, () => {
+  const cells = crashCells(REVERSE);
+
+  test('reverse.crash-cells: lists the reverse\'s crash points', () => {
+    assert.deepEqual(cells.map((c) => `${c.boundary} ${c.label}`), [
+      'B2 command.apply.before-effect', 'B3 plan.apply.after-inputs', 'B3 revision.commit.after-intent', 'B3 revision.commit.after-fact',
+      'B4 command.apply.after-effect', 'B4 command.apply.after-receipt',
+    ]);
+  });
+
+  /** How the compensating commit is closed: by the revision reconciler when the crash left it open, else live. */
+  const COMMIT_RECOVERED_BY: Readonly<Record<string, 'reconciled' | null>> = {
+    'command.apply.before-effect': null, 'plan.apply.after-inputs': null, 'revision.commit.after-intent': 'reconciled', 'revision.commit.after-fact': 'reconciled',
+    'command.apply.after-effect': null, 'command.apply.after-receipt': null,
+  };
+
+  for (const cell of cells) {
+    test(`reverse.crash-cells ${cell.boundary} ${cell.label}: ${cell.recovery}`, T, async () => {
+      const d = setupArc({ steps: [] });
+      recordFirst(d);
+      const setup = contextFor(d);
+      let id: string;
+      try {
+        bundleAdmitsU2(setup, 'restore-revision');
+        id = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, { type: 'reverse', divergence: 'D-1' as DivergenceId }).id;
+      } finally {
+        setup.journal.close();
+      }
+      const trigger = writeTrigger(tmpDir('reverse-crash'), { label: cell.label, occurrence: 1 });
+      const exit = await runFixture('revision-child.ts', [JSON.stringify(d), id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });
+      assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${cell.label}: code ${exit.code}, stderr ${exit.stderr}`);
+      assertFired(trigger);
+
+      const r = contextFor(d);
+      try {
+        const open = r.journal.view.openIntents().map((i) => i.kind).sort();
+        assert.deepEqual(open, COMMIT_RECOVERED_BY[cell.label] === 'reconciled' ? ['command.apply', 'revision.commit'] : ['command.apply']);
+        assert.equal(terminalReceipt(r.ctx.runDir, id as never)?.state, cell.label === 'command.apply.after-receipt' ? 'applied' : undefined);
+        await recover({ stage: r.ctx, commands: ctxOf(r) });
+
+        assert.deepEqual(r.journal.view.openIntents(), [], 'no open intents');
+        assert.deepEqual(r.journal.view.opsOf('needsuser.raise'), [], 'no needs-user');
+        const facts = applied(r);
+        assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, null], [3, id]], 'one compensating plan-applied, naming the command');
+        assert.deepEqual(facts[2]!.changes, [{ type: 'unit-removed', unit: 'u2' }]);
+        assert.equal(facts[2]!.planSha256, facts[0]!.planSha256, 'the preimage plan is back in force');
+        assert.deepEqual(requirePlanInForce(r.ctx.runDir, r.journal.view).plan.units.map((u) => u.id), ['u1']);
+        const commits = r.journal.view.opsOf('revision.commit').filter((i) => i.expect.source.type === 'command' && i.expect.source.command === id);
+        assert.equal(commits.length, 1, 'one compensating commit');
+        const commitDone = r.journal.view.doneOf(commits[0]!.op);
+        assert.equal(commitDone?.kind, 'revision.commit');
+        assert.equal(commitDone.recoveredBy, COMMIT_RECOVERED_BY[cell.label]);
+        const apply = r.journal.view.opsOf('command.apply').filter((i) => i.expect.command === id);
+        assert.equal(apply.length, 1);
+        const applyDone = r.journal.view.doneOf(apply[0]!.op);
+        assert.ok(applyDone?.kind === 'command.apply' && applyDone.outcome.kind === 'applied');
+        assert.equal(applyDone.recoveredBy, 'reconciled', 'the command\'s op is closed by its reconciler');
+        const receipt = readReceipt(r.ctx.runDir, id as never, 'applied');
+        assert.ok(receipt?.state === 'applied' && receipt.op === apply[0]!.op, 'one applied receipt naming the op');
       } finally {
         r.journal.close();
       }

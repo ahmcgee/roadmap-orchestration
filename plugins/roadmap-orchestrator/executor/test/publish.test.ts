@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { readReceipt, submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, PlanAppliedFact } from '../src/core/events.ts';
+import type { Fact, IntentOf, IntentRecord, PlanAppliedFact } from '../src/core/events.ts';
 import { INTEGRATION_SLOT, findingId, invocationDirName, jobId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -33,7 +33,7 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { witnessLaneArgv, writeWitnessControl } from './helpers/witness.ts';
 import { DOCS_PUBLICATION, PREEMPT, crashCells } from './matrix.ts';
-import { API_OP, barrierSuite, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
+import { API_OP, barrierSuite, closedAs, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
   type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil,
@@ -494,7 +494,7 @@ test('rule.dev5-write-back: the first rule on an arc 1.0.0-dev.5 started keeps t
 // ---------------------------------------------------------------------------------------------------
 // Crash: the docs publication (the matrix row DOCS_PUBLICATION) and a preemption (PREEMPT)
 
-type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string }>;
+type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string; open: readonly IntentRecord[] }>;
 
 async function crashChild(label: string, d: ArcDescriptor, id: string, barrier: string | null): Promise<void> {
   const trigger = writeTrigger(tmpDir('publish-crash'), { label, occurrence: 1 });
@@ -503,6 +503,16 @@ async function crashChild(label: string, d: ArcDescriptor, id: string, barrier: 
   });
   assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
   assertFired(trigger);
+}
+
+/** The intents the crashed child left open. */
+function openAfterCrash(d: ArcDescriptor): readonly IntentRecord[] {
+  const r = contextFor(d);
+  try {
+    return r.journal.view.openIntents();
+  } finally {
+    r.journal.close();
+  }
 }
 
 /** Recovery, as a start runs it, with the real docs publisher behind its command reconciler. */
@@ -529,6 +539,21 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
     'ff.act-start': 'docs-1', 'ff.act-end': 'docs-1', 'revision.commit.after-docs': 'docs-1', 'revision.commit.after-fact': 'docs-1', 'docs.after-snapshot': 'docs-1',
   };
 
+  /**
+   * How recovery closes the ops each crash leaves open (closedAs): the apply always reconciled; the revision aborted
+   * before its docs ff published, else reconciled; a docs.commit cut short redone, one acted reconciled; the docs ff
+   * redone before its CAS, reconciled after it.
+   */
+  const APPLY = ['command.apply:reconciled'];
+  const ABORTED = [...APPLY, 'revision.commit:aborted'];
+  const ACTIVATED = [...APPLY, 'revision.commit:reconciled'];
+  const CLOSED: Readonly<Record<string, readonly string[]>> = {
+    'revision.commit.after-intent': ABORTED, 'docs.act-start': [...ABORTED, 'docs.commit:redone'], 'docs.after-commit-tree': [...ABORTED, 'docs.commit:redone'],
+    'docs.act-end': [...ABORTED, 'docs.commit:reconciled'], 'docs.after-lanes': ABORTED,
+    'ff.act-start': [...ACTIVATED, 'integration.ff:redone'], 'ff.act-end': [...ACTIVATED, 'integration.ff:reconciled'],
+    'revision.commit.after-docs': ACTIVATED, 'revision.commit.after-fact': ACTIVATED, 'docs.after-snapshot': APPLY,
+  };
+
   async function crashAt(label: string): Promise<Crashed> {
     const d = publishArc({ steps: [] });
     const r = contextFor(d);
@@ -536,16 +561,17 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
     const file = submitRule(r, ruleRecord(r, 'C-2', API_OP));
     r.journal.close();
     await crashChild(label, d, file.id, null);
-    return { d, id: file.id, tip };
+    return { d, id: file.id, tip, open: openAfterCrash(d) };
   }
 
   for (const cell of cells) {
     test(`docs publication crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
-      const { d, id, tip } = await crashAt(cell.label);
+      const { d, id, tip, open } = await crashAt(cell.label);
       const r = await recoverArc(d);
       try {
         const pub = PUB[cell.label];
         if (pub === undefined) throw new Error(`no expectation for ${cell.label}`);
+        assert.deepEqual(closedAs(r.journal.view, open), CLOSED[cell.label], 'the ops the crash left open, as recovery closed them');
         assert.equal(applied(r).filter((f) => f.command === id).length, 1, 'one plan-applied');
         assertPublished(r, id, pub, tip);
         assert.equal(docsFfs(r).filter((i) => r.journal.view.doneOf(i.op)?.kind === 'integration.ff').length, 1, 'one docs ff');
@@ -562,6 +588,11 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
 
 describe(`matrix row ${PREEMPT}`, () => {
   const cells = crashCells(PREEMPT);
+  /** How the preempt kill stands after recovery (closedAs): its runner alive until the cancel lands, so redone; then reconciled; once done, live. */
+  const KILL_CLOSED: Readonly<Record<string, readonly string[]>> = {
+    'kill.after-intent': ['proc.kill:redone'], 'kill.after-cancel': ['proc.kill:redone', 'proc.kill:reconciled'],
+    'kill.after-quiesced': ['proc.kill:reconciled'], 'kill.after-done': ['proc.kill:live'],
+  };
 
   for (const cell of cells) {
     test(`preemption crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
@@ -572,11 +603,25 @@ describe(`matrix row ${PREEMPT}`, () => {
       const file = submitRule(setup, ruleRecord(setup, 'C-2'));
       setup.journal.close();
       await crashChild(cell.label, d, file.id, barrier);
+      const open = openAfterCrash(d);
       const r = await recoverArc(d);
       const w = wire(r);
       const stop = ticking(w);
       try {
         assertPublished(r, file.id, 'docs-1', tip);
+        // The crashed op is the preempt kill of u1's candidate suite lane, closed per boundary.
+        const [kill, ...moreKills] = r.journal.view.opsOf('proc.kill');
+        assert.ok(kill !== undefined && moreKills.length === 0 && kill.expect.reason === 'preempt', 'one kill, the preemption');
+        const lane = kill.parent.type === 'op' ? r.journal.view.latestIntent(kill.parent.op) : null;
+        assert.ok(lane?.kind === 'proc.spawn' && lane.expect.subject.purpose === 'lane' && lane.expect.subject.set === 'suite', JSON.stringify(lane));
+        assert.deepEqual(lane.parent.type === 'stage' ? [lane.parent.unit, lane.parent.stage] : [], ['u1', 'candidate'], 'the lane is u1\'s candidate\'s');
+        assert.ok(KILL_CLOSED[cell.label]!.includes(closedAs(r.journal.view, [kill])[0]!), `${cell.label}: ${closedAs(r.journal.view, [kill])[0]}`);
+        assert.deepEqual(closedAs(r.journal.view, open.filter((i) => i.kind !== 'proc.kill')), ['proc.spawn:redone', 'command.apply:reconciled', 'revision.commit:aborted'],
+          'the lane settled by recovery, the apply reconciled, its revision (waiting for the slot) aborted and re-evaluated');
+        const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
+        const seqOf = (p: (f: Fact) => boolean): number => events.find((e) => e.type === 'fact' && p(e.fact))?.seq ?? Infinity;
+        assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => f.kind === 'stage-outcome' && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
+          'the candidate never recorded green before the publication');
         assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
         const unitFf = r.journal.view.opsOf('integration.ff').find((i) => i.expect.subject === undefined)!;
         assert.equal(unitFf.expect.old, applied(r).find((f) => f.command === file.id)!.publication!.head, 'the unit merged after the docs publication');
