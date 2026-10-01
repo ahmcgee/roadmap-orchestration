@@ -14,7 +14,7 @@ import type { CommandBody, CommandFile } from '../src/core/records.ts';
 import { absPath, isoTimeOf, refName } from '../src/core/values.ts';
 import { readResidues, recordResidue, undispositioned } from '../src/host/residues.ts';
 import { needsUserAckPath, openBlocking, raiseNeedsUser, readNeedsUserAck } from '../src/needsuser.ts';
-import { commandReconciler } from '../src/recover/command.ts';
+import { recover } from '../src/recover/recover.ts';
 import { type SweepHolder, cleanup, reserve, resourceTable, run as runReservation } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { ownerLabel } from '../src/resources/teardown.ts';
@@ -500,7 +500,7 @@ describe(`matrix row ${COMMAND_APPLY}`, () => {
         assertFired(trigger);
 
         // Accepted is not done: the op is open, and until the terminal receipt exists the command is pending.
-        const { ctx, journal } = openCommandRun(run);
+        const { ctx, stage, journal } = openCommandRun(run);
         const open = journal.view.openIntents().filter((i) => i.kind === 'command.apply');
         assert.equal(open.length, 1);
         const intent = open[0] as IntentOf<'command.apply'>;
@@ -510,16 +510,26 @@ describe(`matrix row ${COMMAND_APPLY}`, () => {
         assert.deepEqual(poll(ctx).map((c) => c.id), receipted ? [] : [cmd.id]);
         await assert.rejects(applyCommand(ctx, cmd), /still open; recovery applies it/);
 
-        const disposition = await commandReconciler(ctx)(intent, journal.view);
-        assert.equal(disposition.kind, 'done');
-        if (disposition.kind !== 'done') return;
-        journal.done(intent.op, 'command.apply', disposition.outcome, 'reconciled');
+        const spawnsOpen = journal.view.openIntents().filter((i) => i.kind === 'proc.spawn').map((i) => i.op);
+        assert.equal(spawnsOpen.length, cell.label === 'spawn.after-intent' ? 1 : 0);
+        const mark = events(ctx.runDir).length;
+        await recover({ stage, commands: ctx });
 
+        // The recovery engine closes the op (reconciled), and the reconciler the sweep's open teardown spawn (lost,
+        // reconciled); everything the remainder of the effect runs is a new op, done in the ordinary way.
+        assert.equal(journal.view.openIntents().length, 0);
+        const done = journal.view.doneOf(intent.op);
+        assert.ok(done?.kind === 'command.apply' && done.outcome.kind === 'applied', JSON.stringify(done));
+        assert.equal(done.recoveredBy, 'reconciled');
+        for (const op of spawnsOpen) {
+          const lost = journal.view.doneOf(op);
+          assert.ok(lost?.kind === 'proc.spawn' && lost.outcome.kind === 'lost' && lost.recoveredBy === 'reconciled', JSON.stringify(lost));
+        }
+        const written = events(ctx.runDir).slice(mark).flatMap((e) => (e.type === 'done' ? [e] : []));
+        assert.deepEqual(written.filter((e) => e.recoveredBy !== null).map((e) => [e.kind, e.op]).sort(), [...spawnsOpen.map((op) => ['proc.spawn', op]), ['command.apply', intent.op]].sort());
         const applied = readReceipt(ctx.runDir, cmd.id, 'applied');
         assert.ok(applied?.state === 'applied');
         assert.equal(applied.op, intent.op);
-        assert.equal(disposition.outcome.kind, 'applied');
-        assert.equal(journal.view.openIntents().length, 0);
         assert.deepEqual(poll(ctx), []);
         if (expectAck !== null) {
           assert.equal(readNeedsUserAck(ctx.runDir, needsUserId(expectAck))?.command, cmd.id);

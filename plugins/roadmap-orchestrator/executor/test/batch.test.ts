@@ -23,7 +23,7 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { BATCH_PUBLICATION, crashCells } from './matrix.ts';
 import { approveBoth, batchArc, publish } from './fixtures/batch-common.ts';
-import { wire } from './fixtures/publish-common.ts';
+import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { type ArcDescriptor, type ArcRun, contextFor } from './fixtures/unit-common.ts';
 
@@ -155,42 +155,84 @@ describe('repair batches (R7, G5, H4)', () => {
 // ---------------------------------------------------------------------------------------------------
 // Crash: the batch publication (the matrix row BATCH_PUBLICATION)
 
-/** The expected state after recovery per label: `published` (the ff published; finishBatch completes it) or `again`. */
-const AFTER: Readonly<Record<string, 'published' | 'again'>> = {
-  'resource.after-intent': 'again', 'candidate.act-start': 'again', 'candidate.after-commit-tree': 'again', 'batch.after-candidate': 'again',
-  'ff.act-start': 'again', 'ff.act-end': 'published', 'snapshot.act-end': 'published',
+/**
+ * resource.after-intent is crashed at these occurrences of the batch run (one process; the recording mode lists them):
+ * the slot's reserve and run edges, the first lane's reserve, run, clean and release under job{batch-1}, and the slot's
+ * clean and release after the ff published. 7-10 (the second lane's same four edges) are pure repeats of 3-6.
+ */
+const RESOURCE_OCCURRENCES: Readonly<Record<number, string>> = {
+  1: 'slot reserve', 2: 'slot run', 3: 'lane reserve', 4: 'lane run', 5: 'lane clean', 6: 'lane release', 11: 'slot clean', 12: 'slot release',
+};
+const casesOf = (label: string): readonly Readonly<{ occurrence: number; what: string }>[] =>
+  label === 'resource.after-intent' ? Object.entries(RESOURCE_OCCURRENCES).map(([n, what]) => ({ occurrence: Number(n), what })) : [{ occurrence: 1, what: label }];
+
+/**
+ * After recovery, per `label#occurrence`: `again` (abandoned: the batch runs again as attempt 2 of batch-1), `published`
+ * (the ff published, the slot left held for finishBatch) or `finished` (the slot released too: nothing left to do); and
+ * how recovery closed the ops the crash left open (closedAs).
+ */
+const TRANSITION = ['resource.transition:reconciled'];
+const AFTER: Readonly<Record<string, Readonly<{ after: 'again' | 'published' | 'finished'; closed: readonly string[] }>>> = {
+  // An open transition is only its record: closed reconciled. Before the ff published the batch is abandoned.
+  'resource.after-intent#1': { after: 'again', closed: TRANSITION }, 'resource.after-intent#2': { after: 'again', closed: TRANSITION },
+  'resource.after-intent#3': { after: 'again', closed: TRANSITION }, 'resource.after-intent#4': { after: 'again', closed: TRANSITION },
+  'resource.after-intent#5': { after: 'again', closed: TRANSITION }, 'resource.after-intent#6': { after: 'again', closed: TRANSITION },
+  // After it: the slot's clean leaves it cleaning, held for finishBatch; its release leaves nothing to do.
+  'resource.after-intent#11': { after: 'published', closed: TRANSITION }, 'resource.after-intent#12': { after: 'finished', closed: TRANSITION },
+  'candidate.act-start#1': { after: 'again', closed: ['candidate.merge:redone'] }, 'candidate.after-commit-tree#1': { after: 'again', closed: ['candidate.merge:redone'] },
+  'batch.after-candidate#1': { after: 'again', closed: [] },
+  // A batch CAS is never redone: done unpublished at T, reconciled.
+  'ff.act-start#1': { after: 'again', closed: ['integration.ff:reconciled'] },
+  'ff.act-end#1': { after: 'published', closed: ['integration.ff:reconciled'] },
+  'snapshot.act-end#1': { after: 'published', closed: ['snapshot.publish:reconciled'] },
 };
 
-async function crashChild(label: string, d: ArcDescriptor): Promise<void> {
-  const trigger = writeTrigger(tmpDir('batch-crash'), { label, occurrence: 1 });
+async function crashChild(label: string, occurrence: number, d: ArcDescriptor): Promise<void> {
+  const trigger = writeTrigger(tmpDir('batch-crash'), { label, occurrence });
   const exit = await runFixture('batch-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
-  assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${label}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+  assert.equal(exit.signal, 'SIGKILL', `the child must crash at ${label}#${occurrence}: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
   assertFired(trigger);
 }
 
 describe(`matrix row ${BATCH_PUBLICATION}`, () => {
-  for (const cell of crashCells(BATCH_PUBLICATION)) {
-    test(`batch crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
+  for (const cell of crashCells(BATCH_PUBLICATION)) for (const { occurrence, what } of casesOf(cell.label)) {
+    test(`batch crashed at ${cell.boundary} ${cell.label}#${occurrence} (${what}): ${cell.recovery.slice(0, 80)}…`, T, async () => {
       const { d } = batchArc();
       const setup = contextFor(d);
       const tip = git(d.repo, 'rev-parse', 'main');
       await approveBoth(setup);
       setup.journal.close();
-      await crashChild(cell.label, d);
+      await crashChild(cell.label, occurrence, d);
       const r = contextFor(d);
+      const open = r.journal.view.openIntents();
       const w = wire(r);
       try {
         await recover({ stage: r.ctx, commands: w.commands });
-        const expected = AFTER[cell.label];
-        if (expected === undefined) throw new Error(`no expectation for ${cell.label}`);
-        if (expected === 'published') {
-          assert.equal(slotState(r) === 'free', false, 'recovery leaves a published batch holding the slot for finishBatch');
-          assert.equal((await finishBatch(r.ctx)).kind, 'published');
-        } else {
-          assert.equal(slotState(r), 'free', 'recovery abandons a batch that did not publish');
-          assert.equal((await publish(r)).kind, 'published');
+        const closed = closedAs(r.journal.view, open);
+        const expected = AFTER[`${cell.label}#${occurrence}`];
+        if (expected === undefined) throw new Error(`no expectation for ${cell.label}#${occurrence}`);
+        assert.deepEqual(closed, expected.closed, 'the ops the crash left open, as recovery closed them');
+        if (cell.label === 'ff.act-start') {
+          const done = r.journal.view.doneOf(batchFfs(r)[0]!.op);
+          assert.deepEqual(done?.kind === 'integration.ff' ? done.outcome : null, { kind: 'unpublished', tip }, 'the cut-short batch CAS closed unpublished at T');
+        }
+        switch (expected.after) {
+          case 'published':
+            assert.equal(slotState(r) === 'free', false, 'recovery leaves a published batch holding the slot for finishBatch');
+            assert.equal((await finishBatch(r.ctx)).kind, 'published');
+            break;
+          case 'finished':
+            assert.equal(slotState(r), 'free', 'the slot release was the last step');
+            break;
+          case 'again':
+            assert.equal(slotState(r), 'free', 'recovery abandons a batch that did not publish');
+            assert.equal((await publish(r)).kind, 'published');
+            break;
         }
         assertPublished(r, tip);
+        const attempts = r.journal.view.opsOf('resource.transition').flatMap((i) => (i.expect.holder.type === 'batch' && i.expect.edge.type === 'reserve' ? [[i.expect.holder.attempt, i.parent]] : []));
+        const job = { type: 'job', job: BATCH };
+        assert.deepEqual(attempts, expected.after === 'again' ? [[1, job], [2, job]] : [[1, job]], 'one durable job; an abandoned batch runs again as its attempt 2');
       } finally {
         r.journal.close();
       }

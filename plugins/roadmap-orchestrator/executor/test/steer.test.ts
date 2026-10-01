@@ -416,6 +416,15 @@ describe(`matrix row ${STEER}`, () => {
         assert.equal(steered.length, 1, 'exactly one steered fact');
         const s0 = steered[0];
         assert.ok(s0?.kind === 'steered' && s0.command === file.id);
+        const apply = r.journal.view.opsOf('command.apply').filter((i) => i.expect.command === file.id);
+        assert.equal(apply.length, 1);
+        assert.equal(r.journal.view.doneOf(apply[0]!.op)?.recoveredBy, 'reconciled', 'the command\'s op is closed by its reconciler');
+        const commits = r.journal.view.opsOf('revision.commit').filter((i) => i.expect.source.type === 'command' && i.expect.source.command === file.id);
+        assert.equal(commits.length, 1, 'one class revision commit');
+        const commitDone = r.journal.view.doneOf(commits[0]!.op);
+        assert.ok(commitDone !== null && commitDone.kind === 'revision.commit');
+        assert.equal(commitDone.recoveredBy, cell.label.startsWith('revision.commit.') ? 'reconciled' : null, 'an open commit is finished by recovery from its payload, else it was done live');
+        assert.deepEqual(r.journal.view.opsOf('needsuser.raise').filter((i) => i.parent.type === 'op'), [], 'recovery raised no needs-user');
         const applied = facts(d).filter((x) => x.kind === 'plan-applied' && x.command === file.id);
         assert.equal(applied.length, 1, 'exactly one plan-applied from the command');
         assert.ok(applied[0]!.kind === 'plan-applied' && applied[0].changes.some((c) => c.type === 'routing' && c.unit === U1));
@@ -428,6 +437,7 @@ describe(`matrix row ${STEER}`, () => {
         const snapshots = r.journal.view.opsOf('evidence.snapshot').filter((i) => i.expect.dest === dest);
         assert.equal(snapshots.length, 1, 'one pre-steer evidence snapshot');
         assert.notEqual(r.journal.view.doneOf(snapshots[0]!.op), null);
+        assert.equal(r.journal.view.doneOf(snapshots[0]!.op)?.recoveredBy, null, 'the snapshot is taken live (by the child or the reconciler), never left open');
         assert.equal(r.journal.view.ackOf(item)?.command, file.id, 'the park\'s item acknowledged by the steer');
         // The unit then runs its one steer round.
         const u = r.journal.view.unit(U1);

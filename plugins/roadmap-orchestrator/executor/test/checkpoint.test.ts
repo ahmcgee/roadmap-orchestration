@@ -481,17 +481,29 @@ describe('design parks (OR-Q1)', () => {
 // ---------------------------------------------------------------------------------------------------
 // Crash: the checkpoint job and the bundle's activation (the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE)
 
+// Each label once per checkpoint (counted with test/fixtures/pm-record.ts), so each cell is crashed at the arc's first
+// checkpoint and at its second (`#2`): ckpt-1 applied in setup with its divergence D-1 and its digest open, then audit-2
+// and the crashed ckpt-2. The second resumes as ckpt-2 from its own inputs, numbers its divergences on from D-1 keyed
+// (ckpt-2, i), and raises no second digest while D-1's is open.
 for (const row of [CHECKPOINT_JOB, BUNDLE_ACTIVATE]) {
   describe(`matrix row ${row}`, () => {
-    for (const cell of crashCells(row)) {
-      test(`checkpoint crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
+    for (const cell of crashCells(row)) for (const second of [false, true]) {
+      test(`checkpoint crashed at ${cell.boundary} ${cell.label}${second ? '#2 (the arc\'s second checkpoint)' : ''}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
         const noop = cell.label === 'bundle.after-decided';
-        const d = checkpointArc(visionLenses('audit-1'));
+        const job = second ? 'ckpt-2' : 'ckpt-1';
+        const audit = second ? 'audit-2' : 'audit-1';
+        const d = second ? checkpointArc([...visionLenses('audit-1', 'audit-2'), checkpointStep('ckpt-1', bundle([limitsOp('retries', 2)]))]) : checkpointArc(visionLenses('audit-1'));
         const setup = contextFor(d);
         const { ctx: sctx } = checkpointContext(setup);
         await completedAudit(setup, sctx);
-        const finding = openVisionFinding(setup, 'audit-1', 'helpers round');
-        appendSteps(d, [checkpointStep('ckpt-1', bundle(noop ? [] : [VALID_OP], { dispose: [finding], interpretations: true }))]);
+        if (second) {
+          const first = await runCheckpoint(sctx);
+          assert.ok(first.kind === 'decided' && first.job === 'ckpt-1' && first.decision.kind === 'applied', JSON.stringify(first));
+          assert.deepEqual(factsOfKind(setup, 'divergence-digest').map((x) => x.ids), [['D-1']]);
+          await completedAudit(setup, sctx);
+        }
+        const finding = openVisionFinding(setup, audit, 'helpers round');
+        appendSteps(d, [checkpointStep(job, bundle(noop ? [] : [VALID_OP], { dispose: [finding], interpretations: true }))]);
         setup.journal.close();
         const trigger = writeTrigger(tmpDir('checkpoint-crash'), { label: cell.label, occurrence: 1 });
         const exit = await runFixture('checkpoint-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
@@ -503,18 +515,23 @@ for (const row of [CHECKPOINT_JOB, BUNDLE_ACTIVATE]) {
           await recover({ stage: ctx, commands: w.commands });
           const out = await runCheckpoint(ctx);
           if (cell.label.startsWith('bundle.')) assert.deepEqual(out, { kind: 'none' });
-          else assert.ok(out.kind === 'decided' && out.job === 'ckpt-1' && out.decision.kind === 'applied', JSON.stringify(out));
-          assert.equal(factsOfKind(r, 'checkpoint-inputs').length, 1, 'one capture');
-          assert.deepEqual(checkpointCalls(r), ['ckpt-1'], 'asked once');
-          assert.deepEqual([...decisions(r), ...bundleRevs(r).map(([, job]) => [job, 'applied'])], [['ckpt-1', noop ? 'no-op' : 'applied']], 'decided once');
-          const dv = factsOfKind(r, 'divergence').map((x) => [x.job, x.index, x.type]);
-          assert.deepEqual(dv, noop ? [['ckpt-1', 0, 'interpretation']] : [['ckpt-1', 0, 'plan-departed'], ['ckpt-1', 1, 'interpretation']]);
+          else assert.ok(out.kind === 'decided' && out.job === job && out.decision.kind === 'applied', JSON.stringify(out));
+          const jobs = second ? ['ckpt-1', 'ckpt-2'] : ['ckpt-1'];
+          assert.deepEqual(factsOfKind(r, 'checkpoint-inputs').map((x) => x.job), jobs, 'one capture per checkpoint');
+          assert.deepEqual(checkpointCalls(r), jobs, 'asked once');
+          const decided = [...decisions(r), ...bundleRevs(r).map(([, j]) => [j, 'applied'])].sort();
+          assert.deepEqual(decided, [...(second ? [['ckpt-1', 'applied']] : []), [job, noop ? 'no-op' : 'applied']], 'decided once');
+          const dv = factsOfKind(r, 'divergence').map((x) => [x.id, x.job, x.index, x.type]);
+          const own = noop ? [[job, 0, 'interpretation']] : [[job, 0, 'plan-departed'], [job, 1, 'interpretation']];
+          const expected = [...(second ? [['ckpt-1', 0, 'plan-departed']] : []), ...own].map((x, i) => [`D-${i + 1}`, ...x]);
+          assert.deepEqual(dv, expected, 'each divergence once, keyed (job, index), numbered on');
           assert.deepEqual(factsOfKind(r, 'finding-transition').map((x) => [x.id, x.to.state]), [[finding, 'ruled']], 'the disposition written once');
-          assert.equal(factsOfKind(r, 'divergence-digest').length, 1);
+          const digests = () => factsOfKind(r, 'divergence-digest').map((x) => x.ids);
+          assert.deepEqual(digests(), second ? [['D-1']] : [expected.map(([id]) => id)], 'one digest: the second checkpoint\'s divergences wait while D-1\'s is open');
           assert.deepEqual(r.journal.view.openIntents(), []);
-          assert.equal(git(d.repo, 'worktree', 'list', '--porcelain').includes('ckpt-1.'), false, 'no checkpoint checkout left');
+          assert.equal(git(d.repo, 'worktree', 'list', '--porcelain').includes('ckpt-'), false, 'no checkpoint checkout left');
           assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
-          assert.equal(factsOfKind(r, 'divergence-digest').length, 1, 'settling again writes nothing');
+          assert.equal(digests().length, 1, 'settling again writes nothing');
         } finally {
           r.journal.close();
         }

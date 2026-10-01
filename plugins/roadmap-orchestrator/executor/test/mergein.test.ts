@@ -370,6 +370,12 @@ describe('merge-in command', () => {
   });
 });
 
+/** How the command's mergein.prepare is closed, per crash label (each label is reached once in the child). */
+const MERGEIN_RECOVERED_BY: Readonly<Record<string, 'redone' | 'reconciled' | null>> = {
+  'command.apply.before-effect': null, 'mergein.act-start': 'redone', 'mergein.after-commit-tree': 'redone', 'mergein.after-cas': 'reconciled',
+  'mergein.act-end': 'reconciled', 'command.apply.after-effect': null, 'command.apply.after-receipt': null,
+};
+
 describe(`matrix row ${MERGE_IN}`, () => {
   const cells = crashCells(MERGE_IN);
 
@@ -401,6 +407,12 @@ describe(`matrix row ${MERGE_IN}`, () => {
         const apply = r.journal.view.opsOf('command.apply').filter((i) => i.expect.command === cmd.id);
         assert.equal(apply.length, 1);
         assert.equal(r.journal.view.doneOf(apply[0]!.op)?.outcome.kind, 'applied');
+        assert.equal(r.journal.view.doneOf(apply[0]!.op)?.recoveredBy, 'reconciled', 'the command\'s op is closed by its reconciler');
+        const merges = prepares(r, commandId(cmd.id));
+        assert.equal(merges.length, 1, 'one mergein.prepare');
+        const prepared = r.journal.view.doneOf(merges[0]!.op);
+        assert.ok(prepared !== null && prepared.kind === 'mergein.prepare' && prepared.outcome.kind === 'clean-merged');
+        assert.equal(prepared.recoveredBy, MERGEIN_RECOVERED_BY[cell.label], 'the merge is redone (HEAD = old), finished (HEAD = the merge), or was done live');
       } finally {
         r.journal.close();
       }
