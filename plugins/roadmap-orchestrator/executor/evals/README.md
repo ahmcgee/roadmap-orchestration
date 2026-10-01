@@ -167,8 +167,9 @@ node evals/m3/check.ts /var/tmp/m3-default
   (plan.json, vision.json, obligations.json, rulings.md, one spec per unit) and `barriers/`. The plan is holistic:
   audits every 2 publications with the required lens set L = {invariants, vision}, `limits.convergenceK` 1. The
   vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
-  mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input". The obligations, each a node-test arc
-  lane over one journey test through the shipped reporter: I-1 future (serves V-1, delivered by `parse` and
+  mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input", V-4 world (a bookkeeper's month-end), no
+  open questions; `holistic.advances` names all four, so the horizon is empty. The obligations, each a node-test arc
+  lane over one journey test through the shipped reporter: I-1 future (serves V-1 and V-4, delivered by `parse` and
   `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: `format` rounds to the cent half to even,
   `format 0.125` prints 0.12; lane `money` runs the CLI, and in branch R its run in the first audit that sees the
   regression waits at the driver's barrier, `evals/m3/barrier.ts`), I-3 must-hold (serves V-3: unknown commands exit 2). Every scoped path is mapped;

@@ -161,7 +161,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
 | `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1, except in a legacy arc). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
-| `holistic?` (M3, A5) | `{vision: PlanPath, obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
+| `holistic?` (M3, A5) | `{vision: PlanPath, advances: V-n[] (ascending, non-empty), obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `advances` the slice of it this arc moves toward (active clauses of the vision, at least one `world`; checked at startup and on every classified revision, `advancesReasons`; owner-only: only an `apply` changes it, `PlanChange` `advances`; the other active clauses are the horizon), `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
 | `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
@@ -1107,20 +1107,31 @@ and readers are in `src/core/{ids,records,events,state,interfaces,upgrade}.ts`, 
 `src/schedule/types.ts`; the behaviour is the later steps' (A1–A5b, B1–B11). DESIGN-1.0.md §2.3–§2.10 (draft 8) is
 the prose.
 
-**Ids** (`src/core/ids.ts`). `VisionClauseId` `V-<n>`, `ObligationId` `I-<n>`, `FindingId` `F-<n>`,
+**Ids** (`src/core/ids.ts`). `VisionClauseId` `V-<n>`, `QuestionId` `Q-<n>` (a vision open question), `ObligationId` `I-<n>`, `FindingId` `F-<n>`,
 `DivergenceId` `D-<n>`, `JobId` `<audit|ckpt|docs|batch|baseline>-<n>` (`jobId(kind, n)`, `parseJobId`,
 `jobIdOfKind(kind)` for a field that names one kind), `LaneRev` and `EnvId` (16 lowercase hex). A numbered id's `n`
 is 1 for the first of its kind in the arc and one more each: findings and divergences by the order their facts
 open them (`nextFindingId`, `nextDivergenceId`), jobs per kind by the highest the log named (`nextJobId`; a job is
 named by a `job` parent or holder, a docs `pub`, a batch candidate, a `witnessed{for: job}` or its opening fact).
-Ids are never reused; a withdrawn clause keeps its id (H16).
+Ids are never reused; a withdrawn clause and a closed question keep their ids (H16).
 
 **Vision** (`roadmap/vision-m3`, `plan.holistic.vision`; `parseVision`). `{schema, rev: positive, confirmation:
-{ref, at}|null (the Phase-0 playback's, unverified until M4), clauses: [{id: V-n, kind: purpose|serves|good|
-non-negotiable|tradeoff, text, rank: positive|null (exactly for a tradeoff), state: active|withdrawn}]}`, ids unique,
-at least one active clause. Owner-only: only an architect `apply` (source `command`) changes it (A14). A new
-bundle, ruling or obligation may not cite a withdrawn clause (A1 refuses it); existing citations stay and are
-reported (`VisionCoverage{unservedClauses, obligationsServingNone, withdrawnCited[{clause, citedBy}]}`).
+{ref, at}|null, clauses: [{id: V-n, kind: world|purpose|serves|good|non-negotiable|tradeoff, text, rank:
+positive|null (exactly for a tradeoff), state: active|withdrawn}], questions: [{id: Q-n, text, bears: V-n[]
+(ascending, non-empty), assumption (non-empty), state: open|closed}]}`, clause and question ids unique, at least one
+active `world` clause. A `world` clause is a prose scene of the target world (who is there, what they do and
+experience, why it is better than today) and may describe a horizon beyond this arc; the other kinds are its facets.
+A question is a vision open question (its answer would change the target world; a design question belongs in a spec
+or a ruling): an open one bears on active clauses of the file, a closed one on clauses of the file; `assumption` is the
+working assumption the arc acts on meanwhile. The skill authors a readable `vision.md` and compiles it to this
+record; `confirmation.ref` is `vision.md#sha256:<hex>` (path relative to the plan, sha256 of the confirmed
+vision.md's bytes), stored as an unverified string: the executor never reads vision.md. Owner-only: only an
+architect `apply` (source `command`) changes it (A14); an edit keeps every clause and question id, a withdrawn clause
+withdrawn and a closed question closed, each as it was (`visionEditReasons`). A new bundle, ruling or obligation may
+not cite a withdrawn clause (A1 refuses it); existing citations stay and are reported. Coverage
+(`visionCoverage(vision, advances, obligations, citers)`) is `VisionCoverage{unservedAdvanced (active clauses in
+advances no non-exempt obligation serves: a gap), horizon (active clauses outside advances: expected, never a gap),
+obligationsServingNone, withdrawnCited[{clause, citedBy}]}`.
 
 **Obligations** (`roadmap/obligations-m3`, `plan.holistic.obligations`; `parseObligations`). `{schema, cutLine,
 lanes: ArcLaneDef[], obligations: ObligationDef[], mapping: {paths: [{pattern: RepoPattern, obligations: I-n[]
@@ -1191,7 +1202,7 @@ any other source has `command: null`), `payloadSha256`, `rulingsSha256`, `obliga
 = {profile, repoConfig: {seats, classes}, planLayer, unitLayers: {unit: layer} (ascending)}` (H7; every M3 revision
 records it). New `PlanChange`s: `obligation{id, edit: added|split|witness|disposed|restored|edited}` (`restored`:
 an exempt obligation active again; `edited`: its serves, contracts or deliveredBy changed, or future → must-hold; both
-added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`; `routing{routingRev, unit?}` (with
+added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `advances` (`holistic.advances` changed); `routing{routingRev, unit?}` (with
 `unit`: that unit's layer changed, and the rev is its routing's).
 
 **Facts** (`HolisticFact`, `src/core/events.ts`; one of each round-trips in `test/m3-schemas.test.ts`):
@@ -1257,7 +1268,8 @@ implemented it: `reverse` A2, `steer` and `merge-in` A3, `rule` A4, `audit` and 
 
 **Prompts** (`src/prompts/`). Since B4: lens/Opus a module, lens/Fable inherits it; checkpoint/Fable a module,
 checkpoint/Opus inherits it; Sonnet and Codex are `unsupported` for both, so a holistic plan seating either role on
-one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses},
+one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
+`advances` from the plan at the revision the inputs were captured at),
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
 owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout}`;
 `CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
@@ -1782,7 +1794,7 @@ src/pipeline/dispatch.ts `callArcRole`):
    publications: unit, batch, and a revision's docs publication carrying contract ops; never a docs-only one),
    `unwitnessed` (R8: a publication's selected future-not-latched or exempt obligations with no observation on its tree
    or verdict `unwitnessed`, recomputed with `selected` over the ff's old..new), `drift` (a revision from a bundle, or
-   whose ledger/sidecars, a non-evidence spec, obligations, mapping, vision or `holistic` changed; never an executor's or
+   whose ledger/sidecars, a non-evidence spec, obligations, mapping, vision, `holistic` or `advances` changed; never an executor's or
    an arc's first), `wall-clock` (`wallClockMin` since the latest audit start or unit publication, while a plan unit is
    not retired, cut or superseded), `requested` (its lenses ∩ L, or L), `final` (no work left and some lens in L
    outstanding: those lenses only). drift runs L ∩ {drift, vision} (or L); every other trigger runs L. An audit records
@@ -2025,3 +2037,25 @@ src/needsuser.ts, src/commands/{audit,admissions}.ts):
 12. **Commands.** `audit` refuses an arc without the layer and a lens outside L, and writes `audit-requested` once per
     command; `close-admissions` refuses while draining (by another command) and writes `admissions-closed` once. The
     in-tree document paths are `CONSTRAINTS_DOC` (src/docs/constraints.ts) and `INVARIANTS_DOC` (src/docs/invariants.ts).
+
+**Choices made in M3: the vision redesign** (2026-10-01; DESIGN-1.0.md §2.8 amendment; hard cutover, since no arc
+ran the holistic layer before it: no defaulting and no `SCHEMA_VERSION` bump):
+1. **World clauses and open questions** are in the record above. A closed question's `bears` need only name clauses of
+   the file (it stays as it was, like a withdrawn clause), so withdrawing a clause never forces an edit of a closed
+   question; an open question bearing on a withdrawn clause is a schema error.
+2. **The slice.** `holistic.advances` is checked wherever plan and vision meet: `revisionInputRows` at a start
+   (`plan-invalid{schema, field: plan.holistic.advances}`, one row per reason) and the classifier on every revision,
+   whatever it changed (an apply that withdraws an advanced clause without moving the slice is refused). It is
+   owner-only like the vision: a changed slice from any proposer but `apply` is refused; an applied one is `advances`
+   (arc-scoped, a drift trigger).
+3. **Where advances is read.** Plan-check reads the plan of the revision in force (`visionInput`); a lens the plan at
+   its `audit-started.planRev`, and a checkpoint the plan at its capture's rev (`payloadAtRev`, src/input/inforce.ts),
+   so the slice always matches the vision the inputs recorded; status the plan in force.
+4. **Rendering** (`visionText`): world clauses first, then the others in file order; `This arc advances: …`, `Horizon
+   (active, beyond this arc): …`, then the open questions with the clauses they bear on and their working assumptions
+   (closed ones omitted). `coverageText` reports advanced-unserved and horizon on separate lines. The lens, checkpoint
+   and plan-check preambles say: world clauses are the target world and the rest its facets; push toward the slice and
+   never foreclose a horizon clause (a choice that does conflicts with the vision); an open question's assumption is
+   provisional (act on it, prefer the reversible choice); for the checkpoint, an act costly to undo if it proves false
+   is a `request` (class `vision`), not an op; never resolve an open question.
+5. **`status.vision`** gains `questions` (as the file holds them) and `advances` (the plan in force's).

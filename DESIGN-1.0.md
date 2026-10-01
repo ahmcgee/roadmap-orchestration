@@ -28,7 +28,8 @@ edit classes; the ledger executor-owned after `start`, with `rule` its only writ
 record per revision under a revision fence; a fourth lens, `vision`, and a required lens set; divergences with
 preimages, digests and `reverse <D-n>`; owner-only acts as `request`s; docs publications that preempt; close-out,
 active and sealed completion; residue compaction and `gc`; `explore`, `--adversarial`, `contractRequests` and
-`owedAfterMerge` withdrawn or deferred.
+`owedAfterMerge` withdrawn or deferred. An M3 amendment (2026-10-01) adds `world` clauses, vision open questions,
+the plan's `advances` slice and the coverage split (§2.8).
 
 ## 1. What the system is for
 
@@ -218,7 +219,7 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 | `route` | the unit's routing layer `unit.routing` (§4), a new `routingRev`; an edit class of `apply`. Risk may rise; a moved implementer seat once the build started parks the unit (`routing-changed`, §4). `--adversarial` is withdrawn: a unit routing layer expresses it (A12) | risk below the Phase-0 floor without a ruling; an unsupported triple |
 | `limits` | arc (`plan.limits`) or unit (`unit.limits`) bounds, in place of the built-in constants; an edit class of `apply` | lowering a counter below what is spent |
 | `obligation add\|split\|witness` | obligation edits (§2.8), edit classes of `apply`, published like a revision (§2.6). `waive`, `defer` and `retire` are not edits: they are a ruling's `obligationDispositions`, applied by `rule` or by a checkpoint bundle | unsupported reporter; a weakening without a ruling in force naming the id; an architect split whose children drop parent text; a withdrawn `V-n` cited |
-| vision | clauses `V-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14) | a vision diff from any other source; a reused id |
+| vision | clauses `V-n` and open questions `Q-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14), as is the plan's `holistic.advances` | a vision or `advances` diff from any other source; a reused id; an `advances` naming a withdrawn or unknown clause, or no world clause |
 | `reverse <D-n>` | builds a fresh compensating revision from the divergence's preimage, restoring the recorded revisions of exactly the artifacts it touched, and validates it like any revision (§2.8, A10) | a `repair-unit` divergence (a verified repair unit reverses a product effect); a conflicting later revision (with reasons; the architect then uses `apply`); an unknown id |
 | `sweep [--resource]` | declared teardown for resources with no live holder, incl. indexed residues | anything a live session holds |
 | `gc --repo <path> [--keep K] [--dry-run]` | a CLI act under the host lock, not a queued command: prunes sealed arcs (§2.9) | a busy host; an arc not sealed (§2.10) |
@@ -239,8 +240,8 @@ without me, what is burning host or time.
 `run` {state (§2.10), since, owner, heartbeatAt, supervisorCrashes} · `target` {cutLine, nextMilestone,
 criticalPath, obligation counts} · `nowTrue` / `notYetTrue` from observations on the current head, with
 blocking units, reason (code|spec|host|supervision|waiting-dep) and evidence dirs · `waived` / `deferred` with
-rulings · `vision` {rev, confirmation, clauses with state, coverage {unservedClauses, obligationsServingNone,
-withdrawnCited}} · `needsUser` ranked, with recommendation and options · `decisionsSince` [{C-nn | bundle |
+rulings · `vision` {rev, confirmation, clauses with state, questions, advances, coverage {unservedAdvanced, horizon,
+obligationsServingNone, withdrawnCited}} · `needsUser` ranked, with recommendation and options · `decisionsSince` [{C-nn | bundle |
 patch | reenter | cut | steer | quarantine | divergence | reverse, oneLine, ruledBy}] · `divergences` (ids no
 acknowledged digest covers) · `convergence` · `commands` · `units` {counts, running [{stage, attempt, elapsed,
 deadline, resources}], parked/quarantined/preparing [{why, reasonClass, nextProbeAt?, escalateAt?, lineage,
@@ -367,19 +368,33 @@ changing a lane or clause invalidates the evidence that graded it.
 
 ### 2.8 Holistic layer: vision, obligations and checkpoint authority
 
-**The vision is the root record (OR-V).** A vision record holds clauses `V-n {kind: purpose | serves | good |
+**The vision is the root record (OR-V).** A vision record holds clauses `V-n {kind: world | purpose | serves | good |
 non-negotiable | tradeoff, text, rank, state: active | withdrawn}` (`rank` required for `tradeoff`, null
 otherwise) and the Phase-0 playback confirmation reference `{ref, at}`, stored unverified (A14). Ids are never
 reused, and a withdrawn clause stays in the file (H16). The vision is revisioned and **owner-only**: only an
 architect `apply` changes it; the classifier refuses a vision diff from any other source. New bundles, rulings and
 obligations may not cite a withdrawn clause (refused as invalid); existing citations stay and are listed in
-`status.vision.coverage.withdrawnCited`. Coverage (unserved clauses, obligations serving none) is reported, not
-refused. **Readers:** the full vision goes first into every lens and checkpoint prompt, and on conflict the vision
+`status.vision.coverage.withdrawnCited`. Coverage (advanced clauses unserved, the horizon, obligations serving
+none) is reported, not refused. **Readers:** the full vision goes first into every lens and checkpoint prompt, and on conflict the vision
 wins. Plan-check receives it as read-only context and may emit `visionConflict [{clauses, note}]`; each entry
 opens a P3 finding (`lens: plan-check`) for the next checkpoint and is never a redirect on its own: a redirect
 needs the spec's own grounds (R17). The gate never receives it: it grades spec and contracts, and the pinned
 scope holds. **A vision revision** restarts every lens's audit coverage at the arc's base (§2.5), reopens the
 quiescence of generations recorded under the old vision, and triggers a drift-only audit (H3, R15).
+
+**M3 amendment (2026-10-01): the world, open questions and the slice.** The skill authors the vision as a readable
+`vision.md` and compiles it to the record; `confirmation.ref` names `vision.md#sha256:<hex>`, still unverified. At
+least one active clause is a **`world`** clause: a prose scene of the target world (who is there, what they do and
+experience, why it is better than today), which may reach beyond the current arc; the other kinds are its facets.
+The record holds **open questions** `Q-n {text, bears: [V-n], assumption, state: open | closed}`: vision questions
+whose answers would change the target world (a design question belongs in a spec or a ruling), each with the
+working assumption the arc acts on meanwhile; ids are never reused and a closed question stays as it was. The plan
+names **the slice** this arc moves toward, `holistic.advances` (active clauses, at least one `world`; owner-only,
+checked at start and on every revision); the other active clauses are **the horizon**. Coverage splits accordingly:
+an advanced clause no obligation serves is a gap, a horizon clause is expected. Judges push toward the slice and
+never foreclose the horizon; an assumption is provisional, so they prefer the reversible choice where a decision
+rests on it, and the checkpoint `request`s an act that would be costly to undo if it proved false. Nobody but the
+owner closes a question.
 
 **Holistic on by vision (A5).** The layer runs only when `plan.holistic` names a vision; obligations may be
 empty. `apply` may add `holistic`, never remove it; adding it runs the baseline job. An arc without it (every arc

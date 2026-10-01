@@ -60,7 +60,9 @@ at triage stay in git history.
   refused for an obligation whose pattern cannot in fact overlap the unit's scope.
 - Lens parallelism (lenses run serially, one `@cpu` each). Trigger: audit wall time delaying completion or
   raising `audit-owed`.
-- Vision playback verification and the vision's in-tree home for the next arc: M4.
+- Vision playback verification and the vision's in-tree home for the next arc: M4. Part of it: `confirmation.ref`
+  (`vision.md#sha256:<hex>`, the skill's) is stored unverified; status could flag a vision.md whose hash no longer
+  matches `confirmation.ref` (the compiled record drifted from the text the owner confirmed).
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
   Trigger: an implementer acting outside the sandbox.
 
