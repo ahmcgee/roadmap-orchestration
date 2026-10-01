@@ -28,9 +28,6 @@ export const CONVERGENCE_K = 1;
 export const MONEY_LANE = 'money';
 /** The fake checkpoint call of the first checkpoint waits here until the driver's stale `apply` is applied. */
 export const FAKE_CKPT_HOLD = 'ckpt-1.hold';
-/** The ledger-file fixture I-1's journey test reconciles, and the line it expects. */
-export const MONTH = '2026-09';
-export const RECONCILED = '2026-09 balance 12.75';
 
 export type Layout = Readonly<{
   dir: string;

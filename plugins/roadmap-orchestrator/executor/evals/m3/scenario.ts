@@ -15,13 +15,14 @@
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
 //              vision lens) and ckpt-3 no-op; report and the repair merge; audit-2 (final: both lenses) and ckpt-4
 //              no-op.
+import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { INVALID_OP, checkpointAnswer, checkpointStep, lensStep, twoOpBundleSecondInvalid } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FAKE_CKPT_HOLD } from './layout.ts';
-import { REPAIR_UNIT, repairSpecText } from './setup.ts';
+import { FILES, REPAIR_UNIT, filesOf, repairSpecText } from './setup.ts';
 
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
 const HOLD_MS = 20 * 60_000;
@@ -33,120 +34,29 @@ const planCheck = (reason: string): M1Step => ({
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
 const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [] } });
 
-const unitTest = (imports: string, body: string): string => `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\n${imports}\n\n${body}`;
-
-const PARSE = `/** The entries of a ledger file (.roadmap/contracts/ledger.md, ledger file). */
-export function parseLedger(text) {
-  const entries = [];
-  text.split('\\n').forEach((line, i) => {
-    if (line.trim() === '') return;
-    const fields = line.split(',');
-    const amount = Number(fields[1]);
-    if (fields.length !== 3 || !/^\\d{4}-\\d{2}-\\d{2}$/.test(fields[0]) || fields[1].trim() === '' || !Number.isFinite(amount)) {
-      throw new Error(\`ledger line \${i + 1} is malformed: \${JSON.stringify(line)}\`);
-    }
-    entries.push({ date: fields[0], amount, memo: fields[2] });
-  });
-  return entries;
-}
-`;
-
-const REPORT = `import { formatAmount } from './format.js';
-
-/** The month's balance line (.roadmap/contracts/ledger.md, commands). */
-export function reconcile(entries, month) {
-  const sum = entries.filter((e) => e.date.startsWith(\`\${month}-\`)).reduce((total, e) => total + e.amount, 0);
-  return \`\${month} balance \${formatAmount(sum)}\`;
-}
-`;
-
-/**
- * src/cli.js after tidy (`format` through formatDisplay, as `total`: `tidied`), with report's `reconcile` command
- * (`reconcileCommand`); report on a tree without tidy (branch P) keeps `format` through formatAmount.
- */
-function cliSource(reconcileCommand: boolean, tidied = true): string {
-  const formatter = tidied ? 'formatDisplay' : 'formatAmount';
-  const imports = [
-    ...(reconcileCommand ? ["import { readFileSync } from 'node:fs';"] : []),
-    "import { formatDisplay } from './display.js';",
-    ...(tidied ? [] : ["import { formatAmount } from './format.js';"]),
-    ...(reconcileCommand ? ["import { parseLedger } from './parse.js';", "import { reconcile } from './report.js';"] : []),
-  ].map((line) => `${line}\n`).join('');
-  const reconcileEntry = reconcileCommand
-    ? `  reconcile: ([month, file]) => {
-    process.stdout.write(\`\${reconcile(parseLedger(readFileSync(file, 'utf8')), month)}\\n\`);
-    return 0;
-  },
-`
-    : '';
-  return `// ledger: node src/cli.js <command> [args...] (.roadmap/contracts/ledger.md, commands).
-${imports}
-const COMMANDS = {
-  format: ([amount]) => {
-    process.stdout.write(\`\${${formatter}(Number(amount))}\\n\`);
-    return 0;
-  },
-  total: (amounts) => {
-    process.stdout.write(\`\${formatDisplay(amounts.reduce((sum, a) => sum + Number(a), 0))}\\n\`);
-    return 0;
-  },
-${reconcileEntry}};
-
-const [name, ...args] = process.argv.slice(2);
-const command = Object.hasOwn(COMMANDS, name ?? '') ? COMMANDS[name] : undefined;
-if (command === undefined) {
-  process.stderr.write(\`ledger: unknown command \${JSON.stringify(name ?? '')}\\n\`);
-  process.exitCode = 2;
-} else {
-  process.exitCode = command(args);
-}
-`;
-}
-
-/** The repair: formatDisplay keeps its separators and rounds the cents on the decimal digits, half to even. */
-const FIXED_DISPLAY = `/** Renders an amount for display: two decimals, thousands separated, cents half to even (docs/money.md). */
-export function formatDisplay(amount) {
-  const sign = amount < 0 ? '-' : '';
-  const [whole, fraction = ''] = String(Math.abs(amount)).split('.');
-  let cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
-  const rest = fraction.slice(2);
-  const above = rest.slice(1).replace(/0/g, '') !== '';
-  if (rest[0] > '5' || (rest[0] === '5' && (above || cents % 2n === 1n))) cents += 1n;
-  const units = String(cents / 100n).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
-  return \`\${sign}\${units}.\${String(cents % 100n).padStart(2, '0')}\`;
-}
-`;
+/** The files of fake build `name` (evals/m3/files/units/<name>/), by repo path. */
+const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(join(FILES, 'units', name));
 
 /** The unit calls of branch R's story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
   parse: [
-    planCheck('The spec is consistent with the ledger contract (ledger file) and C-1, C-2.'),
-    build('parse: parseLedger', {
-      'src/parse.js': PARSE,
-      'test/unit/parse.test.js': unitTest("import { parseLedger } from '../../src/parse.js';", "test('parseLedger reads entries and skips blank lines (A1)', () => {\n  assert.deepEqual(parseLedger('2026-09-01,10.50,refund\\n\\n'), [{ date: '2026-09-01', amount: 10.5, memo: 'refund' }]);\n});\n\ntest('a malformed line names its line number (A2)', () => {\n  assert.throws(() => parseLedger('2026-09-01,10.50,a\\nnope'), /line 2/);\n});\n"),
-    }),
+    planCheck('The spec is consistent with the ledger contract (ledger file) and C-1, C-2, C-4.'),
+    build('parse: parseLedger', unitFiles('parse')),
     gate('A1, A2 and A3 hold.'),
   ],
   tidy: [
     planCheck('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
-    build('tidy: format prints through formatDisplay, as total does', { 'src/cli.js': cliSource(false) }),
+    build('tidy: format prints through formatDisplay, as total does', unitFiles('tidy')),
     gate('A1 and A2 hold: format and total print through the same helper.'),
   ],
   report: [
-    planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-3.'),
-    build('report: reconcile a month', {
-      'src/report.js': REPORT,
-      'src/cli.js': cliSource(true),
-      'test/unit/report.test.js': unitTest("import { reconcile } from '../../src/report.js';", "test('reconcile sums the month (A1)', () => {\n  const entries = [{ date: '2026-09-01', amount: 10.5, memo: 'a' }, { date: '2026-10-01', amount: 1, memo: 'b' }];\n  assert.equal(reconcile(entries, '2026-09'), '2026-09 balance 10.50');\n});\n"),
-    }),
+    planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-4.'),
+    build('report: reconcile a month', { ...unitFiles('report'), ...unitFiles('report-on-tidy') }),
     gate('A1, A2 and A3 hold; unknown commands still exit 2.'),
   ],
   [REPAIR_UNIT.id]: [
     planCheck('The repair restores I-2 within the unit\'s scope.'),
-    build('fix-rounding: formatDisplay rounds the cents half to even', {
-      'src/display.js': FIXED_DISPLAY,
-      'test/unit/display.test.js': unitTest("import { formatDisplay } from '../../src/display.js';", "test('formatDisplay separates thousands', () => {\n  assert.equal(formatDisplay(1234.5), '1,234.50');\n  assert.equal(formatDisplay(3), '3.00');\n});\n\ntest('formatDisplay rounds the cents half to even (A1)', () => {\n  assert.equal(formatDisplay(0.125), '0.12');\n  assert.equal(formatDisplay(2.675), '2.68');\n});\n"),
-    }),
+    build('fix-rounding: formatDisplay rounds the cents half to even', unitFiles(REPAIR_UNIT.id)),
     gate('A1 and A2 hold.'),
   ],
 };
@@ -186,7 +96,7 @@ const INFEASIBLE: M1Step = {
 export const UNIT_STORY_P: Readonly<Record<string, readonly M1Step[]>> = {
   parse: UNIT_STORY['parse']!,
   tidy: [INFEASIBLE, INFEASIBLE],
-  report: UNIT_STORY['report']!.map((s) => (s.role === 'build' ? build('report: reconcile a month', { ...(s.acts[0]!.type === 'commit' ? s.acts[0]!.files : {}), 'src/cli.js': cliSource(true, false) }) : s)),
+  report: UNIT_STORY['report']!.map((s) => (s.role === 'build' ? build('report: reconcile a month', unitFiles('report')) : s)),
   [REPAIR_UNIT.id]: UNIT_STORY[REPAIR_UNIT.id]!,
 };
 

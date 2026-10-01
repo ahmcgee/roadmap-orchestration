@@ -98,6 +98,9 @@ function verdicts(o: ObligationsFile, cwd: string): Readonly<Record<string, Obse
   }));
 }
 
+/** The CLI in `cwd` run with `args` (for the refusals the seed and the story's builds make). */
+const refused = (cwd: string, args: readonly string[]) => spawnSync('node', ['src/cli.js', ...args], { cwd, env: ENV, encoding: 'utf8', timeout: 30_000 });
+
 /** Writes the files of `unit`'s story build commit into `cwd` (the fake implementer's act). */
 function playBuild(unit: string, cwd: string): void {
   const build = UNIT_STORY[unit]!.find((s) => s.role === 'build');
@@ -157,6 +160,13 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
 
   // The witness lanes through the shipped reporter: the baseline's verdicts.
   assert.deepEqual(verdicts(o, l.repo), { 'I-1': 'not-held', 'I-2': 'held', 'I-3': 'held' });
+  // The seed refuses what it cannot read exactly (V-3), so an honest lens has nothing but the story's issue to report.
+  for (const args of [['format', 'abc'], ['format', '1e3'], ['format', 'NaN'], ['format', '1,234.50'], ['format'], ['total'], ['total', '1', 'Infinity']]) {
+    const r = refused(l.repo, args);
+    assert.deepEqual([r.status, r.stdout], [2, ''], `${args.join(' ')} is refused`);
+    assert.match(r.stderr, /^ledger: /, `${args.join(' ')} says why`);
+  }
+  assert.equal(spawnSync('node', ['src/cli.js', 'total', '0.1', '0.2'], { cwd: l.repo, encoding: 'utf8' }).stdout, '0.30\n', 'sums are exact');
 
   // The barrier (branch R): an audit's lane checkout without the regression passes; with it, the run waits until released.
   const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes');
@@ -184,6 +194,14 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   assert.deepEqual([formatted.status, formatted.stdout], [0, '1,234.50\n'], 'tidy\'s own lane passes and delivers its A1');
   playBuild('report', tree);
   assert.deepEqual(verdicts(o, tree), { 'I-1': 'held', 'I-2': 'not-held', 'I-3': 'held' }, 'report delivers I-1');
+  const bad = join(tree, 'bad.csv');
+  writeFileSync(bad, '2026-09-01,1.00,ok\n2026-02-30,1.00,no such day\n');
+  for (const args of [['reconcile', '2026-13', bad], ['reconcile', '2026-09', join(tree, 'missing.csv')], ['reconcile', '2026-09', bad], ['reconcile', '2026-09']]) {
+    const r = refused(tree, args);
+    assert.deepEqual([r.status, r.stdout], [2, ''], `${args.join(' ')} is refused`);
+    assert.match(r.stderr, /^ledger: /, `${args.join(' ')} says why`);
+  }
+  assert.match(refused(tree, ['reconcile', '2026-09', bad]).stderr, /line 2/, 'a malformed ledger line is named');
   playBuild(REPAIR_UNIT.id, tree);
   assert.deepEqual(verdicts(o, tree), { 'I-1': 'held', 'I-2': 'held', 'I-3': 'held' }, 'the repair restores I-2');
   const units = await runUntilExit('npm', ['test'], { env: ENV, cwd: tree, timeoutMs: 60_000 });

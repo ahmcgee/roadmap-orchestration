@@ -54,7 +54,7 @@ import { type ArcId, type CommandId, type NeedsUserId, type OpId, type UnitId, a
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { RUNNER_FILE_READERS, type ResultFile } from '../../src/core/records.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type AbsPath, absPath, matchesPattern, repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot, witnessDir } from '../../src/git/snapshot.ts';
@@ -517,11 +517,31 @@ function headIsPublication(run: Run): Verdict {
   return verdict(problems, `integration ${integration} = the ${last.subject} publication ${last.op}`);
 }
 
+/**
+ * The arc's diff is product inside the scopes in force plus the living docs: every changed path matches the scope of
+ * some unit of the plan in force (bundle-admitted units included; its plan scope or its latest spec's scope, so a
+ * ruled growth counts) or is a living `.roadmap/` doc, and the close-out put the rendered docs in it.
+ */
 function diffProductAndDocs(run: Run): Verdict {
-  const scopes = requirePlanInForce(run.runDir, run.view).plan.units.flatMap((u) => u.scope as readonly string[]);
+  const units = requirePlanInForce(run.runDir, run.view).plan.units;
+  const scopes = units.flatMap((u) => {
+    const spec = run.view.unit(u.id).spec === null ? null : specOf(run, u.id);
+    return [...u.scope, ...(spec?.scope ?? [])].map((pattern) => ({ unit: u.id as string, pattern }));
+  });
   const paths = git(run.repo, ['diff', '--name-only', `${MAIN}...${run.plan.integrationBranch}`]).split('\n').filter((p) => p !== '');
-  const outside = paths.filter((p) => !scopes.includes(p) && !RENDERED.includes(p) && !p.startsWith('.roadmap/contracts/'));
-  return { pass: outside.length === 0 && paths.some((p) => RENDERED.includes(p)), detail: outside.length > 0 ? `outside the units' scopes and the living docs: ${outside.join(', ')}` : paths.join(', ') };
+  const problems: string[] = [];
+  const owned: string[] = [];
+  for (const p of paths) {
+    if (RENDERED.includes(p) || p.startsWith('.roadmap/contracts/')) continue;
+    const by = scopes.find((x) => matchesPattern(repoPath(p), x.pattern));
+    if (by === undefined) problems.push(`${p}: no scope in force matches it (units ${units.map((u) => u.id).join(', ')}), and it is no living .roadmap doc`);
+    else owned.push(`${p} (${by.unit})`);
+  }
+  if (!paths.some((p) => RENDERED.includes(p))) {
+    const closeOut = factsOf(run, 'docs-published').some((f) => f.source === 'close-out');
+    problems.push(`no rendered living doc (${RENDERED.join(', ')}) in the diff: ${closeOut ? 'the close-out publication changed neither' : 'no close-out publication happened'}`);
+  }
+  return verdict(problems, `${owned.join(', ')}; living docs ${paths.filter((p) => RENDERED.includes(p) || p.startsWith('.roadmap/contracts/')).join(', ')}`);
 }
 
 function snapshotVerifies(run: Run): Verdict {

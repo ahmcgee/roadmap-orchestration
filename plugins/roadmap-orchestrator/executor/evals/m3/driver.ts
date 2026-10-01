@@ -2,7 +2,7 @@
 // `roadmap start` against a fixture laid out by setup.ts, applies the forcing devices as the run reaches them, waits
 // for it to end, and writes `<dir>/report.json` for check.ts.
 //
-// Real run (no --fake): `bin/roadmap`, the host's real CLIs and the host dir /var/tmp/roadmap; hard timeout 180 min.
+// Real run (no --fake): `bin/roadmap`, the host's real CLIs and the host dir /var/tmp/roadmap; hard timeout 240 min.
 // Paid: once per merged batch, `--profile default` (evals/README.md). Fake run (--fake <story>, evals/m3/scenario.ts):
 // the fake backends behind PATH shims play the story, the CLI runs through test/fixtures/exec-cli.ts with a host dir
 // inside the fixture; hard timeout 15 min. `claude-only` takes `codex` off PATH as in evals/m1/driver.ts.
@@ -76,7 +76,7 @@ const EXEC_CLI = fileURLToPath(new URL('../../test/fixtures/exec-cli.ts', import
 
 export const REPORT_SCHEMA = 'roadmap/m3-report';
 const TIMEOUTS = {
-  real: { runMs: 180 * 60_000, stopGraceMs: 5 * 60_000, pollMs: 5_000 },
+  real: { runMs: 240 * 60_000, stopGraceMs: 5 * 60_000, pollMs: 5_000 },
   fake: { runMs: 15 * 60_000, stopGraceMs: 60_000, pollMs: 250 },
 } as const;
 const CLI_TIMEOUT_MS = 60_000;

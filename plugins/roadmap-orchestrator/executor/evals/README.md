@@ -96,42 +96,31 @@ node evals/m2/check.ts /var/tmp/m2-default
   registry line. Resources: the pool `estate` of size 2, directory-backed (`evals/m2/estate.ts`: an owner marker
   and a history per instance, a teardown that fails once when armed), and `capacity.cpu` 8. Every unit has an
   estate lane; only `left`'s and `right`'s wait at the `estate-hold` barrier, and `right` also has `right-hold`.
-- `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
-  its condition holds in the log, `status` or a barrier file, each independently of the others' order. First at
-  every poll, whatever the branch, the acks: every `divergence-digest` and `convergence-bound` item acknowledged as
-  it opens, every `bundle-request` answered as an architect who trusts the checkpoint would (`ack <id> --choice
-  apply` when it offers `apply`, so the next job enacts the bundle; a plain `ack` when it offers nothing). Then:
-  the branch (R once tidy publishes; P once a bundle revision cuts, respecifies or re-enters tidy unpublished); in
-  branch R only, `report` added to `run-only` once the first audit to see the regression (checked to be the
-  cadence audit of tidy's publication S) waits at the money barrier, and the barrier released once `report` merged
-  (S′), so A1 audits S and re-witnesses its P1 over I-2 on S′; at the first `checkpoint-inputs`, whatever its
-  trigger (an audit, or tidy's design park), the architect's edit of `direction` by `roadmap apply`, which makes
-  that bundle stale whole; every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change
-  (G18); once the drift audit after the first bundle revision has started, `run-only` every plan unit not cut and
-  every added unit; `run-only --clear` once every added unit merged. Each device is recorded in `report.json`
-  (`devices`). The run stops `device-failed`, with a reason naming the observed job, trigger, outcome or item,
-  only when it is off the story in either branch: the first checkpoint not rejected stale (or applying its
-  bundle); a checkpoint that disposes of nothing before any bundle applied (a no-op, or a request with nothing to
-  apply); an `owner-request` (an owner-only act the driver never answers); in branch R, the barrier's audit not the
-  cadence audit of S, or ending without a witness P1 over I-2; a rejected apply. Finding ids are never assumed
-  (plan-check may open P3s first): the P1 is found by content. A stall ends at the hard timeout, 180 minutes; a
-  parked run is stopped as in M1. It refuses a used dir, uses the machine's host lock, and kills only the pids
+- `driver.ts <dir> --profile default` queues `run-only base left right top` before `start` (it creates the run
+  dir for the queue), then applies each device once its condition holds in `status`, the log or the barrier
+  files: SIGKILL of the executor while `left` and `right` both hold an instance at `estate-hold` round 1;
+  round 1 released once the supervisor's respawn owns the run, instance #1's teardown armed to fail first (so
+  recovery's cleanup of its killed holder fails: a residue no park names); instance #2's teardown armed to fail, then round
+  2 released, once both hold the pool again after recovery; `resolve-edge e-top` once `left` merged; `pause
+  right` once `right` waits at `right-hold` with its registry edit committed; `right-hold` released and
+  `urgent` added to `run-only` once `status` shows `right` held with nothing running; once `urgent` merged, a
+  `git merge-tree` conflict on the registry line, then `right2 {reenters: {unit: right, enterAt: verify}}` by
+  `roadmap apply`; `run-only --clear` once that applies. Each device is recorded in `report.json` (`devices`).
+  A device whose own check fails (no conflict, a rejected apply) stops the run (`endedBy: device-failed`); a
+  parked run is stopped as in M1; hard timeout 120 minutes. It refuses a dir that holds a report or a run dir:
+  a fixture dir is set up and run once. It uses the machine's host lock, and kills only the executor pid
   `status` names.
-- `check.ts <dir>` prints one JSON line with the branch and every criterion, then the two lists, and exits non-zero
-  on any failed criterion. In both branches: `baseline`, `branch` (the log's branch, as the driver recorded it),
-  `stale-whole` (the first checkpoint, whatever its trigger), `bundles-whole` (decided bundles applied nothing;
-  every unit a bundle added merged, its repaired findings resolved or ruled and its obligations held; its detail
-  counts the bundle requests the driver answered, informational), `bundle-divergences` (one citing V-2),
-  `divergence-digest-bound` (each digest binds exactly the recorded ids not bound before; the driver acknowledged
-  each), `convergence-bound` (raised, each acknowledged), `drift-audit` (the vision lens alone), `final-audit`
-  (lenses of L on the last unit publication's head, then a no-op), `close-out` (docs-only, covering its own edge),
-  `completion` (`arc-completed`, then the terminal snapshot; no unmet condition, so every generation quiescent),
-  `lens-coverage` (each lens of L contiguous to the final head, the docs edge applied only from the final audit's
-  SHA), `snapshot-closure`, `obligations-discharged`. Branch R adds `regression-unselected`, `audit-race` and
-  `repair-resolved`; branch P adds `prevention` (tidy never published; its disposal recorded a divergence).
-  Standing: run-ended, units-settled (merged, or cut by a bundle), head-is-publication, diff-product-and-docs
-  (units' scopes plus the living `.roadmap/` docs, `constraints.md` and `invariants.md` included),
-  snapshot-verifies, judgment-fresh (lens and checkpoint calls included), meter-covers-calls, no-model-ids.
+- `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
+  failed criterion. M2: `no-overlap` (no resource unit granted while held or dirty; the pool and `@cpu` never
+  over size; both instances in use at once), `single-owner` (each instance's history shows one owner at a
+  time), `aging` (the graded property, F17, folding the log event by event), `cleanup-survival` (on the live path residue →
+  retryable park, in recovery a residue with no park → reclaim under the residue's attempt → `cleaned` in the host
+  index → the stage runs again and the unit or its lineage merges; nothing left dirty; the respawn started and was not refused), `reentry` (`urgent` kept out by
+  `run-only` until `right` was held; the conflict; `right2` prepared `conflicted`, resolved in a fresh session
+  and merged with both registrations; counters inherited; `top` dispatched after `right2` published),
+  `no-duplicate-writer` (per-unit workload ops disjoint; one outcome and at most one successful backend result
+  per stage attempt). M1: run-ended (complete), units-settled, head-is-candidate, diff-product-only,
+  snapshot-verifies, judgment-fresh, meter-covers-calls, no-model-ids.
 
 Cost and time: 20 backend calls on the straight path (the backend smoke at the start and again at the
 respawn, 2 each; plan-check, build and gate for `base`, `left`, `urgent` and `top`; plan-check and build for
@@ -163,9 +152,13 @@ node evals/m3/driver.ts /var/tmp/m3-default --profile default
 node evals/m3/check.ts /var/tmp/m3-default
 ```
 
-- `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (`src/cli.js` with `format` printing
-  through `formatAmount`, `total` through `formatDisplay`, and an unknown command exiting 2; `src/format.js` whose
-  `formatAmount` builds the cents from the amount's decimal digits, half to even, without saying so;
+- `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (copied from `evals/m3/files/base/`;
+  the fake builds' files are `evals/m3/files/units/<unit>/`), whose seed satisfies the vision everywhere but the
+  story's own issue, since paid run 4's lenses found real V-3 gaps in an earlier seed and the checkpoint kept
+  steering: `src/cli.js` with `format` printing through `formatAmount`, `total` through `formatDisplay`, and an
+  unknown command, wrong arguments or a non-amount refused with a message and exit 2; `src/format.js` with
+  `isAmount` (strict amounts: no exponent, no grouping), the exact `sumAmounts`, and `formatAmount`, which builds
+  the cents from the amount's decimal digits, half to even, without saying so;
   `src/display.js` whose `formatDisplay` separates thousands over `toFixed(2)`; unit tests under `test/unit/` for
   the suite; journey tests `journeys/*.journey.js` for
   the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule, which only I-2's
@@ -186,7 +179,8 @@ node evals/m3/check.ts /var/tmp/m3-default
   paid runs 1 and 2: with a rounding change in tidy's own spec (`Math.round`, then `Intl.NumberFormat`), the real
   plan-check traced the tie behaviour against V-2 and redirected the spec (run 1, then a park and a cut; run 2,
   `roundingMode: 'halfEven'`), so I-2 never regressed. Units: `parse`, `tidy` after it, `report` after `parse`
-  (`reconcile` renders through `formatAmount`, so I-1's latch does not depend on tidy). The repair the fake story
+  (`reconcile` sums exactly and renders through `formatAmount`, so I-1's latch does not depend on tidy; `parse` and
+  `report` are specified to refuse malformed dates, amounts, months and files with a message and exit 2). The repair the fake story
   plays makes `formatDisplay` round half to even; the check accepts any repair that makes I-2 hold.
 
   The story is branch-tolerant (DESIGN-1.0.md §10 M3): paid run 3 showed honest judges stop even this regression
@@ -197,41 +191,51 @@ node evals/m3/check.ts /var/tmp/m3-default
   in `report.json` (`devices.branch`) and both run to the end; check.ts grades the common criteria in both and each
   branch's own.
 - `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
-  its condition holds in the log, `status` or a barrier file, each independently of the others' order: `report`
-  added to `run-only` once audit-1 (checked to be the cadence audit of tidy's publication S) waits at the money
-  barrier; the barrier released once `report` merged (S′), so A1 audits S and re-witnesses its P1 over I-2 on S′;
-  at the first `checkpoint-inputs`, whatever its trigger, the architect's edit of `direction` by `roadmap apply`,
-  which makes that bundle stale whole; the repair's id read from the `plan-applied{source: bundle}` change (G18)
-  and added to `run-only` once the drift audit that revision triggers has started; every `divergence-digest` and
-  `convergence-bound` item acknowledged as it opens; every `bundle-request` answered as an architect who trusts the
-  checkpoint would (`ack <id> --choice apply` when it offers `apply`, so the next job enacts the bundle; a plain
-  `ack` when it offers nothing); `run-only --clear` once the repair merged. Each device is
-  recorded in `report.json` (`devices`). As soon as the log leaves the story the run stops (`endedBy:
-  device-failed`) with a reason naming the observed job, trigger and outcome: the first checkpoint not rejected
-  stale (or applying its bundle), a bundle revision other than one repair admit, a checkpoint that no-ops or asks
-  the owner with a request that cannot be applied before the repair is admitted, any `owner-request` (an owner-only
-  act the driver never answers; the reason names the item and its summary), audit-1 not the cadence audit of S or ending without a witness P1 over
-  I-2, a rejected apply. Finding ids are never assumed (plan-check may open P3s first): the P1 is found by content.
-  A parked run is stopped as in M1; hard timeout 180 minutes.
-  It refuses a used dir, uses the machine's host lock, and kills only the pids `status` names.
-- `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
-  failed criterion. M3: `baseline`, `regression-unselected`, `audit-race`, `stale-whole`, `bundles-whole`,
-  `repair-divergence` (plan-departed citing V-2), `divergence-digest-bound` (each digest binds exactly the
-  recorded ids not bound before; the driver acknowledged each), `bundles-whole` (its detail also counts the bundle
-  requests the driver answered: informational, never a failure), `convergence-bound`, `repair-resolved`,
-  `drift-audit` (the vision lens alone, then a no-op), `final-audit` (L, then a no-op), `close-out` (docs-only,
-  covering its own edge), `completion` (`arc-completed`, then the terminal snapshot), `lens-coverage` (each lens
-  of L contiguous to the final head, the docs edge applied only from the final audit's SHA), `snapshot-closure`
-  (the terminal ref verifies as a closure carrying every witness record and payload), `obligations-discharged`.
-  Standing: run-ended, units-settled, head-is-publication, diff-product-and-docs (units' scopes plus the living
-  `.roadmap/` docs, `constraints.md` and `invariants.md` included), snapshot-verifies, judgment-fresh (lens and
-  checkpoint calls included), meter-covers-calls, no-model-ids.
+  its condition holds in the log, `status` or a barrier file, each independently of the others' order. First at
+  every poll, whatever the branch, the acks: every `divergence-digest` and `convergence-bound` item acknowledged as
+  it opens, every `bundle-request` answered as an architect who trusts the checkpoint would (`ack <id> --choice
+  apply` when it offers `apply`, so the next job enacts the bundle; a plain `ack` when it offers nothing). Then:
+  the branch (R once tidy publishes; P once a bundle revision cuts, respecifies or re-enters tidy unpublished); in
+  branch R only, `report` added to `run-only` once the first audit to see the regression (checked to be the
+  cadence audit of tidy's publication S) waits at the money barrier, and the barrier released once `report` merged
+  (S′), so A1 audits S and re-witnesses its P1 over I-2 on S′; at the first `checkpoint-inputs`, whatever its
+  trigger (an audit, or tidy's design park), the architect's edit of `direction` by `roadmap apply`, which makes
+  that bundle stale whole; every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change
+  (G18); once the drift audit after the first bundle revision has started, `run-only` every plan unit not cut and
+  every added unit; `run-only --clear` once every added unit merged. Each device is recorded in `report.json`
+  (`devices`). The run stops `device-failed`, with a reason naming the observed job, trigger, outcome or item,
+  only when it is off the story in either branch: the first checkpoint not rejected stale (or applying its
+  bundle); a checkpoint that disposes of nothing before any bundle applied (a no-op, or a request with nothing to
+  apply); an `owner-request` (an owner-only act the driver never answers); in branch R, the barrier's audit not the
+  cadence audit of S, or ending without a witness P1 over I-2; a rejected apply. Finding ids are never assumed
+  (plan-check may open P3s first): the P1 is found by content. A stall ends at the hard timeout, 240 minutes; a
+  parked run is stopped as in M1. It refuses a used dir, uses the machine's host lock, and kills only the pids
+  `status` names.
+- `check.ts <dir>` prints one JSON line with the branch and every criterion, then the two lists, and exits non-zero
+  on any failed criterion. In both branches: `baseline`, `branch` (the log's branch, as the driver recorded it),
+  `stale-whole` (the first checkpoint, whatever its trigger), `bundles-whole` (decided bundles applied nothing;
+  every unit a bundle added merged, its repaired findings resolved or ruled and its obligations held; its detail
+  counts the bundle requests the driver answered, informational), `bundle-divergences` (one citing V-2),
+  `divergence-digest-bound` (each digest binds exactly the recorded ids not bound before; the driver acknowledged
+  each), `convergence-bound` (raised, each acknowledged), `drift-audit` (the vision lens alone), `final-audit`
+  (lenses of L on the last unit publication's head, then a no-op), `close-out` (docs-only, covering its own edge),
+  `completion` (`arc-completed`, then the terminal snapshot; no unmet condition, so every generation quiescent),
+  `lens-coverage` (each lens of L contiguous to the final head, the docs edge applied only from the final audit's
+  SHA), `snapshot-closure`, `obligations-discharged`. Branch R adds `regression-unselected`, `audit-race` and
+  `repair-resolved`; branch P adds `prevention` (tidy never published; its disposal recorded a divergence).
+  Standing: run-ended, units-settled (merged, or cut by a bundle), head-is-publication, diff-product-and-docs
+  (every changed path matches a scope in force, bundle-admitted units' and ruled growth included, or is a living
+  `.roadmap/` doc; the close-out put `constraints.md` or `invariants.md` in the diff; a failure names each path
+  and rule, or the missing close-out),
+  snapshot-verifies, judgment-fresh (lens and checkpoint calls included), meter-covers-calls, no-model-ids.
 
 Cost and time: about 23 backend calls on branch R's path: the backend smoke (2), plan-check, build and gate for
 `parse`, `tidy`, `report` and the repair (12, 4 of them Codex builds), the lenses (A1 2, A2 1, A3 2) and the
 checkpoints (the stale one, its re-evaluation, A2's and A3's): 13 Opus and 4 Fable calls among the Claude ones,
 about 2.2 times the M2 fixture. Branch P costs about the same (tidy's plan-checks replace its build and gate, the
-park's checkpoints the cadence audit). Expect 80 to 130 minutes; the driver stops at 180.
+park's checkpoints the cadence audit). Paid run 4 (branch P) was still working at 180 minutes, its checkpoint
+admitting a further unit for real V-3 gaps in the seed, since closed: expect 100 to 200 minutes; the driver stops
+at 240.
 
 `--fake story` and `--fake prevented` run the same driver against the fake backends (`evals/m3/scenario.ts`:
 unit calls as M1-style steps keyed by unit, lens and checkpoint calls as scripted judgments keyed by job and lens)

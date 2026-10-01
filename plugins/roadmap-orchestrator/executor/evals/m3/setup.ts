@@ -2,9 +2,10 @@
 // empty; anything else is refused, so a previous run is never half-reused). Hand-authored against SCHEMAS.md
 // ("Input contract", "spec.json M1 subset", "M3: the holistic layer"):
 //
-//   repo/     the Node CLI `ledger` (pure ES modules, `node --test`): `src/cli.js` (commands `format` through
-//             `formatAmount`, `total` through `formatDisplay`; unknown commands exit 2), `src/format.js` (`formatAmount`,
-//             building the cents from the amount's decimal digits, half to even, with no comment saying so),
+//   repo/     the Node CLI `ledger` (pure ES modules, `node --test`), copied from evals/m3/files/base/: `src/cli.js`
+//             (commands `format` through `formatAmount`, `total` through `formatDisplay`; unknown commands, wrong
+//             arguments and non-amounts exit 2 with a message), `src/format.js` (`isAmount`, the exact `sumAmounts`,
+//             `formatAmount` building the cents from the decimal digits, half to even, with no comment saying so),
 //             `src/display.js` (`formatDisplay`, thousands separators over `toFixed(2)`), the unit tests under
 //             test/unit/ (the suite, `npm test`), the journey tests under journeys/ (`*.journey.js`: the arc lanes;
 //             outside `node --test`'s default discovery, so neither the suite nor a bare `node --test` an implementer
@@ -40,168 +41,44 @@
 // P1 by making formatDisplay round half to even): the fake story admits exactly it; a real checkpoint writes its own,
 // and the check accepts any repair that makes I-2 hold.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, MONTH, RECONCILED, UNITS, layout } from './layout.ts';
+import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, UNITS, layout } from './layout.ts';
 
 export const BARRIER_SCRIPT = fileURLToPath(new URL('./barrier.ts', import.meta.url));
 /** The money lane waits at most this long for the driver (the driver's own run timeout is shorter). */
-const BARRIER_TIMEOUT_MS = 4 * 60 * 60_000;
+const BARRIER_TIMEOUT_MS = 5 * 60 * 60_000;
 
 export const CONTRACT_PATH = '.roadmap/contracts/ledger.md';
 
-const CONTRACT = `# Contract: the ledger CLI
+/**
+ * The product's files, as real files (`evals/m3/files/`): `base/` is the baseline tree, `units/<unit>/` the files each
+ * fake build commits (`units/report-on-tidy/` is report's src/cli.js on a tree tidy changed, branch R). The seed is
+ * meant to satisfy the vision everywhere but the story's own issue (`formatDisplay`'s `toFixed`, against I-2's
+ * half-even): strict amounts and dates, exact sums, refused input exits 2 with a message (paid run 4's lenses found
+ * real V-3 gaps in an earlier seed and the checkpoint kept steering).
+ */
+export const FILES = fileURLToPath(new URL('./files/', import.meta.url));
 
-\`ledger\` is run as \`node src/cli.js <command> [args...]\`.
-
-## Commands
-
-- \`format <amount>\` prints the amount with two decimals.
-- \`total <amount>...\` prints the sum of the amounts for display, with thousands separators.
-- \`reconcile <YYYY-MM> <file>\` prints \`<YYYY-MM> balance <amount>\`: the sum of the ledger file's entries dated in
-  that month, rendered by \`formatAmount\`.
-
-Unknown commands exit 2 with a one-line error on stderr naming the command.
-
-## Ledger file
-
-One entry per line, \`YYYY-MM-DD,<amount>,<memo>\`; blank lines are skipped. A malformed line is refused with an
-error naming its 1-based line number.
-
-## Money
-
-\`formatAmount(amount)\` in \`src/format.js\` renders an amount with exactly two decimals; \`formatDisplay(amount)\`
-in \`src/display.js\` renders one for display, two decimals with thousands separators. Every amount the CLI prints
-goes through one of them.
-`;
-
-const RULINGS = `# Constraints (C-nn ledger)
-
-C-1 — Every module under src/ is a dependency-free ES module; only src/cli.js does I/O.
-C-2 — Every exported function is covered by node --test tests under test/unit/, one test file per module.
-C-3 — Amounts are rendered only through formatAmount (src/format.js) or formatDisplay (src/display.js).
-`;
-
-const INVARIANTS = `# Invariants
-
-- \`npm test\` passes on the integration branch.
-- \`package.json\` declares no dependencies.
-`;
-
-const ARCHITECTURE = `# Architecture
-
-A small bookkeeping CLI.
-
-- \`src/cli.js\`: the command dispatcher (\`.roadmap/contracts/ledger.md\`, commands); the only module doing I/O.
-- \`src/<module>.js\`: one ES module per concern, pure functions, no dependencies.
-- \`test/unit/<module>.test.js\`: that module's \`node --test\` tests; \`npm test\` runs them all.
-- \`journeys/\`: end-to-end tests of the CLI (\`*.journey.js\`), one per obligation, run by the arc lanes (never by
-  \`npm test\`).
-
-## Money
-
-Amounts are JavaScript numbers, rendered by formatAmount in \`src/format.js\` or, for display, by formatDisplay in
-\`src/display.js\`.
-`;
-
-/** The rounding rule (I-2's docRef): only the obligation points here. */
-const MONEY_DOC = `# Money
-
-## Rounding
-
-The \`format\` command rounds an amount to the cent on its decimal digits, half to even: \`format 0.125\` prints 0.12,
-\`format 2.675\` prints 2.68.
-`;
-
-const unitTest = (imports: string, body: string): string =>
-  `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\n${imports}\n\n${body}`;
-
-const CLI = `// ledger: node src/cli.js <command> [args...] (.roadmap/contracts/ledger.md, commands).
-import { formatDisplay } from './display.js';
-import { formatAmount } from './format.js';
-
-const COMMANDS = {
-  format: ([amount]) => {
-    process.stdout.write(\`\${formatAmount(Number(amount))}\\n\`);
-    return 0;
-  },
-  total: (amounts) => {
-    process.stdout.write(\`\${formatDisplay(amounts.reduce((sum, a) => sum + Number(a), 0))}\\n\`);
-    return 0;
-  },
-};
-
-const [name, ...args] = process.argv.slice(2);
-const command = Object.hasOwn(COMMANDS, name ?? '') ? COMMANDS[name] : undefined;
-if (command === undefined) {
-  process.stderr.write(\`ledger: unknown command \${JSON.stringify(name ?? '')}\\n\`);
-  process.exitCode = 2;
-} else {
-  process.exitCode = command(args);
+/** Every file under `dir`, by its path relative to `dir`, ascending. */
+export function filesOf(dir: string): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const e of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!e.isFile()) continue;
+    const abs = join(e.parentPath, e.name);
+    out[relative(dir, abs)] = readFileSync(abs, 'utf8');
+  }
+  return Object.fromEntries(Object.entries(out).sort(([x], [y]) => (x < y ? -1 : 1)));
 }
-`;
 
-const FORMAT = `/** Renders a money amount with exactly two decimals (.roadmap/contracts/ledger.md, money). */
-export function formatAmount(amount) {
-  const sign = amount < 0 ? '-' : '';
-  const [whole, fraction = ''] = String(Math.abs(amount)).split('.');
-  let cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
-  const rest = fraction.slice(2);
-  const above = rest.slice(1).replace(/0/g, '') !== '';
-  if (rest[0] > '5' || (rest[0] === '5' && (above || cents % 2n === 1n))) cents += 1n;
-  return \`\${sign}\${cents / 100n}.\${String(cents % 100n).padStart(2, '0')}\`;
-}
-`;
-
-const DISPLAY = `/** Renders an amount for display: two decimals, thousands separated (.roadmap/contracts/ledger.md, money). */
-export function formatDisplay(amount) {
-  const [whole, cents] = amount.toFixed(2).split('.');
-  return \`\${whole.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',')}.\${cents}\`;
-}
-`;
-
-/** A journey test runs the CLI in the checkout it is in. */
-const journey = (name: string, body: string): string => `import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
-
-const CLI = fileURLToPath(new URL('../src/cli.js', import.meta.url));
-const ledger = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
-
-test('${name}', () => {
-${body}
-});
-`;
-
-/** The witness test ids (node test ids: the test's name path), per obligation. */
+/** The witness test ids (node test ids: the test's name path), per obligation, as the journeys name them. */
 export const WITNESS_TESTS = {
   'I-1': 'reconcile a month in one command',
   'I-2': 'amounts render to the cent',
   'I-3': 'unknown commands exit 2',
 } as const;
-
-const PRODUCT: Readonly<Record<string, string>> = {
-  'package.json': `${JSON.stringify({ name: 'ledger', private: true, type: 'module', scripts: { test: "node --test 'test/unit/*.test.js'" } }, null, 2)}\n`,
-  '.gitignore': 'node_modules/\n',
-  'ARCHITECTURE.md': ARCHITECTURE,
-  'src/cli.js': CLI,
-  'src/format.js': FORMAT,
-  'src/display.js': DISPLAY,
-  'test/unit/display.test.js': unitTest("import { formatDisplay } from '../../src/display.js';", "test('formatDisplay separates thousands', () => {\n  assert.equal(formatDisplay(1234.5), '1,234.50');\n  assert.equal(formatDisplay(3), '3.00');\n});\n"),
-  'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", "test('formatAmount renders two decimals', () => {\n  assert.equal(formatAmount(12.5), '12.50');\n  assert.equal(formatAmount(3), '3.00');\n  assert.equal(formatAmount(0.1 + 0.2), '0.30');\n});\n"),
-  'journeys/reconcile.journey.js': journey(WITNESS_TESTS['I-1'], `  const r = ledger('reconcile', '${MONTH}', fileURLToPath(new URL('./september.csv', import.meta.url)));\n  assert.equal(r.status, 0, r.stderr);\n  assert.equal(r.stdout, '${RECONCILED}\\n');`),
-  'journeys/september.csv': '2026-08-31,40.00,last month\n2026-09-01,10.50,refund\n\n2026-09-15,2.25,interest\n2026-10-01,99.00,next month\n',
-  'journeys/money.journey.js': journey(WITNESS_TESTS['I-2'], "  for (const [amount, printed] of [['0.125', '0.12'], ['0.625', '0.62'], ['2.675', '2.68'], ['10.5', '10.50']]) {\n    const r = ledger('format', amount);\n    assert.equal(r.status, 0, r.stderr);\n    assert.equal(r.stdout, `${printed}\\n`);\n  }"),
-  'docs/money.md': MONEY_DOC,
-  'journeys/cli.journey.js': journey(WITNESS_TESTS['I-3'], "  const r = ledger('frobnicate');\n  assert.equal(r.status, 2);\n  assert.match(r.stderr, /frobnicate/);"),
-  [CONTRACT_PATH]: CONTRACT,
-  '.roadmap/constraints.md': RULINGS,
-  '.roadmap/invariants.md': INVARIANTS,
-  '.roadmap/config.json': `${JSON.stringify({ routing: {} }, null, 2)}\n`,
-};
 
 const VISION = {
   schema: 'roadmap/vision-m3',
@@ -296,15 +173,15 @@ const SCOPES: Readonly<Record<Unit, readonly string[]>> = {
 };
 
 function specOf(unit: Unit): unknown {
-  const common = { schema: 'roadmap/spec-m1', unit, rev: 1, scope: SCOPES[unit], resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3'] } };
+  const common = { schema: 'roadmap/spec-m1', unit, rev: 1, scope: SCOPES[unit], resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3', 'C-4'] } };
   switch (unit) {
     case 'parse':
       return {
         ...common, obligations: ['I-1'],
         lanes: [unitLane('parse', 'test/unit/parse.test.js')],
         acceptance: [
-          clause('A1', '`parseLedger(text)` in src/parse.js returns the entries `{date, amount, memo}` of the lines `YYYY-MM-DD,<amount>,<memo>` in file order, `amount` a number; blank lines are skipped (.roadmap/contracts/ledger.md, ledger file).'),
-          clause('A2', 'A malformed line (not three comma-separated fields, a date not YYYY-MM-DD, an amount not a finite number) throws an Error whose message names its 1-based line number.'),
+          clause('A1', '`parseLedger(text)` in src/parse.js returns the entries `{date, amount, memo}` of the lines `YYYY-MM-DD,<amount>,<memo>` in file order, `amount` the amount text as written; blank lines are skipped and `\\r\\n` line ends accepted (.roadmap/contracts/ledger.md, ledger file).'),
+          clause('A2', 'A malformed line (not exactly three comma-separated fields, a date that is not a real calendar date, an amount `isAmount` from src/format.js refuses, an empty memo) throws a `LedgerError` (exported by src/parse.js) whose message names its 1-based line number and why (C-4).'),
           clause('A3', 'test/unit/parse.test.js covers A1 and A2 and passes under the parse lane (C-2).'),
         ],
         facts: [fact('F1', 'package.json declares "type": "module"; src/cli.js is the only module doing I/O (C-1).')],
@@ -324,8 +201,8 @@ function specOf(unit: Unit): unknown {
         ...common, obligations: ['I-1', 'I-3'],
         lanes: [unitLane('report', 'test/unit/report.test.js')],
         acceptance: [
-          clause('A1', '`reconcile(entries, month)` in src/report.js returns `<month> balance <amount>`: the sum of the amounts of the entries whose date is in `month` (YYYY-MM), rendered by formatAmount (C-3).'),
-          clause('A2', 'src/cli.js gains the command `reconcile <YYYY-MM> <file>`: it reads the file, parses it with parseLedger from src/parse.js and prints the line of A1 (.roadmap/contracts/ledger.md, commands). The other commands, and exit 2 for an unknown command, are unchanged.'),
+          clause('A1', '`reconcile(entries, month)` in src/report.js returns `<month> balance <amount>`: the exact sum (`sumAmounts` from src/format.js) of the amounts of the entries whose date is in `month` (YYYY-MM), rendered by formatAmount (C-3); a month with no entries balances at 0.00.'),
+          clause('A2', 'src/cli.js gains the command `reconcile <YYYY-MM> <file>`: it reads the file, parses it with parseLedger from src/parse.js and prints the line of A1 (.roadmap/contracts/ledger.md, commands). A wrong number of arguments, a month that is not YYYY-MM, a file it cannot read or a `LedgerError` is refused with a one-line message naming it on stderr and exit 2 (C-4). The other commands are unchanged.'),
           clause('A3', 'test/unit/report.test.js covers A1 and passes under the report lane (C-2).'),
         ],
         facts: [fact('F1', 'src/parse.js exports parseLedger once unit parse has merged.')],
@@ -377,13 +254,13 @@ export function setup(dir: string): void {
   git(l.repo, 'config', 'user.name', 'M3 Fixture');
   git(l.repo, 'config', 'user.email', 'm3-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
-  for (const [path, text] of Object.entries(PRODUCT)) write(join(l.repo, path), text);
+  for (const [path, text] of Object.entries(filesOf(join(FILES, 'base')))) write(join(l.repo, path), text);
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm3 fixture: the ledger CLI');
   git(l.repo, 'branch', INTEGRATION, MAIN);
   const baseline = git(l.repo, 'rev-parse', MAIN);
 
-  write(join(l.input, 'rulings.md'), RULINGS);
+  write(join(l.input, 'rulings.md'), readFileSync(join(FILES, 'base', '.roadmap', 'constraints.md'), 'utf8'));
   write(l.vision, json(VISION));
   write(l.obligations, json(obligationsFile(l)));
   for (const unit of UNITS) write(join(l.input, `${unit}.json`), json(specOf(unit)));
