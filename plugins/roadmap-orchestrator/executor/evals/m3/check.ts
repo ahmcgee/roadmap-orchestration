@@ -267,24 +267,27 @@ function divergenceDigestBound(run: Run): Verdict {
     if (JSON.stringify(g.ids) !== JSON.stringify(expected)) problems.push(`digest ${g.needsUser} binds ${JSON.stringify(g.ids)}, not ${JSON.stringify(expected)}`);
     for (const id of g.ids) bound.add(id);
   }
-  const acked = run.report.devices.digest;
-  const g = digests.find((x) => x.needsUser === acked?.needsUser);
-  if (acked === null || g === undefined) problems.push(`the driver acknowledged no digest (${JSON.stringify(acked)})`);
-  else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) problems.push(`${g.needsUser} is not acknowledged`);
+  const acks = run.report.devices.acks;
+  if (digests.length === 0) problems.push('no digest was raised');
+  for (const g of digests) {
+    if (!acks.some((a) => a.needsUser === g.needsUser && a.reason === 'divergence-digest')) problems.push(`the driver did not acknowledge the digest ${g.needsUser}`);
+    else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) problems.push(`${g.needsUser} is not acknowledged`);
+  }
   const uncovered = run.report.status.divergences.map((d) => d.id);
   if (uncovered.length > 0) problems.push(`uncovered divergences ${JSON.stringify(uncovered)}`);
   if (factsOf(run, 'divergence').length === 0) problems.push('no divergence recorded');
-  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; acknowledged ${acked?.needsUser}`);
+  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; each acknowledged by the driver`);
 }
 
 function convergenceBound(run: Run): Verdict {
   const rev = bundleRevision(run);
   const raised = items(run, 'convergence-bound');
-  const acked = run.report.devices.bound;
+  const acks = run.report.devices.acks;
   const problems: string[] = [];
   if (raised.length !== 1) problems.push(`${raised.length} convergence-bound items`);
-  const item = raised.find((n) => n.id === acked?.needsUser);
-  if (item === undefined || item.ack === null) problems.push(`the driver's ack ${JSON.stringify(acked)} does not cover the raised item`);
+  for (const item of raised) {
+    if (!acks.some((a) => a.needsUser === item.id && a.reason === 'convergence-bound') || item.ack === null) problems.push(`${item.id} is not acknowledged by the driver`);
+  }
   if (rev === null) problems.push('no bundle revision');
   return verdict(problems, `${raised.map((n) => n.id).join(', ')} raised after the bundle revision ${rev?.rev}, acknowledged`);
 }

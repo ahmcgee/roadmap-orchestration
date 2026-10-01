@@ -3,9 +3,13 @@
 // ("Input contract", "spec.json M1 subset", "M3: the holistic layer"):
 //
 //   repo/     the Node CLI `ledger` (pure ES modules, `node --test`): `src/cli.js` (commands `format`, unknown
-//             commands exit 2), `src/format.js` (`formatAmount`, rounding on the decimal digits as written), the
-//             unit tests under test/unit/ (the suite, `npm test`) and the journey tests under test/journeys/ (the
-//             arc lanes, never in the suite); branch `main` and an `integration` branch cut from it; in-tree
+//             commands exit 2), `src/format.js` (`formatAmount`, building the cents from the amount's decimal
+//             digits, half to even, with no comment saying so), the unit tests under test/unit/ (the suite, `npm
+//             test`), the journey tests under journeys/ (`*.journey.js`: the arc lanes; outside `node --test`'s
+//             default discovery, so neither the suite nor a bare `node --test` an implementer runs picks them up),
+//             docs/money.md (the rounding rule, I-2's docRef: no spec cites it, and it is neither a plan contract
+//             nor the architecture doc, so no plan-check or gate is handed it); branch `main` and an
+//             `integration` branch cut from it; in-tree
 //             `.roadmap/` holds contracts/ledger.md, the C-nn ledger, a hand-written invariants.md (the close-out
 //             renders it, so the close-out publication has something to change) and config.json (empty routing)
 //   input/    plan.json (holistic: vision, obligations, audit every 2 with L = {invariants, vision};
@@ -17,13 +21,16 @@
 // The obligations, each witnessed by one node-test arc lane over one journey test:
 //   I-1 future, serves V-1, delivered by `parse` and `report`: `node src/cli.js reconcile 2026-09 <file>` prints
 //       the month's balance (fails at the baseline: there is no reconcile command)
-//   I-2 must-hold, serves V-2: formatAmount(1.005) is '1.01' (held at the baseline; lane `money`, which waits at
-//       the driver's barrier in audit-1's run only, barrier.ts)
+//   I-2 must-hold, serves V-2: amounts round to the cent half to even, 0.125 renders 0.12 (held at the baseline;
+//       lane `money`, which waits at the driver's barrier in audit-1's run only, barrier.ts)
 //   I-3 must-hold, serves V-3: unknown commands exit 2
-// The mapping maps every scoped path: `tidy`'s one path `src/format.js` maps to I-3 only, so `tidy`, whose spec
-// replaces the rounding by `Math.round(amount * 100) / 100`, never selects I-2 and regresses it unselected.
+// The mapping maps every scoped path: `tidy`'s paths (src/format.js and its unit test) map to I-3 only, so `tidy`
+// never selects I-2. Its spec is a legitimate readability change that says nothing about rounding: format through
+// `Intl.NumberFormat('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})` with thousands grouping and
+// drop the hand-written digit code. Intl rounds half away from zero (0.125 → '0.13'), so tidy regresses I-2
+// unselected, a side effect nothing a judge of tidy reads (its spec, contracts, architecture) states.
 //
-// Units: `parse` (src/parse.js); `tidy` after it (src/format.js); `report` after `parse` (src/report.js and the
+// Units: `parse` (src/parse.js); `tidy` after it (src/format.js, test/unit/format.test.js); `report` after `parse` (src/report.js and the
 // `reconcile` command in src/cli.js), which the driver keeps out with run-only until A1 waits at the barrier.
 // `repairSpec` is the spec the checkpoint is expected to admit (origin repair, repairing I-2's P1): the fake story
 // admits exactly it; a real checkpoint writes its own.
@@ -83,11 +90,20 @@ A small bookkeeping CLI.
 - \`src/cli.js\`: the command dispatcher (\`.roadmap/contracts/ledger.md\`, commands); the only module doing I/O.
 - \`src/<module>.js\`: one ES module per concern, pure functions, no dependencies.
 - \`test/unit/<module>.test.js\`: that module's \`node --test\` tests; \`npm test\` runs them all.
-- \`test/journeys/\`: end-to-end tests of the CLI, one per obligation, run by the arc lanes (never by \`npm test\`).
+- \`journeys/\`: end-to-end tests of the CLI (\`*.journey.js\`), one per obligation, run by the arc lanes (never by
+  \`npm test\`).
 
 ## Money
 
-Amounts are JavaScript numbers, rendered by formatAmount in \`src/format.js\` on their decimal digits as written.
+Amounts are JavaScript numbers, rendered by formatAmount in \`src/format.js\`.
+`;
+
+/** The rounding rule (I-2's docRef): only the obligation points here. */
+const MONEY_DOC = `# Money
+
+## Rounding
+
+An amount is rounded to the cent on its decimal digits, half to even: 0.125 renders 0.12, 0.375 renders 0.38.
 `;
 
 const unitTest = (imports: string, body: string): string =>
@@ -115,13 +131,13 @@ if (command === undefined) {
 
 const FORMAT = `/** Renders a money amount with exactly two decimals (.roadmap/contracts/ledger.md, money). */
 export function formatAmount(amount) {
-  return (Math.round(shift(amount, 2)) / 100).toFixed(2);
-}
-
-/** \`amount\` times 10^places, shifted on its decimal digits as written (no binary multiplication error). */
-function shift(amount, places) {
-  const [digits, exponent = '0'] = String(amount).split('e');
-  return Number(\`\${digits}e\${Number(exponent) + places}\`);
+  const sign = amount < 0 ? '-' : '';
+  const [whole, fraction = ''] = String(Math.abs(amount)).split('.');
+  let cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+  const rest = fraction.slice(2);
+  const above = rest.slice(1).replace(/0/g, '') !== '';
+  if (rest[0] > '5' || (rest[0] === '5' && (above || cents % 2n === 1n))) cents += 1n;
+  return \`\${sign}\${cents / 100n}.\${String(cents % 100n).padStart(2, '0')}\`;
 }
 `;
 
@@ -131,7 +147,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-const CLI = fileURLToPath(new URL('../../src/cli.js', import.meta.url));
+const CLI = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 const ledger = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
 
 test('${name}', () => {
@@ -142,7 +158,7 @@ ${body}
 /** The witness test ids (node test ids: the test's name path), per obligation. */
 export const WITNESS_TESTS = {
   'I-1': 'reconcile a month in one command',
-  'I-2': 'money is never silently mis-rounded',
+  'I-2': 'amounts render to the cent',
   'I-3': 'unknown commands exit 2',
 } as const;
 
@@ -153,19 +169,21 @@ const PRODUCT: Readonly<Record<string, string>> = {
   'src/cli.js': CLI,
   'src/format.js': FORMAT,
   'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", "test('formatAmount renders two decimals', () => {\n  assert.equal(formatAmount(12.5), '12.50');\n  assert.equal(formatAmount(3), '3.00');\n  assert.equal(formatAmount(0.1 + 0.2), '0.30');\n});\n"),
-  'test/journeys/reconcile.test.js': journey(WITNESS_TESTS['I-1'], `  const r = ledger('reconcile', '${MONTH}', fileURLToPath(new URL('./september.csv', import.meta.url)));\n  assert.equal(r.status, 0, r.stderr);\n  assert.equal(r.stdout, '${RECONCILED}\\n');`),
-  'test/journeys/september.csv': '2026-08-31,40.00,last month\n2026-09-01,10.50,refund\n\n2026-09-15,2.25,interest\n2026-10-01,99.00,next month\n',
-  'test/journeys/money.test.js': `import assert from 'node:assert/strict';
+  'journeys/reconcile.journey.js': journey(WITNESS_TESTS['I-1'], `  const r = ledger('reconcile', '${MONTH}', fileURLToPath(new URL('./september.csv', import.meta.url)));\n  assert.equal(r.status, 0, r.stderr);\n  assert.equal(r.stdout, '${RECONCILED}\\n');`),
+  'journeys/september.csv': '2026-08-31,40.00,last month\n2026-09-01,10.50,refund\n\n2026-09-15,2.25,interest\n2026-10-01,99.00,next month\n',
+  'journeys/money.journey.js': `import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { formatAmount } from '../../src/format.js';
+import { formatAmount } from '../src/format.js';
 
 test('${WITNESS_TESTS['I-2']}', () => {
-  assert.equal(formatAmount(1.005), '1.01');
-  assert.equal(formatAmount(2.675), '2.68');
-  assert.equal(formatAmount(1.255), '1.26');
+  assert.equal(formatAmount(0.125), '0.12');
+  assert.equal(formatAmount(0.375), '0.38');
+  assert.equal(formatAmount(0.625), '0.62');
+  assert.equal(formatAmount(10.5), '10.50');
 });
 `,
-  'test/journeys/cli.test.js': journey(WITNESS_TESTS['I-3'], "  const r = ledger('frobnicate');\n  assert.equal(r.status, 2);\n  assert.match(r.stderr, /frobnicate/);"),
+  'docs/money.md': MONEY_DOC,
+  'journeys/cli.journey.js': journey(WITNESS_TESTS['I-3'], "  const r = ledger('frobnicate');\n  assert.equal(r.status, 2);\n  assert.match(r.stderr, /frobnicate/);"),
   [CONTRACT_PATH]: CONTRACT,
   '.roadmap/constraints.md': RULINGS,
   '.roadmap/invariants.md': INVARIANTS,
@@ -202,8 +220,8 @@ const OBLIGATIONS: readonly ObligationSeed[] = [
   },
   {
     id: 'I-2', lane: MONEY_LANE, activation: 'must-hold', deliveredBy: [], serves: 'V-2', contracts: [],
-    statement: 'formatAmount rounds on the decimal digits as written, never on a binary approximation: 1.005 renders 1.01 and 2.675 renders 2.68.',
-    docPath: 'ARCHITECTURE.md', anchor: '#money', quotedText: 'on their decimal digits as written',
+    statement: 'Amounts round to the cent on their decimal digits, half to even: 0.125 renders 0.12 and 0.375 renders 0.38.',
+    docPath: 'docs/money.md', anchor: '#rounding', quotedText: 'half to even',
   },
   {
     id: 'I-3', lane: 'cli', activation: 'must-hold', deliveredBy: [], serves: 'V-3', contracts: [CONTRACT_PATH],
@@ -212,22 +230,23 @@ const OBLIGATIONS: readonly ObligationSeed[] = [
   },
 ];
 
-/** Every path a unit may touch, mapped (patterns ascending by pattern text). `src/format.js` maps to I-3 only. */
+/** Every path a unit may touch (and each journey and doc), mapped. `src/format.js` and its unit test map to I-3 only. */
 const MAPPING = [
+  { pattern: 'docs/money.md', obligations: ['I-2'] },
+  { pattern: 'journeys/cli.journey.js', obligations: ['I-3'] },
+  { pattern: 'journeys/money.journey.js', obligations: ['I-2'] },
+  { pattern: 'journeys/reconcile.journey.js', obligations: ['I-1'] },
   { pattern: 'src/cli.js', obligations: ['I-1', 'I-3'] },
   { pattern: 'src/format.js', obligations: ['I-3'] },
   { pattern: 'src/parse.js', obligations: ['I-1'] },
   { pattern: 'src/report.js', obligations: ['I-1'] },
-  { pattern: 'test/journeys/cli.test.js', obligations: ['I-3'] },
-  { pattern: 'test/journeys/money.test.js', obligations: ['I-2'] },
-  { pattern: 'test/journeys/reconcile.test.js', obligations: ['I-1'] },
   { pattern: 'test/unit/format.test.js', obligations: ['I-3'] },
   { pattern: 'test/unit/parse.test.js', obligations: ['I-1'] },
   { pattern: 'test/unit/report.test.js', obligations: ['I-1'] },
 ];
 
 export function obligationsFile(l: Layout): unknown {
-  const lanes = [arcLane(l, 'cli', 'test/journeys/cli.test.js'), arcLane(l, MONEY_LANE, 'test/journeys/money.test.js'), arcLane(l, 'reconcile', 'test/journeys/reconcile.test.js')];
+  const lanes = [arcLane(l, 'cli', 'journeys/cli.journey.js'), arcLane(l, MONEY_LANE, 'journeys/money.journey.js'), arcLane(l, 'reconcile', 'journeys/reconcile.journey.js')];
   const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
   return {
     schema: 'roadmap/obligations-m3',
@@ -255,7 +274,7 @@ type Unit = (typeof UNITS)[number] | 'fix-rounding';
 
 const SCOPES: Readonly<Record<Unit, readonly string[]>> = {
   parse: ['src/parse.js', 'test/unit/parse.test.js'],
-  tidy: ['src/format.js'],
+  tidy: ['src/format.js', 'test/unit/format.test.js'],
   report: ['src/cli.js', 'src/report.js', 'test/unit/report.test.js'],
   'fix-rounding': ['src/format.js', 'test/unit/format.test.js'],
 };
@@ -279,10 +298,10 @@ function specOf(unit: Unit): unknown {
         ...common, obligations: ['I-3'],
         lanes: [unitLane('format', 'test/unit/format.test.js')],
         acceptance: [
-          clause('A1', 'Simplify src/format.js: `formatAmount(amount)` returns exactly `(Math.round(amount * 100) / 100).toFixed(2)`, and the `shift` helper is removed.'),
-          clause('A2', 'test/unit/format.test.js passes under the format lane unchanged (C-2).'),
+          clause('A1', 'Amounts read with thousands grouping: `formatAmount(amount)` in src/format.js returns the format of `amount` by one module-level `new Intl.NumberFormat(\'en-US\', { style: \'decimal\', minimumFractionDigits: 2, maximumFractionDigits: 2 })`, so `formatAmount(1234.5)` is `\'1,234.50\'`; the hand-written digit handling in src/format.js is removed.'),
+          clause('A2', 'test/unit/format.test.js also asserts `formatAmount(1234.5) === \'1,234.50\'` and passes under the format lane (C-2).'),
         ],
-        facts: [fact('F1', 'src/format.js rounds through a helper, `shift`, that round-trips the amount through an exponent string.')],
+        facts: [fact('F1', 'src/format.js builds the two-decimal string by hand from the amount\'s digits, without grouping: `formatAmount(1234.5)` is `\'1234.50\'` today.')],
       };
     case 'report':
       return {
@@ -300,10 +319,10 @@ function specOf(unit: Unit): unknown {
         ...common, obligations: ['I-3'], repairs: ['F-1'],
         lanes: [unitLane('format', 'test/unit/format.test.js')],
         acceptance: [
-          clause('A1', '`formatAmount(amount)` in src/format.js rounds on the decimal digits as written, never on a binary approximation: `formatAmount(1.005)` is `\'1.01\'` and `formatAmount(2.675)` is `\'2.68\'` (I-2).'),
-          clause('A2', 'test/unit/format.test.js also asserts both values of A1 and passes under the format lane (C-2).'),
+          clause('A1', '`formatAmount(amount)` in src/format.js rounds to the cent on the amount\'s decimal digits, half to even (docs/money.md, rounding): `formatAmount(0.125)` is `\'0.12\'` and `formatAmount(0.375)` is `\'0.38\'`; thousands grouping stays: `formatAmount(1234.5)` is `\'1,234.50\'` (I-2).'),
+          clause('A2', 'test/unit/format.test.js also asserts the values of A1 and passes under the format lane (C-2).'),
         ],
-        facts: [fact('F1', 'Unit tidy replaced the rounding by `Math.round(amount * 100) / 100`, which renders 1.005 as 1.00 (finding F-1).')],
+        facts: [fact('F1', 'Unit tidy formats through Intl.NumberFormat, which rounds half away from zero: 0.125 renders 0.13 (finding F-1, I-2 not held).')],
       };
   }
 }

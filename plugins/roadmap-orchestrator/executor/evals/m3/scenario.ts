@@ -82,18 +82,29 @@ if (command === undefined) {
 }
 `;
 
-const TIDY_FORMAT = `/** Renders a money amount with exactly two decimals (.roadmap/contracts/ledger.md, money). */
+const TIDY_FORMAT = `const AMOUNT = new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Renders a money amount with exactly two decimals and thousands grouping (.roadmap/contracts/ledger.md, money). */
 export function formatAmount(amount) {
-  return (Math.round(amount * 100) / 100).toFixed(2);
+  return AMOUNT.format(amount);
 }
 `;
 
-const FIXED_FORMAT = `/** Renders a money amount with exactly two decimals, on its decimal digits as written (I-2). */
+const FIXED_FORMAT = `const WHOLE = new Intl.NumberFormat('en-US');
+
+/** Renders a money amount with two decimals and thousands grouping, rounding to the cent half to even (docs/money.md). */
 export function formatAmount(amount) {
-  const [digits, exponent = '0'] = String(amount).split('e');
-  return (Math.round(Number(\`\${digits}e\${Number(exponent) + 2}\`)) / 100).toFixed(2);
+  const sign = amount < 0 ? '-' : '';
+  const [whole, fraction = ''] = String(Math.abs(amount)).split('.');
+  let cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+  const rest = fraction.slice(2);
+  const above = rest.slice(1).replace(/0/g, '') !== '';
+  if (rest[0] > '5' || (rest[0] === '5' && (above || cents % 2n === 1n))) cents += 1n;
+  return \`\${sign}\${WHOLE.format(cents / 100n)}.\${String(cents % 100n).padStart(2, '0')}\`;
 }
 `;
+
+const FORMAT_TEST_BASE = "test('formatAmount renders two decimals', () => {\n  assert.equal(formatAmount(12.5), '12.50');\n  assert.equal(formatAmount(3), '3.00');\n  assert.equal(formatAmount(0.1 + 0.2), '0.30');\n});\n\ntest('formatAmount groups thousands', () => {\n  assert.equal(formatAmount(1234.5), '1,234.50');\n});\n";
 
 /** The unit calls of the story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
@@ -106,9 +117,12 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
     gate('A1, A2 and A3 hold.'),
   ],
   tidy: [
-    planCheck('The spec states the new body of formatAmount exactly; C-3 holds.'),
-    build('tidy: simplify formatAmount', { 'src/format.js': TIDY_FORMAT }),
-    gate('A1 and A2 hold: formatAmount is the stated expression and the format lane passes.'),
+    planCheck('The spec states the new formatter exactly; C-3 holds.'),
+    build('tidy: format amounts with thousands grouping', {
+      'src/format.js': TIDY_FORMAT,
+      'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", FORMAT_TEST_BASE),
+    }),
+    gate('A1 and A2 hold: formatAmount uses the stated formatter and the format lane passes.'),
   ],
   report: [
     planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-3.'),
@@ -121,9 +135,9 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
   ],
   [REPAIR_UNIT.id]: [
     planCheck('The repair restores I-2 within the unit\'s scope.'),
-    build('fix-rounding: round on the decimal digits', {
+    build('fix-rounding: round to the cent half to even', {
       'src/format.js': FIXED_FORMAT,
-      'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", "test('formatAmount renders two decimals', () => {\n  assert.equal(formatAmount(12.5), '12.50');\n  assert.equal(formatAmount(3), '3.00');\n  assert.equal(formatAmount(0.1 + 0.2), '0.30');\n});\n\ntest('formatAmount rounds on the digits as written (A1)', () => {\n  assert.equal(formatAmount(1.005), '1.01');\n  assert.equal(formatAmount(2.675), '2.68');\n});\n"),
+      'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", `${FORMAT_TEST_BASE}\ntest('formatAmount rounds to the cent half to even (A1)', () => {\n  assert.equal(formatAmount(0.125), '0.12');\n  assert.equal(formatAmount(0.375), '0.38');\n});\n`),
     }),
     gate('A1 and A2 hold.'),
   ],
@@ -132,7 +146,7 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
   op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: repairSpecText(),
-  cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy replaced the rounding by Math.round(amount * 100) / 100'],
+  cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy formats through Intl.NumberFormat, which renders 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
 const NO_OP = checkpointAnswer({ decision: 'no-op' });

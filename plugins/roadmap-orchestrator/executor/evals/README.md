@@ -153,34 +153,43 @@ node evals/m3/check.ts /var/tmp/m3-default
 ```
 
 - `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (`src/cli.js` with an unknown command
-  exiting 2, `src/format.js` whose `formatAmount` rounds on the decimal digits as written, unit tests under
-  `test/unit/` for the suite, journey tests under `test/journeys/` for the arc lanes; in-tree `.roadmap/` with
-  the ledger contract, the C-nn ledger, a hand-written `invariants.md` and an empty-routing config), `input/`
+  exiting 2, `src/format.js` whose `formatAmount` builds the cents from the amount's decimal digits, half to
+  even, without saying so; unit tests under `test/unit/` for the suite; journey tests `journeys/*.journey.js` for
+  the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule, which only I-2's
+  docRef names; in-tree `.roadmap/` with the ledger contract, the C-nn ledger, a hand-written `invariants.md`
+  and an empty-routing config), `input/`
   (plan.json, vision.json, obligations.json, rulings.md, one spec per unit) and `barriers/`. The plan is holistic:
   audits every 2 publications with the required lens set L = {invariants, vision}, `limits.convergenceK` 1. The
   vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
   mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input". The obligations, each a node-test arc
   lane over one journey test through the shipped reporter: I-1 future (serves V-1, delivered by `parse` and
-  `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: 1.005 renders 1.01; lane `money`, which
-  waits at the driver's barrier in audit-1's run only, `evals/m3/barrier.ts`), I-3 must-hold (serves V-3:
-  unknown commands exit 2). Every scoped path is mapped; `tidy`'s one path `src/format.js` maps to I-3 only, and
-  its spec replaces the rounding by `Math.round(amount * 100) / 100`, so it regresses I-2 unselected. Units:
-  `parse`, `tidy` after it, `report` after `parse`.
+  `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: cents round half to even, 0.125 renders
+  0.12; lane `money`, which waits at the driver's barrier in audit-1's run only, `evals/m3/barrier.ts`), I-3
+  must-hold (serves V-3: unknown commands exit 2). Every scoped path is mapped; `tidy`'s paths (`src/format.js`
+  and its unit test) map to I-3 only. Its spec is an honest readability change that never mentions rounding:
+  format through `Intl.NumberFormat('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})` with
+  thousands grouping (`1,234.50`) and drop the hand-written digit code. Intl rounds half away from zero (0.125 →
+  `0.13`), so tidy regresses I-2 unselected, as a side effect nothing its plan-check or gate is handed (spec,
+  cited contract, architecture doc) states. Units: `parse`, `tidy` after it, `report` after `parse`.
 - `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
-  its condition holds in the log, `status` or a barrier file: `report` added to `run-only` once audit-1 waits
-  at the money barrier; the barrier released once `report` merged (S′), so A1 audits S and re-witnesses its P1
-  over I-2 on S′; at the first checkpoint's `checkpoint-inputs`, the architect's edit of `direction` by `roadmap
-  apply`, which makes that bundle stale whole; the repair's id read from the `plan-applied{source: bundle}`
-  change (G18) and added to `run-only` once the drift audit that revision triggers has started; the
-  `divergence-digest` and `convergence-bound` items acknowledged; `run-only --clear` once the repair merged.
-  Each device is recorded in `report.json` (`devices`). A checkpoint that no-ops or asks the owner where a bundle
-  is required, a first checkpoint not rejected stale, a bundle adding anything but one repair unit, or a rejected
-  apply stops the run (`endedBy: device-failed`); a parked run is stopped as in M1; hard timeout 180 minutes.
+  its condition holds in the log, `status` or a barrier file, each independently of the others' order: `report`
+  added to `run-only` once audit-1 (checked to be the cadence audit of tidy's publication S) waits at the money
+  barrier; the barrier released once `report` merged (S′), so A1 audits S and re-witnesses its P1 over I-2 on S′;
+  at the first `checkpoint-inputs`, whatever its trigger, the architect's edit of `direction` by `roadmap apply`,
+  which makes that bundle stale whole; the repair's id read from the `plan-applied{source: bundle}` change (G18)
+  and added to `run-only` once the drift audit that revision triggers has started; every `divergence-digest` and
+  `convergence-bound` item acknowledged as it opens; `run-only --clear` once the repair merged. Each device is
+  recorded in `report.json` (`devices`). As soon as the log leaves the story the run stops (`endedBy:
+  device-failed`) with a reason naming the observed job, trigger and outcome: the first checkpoint not rejected
+  stale (or applying its bundle), a bundle revision other than one repair admit, a checkpoint that no-ops or asks
+  the owner before the repair is admitted, audit-1 not the cadence audit of S or ending without a witness P1 over
+  I-2, a rejected apply. Finding ids are never assumed (plan-check may open P3s first): the P1 is found by content.
+  A parked run is stopped as in M1; hard timeout 180 minutes.
   It refuses a used dir, uses the machine's host lock, and kills only the pids `status` names.
 - `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
   failed criterion. M3: `baseline`, `regression-unselected`, `audit-race`, `stale-whole`, `bundles-whole`,
   `repair-divergence` (plan-departed citing V-2), `divergence-digest-bound` (each digest binds exactly the
-  recorded ids not bound before; the driver's ack covers it), `convergence-bound`, `repair-resolved`,
+  recorded ids not bound before; the driver acknowledged each), `convergence-bound`, `repair-resolved`,
   `drift-audit` (the vision lens alone, then a no-op), `final-audit` (L, then a no-op), `close-out` (docs-only,
   covering its own edge), `completion` (`arc-completed`, then the terminal snapshot), `lens-coverage` (each lens
   of L contiguous to the final head, the docs edge applied only from the final audit's SHA), `snapshot-closure`
@@ -208,5 +217,8 @@ none of them; each has a fake integrated test in `npm test` (the literal partial
 `CANNOT SHOW: …` is fixed: real cgroup containment, crash boundaries under real models, week-long convergence,
 and a model's op list (the partial bundle is forced only by fakes).
 
-A real `tidy` gate that refuses the `Math.round` rewrite, or a real checkpoint that no-ops instead of admitting a
-repair, leaves the story unplayed: the run then ends `device-failed` or times out, and the report says where.
+What real judges may still do differently, each ending the run `device-failed` (or timed out) with the report
+saying where: tidy's plan-check or gate may read `src/format.js` or `docs/money.md` through its checkout and
+refuse or redirect the Intl rewrite (the first run, with a `Math.round` spec, was redirected and then cut by a
+park checkpoint); a real first checkpoint may decide before the stale `apply` commits; a real checkpoint may
+no-op, cut `tidy` or write a repair spec that cannot be admitted instead of admitting a repair.

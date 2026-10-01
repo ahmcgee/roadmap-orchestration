@@ -130,14 +130,25 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
     for (const p of spec.scope) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
   }
   assert.deepEqual(mapped.get('src/format.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
-  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/format.js']);
+  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/format.js', 'test/unit/format.test.js']);
+  assert.deepEqual(mapped.get('test/unit/format.test.js'), ['I-3']);
+  // What tidy's judges read says nothing about rounding: its spec, the contract it cites, the architecture doc.
+  const tidySpec = readFileSync(join(l.input, 'tidy.json'), 'utf8');
+  for (const text of [tidySpec, readFileSync(join(l.repo, '.roadmap/contracts/ledger.md'), 'utf8'), readFileSync(join(l.repo, 'ARCHITECTURE.md'), 'utf8')]) {
+    assert.doesNotMatch(text, /round|even|half/i);
+  }
+  assert.match(tidySpec, /Intl\.NumberFormat/);
   const repair = parseSpec(Buffer.from(repairSpecText()), `${REPAIR_UNIT.id}.json` as never);
   assert.deepEqual([repair.unit, repair.repairs, repair.obligations], [REPAIR_UNIT.id, ['F-1'], ['I-3']]);
   assert.equal(git(l.repo, 'rev-parse', INTEGRATION), git(l.repo, 'rev-parse', MAIN));
   assert.equal(plan.baseline, git(l.repo, 'rev-parse', MAIN));
   const suite = await runUntilExit('npm', ['test'], { env: ENV, cwd: l.repo, timeoutMs: 60_000 });
   assert.equal(suite.code, 0, `the suite is green at the baseline: ${suite.stdout}`);
-  assert.doesNotMatch(suite.stdout, /money|reconcile a month|unknown commands/, 'the suite runs no journey test');
+  const journeyNames = /amounts render to the cent|reconcile a month|unknown commands/;
+  assert.doesNotMatch(suite.stdout, journeyNames, 'the suite runs no journey test');
+  const bare = spawnSync(process.execPath, ['--test'], { cwd: l.repo, env: ENV, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(bare.status, 0, bare.stdout);
+  assert.doesNotMatch(bare.stdout, journeyNames, 'a bare `node --test` discovers no journey test either');
 
   // The witness lanes through the shipped reporter: the baseline's verdicts.
   assert.deepEqual(verdicts(o, l.repo), { 'I-1': 'not-held', 'I-2': 'held', 'I-3': 'held' });
@@ -275,9 +286,9 @@ describe('evals-m3: the fake-backed fixture run', () => {
   }
 
   test('evals-m3.tamper-digest: a digest the driver did not acknowledge fails divergence-digest-bound', async () => {
-    const tampered = await tamper((d) => ({ ...d, digest: { needsUser: 'nu-999', ack: d.digest!.ack } }));
+    const tampered = await tamper((d) => ({ ...d, acks: d.acks.filter((a) => a.reason !== 'divergence-digest') }));
     assert.deepEqual(failing(tampered), ['divergence-digest-bound']);
-    assert.match(criterion(tampered, 'divergence-digest-bound').detail, /acknowledged no digest/);
+    assert.match(criterion(tampered, 'divergence-digest-bound').detail, /the driver did not acknowledge the digest/);
   });
 
   test('evals-m3.tamper-stale: a stale apply that committed no revision fails stale-whole', async () => {
