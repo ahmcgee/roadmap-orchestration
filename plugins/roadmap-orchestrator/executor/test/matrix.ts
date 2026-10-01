@@ -1268,8 +1268,9 @@ export const MATRIX: readonly Row[] = [
   {
     // Unit u1's candidate parks in its suite lane (a barrier) holding the slot before green; `rule` is applied in the
     // same child (test/fixtures/publish-child.ts), preempting it: the kill of its lane with reason `preempt` is crashed (each
-    // kill.* label occurs once, at occurrence 1). In every cell the lane's spawn is closed redone, the rule's revision.commit
-    // (waiting for the slot) aborted and re-evaluated, and u1's candidate records green only after the publication.
+    // kill.* label occurs once, at occurrence 1). In every cell the lane's spawn is closed redone (B4, B5: or live, settled
+    // by its invoke before the crash), the rule's revision.commit (waiting for the slot) aborted and re-evaluated, and u1's
+    // candidate records green only after the publication.
     row: PREEMPT,
     test: 'test/publish.test.ts',
     cells: {

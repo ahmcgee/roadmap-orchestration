@@ -597,6 +597,16 @@ describe(`matrix row ${PREEMPT}`, () => {
     'kill.after-intent': ['proc.kill:redone'], 'kill.after-cancel': ['proc.kill:redone', 'proc.kill:reconciled'],
     'kill.after-quiesced': ['proc.kill:reconciled'], 'kill.after-done': ['proc.kill:live'],
   };
+  /**
+   * How the lane's spawn stands after recovery: open at the crash, so redone, while its runner can still be alive. Once
+   * the runner has exited (the kill quiesced), the lane's own invoke and the kill both await that exit, each on its own
+   * poll: whichever sees it first moves on, so the crash finds the spawn either still open (redone) or already settled
+   * by its invoke (live). Which one is decided inside the crashed child; both are correct.
+   */
+  const LANE_CLOSED: Readonly<Record<string, readonly string[]>> = {
+    'kill.after-intent': ['proc.spawn:redone'], 'kill.after-cancel': ['proc.spawn:redone'],
+    'kill.after-quiesced': ['proc.spawn:live', 'proc.spawn:redone'], 'kill.after-done': ['proc.spawn:live', 'proc.spawn:redone'],
+  };
 
   for (const cell of cells) {
     test(`preemption crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
@@ -620,8 +630,11 @@ describe(`matrix row ${PREEMPT}`, () => {
         assert.ok(lane?.kind === 'proc.spawn' && lane.expect.subject.purpose === 'lane' && lane.expect.subject.set === 'suite', JSON.stringify(lane));
         assert.deepEqual(lane.parent.type === 'stage' ? [lane.parent.unit, lane.parent.stage] : [], ['u1', 'candidate'], 'the lane is u1\'s candidate\'s');
         assert.ok(KILL_CLOSED[cell.label]!.includes(closedAs(r.journal.view, [kill])[0]!), `${cell.label}: ${closedAs(r.journal.view, [kill])[0]}`);
-        assert.deepEqual(closedAs(r.journal.view, open.filter((i) => i.kind !== 'proc.kill')), ['proc.spawn:redone', 'command.apply:reconciled', 'revision.commit:aborted'],
-          'the lane settled by recovery, the apply reconciled, its revision (waiting for the slot) aborted and re-evaluated');
+        const laneClosed = closedAs(r.journal.view, [lane])[0]!;
+        assert.ok(LANE_CLOSED[cell.label]!.includes(laneClosed), `${cell.label}: ${laneClosed}`);
+        assert.equal(open.some((i) => i.op === lane.op), laneClosed === 'proc.spawn:redone', 'the lane is redone exactly when the crash left it open');
+        assert.deepEqual(closedAs(r.journal.view, open.filter((i) => i.kind !== 'proc.kill' && i.op !== lane.op)), ['command.apply:reconciled', 'revision.commit:aborted'],
+          'the apply reconciled, its revision (waiting for the slot) aborted and re-evaluated');
         const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
         const seqOf = (p: (f: Fact) => boolean): number => events.find((e) => e.type === 'fact' && p(e.fact))?.seq ?? Infinity;
         assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => f.kind === 'stage-outcome' && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
