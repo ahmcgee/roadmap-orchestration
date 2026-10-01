@@ -47,7 +47,7 @@
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
 // reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
 // run takes none of them (the fake story takes the literal partial bundle); each has a fake integrated test.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
 import { type ArcId, type CommandId, type NeedsUserId, type OpId, type UnitId, arcId, invocationDirName, invocationId } from '../../src/core/ids.ts';
@@ -64,7 +64,7 @@ import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
-import { readCommand } from '../../src/commands/queue.ts';
+import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { MODEL_IDS } from '../../src/routing/types.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
@@ -334,14 +334,30 @@ function divergenceDigestBound(run: Run): Verdict {
   }
   const acks = run.report.devices.acks;
   if (digests.length === 0) problems.push('no digest was raised');
+  // A digest raised in the arc's last turns may be acknowledged only after the arc completed: the driver's ack is then
+  // a command no executor is left to apply (`afterCompletion`). Its ids stay uncovered, and that is the only way they may.
+  const late = new Set<string>();
   for (const g of digests) {
     if (!acks.some((a) => a.needsUser === g.needsUser && a.reason === 'divergence-digest')) problems.push(`the driver did not acknowledge the digest ${g.needsUser}`);
-    else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) problems.push(`${g.needsUser} is not acknowledged`);
+    else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) {
+      if (afterCompletion(run, g.needsUser)) for (const id of g.ids) late.add(id);
+      else problems.push(`${g.needsUser} is not acknowledged`);
+    }
   }
-  const uncovered = run.report.status.divergences.map((d) => d.id);
+  const uncovered = run.report.status.divergences.map((d) => d.id).filter((id) => !late.has(id));
   if (uncovered.length > 0) problems.push(`uncovered divergences ${JSON.stringify(uncovered)}`);
   if (factsOf(run, 'divergence').length === 0) problems.push('no divergence recorded');
-  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; each acknowledged by the driver`);
+  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; each acknowledged by the driver${late.size > 0 ? ` (${[...late].join(', ')} after completion)` : ''}`);
+}
+
+/** The driver's ack of `needsUser` was queued after `arc-completed`: no executor ran to apply it. */
+function afterCompletion(run: Run, needsUser: string): boolean {
+  const done = run.events.findLast((e) => e.type === 'fact' && e.fact.kind === 'arc-completed');
+  if (done === undefined) return false;
+  const ack = run.report.devices.acks.find((a) => a.needsUser === needsUser);
+  if (ack === undefined) return false;
+  const file = join(run.runDir, 'commands', 'incoming', `${ack.ack}.json`);
+  return existsSync(file) && statSync(file).mtimeMs > Date.parse(done.at);
 }
 
 function convergenceBound(run: Run): Verdict {
@@ -426,7 +442,10 @@ function completion(run: Run): Verdict {
   const at = refTarget(run.repo, snapshotRef(run.arc));
   const v = at === null ? null : verifySnapshot(run.repo, at);
   if (v === null || v.kind !== 'verified' || v.manifest.highWater < c.seq) problems.push(`the terminal snapshot does not follow arc-completed (seq ${c.seq}): ${v === null ? 'no ref' : v.kind === 'verified' ? `high-water ${v.manifest.highWater}` : v.detail}`);
-  if (!run.report.status.completion.active || run.report.status.completion.unmet.length > 0) problems.push(`status completion not active and met: ${JSON.stringify(run.report.status.completion)}`);
+  // The only command that may be pending is a driver ack queued after the arc completed (see afterCompletion).
+  const lateAcks = new Set(run.report.devices.acks.filter((a) => afterCompletion(run, a.needsUser)).map((a) => a.ack));
+  const unmet = run.report.status.completion.unmet.filter((u) => u !== 'pending-commands' || !pendingAre(run, lateAcks));
+  if (!run.report.status.completion.active || unmet.length > 0) problems.push(`status completion not active and met: ${JSON.stringify(run.report.status.completion)}`);
   return verdict(problems, `arc-completed at seq ${c.seq} on ${c.head}, rev ${c.planRev}; terminal snapshot verified`);
 }
 
@@ -742,4 +761,9 @@ if (import.meta.main) {
   const list = (xs: readonly string[]): string => (xs.length === 0 ? '(none)' : xs.join(', '));
   process.stdout.write(`${JSON.stringify(result)}\nNOT EXERCISED: ${list(result.notExercised)}\nCANNOT SHOW: ${list(result.cannotShow)}\n`);
   process.exitCode = result.pass ? 0 : 1;
+}
+
+/** Every pending command is one of `ids`. */
+function pendingAre(run: Run, ids: ReadonlySet<string>): boolean {
+  return pendingCommandIds(run.runDir).every((id) => ids.has(id));
 }
