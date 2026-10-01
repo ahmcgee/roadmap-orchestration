@@ -24,6 +24,12 @@ audit the merged history, and a checkpoint that acts through revisions and recor
 target as a divergence. `executor/evals/m3/setup.ts <dir>` writes a worked holistic input. An arc without
 `holistic` runs as before.
 
+The vision comes from the `vision` skill, never from you alone. Before writing a holistic arc's plan, the
+vision must be confirmed: `vision.md` marked confirmed, and its sha256 the one in `vision.json`'s
+`confirmation.ref`. If it is not, run the `vision` skill first. Choose `holistic.advances`, the slice of the
+vision this arc moves toward, with the owner. When an arc completes, offer the owner a calibration (`vision`)
+before the next plan.
+
 ## Branches and refs
 
 You create one branch before `start`. The executor creates every other ref.
