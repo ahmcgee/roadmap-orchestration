@@ -2,7 +2,7 @@
 // arcs: real git, real processes, the fake claude answering lens and checkpoint calls keyed by job, fake witness lanes.
 // Named tests: bundle.stale, bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
 // noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
-// bundle.withdrawn-cite-invalid (H16), bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
+// bundle.withdrawn-cite-invalid (H16), bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
 // ckpt.design-park-respec-first (OR-Q1), and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
@@ -31,6 +31,7 @@ import { BUNDLE_ACTIVATE, CHECKPOINT_JOB, crashCells } from './matrix.ts';
 import {
   type Wired, admitOp, applyPlanEdit, applyVision, checkpointArc, checkpointContext, completedAudit, factsOfKind, limitsOp, visionLenses,
 } from './fixtures/checkpoint-common.ts';
+import { mapped } from './fixtures/audit-common.ts';
 import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, codexStep, contextFor } from './fixtures/unit-common.ts';
@@ -66,7 +67,7 @@ describe('the checkpoint and its bundle', () => {
       assert.deepEqual(decisions(r), [['ckpt-1', 'no-op']]);
       const inputs = factsOfKind(r, 'checkpoint-inputs')[0]!;
       assert.equal(inputs.generation, 1);
-      assert.deepEqual([...quiescentGenerations(r.journal.view.holistic(), inputs.visionSha256)], [1]);
+      assert.deepEqual([...quiescentGenerations(r.journal.view, inputs.visionSha256)], [1]);
       const call = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-1')!;
       assert.ok(call.stdin.startsWith('<vision>'), 'the vision first');
       assert.match(call.stdin, /Arithmetic helpers anyone can trust/, 'in full');
@@ -91,7 +92,7 @@ describe('the checkpoint and its bundle', () => {
       const [dv] = factsOfKind(r, 'divergence');
       assert.deepEqual([dv!.id, dv!.job, dv!.index, dv!.type, dv!.cites, dv!.compensation.kind], ['D-1', 'ckpt-1', 0, 'interpretation', ['V-1'], 'none']);
       assert.match(dv!.what, /Round half to even/);
-      assert.deepEqual([...quiescentGenerations(r.journal.view.holistic(), factsOfKind(r, 'checkpoint-inputs')[0]!.visionSha256)], [1], 'still quiescent');
+      assert.deepEqual([...quiescentGenerations(r.journal.view, factsOfKind(r, 'checkpoint-inputs')[0]!.visionSha256)], [1], 'still quiescent');
       const [digest] = factsOfKind(r, 'divergence-digest');
       assert.deepEqual(digest!.ids, ['D-1']);
       assert.equal(item(r, digest!.needsUser).blocking, false);
@@ -103,7 +104,7 @@ describe('the checkpoint and its bundle', () => {
   test('bundle.partial (A18): a two-op bundle whose second op is invalid applies neither; the trigger re-evaluates once; a second invalid bundle goes to the owner', T, async () => {
     const d = checkpointArc([...visionLenses('audit-1'), checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid())]);
     const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
+    const { ctx, w } = checkpointContext(r);
     try {
       await completedAudit(r, ctx);
       const rev = r.journal.view.planApplied()!.rev;
@@ -119,6 +120,11 @@ describe('the checkpoint and its bundle', () => {
       assert.deepEqual([n.blocking, n.options], [false, []], 'non-blocking, and nothing to apply as proposed');
       assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:invalid'], ['ckpt-2', 'requested']]);
       assert.equal(r.journal.view.planApplied()!.rev, rev);
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+      const vision = factsOfKind(r, 'checkpoint-inputs')[0]!.visionSha256;
+      assert.deepEqual([...quiescentGenerations(r.journal.view, vision)], [], 'an unanswered request holds its generation open');
+      await ack(w, r, second.decision.needsUser);
+      assert.deepEqual([...quiescentGenerations(r.journal.view, vision)], [1], 'answered without apply: the trigger\'s decision ends, the generation is quiescent');
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
     } finally {
       r.journal.close();
@@ -250,7 +256,7 @@ describe('the activation checks', () => {
   test('bundle.nested-owner-only (H10): an admit whose lane runs a program no lane in force runs and passes a new env prerequisite raises one blocking owner request; nothing applies', T, async () => {
     const d = checkpointArc(visionLenses('audit-1'));
     const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
+    const { ctx, w } = checkpointContext(r);
     try {
       const lane = { id: 'py', argv: ['python3', 'check.py'], cwd: '.', env: { set: {}, pass: ['PATH', 'SECRET_TOKEN'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
       appendSteps(d, [checkpointStep('ckpt-1', bundle([limitsOp('retries', 2), admitOp(d, 'u2', [lane])]))]);
@@ -264,6 +270,10 @@ describe('the activation checks', () => {
       assert.match(n.summary, /\[env-prerequisite\] lane py passes SECRET_TOKEN/);
       assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied, the valid limits op included');
       assert.deepEqual(factsOfKind(r, 'divergence'), []);
+      const vision = factsOfKind(r, 'checkpoint-inputs')[0]!.visionSha256;
+      await ack(w, r, out.decision.needsUser);
+      assert.deepEqual([...quiescentGenerations(r.journal.view, vision)], [1], 'the owner answered: the generation is quiescent');
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
     } finally {
       r.journal.close();
     }
@@ -281,6 +291,25 @@ describe('the activation checks', () => {
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /cites V-2, which is withdrawn/);
       assert.equal(planLimits(r), null);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.admit-widens-obligations (lead ruling, paid M3 run 5): a checkpoint admit whose spec omits an obligation the mapping selects for its scope applies, its declaration completed by code', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'), { units: [{ id: 'u1', obligations: ['I-1'] }], mapping: mapped(['I-1']) });
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const op = admitOp(d, 'u2') as Record<string, JsonValue>;
+      const { obligations: _declared, ...spec } = JSON.parse(op['spec'] as string) as Record<string, JsonValue>;
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ ...op, spec: JSON.stringify(spec) }]))]);
+      await completedAudit(r, ctx);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const sha = r.journal.view.planApplied()!.specs[unitId('u2')]!;
+      const kept = JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${sha}.spec.json`), 'utf8')) as { obligations?: readonly string[] };
+      assert.deepEqual(kept.obligations, ['I-1'], 'declared ∪ mapping-selected');
     } finally {
       r.journal.close();
     }

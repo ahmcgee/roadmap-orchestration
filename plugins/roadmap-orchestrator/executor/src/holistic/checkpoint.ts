@@ -11,7 +11,8 @@
 //      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `invalid`: once, the second goes to the owner), or its
 //      latest job's bundle request was acknowledged `apply` (the next job enacts that bundle: no call, the brakes and
-//      draining skipped, staleness and the rest checked as ever). A due job is skipped, writing nothing, while the
+//      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
+//      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
 //      checkpoint seat's backend is parked or the arc is paused or stopped.
 //   2. Before the capture: for an audit's trigger, its cited P1s re-witnessed on the head (B5's `rewitnessP1s`, the
 //      race of §2.5); after an evidence rejection, the lanes of the observations it cited re-witnessed on the head.

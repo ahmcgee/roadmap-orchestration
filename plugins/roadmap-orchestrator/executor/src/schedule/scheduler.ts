@@ -485,7 +485,7 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   const g = Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((x) => x.inputs.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
-  if (g > 0 && !quiescentGenerations(fold, vision).has(g)) out.add('generation-not-quiescent');
+  if (g > 0 && !quiescentGenerations(view, vision).has(g)) out.add('generation-not-quiescent');
   if (closeOutState(h, head) === 'due') out.add('close-out');
   if (obligationsOn(ctx, head, h.laneEnv) !== 'discharged') out.add('obligations-not-discharged');
   return COMPLETION_BLOCKERS.filter((b) => out.has(b));

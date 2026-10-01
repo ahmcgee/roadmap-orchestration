@@ -14,8 +14,8 @@
 //                    `convergence-bound` is raised (`raiseBound`)
 //   open brake       a raised `convergence-bound` or `convergence-identity` item not yet acknowledged: while one is
 //                    open, every bundle becomes a `bundle-request` (A9)
-//   quiescence       a generation whose checkpoint decided `no-op` under the vision in force (`quiescentGenerations`;
-//                    a vision revision reopens it, H3)
+//   quiescence       a generation whose checkpoint decided `no-op` under the vision in force, or whose request the
+//                    owner answered without `apply` (`quiescentGenerations`; a vision revision reopens it, H3)
 import type { FindingId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
@@ -148,9 +148,18 @@ export function raiseBound(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>,
 }
 
 /**
- * The generations quiescent under the vision in force (`visionSha256`): each whose checkpoint decided `no-op` under that
- * vision. A vision revision since reopens them (H3).
+ * The generations quiescent under the vision in force (`visionSha256`): each with a checkpoint, captured under that
+ * vision, that decided `no-op`, or whose request (`bundle-request` or `owner-request`) the owner answered without
+ * `apply`: a declined or acknowledged request ends that trigger's decision, nothing applied, the findings it concerned
+ * as they are. An unanswered request waits on its open item; one answered `apply` is enacted by the trigger's next job.
+ * A vision revision since reopens them all (H3).
  */
-export function quiescentGenerations(fold: HolisticFold, visionSha256: Sha256Hex): ReadonlySet<number> {
-  return new Set(fold.checkpoints.filter((c) => c.decided?.kind === 'no-op' && c.inputs.visionSha256 === visionSha256).map((c) => c.inputs.generation));
+export function quiescentGenerations(view: JournalView, visionSha256: Sha256Hex): ReadonlySet<number> {
+  const settled = (d: HolisticFold['checkpoints'][number]['decided']): boolean => {
+    if (d?.kind === 'no-op') return true;
+    if (d?.kind !== 'requested') return false;
+    const ack = view.ackOf(d.needsUser as NeedsUserId);
+    return ack !== null && ack.choice !== 'apply';
+  };
+  return new Set(view.holistic().checkpoints.filter((c) => c.inputs.visionSha256 === visionSha256 && settled(c.decided)).map((c) => c.inputs.generation));
 }

@@ -1879,7 +1879,16 @@ src/pipeline/dispatch.ts `callArcRole`):
     not raised as well).
 13. **The admit template** (B4 carry-forward) is part of the rendered `plan` input: the spec in force of the plan's
     first unit, pretty JSON. No prompt module changed.
-14. **Quiescence** (`quiescentGenerations`): a generation whose checkpoint decided `no-op` under the vision in force.
+14. **Quiescence** (`quiescentGenerations(view, visionSha256)`): a generation with a checkpoint, captured under the vision
+    in force, that decided `no-op`, or whose request (`bundle-request` or `owner-request`) the owner answered without
+    `apply` (paid M3 run 5): a declined or acknowledged request ends that trigger's decision, nothing applied, the
+    findings it concerned as they are, and the trigger is not due again. An unanswered request holds the generation open
+    on its open item; one answered `apply` is enacted by the trigger's next job (item 9).
+15. **Spec obligations of a bundle-authored spec** (lead ruling, paid M3 run 5): the spec of an `admit`, a `reenter` and a
+    `patch-spec` is completed by code before the apply core classifies it: `obligations` = declared ∪ every non-exempt
+    obligation (in the bundle's resulting obligations) of a mapping pattern that may overlap the unit's plan or spec scope
+    (the classifier's prefix-conservative `mayOverlap`), ascending; left absent when that is empty. The model never
+    reproduces the mapping. The classifier still refuses a narrower declaration in an architect's spec (DESIGN §2.3).
 
 **Choices made in M3 B9** (`status`, `watch`, the meter; src/{status,watch,meter}.ts):
 

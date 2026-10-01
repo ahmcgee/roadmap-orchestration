@@ -3,7 +3,7 @@
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.declined-request-quiescent, complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
 // sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ import { holisticInForce } from '../src/pipeline/stages.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer, checkpointStep, lensStep } from './helpers/holistic.ts';
+import { checkpointAnswer, checkpointStep, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -117,6 +117,34 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     }
   });
 
+  test('sched.declined-request-quiescent (paid M3 run 5): an invalid-twice bundle request acknowledged without `apply` ends its trigger\'s decision; the generation is quiescent and close-out and completion follow', T, async () => {
+    const d = checkpointArc([
+      ...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'),
+      checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid()),
+    ]);
+    const r = contextFor(d);
+    const s = startHolistic(r);
+    let ended = false;
+    try {
+      let id: NeedsUserId | null = null;
+      await until(() => (id = itemOf(r, 'bundle-request')) !== null, WAIT_MS, 'the bundle request of the second invalid bundle');
+      assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'rejected'], ['ckpt-2', 'requested']]);
+      assert.ok(completionBlockers(s.h, { blocking: 0, pending: 0 }).includes('generation-not-quiescent'), 'the unanswered request holds the generation open');
+      submit(r, { type: 'ack', needsUser: id!, choice: null });
+      const end = await s.end;
+      ended = true;
+      assert.deepEqual(end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+      const g = factsOf(r, 'checkpoint-inputs').at(-1)!.generation;
+      assert.ok(quiescentGenerations(r.journal.view, r.journal.view.planApplied()!.visionSha256!).has(g));
+      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2, 'no further checkpoint: the declined request settled its trigger');
+      assert.equal(factsOf(r, 'docs-published').at(-1)?.source, 'close-out');
+      assert.equal(factsOf(r, 'arc-completed').length, 1);
+    } finally {
+      if (ended) r.journal.close();
+      else await stopAndClose(r, s);
+    }
+  });
+
   test('complete.reopen-invalidates (A20): an admitting apply after completion invalidates it; the arc runs the new unit and completes again with a new fact', T, async () => {
     const d = completingArc();
     const r = contextFor(d);
@@ -152,7 +180,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       await applyVision(r, wired(r), [{ id: 'V-2', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
       const visionNow = r.journal.view.planApplied()!.visionSha256!;
       assert.notEqual(visionNow, g1.visionSha256);
-      assert.deepEqual([...quiescentGenerations(r.journal.view.holistic(), visionNow)], [], 'generation 1 is quiescent only under the old vision');
+      assert.deepEqual([...quiescentGenerations(r.journal.view, visionNow)], [], 'generation 1 is quiescent only under the old vision');
       const blockers = completionBlockers(contextsOf(r), { blocking: 0, pending: 0 });
       for (const b of ['audit-pending', 'audit-owed', 'generation-not-quiescent'] as const) assert.ok(blockers.includes(b), `${b} in ${blockers.join(', ')}`);
       assert.equal(r.journal.view.holistic().completion?.active, false);
@@ -161,7 +189,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual([a2!.lenses, a2!.triggers.map((t) => t.type)], [['vision'], ['drift']]);
       const g2 = factsOf(r, 'checkpoint-inputs')[1]!;
       assert.deepEqual([g2.generation, g2.visionSha256], [2, visionNow]);
-      assert.deepEqual([...quiescentGenerations(r.journal.view.holistic(), visionNow)], [2]);
+      assert.deepEqual([...quiescentGenerations(r.journal.view, visionNow)], [2]);
       const completions = factsOf(r, 'arc-completed');
       assert.equal(completions.length, 2);
       assert.equal(completions[1]!.planRev, r.journal.view.planApplied()!.rev);

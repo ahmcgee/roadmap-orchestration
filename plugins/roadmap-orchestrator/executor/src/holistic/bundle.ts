@@ -49,7 +49,7 @@ import {
   type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RulingId, type UnitId,
   parseInvocationId, specRev,
 } from '../core/ids.ts';
-import type { LaneDef, NeedsUserContent, NeedsUserReason, SpecM1 } from '../core/records.ts';
+import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import type { CheckpointState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
@@ -60,6 +60,7 @@ import {
 } from '../input/inforce.ts';
 import { type PlanM1, parsePlan } from '../input/plan.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
+import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { laneEnvId, observations } from '../pipeline/lanes.ts';
 import { rulingContextAt } from '../pipeline/publish.ts';
@@ -74,7 +75,7 @@ import { type DivergenceBase, appendDivergences, interpretationDivergences, opDi
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
 import { keyOf, reuse } from './observe.ts';
 import {
-  type BundleRejection, type ObligationDef, type OwnerOnlyClass, type RevisionVector, type RulingSidecar, laneRevOf, observationKeyText, parseObligations,
+  type BundleRejection, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector, type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations,
   parseRulingSidecar,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
@@ -268,11 +269,20 @@ function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-
   };
 }
 
+/** `declared` ∪ every non-exempt obligation a mapping pattern that may overlap `scope` names (prefix-conservative), ascending. */
+function mappedObligations(obligations: Obligations, scope: readonly string[], declared: readonly ObligationId[]): readonly ObligationId[] {
+  const live = new Set(obligations.obligations.filter((o) => !isExempt(o)).map((o) => o.id));
+  const mapped = obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations).filter((id) => live.has(id));
+  return [...new Set([...declared, ...mapped])].sort();
+}
+
 /** The revision in force with every op applied, or the reasons it cannot be built; nothing is written. */
 function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, revision: RevisionInForce, current: InputFiles): Proposal {
   const reasons: string[] = [];
   const touched: Touched = { plan: false, specs: new Set(), obligations: false, ledger: false, contracts: new Set() };
   const lanes: LaneDef[] = [];
+  /** The units whose spec this bundle writes (admit, patch-spec, reenter): their `obligations` are code's to complete. */
+  const authored = new Set<UnitId>();
   const plan = JSON.parse(current.planBytes.toString('utf8')) as RawPlan;
   const specs = new Map<UnitId, InputFile>(current.specs);
   const obligationsRaw = current.obligations?.bytes == null ? null : JSON.parse(current.obligations.bytes.toString('utf8')) as RawObligations;
@@ -323,6 +333,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         if (spec.unit !== op.unit.id || spec.rev !== 1) reasons.push(`${at}: its spec names unit ${spec.unit} rev ${spec.rev}, not ${op.unit.id} rev 1`);
         plan.units.push({ id: op.unit.id, spec: `${op.unit.id}.json`, risk: op.unit.risk, scope: op.unit.scope, resources: [], after: op.unit.after, origin: op.unit.origin });
         specs.set(op.unit.id, { path: specPath(op.unit.id), bytes: specBytes(spec) });
+        authored.add(op.unit.id);
         lanes.push(...spec.lanes);
         touched.plan = true;
         return;
@@ -342,6 +353,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         }
         for (const p of op.patch) if ((p.op === 'add' || p.op === 'replace') && p.section === 'lanes') lanes.push(p.item as LaneDef);
         touched.specs.add(op.unit);
+        authored.add(op.unit);
         return;
       }
       case 'reenter': {
@@ -361,6 +373,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
           reenters: { unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }) },
         });
         specs.set(op.unit, { path: specPath(op.unit), bytes: specBytes({ ...spec, unit: op.unit, rev: specRev(1) }) });
+        authored.add(op.unit);
         touched.plan = true;
         touched.specs.add(op.reenters);
         return;
@@ -478,10 +491,11 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     reasons.push(`the plan with the ops applied does not parse: ${error.message}`);
   }
   let obligations: InputFile | null = current.obligations;
+  let obligationsAfter = obligationsNow;
   if (touched.obligations && current.obligations !== null && obligationsRaw !== null) {
     const bytes = jsonBytes(obligationsRaw);
     try {
-      parseObligations(JSON.parse(bytes.toString('utf8')));
+      obligationsAfter = parseObligations(JSON.parse(bytes.toString('utf8')));
       obligations = { path: current.obligations.path, bytes };
     } catch (error) {
       if (!(error instanceof SchemaError)) throw error;
@@ -489,6 +503,20 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     }
   }
   if (parsed === null || reasons.length > 0) return { files: current, landing, touched, lanes, outsidePaths, reasons };
+
+  // Lead ruling (paid M3 run 5): a spec the bundle authors declares every obligation the impact mapping selects for its
+  // scope, filled in by code (declared ∪ mapping-selected, non-exempt); the model never reproduces the mapping. The
+  // classifier's refusal of narrower declarations stays for the architect's specs (DESIGN §2.3).
+  if (obligationsAfter !== null) {
+    for (const id of [...authored].sort()) {
+      const u = parsed.units.find((x) => x.id === id);
+      const f = specs.get(id);
+      if (u === undefined || f?.bytes == null) continue;
+      const spec = parseSpec(f.bytes, f.path);
+      const widened = mappedObligations(obligationsAfter, [...u.scope, ...spec.scope], specObligations(spec));
+      if (widened.length > 0 && canonicalJson(widened) !== canonicalJson(specObligations(spec))) specs.set(id, { path: f.path, bytes: specBytes({ ...spec, obligations: widened }) });
+    }
+  }
 
   const ledgerFile = ledgerPath(ctx.planFile, parsed);
   const sidecarFiles = new Map(sidecars.map((s) => {
