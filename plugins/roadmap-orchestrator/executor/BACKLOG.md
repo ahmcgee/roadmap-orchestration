@@ -96,6 +96,11 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **An unanswered non-blocking request holds its generation open.** A checkpoint bundle request nobody answers keeps
+  that generation non-quiescent, so an otherwise finished arc stays `running` on a visible open item (declined or
+  applied requests settle it). Trigger: an arc idling on an unanswered request; then surface it as `blocked` with the
+  item named, or escalate the last obstacle to blocking.
+
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
   outlasts a working day with nobody noticing.
