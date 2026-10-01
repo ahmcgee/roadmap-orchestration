@@ -38,7 +38,8 @@
 // candidate. A job's crash points pass no unit, so each cell crashes the occurrence the
 // recording attributes to the job (by its log's records: `sampleJob`), and asserts the op it hit: the log at the crash
 // holds exactly the recording's records of that op's owner (the job, the command, or u1 for the preempting kill), the
-// last one the same. The audit, bundle and batch rows then assert the peers' builds open at the crash and adopted once, and the arc's end
+// last one the same (at kill.after-quiesced and kill.after-done, where u1's lane and the kill race, the kill's records
+// exactly and u1's others in the recorded order: LANE_RACE). The audit, bundle and batch rows then assert the peers' builds open at the crash and adopted once, and the arc's end
 // as recorded (outcomes, product, every call once, the holistic records); the preempt row asserts safety (one slot
 // holder at a time, the rule applied once with one docs ff, u1 published once onto the recorded tree).
 import assert from 'node:assert/strict';
@@ -657,6 +658,42 @@ function recoveredByOwner(snap: LogSnapshot): ReadonlyMap<string, readonly strin
 }
 
 /**
+ * The preempt kill's labels after its lane's runner has exited. From there the lane's own invoke and the kill each await
+ * that exit on their own poll: whichever sees it first moves on, so the lane's spawn may settle and the candidate run on
+ * (the lane's evidence, release and checkout removal) to its close, which awaits the kill, before the kill reaches its
+ * crash point, or not. The recording and the crashed run each take either order, so u1's record count at the crash is
+ * not the recording's: assertKillRace holds u1's records to what both orders share.
+ */
+const LANE_RACE: readonly string[] = ['kill.after-quiesced', 'kill.after-done'];
+
+/**
+ * u1's records at a LANE_RACE crash: the preempting kill's records exactly the recording's at the label, the last of
+ * them the one the crash cut short; u1's other records the recording's in order, at least up to the kill's intent and
+ * short of the candidate's outcome (recorded only after its close has awaited the kill).
+ */
+function assertKillRace(rec: LogSnapshot, crash: LogSnapshot, c: Sampled, owned: (snap: LogSnapshot) => readonly Event[]): void {
+  assert.equal(c.owner, `unit:${A}`, `${c.label} is sampled on u1's records`);
+  const isKill = (snap: LogSnapshot, e: Event): boolean => {
+    const i = e.type === 'intent' ? e : e.type === 'done' || e.type === 'abort' ? snap.view.latestIntent(e.op) : null;
+    return i?.kind === 'proc.kill' && i.expect.reason === 'preempt';
+  };
+  const describe = (snap: LogSnapshot, es: readonly Event[]): readonly string[] => es.map((e) => describeRecord(snap, e));
+  const recorded = owned(rec);
+  const atLabel = recorded.slice(0, c.ownerRecords);
+  const mine = owned(crash);
+  const kills = mine.filter((e) => isKill(crash, e));
+  assert.deepEqual(describe(crash, kills), describe(rec, atLabel.filter((e) => isKill(rec, e))), `the preempting kill's records at the crash are the recording's at ${c.label}`);
+  assert.equal(describeRecord(crash, kills.at(-1)!), describeRecord(rec, atLabel.filter((e) => isKill(rec, e)).at(-1)!), 'the kill\'s last record at the crash is the recording\'s');
+  const rest = mine.filter((e) => !isKill(crash, e));
+  const recRest = recorded.filter((e) => !isKill(rec, e));
+  assert.deepEqual(describe(crash, rest), describe(rec, recRest.slice(0, rest.length)), 'u1\'s other records at the crash are the recording\'s, in order');
+  const killAt = recorded.findIndex((e) => isKill(rec, e));
+  assert.ok(rest.length >= recorded.slice(0, killAt).filter((e) => !isKill(rec, e)).length, 'u1\'s records up to the kill\'s intent are all at the crash');
+  const outcome = recRest.findIndex((e) => e.seq > recorded[killAt]!.seq && e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'candidate');
+  assert.ok(outcome >= 0 && rest.length <= outcome, `u1's candidate outcome is not at the crash: its close awaits the kill (${rest.length} of u1's other records, the outcome is the ${outcome + 1}th)`);
+}
+
+/**
  * One job row cell: the scenario crashed at the sampled occurrence (no unit selector: the recording attributed it to
  * the job), then the op it hit (the owner's records at the crash), the peers at the crash, and the end.
  */
@@ -673,8 +710,11 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   // The op the crash hit: its owner's records at the crash are the recording's up to it.
   const owned = (snap: LogSnapshot) => snap.events.filter((e) => ownerOf(snap.view, e) === c.owner);
   const mine = owned(crash);
-  assert.equal(mine.length, c.ownerRecords, `the log at the crash holds ${c.ownerRecords} records of ${c.owner}, as the recording had at ${c.label}#${c.occurrence} (${row})`);
-  if (c.ownerRecords > 0) assert.equal(describeRecord(crash, mine.at(-1)!), describeRecord(ref.snap, owned(ref.snap)[c.ownerRecords - 1]!), `${c.owner}'s last record at the crash is the recording's`);
+  if (row === 'preempt' && LANE_RACE.includes(c.label)) assertKillRace(ref.snap, crash, c, owned);
+  else {
+    assert.equal(mine.length, c.ownerRecords, `the log at the crash holds ${c.ownerRecords} records of ${c.owner}, as the recording had at ${c.label}#${c.occurrence} (${row})`);
+    if (c.ownerRecords > 0) assert.equal(describeRecord(crash, mine.at(-1)!), describeRecord(ref.snap, owned(ref.snap)[c.ownerRecords - 1]!), `${c.owner}'s last record at the crash is the recording's`);
+  }
 
   // The peers at the crash.
   const crashSeq = crash.events.at(-1)!.seq;
