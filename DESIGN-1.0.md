@@ -862,7 +862,13 @@ ladder with its own runnable fixture:
   records a divergence whose digest the driver acknowledges; `convergence-bound` fires and is acknowledged; the
   repair merges and resolves F-1; a drift-only audit runs the vision lens and the checkpoint no-ops; the final
   audit runs both lenses of L and the checkpoint no-ops; the close-out publication is docs-only and covers its
-  own edge; `arc-completed`, then the terminal snapshot. Not exercised in the paid run (reported): `rule`,
+  own edge; `arc-completed`, then the terminal snapshot. Honest judges may refuse the regression, so the paid
+  story is branch-tolerant and records which branch it took: **R (regressed)**, the story above, or **P
+  (prevented)**, where plan-check or the gate stops `tidy` upstream and a checkpoint disposes of it (a cut, a
+  respec, a repair or replacement unit) with its divergences recorded. Both branches run to the end, and both
+  must show the stale-whole rejection, the acknowledged digest and `convergence-bound`, every admitted unit
+  merged with its obligation held, a drift audit, a final audit, close-out and completion. The literal merged
+  regression → P1 → repair path stays asserted by the `evals-m3` fake. Not exercised in the paid run (reported): `rule`,
   `reverse`, `steer`, `merge-in`, reproduction, batch repair, the per-identity bound, `owner-request`,
   `draining`, real `go`, and the literal partial bundle.
 - **M4 Skill text and acceptance.** SKILL.md (Phase 0 with obligation extraction, which is in-session work;

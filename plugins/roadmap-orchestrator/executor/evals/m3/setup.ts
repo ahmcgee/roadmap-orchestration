@@ -15,7 +15,7 @@
 //             something to change) and config.json (empty routing)
 //   input/    plan.json (holistic: vision, obligations, audit every 2 with L = {invariants, vision};
 //             limits.convergenceK 1), vision.json, obligations.json, rulings.md and one spec per unit
-//   barriers/ empty: the money lane writes `audit-1.money.reached` here, the driver `.release`
+//   barriers/ empty: in branch R the money lane writes `money.reached` here, the driver `money.release`
 //
 // The vision (plan "Fixture evals/m3/"): V-1 purpose "bookkeepers reconcile a month in one command", V-2
 // non-negotiable "money is never silently mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input".
@@ -23,7 +23,8 @@
 //   I-1 future, serves V-1, delivered by `parse` and `report`: `node src/cli.js reconcile 2026-09 <file>` prints
 //       the month's balance (fails at the baseline: there is no reconcile command)
 //   I-2 must-hold, serves V-2: `format` prints amounts rounded to the cent half to even, `format 0.125` prints
-//       0.12 (held at the baseline; lane `money`, which waits at the driver's barrier in audit-1's run only)
+//       0.12 (held at the baseline; lane `money`, which waits at the driver's barrier in the first audit that sees the
+//       regression, branch R only)
 //   I-3 must-hold, serves V-3: unknown commands exit 2
 //
 // The regression (lead ruling after paid runs 1 and 2, whose plan-checks read a rounding change in tidy's spec and
@@ -43,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { AUDIT_EVERY, BARRIER_JOB, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, MONTH, RECONCILED, UNITS, layout } from './layout.ts';
+import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, MONTH, RECONCILED, UNITS, layout } from './layout.ts';
 
 export const BARRIER_SCRIPT = fileURLToPath(new URL('./barrier.ts', import.meta.url));
 /** The money lane waits at most this long for the driver (the driver's own run timeout is shorter). */
@@ -215,10 +216,10 @@ const VISION = {
 
 const PASS_PATH = { set: {}, pass: ['PATH'] };
 
-/** An arc lane (node-test reporter) over one journey test; the money lane waits at audit-1's barrier. */
+/** An arc lane (node-test reporter) over one journey test; the money lane goes through the barrier (branch R). */
 function arcLane(l: Layout, id: string, file: string) {
   const test = [process.execPath, '--test', file];
-  const argv = id === MONEY_LANE ? [process.execPath, BARRIER_SCRIPT, l.barriers, BARRIER_JOB, String(BARRIER_TIMEOUT_MS), '--', ...test] : test;
+  const argv = id === MONEY_LANE ? [process.execPath, BARRIER_SCRIPT, l.barriers, String(BARRIER_TIMEOUT_MS), '--', ...test] : test;
   return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test' };
 }
 

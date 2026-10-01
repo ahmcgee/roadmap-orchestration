@@ -7,37 +7,42 @@
 // the fake backends behind PATH shims play the story, the CLI runs through test/fixtures/exec-cli.ts with a host dir
 // inside the fixture; hard timeout 15 min. `claude-only` takes `codex` off PATH as in evals/m1/driver.ts.
 //
-// The forcing devices (plan "Fixture evals/m3/", story steps 1–11), each a durable gate on the log, `roadmap status`
-// or a barrier file, never on timing, and each independent of the others' order. Each fires once (the acks once per
-// item) and is recorded in the report (`devices`), which check.ts reads:
+// The story is branch-tolerant (DESIGN-1.0.md §10 M3, after three paid runs whose judges refused the regression):
+// branch R (regressed: tidy merges, the audit finds I-2's P1, a repair is admitted and merges) or branch P (prevented:
+// tidy is redirected, parked or cut upstream and a checkpoint disposes of it). The driver records the branch the log
+// shows (`devices.branch`) and both run to the end. The forcing devices, each a durable gate on the log, `roadmap
+// status` or a barrier file, never on timing, and each independent of the others' order; each is recorded in the
+// report (`devices`), which check.ts reads:
 //
+//   acks         first at every poll, whatever the branch: every `divergence-digest` and `convergence-bound` item,
+//                acknowledged once each as it opens; every `bundle-request` (a convergence brake, a draining arc, a
+//                re-evaluation) answered as an architect who trusts the checkpoint would: `ack <id> --choice apply`
+//                when the item offers `apply` (the next job of its trigger enacts the bundle), a plain `ack` when it
+//                offers nothing
 //   runOnly      before `start`, the driver creates the run dir and queues `run-only parse tidy`: `report` never
-//                starts before audit A1 waits at its barrier
-//   barrier      once audit-1's run of the money lane (I-2) waits at the barrier (`barriers/audit-1.money.reached`,
-//                barrier.ts), and audit-1 is the cadence audit of tidy's publication S: `run-only parse report tidy`,
-//                so `report` merges at S′ while A1 audits S
+//                starts before the regression's audit (R) or the bundle's drift audit (P)
+//   branch       R once tidy publishes; P once a bundle revision cuts, respecifies or re-enters tidy before it did
+//   barrier      R only: once the first audit to see the regression waits at the money barrier (barrier.ts writes
+//                `barriers/money.reached` with its job id) and it is the cadence audit of tidy's publication S:
+//                `run-only parse report tidy`, so `report` merges at S′ while A1 audits S
 //   release      once `report` is merged: release the barrier. A1 then opens its P1 over I-2 and re-witnesses it on S′
 //   staleApply   once the first `checkpoint-inputs` is in the log, whatever its trigger (an audit, or a design park):
 //                the architect's edit of the plan's `direction` (setup.ts DIRECTION_EDITED) by `roadmap apply`, so
 //                that checkpoint's bundle is stale whole
 //   staleApplied once that apply's receipt is `applied`; under --fake it then releases the fake checkpoint call held at
 //                `fake/ckpt-1.hold` (a real call takes longer than the apply; if not, the run fails, naming it)
-//   acks         every `divergence-digest` and `convergence-bound` item, acknowledged once each as it opens; every
-//                `bundle-request` (a convergence brake, a draining arc, a re-evaluation) answered as an architect who
-//                trusts the checkpoint would: `ack <id> --choice apply` when the item offers `apply` (the next job of its
-//                trigger enacts the bundle), a plain `ack` when it offers nothing (it cannot be applied as proposed).
-//                An `owner-request` (an owner-only act, A16) is never answered: the run stops `device-failed`, naming
-//                the item and its summary
-//   repair       G18: the unit the bundle revision admits (read from its `plan-applied{source: bundle}` change)
-//   admitRepair  once an audit started after that revision (A2, the drift audit): `run-only` the plan units and the
-//                repair, so the repair merges after A2's capture
-//   unlimited    once the repair is merged: `run-only --clear`
+//   added        G18: every unit a bundle revision adds (read from its `plan-applied{source: bundle}` change)
+//   admit        once an audit started after the first bundle revision (the drift audit): `run-only` every plan unit
+//                not cut or superseded and every added unit (re-issued as more are added), so they merge after the
+//                drift audit's capture
+//   unlimited    once every added unit is merged: `run-only --clear`
 //
-// The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger and
-// outcome) as soon as the log leaves the story: the first checkpoint decides anything but `rejected{stale}` or applies
-// its bundle; a bundle revision is anything but the one admit of an origin-`repair` unit; a checkpoint no-ops, or asks
-// the owner with a request that cannot be applied, before the repair is admitted; an `owner-request` opens; audit-1 is not the cadence audit of tidy's publication, or ends without a
-// witness P1 over I-2; the stale apply is rejected. Finding ids are never assumed: the P1 is found by its content.
+// The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger, outcome or
+// item) only when it is off the story in either branch: the first checkpoint decides anything but `rejected{stale}`
+// or applies its bundle; a checkpoint disposes of nothing before any bundle applied (a no-op, or a request with
+// nothing to apply); an `owner-request` opens (an owner-only act, A16, which the driver never answers); in branch R,
+// the barrier's audit is not the cadence audit of S, or ends without a witness P1 over I-2; the stale apply is
+// rejected. A stall ends at the hard timeout. Finding ids are never assumed: the P1 is found by its content.
 // As in M1 and M2, a run parked on a blocking needs-user is stopped (`parked-stop`), and the hard timeout stops,
 // then SIGKILLs. The driver refuses a fixture dir that already holds a report or a run dir: a fixture is set up and
 // run once.
@@ -62,7 +67,7 @@ import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import type { BundleOutcome, CheckpointTrigger } from '../../src/holistic/types.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { BARRIER_JOB, FAKE_CKPT_HOLD, FIRST, type Layout, UNITS, barrierFile, layout } from './layout.ts';
+import { FAKE_CKPT_HOLD, FIRST, type Layout, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
 import { type StoryName, storyName, storySteps } from './scenario.ts';
 import { DIRECTION_EDITED, json } from './setup.ts';
 
@@ -82,13 +87,14 @@ export type Ready = Readonly<{ kind: 'ready'; generation: number; supervisor: nu
 /** The forcing devices as the driver applied them, in order; null until each fired. */
 export type Devices = {
   runOnly: string | null;
+  branch: { branch: StoryBranch; why: string; at: string } | null;
   barrier: { at: string; audit: string; runOnly: string } | null;
   release: { at: string } | null;
   staleApply: { command: string; checkpoint: string; trigger: string; seq: number } | null;
   staleApplied: { at: string } | null;
   acks: { needsUser: string; reason: string; choice: string | null; ack: string }[];
-  repair: { unit: string; job: string; rev: number; seq: number } | null;
-  admitRepair: { runOnly: string; audit: string } | null;
+  added: { unit: string; job: string; rev: number; seq: number }[];
+  admit: { runOnly: string; audit: string; units: readonly string[] } | null;
   unlimited: string | null;
   failed: string | null;
 };
@@ -231,6 +237,10 @@ const merged = (s: Status, unit: string): boolean => s.units.find((u) => u.unit 
 const now = (): string => new Date().toISOString();
 /** The items the driver acknowledges whenever they are open (story steps 5 and 6, and the bundle requests). */
 const ACKED_REASONS: readonly string[] = ['divergence-digest', 'convergence-bound', 'bundle-request'];
+/** The unit whose change regresses I-2 in branch R, and which branch P stops upstream. */
+const TIDY = 'tidy';
+/** The changes by which a bundle revision disposes of tidy (branch P). */
+const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
 /** A checkpoint trigger, as the device messages name it. */
 const triggerText = (t: CheckpointTrigger): string => (t.type === 'audit' ? `audit ${t.job}` : `park of ${t.unit} at seq ${t.seq}`);
@@ -242,16 +252,9 @@ function editDirection(l: Layout): void {
   writeFileSync(l.plan, json({ ...plan, direction: DIRECTION_EDITED }));
 }
 
-/** The origin a revision's kept plan gives `unit`. */
-function originIn(l: Layout, planSha256: string, unit: string): string | undefined {
-  const plan = JSON.parse(readFileSync(join(l.runDir, 'inputs', `${planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string }[] };
-  const u = plan.units.find((x) => x.id === unit);
-  return u === undefined ? undefined : u.origin ?? 'planned';
-}
-
 /** The integration head tidy's publication made, or null before it published. */
 function tidyHead(events: readonly Event[]): string | null {
-  const ff = events.find((e) => e.type === 'intent' && e.kind === 'integration.ff' && e.parent.type === 'stage' && e.parent.unit === 'tidy');
+  const ff = events.find((e) => e.type === 'intent' && e.kind === 'integration.ff' && e.parent.type === 'stage' && e.parent.unit === TIDY);
   if (ff === undefined || ff.type !== 'intent' || ff.kind !== 'integration.ff') return null;
   const done = events.some((e) => e.type === 'done' && e.op === ff.op && e.kind === 'integration.ff' && e.outcome.kind === 'published');
   return done ? ff.expect.new : null;
@@ -260,11 +263,13 @@ function tidyHead(events: readonly Event[]): string | null {
 type Poll = Readonly<{ l: Layout; c: Cli; run: readonly string[]; fake: boolean; d: Devices; s: Status; events: readonly Event[] }>;
 
 /**
- * Why the log has left the story, naming the facts it observed (job, trigger, outcome), or null. Checked at every
- * poll, before any device fires.
+ * Why the run is off the story in either branch, naming the facts it observed (job, trigger, outcome, item), or null:
+ * the first checkpoint not rejected stale (or applying its bundle); a checkpoint that disposes of nothing before any
+ * bundle applied (a no-op, or a request with nothing to apply); an open `owner-request`; in branch R, the audit held at
+ * the barrier ending without a witness P1 over I-2.
  */
-function divergence(p: Poll): string | null {
-  const { l, d, events } = p;
+function offStory(p: Poll): string | null {
+  const { l, d, s, events } = p;
   const inputs = factsOf(events, 'checkpoint-inputs');
   const decided = factsOf(events, 'bundle-decided');
   const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');
@@ -282,51 +287,67 @@ function divergence(p: Poll): string | null {
       return `the first checkpoint ${first.job} (${triggerText(first.trigger)}) decided ${outcomeText(firstDecision.outcome)}, not rejected{stale}`;
     }
   }
-  for (const b of bundles) {
-    if (b.source?.type !== 'bundle') continue;
-    const added = b.changes.flatMap((x) => (x.type === 'unit-added' ? [x.unit] : []));
-    const [unit] = added;
-    const origin = unit === undefined ? undefined : originIn(l, b.planSha256, unit);
-    if (added.length !== 1 || b.changes.length !== 1 || origin !== 'repair') {
-      return `the bundle revision ${b.rev} of ${b.source.job} (${triggerOf(b.source.job)}) made ${JSON.stringify(b.changes)}${unit === undefined ? '' : ` (${unit}: origin ${origin})`}, not the one admit of a repair unit`;
-    }
-  }
   if (bundles.length === 0) {
     const applicable = (o: BundleOutcome): boolean => o.kind === 'requested' && (readNeedsUser(absPath(l.runDir), o.needsUser as NeedsUserId)?.options.some((x) => x.id === 'apply') ?? false);
     const settled = decided.find((x) => x.outcome.kind === 'no-op' || (x.outcome.kind === 'requested' && !applicable(x.outcome)));
-    if (settled !== undefined) return `checkpoint ${settled.job} (${triggerOf(settled.job)}) decided ${outcomeText(settled.outcome)} while no repair is admitted: a bundle admitting the repair is required there`;
+    if (settled !== undefined) return `checkpoint ${settled.job} (${triggerOf(settled.job)}) decided ${outcomeText(settled.outcome)} before any bundle applied: it disposes of nothing`;
   }
-  const owner = p.s.needsUser.find((n) => n.reason === 'owner-request');
+  const owner = s.needsUser.find((n) => n.reason === 'owner-request');
   if (owner !== undefined) return `owner-request ${owner.id} is open (an owner-only act the driver never answers): ${readNeedsUser(absPath(l.runDir), owner.id)?.summary ?? '(no record)'}`;
-  const audit1 = factsOf(events, 'audit-started').find((a) => a.job === BARRIER_JOB);
-  if (d.barrier !== null && audit1 !== undefined) {
-    const ended = factsOf(events, 'audit-ended').find((x) => x.job === BARRIER_JOB);
+  if (d.barrier !== null) {
+    const ended = factsOf(events, 'audit-ended').find((x) => x.job === d.barrier!.audit);
     const p1 = factsOf(events, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
-    if (ended !== undefined && p1 === undefined) return `${BARRIER_JOB} ended ${ended.outcome} with findings ${JSON.stringify(ended.findings)}: no witness P1 over I-2`;
+    if (ended !== undefined && p1 === undefined) return `branch R: ${d.barrier.audit} ended ${ended.outcome} with findings ${JSON.stringify(ended.findings)}: no witness P1 over I-2`;
+  }
+  return null;
+}
+
+/** The branch the log shows, once it shows one: R when tidy published, P when a bundle disposed of tidy unpublished. */
+function branchOf(events: readonly Event[]): Readonly<{ branch: StoryBranch; why: string }> | null {
+  const head = tidyHead(events);
+  if (head !== null) return { branch: 'R', why: `tidy published ${head}` };
+  for (const b of factsOf(events, 'plan-applied')) {
+    if (b.source?.type !== 'bundle') continue;
+    const disposal = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === TIDY);
+    if (disposal !== undefined) return { branch: 'P', why: `${b.source.job}'s revision ${b.rev} made ${disposal.type} of tidy before it published` };
   }
   return null;
 }
 
 /**
- * One poll's worth of devices: fires every device whose condition holds now. Returns a failure reason when the run has
- * left the story or a device's own check fails (the caller stops the run), else null.
+ * One poll's worth of devices: the acks first (they never depend on the branch), then every device whose condition
+ * holds now. Returns a failure reason when the run is off the story or a device's own check fails (the caller stops
+ * the run), else null.
  */
 function fire(p: Poll): string | null {
   const { l, c, run, d, s, events } = p;
-  const failure = divergence(p);
+  for (const item of s.needsUser) {
+    if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
+    const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
+    const choice = item.reason === 'bundle-request' && offered ? 'apply' : null;
+    d.acks.push({ needsUser: item.id, reason: item.reason, choice, ack: submitted(cli(c, ['ack', item.id, ...(choice === null ? [] : ['--choice', choice]), ...run])) });
+  }
+  const failure = offStory(p);
   if (failure !== null) return failure;
+  if (d.branch === null) {
+    const b = branchOf(events);
+    if (b !== null) d.branch = { ...b, at: now() };
+  }
 
-  if (d.barrier === null && existsSync(barrierFile(l, BARRIER_JOB, 'reached'))) {
-    const audit = factsOf(events, 'audit-started').find((a) => a.job === BARRIER_JOB);
+  // Branch R: the first audit to see the regression waits at the money barrier; report merges meanwhile (S′).
+  const reached = barrierFile(l, 'reached');
+  if (d.barrier === null && existsSync(reached)) {
+    const job = readFileSync(reached, 'utf8').trim();
+    const audit = factsOf(events, 'audit-started').find((a) => a.job === job);
     const s1 = tidyHead(events);
-    if (audit === undefined) return `the money lane waits at ${BARRIER_JOB}'s barrier, but the log has no audit-started of ${BARRIER_JOB}`;
+    if (audit === undefined) return `the money lane waits at the barrier for ${job}, but the log has no audit-started of ${job}`;
     if (!audit.triggers.some((t) => t.type === 'cadence') || audit.integrationSha !== s1) {
-      return `${BARRIER_JOB} waits at the money barrier, but it was started by ${JSON.stringify(audit.triggers)} on ${audit.integrationSha}, not the cadence audit of tidy's publication (${s1 ?? 'tidy has not published'})`;
+      return `branch R: ${job} waits at the money barrier, but it was started by ${JSON.stringify(audit.triggers)} on ${audit.integrationSha}, not the cadence audit of tidy's publication (${s1 ?? 'tidy has not published'})`;
     }
-    d.barrier = { at: now(), audit: audit.job, runOnly: submitted(cli(c, ['run-only', ...UNITS, ...run])) };
+    d.barrier = { at: now(), audit: job, runOnly: submitted(cli(c, ['run-only', ...UNITS, ...run])) };
   }
   if (d.barrier !== null && d.release === null && merged(s, 'report')) {
-    writeFileSync(barrierFile(l, BARRIER_JOB, 'release'), '', { flag: 'wx' });
+    writeFileSync(barrierFile(l, 'release'), '', { flag: 'wx' });
     d.release = { at: now() };
   }
 
@@ -344,25 +365,25 @@ function fire(p: Poll): string | null {
     }
   }
 
-  for (const item of s.needsUser) {
-    if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
-    const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
-    const choice = item.reason === 'bundle-request' && offered ? 'apply' : null;
-    d.acks.push({ needsUser: item.id, reason: item.reason, choice, ack: submitted(cli(c, ['ack', item.id, ...(choice === null ? [] : ['--choice', choice]), ...run])) });
+  // G18: every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change.
+  const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+  for (const b of bundles) {
+    for (const x of b.changes) {
+      if (x.type !== 'unit-added' || b.source?.type !== 'bundle' || d.added.some((a) => a.unit === x.unit)) continue;
+      d.added.push({ unit: x.unit, job: b.source.job, rev: b.rev, seq: b.seq });
+    }
   }
-
-  if (d.repair === null) {
-    const bundle = factsOf(events, 'plan-applied').find((f) => f.source?.type === 'bundle');
-    const unit = bundle?.changes.find((x) => x.type === 'unit-added');
-    if (bundle === undefined || bundle.source?.type !== 'bundle' || unit === undefined || unit.type !== 'unit-added') return null;
-    d.repair = { unit: unit.unit, job: bundle.source.job, rev: bundle.rev, seq: bundle.seq };
+  const [firstBundle] = bundles;
+  if (firstBundle === undefined) return null;
+  // Once an audit started after the first bundle revision (the drift audit), every unit still to run may: the plan's
+  // units not cut or superseded, and every added one (re-issued as more are added).
+  const audit = factsOf(events, 'audit-started').find((f) => f.seq > firstBundle.seq);
+  if (audit === undefined) return null;
+  const units = [...new Set([...s.units.filter((u) => u.status !== 'cut' && u.status !== 'superseded').map((u) => u.unit as string), ...d.added.map((a) => a.unit)])].sort();
+  if (d.unlimited === null && (d.admit === null || units.some((u) => !d.admit!.units.includes(u)))) {
+    d.admit = { runOnly: submitted(cli(c, ['run-only', ...units, ...run])), audit: audit.job, units };
   }
-  if (d.admitRepair === null) {
-    const audit = factsOf(events, 'audit-started').find((f) => f.seq > d.repair!.seq);
-    if (audit === undefined) return null;
-    d.admitRepair = { runOnly: submitted(cli(c, ['run-only', ...UNITS, d.repair.unit, ...run])), audit: audit.job };
-  }
-  if (d.unlimited === null && merged(s, d.repair.unit)) d.unlimited = submitted(cli(c, ['run-only', '--clear', ...run]));
+  if (d.admit !== null && d.unlimited === null && d.added.every((a) => merged(s, a.unit))) d.unlimited = submitted(cli(c, ['run-only', '--clear', ...run]));
   return null;
 }
 
@@ -373,7 +394,7 @@ export async function drive(args: Args): Promise<Report> {
   const run = ['--repo', l.repo, '--arc', l.arc];
   const status = (): Status => JSON.parse(cli(c, ['status', ...run])) as Status;
   const devices: Devices = {
-    runOnly: null, barrier: null, release: null, staleApply: null, staleApplied: null, acks: [], repair: null, admitRepair: null, unlimited: null, failed: null,
+    runOnly: null, branch: null, barrier: null, release: null, staleApply: null, staleApplied: null, acks: [], added: [], admit: null, unlimited: null, failed: null,
   };
   const startedAt = new Date();
   const deadline = startedAt.getTime() + limits.runMs;

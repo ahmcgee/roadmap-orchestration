@@ -26,8 +26,8 @@ import { parsePlan } from '../src/input/plan.ts';
 import { loadSpec, parseSpec } from '../src/spec/spec.ts';
 import { BRANCHES, CANNOT_SHOW, type CheckResult } from '../evals/m3/check.ts';
 import type { Report } from '../evals/m3/driver.ts';
-import { AUDIT_EVERY, BARRIER_JOB, CONVERGENCE_K, INTEGRATION, LENSES, MAIN, MONEY_LANE, UNITS, barrierFile, layout } from '../evals/m3/layout.ts';
-import { UNIT_STORY, storySteps } from '../evals/m3/scenario.ts';
+import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, MAIN, MONEY_LANE, UNITS, barrierFile, layout } from '../evals/m3/layout.ts';
+import { type StoryName, UNIT_STORY, storySteps } from '../evals/m3/scenario.ts';
 import { REPAIR_UNIT, repairSpecText } from '../evals/m3/setup.ts';
 import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
@@ -158,17 +158,22 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   // The witness lanes through the shipped reporter: the baseline's verdicts.
   assert.deepEqual(verdicts(o, l.repo), { 'I-1': 'not-held', 'I-2': 'held', 'I-3': 'held' });
 
-  // The barrier: audit-1's lane checkout waits until released; any other checkout passes.
-  const checkout = join(tmpDir('m3-checkouts'), `${BARRIER_JOB}.lanes`);
+  // The barrier (branch R): an audit's lane checkout without the regression passes; with it, the run waits until released.
+  const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes');
   git(l.repo, 'worktree', 'add', '--detach', checkout, MAIN);
+  const clean = runArcLane(o, MONEY_LANE, checkout);
+  assert.equal(clean.run().status, 0, 'no regression: the audit\'s run passes straight through');
+  assert.equal(existsSync(barrierFile(l, 'reached')), false);
+  assert.equal(verdictIn(o, 'I-2', clean.file), 'held', 'the lane reports through the reporter');
+  playBuild('tidy', checkout);
   const money = runArcLane(o, MONEY_LANE, checkout);
   const waiting = runUntilExit(money.cmd, money.args, { env: money.env, cwd: checkout, timeoutMs: 60_000 });
-  for (let i = 0; i < 300 && !existsSync(barrierFile(l, BARRIER_JOB, 'reached')); i++) await sleep(100);
-  assert.ok(existsSync(barrierFile(l, BARRIER_JOB, 'reached')), 'audit-1\'s run waits at the barrier');
-  writeFileSync(barrierFile(l, BARRIER_JOB, 'release'), '');
+  for (let i = 0; i < 300 && !existsSync(barrierFile(l, 'reached')); i++) await sleep(100);
+  assert.equal(readFileSync(barrierFile(l, 'reached'), 'utf8'), 'audit-1\n', 'with tidy\'s regression, the audit\'s run waits at the barrier, naming its job');
+  writeFileSync(barrierFile(l, 'release'), '');
   const released = await waiting;
-  assert.equal(released.code, 0, released.stderr);
-  assert.equal(verdictIn(o, 'I-2', money.file), 'held', 'released, the lane reports through the reporter');
+  assert.equal(released.code, 1, 'released, the lane runs and fails: I-2 is regressed');
+  assert.equal(verdictIn(o, 'I-2', money.file), 'not-held');
 
   // The story's builds: tidy regresses I-2 (and keeps its command lane and I-3 green); the repair restores it.
   const tree = join(tmpDir('m3-story'), 'tree');
@@ -194,49 +199,61 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
 type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Checked }>;
 type Seq<F> = F & { seq: number };
 
-describe('evals-m3: the fake-backed fixture run', () => {
+/** Sets up a fixture and runs the driver on fake `story` to its end; the run is torn down whatever happens. */
+async function runStory(story: StoryName): Promise<Readonly<{ fx: Fixture; events: readonly Event[] }>> {
+  const dir = join(tmpDir('m3-fixture'), 'fx');
+  const setup = await script('setup.ts', [dir]);
+  assert.equal(setup.code, 0, setup.stderr);
+  const l = layout(dir);
+  // The driver ends its run itself; a driver that failed or timed out may leave it going, so it is torn down here.
+  const scope: RunScope = {
+    paths: [dir],
+    stop: async () => {
+      const stop = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), join(l.fake, 'host'), 'stop', '--repo', l.repo, '--arc', l.arc], { env: process.env, timeoutMs: 30_000 });
+      assert.equal(stop.code, 0, `roadmap stop: ${stop.stderr}`);
+    },
+  };
+  track(scope);
+  const driver = await script('driver.ts', [dir, '--profile', 'default', '--fake', story]).finally(() => teardown(scope));
+  const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
+  return { fx: { dir, driver, report, checked: await check(dir) }, events: readJournal(absPath(l.runDir), arcId(l.arc)).events };
+}
+
+/** Every step of the fake scenario was played once, by a call that matched it. */
+function assertEveryStepPlayed(dir: string): void {
+  const scenario = join(layout(dir).fake, 'scenario.json');
+  const calls = readCalls(scenario);
+  const steps = (JSON.parse(readFileSync(scenario, 'utf8')) as ScenarioFile).steps;
+  assert.deepEqual(calls.filter((c) => c.step === null), [], 'no call went unmatched');
+  assert.deepEqual(calls.map((c) => c.step).sort((a, b) => a! - b!), steps.map((_, i) => i), 'every step played once');
+}
+
+describe('evals-m3: the fake-backed fixture run, branch R', () => {
   let fx: Fixture;
   let events: readonly Event[];
   const factsOf = <K extends Fact['kind']>(kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
     events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
 
   before(async () => {
-    const dir = join(tmpDir('m3-fixture'), 'fx');
-    const setup = await script('setup.ts', [dir]);
-    assert.equal(setup.code, 0, setup.stderr);
-    const l = layout(dir);
-    // The driver ends its run itself; a driver that failed or timed out may leave it going, so it is torn down here.
-    const scope: RunScope = {
-      paths: [dir],
-      stop: async () => {
-        const stop = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), join(l.fake, 'host'), 'stop', '--repo', l.repo, '--arc', l.arc], { env: process.env, timeoutMs: 30_000 });
-        assert.equal(stop.code, 0, `roadmap stop: ${stop.stderr}`);
-      },
-    };
-    track(scope);
-    const driver = await script('driver.ts', [dir, '--profile', 'default', '--fake', 'story']).finally(() => teardown(scope));
-    const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
-    fx = { dir, driver, report, checked: await check(dir) };
-    events = readJournal(absPath(l.runDir), arcId(l.arc)).events;
+    ({ fx, events } = await runStory('story'));
   }, T);
 
-  test('evals-m3.fake: every forcing device fired, the arc completed, and every criterion passes', () => {
+  test('evals-m3.fake: branch R; every forcing device fired, the arc completed, and every criterion passes', () => {
     const { driver, report, checked } = fx;
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.equal(report.endedBy, 'exit', JSON.stringify(report.devices));
     const d = report.devices;
     assert.equal(d.failed, null);
     for (const [name, value] of Object.entries(d)) if (name !== 'failed') assert.notEqual(value, null, `device ${name} fired`);
-    assert.equal(d.repair?.unit, REPAIR_UNIT.id);
+    assert.equal(d.branch?.branch, 'R');
+    assert.deepEqual(d.added.map((a) => a.unit), [REPAIR_UNIT.id]);
     assert.deepEqual(report.exit, { kind: 'complete', units: [...UNITS, REPAIR_UNIT.id].map((unit) => ({ unit, result: 'merged' })) });
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
-    assert.equal(checked.result.criteria.length, 24);
+    assert.equal(checked.result.branch, 'R');
+    assert.equal(checked.result.criteria.length, 25);
+    assert.ok(['regression-unselected', 'audit-race', 'repair-resolved'].every((n) => checked.result.criteria.some((c) => c.name === n)), 'branch R\'s own criteria are graded');
     assert.deepEqual(checked.result.notExercised, BRANCHES.filter((b) => b !== 'literal partial bundle'), 'the fake story takes the literal partial bundle, and nothing else the paid run leaves out');
-    const scenario = join(layout(fx.dir).fake, 'scenario.json');
-    const calls = readCalls(scenario);
-    const steps = (JSON.parse(readFileSync(scenario, 'utf8')) as ScenarioFile).steps;
-    assert.deepEqual(calls.filter((c) => c.step === null), [], 'no call went unmatched');
-    assert.deepEqual(calls.map((c) => c.step).sort((a, b) => a! - b!), steps.map((_, i) => i), 'every step played once');
+    assertEveryStepPlayed(fx.dir);
   });
 
   test('evals-m3.partial-bundle (A18, G19): the two-op bundle whose second op is invalid applies neither; its one re-evaluation applies the admit alone', () => {
@@ -260,8 +277,10 @@ describe('evals-m3: the fake-backed fixture run', () => {
   });
 
   test('evals-m3.latch-during-audit: I-1 latches while audit-1 runs; the audit grades latches as of its capture, so it opens the I-2 witness P1 and nothing over I-1', () => {
-    const started = factsOf('audit-started').find((f) => f.job === BARRIER_JOB)!;
-    const ended = factsOf('audit-ended').find((f) => f.job === BARRIER_JOB)!;
+    const job = fx.report.devices.barrier!.audit;
+    assert.equal(job, 'audit-1');
+    const started = factsOf('audit-started').find((f) => f.job === job)!;
+    const ended = factsOf('audit-ended').find((f) => f.job === job)!;
     assert.ok(started !== undefined && ended !== undefined);
     const latch = factsOf('obligation-latched').find((f) => f.obligation === 'I-1');
     assert.ok(latch !== undefined && latch.seq > started.highWater && latch.seq < ended.seq, 'I-1 latched after the audit\'s capture and before its end: the race');
@@ -301,5 +320,38 @@ describe('evals-m3: the fake-backed fixture run', () => {
     const tampered = await tamper((d) => ({ ...d, staleApply: { ...d.staleApply!, command: 'cmd-000000000000ffff' } }));
     assert.deepEqual(failing(tampered), ['stale-whole']);
     assert.match(criterion(tampered, 'stale-whole').detail, /committed no revision/);
+  });
+});
+
+describe('evals-m3: the fake-backed fixture run, branch P', () => {
+  let fx: Fixture;
+  let events: readonly Event[];
+
+  before(async () => {
+    ({ fx, events } = await runStory('prevented'));
+  }, T);
+
+  test('evals-m3.prevented: branch P (as paid run 3); tidy is stopped upstream and cut, the repair merges, the arc completes, and every criterion passes', () => {
+    const { driver, report, checked } = fx;
+    assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
+    assert.equal(report.endedBy, 'exit', JSON.stringify(report.devices));
+    const d = report.devices;
+    assert.equal(d.failed, null);
+    assert.equal(d.branch?.branch, 'P');
+    assert.match(d.branch!.why, /unit-cut of tidy/);
+    assert.deepEqual([d.barrier, d.release], [null, null], 'no regression: the money barrier never held');
+    for (const name of ['runOnly', 'staleApply', 'staleApplied', 'admit', 'unlimited'] as const) assert.notEqual(d[name], null, `device ${name} fired`);
+    assert.deepEqual(d.added.map((a) => a.unit), [REPAIR_UNIT.id]);
+    assert.deepEqual(d.acks.map((a) => a.reason).sort(), ['convergence-bound', 'divergence-digest']);
+    assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
+    assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
+    assert.equal(checked.result.branch, 'P');
+    assert.equal(checked.result.criteria.length, 23);
+    assert.ok(checked.result.criteria.some((c) => c.name === 'prevention'), 'branch P\'s own criterion is graded');
+    const outcomes = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === 'tidy' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+    assert.ok(outcomes.every((o) => o.startsWith('plan-check:')), `tidy never got past plan-check: ${outcomes.join(', ')}`);
+    const firstCheckpoint = events.find((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs');
+    assert.ok(firstCheckpoint?.type === 'fact' && firstCheckpoint.fact.kind === 'checkpoint-inputs' && firstCheckpoint.fact.trigger.type === 'park', 'the stale apply fired on the park\'s checkpoint');
+    assertEveryStepPlayed(fx.dir);
   });
 });

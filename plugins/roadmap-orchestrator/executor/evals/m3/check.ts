@@ -2,36 +2,44 @@
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
 //
-// M3 criteria (plan "Fixture evals/m3/", the story's steps in brackets):
+// The story is branch-tolerant (DESIGN-1.0.md §10 M3): branch R (regressed) or branch P (prevented), read from the log
+// (R: tidy published; P: a bundle revision disposed of tidy before it published) and matched with the driver's record.
+// M3 criteria in both branches (the story's steps in brackets):
 //   baseline                the baseline job witnessed every arc lane on the baseline before any unit was dispatched,
 //                           and raised no `obligation-baseline`: I-2 and I-3 held, I-1 not
-//   regression-unselected   [2] tidy's approval selected I-3 and not I-2; I-2 not held on the tree tidy published (S)
-//   audit-race              [3] the first audit ran L on S; report published inside it (S′) and latched I-1; the audit's
-//                           code opened a P1 over I-2, and re-witnessed I-2 on S′ (not held)
-//   stale-whole             [4] the first checkpoint was rejected stale whole: the driver's apply committed between its
-//                           capture and its decision, and nothing of its bundle applied
-//   bundles-whole           every bundle decided rejected or requested applied nothing; exactly one bundle revision,
-//                           adding one unit of origin `repair` whose spec repairs I-2's P1
-//   repair-divergence       [5] the bundle revision recorded a `plan-departed` divergence citing V-2
+//   branch                  the log shows branch R or P, and the driver recorded the same
+//   stale-whole             [4] the first checkpoint, whatever its trigger, was rejected stale whole: the driver's apply
+//                           committed between its capture and its decision, and nothing of its bundle applied
+//   bundles-whole           every bundle decided rejected or requested applied nothing; at least one bundle revision;
+//                           every unit a bundle added merged, each finding it repairs resolved or ruled and each
+//                           obligation it serves held; the bundle requests the driver answered (informational)
+//   bundle-divergences      [5] every bundle revision recorded divergences, one citing V-2
 //   divergence-digest-bound [5] each digest binds exactly the divergences recorded before it that no earlier digest
-//                           bound; the driver acknowledged the story's digest; none is left uncovered
-//   convergence-bound       [6] K = 1: `convergence-bound` was raised once the bundle applied, and acknowledged
-//   repair-resolved         [7] the repair merged, the P1 over I-2 was resolved, and I-2 holds on the head
-//   drift-audit             [8] an audit triggered by the bundle revision's drift ran the vision lens alone; its
+//                           bound; the driver acknowledged each; none is left uncovered
+//   convergence-bound       [6] K = 1: `convergence-bound` was raised, each one acknowledged by the driver
+//   drift-audit             [8] an audit triggered by a bundle revision's drift ran the vision lens alone, completed
+//   final-audit             [9] the last audit was `final`, ran lenses of L on the last unit publication's head; its
 //                           checkpoint no-oped
-//   final-audit             [9] the last audit was `final`, ran every lens of L on the last unit publication's head;
-//                           its checkpoint no-oped
 //   close-out               [10] the close-out publication is docs-only (the rendered `.roadmap/` files) and records
 //                           `docs-covered` for its own edge
-//   completion              [11] `arc-completed` names the plan in force, the head and every unit; then the terminal
-//                           snapshot (its high-water past the completion); status shows the completion active
+//   completion              [11] `arc-completed` names the plan in force, the head and every merged unit; then the
+//                           terminal snapshot (its high-water past the completion); status shows the completion active
+//                           with no unmet condition (every generation quiescent under the vision)
 //   lens-coverage           every lens of L has a contiguous watermark at the final head (status.audit), the docs edge
 //                           applied only from the final audit's SHA, nothing outstanding
 //   snapshot-closure        the terminal ref verifies as a closure (every file named by a record), and carries each
 //                           witness record and each kept revision payload the log names
 //   obligations-discharged  status: every obligation holds on the head, none pending
+// Branch R only:
+//   regression-unselected   [2] tidy's approval selected I-3 and not I-2; I-2 not held on the tree tidy published (S)
+//   audit-race              [3] the first audit ran L on S; report published inside it (S′) and latched I-1; the audit's
+//                           code opened a P1 over I-2, and re-witnessed I-2 on S′ (not held)
+//   repair-resolved         [7] a unit repairing that P1 (or I-2) merged, the P1 was resolved, and I-2 holds on the head
+// Branch P only:
+//   prevention              tidy never published; a bundle revision cut, respecified or re-entered it, recording a
+//                           divergence citing an active clause
 // M1/M2 standing criteria, over this run:
-//   run-ended (complete), units-settled, head-is-publication (the head is the last publication's commit: a unit's
+//   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
 //   constraints.md and invariants.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens and
 //   checkpoint calls), meter-covers-calls (unit and arc calls), no-model-ids
@@ -61,11 +69,11 @@ import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { MODEL_IDS } from '../../src/routing/types.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
 import type { Report } from './driver.ts';
-import { LENSES, MAIN, MONEY_LANE, layout } from './layout.ts';
+import { LENSES, MAIN, MONEY_LANE, type StoryBranch, layout } from './layout.ts';
 
 type Verdict = Readonly<{ pass: boolean; detail: string }>;
 export type Criterion = Readonly<{ name: string }> & Verdict;
-export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[]; notExercised: readonly Branch[]; cannotShow: readonly string[] }>;
+export type CheckResult = Readonly<{ pass: boolean; branch: StoryBranch | null; criteria: readonly Criterion[]; notExercised: readonly Branch[]; cannotShow: readonly string[] }>;
 
 /** What the paid run leaves untaken (plan "Fixture evals/m3/", not exercised), in the order the report lists them. */
 export const BRANCHES = [
@@ -138,10 +146,31 @@ const laneOf = (run: Run, id: string): string => {
 /** The P1 over I-2 that code opened on an audit snapshot (`lens: witness`). */
 const moneyP1 = (run: Run) => factsOf(run, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
 
-/** The one bundle revision, or why there is not exactly one. */
-function bundleRevision(run: Run) {
-  const revs = factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
-  return revs.length === 1 ? revs[0]! : null;
+/** Every bundle revision, in log order. */
+const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+
+/** The units bundle revisions added, with the revision that added each. */
+const addedUnits = (run: Run) => bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-added' ? [{ unit: c.unit, rev: b }] : [])));
+
+/** A unit's spec in force (its latest recorded spec). */
+function specOf(run: Run, unit: UnitId) {
+  const spec = run.view.unit(unit).spec;
+  if (spec === null) throw new Error(`${unit} has no recorded spec`);
+  return parseSpec(readFileSync(join(run.runDir, 'inputs', `${spec.sha256}.spec.json`)), `${unit}.json` as never);
+}
+
+/** The changes by which a bundle revision disposes of tidy (branch P). */
+const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
+
+/** The branch the log shows: R when tidy published, P when a bundle disposed of tidy unpublished, else null. */
+function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> | null {
+  const pub = unitPublication(run, 'tidy');
+  if (pub !== undefined) return { branch: 'R', detail: `tidy published ${pub.new}` };
+  for (const b of bundleRevisions(run)) {
+    const d = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy');
+    if (d !== undefined && b.source?.type === 'bundle') return { branch: 'P', detail: `${b.source.job}'s revision ${b.rev} made ${d.type} of tidy, which never published` };
+  }
+  return null;
 }
 
 /** The checkpoint that ran on audit `job`, and its decision (`applied` for a bundle revision). */
@@ -230,34 +259,68 @@ function staleWhole(run: Run): Verdict {
 
 function bundlesWhole(run: Run): Verdict {
   const problems: string[] = [];
-  const applied = factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+  const applied = bundleRevisions(run);
   for (const d of factsOf(run, 'bundle-decided')) {
     if (applied.some((f) => f.source?.type === 'bundle' && f.source.job === d.job)) problems.push(`${d.job} decided ${d.outcome.kind} and applied`);
   }
-  const rev = bundleRevision(run);
-  if (rev === null) return verdict([...problems, `${applied.length} bundle revisions, not one`], '');
-  const added = rev.changes.flatMap((c) => (c.type === 'unit-added' ? [c.unit] : []));
-  const plan = requirePlanInForce(run.runDir, run.view).plan;
-  const unit = plan.units.find((u) => u.id === added[0]);
-  if (added.length !== 1 || unit === undefined) return verdict([...problems, `the bundle revision adds ${JSON.stringify(added)}`], '');
-  if (unit.origin !== 'repair') problems.push(`${unit.id} has origin ${unit.origin}`);
-  const spec = run.view.unit(unit.id).spec;
-  const specText = spec === null ? null : readFileSync(join(run.runDir, 'inputs', `${spec.sha256}.spec.json`), 'utf8');
-  const repairs = specText === null ? [] : (parseSpec(Buffer.from(specText), `${unit.id}.json` as never).repairs ?? []);
-  const p1 = moneyP1(run);
-  if (!repairs.some((x) => x === p1?.id || x === 'I-2')) problems.push(`${unit.id}'s spec repairs ${JSON.stringify(repairs)}, not ${p1?.id} or I-2`);
+  if (applied.length === 0) problems.push('no bundle revision');
+  const held = new Map(run.report.status.nowTrue.map((o) => [o.obligation as string, o.verdict]));
+  const lines: string[] = [];
+  for (const { unit, rev } of addedUnits(run)) {
+    const u = run.view.unit(unit);
+    if (u.status !== 'retired') {
+      problems.push(`${unit} (added by revision ${rev.rev}) is ${u.status} at ${u.stage}, not merged`);
+      continue;
+    }
+    const spec = specOf(run, unit);
+    for (const r of spec.repairs ?? []) {
+      if (r.startsWith('I-')) {
+        if (held.get(r) !== 'held') problems.push(`${unit} repairs ${r}, which is ${held.get(r) ?? 'absent'} on the head`);
+        continue;
+      }
+      const last = factsOf(run, 'finding-transition').filter((t) => t.id === r).at(-1);
+      if (last === undefined || (last.to.state !== 'resolved' && last.to.state !== 'ruled')) problems.push(`${unit} repairs ${r}, which ended ${last?.to.state ?? 'open'}`);
+    }
+    for (const o of spec.obligations ?? []) if (held.get(o) !== 'held') problems.push(`${unit} serves ${o}, which is ${held.get(o) ?? 'absent'} on the head`);
+    lines.push(`${unit} (rev ${rev.rev}, repairs ${JSON.stringify(spec.repairs ?? [])}) merged`);
+  }
   const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
   const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
-  return verdict(problems, `one bundle revision ${rev.rev} (${rev.source?.type === 'bundle' ? rev.source.job : ''}) admits ${unit.id} (repair of ${JSON.stringify(repairs)}); ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
+  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
 }
 
-function repairDivergence(run: Run): Verdict {
-  const rev = bundleRevision(run);
-  if (rev === null || rev.source?.type !== 'bundle') return { pass: false, detail: 'no single bundle revision' };
-  const job = rev.source.job;
+function bundleDivergences(run: Run): Verdict {
+  const problems: string[] = [];
+  let v2 = false;
+  for (const b of bundleRevisions(run)) {
+    if (b.source?.type !== 'bundle') continue;
+    const job = b.source.job;
+    const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
+    if (ds.length === 0) problems.push(`${job}'s revision ${b.rev} recorded no divergence`);
+    if (ds.some((d) => d.cites.includes('V-2' as never))) v2 = true;
+  }
+  if (!v2) problems.push('no bundle divergence cites V-2');
+  const all = factsOf(run, 'divergence').map((d) => `${d.id} ${d.type} [${d.cites.join(', ')}]`);
+  return verdict(problems, all.join('; '));
+}
+
+function prevention(run: Run): Verdict {
+  const b = branchOf(run);
+  if (b?.branch !== 'P') return { pass: false, detail: `not branch P: ${b?.detail ?? 'no branch'}` };
+  const problems: string[] = [];
+  const disposer = bundleRevisions(run).find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
+  const job = disposer?.source?.type === 'bundle' ? disposer.source.job : null;
   const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
-  const hit = ds.find((d) => d.type === 'plan-departed' && d.cites.includes('V-2' as never));
-  return { pass: hit !== undefined, detail: hit !== undefined ? `${hit.id} plan-departed citing ${hit.cites.join(', ')} (${hit.what})` : `${job}'s divergences: ${JSON.stringify(ds.map((d) => [d.id, d.type, d.cites]))}` };
+  if (ds.length === 0) problems.push(`${job}'s disposal of tidy recorded no divergence`);
+  const upstream = factsOf(run, 'stage-outcome').filter((o) => o.unit === 'tidy').map((o) => `${o.stage}:${o.outcome}`);
+  return verdict(problems, `${b.detail}; tidy's outcomes ${upstream.join(', ')}; divergences ${ds.map((d) => d.id).join(', ')}`);
+}
+
+function branchMatches(run: Run): Verdict {
+  const b = branchOf(run);
+  const recorded = run.report.devices.branch?.branch ?? null;
+  if (b === null) return { pass: false, detail: `the log shows neither branch (driver recorded ${recorded})` };
+  return { pass: b.branch === recorded, detail: `branch ${b.branch}: ${b.detail}; the driver recorded ${recorded}` };
 }
 
 function divergenceDigestBound(run: Run): Verdict {
@@ -282,22 +345,21 @@ function divergenceDigestBound(run: Run): Verdict {
 }
 
 function convergenceBound(run: Run): Verdict {
-  const rev = bundleRevision(run);
   const raised = items(run, 'convergence-bound');
   const acks = run.report.devices.acks;
   const problems: string[] = [];
-  if (raised.length !== 1) problems.push(`${raised.length} convergence-bound items`);
+  if (raised.length === 0) problems.push('no convergence-bound item was raised');
   for (const item of raised) {
     if (!acks.some((a) => a.needsUser === item.id && a.reason === 'convergence-bound') || item.ack === null) problems.push(`${item.id} is not acknowledged by the driver`);
   }
-  if (rev === null) problems.push('no bundle revision');
-  return verdict(problems, `${raised.map((n) => n.id).join(', ')} raised after the bundle revision ${rev?.rev}, acknowledged`);
+  return verdict(problems, `${raised.map((n) => n.id).join(', ')} raised, each acknowledged by the driver`);
 }
 
 function repairResolved(run: Run): Verdict {
   const problems: string[] = [];
-  const repair = run.report.devices.repair?.unit ?? null;
-  if (repair === null) return { pass: false, detail: 'the driver found no repair unit' };
+  const p1Id = moneyP1(run)?.id;
+  const repair = addedUnits(run).map((a) => a.unit).find((u) => (specOf(run, u).repairs ?? []).some((r) => r === p1Id || r === 'I-2')) ?? null;
+  if (repair === null) return { pass: false, detail: `no added unit repairs the I-2 P1 (${p1Id}) or I-2` };
   const pub = unitPublication(run, repair);
   if (pub === undefined) problems.push(`${repair} never published`);
   const p1 = moneyP1(run);
@@ -309,16 +371,14 @@ function repairResolved(run: Run): Verdict {
 }
 
 function driftAudit(run: Run): Verdict {
-  const rev = bundleRevision(run);
-  if (rev === null) return { pass: false, detail: 'no bundle revision' };
-  const audit = factsOf(run, 'audit-started').find((a) => a.triggers.some((t) => t.type === 'drift' && t.planRev === rev.rev));
-  if (audit === undefined) return { pass: false, detail: `no audit triggered by the drift of revision ${rev.rev}` };
+  const revs = new Set(bundleRevisions(run).map((b) => b.rev as number));
+  const audit = factsOf(run, 'audit-started').find((a) => a.triggers.some((t) => t.type === 'drift' && revs.has(t.planRev)));
+  if (audit === undefined) return { pass: false, detail: `no audit triggered by the drift of bundle revisions ${[...revs].join(', ')}` };
   const problems: string[] = [];
   if (JSON.stringify(audit.lenses) !== JSON.stringify(['vision'])) problems.push(`${audit.job} ran ${JSON.stringify(audit.lenses)}, not the vision lens alone`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
   const ck = checkpointOf(run, audit.job);
-  if (ck?.decision !== 'no-op') problems.push(`its checkpoint ${ck?.job} decided ${ck?.decision}`);
-  return verdict(problems, `${audit.job} (drift of rev ${rev.rev}) ran vision; ${ck?.job} no-op`);
+  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran vision; ${ck?.job} ${ck?.decision}`);
 }
 
 function finalAudit(run: Run): Verdict {
@@ -326,7 +386,7 @@ function finalAudit(run: Run): Verdict {
   if (last === undefined) return { pass: false, detail: 'no audit' };
   const problems: string[] = [];
   if (!last.triggers.some((t) => t.type === 'final')) problems.push(`the last audit ${last.job} was triggered by ${JSON.stringify(last.triggers)}, not final`);
-  if (JSON.stringify(last.lenses) !== JSON.stringify(LENSES)) problems.push(`${last.job} ran ${JSON.stringify(last.lenses)}, not L`);
+  if (last.lenses.length === 0 || last.lenses.some((x) => !(LENSES as readonly string[]).includes(x))) problems.push(`${last.job} ran ${JSON.stringify(last.lenses)}, not lenses of L`);
   const lastUnit = publications(run).filter((p) => p.subject !== 'docs').at(-1);
   if (lastUnit === undefined || last.integrationSha !== lastUnit.new) problems.push(`${last.job} audited ${last.integrationSha}, not the last unit publication ${lastUnit?.new}`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === last.job)?.outcome !== 'completed') problems.push(`${last.job} did not complete`);
@@ -361,12 +421,12 @@ function completion(run: Run): Verdict {
   const head = revParse(run.repo, `refs/heads/${run.plan.integrationBranch}`);
   if (c.head !== head) problems.push(`arc-completed head ${c.head} is not the integration head ${head}`);
   if (c.planRev !== run.view.planApplied()?.rev) problems.push(`arc-completed names rev ${c.planRev}, not the plan in force`);
-  const units = requirePlanInForce(run.runDir, run.view).plan.units.map((u) => u.id as string).sort();
-  if (JSON.stringify([...c.units].sort()) !== JSON.stringify(units)) problems.push(`arc-completed units ${JSON.stringify(c.units)}, not ${JSON.stringify(units)}`);
+  const units = requirePlanInForce(run.runDir, run.view).plan.units.filter((u) => run.view.unit(u.id).status === 'retired').map((u) => u.id as string).sort();
+  if (JSON.stringify([...c.units].sort()) !== JSON.stringify(units)) problems.push(`arc-completed units ${JSON.stringify(c.units)}, not the merged ${JSON.stringify(units)}`);
   const at = refTarget(run.repo, snapshotRef(run.arc));
   const v = at === null ? null : verifySnapshot(run.repo, at);
   if (v === null || v.kind !== 'verified' || v.manifest.highWater < c.seq) problems.push(`the terminal snapshot does not follow arc-completed (seq ${c.seq}): ${v === null ? 'no ref' : v.kind === 'verified' ? `high-water ${v.manifest.highWater}` : v.detail}`);
-  if (!run.report.status.completion.active) problems.push(`status completion not active: ${JSON.stringify(run.report.status.completion)}`);
+  if (!run.report.status.completion.active || run.report.status.completion.unmet.length > 0) problems.push(`status completion not active and met: ${JSON.stringify(run.report.status.completion)}`);
   return verdict(problems, `arc-completed at seq ${c.seq} on ${c.head}, rev ${c.planRev}; terminal snapshot verified`);
 }
 
@@ -429,11 +489,15 @@ function runEnded(run: Run): Verdict {
 function unitsSettled(run: Run): Verdict {
   const plan = requirePlanInForce(run.runDir, run.view).plan;
   const problems: string[] = [];
+  const disposed = new Set(bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-cut' ? [c.unit as string] : []))));
+  const lines: string[] = [];
   for (const unit of plan.units) {
     const u = run.view.unit(unit.id);
-    if (u.status !== 'retired') problems.push(`${unit.id}: ${u.status} at ${u.stage}`);
+    if (u.status === 'retired') lines.push(`${unit.id} merged`);
+    else if ((u.status === 'cut' && disposed.has(unit.id)) || (u.status === 'superseded' && u.supersededBy !== null && run.view.unit(u.supersededBy).status === 'retired')) lines.push(`${unit.id} ${u.status}`);
+    else problems.push(`${unit.id}: ${u.status} at ${u.stage}`);
   }
-  return verdict(problems, `${plan.units.map((u) => u.id).join(', ')} merged`);
+  return verdict(problems, lines.join(', '));
 }
 
 function headIsPublication(run: Run): Verdict {
@@ -557,16 +621,16 @@ function noModelIds(run: Run): Verdict {
   return { pass: hits.length === 0, detail: hits.length > 0 ? hits.join('; ') : `${checked} files scanned` };
 }
 
-const CRITERIA: readonly (readonly [string, (run: Run) => Verdict])[] = [
+type Grade = readonly [string, (run: Run) => Verdict];
+
+const COMMON: readonly Grade[] = [
   ['baseline', baseline],
-  ['regression-unselected', regressionUnselected],
-  ['audit-race', auditRace],
+  ['branch', branchMatches],
   ['stale-whole', staleWhole],
   ['bundles-whole', bundlesWhole],
-  ['repair-divergence', repairDivergence],
+  ['bundle-divergences', bundleDivergences],
   ['divergence-digest-bound', divergenceDigestBound],
   ['convergence-bound', convergenceBound],
-  ['repair-resolved', repairResolved],
   ['drift-audit', driftAudit],
   ['final-audit', finalAudit],
   ['close-out', closeOut],
@@ -583,6 +647,12 @@ const CRITERIA: readonly (readonly [string, (run: Run) => Verdict])[] = [
   ['meter-covers-calls', meterCoversCalls],
   ['no-model-ids', noModelIds],
 ];
+
+/** Each branch's own criteria, after the common ones. */
+const BRANCH_CRITERIA: Readonly<Record<StoryBranch, readonly Grade[]>> = {
+  R: [['regression-unselected', regressionUnselected], ['audit-race', auditRace], ['repair-resolved', repairResolved]],
+  P: [['prevention', prevention]],
+};
 
 // ---------------------------------------------------------------------------------------------------
 // What the run did not exercise
@@ -632,7 +702,8 @@ export function check(dir: string): CheckResult {
   const { view, events } = readJournal(runDir, arc);
   const obligations = parseObligations(JSON.parse(readFileSync(l.obligations, 'utf8')));
   const run: Run = { repo: absPath(l.repo), input: l.input, runDir, arc, plan, obligations, report, events, view };
-  const criteria = CRITERIA.map(([name, grade]): Criterion => {
+  const branch = branchOf(run)?.branch ?? null;
+  const criteria = [...COMMON, ...(branch === null ? [] : BRANCH_CRITERIA[branch])].map(([name, grade]): Criterion => {
     try {
       const v = grade(run);
       return { name, pass: v.pass, detail: v.detail };
@@ -641,7 +712,7 @@ export function check(dir: string): CheckResult {
     }
   });
   const done = exercised(run);
-  return { pass: criteria.every((c) => c.pass), criteria, notExercised: BRANCHES.filter((b) => !done.has(b)), cannotShow: CANNOT_SHOW };
+  return { pass: criteria.every((c) => c.pass), branch, criteria, notExercised: BRANCHES.filter((b) => !done.has(b)), cannotShow: CANNOT_SHOW };
 }
 
 if (import.meta.main) {

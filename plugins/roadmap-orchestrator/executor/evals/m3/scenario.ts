@@ -5,11 +5,16 @@
 // one start is prepended, unkeyed. Stories are code, not JSON files: the checkpoint's admit op carries the repair
 // spec's text (evals/m3/setup.ts `repairSpecText`) and every judgment is validated by the frozen readers here.
 //
-//   story   the plan's story, plus the literal partial bundle (A18, G19): after the stale rejection (ckpt-1, held at
-//           the fake barrier `ckpt-1.hold` until the driver's `apply` is applied), ckpt-2 answers the repair admit
-//           followed by an invalid op (`twoOpBundleSecondInvalid`): rejected invalid, nothing applied; its one
-//           re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the vision lens) and ckpt-4 no-op,
-//           audit-3 (final: both lenses of L) and ckpt-5 no-op.
+//   story      branch R (regressed), the plan's story, plus the literal partial bundle (A18, G19): after the stale
+//              rejection (ckpt-1, held at the fake barrier `ckpt-1.hold` until the driver's `apply` is applied), ckpt-2
+//              answers the repair admit followed by an invalid op (`twoOpBundleSecondInvalid`): rejected invalid,
+//              nothing applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
+//              vision lens) and ckpt-4 no-op, audit-3 (final: both lenses of L) and ckpt-5 no-op.
+//   prevented  branch P, after paid run 3: tidy's plan-check twice answers `infeasible` with a V-2 vision conflict
+//              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
+//              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
+//              vision lens) and ckpt-3 no-op; report and the repair merge; audit-2 (final: both lenses) and ckpt-4
+//              no-op.
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { INVALID_OP, checkpointAnswer, checkpointStep, lensStep, twoOpBundleSecondInvalid } from '../../test/helpers/holistic.ts';
@@ -55,11 +60,18 @@ export function reconcile(entries, month) {
 }
 `;
 
-/** src/cli.js after tidy (`format` through formatDisplay, as `total`), and after report too (`reconcile`). */
-function cliSource(reconcileCommand: boolean): string {
-  const imports = reconcileCommand
-    ? "import { readFileSync } from 'node:fs';\nimport { formatDisplay } from './display.js';\nimport { parseLedger } from './parse.js';\nimport { reconcile } from './report.js';\n"
-    : "import { formatDisplay } from './display.js';\n";
+/**
+ * src/cli.js after tidy (`format` through formatDisplay, as `total`: `tidied`), with report's `reconcile` command
+ * (`reconcileCommand`); report on a tree without tidy (branch P) keeps `format` through formatAmount.
+ */
+function cliSource(reconcileCommand: boolean, tidied = true): string {
+  const formatter = tidied ? 'formatDisplay' : 'formatAmount';
+  const imports = [
+    ...(reconcileCommand ? ["import { readFileSync } from 'node:fs';"] : []),
+    "import { formatDisplay } from './display.js';",
+    ...(tidied ? [] : ["import { formatAmount } from './format.js';"]),
+    ...(reconcileCommand ? ["import { parseLedger } from './parse.js';", "import { reconcile } from './report.js';"] : []),
+  ].map((line) => `${line}\n`).join('');
   const reconcileEntry = reconcileCommand
     ? `  reconcile: ([month, file]) => {
     process.stdout.write(\`\${reconcile(parseLedger(readFileSync(file, 'utf8')), month)}\\n\`);
@@ -71,7 +83,7 @@ function cliSource(reconcileCommand: boolean): string {
 ${imports}
 const COMMANDS = {
   format: ([amount]) => {
-    process.stdout.write(\`\${formatDisplay(Number(amount))}\\n\`);
+    process.stdout.write(\`\${${formatter}(Number(amount))}\\n\`);
     return 0;
   },
   total: (amounts) => {
@@ -105,7 +117,7 @@ export function formatDisplay(amount) {
 }
 `;
 
-/** The unit calls of the story, by unit, in each unit's own order. */
+/** The unit calls of branch R's story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
   parse: [
     planCheck('The spec is consistent with the ledger contract (ledger file) and C-1, C-2.'),
@@ -147,7 +159,7 @@ const ADMIT_REPAIR: JsonValue = {
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
 const NO_OP = checkpointAnswer({ decision: 'no-op' });
 
-const JOB_STEPS: readonly Step[] = [
+const JOB_STEPS_R: readonly Step[] = [
   lensStep('audit-1', 'vision'),
   lensStep('audit-1', 'invariants'),
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
@@ -160,7 +172,39 @@ const JOB_STEPS: readonly Step[] = [
   checkpointStep('ckpt-5', NO_OP),
 ];
 
-export const STORIES = ['story'] as const;
+/** tidy's plan-check in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
+const INFEASIBLE: M1Step = {
+  role: 'planCheck',
+  answer: {
+    decision: 'infeasible', reasons: ['Routing `format` through formatDisplay breaks I-2: its toFixed prints 0.125 as 0.13; nothing within src/cli.js reconciles A1 with I-2.'],
+    patch: null, risk: 'med', notes: 'Drop the unit, or re-scope a unit to src/display.js so formatDisplay rounds half to even.', premises: [],
+    visionConflict: [{ clauses: ['V-2'], note: 'format through formatDisplay silently mis-rounds money (0.125 prints 0.13)' }],
+  },
+};
+
+/** The unit calls of branch P's story: tidy never builds; report builds on a tree without tidy. */
+export const UNIT_STORY_P: Readonly<Record<string, readonly M1Step[]>> = {
+  parse: UNIT_STORY['parse']!,
+  tidy: [INFEASIBLE, INFEASIBLE],
+  report: UNIT_STORY['report']!.map((s) => (s.role === 'build' ? build('report: reconcile a month', { ...(s.acts[0]!.type === 'commit' ? s.acts[0]!.files : {}), 'src/cli.js': cliSource(true, false) }) : s)),
+  [REPAIR_UNIT.id]: UNIT_STORY[REPAIR_UNIT.id]!,
+};
+
+/** Branch P's bundle: cut tidy, admit the repair (repairing the plan-check P3 F-1), as paid run 3's ckpt-2. */
+const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot be met within src/cli.js without breaking I-2.', cites: ['V-2'], evidence: ['F-1: plan-check found that format through formatDisplay prints 0.125 as 0.13'] };
+const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR, CUT_TIDY] });
+
+const JOB_STEPS_P: readonly Step[] = [
+  checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
+  checkpointStep('ckpt-2', PREVENT_BUNDLE),
+  lensStep('audit-1', 'vision'),
+  checkpointStep('ckpt-3', NO_OP),
+  lensStep('audit-2', 'invariants'),
+  lensStep('audit-2', 'vision'),
+  checkpointStep('ckpt-4', NO_OP),
+];
+
+export const STORIES = ['story', 'prevented'] as const;
 export type StoryName = (typeof STORIES)[number];
 
 export function storyName(value: string): StoryName {
@@ -170,8 +214,9 @@ export function storyName(value: string): StoryName {
 }
 
 /** The fake backend steps that play `story` under `profile`. */
-export function storySteps(_story: StoryName, profile: ProfileName): readonly Step[] {
+export function storySteps(story: StoryName, profile: ProfileName): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
-  const units = Object.entries(UNIT_STORY).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
-  return [...smoke, ...units, ...JOB_STEPS];
+  const unitStory = story === 'story' ? UNIT_STORY : UNIT_STORY_P;
+  const units = Object.entries(unitStory).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
+  return [...smoke, ...units, ...(story === 'story' ? JOB_STEPS_R : JOB_STEPS_P)];
 }

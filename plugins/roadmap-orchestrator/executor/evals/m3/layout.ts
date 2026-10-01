@@ -5,7 +5,8 @@
 //   input/       the run input: plan.json, vision.json, obligations.json, rulings.md (the C-nn ledger) and one
 //                spec per unit (never in the product tree)
 //   worktrees/   the plan's worktreeRoot
-//   barriers/    the money lane's audit barrier (`<job>.money.reached` / `.release`, barrier.ts)
+//   barriers/    the money lane's audit barrier, branch R only (`money.reached`, holding the audit's job id / `money.release`,
+//                barrier.ts)
 //   fake/        --fake only: the scenario, the backend shims, calls.jsonl, the fake host dir, and the fake
 //                checkpoint's hold barrier (`ckpt-1.hold.reached` / `.release`)
 //   report.json  written by the driver, read by check
@@ -23,9 +24,8 @@ export const FIRST = ['parse', 'tidy'] as const;
 export const LENSES = ['invariants', 'vision'] as const;
 export const AUDIT_EVERY = 2;
 export const CONVERGENCE_K = 1;
-/** The arc lane of I-2 and the audit whose run of it waits at the barrier (A1: the first audit job). */
+/** The arc lane of I-2; its run in the first audit that sees the regression waits at the barrier (branch R: A1). */
 export const MONEY_LANE = 'money';
-export const BARRIER_JOB = 'audit-1';
 /** The fake checkpoint call of the first checkpoint waits here until the driver's stale `apply` is applied. */
 export const FAKE_CKPT_HOLD = 'ckpt-1.hold';
 /** The ledger-file fixture I-1's journey test reconciles, and the line it expects. */
@@ -72,5 +72,9 @@ export function layout(dir: string): Layout {
   };
 }
 
-/** The barrier file of `job`'s run of the money lane. */
-export const barrierFile = (l: Layout, job: string, what: 'reached' | 'release'): string => join(l.barriers, `${job}.${MONEY_LANE}.${what}`);
+/** The money barrier's files: `reached` holds the waiting audit's job id. */
+export const barrierFile = (l: Layout, what: 'reached' | 'release'): string => join(l.barriers, `${MONEY_LANE}.${what}`);
+
+/** The paid story's two honest branches (DESIGN-1.0.md §10 M3): tidy's regression merged, or prevented upstream. */
+export const STORY_BRANCHES = ['R', 'P'] as const;
+export type StoryBranch = (typeof STORY_BRANCHES)[number];
