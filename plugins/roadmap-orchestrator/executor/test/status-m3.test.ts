@@ -28,7 +28,7 @@ import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { runOp } from './fixtures/git-common.ts';
 import { auditArc } from './fixtures/audit-common.ts';
-import { holisticArc, tipTree } from './fixtures/brake-common.ts';
+import { VISION, holisticArc, tipTree } from './fixtures/brake-common.ts';
 import { ruleRecord } from './fixtures/publish-common.ts';
 import { type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
@@ -135,8 +135,8 @@ describe('status M3', () => {
       });
       assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', ruling: 'C-1' }], []]);
       assert.deepEqual(s.vision, {
-        rev: 1, confirmation: null, clauses: [{ id: 'V-1', kind: 'purpose', text: 'Arithmetic helpers anyone can trust.', rank: null, state: 'active' }],
-        coverage: { unservedClauses: [], obligationsServingNone: [], withdrawnCited: [] },
+        rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
+        coverage: { unservedAdvanced: ['V-2'], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       });
       noModelIds(s);
 

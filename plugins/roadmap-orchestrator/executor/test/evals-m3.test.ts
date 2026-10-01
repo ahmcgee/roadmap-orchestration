@@ -21,6 +21,7 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { verdictOf } from '../src/holistic/observe.ts';
 import { type ObservationVerdict, parseObligations, parseVision } from '../src/holistic/types.ts';
+import { advancesReasons } from '../src/holistic/vision.ts';
 import { witnessEnv } from '../src/holistic/witness.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { loadSpec, parseSpec } from '../src/spec/spec.ts';
@@ -119,12 +120,14 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   const plan = parsePlan(JSON.parse(readFileSync(l.plan, 'utf8')));
   assert.equal(plan.arc, l.arc);
   assert.deepEqual(plan.units.map((u) => u.id), [...UNITS]);
-  assert.deepEqual(plan.holistic, { vision: 'vision.json', obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } });
+  assert.deepEqual(plan.holistic, { vision: 'vision.json', advances: ['V-1', 'V-2', 'V-3', 'V-4'], obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } });
   assert.deepEqual(plan.limits, { convergenceK: CONVERGENCE_K });
   const vision = parseVision(JSON.parse(readFileSync(l.vision, 'utf8')));
-  assert.deepEqual(vision.clauses.map((c) => [c.id, c.kind, c.rank, c.state]), [['V-1', 'purpose', null, 'active'], ['V-2', 'non-negotiable', null, 'active'], ['V-3', 'tradeoff', 1, 'active']]);
+  assert.deepEqual(vision.clauses.map((c) => [c.id, c.kind, c.rank, c.state]), [['V-1', 'purpose', null, 'active'], ['V-2', 'non-negotiable', null, 'active'], ['V-3', 'tradeoff', 1, 'active'], ['V-4', 'world', null, 'active']]);
+  assert.deepEqual(vision.questions, []);
+  assert.deepEqual(advancesReasons(vision, plan.holistic!.advances), []);
   const o = parseObligations(JSON.parse(readFileSync(l.obligations, 'utf8')));
-  assert.deepEqual(o.obligations.map((x) => [x.id, x.activation, x.serves, x.deliveredBy]), [['I-1', 'future', ['V-1'], ['parse', 'report']], ['I-2', 'must-hold', ['V-2'], []], ['I-3', 'must-hold', ['V-3'], []]]);
+  assert.deepEqual(o.obligations.map((x) => [x.id, x.activation, x.serves, x.deliveredBy]), [['I-1', 'future', ['V-1', 'V-4'], ['parse', 'report']], ['I-2', 'must-hold', ['V-2'], []], ['I-3', 'must-hold', ['V-3'], []]]);
   assert.deepEqual(o.lanes.map((x) => x.reporter), ['node-test', 'node-test', 'node-test']);
   const mapped = new Map(o.mapping.paths.map((m) => [m.pattern as string, m.obligations]));
   for (const u of plan.units) {

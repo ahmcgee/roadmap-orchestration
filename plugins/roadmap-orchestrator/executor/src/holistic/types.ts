@@ -6,9 +6,9 @@
 // observations, the transition table in table.ts), B3 (findings), B5 (audits, coverage), B6 (checkpoint, bundles,
 // divergences).
 import {
-  type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type RulingId, type Sha, type Sha256Hex,
-  type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, laneId, laneRev, obligationId, rulingId, sha, sha256, unitId,
-  visionClauseId, type EnvId,
+  type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type QuestionId, type RulingId, type Sha,
+  type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, laneId, laneRev, obligationId, questionId, rulingId,
+  sha, sha256, unitId, visionClauseId, type EnvId,
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { LENS_KIND_NAMES, type LaneDef, type LensKindName, laneDef } from '../core/records.ts';
@@ -45,7 +45,11 @@ export const lensKind: Read<LensKind> = oneOf(LENS_KINDS);
 // The vision (OR-V, A14, H16): `holistic.vision` in plan.json names this file.
 
 export const VISION_SCHEMA = 'roadmap/vision-m3';
-export const VISION_CLAUSE_KINDS = ['purpose', 'serves', 'good', 'non-negotiable', 'tradeoff'] as const;
+/**
+ * `world` is a prose scene of the target world: who is there, what they do and experience, and why it is better than
+ * today; it may describe a horizon beyond this arc. The other kinds are its facets.
+ */
+export const VISION_CLAUSE_KINDS = ['world', 'purpose', 'serves', 'good', 'non-negotiable', 'tradeoff'] as const;
 export type VisionClauseKind = (typeof VISION_CLAUSE_KINDS)[number];
 export const CLAUSE_STATES = ['active', 'withdrawn'] as const;
 export type ClauseState = (typeof CLAUSE_STATES)[number];
@@ -53,15 +57,27 @@ export type ClauseState = (typeof CLAUSE_STATES)[number];
 /** `rank` orders the tradeoffs (1 first) and is null for every other kind. A withdrawn clause stays in the file. */
 export type VisionClause = Readonly<{ id: VisionClauseId; kind: VisionClauseKind; text: string; rank: number | null; state: ClauseState }>;
 
+export const QUESTION_STATES = ['open', 'closed'] as const;
+export type QuestionState = (typeof QUESTION_STATES)[number];
+
+/**
+ * A vision open question: one whose answer would change the target world (not a design question, which a unit's
+ * spec or a ruling settles). `bears` names the active clauses it bears on; `assumption` is the working assumption the
+ * arc acts on meanwhile. A closed question stays in the file as it was (its `bears` need only name clauses of the file);
+ * ids are never reused.
+ */
+export type VisionQuestion = Readonly<{ id: QuestionId; text: string; bears: readonly VisionClauseId[]; assumption: string; state: QuestionState }>;
+
 /**
  * The root record (OR-V). Owner-only: only an architect `apply` changes it. `confirmation` is the Phase-0
- * playback's confirmation reference, stored unverified (verification is M4).
+ * playback's confirmation reference, stored unverified (verification is M4). At least one active `world` clause.
  */
 export type Vision = Readonly<{
   schema: typeof VISION_SCHEMA;
   rev: number;
   confirmation: Readonly<{ ref: string; at: IsoTime }> | null;
   clauses: readonly VisionClause[];
+  questions: readonly VisionQuestion[];
 }>;
 
 const visionClause: Read<VisionClause> = object((f) => {
@@ -76,15 +92,32 @@ const visionClause: Read<VisionClause> = object((f) => {
   return out;
 });
 
+const visionQuestion: Read<VisionQuestion> = object((f) => ({
+  id: f.get('id', (v, p) => questionId(v, p)),
+  text: f.get('text', str),
+  bears: f.get('bears', sortedBy(vid, (c) => c, { nonEmpty: true })),
+  assumption: f.get('assumption', str),
+  state: f.get('state', oneOf(QUESTION_STATES)),
+}));
+
 export const vision: Read<Vision> = object((f) => {
   const out: Vision = {
     schema: f.get('schema', literal(VISION_SCHEMA)),
     rev: f.get('rev', positive),
     confirmation: f.get('confirmation', nullable(object((g) => ({ ref: g.get('ref', str), at: g.get('at', (v, p) => isoTime(v, p)) })))),
     clauses: f.get('clauses', arrayOf(visionClause, { nonEmpty: true })),
+    questions: f.get('questions', arrayOf(visionQuestion)),
   };
   assertUnique(out.clauses, byId, `${f.path}.clauses`);
-  if (!out.clauses.some((c) => c.state === 'active')) throw new SchemaError(`${f.path}.clauses`, 'at least one active clause', out.clauses);
+  if (!out.clauses.some((c) => c.state === 'active' && c.kind === 'world')) throw new SchemaError(`${f.path}.clauses`, 'at least one active world clause', out.clauses);
+  assertUnique(out.questions, byId, `${f.path}.questions`);
+  // An open question bears on active clauses; a closed one stays as it was, so its clauses need only be in the file.
+  out.questions.forEach((q, i) => q.bears.forEach((id) => {
+    const c = out.clauses.find((x) => x.id === id);
+    if (c === undefined || (q.state === 'open' && c.state !== 'active')) {
+      throw new SchemaError(`${f.path}.questions[${i}].bears`, q.state === 'open' ? 'active clauses of this vision' : 'clauses of this vision', id);
+    }
+  }));
   return out;
 });
 
@@ -260,8 +293,10 @@ export const isExempt = (o: ObligationDef): boolean => o.state.type === 'waived'
 
 /** Vision coverage (A1's `visionCoverage`; `status.vision.coverage`, every lens and checkpoint prompt). */
 export type VisionCoverage = Readonly<{
-  /** Active clauses no active obligation serves. */
-  unservedClauses: readonly VisionClauseId[];
+  /** Active clauses the arc advances (`holistic.advances`) that no active obligation serves: a real gap. */
+  unservedAdvanced: readonly VisionClauseId[];
+  /** Active clauses outside `holistic.advances`: the horizon beyond this arc, expected and never a gap. */
+  horizon: readonly VisionClauseId[];
   /** Active obligations serving no clause. */
   obligationsServingNone: readonly ObligationId[];
   /** H16: withdrawn clauses still cited, and by what (an obligation, a ruling or a divergence id). */

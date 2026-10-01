@@ -253,7 +253,11 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
 
 const VISION = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
-  clauses: [{ id: 'V-1', kind: 'purpose', text: 'Arithmetic helpers anyone can trust.', rank: null, state: 'active' }],
+  clauses: [
+    { id: 'V-1', kind: 'purpose', text: 'Arithmetic helpers anyone can trust.', rank: null, state: 'active' },
+    { id: 'V-2', kind: 'world', text: 'A developer calls add or mul and gets the exact answer, every time.', rank: null, state: 'active' },
+  ],
+  questions: [],
 };
 
 /**
@@ -277,7 +281,7 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
       }],
     }));
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
-    writeFileSync(x.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', obligations: 'obligations.json' } }));
+    writeFileSync(x.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json' } }));
     if (declare) {
       const spec = join(planDir, 'u1.json');
       writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1'] }));

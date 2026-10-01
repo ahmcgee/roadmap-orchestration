@@ -85,8 +85,11 @@ const VISION = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null, clauses: [
     { id: 'V-1', kind: 'purpose', text: 'Multiply numbers in one call.', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'Never lose a digit.', rank: null, state: 'active' },
+    { id: 'V-3', kind: 'world', text: 'A developer multiplies any two numbers in one call and trusts every digit.', rank: null, state: 'active' },
   ],
+  questions: [],
 };
+const ADVANCES = ['V-1', 'V-2', 'V-3'];
 const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
 
@@ -131,7 +134,7 @@ function holisticArc(): ArcRun {
   const d = setupArc({ steps: [] });
   writeJson(join(planDirOf(d), 'vision.json'), VISION);
   writeJson(obligationsPath(d), OBLIGATIONS);
-  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', obligations: 'obligations.json' }));
+  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' }));
   addRuling(d, 'C-2', 'I-1 may retire and I-2 may be waived.', {
     obligations: ['I-1', 'I-2'], obligationDispositions: [{ id: 'I-1', disposition: 'retired' }, { id: 'I-2', disposition: 'waived' }],
   });
@@ -451,7 +454,7 @@ test('apply.holistic-add: `holistic` and the vision may be added (A5); removing 
   const r = contextFor(d);
   try {
     writeJson(join(planDirOf(d), 'vision.json'), VISION);
-    editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json' }));
+    editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', advances: ADVANCES }));
     const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath)), { type: 'apply' });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind === 'accepted') assert.deepEqual(v.draft.changes, [{ type: 'holistic' }, { type: 'vision', rev: 1 }]);
@@ -464,6 +467,42 @@ test('apply.holistic-add: `holistic` and the vision may be added (A5); removing 
   try {
     editPlan(h.d, (p) => void delete p['holistic']);
     assert.match(reasonOf((await command(h, applyBody(h.d))).outcome), /holistic may be added, never removed \(A5\)/);
+  } finally {
+    h.journal.close();
+  }
+});
+
+test('apply.advances: the plan\'s slice names active clauses of the revision\'s vision, one a world clause; only an apply changes it', T, async () => {
+  const h = holisticArc();
+  try {
+    const visionFile = join(planDirOf(h.d), 'vision.json');
+    const reasons = (proposer: Parameters<typeof evaluateRevision>[2] = { type: 'apply' }): readonly string[] => {
+      const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath)), proposer);
+      return v.kind === 'rejected' ? v.reasons : assert.fail(`expected a rejection, got ${JSON.stringify(v)}`);
+    };
+    // The vision withdraws the world clause the plan advances (a new one takes its place): the apply is refused.
+    writeJson(visionFile, {
+      ...VISION, rev: 2,
+      clauses: [...VISION.clauses.map((c) => (c.id === 'V-3' ? { ...c, state: 'withdrawn' } : c)), { id: 'V-4', kind: 'world', text: 'Every digit survives.', rank: null, state: 'active' }],
+    });
+    assert.deepEqual(reasons(), [
+      'holistic.advances names V-3, which is withdrawn (the arc advances only active clauses)',
+      'holistic.advances names no active world clause (the arc advances at least one)',
+    ]);
+    editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-1', 'V-2', 'V-9']));
+    assert.deepEqual(reasons(), [
+      'holistic.advances names V-9, which is not a clause of the vision',
+      'holistic.advances names no active world clause (the arc advances at least one)',
+    ]);
+    // The slice follows the vision: it applies, and a change of it is listed.
+    editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-1', 'V-4']));
+    const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath)), { type: 'apply' });
+    assert.ok(v.kind === 'accepted', JSON.stringify(v));
+    assert.deepEqual(v.draft.changes, [{ type: 'vision', rev: 2 }, { type: 'advances' }]);
+    // Owner-only: no other proposer moves the slice.
+    writeJson(visionFile, VISION);
+    editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-2', 'V-3']));
+    assert.ok(reasons({ type: 'start' }).includes('holistic.advances is owner-only: only an architect `apply` changes it, not a start'));
   } finally {
     h.journal.close();
   }
@@ -532,7 +571,7 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
   const d = setupArc({ steps: [] });
   writeJson(join(planDirOf(d), 'vision.json'), VISION);
   editPlan(d, (p) => {
-    p['holistic'] = { vision: 'vision.json', obligations: 'obligations.json' };
+    p['holistic'] = { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' };
     p['baseline'] = revParse(repo, 'main');
   });
   const context = (): StartupContext => {
@@ -737,7 +776,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
   const d = setupArc({ steps: [] });
   writeJson(join(planDirOf(d), 'vision.json'), VISION);
   writeJson(obligationsPath(d), OBLIGATIONS);
-  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', obligations: 'obligations.json' }));
+  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' }));
   addRuling(d, 'C-2', 'I-1 may be amended.', { obligations: ['I-1'], obligationDispositions: [{ id: 'I-1', disposition: 'amended' }] });
   recordFirst(d);
   const r = contextFor(d);

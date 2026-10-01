@@ -237,6 +237,13 @@ export function keptPayload(runDir: AbsPath, sha: Sha256Hex): RevisionPayload {
   return parseRevisionPayload(JSON.parse(bytes.toString('utf8')));
 }
 
+/** The kept payload of plan rev `rev`, by its applied `revision.commit` (a revision this release wrote always has one). */
+export function payloadAtRev(view: JournalView, runDir: AbsPath, rev: number): RevisionPayload {
+  const commit = view.opsOf('revision.commit').find((c) => c.expect.rev === rev && view.doneOf(c.op) !== null);
+  if (commit === undefined) throw new Error(`plan rev ${rev} has no applied revision.commit`);
+  return keptPayload(runDir, commit.expect.payloadSha256);
+}
+
 /** The open `revision.commit` (A19: at most one, its key), or null: the revision fence's durable half. */
 export function openRevision(view: JournalView): IntentOf<'revision.commit'> | null {
   return (view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined) ?? null;

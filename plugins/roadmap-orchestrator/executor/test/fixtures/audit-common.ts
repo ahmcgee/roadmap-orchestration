@@ -11,7 +11,7 @@ import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { type TreePlan, witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { type HolisticArc, type HolisticOptions, VISION, obligationsJson } from './brake-common.ts';
+import { type HolisticArc, type HolisticOptions, ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { publishArc, wire } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
 import { type ArcRun, codexStep, gateStep } from './unit-common.ts';
@@ -50,7 +50,7 @@ export function auditArc(opts: AuditArcOptions): HolisticArc {
     writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
     writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(withOwnControls(obligationsJson(opts, control), opts.ownControl)));
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
-    writeFileSync(x.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: opts.audit } }));
+    writeFileSync(x.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: opts.audit } }));
     for (const u of opts.units ?? []) {
       if (u.obligations === undefined) continue;
       const spec = join(planDir, `${u.id}.json`);

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { unitId } from '../src/core/ids.ts';
+import { unitId, visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { planPath } from '../src/core/values.ts';
@@ -200,7 +200,7 @@ describe('routing: the arc seats (M3)', () => {
     assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [OPUS, FABLE]);
     // A plan naming a vision puts them in force: every seat is checked (the built-in arc seats have prompt modules
     // since B4), and the rev hashes them too.
-    const plan = { holistic: { vision: planPath('vision.json') } };
+    const plan = { holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } };
     const h = resolveRouting(planStack('default', null, plan));
     assert.equal(h.holistic, true);
     assert.equal(seatsInForce(h).length, SEAT_REFS.length);

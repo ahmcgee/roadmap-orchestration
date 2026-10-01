@@ -11,7 +11,7 @@ import { selectObligations } from '../src/holistic/impact.ts';
 import { type ClassifyContext, classifyObligations } from '../src/holistic/obligations.ts';
 import { rederive } from '../src/holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, laneRevOf, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
-import { citeReasons, visionCoverage, visionEditReasons } from '../src/holistic/vision.ts';
+import { advancesReasons, citeReasons, visionCoverage, visionEditReasons } from '../src/holistic/vision.ts';
 
 const LANE = {
   id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
@@ -46,7 +46,9 @@ const VISION: Vision = parseVision({
     { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
     { id: 'V-3', kind: 'tradeoff', text: 'clear errors over permissive input', rank: 1, state: 'active' },
     { id: 'V-4', kind: 'good', text: 'terse output', rank: null, state: 'withdrawn' },
+    { id: 'V-5', kind: 'world', text: 'a bookkeeper closes the month by running one command and trusting every total', rank: null, state: 'active' },
   ],
+  questions: [],
 });
 
 const ruling = (id: string, dispositions: readonly Readonly<{ id: string; disposition: string }>[]): RulingSidecar => parseRulingSidecar({
@@ -241,14 +243,27 @@ describe('invariants.md and re-derivation', () => {
 });
 
 describe('the vision record', () => {
-  it('vision.coverage: unserved active clauses, obligations serving no active clause, withdrawn clauses still cited', () => {
+  it('vision.coverage: advanced clauses unserved, the horizon, obligations serving no active clause, withdrawn clauses still cited', () => {
     const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', ruling: 'C-1' } })]);
-    assert.deepEqual(visionCoverage(VISION, o, [{ id: 'C-2', cites: [visionClauseId('V-4')] }, { id: 'D-1', cites: [visionClauseId('V-2')] }]), {
-      unservedClauses: ['V-3'],
+    const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
+    assert.deepEqual(visionCoverage(VISION, advances, o, [{ id: 'C-2', cites: [visionClauseId('V-4')] }, { id: 'D-1', cites: [visionClauseId('V-2')] }]), {
+      unservedAdvanced: ['V-3', 'V-5'],
+      horizon: ['V-1'],
       obligationsServingNone: ['I-4'],
       withdrawnCited: [{ clause: 'V-4', citedBy: ['C-2', 'I-4'] }],
     });
-    assert.deepEqual(visionCoverage(VISION, null, []), { unservedClauses: ['V-1', 'V-2', 'V-3'], obligationsServingNone: [], withdrawnCited: [] });
+    const all = ['V-1', 'V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
+    assert.deepEqual(visionCoverage(VISION, all, null, []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
+  });
+
+  it('vision.advances: every id an active clause of the vision, one a world clause', () => {
+    const ids = (...c: string[]) => c.map((x) => visionClauseId(x));
+    assert.deepEqual(advancesReasons(VISION, ids('V-1', 'V-5')), []);
+    assert.deepEqual(advancesReasons(VISION, ids('V-1', 'V-4', 'V-5', 'V-9')), [
+      'holistic.advances names V-4, which is withdrawn (the arc advances only active clauses)',
+      'holistic.advances names V-9, which is not a clause of the vision',
+    ]);
+    assert.deepEqual(advancesReasons(VISION, ids('V-1', 'V-2')), ['holistic.advances names no active world clause (the arc advances at least one)']);
   });
 
   it('vision.withdrawn-cite-refused: a new ruling, obligation or bundle op may not cite a withdrawn clause; existing citations stay', () => {
@@ -272,5 +287,18 @@ describe('the vision record', () => {
     assert.deepEqual(visionEditReasons(VISION, next(raw.clauses.filter((c) => c['id'] !== 'V-2'))), ['vision clause V-2 was removed (a clause stays in the file; withdraw it instead)']);
     const reused = raw.clauses.map((c) => (c['id'] === 'V-4' ? { ...c, text: 'something new', state: 'active' } : c));
     assert.deepEqual(visionEditReasons(VISION, next(reused)), ['vision clause V-4 is withdrawn and stays as it was (ids are never reused; add a new clause)']);
+  });
+
+  it('vision.edit: questions stay, a closed question stays closed as it was', () => {
+    const raw = JSON.parse(canonicalJson(VISION)) as Raw;
+    const q = { id: 'Q-1', text: 'more than one currency?', bears: ['V-2'], assumption: 'one currency', state: 'open' };
+    const at = (rev: number, questions: Raw[]): Vision => parseVision({ ...raw, rev, questions });
+    const open = at(2, [q]);
+    const closed = at(3, [{ ...q, state: 'closed' }]);
+    assert.deepEqual(visionEditReasons(VISION, open), []);
+    assert.deepEqual(visionEditReasons(open, at(3, [{ ...q, assumption: 'two currencies' }])), [], 'an open question may change');
+    assert.deepEqual(visionEditReasons(open, closed), []);
+    assert.deepEqual(visionEditReasons(open, at(3, [])), ['vision question Q-1 was removed (a question stays in the file; close it instead)']);
+    assert.deepEqual(visionEditReasons(closed, at(4, [q])), ['vision question Q-1 is closed and stays as it was (ids are never reused; add a new question)']);
   });
 });

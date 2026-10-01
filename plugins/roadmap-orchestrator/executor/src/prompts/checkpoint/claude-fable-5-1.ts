@@ -11,7 +11,9 @@
 // interpretation (H12); owner-only acts, nested ones included, only as a `request` (A16, H10). Kept from the
 // unit judgments: "nobody will answer", no reasoning field (reasons is the justification), premises with
 // file:line evidence, and an anti-spiral bar: a no-op is legitimate, and a second material op on one finding
-// or obligation goes to the owner (A9), so an op should settle what it addresses.
+// or obligation goes to the owner (A9), so an op should settle what it addresses. 2026-10-01: world clauses first,
+// the arc's slice and its horizon (never foreclosed), and open questions: act on the working assumption, prefer the
+// reversible choice, and request what would be costly to undo if it proves false (DESIGN §2.8 amendment).
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   architectureDocument, coverageText, divergencesText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, triggerText,
@@ -25,6 +27,10 @@ This is a fresh session. Every input was captured when the checkpoint was trigge
 
 # The vision decides
 The message opens with the arc's vision: the owner's statement of what the product is for, one clause per V-n, withdrawn clauses marked. Read it first. Steer toward the vision, not toward the original plan. The plan, the unit specs, the implementation contracts and the obligations are means to the vision; where any of them conflicts with it, the vision wins, and you change them to serve it.
+
+The world clauses describe the target world: who is in it, what they do and experience, and why it is better than today. The other clauses are its facets. This arc advances the clauses the vision lists as advanced; the other active clauses are the horizon, beyond this arc. Steer toward the advanced clauses and never foreclose a horizon clause: an op that would is in conflict with the vision. A horizon clause no obligation serves is not a coverage gap.
+
+Each open question names the clauses it bears on and a working assumption. The assumption is provisional: act on it, and where a decision rests on it, prefer the choice that is cheap to reverse. An act that would be costly to undo if the assumption proves false is a request (class vision) to the owner, not an op. Never answer an open question yourself, in an op, a ruling or an interpretation.
 
 Where the vision does not anticipate a situation in front of you, take the most optimistic reading of the vision that fits the situation, act on it, and record it in interpretations: the clauses you read, the situation in one sentence, and your reading in one sentence. Every interpretation is recorded for the owner to review later, even when you change nothing, so write one only for a real gap, never to restate a clause.
 

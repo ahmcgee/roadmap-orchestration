@@ -6,7 +6,7 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { DivergenceId, FindingId, LaneId, RulingId, Sha, SpecRev, UnitId } from '../core/ids.ts';
+import type { DivergenceId, FindingId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
@@ -14,7 +14,7 @@ import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
   CheckpointTrigger, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
-  VisionClause, VisionCoverage,
+  Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
@@ -159,8 +159,13 @@ export type GateInputs = Readonly<{
 // M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
 // conflict the vision wins. Plan-check reads it as non-directive context; the gate never does (R17).
 
-/** The vision as a prompt gets it: every clause, withdrawn ones marked (H16). */
-export type VisionInput = Readonly<{ rev: number; clauses: readonly VisionClause[] }>;
+/**
+ * The vision as a prompt gets it: every clause, withdrawn ones marked (H16); the open questions; and `advances`, the
+ * plan's slice of it (`holistic.advances` of the plan the inputs were captured at).
+ */
+export type VisionInput = Readonly<{ rev: number; clauses: readonly VisionClause[]; questions: readonly VisionQuestion[]; advances: readonly VisionClauseId[] }>;
+
+export const visionInputOf = (v: Vision, advances: readonly VisionClauseId[]): VisionInput => ({ rev: v.rev, clauses: v.clauses, questions: v.questions, advances });
 
 /** One obligation with its observation on the tree under review (null: none, `not covered`, never passed). */
 export type ObligationView = Readonly<{
@@ -392,13 +397,26 @@ export function findingsText(findings: readonly GateFinding[]): string {
 // ---------------------------------------------------------------------------------------------------
 // M3 text helpers: the vision, obligations, findings, coverage and divergences as the judgments read them.
 
-/** Every clause, one per line; a tradeoff with its rank, a withdrawn clause marked so it is never cited (H16). */
+/**
+ * Every clause, one per line, world clauses first; a tradeoff with its rank, a withdrawn clause marked so it is never
+ * cited (H16). Then the arc's slice and the horizon (the active clauses outside it), and the open questions with the
+ * clauses they bear on and their working assumptions (closed ones omitted).
+ */
 export function visionText(v: VisionInput): string {
-  const lines = v.clauses.map((c) => {
+  const ordered = [...v.clauses.filter((c) => c.kind === 'world'), ...v.clauses.filter((c) => c.kind !== 'world')];
+  const lines = ordered.map((c) => {
     const kind = c.rank === null ? c.kind : `${c.kind}, rank ${c.rank}`;
     return `${c.id} (${kind}${c.state === 'withdrawn' ? ', WITHDRAWN: never cite it' : ''}): ${c.text}`;
   });
-  return `Vision revision ${v.rev}\n${lines.join('\n')}`;
+  const horizon = v.clauses.filter((c) => c.state === 'active' && !v.advances.includes(c.id)).map((c) => c.id);
+  const open = v.questions.filter((q) => q.state === 'open');
+  const questions = open.length === 0
+    ? ['Open questions: none']
+    : ['Open questions:', ...open.map((q) => `- ${q.id} (bears on ${q.bears.join(', ')}): ${q.text}\n  Working assumption: ${q.assumption}`)];
+  return [
+    `Vision revision ${v.rev}`, ...lines,
+    `This arc advances: ${v.advances.join(', ')}`, `Horizon (active, beyond this arc): ${horizon.join(', ') || 'none'}`, ...questions,
+  ].join('\n');
 }
 
 function obligationState(o: ObligationDef): string {
@@ -444,7 +462,8 @@ export function findingViewsText(findings: readonly FindingView[]): string {
 export function coverageText(c: VisionCoverage): string {
   const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
   return [
-    `Active clauses no active obligation serves: ${c.unservedClauses.join(', ') || 'none'}`,
+    `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
+    `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
     `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
     `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
   ].join('\n');

@@ -49,7 +49,9 @@ const VISION: Vision = parseVision({
     { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
     { id: 'V-3', kind: 'good', text: 'terse output', rank: null, state: 'withdrawn' },
+    { id: 'V-4', kind: 'world', text: 'a bookkeeper closes the month by running one command and trusting every total', rank: null, state: 'active' },
   ],
+  questions: [],
 });
 
 const OBLIGATIONS: Obligations = parseObligations({

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
+import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
 import { LENS_KINDS, type ObligationDef } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
@@ -32,7 +32,9 @@ const index = (c: string, r: string, ledger: string) => ({
 const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, line: 3 }] });
 
 // M3: the vision, obligations and findings the arc roles (and plan-check and the gate) read.
-const vision = (rev: number, text: string) => ({ rev, clauses: [{ id: visionClauseId('V-1'), kind: 'purpose' as const, text, rank: null, state: 'active' as const }] });
+const vision = (rev: number, text: string) => ({
+  rev, clauses: [{ id: visionClauseId('V-1'), kind: 'world' as const, text, rank: null, state: 'active' as const }], questions: [], advances: [visionClauseId('V-1')],
+});
 const obligation = (id: string, statement: string): ObligationDef => ({
   id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
   witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('journey'), testIds: ['t1'] } },
@@ -118,13 +120,13 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   checkpoint: [
     {
       vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, head: SHA_A, plan: 'PLAN-A', findings: [],
-      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedClauses: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       architecture: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40 }, head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
-      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedClauses: [visionClauseId('V-1')], obligationsServingNone: [], withdrawnCited: [] },
+      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedAdvanced: [visionClauseId('V-1')], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
       index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), architecture: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },
       direction: 'DIR-B',
@@ -413,6 +415,9 @@ describe('M3 prompts: the vision and the arc roles', () => {
     for (const role of ['lens', 'checkpoint'] as const) for (const model of ARC_MODELS) {
       const mod = promptFor(role, model) as { system: string; render: (i: unknown) => string };
       assert.match(mod.system, /the vision wins/, `${role}/${model}`);
+      assert.match(mod.system, /forecloses? a horizon clause/, `${role}/${model}: the horizon is never foreclosed`);
+      assert.match(mod.system, /Never (resolve|answer) an open question yourself/, `${role}/${model}`);
+      if (role === 'checkpoint') assert.match(mod.system, /costly to undo if the assumption proves false is a request/, model);
       for (const input of SAMPLES[role]) {
         const text = mod.render(input);
         const v = input.vision;
@@ -425,17 +430,24 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
   });
 
-  it('the vision marks withdrawn clauses and ranks tradeoffs', () => {
+  it('the vision: world clauses first, withdrawn clauses marked, tradeoffs ranked; the slice, the horizon and the open questions', () => {
+    const q = { id: questionId('Q-1'), text: 'Q', bears: [visionClauseId('V-1'), visionClauseId('V-4')], assumption: 'A', state: 'open' as const };
     const v = {
       rev: 3, clauses: [
         { id: visionClauseId('V-1'), kind: 'purpose' as const, text: 'P', rank: null, state: 'active' as const },
         { id: visionClauseId('V-2'), kind: 'tradeoff' as const, text: 'T', rank: 1, state: 'active' as const },
         { id: visionClauseId('V-3'), kind: 'good' as const, text: 'G', rank: null, state: 'withdrawn' as const },
+        { id: visionClauseId('V-4'), kind: 'world' as const, text: 'W', rank: null, state: 'active' as const },
       ],
+      questions: [q, { ...q, id: questionId('Q-2'), text: 'CLOSED', state: 'closed' as const }],
+      advances: [visionClauseId('V-1'), visionClauseId('V-4')],
     };
     const text = promptFor('checkpoint', 'claude-fable-5-1').render({ ...SAMPLES.checkpoint[0], vision: v });
+    assert.match(text, /<vision>\nVision revision 3\nV-4 \(world\): W\nV-1 \(purpose\): P\n/);
     assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
     assert.match(text, /V-3 \(good, WITHDRAWN: never cite it\): G/);
+    assert.match(text, /\nThis arc advances: V-1, V-4\nHorizon \(active, beyond this arc\): V-2\nOpen questions:\n- Q-1 \(bears on V-1, V-4\): Q\n {2}Working assumption: A\n<\/vision>/);
+    assert.doesNotMatch(text, /CLOSED/, 'a closed question is omitted');
   });
 
   it('the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests', () => {
@@ -480,7 +492,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
       assert.match(mod.system, /visionConflict/, model);
       assert.match(mod.system, /never a reason to redirect by itself/, model);
       assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /<vision>/, `${model}: no vision outside a holistic arc`);
-      assert.match(mod.render(SAMPLES.planCheck[1]), /<vision>\nRead-only context: it informs visionConflict and never decides the check\.\nVision revision 2\nV-1 \(purpose\): VISION-B\n<\/vision>/, model);
+      assert.match(mod.render(SAMPLES.planCheck[1]), /<vision>\nRead-only context: it informs visionConflict and never decides the check\.\nVision revision 2\nV-1 \(world\): VISION-B\nThis arc advances: V-1\nHorizon \(active, beyond this arc\): none\nOpen questions: none\n<\/vision>/, model);
     }
     assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('visionConflict'));
     const out = validatePlanCheckOutput(OUTPUTS.planCheck);

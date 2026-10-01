@@ -47,7 +47,8 @@ import { capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { catFileType, git, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
-import { RULINGS_INPUT, OBLIGATIONS_INPUT, VISION_INPUT, keptInput, keptPayload } from '../input/inforce.ts';
+import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
+import { advancesOf, parsePlan } from '../input/plan.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
@@ -56,7 +57,7 @@ import {
 import { type JourneyEnd, arcJourneyLane, dirtyPaths, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import type { FindingView, LensInputs } from '../prompts/inputs.ts';
+import { type FindingView, type LensInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
@@ -112,7 +113,7 @@ const tally = (t: Tally, o: FindingOpen): void => {
 // ---------------------------------------------------------------------------------------------------
 // The inputs, as recorded
 
-type Recorded = Readonly<{ vision: Vision; obligations: Obligations | null; ledgerText: string }>;
+type Recorded = Readonly<{ vision: Vision; advances: readonly VisionClauseId[]; obligations: Obligations | null; ledgerText: string }>;
 
 function kept(ctx: StageContext, sha: Sha256Hex, ext: string): string {
   const bytes = keptInput(ctx.runDir, sha, ext);
@@ -120,11 +121,13 @@ function kept(ctx: StageContext, sha: Sha256Hex, ext: string): string {
   return bytes.toString('utf8');
 }
 
-/** The vision, obligations and ledger the audit recorded, by their kept bytes. */
+/** The vision, the slice the plan at the audit's rev advances, the obligations and ledger the audit recorded, by their kept bytes. */
 function recorded(ctx: StageContext, s: Started): Recorded {
   if (s.ledgerSha256 === null) throw new Error(`${s.job}: a holistic arc's revision in force keeps its ledger`);
+  const plan = parsePlan(JSON.parse(kept(ctx, payloadAtRev(ctx.journal.view, ctx.runDir, s.planRev).manifest.planSha256, PLAN_INPUT)));
   return {
     vision: parseVision(JSON.parse(kept(ctx, s.visionSha256, VISION_INPUT))),
+    advances: advancesOf(plan),
     obligations: s.obligationsSha256 === null ? null : parseObligations(JSON.parse(kept(ctx, s.obligationsSha256, OBLIGATIONS_INPUT))),
     ledgerText: kept(ctx, s.ledgerSha256, RULINGS_INPUT),
   };
@@ -219,7 +222,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const diff = (a: Sha, b: Sha): string => (a === b ? '' : git(ctx.repo, ['diff', '--no-color', '--no-renames', a, b]));
   return {
-    vision: { rev: r.vision.rev, clauses: r.vision.clauses },
+    vision: visionInputOf(r.vision, r.advances),
     lens,
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
     range: { from, to: sha, diff: diff(from, sha) },

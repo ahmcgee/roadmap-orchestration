@@ -19,8 +19,14 @@ type Json = Record<string, unknown>;
 
 export const VISION = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
-  clauses: [{ id: 'V-1', kind: 'purpose', text: 'Arithmetic helpers anyone can trust.', rank: null, state: 'active' }],
+  clauses: [
+    { id: 'V-1', kind: 'purpose', text: 'Arithmetic helpers anyone can trust.', rank: null, state: 'active' },
+    { id: 'V-2', kind: 'world', text: 'A developer calls add or mul and gets the exact answer, every time.', rank: null, state: 'active' },
+  ],
+  questions: [],
 } as const;
+/** The plan's `holistic.advances` for VISION: the whole vision. */
+export const ADVANCES = ['V-1', 'V-2'] as const;
 
 /** One obligation of the arc: witnessed on `lane` (default `journey`) by `testIds`. */
 export type ObligationJson = Readonly<{
@@ -92,7 +98,7 @@ export function holisticArc(opts: HolisticOptions): HolisticArc {
       const o = opts.units?.find((s) => s.id === u['id']);
       return o?.origin === undefined ? u : { ...u, origin: o.origin };
     });
-    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, units, holistic: { vision: 'vision.json', obligations: 'obligations.json' } }));
+    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, units, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' } }));
     for (const u of opts.units ?? [{ id: 'u1' }]) {
       const extra = u as Readonly<{ obligations?: readonly string[]; repairs?: readonly string[] }>;
       if (extra.obligations === undefined && extra.repairs === undefined) continue;

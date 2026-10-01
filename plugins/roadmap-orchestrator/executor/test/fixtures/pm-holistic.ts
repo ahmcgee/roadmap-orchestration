@@ -21,7 +21,7 @@ import { checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep } fr
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { VISION, obligationsJson } from './brake-common.ts';
+import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
@@ -47,7 +47,7 @@ function holistic(r: ExecRun): void {
   writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED }, control)));
   const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
+  writeFileSync(r.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
   const spec = join(planDir, 'u1.json');
   writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1', 'I-2'] }));
 }

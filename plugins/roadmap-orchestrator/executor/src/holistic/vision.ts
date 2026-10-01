@@ -4,11 +4,14 @@
 //
 // - A new citation must name an active clause of the vision in force: an unknown or withdrawn clause is refused.
 //   Existing citations of a clause withdrawn since stay, and are reported in `withdrawnCited`.
-// - A vision edit (source `command` only, the classifier's check): every clause id stays (a withdrawn clause stays in
-//   the file), a withdrawn clause stays withdrawn with its kind and text (ids are never reused), and a changed vision
-//   takes the next `rev`.
-// - Coverage runs both directions and is reported, never refused: active clauses no non-exempt obligation serves,
-//   and non-exempt obligations serving no active clause.
+// - A vision edit (source `command` only, the classifier's check): every clause and question id stays (a withdrawn
+//   clause and a closed question stay in the file), a withdrawn clause stays withdrawn with its kind and text and a
+//   closed question stays closed as it was (ids are never reused), and a changed vision takes the next `rev`.
+// - The plan's slice (`holistic.advances`), wherever plan and vision meet (startup, every classified revision): each
+//   id an active clause of the vision, at least one a `world` clause.
+// - Coverage runs both directions and is reported, never refused: advanced clauses no non-exempt obligation serves
+//   (a gap), the horizon (active clauses the arc does not advance; expected), and non-exempt obligations serving no
+//   active clause.
 import type { ObligationId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type Obligations, type Vision, type VisionCoverage, isExempt } from './types.ts';
@@ -35,15 +38,35 @@ export function visionEditReasons(prev: Vision | null, next: Vision): readonly s
       out.push(`vision clause ${was.id} is withdrawn and stays as it was (ids are never reused; add a new clause)`);
     }
   }
+  for (const was of prev.questions) {
+    const now = next.questions.find((q) => q.id === was.id);
+    if (now === undefined) out.push(`vision question ${was.id} was removed (a question stays in the file; close it instead)`);
+    else if (was.state === 'closed' && canonicalJson(now) !== canonicalJson(was)) {
+      out.push(`vision question ${was.id} is closed and stays as it was (ids are never reused; add a new question)`);
+    }
+  }
   return out;
 }
 
+/** Why the plan's `holistic.advances` does not fit `vision`; empty when every id is an active clause and one is a world clause. */
+export function advancesReasons(vision: Vision, advances: readonly VisionClauseId[]): readonly string[] {
+  const out = advances.flatMap((id) => {
+    const clause = vision.clauses.find((c) => c.id === id);
+    if (clause === undefined) return [`holistic.advances names ${id}, which is not a clause of the vision`];
+    return clause.state === 'withdrawn' ? [`holistic.advances names ${id}, which is withdrawn (the arc advances only active clauses)`] : [];
+  });
+  const world = vision.clauses.some((c) => c.kind === 'world' && c.state === 'active' && advances.includes(c.id));
+  return world ? out : [...out, 'holistic.advances names no active world clause (the arc advances at least one)'];
+}
+
 /**
- * Vision coverage: unserved active clauses, non-exempt obligations serving no active clause, and every withdrawn
- * clause still cited, with its citers (obligation, ruling and divergence ids) ascending.
+ * Vision coverage: the advanced active clauses no non-exempt obligation serves, the horizon (active clauses outside
+ * `advances`), non-exempt obligations serving no active clause, and every withdrawn clause still cited, with its
+ * citers (obligation, ruling and divergence ids) ascending.
  */
 export function visionCoverage(
-  vision: Vision, obligations: Obligations | null, citers: readonly Readonly<{ id: string; cites: readonly VisionClauseId[] }>[],
+  vision: Vision, advances: readonly VisionClauseId[], obligations: Obligations | null,
+  citers: readonly Readonly<{ id: string; cites: readonly VisionClauseId[] }>[],
 ): VisionCoverage {
   const active = new Set(vision.clauses.filter((c) => c.state === 'active').map((c) => c.id));
   const all = obligations?.obligations ?? [];
@@ -54,7 +77,8 @@ export function visionCoverage(
     return citedBy.length === 0 ? [] : [{ clause: c.id, citedBy: [...new Set(citedBy)].sort() }];
   });
   return {
-    unservedClauses: [...active].filter((c) => !served.has(c)).sort(),
+    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c)).sort(),
+    horizon: [...active].filter((c) => !advances.includes(c)).sort(),
     obligationsServingNone: live.filter((o) => !o.serves.some((c) => active.has(c))).map((o): ObligationId => o.id).sort(),
     withdrawnCited: withdrawnCited.sort((a, b) => (a.clause < b.clause ? -1 : 1)),
   };

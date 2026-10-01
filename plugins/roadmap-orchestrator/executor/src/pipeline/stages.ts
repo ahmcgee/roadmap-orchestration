@@ -76,15 +76,16 @@ import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.t
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import {
-  type LoadedSpec, OBLIGATIONS_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
+  type LoadedSpec, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import { type PlanUnit, advancesOf, parsePlan } from '../input/plan.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
   ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText, VisionInput,
 } from '../prompts/inputs.ts';
+import { visionInputOf } from '../prompts/inputs.ts';
 import {
   DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, validateBuildOutput, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
@@ -309,10 +310,16 @@ export function holisticInForce(ctx: Readonly<{ journal: Readonly<{ view: Journa
   };
 }
 
-/** The vision in force as a prompt reads it (every clause, withdrawn ones marked), or null outside a holistic arc. */
+/**
+ * The vision in force as a prompt reads it (every clause, withdrawn ones marked, its open questions, and the slice the
+ * plan of the same revision advances), or null outside a holistic arc.
+ */
 export function visionInput(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): VisionInput | null {
   const { vision } = holisticInForce(ctx);
-  return vision === null ? null : { rev: vision.rev, clauses: vision.clauses };
+  if (vision === null) return null;
+  const payload = payloadInForce(ctx);
+  if (payload === null) throw new Error('a vision in force without a revision payload');
+  return visionInputOf(vision, advancesOf(parsePlan(JSON.parse(kept(ctx, payload.manifest.planSha256, PLAN_INPUT).toString('utf8')))));
 }
 
 /** A document's first Markdown heading, for the reference index. */

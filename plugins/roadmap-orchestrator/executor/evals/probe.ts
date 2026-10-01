@@ -41,7 +41,7 @@ import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, sha, specRev, unitId, visionClauseId,
+  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, sha, specRev, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -161,7 +161,12 @@ const MINI_VISION: VisionInput = {
   clauses: [
     { id: visionClauseId('V-1'), kind: 'purpose', text: 'The tool converts a temperature between Celsius and Fahrenheit.', rank: null, state: 'active' },
     { id: visionClauseId('V-2'), kind: 'non-negotiable', text: 'Results are never rounded silently; the caller chooses the precision.', rank: null, state: 'active' },
+    { id: visionClauseId('V-3'), kind: 'world', text: 'A traveller converts a forecast in one call and trusts the number without checking it by hand.', rank: null, state: 'active' },
   ],
+  questions: [{
+    id: questionId('Q-1'), text: 'Do callers need Kelvin as well?', bears: [visionClauseId('V-1')], assumption: 'Celsius and Fahrenheit only', state: 'open',
+  }],
+  advances: [visionClauseId('V-1'), visionClauseId('V-2'), visionClauseId('V-3')],
 };
 const MINI_OBLIGATION: ObligationDef = {
   id: obligationId('I-1'), rev: 1, statement: 'toFahrenheit(100) returns 212.',
@@ -366,7 +371,7 @@ async function main(): Promise<void> {
   const checkpointInputs: CheckpointInputs = {
     vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, head: HEAD,
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
-    coverage: { unservedClauses: [visionClauseId('V-2')], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+    coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
   };
   await backend(ctx, 'm3.checkpoint', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),

@@ -1063,7 +1063,11 @@ async function runOnHead(p: Phase1, steps: readonly Step[], during: () => Promis
 /** The architect's opt-in: one purpose clause, one must-hold obligation witnessed by slug's tests through a node-test lane. */
 const VISION = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
-  clauses: [{ id: 'V-1', kind: 'purpose', text: 'Every page has a stable, readable identifier.', rank: null, state: 'active' }],
+  clauses: [
+    { id: 'V-1', kind: 'purpose', text: 'Every page has a stable, readable identifier.', rank: null, state: 'active' },
+    { id: 'V-2', kind: 'world', text: 'A reader shares a link to any page and it still works a year later.', rank: null, state: 'active' },
+  ],
+  questions: [],
 };
 const SLUG_LANE = {
   id: 'slug-journey', argv: ['node', '--test', 'test/slug.test.js'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
@@ -1103,7 +1107,7 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to a dev.5 arc
       await until('HEAD\'s executor runs the arc', PHASE_MS, () => (factsOf(journalOf(p).events, 'executor-started').length > 1 ? true : null));
       writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
       writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(obligations(), null, 2)}\n`);
-      editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
+      editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
       id = await submitOnHead(p, ['apply']);
       await submitOnHead(p, ['resume', 'page-id']);
     });

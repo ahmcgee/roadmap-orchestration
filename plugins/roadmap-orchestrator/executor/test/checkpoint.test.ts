@@ -163,7 +163,7 @@ describe('the checkpoint and its bundle', () => {
       await completedAudit(r, ctx);
       const running = runCheckpoint(ctx);
       await reached(d.scenarioDir, 'ckpt', 120_000);
-      await applyVision(r, w, [{ id: 'V-2', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
+      await applyVision(r, w, [{ id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
       const planSha = r.journal.view.planApplied()!.planSha256;
       release(d.scenarioDir, 'ckpt');
       const out = await running;
@@ -284,12 +284,12 @@ describe('the activation checks', () => {
     const r = contextFor(d);
     const { ctx, w } = checkpointContext(r);
     try {
-      await applyVision(r, w, [{ id: 'V-2', kind: 'good', text: 'Errors are silent.', rank: null, state: 'withdrawn' }]);
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-2'], evidence: ['e'] }]))]);
+      await applyVision(r, w, [{ id: 'V-3', kind: 'good', text: 'Errors are silent.', rank: null, state: 'withdrawn' }]);
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-3'], evidence: ['e'] }]))]);
       await completedAudit(r, ctx);
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.match(out.decision.detail, /cites V-2, which is withdrawn/);
+      assert.match(out.decision.detail, /cites V-3, which is withdrawn/);
       assert.equal(planLimits(r), null);
     } finally {
       r.journal.close();

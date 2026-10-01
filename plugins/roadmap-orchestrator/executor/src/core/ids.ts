@@ -226,6 +226,11 @@ export type VisionClauseId = Brand<string, 'VisionClauseId'>;
 const V = numbered('VisionClauseId', 'V');
 export const visionClauseId: IdReader<VisionClauseId> = V.read;
 
+/** A vision open question: `Q-<n>`. A closed question keeps its id; ids are never reused. */
+export type QuestionId = Brand<string, 'QuestionId'>;
+const Q = numbered('QuestionId', 'Q');
+export const questionId: IdReader<QuestionId> = Q.read;
+
 /** An obligation: `I-<n>`. Ids survive amendments; a split child gets a new one. */
 export type ObligationId = Brand<string, 'ObligationId'>;
 const I = numbered('ObligationId', 'I');

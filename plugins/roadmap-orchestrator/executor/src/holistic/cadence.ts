@@ -105,14 +105,14 @@ function countedPublications(heads: readonly PublishedHead[], revisions: readonl
   return heads.filter((h) => h.subject !== 'docs' || withOps.has(h.op));
 }
 
-/** Whether a revision drifts (R15): a bundle's; a rule's or an architect's that changed the ledger, a spec, obligations, the mapping or the vision. */
+/** Whether a revision drifts (R15): a bundle's; a rule's or an architect's that changed the ledger, a spec, obligations, the mapping, the vision or the arc's slice of it. */
 function drifts(r: AppliedRevision, previous: AppliedRevision | null): boolean {
   const { source, manifest, changes } = r.payload;
   if (r.payload.base === 0) return false;
   if (source.type === 'bundle') return true;
   if (source.type === 'executor') return false;
   const ledger = previous !== null && JSON.stringify(previous.payload.manifest.rulings) !== JSON.stringify(manifest.rulings);
-  return ledger || changes.some((c) => (c.type === 'spec' && c.edit !== 'evidence') || c.type === 'obligation' || c.type === 'mapping' || c.type === 'vision' || c.type === 'holistic');
+  return ledger || changes.some((c) => (c.type === 'spec' && c.edit !== 'evidence') || c.type === 'obligation' || c.type === 'mapping' || c.type === 'vision' || c.type === 'holistic' || c.type === 'advances');
 }
 
 // R8 is a git diff and a spec read per publication: read each once per process.

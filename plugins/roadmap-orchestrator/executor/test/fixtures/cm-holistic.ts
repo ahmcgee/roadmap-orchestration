@@ -38,7 +38,7 @@ import type { Owner } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { VISION, obligationsJson } from './brake-common.ts';
+import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { restarted, submit } from './cm-common.ts';
 import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
 import type { Hook, Laid } from './pm-common.ts';
@@ -91,7 +91,7 @@ function makeHolistic(r: ExecRun, units: readonly string[], i2 = false): void {
   const obligations = [{ id: 'I-1', testIds: ['t1'] }, ...(i2 ? [{ id: 'I-2', testIds: ['t2'] }] : [])];
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsJson({ obligations, mapping }, control)));
   const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, capacity: { cpu: 16 }, holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
+  writeFileSync(r.planPath, JSON.stringify({ ...plan, capacity: { cpu: 16 }, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
   for (const u of units) {
     const spec = join(planDir, `${u}.json`);
     writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1'] }));

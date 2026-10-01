@@ -177,7 +177,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     try {
       await runToComplete(r);
       const g1 = factsOf(r, 'checkpoint-inputs')[0]!;
-      await applyVision(r, wired(r), [{ id: 'V-2', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
+      await applyVision(r, wired(r), [{ id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
       const visionNow = r.journal.view.planApplied()!.visionSha256!;
       assert.notEqual(visionNow, g1.visionSha256);
       assert.deepEqual([...quiescentGenerations(r.journal.view, visionNow)], [], 'generation 1 is quiescent only under the old vision');

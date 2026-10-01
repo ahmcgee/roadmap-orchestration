@@ -45,6 +45,7 @@ import { ownArcResidue, undispositionedResidueCheck } from '../host/residues.ts'
 import type { ClaimOutcome } from '../host/lock.ts';
 import { evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { advancesReasons } from '../holistic/vision.ts';
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
@@ -242,20 +243,22 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
 
 /**
  * M3: the revisioned inputs besides plan and specs, as the files hold them (a start, not a respawn): each ruling
- * sidecar, the obligations and the vision load (`plan-invalid`, schema).
+ * sidecar, the obligations and the vision load, and the plan's `holistic.advances` fits the vision (`plan-invalid`,
+ * schema).
  */
 export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[] {
   const out: Rejection<'plan-invalid'>[] = [];
-  const load = (field: string, path: string, bytes: Buffer | null, parse: (v: unknown) => unknown): void => {
+  const load = <T>(field: string, path: string, bytes: Buffer | null, parse: (v: unknown) => T): T | null => {
     if (bytes === null) {
       out.push({ kind: 'plan-invalid', problem: { type: 'schema', field, detail: `${path} does not exist` } });
-      return;
+      return null;
     }
     try {
-      parse(JSON.parse(bytes.toString('utf8')));
+      return parse(JSON.parse(bytes.toString('utf8')));
     } catch (error) {
       if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
       out.push({ kind: 'plan-invalid', problem: { type: 'schema', field, detail: `${path}: ${error.message}` } });
+      return null;
     }
   };
   for (const [id, s] of files.sidecars) {
@@ -264,7 +267,10 @@ export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[
     });
   }
   if (files.obligations !== null) load('plan.holistic.obligations', files.obligations.path, files.obligations.bytes, parseObligations);
-  if (files.vision !== null) load('plan.holistic.vision', files.vision.path, files.vision.bytes, parseVision);
+  const vision = files.vision === null ? null : load('plan.holistic.vision', files.vision.path, files.vision.bytes, parseVision);
+  if (vision !== null && files.plan.holistic !== undefined) {
+    for (const detail of advancesReasons(vision, files.plan.holistic.advances)) out.push({ kind: 'plan-invalid', problem: { type: 'schema', field: 'plan.holistic.advances', detail } });
+  }
   return out;
 }
 

@@ -678,7 +678,9 @@ export type PlanChange =
   /** M3: a unit's `limits`, or the plan's (null). */
   | Readonly<{ type: 'limits'; unit: UnitId | null }>
   /** M3 (A5): the plan gained `holistic`. */
-  | Readonly<{ type: 'holistic' }>;
+  | Readonly<{ type: 'holistic' }>
+  /** M3: `holistic.advances`, the arc's slice of the vision, changed (owner-only). */
+  | Readonly<{ type: 'advances' }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1170,6 +1172,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   vision: object((f): PlanChange => ({ type: f.get('type', literal('vision')), rev: f.get('rev', positive) })),
   limits: object((f): PlanChange => ({ type: f.get('type', literal('limits')), unit: f.get('unit', nullable(unitR)) })),
   holistic: object((f): PlanChange => ({ type: f.get('type', literal('holistic')) })),
+  advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {

@@ -215,7 +215,9 @@ const VISION = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null, clauses: [
     { id: 'V-1', kind: 'purpose', text: 'Multiply numbers in one call.', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'Never lose a digit.', rank: null, state: 'active' },
+    { id: 'V-3', kind: 'world', text: 'A developer multiplies any two numbers in one call and trusts every digit.', rank: null, state: 'active' },
   ],
+  questions: [],
 };
 const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
@@ -237,7 +239,7 @@ function holisticArc(): ReturnType<typeof setupArc> {
   const d = setupArc({ steps: straightToGate() });
   writeFileSync(join(planDirOf(d), 'vision.json'), JSON.stringify(VISION));
   writeFileSync(join(planDirOf(d), 'obligations.json'), JSON.stringify(OBLIGATIONS));
-  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', obligations: 'obligations.json' }));
+  editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', advances: ['V-1', 'V-2', 'V-3'], obligations: 'obligations.json' }));
   recordFirst(d);
   return d;
 }
@@ -278,7 +280,10 @@ test('plan-check.vision-context: in a holistic arc the plan-check prompt carries
     const calls = readCalls(d.scenarioPath);
     const check = calls[0]!;
     assert.ok(check.as === 'claude' && !isGate(check));
-    assert.ok(check.stdin.includes('Vision revision 1\nV-1 (purpose): Multiply numbers in one call.\nV-2 (non-negotiable): Never lose a digit.'), check.stdin);
+    assert.ok(check.stdin.includes([
+      'Vision revision 1', 'V-3 (world): A developer multiplies any two numbers in one call and trusts every digit.',
+      'V-1 (purpose): Multiply numbers in one call.', 'V-2 (non-negotiable): Never lose a digit.', 'This arc advances: V-1, V-2, V-3',
+    ].join('\n')), check.stdin);
     const [g] = calls.filter(isGate);
     for (const text of ['Multiply numbers in one call.', 'Never lose a digit.', 'Vision revision']) assert.ok(!g!.stdin.includes(text), `the gate prompt carries "${text}"`);
   } finally {

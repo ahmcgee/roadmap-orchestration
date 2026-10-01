@@ -10,7 +10,8 @@
 // branch; w35-37: one note repeated thrice, hence prior findings with their states and a stable `cause` the
 // executor dedupes on). Kept from the unit judgments: FINDING_BAR with its symmetry clause, "nobody will
 // answer", premises with file:line evidence. Mutants are executed, never judged by reading: the vacuity
-// lens writes one, the executor runs it.
+// lens writes one, the executor runs it. 2026-10-01: world clauses first, the arc's slice and its horizon, and open
+// questions whose working assumptions are provisional (DESIGN §2.8 amendment).
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
   architectureDocument, documentsXml, findingViewsText, obligationsText, pasted, referenceIndexText, rulingsText, visionText,
@@ -24,6 +25,10 @@ You run in a fresh session with inputs captured when the audit started. Nobody w
 
 <vision_first>
 The message opens with the arc's vision: the owner's statement of what the product is for, one clause per V-n, withdrawn clauses marked. Read it first and judge everything after it against it. The obligations, contracts, rulings, plan and code are means to the vision; where any of them conflicts with it, the vision wins, and the conflict is a finding, never a reason to read the vision down. Cite only active clauses.
+
+The world clauses describe the target world: who is in it, what they do and experience, and why it is better than today. The other clauses are its facets. This arc advances the clauses the vision lists as advanced; the other active clauses are the horizon, which later arcs reach. Judge the product by how it moves toward the advanced clauses. A horizon clause nothing serves yet is not a defect, but a choice that forecloses a horizon clause conflicts with the vision.
+
+Each open question names the clauses it bears on and a working assumption the arc acts on until the owner answers. The assumption is provisional: judge against it, and a choice resting on it that would be costly to undo if it proves false is worth a finding. Never resolve an open question yourself.
 </vision_first>
 
 <workspace>
@@ -59,7 +64,7 @@ const LENS_BRIEFS: { readonly [K in LensKind]: string } = {
   invariants: `Invariants. For each obligation, and each system property the contracts and the architecture doc state: does it still hold on the audited tree, and is its witness still meaningful? Look where units meet: an interface one unit changed and another relies on, shared state, ordering, error paths, configuration read in two places. A broken must-hold obligation or system property is P1; a property that holds only by accident, or a witness that no longer reaches the behaviour, is P2. Name the obligation when one is broken.`,
   drift: `Drift. Compare what is in force: the rulings, the contracts, the architecture doc, the obligations and the vision, and the code the audited range changed against each of them. Where does one contradict another? One finding per contradiction, naming both sides by path, C-nn or I-n and quoting the words in conflict. Code or a contract that now contradicts a contract, a ruling or the architecture doc is P2; documents that disagree while the code is right are P3. A ruling that deliberately deviates from a document and says so is not drift.`,
   vacuity: `Vacuity. For the tests the audited range added or changed, and for every obligation's witness tests: would the obvious mutant pass? A test that asserts an outcome without asserting the path was reached, asserts on a mock of the code under test, or would pass with the behaviour removed is vacuous. Every vacuity finding carries a mutant: patch is a unified diff against the audited tree (paths relative to the repository root, applicable with git apply) that breaks the behaviour while the test stays green, and lane is the lane whose tests should catch it. The executor applies it and runs the lane; a mutant the lane kills dismisses the finding, so write the smallest change you expect to survive. You do not run it. A vacuous witness of an obligation is P2; any other vacuous test is P3.`,
-  vision: `Vision. Does the product serve the vision? Read the product as it stands on the audited tree against each active clause. Is anything faithful to the letter of its spec and obligations but wrong for the vision? Is an active clause served by nothing the product does? Where did the build meet a situation the vision does not anticipate? Every finding cites at least one active V-n, and its severity is P2 or P3, never P1: this lens reports, the checkpoint steers. obligation is null unless one obligation is the subject.`,
+  vision: `Vision. Does the product serve the vision? Read the product as it stands on the audited tree against each active clause. Is anything faithful to the letter of its spec and obligations but wrong for the vision? Is a clause this arc advances served by nothing the product does? Does a choice foreclose a horizon clause? Where did the build meet a situation the vision does not anticipate? Every finding cites at least one active V-n, and its severity is P2 or P3, never P1: this lens reports, the checkpoint steers. obligation is null unless one obligation is the subject.`,
 };
 
 function owners(i: LensInputs): string {

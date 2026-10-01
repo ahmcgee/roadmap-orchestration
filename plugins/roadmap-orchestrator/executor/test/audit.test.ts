@@ -454,7 +454,7 @@ describe('coverage', () => {
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S1, true]], 'S1→S2 is uncovered when the vision changes');
       const visionFile = join(d.planPath, '..', 'vision.json');
       const vision = JSON.parse(readFileSync(visionFile, 'utf8')) as typeof VISION;
-      writeFileSync(visionFile, JSON.stringify({ ...vision, rev: 2, clauses: [...vision.clauses, { id: 'V-2', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }] }));
+      writeFileSync(visionFile, JSON.stringify({ ...vision, rev: 2, clauses: [...vision.clauses, { id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }] }));
       const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       const base = coverageBase(ctx, S2)!;

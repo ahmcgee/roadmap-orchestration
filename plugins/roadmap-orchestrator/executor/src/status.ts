@@ -57,8 +57,9 @@
 //                 `dischargingObservation`): on the head's tree, the lane at its current rev, in the environment the
 //                 executor recorded for it (`recordedLaneEnv`), so status never shows true what completion counts unmet
 //   waived/deferred  exempt obligations with the ruling that exempted each
-//   vision        the vision in force and its coverage both ways (A1 `visionCoverage`; citers: the sidecars in
-//                 force and the divergences)
+//   vision        the vision in force (clauses, questions), the plan's slice of it (`advances`) and its coverage
+//                 (A1 `visionCoverage`: advanced clauses unserved, the horizon, obligations serving none, withdrawn
+//                 clauses still cited; citers: the sidecars in force and the divergences)
 //   divergences   every divergence no acknowledged digest covers (H11), with what differed, the clauses cited,
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
@@ -100,7 +101,7 @@ import {
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf } from './needsuser.ts';
-import { type PlanM1, type PlanUnit, lensSetOf, parsePlan } from './input/plan.ts';
+import { type PlanM1, type PlanUnit, advancesOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type JobTotal, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { readRepoConfig } from './preflight/checks.ts';
@@ -130,7 +131,7 @@ import { type FindingMetric, findingMetrics, isActive } from './holistic/finding
 import { type Observation, verdictOf } from './holistic/observe.ts';
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
-  type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, isExempt,
+  type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt,
   observationKeyText, parseRulingSidecar,
 } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
@@ -302,6 +303,10 @@ export type VisionView = Readonly<{
   rev: number;
   confirmation: Vision['confirmation'];
   clauses: readonly Readonly<{ id: VisionClauseId; kind: VisionClauseKind; text: string; rank: number | null; state: ClauseState }>[];
+  /** The open and closed vision questions, as the file holds them. */
+  questions: readonly VisionQuestion[];
+  /** The plan in force's slice (`holistic.advances`); the other active clauses are the horizon. */
+  advances: readonly VisionClauseId[];
   coverage: VisionCoverage;
 }>;
 
@@ -1013,7 +1018,7 @@ function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'):
     .sort((a, b) => idNumber(a.obligation) - idNumber(b.obligation));
 }
 
-function visionOf(revision: RevisionInForce, fold: HolisticFold): VisionView | null {
+function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold): VisionView | null {
   if (revision.vision === null) return null;
   const v = revision.vision.value;
   const citers = [
@@ -1023,7 +1028,9 @@ function visionOf(revision: RevisionInForce, fold: HolisticFold): VisionView | n
   return {
     rev: v.rev, confirmation: v.confirmation,
     clauses: v.clauses.map((c) => ({ id: c.id, kind: c.kind, text: c.text, rank: c.rank, state: c.state })),
-    coverage: visionCoverage(v, revision.obligations?.value ?? null, citers),
+    questions: v.questions,
+    advances,
+    coverage: visionCoverage(v, advances, revision.obligations?.value ?? null, citers),
   };
 }
 
@@ -1273,7 +1280,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     notYetTrue: t.notYetTrue,
     waived: exemptBy(obligations, 'waived'),
     deferred: exemptBy(obligations, 'deferred'),
-    vision: revision === null ? null : visionOf(revision, fold),
+    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
     divergences: divergencesOf(view),
     decisionsSince: decisionsSince(runDir, arc, view, events, acks),
     convergence: on === null ? null : convergenceOf(runDir, view, on.plan),

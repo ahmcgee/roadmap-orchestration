@@ -193,6 +193,24 @@ describe('startup.rejections', () => {
     assert.equal(r?.kind === 'plan-invalid' ? r.problem.type : null, 'schema');
   });
 
+  it('plan-invalid: holistic.advances names a withdrawn or unknown clause, or no world clause, of the vision (78)', T, async () => {
+    const s = setup();
+    writeFileSync(join(s.planDir, 'vision.json'), JSON.stringify({
+      schema: 'roadmap/vision-m3', rev: 1, confirmation: null, questions: [], clauses: [
+        { id: 'V-1', kind: 'purpose', text: 'Helpers anyone can trust.', rank: null, state: 'active' },
+        { id: 'V-2', kind: 'world', text: 'A developer calls a helper and trusts the answer.', rank: null, state: 'active' },
+        { id: 'V-3', kind: 'good', text: 'Terse output.', rank: null, state: 'withdrawn' },
+      ],
+    }));
+    write({ ...s, plan: { ...s.plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-3', 'V-9'] } } });
+    const rejections = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
+    assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'schema' ? [r.problem.field, r.problem.detail] : null)), [
+      ['plan.holistic.advances', 'holistic.advances names V-3, which is withdrawn (the arc advances only active clauses)'],
+      ['plan.holistic.advances', 'holistic.advances names V-9, which is not a clause of the vision'],
+      ['plan.holistic.advances', 'holistic.advances names no active world clause (the arc advances at least one)'],
+    ]);
+  });
+
   it('plan-invalid: a --plan file that does not exist (78)', T, async () => {
     const s = setup();
     const missing = absPath(join(s.planDir, 'nope.json'));

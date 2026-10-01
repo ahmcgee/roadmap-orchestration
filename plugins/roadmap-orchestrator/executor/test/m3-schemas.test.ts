@@ -134,15 +134,32 @@ describe('M3 inputs: vision, obligations, ruling sidecars', () => {
     { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
     { id: 'V-3', kind: 'tradeoff', text: 'clear errors over permissive input', rank: 1, state: 'withdrawn' },
+    { id: 'V-4', kind: 'world', text: 'a bookkeeper closes the month by running one command and trusting every total', rank: null, state: 'active' },
   ];
-  const v = { schema: 'roadmap/vision-m3', rev: 1, confirmation: { ref: 'phase0/playback#3', at: AT }, clauses };
+  const question = { id: 'Q-1', text: 'do bookkeepers reconcile more than one currency?', bears: ['V-1', 'V-2'], assumption: 'one currency per ledger', state: 'open' };
+  const v = { schema: 'roadmap/vision-m3', rev: 1, confirmation: { ref: 'vision.md#sha256:ab12', at: AT }, clauses, questions: [question] };
 
-  it('the vision: a tradeoff is ranked and nothing else is; ids unique; one active clause at least', () => {
+  it('the vision: a tradeoff is ranked and nothing else is; ids unique; an active world clause at least', () => {
     assert.deepEqual(parseVision(v), v);
     assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[2], rank: null }] }), /rank/);
     assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[0], rank: 2 }] }), /rank/);
     assert.throws(() => parseVision({ ...v, clauses: [clauses[0], clauses[0]] }), /clauses/);
-    assert.throws(() => parseVision({ ...v, clauses: [clauses[2]] }), /active clause/);
+    assert.throws(() => parseVision({ ...v, clauses: clauses.slice(0, 3), questions: [] }), /at least one active world clause/);
+    assert.throws(() => parseVision({ ...v, clauses: [...clauses.slice(0, 3), { ...clauses[3], state: 'withdrawn' }], questions: [] }), /at least one active world clause/);
+    assert.throws(() => parseVision({ ...v, questions: undefined }), /questions/);
+  });
+
+  it('vision questions: ids unique, an open one bears on active clauses, a working assumption always', () => {
+    assert.deepEqual(parseVision({ ...v, questions: [] }).questions, []);
+    assert.throws(() => parseVision({ ...v, questions: [question, { ...question, text: 'again' }] }), /questions\[1\]: expected a unique id/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-3'] }] }), /questions\[0\]\.bears: expected active clauses of this vision, got "V-3"/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'] }] }), /questions\[0\]\.bears: expected active clauses/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: [] }] }), /bears/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, assumption: '' }] }), /assumption/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, id: 'V-5' }] }), /questions\[0\]\.id/);
+    // A closed question stays as it was: its clauses need only be in the file.
+    assert.deepEqual(parseVision({ ...v, questions: [{ ...question, bears: ['V-3'], state: 'closed' }] }).questions[0]?.state, 'closed');
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'], state: 'closed' }] }), /expected clauses of this vision/);
   });
 
   it('obligations: split parents carry no witness (H14), children name their parent, the mapping names known ids', () => {
@@ -386,7 +403,7 @@ describe('M3 file records', () => {
     };
     const m3 = {
       ...base,
-      holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: { every: 2, lenses: ['invariants', 'vision'], wallClockMin: 120 } },
+      holistic: { vision: 'vision.json', advances: ['V-1', 'V-4'], obligations: 'obligations.json', audit: { every: 2, lenses: ['invariants', 'vision'], wallClockMin: 120 } },
       limits: { chargeable: 4, convergenceK: 1 },
       units: [{ ...unit, origin: 'repair', routing: { gate: { med: 'summit' } }, limits: { redirects: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
     };
@@ -395,13 +412,16 @@ describe('M3 file records', () => {
     assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, redirects: 1 });
     assert.deepEqual(boundsOf(plan, plan.units[1]!), { ...DEFAULT_BOUNDS, chargeable: 4 });
     assert.deepEqual(lensSetOf(plan.holistic!), ['invariants', 'vision']);
-    assert.deepEqual(lensSetOf({ vision: plan.holistic!.vision }), ['invariants', 'drift', 'vacuity', 'vision']);
+    assert.deepEqual(lensSetOf({ vision: plan.holistic!.vision, advances: plan.holistic!.advances }), ['invariants', 'drift', 'vacuity', 'vision']);
     assert.equal(DEFAULT_CONVERGENCE_K, 3);
     const noM3 = parsePlan(base);
     assert.equal(noM3.holistic, undefined);
     assert.deepEqual(boundsOf(noM3, noM3.units[0]!), DEFAULT_BOUNDS);
-    assert.throws(() => parsePlan({ ...base, holistic: { obligations: 'o.json' } }), /holistic\.vision/);
-    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', audit: { lenses: ['vision', 'drift'] } } }), /lenses/);
+    assert.throws(() => parsePlan({ ...base, holistic: { obligations: 'o.json', advances: ['V-1'] } }), /holistic\.vision/);
+    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-1'], audit: { lenses: ['vision', 'drift'] } } }), /lenses/);
+    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json' } }), /holistic\.advances/);
+    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: [] } }), /holistic\.advances: expected a non-empty array/);
+    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
     assert.deepEqual(ORIGIN_RANK, { repair: 0, checkpoint: 1, planned: 2 });

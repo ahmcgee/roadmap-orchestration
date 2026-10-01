@@ -45,7 +45,9 @@
 //                               differing ledger or sidecar from an apply, a start or a reverse is refused
 //   vision                      owner-only (A14): only an architect `apply` changes it (`visionEditReasons`)
 //   holistic                    may be added (`holistic`, with the vision), never removed; its audit settings and
-//                               its obligations file stay once in force
+//                               its obligations file stay once in force; `holistic.advances` (owner-only: only an
+//                               `apply` changes it, `advances`) names active clauses of the revision's vision, one a
+//                               world clause (`advancesReasons`), checked on every revision
 //   obligations                 `classifyObligations` (src/holistic/obligations.ts): added, split, witness (also
 //                               every obligation witnessed by a changed arc lane), disposed by a ruling in force
 //                               (a split parent stays split: never disposed), restored, edited; `mapping`. A
@@ -82,7 +84,7 @@ import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
 import { type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { visionEditReasons } from '../holistic/vision.ts';
+import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
 import { withinEnvelope } from '../pipeline/prepare.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
@@ -714,6 +716,12 @@ export function classify(input: ClassifyInput): Classified {
       if (why.length === 0) changes.push({ type: 'vision', rev: inputs.vision.rev });
     }
   }
+  // The arc's slice of the vision (owner-only, like the vision): it fits the revision's vision whatever changed.
+  if (plan.holistic !== undefined && inputs.vision !== null) reasons.push(...advancesReasons(inputs.vision, plan.holistic.advances));
+  if (cur.holistic !== undefined && plan.holistic !== undefined && !same(cur.holistic.advances, plan.holistic.advances)) {
+    if (proposer.type !== 'apply') reasons.push(`holistic.advances is owner-only: only an architect \`apply\` changes it, not a ${proposer.type}`);
+    else changes.push({ type: 'advances' });
+  }
   const obligations = obligationRows(input, inputs, reasons);
   changes.push(...obligations.changes);
   specRows(input, inputs, specs, changes, reasons);
@@ -849,6 +857,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'mapping':
       case 'vision':
       case 'holistic':
+      case 'advances':
         return ARC;
       case 'unit-added':
       case 'unit-removed':

@@ -5,7 +5,8 @@
 // `roadmap/plan-m1` and a 1.0.0-dev.4 plan reads unchanged (LR-1). M3 does the same: `holistic`, `limits`, a
 // unit's `routing` layer and `limits`, and the `repair` origin.
 import {
-  type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, INTEGRATION_SLOT, arcId, edgeId, resourceName, rulingId, sha, unitId,
+  type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, resourceName,
+  rulingId, sha, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv } from '../core/records.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str } from '../core/validate.ts';
@@ -64,6 +65,11 @@ export const DEFAULT_CONVERGENCE_K = 3;
 export type Holistic = Readonly<{
   /** The vision file (`roadmap/vision-m3`), relative to the plan's directory. */
   vision: PlanPath;
+  /**
+   * The slice of the vision this arc moves toward, ascending: active clauses of the vision in force, at least one a
+   * `world` clause (checked where plan and vision meet: `advancesReasons`). The other active clauses are the horizon.
+   */
+  advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
   audit?: Readonly<{
@@ -154,13 +160,22 @@ const holistic: Read<Holistic> = object((f) => {
     const wallClockMin = g.optional('wallClockMin', positive);
     return { ...(every === undefined ? {} : { every }), ...(lenses === undefined ? {} : { lenses }), ...(wallClockMin === undefined ? {} : { wallClockMin }) };
   }));
-  return { vision: f.get('vision', (v, p) => planPath(v, p)), ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
+  return {
+    vision: f.get('vision', (v, p) => planPath(v, p)),
+    advances: f.get('advances', sortedBy((v, p) => visionClauseId(v, p), (c) => c, { nonEmpty: true })),
+    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */
 export function boundsOf(plan: PlanM1, unit: PlanUnit): Bounds {
   const pick = (k: keyof Bounds): number => unit.limits?.[k] ?? plan.limits?.[k] ?? DEFAULT_BOUNDS[k];
   return Object.fromEntries(BOUND_FIELDS.map((k) => [k, pick(k)])) as Bounds;
+}
+
+/** The arc's slice of the vision (`holistic.advances`); a plan without `holistic` here is a bug (a vision is in force). */
+export function advancesOf(plan: PlanM1): readonly VisionClauseId[] {
+  if (plan.holistic === undefined) throw new Error(`plan of arc ${plan.arc}: a vision in force under a plan without holistic`);
+  return plan.holistic.advances;
 }
 
 /** The arc's required lens set L (H9): `holistic.audit.lenses`, or all four. */

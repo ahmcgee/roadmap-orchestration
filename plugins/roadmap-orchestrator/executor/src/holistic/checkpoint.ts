@@ -44,8 +44,8 @@ import type { CheckpointState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
-import { OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, keptInput, keptPayload, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { DEFAULT_CONVERGENCE_K, type PlanM1, parsePlan } from '../input/plan.ts';
+import { OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, keptInput, payloadAtRev, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import { DEFAULT_CONVERGENCE_K, type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf,
@@ -53,7 +53,7 @@ import {
 import { arcJourneyLane, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import type { CheckpointInputs, FindingView } from '../prompts/inputs.ts';
+import { type CheckpointInputs, type FindingView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { parseRulings } from '../spec/rulings.ts';
@@ -307,12 +307,7 @@ function kept(ctx: CheckpointContext, sha: Parameters<typeof keptInput>[1], ext:
 }
 
 /** The payload of plan rev `rev` (a holistic revision always has one). */
-function payloadAt(ctx: CheckpointContext, rev: number) {
-  const view = ctx.journal.view;
-  const commit = view.opsOf('revision.commit').find((c) => c.expect.rev === rev && view.doneOf(c.op) !== null);
-  if (commit === undefined) throw new Error(`plan rev ${rev} has no applied revision.commit`);
-  return keptPayload(ctx.runDir, commit.expect.payloadSha256);
-}
+const payloadAt = (ctx: CheckpointContext, rev: number) => payloadAtRev(ctx.journal.view, ctx.runDir, rev);
 
 function recorded(ctx: CheckpointContext, s: Captured): Recorded {
   const payload = payloadAt(ctx, s.vector.plan);
@@ -374,13 +369,13 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
   return {
-    vision: { rev: r.vision.rev, clauses: r.vision.clauses },
+    vision: visionInputOf(r.vision, advancesOf(r.plan)),
     trigger: s.trigger,
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
     findings: findingViews(ctx, s.findings),
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, s.headSha),
-    coverage: visionCoverage(r.vision, r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites }))),
+    coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites }))),
     divergences: uncoveredDivergences(ctx.journal.view).map((d) => ({ id: d.id, type: d.type, what: d.what })),
     contracts: r.plan.contracts.map((c) => docAt(ctx, s.headSha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),

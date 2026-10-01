@@ -14,14 +14,16 @@
 //             and an `integration` branch cut from it; in-tree `.roadmap/` holds contracts/ledger.md, the C-nn
 //             ledger, a hand-written invariants.md (the close-out renders it, so the close-out publication has
 //             something to change) and config.json (empty routing)
-//   input/    plan.json (holistic: vision, obligations, audit every 2 with L = {invariants, vision};
+//   input/    plan.json (holistic: vision, advances V-1..V-4, obligations, audit every 2 with L = {invariants, vision};
 //             limits.convergenceK 1), vision.json, obligations.json, rulings.md and one spec per unit
 //   barriers/ empty: in branch R the money lane writes `money.reached` here, the driver `money.release`
 //
 // The vision (plan "Fixture evals/m3/"): V-1 purpose "bookkeepers reconcile a month in one command", V-2
-// non-negotiable "money is never silently mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input".
+// non-negotiable "money is never silently mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input",
+// V-4 world: a bookkeeper's month-end the other three are facets of. No open questions (a question's working
+// assumption would invite requests the story does not script). The arc advances all four, so the horizon is empty.
 // The obligations, each witnessed by one node-test arc lane over one journey test:
-//   I-1 future, serves V-1, delivered by `parse` and `report`: `node src/cli.js reconcile 2026-09 <file>` prints
+//   I-1 future, serves V-1 and V-4, delivered by `parse` and `report`: `node src/cli.js reconcile 2026-09 <file>` prints
 //       the month's balance (fails at the baseline: there is no reconcile command)
 //   I-2 must-hold, serves V-2: `format` prints amounts rounded to the cent half to even, `format 0.125` prints
 //       0.12 (held at the baseline; lane `money`, which waits at the driver's barrier in the first audit that sees the
@@ -88,8 +90,14 @@ const VISION = {
     { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
     { id: 'V-3', kind: 'tradeoff', text: 'clear errors over permissive input', rank: 1, state: 'active' },
+    {
+      id: 'V-4', kind: 'world', rank: null, state: 'active',
+      text: 'At month-end a bookkeeper runs one command over the month\'s ledger and gets a balance she can file without re-adding it by hand: every amount is exact to the cent, and a bad entry stops the run with a message naming it, so closing the books takes minutes instead of an afternoon.',
+    },
   ],
+  questions: [],
 };
+const ADVANCES = ['V-1', 'V-2', 'V-3', 'V-4'] as const;
 
 const PASS_PATH = { set: {}, pass: ['PATH'] };
 
@@ -100,21 +108,21 @@ function arcLane(l: Layout, id: string, file: string) {
   return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test' };
 }
 
-type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; anchor: string; quotedText: string; docPath: string; serves: string; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
+type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; anchor: string; quotedText: string; docPath: string; serves: readonly string[]; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
 
 const OBLIGATIONS: readonly ObligationSeed[] = [
   {
-    id: 'I-1', lane: 'reconcile', activation: 'future', deliveredBy: ['parse', 'report'], serves: 'V-1', contracts: [CONTRACT_PATH],
+    id: 'I-1', lane: 'reconcile', activation: 'future', deliveredBy: ['parse', 'report'], serves: ['V-1', 'V-4'], contracts: [CONTRACT_PATH],
     statement: 'A bookkeeper reconciles a month of a ledger file in one command: `reconcile <YYYY-MM> <file>` prints the month\'s balance.',
     docPath: CONTRACT_PATH, anchor: '#commands', quotedText: '`reconcile <YYYY-MM> <file>` prints `<YYYY-MM> balance <amount>`',
   },
   {
-    id: 'I-2', lane: MONEY_LANE, activation: 'must-hold', deliveredBy: [], serves: 'V-2', contracts: [],
+    id: 'I-2', lane: MONEY_LANE, activation: 'must-hold', deliveredBy: [], serves: ['V-2'], contracts: [],
     statement: '`format <amount>` prints the amount rounded to the cent on its decimal digits, half to even: `format 0.125` prints 0.12 and `format 2.675` prints 2.68.',
     docPath: 'docs/money.md', anchor: '#rounding', quotedText: 'half to even',
   },
   {
-    id: 'I-3', lane: 'cli', activation: 'must-hold', deliveredBy: [], serves: 'V-3', contracts: [CONTRACT_PATH],
+    id: 'I-3', lane: 'cli', activation: 'must-hold', deliveredBy: [], serves: ['V-3'], contracts: [CONTRACT_PATH],
     statement: 'Unknown commands exit 2.',
     docPath: CONTRACT_PATH, anchor: '#commands', quotedText: 'Unknown commands exit 2',
   },
@@ -147,7 +155,7 @@ export function obligationsFile(l: Layout): unknown {
     obligations: OBLIGATIONS.map((o) => {
       const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]] };
       return {
-        id: o.id, rev: 1, statement: o.statement, docRef: { path: o.docPath, anchor: o.anchor, quotedText: o.quotedText }, serves: [o.serves],
+        id: o.id, rev: 1, statement: o.statement, docRef: { path: o.docPath, anchor: o.anchor, quotedText: o.quotedText }, serves: o.serves,
         witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
         deliveredBy: [...o.deliveredBy], activation: o.activation, contracts: [...o.contracts], state: { type: 'active' },
       };
@@ -282,7 +290,7 @@ export function setup(dir: string): void {
       }],
     },
     resources: [],
-    holistic: { vision: 'vision.json', obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
+    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
     limits: { convergenceK: CONVERGENCE_K },
     units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPES[id], resources: [], after: after[id] })),
   }));
