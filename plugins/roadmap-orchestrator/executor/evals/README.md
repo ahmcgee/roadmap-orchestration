@@ -184,18 +184,22 @@ node evals/m3/check.ts /var/tmp/m3-default
   at the first `checkpoint-inputs`, whatever its trigger, the architect's edit of `direction` by `roadmap apply`,
   which makes that bundle stale whole; the repair's id read from the `plan-applied{source: bundle}` change (G18)
   and added to `run-only` once the drift audit that revision triggers has started; every `divergence-digest` and
-  `convergence-bound` item acknowledged as it opens; `run-only --clear` once the repair merged. Each device is
+  `convergence-bound` item acknowledged as it opens; every `bundle-request` answered as an architect who trusts the
+  checkpoint would (`ack <id> --choice apply` when it offers `apply`, so the next job enacts the bundle; a plain
+  `ack` when it offers nothing); `run-only --clear` once the repair merged. Each device is
   recorded in `report.json` (`devices`). As soon as the log leaves the story the run stops (`endedBy:
   device-failed`) with a reason naming the observed job, trigger and outcome: the first checkpoint not rejected
   stale (or applying its bundle), a bundle revision other than one repair admit, a checkpoint that no-ops or asks
-  the owner before the repair is admitted, audit-1 not the cadence audit of S or ending without a witness P1 over
+  the owner with a request that cannot be applied before the repair is admitted, any `owner-request` (an owner-only
+  act the driver never answers; the reason names the item and its summary), audit-1 not the cadence audit of S or ending without a witness P1 over
   I-2, a rejected apply. Finding ids are never assumed (plan-check may open P3s first): the P1 is found by content.
   A parked run is stopped as in M1; hard timeout 180 minutes.
   It refuses a used dir, uses the machine's host lock, and kills only the pids `status` names.
 - `check.ts <dir>` prints one JSON line with every criterion, then the two lists, and exits non-zero on any
   failed criterion. M3: `baseline`, `regression-unselected`, `audit-race`, `stale-whole`, `bundles-whole`,
   `repair-divergence` (plan-departed citing V-2), `divergence-digest-bound` (each digest binds exactly the
-  recorded ids not bound before; the driver acknowledged each), `convergence-bound`, `repair-resolved`,
+  recorded ids not bound before; the driver acknowledged each), `bundles-whole` (its detail also counts the bundle
+  requests the driver answered: informational, never a failure), `convergence-bound`, `repair-resolved`,
   `drift-audit` (the vision lens alone, then a no-op), `final-audit` (L, then a no-op), `close-out` (docs-only,
   covering its own edge), `completion` (`arc-completed`, then the terminal snapshot), `lens-coverage` (each lens
   of L contiguous to the final head, the docs edge applied only from the final audit's SHA), `snapshot-closure`
@@ -229,5 +233,6 @@ checkout, connect them to V-2 and redirect or revise (runs 1 and 2 did, with the
 Codex may keep `format` on `formatAmount` or fix `formatDisplay` too, so I-2 never regresses and audit-1 opens
 no P1 over it; a real first checkpoint may decide before the stale `apply` commits; a real checkpoint may no-op,
 cut `tidy`, patch a spec or write a repair spec that cannot be admitted instead of admitting a repair; lenses
-may open further findings that make the checkpoint act again, and with K = 1 a second applied bundle turns the
-rest into bundle requests the driver does not answer.
+may open further findings that make the checkpoint act again: with K = 1 a second bundle while the brake is open
+becomes a bundle request, which the driver applies, so the story still converges but takes more checkpoint calls
+than the 23 counted above; an owner-only act stops the run.

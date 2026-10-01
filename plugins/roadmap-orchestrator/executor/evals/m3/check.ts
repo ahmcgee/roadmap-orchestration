@@ -246,7 +246,9 @@ function bundlesWhole(run: Run): Verdict {
   const repairs = specText === null ? [] : (parseSpec(Buffer.from(specText), `${unit.id}.json` as never).repairs ?? []);
   const p1 = moneyP1(run);
   if (!repairs.some((x) => x === p1?.id || x === 'I-2')) problems.push(`${unit.id}'s spec repairs ${JSON.stringify(repairs)}, not ${p1?.id} or I-2`);
-  return verdict(problems, `one bundle revision ${rev.rev} (${rev.source?.type === 'bundle' ? rev.source.job : ''}) admits ${unit.id} (repair of ${JSON.stringify(repairs)}); ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing`);
+  const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
+  const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
+  return verdict(problems, `one bundle revision ${rev.rev} (${rev.source?.type === 'bundle' ? rev.source.job : ''}) admits ${unit.id} (repair of ${JSON.stringify(repairs)}); ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
 }
 
 function repairDivergence(run: Run): Verdict {

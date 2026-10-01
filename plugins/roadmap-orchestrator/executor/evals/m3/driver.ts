@@ -22,7 +22,12 @@
 //                that checkpoint's bundle is stale whole
 //   staleApplied once that apply's receipt is `applied`; under --fake it then releases the fake checkpoint call held at
 //                `fake/ckpt-1.hold` (a real call takes longer than the apply; if not, the run fails, naming it)
-//   acks         every `divergence-digest` and `convergence-bound` item, acknowledged once each as it opens
+//   acks         every `divergence-digest` and `convergence-bound` item, acknowledged once each as it opens; every
+//                `bundle-request` (a convergence brake, a draining arc, a re-evaluation) answered as an architect who
+//                trusts the checkpoint would: `ack <id> --choice apply` when the item offers `apply` (the next job of its
+//                trigger enacts the bundle), a plain `ack` when it offers nothing (it cannot be applied as proposed).
+//                An `owner-request` (an owner-only act, A16) is never answered: the run stops `device-failed`, naming
+//                the item and its summary
 //   repair       G18: the unit the bundle revision admits (read from its `plan-applied{source: bundle}` change)
 //   admitRepair  once an audit started after that revision (A2, the drift audit): `run-only` the plan units and the
 //                repair, so the repair merges after A2's capture
@@ -30,8 +35,8 @@
 //
 // The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger and
 // outcome) as soon as the log leaves the story: the first checkpoint decides anything but `rejected{stale}` or applies
-// its bundle; a bundle revision is anything but the one admit of an origin-`repair` unit; a checkpoint no-ops or asks
-// the owner before the repair is admitted; audit-1 is not the cadence audit of tidy's publication, or ends without a
+// its bundle; a bundle revision is anything but the one admit of an origin-`repair` unit; a checkpoint no-ops, or asks
+// the owner with a request that cannot be applied, before the repair is admitted; an `owner-request` opens; audit-1 is not the cadence audit of tidy's publication, or ends without a
 // witness P1 over I-2; the stale apply is rejected. Finding ids are never assumed: the P1 is found by its content.
 // As in M1 and M2, a run parked on a blocking needs-user is stopped (`parked-stop`), and the hard timeout stops,
 // then SIGKILLs. The driver refuses a fixture dir that already holds a report or a run dir: a fixture is set up and
@@ -45,7 +50,7 @@ import { terminalReceipt } from '../../src/commands/queue.ts';
 import { isAlive, statOf } from '../../src/contain/proc.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { readJson } from '../../src/core/fsx.ts';
-import { arcId, commandId } from '../../src/core/ids.ts';
+import { type NeedsUserId, arcId, commandId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { type ProcIdentity, executorExitReason } from '../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
@@ -55,6 +60,7 @@ import { type ProfileName, profileName } from '../../src/routing/types.ts';
 import type { ArcState, Status } from '../../src/status.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import type { BundleOutcome, CheckpointTrigger } from '../../src/holistic/types.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
 import { BARRIER_JOB, FAKE_CKPT_HOLD, FIRST, type Layout, UNITS, barrierFile, layout } from './layout.ts';
 import { type StoryName, storyName, storySteps } from './scenario.ts';
@@ -80,7 +86,7 @@ export type Devices = {
   release: { at: string } | null;
   staleApply: { command: string; checkpoint: string; trigger: string; seq: number } | null;
   staleApplied: { at: string } | null;
-  acks: { needsUser: string; reason: string; ack: string }[];
+  acks: { needsUser: string; reason: string; choice: string | null; ack: string }[];
   repair: { unit: string; job: string; rev: number; seq: number } | null;
   admitRepair: { runOnly: string; audit: string } | null;
   unlimited: string | null;
@@ -223,8 +229,8 @@ const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): rea
 
 const merged = (s: Status, unit: string): boolean => s.units.find((u) => u.unit === unit)?.status === 'retired';
 const now = (): string => new Date().toISOString();
-/** The items the driver acknowledges whenever they are open (story steps 5 and 6). */
-const ACKED_REASONS: readonly string[] = ['divergence-digest', 'convergence-bound'];
+/** The items the driver acknowledges whenever they are open (story steps 5 and 6, and the bundle requests). */
+const ACKED_REASONS: readonly string[] = ['divergence-digest', 'convergence-bound', 'bundle-request'];
 
 /** A checkpoint trigger, as the device messages name it. */
 const triggerText = (t: CheckpointTrigger): string => (t.type === 'audit' ? `audit ${t.job}` : `park of ${t.unit} at seq ${t.seq}`);
@@ -286,9 +292,12 @@ function divergence(p: Poll): string | null {
     }
   }
   if (bundles.length === 0) {
-    const settled = decided.find((x) => x.outcome.kind === 'no-op' || x.outcome.kind === 'requested');
+    const applicable = (o: BundleOutcome): boolean => o.kind === 'requested' && (readNeedsUser(absPath(l.runDir), o.needsUser as NeedsUserId)?.options.some((x) => x.id === 'apply') ?? false);
+    const settled = decided.find((x) => x.outcome.kind === 'no-op' || (x.outcome.kind === 'requested' && !applicable(x.outcome)));
     if (settled !== undefined) return `checkpoint ${settled.job} (${triggerOf(settled.job)}) decided ${outcomeText(settled.outcome)} while no repair is admitted: a bundle admitting the repair is required there`;
   }
+  const owner = p.s.needsUser.find((n) => n.reason === 'owner-request');
+  if (owner !== undefined) return `owner-request ${owner.id} is open (an owner-only act the driver never answers): ${readNeedsUser(absPath(l.runDir), owner.id)?.summary ?? '(no record)'}`;
   const audit1 = factsOf(events, 'audit-started').find((a) => a.job === BARRIER_JOB);
   if (d.barrier !== null && audit1 !== undefined) {
     const ended = factsOf(events, 'audit-ended').find((x) => x.job === BARRIER_JOB);
@@ -337,7 +346,9 @@ function fire(p: Poll): string | null {
 
   for (const item of s.needsUser) {
     if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
-    d.acks.push({ needsUser: item.id, reason: item.reason, ack: submitted(cli(c, ['ack', item.id, ...run])) });
+    const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
+    const choice = item.reason === 'bundle-request' && offered ? 'apply' : null;
+    d.acks.push({ needsUser: item.id, reason: item.reason, choice, ack: submitted(cli(c, ['ack', item.id, ...(choice === null ? [] : ['--choice', choice]), ...run])) });
   }
 
   if (d.repair === null) {
