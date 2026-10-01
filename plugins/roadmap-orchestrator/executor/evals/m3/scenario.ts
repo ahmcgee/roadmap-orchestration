@@ -55,22 +55,30 @@ export function reconcile(entries, month) {
 }
 `;
 
-const CLI = `// ledger: node src/cli.js <command> [args...] (.roadmap/contracts/ledger.md, commands).
-import { readFileSync } from 'node:fs';
-import { formatAmount } from './format.js';
-import { parseLedger } from './parse.js';
-import { reconcile } from './report.js';
-
-const COMMANDS = {
-  format: ([amount]) => {
-    process.stdout.write(\`\${formatAmount(Number(amount))}\\n\`);
-    return 0;
-  },
-  reconcile: ([month, file]) => {
+/** src/cli.js after tidy (`format` through formatDisplay, as `total`), and after report too (`reconcile`). */
+function cliSource(reconcileCommand: boolean): string {
+  const imports = reconcileCommand
+    ? "import { readFileSync } from 'node:fs';\nimport { formatDisplay } from './display.js';\nimport { parseLedger } from './parse.js';\nimport { reconcile } from './report.js';\n"
+    : "import { formatDisplay } from './display.js';\n";
+  const reconcileEntry = reconcileCommand
+    ? `  reconcile: ([month, file]) => {
     process.stdout.write(\`\${reconcile(parseLedger(readFileSync(file, 'utf8')), month)}\\n\`);
     return 0;
   },
-};
+`
+    : '';
+  return `// ledger: node src/cli.js <command> [args...] (.roadmap/contracts/ledger.md, commands).
+${imports}
+const COMMANDS = {
+  format: ([amount]) => {
+    process.stdout.write(\`\${formatDisplay(Number(amount))}\\n\`);
+    return 0;
+  },
+  total: (amounts) => {
+    process.stdout.write(\`\${formatDisplay(amounts.reduce((sum, a) => sum + Number(a), 0))}\\n\`);
+    return 0;
+  },
+${reconcileEntry}};
 
 const [name, ...args] = process.argv.slice(2);
 const command = Object.hasOwn(COMMANDS, name ?? '') ? COMMANDS[name] : undefined;
@@ -81,30 +89,21 @@ if (command === undefined) {
   process.exitCode = command(args);
 }
 `;
-
-const TIDY_FORMAT = `const AMOUNT = new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/** Renders a money amount with exactly two decimals and thousands grouping (.roadmap/contracts/ledger.md, money). */
-export function formatAmount(amount) {
-  return AMOUNT.format(amount);
 }
-`;
 
-const FIXED_FORMAT = `const WHOLE = new Intl.NumberFormat('en-US');
-
-/** Renders a money amount with two decimals and thousands grouping, rounding to the cent half to even (docs/money.md). */
-export function formatAmount(amount) {
+/** The repair: formatDisplay keeps its separators and rounds the cents on the decimal digits, half to even. */
+const FIXED_DISPLAY = `/** Renders an amount for display: two decimals, thousands separated, cents half to even (docs/money.md). */
+export function formatDisplay(amount) {
   const sign = amount < 0 ? '-' : '';
   const [whole, fraction = ''] = String(Math.abs(amount)).split('.');
   let cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
   const rest = fraction.slice(2);
   const above = rest.slice(1).replace(/0/g, '') !== '';
   if (rest[0] > '5' || (rest[0] === '5' && (above || cents % 2n === 1n))) cents += 1n;
-  return \`\${sign}\${WHOLE.format(cents / 100n)}.\${String(cents % 100n).padStart(2, '0')}\`;
+  const units = String(cents / 100n).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+  return \`\${sign}\${units}.\${String(cents % 100n).padStart(2, '0')}\`;
 }
 `;
-
-const FORMAT_TEST_BASE = "test('formatAmount renders two decimals', () => {\n  assert.equal(formatAmount(12.5), '12.50');\n  assert.equal(formatAmount(3), '3.00');\n  assert.equal(formatAmount(0.1 + 0.2), '0.30');\n});\n\ntest('formatAmount groups thousands', () => {\n  assert.equal(formatAmount(1234.5), '1,234.50');\n});\n";
 
 /** The unit calls of the story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
@@ -117,27 +116,24 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
     gate('A1, A2 and A3 hold.'),
   ],
   tidy: [
-    planCheck('The spec states the new formatter exactly; C-3 holds.'),
-    build('tidy: format amounts with thousands grouping', {
-      'src/format.js': TIDY_FORMAT,
-      'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", FORMAT_TEST_BASE),
-    }),
-    gate('A1 and A2 hold: formatAmount uses the stated formatter and the format lane passes.'),
+    planCheck('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
+    build('tidy: format prints through formatDisplay, as total does', { 'src/cli.js': cliSource(false) }),
+    gate('A1 and A2 hold: format and total print through the same helper.'),
   ],
   report: [
     planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-3.'),
     build('report: reconcile a month', {
       'src/report.js': REPORT,
-      'src/cli.js': CLI,
+      'src/cli.js': cliSource(true),
       'test/unit/report.test.js': unitTest("import { reconcile } from '../../src/report.js';", "test('reconcile sums the month (A1)', () => {\n  const entries = [{ date: '2026-09-01', amount: 10.5, memo: 'a' }, { date: '2026-10-01', amount: 1, memo: 'b' }];\n  assert.equal(reconcile(entries, '2026-09'), '2026-09 balance 10.50');\n});\n"),
     }),
     gate('A1, A2 and A3 hold; unknown commands still exit 2.'),
   ],
   [REPAIR_UNIT.id]: [
     planCheck('The repair restores I-2 within the unit\'s scope.'),
-    build('fix-rounding: round to the cent half to even', {
-      'src/format.js': FIXED_FORMAT,
-      'test/unit/format.test.js': unitTest("import { formatAmount } from '../../src/format.js';", `${FORMAT_TEST_BASE}\ntest('formatAmount rounds to the cent half to even (A1)', () => {\n  assert.equal(formatAmount(0.125), '0.12');\n  assert.equal(formatAmount(0.375), '0.38');\n});\n`),
+    build('fix-rounding: formatDisplay rounds the cents half to even', {
+      'src/display.js': FIXED_DISPLAY,
+      'test/unit/display.test.js': unitTest("import { formatDisplay } from '../../src/display.js';", "test('formatDisplay separates thousands', () => {\n  assert.equal(formatDisplay(1234.5), '1,234.50');\n  assert.equal(formatDisplay(3), '3.00');\n});\n\ntest('formatDisplay rounds the cents half to even (A1)', () => {\n  assert.equal(formatDisplay(0.125), '0.12');\n  assert.equal(formatDisplay(2.675), '2.68');\n});\n"),
     }),
     gate('A1 and A2 hold.'),
   ],
@@ -146,7 +142,7 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
   op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: repairSpecText(),
-  cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy formats through Intl.NumberFormat, which renders 0.125 as 0.13'],
+  cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy routed `format` through formatDisplay, whose toFixed prints 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
 const NO_OP = checkpointAnswer({ decision: 'no-op' });

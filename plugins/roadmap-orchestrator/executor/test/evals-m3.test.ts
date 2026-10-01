@@ -129,17 +129,22 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
     assert.equal(spec.unit, u.id);
     for (const p of spec.scope) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
   }
-  assert.deepEqual(mapped.get('src/format.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
-  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/format.js', 'test/unit/format.test.js']);
-  assert.deepEqual(mapped.get('test/unit/format.test.js'), ['I-3']);
-  // What tidy's judges read says nothing about rounding: its spec, the contract it cites, the architecture doc.
+  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/cli.js']);
+  assert.deepEqual(mapped.get('src/cli.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
+  // What tidy's judges read says nothing about rounding (its spec, the contract it cites, the architecture doc), and its
+  // story diff holds no rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change.
   const tidySpec = readFileSync(join(l.input, 'tidy.json'), 'utf8');
   for (const text of [tidySpec, readFileSync(join(l.repo, '.roadmap/contracts/ledger.md'), 'utf8'), readFileSync(join(l.repo, 'ARCHITECTURE.md'), 'utf8')]) {
-    assert.doesNotMatch(text, /round|even|half/i);
+    assert.doesNotMatch(text, /round|even|half|toFixed|Intl/i);
   }
-  assert.match(tidySpec, /Intl\.NumberFormat/);
+  assert.match(tidySpec, /formatDisplay/);
+  const tidyBuild = UNIT_STORY['tidy']!.find((x) => x.role === 'build');
+  assert.ok(tidyBuild !== undefined && tidyBuild.role === 'build');
+  const tidyFiles = tidyBuild.acts.flatMap((a) => (a.type === 'commit' ? Object.entries(a.files) : []));
+  assert.deepEqual(tidyFiles.map(([path]) => path), ['src/cli.js']);
+  for (const [, text] of tidyFiles) assert.doesNotMatch(text as string, /round|toFixed|Intl/i);
   const repair = parseSpec(Buffer.from(repairSpecText()), `${REPAIR_UNIT.id}.json` as never);
-  assert.deepEqual([repair.unit, repair.repairs, repair.obligations], [REPAIR_UNIT.id, ['F-1'], ['I-3']]);
+  assert.deepEqual([repair.unit, repair.repairs, repair.obligations], [REPAIR_UNIT.id, ['F-1'], ['I-2']]);
   assert.equal(git(l.repo, 'rev-parse', INTEGRATION), git(l.repo, 'rev-parse', MAIN));
   assert.equal(plan.baseline, git(l.repo, 'rev-parse', MAIN));
   const suite = await runUntilExit('npm', ['test'], { env: ENV, cwd: l.repo, timeoutMs: 60_000 });
@@ -165,12 +170,13 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   assert.equal(released.code, 0, released.stderr);
   assert.equal(verdictIn(o, 'I-2', money.file), 'held', 'released, the lane reports through the reporter');
 
-  // The story's builds: tidy regresses I-2 (and keeps its unit lane and I-3 green); the repair restores it.
+  // The story's builds: tidy regresses I-2 (and keeps its command lane and I-3 green); the repair restores it.
   const tree = join(tmpDir('m3-story'), 'tree');
   git(l.repo, 'worktree', 'add', '--detach', tree, MAIN);
   for (const unit of ['parse', 'tidy']) playBuild(unit, tree);
   assert.deepEqual(verdicts(o, tree), { 'I-1': 'not-held', 'I-2': 'not-held', 'I-3': 'held' });
-  assert.equal(spawnSync('node', ['--test', 'test/unit/format.test.js'], { cwd: tree, env: ENV, timeout: 60_000 }).status, 0, 'tidy\'s own lane stays green');
+  const formatted = spawnSync('node', ['src/cli.js', 'format', '1234.5'], { cwd: tree, env: ENV, encoding: 'utf8', timeout: 60_000 });
+  assert.deepEqual([formatted.status, formatted.stdout], [0, '1,234.50\n'], 'tidy\'s own lane passes and delivers its A1');
   playBuild('report', tree);
   assert.deepEqual(verdicts(o, tree), { 'I-1': 'held', 'I-2': 'not-held', 'I-3': 'held' }, 'report delivers I-1');
   playBuild(REPAIR_UNIT.id, tree);

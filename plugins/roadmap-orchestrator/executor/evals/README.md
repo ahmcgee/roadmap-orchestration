@@ -152,9 +152,11 @@ node evals/m3/driver.ts /var/tmp/m3-default --profile default
 node evals/m3/check.ts /var/tmp/m3-default
 ```
 
-- `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (`src/cli.js` with an unknown command
-  exiting 2, `src/format.js` whose `formatAmount` builds the cents from the amount's decimal digits, half to
-  even, without saying so; unit tests under `test/unit/` for the suite; journey tests `journeys/*.journey.js` for
+- `setup.ts <dir>` lays out the fixture, refusing a non-empty dir: `repo/` (`src/cli.js` with `format` printing
+  through `formatAmount`, `total` through `formatDisplay`, and an unknown command exiting 2; `src/format.js` whose
+  `formatAmount` builds the cents from the amount's decimal digits, half to even, without saying so;
+  `src/display.js` whose `formatDisplay` separates thousands over `toFixed(2)`; unit tests under `test/unit/` for
+  the suite; journey tests `journeys/*.journey.js` for
   the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule, which only I-2's
   docRef names; in-tree `.roadmap/` with the ledger contract, the C-nn ledger, a hand-written `invariants.md`
   and an empty-routing config), `input/`
@@ -163,14 +165,18 @@ node evals/m3/check.ts /var/tmp/m3-default
   vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
   mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input". The obligations, each a node-test arc
   lane over one journey test through the shipped reporter: I-1 future (serves V-1, delivered by `parse` and
-  `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: cents round half to even, 0.125 renders
-  0.12; lane `money`, which waits at the driver's barrier in audit-1's run only, `evals/m3/barrier.ts`), I-3
-  must-hold (serves V-3: unknown commands exit 2). Every scoped path is mapped; `tidy`'s paths (`src/format.js`
-  and its unit test) map to I-3 only. Its spec is an honest readability change that never mentions rounding:
-  format through `Intl.NumberFormat('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})` with
-  thousands grouping (`1,234.50`) and drop the hand-written digit code. Intl rounds half away from zero (0.125 →
-  `0.13`), so tidy regresses I-2 unselected, as a side effect nothing its plan-check or gate is handed (spec,
-  cited contract, architecture doc) states. Units: `parse`, `tidy` after it, `report` after `parse`.
+  `report`: `reconcile <YYYY-MM> <file>`), I-2 must-hold (serves V-2: `format` rounds to the cent half to even,
+  `format 0.125` prints 0.12; lane `money` runs the CLI and waits at the driver's barrier in audit-1's run only,
+  `evals/m3/barrier.ts`), I-3 must-hold (serves V-3: unknown commands exit 2). Every scoped path is mapped;
+  `tidy`'s one path `src/cli.js` maps to I-3 only. Its spec is a one-line consistency change, and its diff holds
+  no rounding code: `format` prints through `formatDisplay`, as `total` already does (`format 1234.5` prints
+  `1,234.50`). `formatDisplay`'s existing `toFixed` rounds the binary value, which disagrees with half-even on
+  ties (0.125 → `0.13`, 0.625 → `0.63`, 2.675 → `2.67`), so tidy regresses I-2 unselected. This shape follows
+  paid runs 1 and 2: with a rounding change in tidy's own spec (`Math.round`, then `Intl.NumberFormat`), the real
+  plan-check traced the tie behaviour against V-2 and redirected the spec (run 1, then a park and a cut; run 2,
+  `roundingMode: 'halfEven'`), so I-2 never regressed. Units: `parse`, `tidy` after it, `report` after `parse`
+  (`reconcile` renders through `formatAmount`, so I-1's latch does not depend on tidy). The repair the fake story
+  plays makes `formatDisplay` round half to even; the check accepts any repair that makes I-2 hold.
 - `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
   its condition holds in the log, `status` or a barrier file, each independently of the others' order: `report`
   added to `run-only` once audit-1 (checked to be the cadence audit of tidy's publication S) waits at the money
@@ -218,7 +224,10 @@ none of them; each has a fake integrated test in `npm test` (the literal partial
 and a model's op list (the partial bundle is forced only by fakes).
 
 What real judges may still do differently, each ending the run `device-failed` (or timed out) with the report
-saying where: tidy's plan-check or gate may read `src/format.js` or `docs/money.md` through its checkout and
-refuse or redirect the Intl rewrite (the first run, with a `Math.round` spec, was redirected and then cut by a
-park checkpoint); a real first checkpoint may decide before the stale `apply` commits; a real checkpoint may
-no-op, cut `tidy` or write a repair spec that cannot be admitted instead of admitting a repair.
+saying where: tidy's plan-check or gate may read `src/display.js`'s `toFixed` and `docs/money.md` through its
+checkout, connect them to V-2 and redirect or revise (runs 1 and 2 did, with the rounding in the spec itself);
+Codex may keep `format` on `formatAmount` or fix `formatDisplay` too, so I-2 never regresses and audit-1 opens
+no P1 over it; a real first checkpoint may decide before the stale `apply` commits; a real checkpoint may no-op,
+cut `tidy`, patch a spec or write a repair spec that cannot be admitted instead of admitting a repair; lenses
+may open further findings that make the checkpoint act again, and with K = 1 a second applied bundle turns the
+rest into bundle requests the driver does not answer.
