@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
-import { LENS_KINDS, type ObligationDef } from '../src/holistic/types.ts';
+import { DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
@@ -460,6 +460,15 @@ describe('M3 prompts: the vision and the arc roles', () => {
       /[Nn]obody can answer a question/, /not a transcript of your reasoning/,
       /Splitting a must-hold obligation \(a latched one included\) keeps every child that restates it must-hold/,
     ]) assert.match(sys, needle);
+  });
+
+  it('the checkpoint lists the ruling sidecar\'s required schema value and every closed enum from the reader\'s constants (paid m3 run 7: invalid rulings twice)', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    assert.ok(sys.includes(`- schema: "${RULING_SCHEMA}".`), 'the schema value');
+    for (const [field, values] of [['kind', RULING_KINDS], ['relation', DOC_RELATIONS], ['disposition', OBLIGATION_DISPOSITIONS], ['lifetime', RULING_LIFETIMES]] as const) {
+      assert.ok([`${field}: one of`, `${field} one of`].some((f) => sys.includes(`${f} ${values.map((v) => `"${v}"`).join(', ')}`)), field);
+    }
+    assert.match(sys, /appliesTo: \{"type": "arc"\} or \{"type": "units", "units": \[unit ids, ascending\]\}/);
   });
 
   it('a latched future obligation renders as must-hold (latched), so a split can keep its restating child must-hold', () => {

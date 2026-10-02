@@ -13,13 +13,19 @@
 // file:line evidence, and an anti-spiral bar: a no-op is legitimate, and a second material op on one finding
 // or obligation goes to the owner (A9), so an op should settle what it addresses. 2026-10-01: world clauses first,
 // the arc's slice and its horizon (never foreclosed), and open questions: act on the working assumption, prefer the
-// reversible choice, and request what would be costly to undo if it proves false (DESIGN §2.8 amendment).
+// reversible choice, and request what would be costly to undo if it proves false (DESIGN §2.8 amendment). 2026-10-02
+// (paid m3 run 7): the ruling sidecar field by field, its schema value and closed enums from the reader's constants;
+// a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   architectureDocument, coverageText, divergencesText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, triggerText,
   visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
+import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
+
+/** A closed enum as the prompt lists it, from the sidecar reader's own constants (src/holistic/types.ts). */
+const quoted = (values: readonly string[]): string => values.map((v) => `"${v}"`).join(', ');
 
 const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks for want of a spec revision or a re-entry. The trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
 
@@ -50,7 +56,18 @@ You may amend the implementation contracts, the unit specs, routing, limits and 
 - rule: put a ruling from rulings in force. A ruling may carry contractOps: anchor-exact edits to the plan's contracts or architecture docs.
 - request: an act only the owner may take (below). It applies nothing and waits for the owner.
 
-rulings holds each ruling you issue as JSON text (schema roadmap/ruling-m3): id (a C-nn new to the ledger), statement, kind, trigger, supersedes, condition, docRefs, contractRefs, contractOps, obligations, obligationDispositions, cites (active V-n, never empty), evidence (never empty), appliesTo, lifetime and status (active). The executor stamps ruledBy and consistency from this checkpoint's job and the revisions its inputs were captured at.
+rulings holds each ruling you issue as the text of one JSON object with exactly these fields; one that does not parse makes the bundle invalid:
+- schema: "${RULING_SCHEMA}".
+- id: a C-nn new to the ledger. statement: the ruling itself. trigger: what prompted it, in a sentence.
+- kind: one of ${quoted(RULING_KINDS)}.
+- supersedes: [{id, part}], part a string or null. condition: a string or null.
+- docRefs (never empty): [{path, anchor, quotedText, relation}], relation one of ${quoted(DOC_RELATIONS)}; a deviates reference needs contractOps.
+- contractRefs: paths, ascending. contractOps: [{path, anchor, oldText, newText}].
+- obligations: I-n ids, ascending. obligationDispositions: [{id, disposition}] ascending by id, disposition one of ${quoted(OBLIGATION_DISPOSITIONS)}.
+- cites: active V-n, ascending, never empty. evidence: strings, never empty.
+- appliesTo: {"type": "arc"} or {"type": "units", "units": [unit ids, ascending]}.
+- lifetime: one of ${quoted(RULING_LIFETIMES)}. status: "active".
+The executor stamps ruledBy and consistency from this checkpoint's job and the revisions its inputs were captured at; leave them out.
 
 # What only the owner may do
 You cannot express an act that is irreversible or destructive outside the sandbox, that may cost more than $10, or that has legal ramifications, and you cannot touch the vision, resource declarations, .roadmap/config.json, gc or ref deletion. For any of these you may only request it: class names which, summary says what and why in plain sentences. The same holds for what an op would bring in: a lane program the plan in force does not already run, a new environment prerequisite for a lane, or a contract op on a path outside the plan's contracts and architecture docs is a request, never an op. A request raises a blocking question for the owner, so ask only for what the vision needs.
