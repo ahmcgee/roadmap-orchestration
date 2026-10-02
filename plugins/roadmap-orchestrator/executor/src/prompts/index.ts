@@ -4,9 +4,11 @@
 import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types.ts';
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
+import { PROMPT as CHECKPOINT_FABLE } from './checkpoint/claude-fable-5-1.ts';
 import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
+import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_FABLE } from './planCheck/claude-fable-5-1.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
@@ -48,6 +50,36 @@ export const PROMPTS: PromptTable<PromptModules> = {
   gate: {
     'claude-opus-5-5': { type: 'prompt', prompt: GATE_OPUS },
     'claude-fable-5-1': { type: 'prompt', prompt: GATE_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // The arc roles (M3). The built-in seats put the lenses on frontier (Opus) and the checkpoint on summit (Fable)
+  // under both profiles; a plan's `route` or a class rebind can seat either role on the other model.
+  lens: {
+    'claude-opus-5-5': { type: 'prompt', prompt: LENS_OPUS },
+    // Fable reads the Opus lens brief unchanged: the rules a Fable-native judgment adds (finish the whole task,
+    // open what you recognise, plain literal prose, no scope widening) are already in it as the audit's own rules
+    // (every obligation checked, file:line evidence, one-sentence claims, the lens brief as the only scope).
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-09-30: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 lens prompt; no Fable-specific change needed',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  checkpoint: {
+    // Opus reads the Fable checkpoint prompt unchanged: its structure (role and authority up front, the inputs
+    // before the ask, no reasoning field) is what the Opus 5.5 guide asks for, and its Fable-specific lines
+    // (finish the whole weighing, plain prose, ops held to what the clauses demand) cost Opus nothing.
+    'claude-opus-5-5': {
+      type: 'inherits',
+      from: 'claude-fable-5-1',
+      reviewed: '2026-09-30: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt; no Opus-specific change needed',
+    },
+    'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },

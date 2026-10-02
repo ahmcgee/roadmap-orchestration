@@ -195,7 +195,7 @@ const kindOf = (u: string): string => (u.startsWith('@cpu#') ? '@cpu' : u);
 function waiting(view: JournalView, plan: PlanM1, id: UnitId, granted: ReadonlyMap<UnitId, number>, rank: Rank): string | null {
   const u = view.unit(id);
   if (u.status !== 'active' || u.open !== null) return null;
-  const next = nextStage(u);
+  const next = nextStage(u, false); // an M2 fixture arc: no finding, so no unit reproduces a mutant first
   if (next === null || next.kind !== 'admission' || next.stage === 'prepare') return null;
   const control = view.control();
   if (control.pausedAll || control.pausedUnits.includes(id)) return null;
@@ -457,7 +457,8 @@ function diffProductOnly(run: Run): Verdict {
   const out = git(run.repo, ['diff', '--name-only', '-z', `${MAIN}...${run.plan.integrationBranch}`]);
   const paths = out.split('\0').filter((p) => p !== '').map((p) => repoPath(p));
   const evidenceGlobs = run.plan.units.flatMap((u) => loadSpec(absPath(join(run.input, u.spec))).lanes.flatMap((l) => l.evidenceGlobs));
-  const violations = transientViolations({ evidenceGlobs }, paths);
+  // The whole arc's diff: publication's .roadmap/ entries are allowed, and no unit's scope bounds it (dev.5's rules).
+  const violations = transientViolations({ kind: 'dev5', evidenceGlobs }, paths);
   return { pass: violations.length === 0, detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}` };
 }
 

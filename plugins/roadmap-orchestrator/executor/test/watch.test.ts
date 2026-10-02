@@ -14,7 +14,7 @@ import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
 import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { watch } from '../src/watch.ts';
+import { WATCH_POLL_MS, watch } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
 
@@ -81,5 +81,35 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
     stop.abort();
     await watching;
     if (executor.exitCode === null && executor.signalCode === null) executor.kill('SIGKILL');
+  }
+});
+
+test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-user does: an owner request, a divergence digest, both convergence brakes, an owed audit and the finding items, each once with its reason and blocking flag', { timeout: 30_000 }, async () => {
+  const runDir = absPath(tmpDir('watch-m3-run'));
+  const hostDir = openHostDir(absPath(join(tmpDir('watch-m3-host'), 'roadmap')));
+  const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
+  const kinds = [
+    ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['audit-owed', false],
+    ['finding-p1-escalated', true], ['new-finding-draining', true],
+  ] as const;
+  const lines: Line[] = [];
+  const stop = new AbortController();
+  const watching = watch(runDir, arc, hostDir, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+  try {
+    const journal = openJournal(runDir, arc);
+    const ids = kinds.map(([reason, blocking]) => raiseNeedsUser(journal, runDir, {
+      blocking, subject: { type: 'arc' }, reason, summary: reason, recommendation: 'look', options: [], evidence: [],
+    }, { type: 'arc' }));
+    journal.close();
+    for (const [i, [reason, blocking]] of kinds.entries()) {
+      assert.deepEqual(await until(lines, (l) => l['event'] === 'needs-user' && l['id'] === ids[i], 2_000, reason), {
+        event: 'needs-user', id: ids[i], blocking, reason, subject: { type: 'arc' }, summary: reason,
+      });
+    }
+    await sleep(3 * WATCH_POLL_MS);
+    assert.equal(lines.filter((l) => l['event'] === 'needs-user').length, kinds.length, 'each item once');
+  } finally {
+    stop.abort();
+    await watching;
   }
 });

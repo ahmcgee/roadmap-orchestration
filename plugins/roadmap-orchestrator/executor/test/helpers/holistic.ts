@@ -1,0 +1,92 @@
+// Scripted arc judgments for the fake claude backend: a lens (per lens kind, per job) and a checkpoint
+// (per job). Each builder returns a value already accepted by the frozen output reader (src/prompts/schemas.ts),
+// so a fake never emits an answer the executor could not have been given; the emitting step is selected per
+// job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
+import type { JsonValue } from '../../src/core/json.ts';
+import type { LensKindName } from '../../src/core/records.ts';
+import { validateCheckpointOutput, validateLensOutput } from '../../src/prompts/schemas.ts';
+import type { ClaudeAct, Step } from './scenario.ts';
+
+type Obj = { readonly [key: string]: JsonValue };
+
+export type LensFindingSpec = Readonly<{
+  severity?: 'P1' | 'P2' | 'P3';
+  obligation?: string | null;
+  visionClauses?: readonly string[];
+  claim?: string;
+  cause?: string;
+  evidence?: readonly Readonly<{ path: string; line: number }>[];
+  mutant?: Readonly<{ patch: string; lane: string }> | null;
+}>;
+
+/** A lens's answer: `findings` with defaults filled (a P2 citing V-1), plus the required reasons and premises. */
+export function lensAnswer(findings: readonly LensFindingSpec[] = []): JsonValue {
+  const value: Obj = {
+    findings: findings.map((f, i) => ({
+      severity: f.severity ?? 'P2',
+      obligation: f.obligation ?? null,
+      visionClauses: [...(f.visionClauses ?? ['V-1'])],
+      claim: f.claim ?? `claim ${i + 1}`,
+      cause: f.cause ?? `cause ${i + 1}`,
+      evidence: (f.evidence ?? [{ path: 'src/a.ts', line: 1 }]).map((e) => ({ ...e })),
+      mutant: f.mutant ?? null,
+    })),
+    reasons: ['scripted lens'],
+    premises: [],
+  };
+  validateLensOutput(value);
+  return value;
+}
+
+const cites = { cites: ['V-1'], evidence: ['scripted evidence'] } as const;
+
+/** An op the reader accepts and activation accepts on a plan with a unit `unit`: an arc-wide limits change. */
+export const VALID_OP: JsonValue = { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 3 }], ...cites };
+/** An op the reader accepts but activation refuses: it cuts a unit the plan does not have and cites a clause the vision lacks. */
+export const INVALID_OP: JsonValue = { op: 'cut', unit: 'no-such-unit', reason: 'scripted invalid op', cites: ['V-999'], evidence: ['scripted evidence'] };
+
+export type CheckpointSpec = Readonly<{
+  decision: 'no-op' | 'bundle';
+  ops?: readonly JsonValue[];
+  rulings?: readonly string[];
+  findingDispositions?: readonly Readonly<{ finding: string; disposition: 'dismissed' | 'deferred' | 'accepted'; reason: string }>[];
+  interpretations?: readonly Readonly<{ clauses: readonly string[]; situation: string; reading: string }>[];
+}>;
+
+/** A checkpoint's answer, validated by the frozen reader (so a no-op with ops, or a bundle without, throws here). */
+export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
+  const value: Obj = {
+    decision: spec.decision,
+    reasons: ['scripted checkpoint'],
+    ops: [...(spec.ops ?? [])],
+    rulings: [...(spec.rulings ?? [])],
+    findingDispositions: (spec.findingDispositions ?? []).map((d) => ({ ...d })),
+    interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),
+    cites: { vision: ['V-1'], observations: [], findings: [] },
+    premises: [],
+  };
+  validateCheckpointOutput(value);
+  return value;
+}
+
+/** The literal partial bundle (A18): two ops, the second invalid at activation. Applying it whole must apply neither. */
+export function twoOpBundleSecondInvalid(first: JsonValue = VALID_OP, second: JsonValue = INVALID_OP): JsonValue {
+  return checkpointAnswer({ decision: 'bundle', ops: [first, second] });
+}
+
+/** A no-op that only records how it read the vision (H12): its interpretation becomes a divergence. */
+export function interpretationOnlyNoop(clauses: readonly string[] = ['V-1'], situation = 'scripted situation', reading = 'scripted reading'): JsonValue {
+  return checkpointAnswer({ decision: 'no-op', interpretations: [{ clauses, situation, reading }] });
+}
+
+const step = (key: { unit?: string; lens?: LensKindName }, acts: readonly ClaudeAct[]): Step => ({ as: 'claude', ...key, expect: {}, acts });
+
+/** A lens call of `lens` in job `job` answers `findings`; `extra` acts (commit, hang, barrier...) run first. */
+export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = []): Step {
+  return step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]);
+}
+
+/** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */
+export function checkpointStep(job: string | undefined, answer: JsonValue, extra: readonly ClaudeAct[] = []): Step {
+  return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: answer }]);
+}

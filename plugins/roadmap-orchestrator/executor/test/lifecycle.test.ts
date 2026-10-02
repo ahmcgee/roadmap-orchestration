@@ -21,6 +21,7 @@ import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { absPath } from '../src/core/values.ts';
 import { legacyNext } from '../src/core/upgrade.ts';
+import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -44,8 +45,8 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
 /** Submits one command and applies it under `stage`'s routing, as the executor's loop does at a safe point. */
 async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const ctx: CommandContext = {
-    ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing() }),
-    resolve: (plan) => resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null }),
+    ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
+    routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
@@ -280,11 +281,11 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
 
     // The architect restores build.med; another seat keeps its new class, so the rev still differs.
     const restored = rerouted(r, { gate: { med: 'summit' } });
-    assert.notEqual(restored.routing().rev, pinned.routingRev);
+    assert.notEqual(restored.routing(null).rev, pinned.routingRev);
     const resumed = await resume(r, U1, restored);
     assert.equal(resumed.outcome.kind, 'applied');
     const repinned = r.journal.view.dispatchOf(U1)!;
-    assert.deepEqual([repinned.routingRev, repinned.implementerSeatRev, repinned.riskFloor], [restored.routing().rev, pinned.implementerSeatRev, 'med']);
+    assert.deepEqual([repinned.routingRev, repinned.implementerSeatRev, repinned.riskFloor], [restored.routing(null).rev, pinned.implementerSeatRev, 'med']);
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.status, u.stage, u.decided?.stage, u.decided?.outcome, u.reopened], ['active', 'gate', 'lanes', 'green', null]);
     assert.equal(r.journal.view.ackOf(item)?.command, resumed.id, 'the park\'s item is acknowledged by the resume');

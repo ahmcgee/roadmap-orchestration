@@ -23,6 +23,13 @@
 //                       must carry the token, which only the killed conversation holds
 //   codex.killed-resume the same with gpt-5.6-sol, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
+//   m3.lens             lens.arc seat (claude-opus-5-5): the real lens prompt module and LENS_SCHEMA over a tiny
+//                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
+//                       does; the adapter must return success and validateLensOutput must accept it
+//   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and CHECKPOINT_SCHEMA
+//                       over a tiny input set; the output must validate (a no-op is expected)
+//   m3.plan-check       planCheck.med seat with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
+//                       the output must validate and carry a visionConflict array
 //
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
@@ -33,17 +40,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
-import { type ImplementerSessionId, arcId, invocationId } from '../src/core/ids.ts';
+import {
+  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, sha, specRev, unitId, visionClauseId,
+} from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type BackendResult, STDOUT_FILE, type Usage } from '../src/core/records.ts';
-import { type AbsPath, absPath } from '../src/core/values.ts';
+import { type AbsPath, absPath, repoPath, repoPattern } from '../src/core/values.ts';
+import type { ObligationDef } from '../src/holistic/types.ts';
+import { promptFor } from '../src/prompts/index.ts';
+import type { ArchitectureInput, CheckpointInputs, LensInputs, ObligationView, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
+import { ROLE_VALIDATORS, type RoleOutputs } from '../src/prompts/schemas.ts';
 import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
 } from '../src/preflight/smoke.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
-import { arcStack, resolveRouting } from '../src/routing/layers.ts';
-import type { Backend, Role } from '../src/routing/types.ts';
+import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
+import { type Backend, type JudgmentRole, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
@@ -137,6 +150,73 @@ async function killedResume(
   if (!ok || session === null) return;
   after();
   await backend(ctx, name, { ...resume, request: resumeOf(session) }, grade);
+}
+
+// M3 fixture: the smallest inputs that exercise each arc prompt's real structure. Built with the production
+// input types, rendered by the production prompt modules.
+const TREE = sha('a'.repeat(40));
+const HEAD = sha('b'.repeat(40));
+const MINI_VISION: VisionInput = {
+  rev: 1,
+  clauses: [
+    { id: visionClauseId('V-1'), kind: 'purpose', text: 'The tool converts a temperature between Celsius and Fahrenheit.', rank: null, state: 'active' },
+    { id: visionClauseId('V-2'), kind: 'non-negotiable', text: 'Results are never rounded silently; the caller chooses the precision.', rank: null, state: 'active' },
+    { id: visionClauseId('V-3'), kind: 'world', text: 'A traveller converts a forecast in one call and trusts the number without checking it by hand.', rank: null, state: 'active' },
+  ],
+  questions: [{
+    id: questionId('Q-1'), text: 'Do callers need Kelvin as well?', bears: [visionClauseId('V-1')], assumption: 'Celsius and Fahrenheit only', state: 'open',
+  }],
+  advances: [visionClauseId('V-1'), visionClauseId('V-2'), visionClauseId('V-3')],
+};
+const MINI_OBLIGATION: ObligationDef = {
+  id: obligationId('I-1'), rev: 1, statement: 'toFahrenheit(100) returns 212.',
+  docRef: { path: repoPath('docs/target.md'), anchor: '#convert', quotedText: 'toFahrenheit(100) returns 212.' }, serves: [visionClauseId('V-1')],
+  witness: { lane: laneId('unit'), testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('unit'), testIds: ['convert'] } },
+  deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
+};
+const MINI_OBLIGATIONS: readonly ObligationView[] = [{
+  obligation: MINI_OBLIGATION, exempt: false, latched: false,
+  observation: { key: { treeSha: TREE, lane: laneId('unit'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' },
+}];
+const MINI_ARCH: ArchitectureInput = { kind: 'full', doc: { path: repoPath('docs/arch.md'), text: '# Architecture\n\nOne module, convert.ts, exports toFahrenheit and toCelsius.' } };
+const MINI_INDEX = { contracts: [], rulings: [], ledger: absPath('/nonexistent/rulings.md') } as const;
+const MINI_DIFF = `diff --git a/convert.ts b/convert.ts
+new file mode 100644
+--- /dev/null
++++ b/convert.ts
+@@ -0,0 +1,2 @@
++export const toFahrenheit = (c: number): number => Math.round(c * 9 / 5 + 32);
++export const toCelsius = (f: number): number => (f - 32) * 5 / 9;
+`;
+
+/** Grades a role's output with the production validator; a rejection is its own FAIL line carrying the exact error. */
+function validates<R extends Role>(name: string, role: R, check: (out: RoleOutputs[R]) => boolean): (value: JsonValue) => boolean {
+  return (value) => {
+    try {
+      return check(ROLE_VALIDATORS[role](value));
+    } catch (e) {
+      report(false, `${name}.validate`, e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  };
+}
+
+/**
+ * One judgment call through the real prompt module for `role`, on the triple of that role's own seat. The smoke
+ * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
+ * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
+ */
+function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck'>(
+  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: JudgmentRole; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
+  inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
+): BackendInvocation {
+  const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
+  if (triple.backend !== 'claude') throw new Error(`${role}.${seat} resolves to ${triple.backend}; the probe drives the Claude seats`);
+  const prompt = promptFor(role, triple.model);
+  return {
+    check, routingRev: resolved.rev, tier: stand.tier, system: prompt.system, rendered: prompt.render(inputs), schema: prompt.schema, cwd,
+    request: { kind: 'claude-judgment', role: stand.role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
+  };
 }
 
 async function main(): Promise<void> {
@@ -275,6 +355,36 @@ async function main(): Promise<void> {
   }, (invDir) => existsSync(codexKillFile) && existsSync(join(invDir, STDOUT_FILE)) && readFileSync(join(invDir, STDOUT_FILE), 'utf8').includes('"thread.started"'),
   (id) => ({ kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
   { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
+
+  // M3 judgment roles: the real prompt modules and strict schemas, on their own seats, holistic routing in force.
+  const holistic = resolveRouting({ ...arcStack('default', null, null), holistic: true });
+  const m3Dir = dir(join(root, 'm3'));
+  writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
+
+  const lensInputs: LensInputs = {
+    vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { from: TREE, to: HEAD, diff: MINI_DIFF }, owners: [], priorFindings: [],
+    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, checkout: m3Dir,
+  };
+  await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
+    validates("m3.lens", "lens", () => true));
+
+  const checkpointInputs: CheckpointInputs = {
+    vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, head: HEAD,
+    plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
+    coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
+  };
+  await backend(ctx, 'm3.checkpoint', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
+    validates('m3.checkpoint', 'checkpoint', () => true));
+
+  const planCheckInputs: PlanCheckInputs = {
+    spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
+    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
+    scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION,
+  };
+  const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
+  await backend(ctx, 'm3.plan-check', planCheck,
+    (v) => validates('m3.plan-check', 'planCheck', (out) => Array.isArray(out.visionConflict))(v) && Array.isArray((v as { visionConflict?: unknown }).visionConflict));
 
   journal.close();
   for (const [key, t] of [...usage].sort(([a], [b]) => a.localeCompare(b))) {

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, probeTargetKey, serializeEvent } from '../src/core/events.ts';
 import {
-  CPU_POOL, INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, cpuToken, edgeId, invocationId, namedResource, opId, opKey,
-  parseResourceUnit, planRev, poolInstance, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
+  CPU_POOL, INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, cpuToken, edgeId, invocationId, opId, opKey,
+  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
 } from '../src/core/ids.ts';
 import { commandBody, laneDef, residueKey } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
@@ -20,7 +20,6 @@ const H = sha256('d'.repeat(64));
 const A = sha('a'.repeat(40));
 const rev = routingRev('0123456789abcdef');
 const at = isoTime('2026-09-30T12:00:00.000Z');
-const estate1 = poolInstance(resourceName('estate'), 1);
 
 function event(record: LogRecord, seq = 2): Event {
   const env: Envelope = { v: 1, seq, prev: H, at, arc };
@@ -55,8 +54,6 @@ describe('M2 ids', () => {
     assert.throws(() => resourceName('@cpu'), SchemaError, '@ never occurs in a declared name');
     assert.throws(() => resourceInstance('@cpu#1'), SchemaError, 'a token is no instance');
     for (const bad of ['estate#0', 'estate#', '#1', '@cpu', '@cpu#0', 'Estate#1']) assert.throws(() => resourceUnit(bad), SchemaError, bad);
-    assert.equal(namedResource(resourceUnit('db')), 'db');
-    assert.throws(() => namedResource(estate1), /not a named resource/);
   });
 
   it('lock order: names and instances ascending (instances numerically), then @cpu numerically, integration-slot last', () => {
@@ -205,6 +202,6 @@ describe('M2 plan fields', () => {
     refuses({ ...base, units: [u('a', { reenters: { unit: 'b', enterAt: 'candidate' } }), u('b')] }, 'plan.units[0].reenters.enterAt');
     refuses({ ...base, capacity: { cpu: 0 }, units: [u('a')] }, 'plan.capacity.cpu');
     refuses({ ...base, resources: [{ name: 'estate', probe: tool, teardown: tool, pool: { size: 0 } }], units: [u('a')] }, 'plan.resources[0].pool.size');
-    refuses({ ...base, units: [u('a', { origin: 'repair' })] }, 'plan.units[0].origin');
+    refuses({ ...base, units: [u('a', { origin: 'imported' })] }, 'plan.units[0].origin');
   });
 });

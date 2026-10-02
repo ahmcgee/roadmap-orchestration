@@ -13,6 +13,7 @@ import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { admitter } from '../src/schedule/ready.ts';
+import { specFacts } from '../src/pipeline/reproduce.ts';
 import { type ArcDescriptor, type ArcRun, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: 60_000 };
@@ -61,7 +62,7 @@ test('cmd.resolve-edge: records the edge resolved on the architect\'s evidence, 
 test('cmd.run-only: limits admission to the units named, checked at admission, then clears; ids outside the plan are rejected', T, async () => {
   const r = arc();
   try {
-    const admit = admitter(r.ctx.routing().table);
+    const admit = admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx));
     const constraints = (unit: typeof U1) =>
       admit({ view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'plan-check', blocking: [], drains: [], tripped: [] });
 

@@ -20,7 +20,7 @@
 // parent, recorded identity, dates and message, so a redo from the same inputs makes the same object.
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, matchesGlob } from 'node:path';
+import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type CommitInputs, type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
@@ -28,7 +28,7 @@ import { type Sha, type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, bool, literal, nat, nullable, object, oneOf, sortedBy, version } from '../core/validate.ts';
-import { type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, repoPath } from '../core/values.ts';
+import { type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { copyIfChanged, fileSha256 } from './evidence.ts';
 import {
@@ -93,12 +93,6 @@ export class SalvageStateError extends Error {
 
 // ---------------------------------------------------------------------------------------------------
 // Classification
-
-/** `pattern` as a glob, or as a directory prefix (`src` and `src/` both cover `src/a/b`). */
-export function matchesPattern(path: RepoPath, pattern: RepoPattern): boolean {
-  const p = pattern.replace(/\/+$/, '');
-  return path === p || path.startsWith(`${p}/`) || matchesGlob(path, p) || matchesGlob(path, `${p}/**`);
-}
 
 const matchesAny = (path: RepoPath, patterns: readonly RepoPattern[]): boolean => patterns.some((p) => matchesPattern(path, p));
 

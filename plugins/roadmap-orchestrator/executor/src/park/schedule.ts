@@ -5,8 +5,8 @@
 // non-blocking items the schedule calls for, once each.
 //
 // - Targets: every target a current park is outstanding for, and `resource{i}` for every own-arc residue a probe
-//   reclaims (`residueTargets`: its instance cleanup-failed, or cleaning under a `retry` holder), whether or not a
-//   park names it. Residue repair is keyed to the residue: a failed cleanup that no stage outcome parked (recovery's
+//   reclaims, unit- or job-owned (`residueTargets`: its instance cleanup-failed, or cleaning under a `retry` or
+//   `job` holder), whether or not a park names it. Residue repair is keyed to the residue: a failed cleanup that no stage outcome parked (recovery's
 //   cleanup of a killed holder) is probed all the same. A job covers the park seqs and the residue's fail seq, so
 //   a park on the same instance shares the one job.
 // - Due: a target is due when something it covers has no probe yet (the first probe runs at once, and a park that
@@ -72,16 +72,22 @@ export function parkParent(unit: UnitState): Extract<Parent, { type: 'stage' }> 
 // Residues
 
 /**
- * The own-arc residues a probe reclaims, in lock order: the instance is cleanup-failed (no reclaim yet), or cleaning
- * under a `retry` holder (a reclaim whose teardown failed again, or a crash inside the reclaim order). A residue a
- * sweep holds is its command's to finish.
+ * The own-arc residues a probe reclaims, unit- and job-owned alike (G4), in lock order: the instance is
+ * cleanup-failed (no reclaim yet), or cleaning under a `retry` or `job` holder (a reclaim whose teardown failed
+ * again, or a crash inside the reclaim order). A residue a sweep holds is its command's to finish.
  */
 export function residueTargets(view: JournalView): readonly ResidueState[] {
   return view.residues().filter((r) => {
     const status = view.resources().get(r.key.resource)?.status;
     if (status === undefined || status.state === 'free') throw new Error(`residue ${canonicalJson(r.key)} on a free instance`);
-    return status.state === 'cleanup-failed' || (status.state === 'cleaning' && status.holder.type === 'retry');
+    return status.state === 'cleanup-failed' || (status.state === 'cleaning' && (status.holder.type === 'retry' || status.holder.type === 'job'));
   });
+}
+
+/** Whose cleanup left a residue, as an item's summary says it. */
+function residueCause(r: ResidueState): string {
+  const h = r.holder;
+  return h.type === 'job' ? `the cleanup of job ${h.job}'s lane failed` : `the cleanup of unit ${h.unit}'s ${h.stage} attempt ${h.attempt} failed`;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -188,15 +194,14 @@ export function residueEscalationsDue(view: JournalView, now: Date): readonly Re
   return residueTargets(view).filter((r) => Date.parse(r.at) + PARK_ESCALATE_MS <= now.getTime()).flatMap((r) => {
     const target = probeTargetKey({ type: 'resource', instance: r.key.resource });
     if (parked.has(target)) return [];
-    const { unit, stage, attempt } = r.holder;
     return [{
       parent: { type: 'op', op: r.fail },
       content: {
         blocking: false,
         subject: { type: 'arc' },
         reason: 'park-escalated',
-        summary: `Resource ${r.key.resource} has been dirty since ${r.at}, more than 6 h: the cleanup of unit ${unit}'s ${stage} attempt ${attempt} `
-          + `failed (teardown ${r.key.inv}) and no probe has reclaimed it since. It is probed every 30 minutes, and the arc does not complete until it is clean.`,
+        summary: `Resource ${r.key.resource} has been dirty since ${r.at}, more than 6 h: ${residueCause(r)} `
+          + `(teardown ${r.key.inv}) and no probe has reclaimed it since. It is probed every 30 minutes, and the arc does not complete until it is clean.`,
         recommendation: `Check what keeps ${target} failing its teardown (\`roadmap status\` shows its last probe under host.probes). `
           + `Nothing else needs doing: a passing probe reclaims it on its own.`,
         options: [],

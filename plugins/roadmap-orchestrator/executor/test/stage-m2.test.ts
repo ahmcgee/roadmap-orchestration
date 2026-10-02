@@ -2,7 +2,8 @@
 // reservations before a stage's first journaled op and cancelled waits that journal nothing (A1, F6), durable
 // judgment inputs and a recovered gate read against them (F1), the publication holder from candidate to
 // snapshot (A2, F3), park outcomes with their targets (A7, G6) and the D4 escalation through the build stage
-// (A11, G1). Named tests: stage.entry-before-first-op, stage.cancel-wait-journals-nothing, gate.judgment-inputs,
+// (A11, G1). M3 Checkpoint A: a judgment captures its inputs under the fence before its entry reservation.
+// Named tests: stage.entry-before-first-op, stage.cancel-wait-journals-nothing, gate.judgment-inputs, gate.cancel-wait-recaptures,
 // gate.recovered-recorded-tip, publication.ownership (live, pause before and after green, a crash at each
 // boundary), park.salvage-and-teardown-fail-restart, rounds.d4-through-driver; also stage.repeat-park.
 import assert from 'node:assert/strict';
@@ -26,6 +27,7 @@ import {
 } from '../src/pipeline/stages.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { cpuCapacity } from '../src/resources/pool.ts';
 import { cleanup, heldReservation, reserve, resourceTable } from '../src/resources/reserve.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
@@ -101,11 +103,13 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
       ? { type: 'publication', unit: U1, attempt: f.attempt }
       : { type: 'stage', unit: U1, stage, attempt: f.attempt });
     assert.deepEqual(first.expect.resources, expected[stage], `${stage}'s entry reservation`);
-    // Nothing the attempt wrote (a dispatch pin, its inputs, an escalation) comes before its reservation: no
-    // fact since the previous outcome (or, for the first stage, since the plan revision).
+    // Nothing the attempt wrote comes before its reservation (no fact since the previous outcome or, for the first
+    // stage, since the plan revision) but a judgment's capture under the fence (M3 Checkpoint A: the fence, then
+    // `@cpu`): plan-check's pin and its judgment-inputs, the gate's judgment-inputs.
     const since = events.findLast((x) => x.seq < first.seq && (outcomeOf(x) !== null || (x.type === 'fact' && x.fact.kind === 'plan-applied')))?.seq ?? 0;
     const facts = events.filter((e) => e.type === 'fact' && e.seq > since && e.seq < first.seq);
-    assert.deepEqual(facts.map((e) => e.type === 'fact' && e.fact.kind), [], `${stage}: no fact between the previous outcome and the reservation`);
+    const capture = stage === 'plan-check' ? ['dispatch', 'judgment-inputs'] : stage === 'gate' ? ['judgment-inputs'] : [];
+    assert.deepEqual(facts.map((e) => e.type === 'fact' && e.fact.kind), capture, `${stage}: only its capture between the previous outcome and the reservation`);
   }
   // The build's reservation is held through its chain and released by teardown.
   const buildHolder = transitions(events).find((t) => t.expect.holder.type === 'stage' && t.expect.holder.stage === 'build')!.expect.holder;
@@ -114,7 +118,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
   assert.ok(released[0]!.parent.type === 'stage' && released[0]!.parent.stage === 'teardown', 'released under teardown');
 });
 
-test('gate.judgment-inputs: plan-check and gate write their inputs after the entry reservation and before the spawn', T, async () => {
+test('gate.judgment-inputs: plan-check and gate write their inputs before the entry reservation and the spawn; the gate\'s carry its fingerprint', T, async () => {
   const d = setupArc({ steps: STRAIGHT, dag: DAG });
   const base = git(d.repo, 'rev-parse', 'main');
   const r = contextFor(d);
@@ -131,12 +135,15 @@ test('gate.judgment-inputs: plan-check and gate write their inputs after the ent
       assert.equal(f.head, f.stage === 'gate' ? git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)) : null);
       assert.equal(f.specRev, 1);
       assert.equal(f.planRev, planRevNow);
-      assert.equal(f.routingRev, r.ctx.routing().rev);
-      assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), { unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev });
+      assert.equal(f.routingRev, r.ctx.routing(null).rev);
+      const fingerprint = f.stage === 'gate' ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)) } : {};
+      assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), {
+        unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev, ...fingerprint,
+      });
       const ops = events.filter((x) => x.type === 'intent' && ofAttempt(x.parent, f));
       const reserve = ops.find((x) => x.type === 'intent' && x.kind === 'resource.transition' && x.expect.edge.type === 'reserve')!;
       const spawn = ops.find((x) => x.type === 'intent' && x.kind === 'proc.spawn')!;
-      assert.ok(reserve.seq < e.seq && e.seq < spawn.seq, `${f.stage}: reserve ${reserve.seq} < inputs ${e.seq} < spawn ${spawn.seq}`);
+      assert.ok(e.seq < reserve.seq && reserve.seq < spawn.seq, `${f.stage}: inputs ${e.seq} < reserve ${reserve.seq} < spawn ${spawn.seq}`);
     }
   } finally {
     r.journal.close();
@@ -259,6 +266,37 @@ test('stage.cancel-wait-journals-nothing: a fix round paused while waiting for i
   assert.ok(calls.every((c) => c.step !== null));
   assert.ok(!calls[2]!.stdin.includes('You were paused'), 'a fix round, not a continue');
   assert.ok(calls[2]!.stdin.includes(fix.kind === 'fix' ? fix.fix.failingEvidenceDirs[0]! : ''), 'with the failing evidence');
+});
+
+test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leaves only its capture; resumed, the same attempt captures again and approves', T, async () => {
+  const run = setupUnit({
+    steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] }), gateStep({ decision: 'approve' })],
+    dag: DAG,
+  });
+  started(await planCheck(run.ctx, run.unit));
+  const green = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
+  assert.equal(green.outcome.kind, 'green');
+  const b = blocked(run);
+  const high = run.journal.view.highWater();
+  const unit = run.journal.view.unit(U1);
+  const waiting = gate(b.ctx, run.unit);
+  for (let i = 0; i < 100 && b.waiting() === 0; i++) await tick();
+  assert.equal(b.waiting(), 1, 'the gate waits for its @cpu, its capture made');
+  b.pause.abort('pause');
+  assert.deepEqual(await waiting, { kind: 'cancelled', reason: 'pause' });
+  const after = runEvents(run).filter((e) => e.seq > high);
+  assert.deepEqual(after.map((e) => (e.type === 'fact' ? e.fact.kind : e.type)), ['judgment-inputs'], 'only the capture was journaled');
+  assert.deepEqual(run.journal.view.unit(U1), unit, 'no attempt, no counter, no interrupted');
+  assert.equal(readCalls(run.scenario.path).filter((c) => c.as === 'claude').length, 1, 'no gate call');
+  await b.unblock();
+  // Resumed: the same attempt number captures again (replacing the unstarted capture) and approves.
+  const s = await step(run.ctx, run.unit);
+  assert.equal(s.kind, 'continue');
+  const decided = run.journal.view.unit(U1).decided;
+  assert.ok(decided !== null && decided.stage === 'gate' && decided.outcome === 'approve');
+  const captures = runEvents(run).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'judgment-inputs' && e.fact.stage === 'gate' ? [e.fact] : []));
+  assert.deepEqual(captures.map((f) => f.attempt), [decided.attempt, decided.attempt]);
+  assert.equal(run.journal.view.judgmentInputs(U1, 'gate', decided.attempt)?.fingerprint?.unitCommit, captures[1]!.head);
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -464,7 +502,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
       stage: ctx,
       commands: {
         ...ctx, hostEnv: backendEnv(ctx.hostEnv), laneEnv: ctx.hostEnv, planFile: absPath(join(run.planDir, 'plan.json')),
-        resolve: () => ctx.routing(), routing: () => ({ profile: 'default', resolved: ctx.routing() }), probes: testProbes(ctx),
+        routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing(null) }), probes: testProbes(ctx),
       },
     });
     const u = journal.view.unit(U1);
@@ -544,7 +582,7 @@ test('rounds.d4-through-driver: red, a stalled fix round, then the next build la
   assert.equal(s.tier, 'high', 'the round sits on build.high');
   const launch = launchOf(run, escalated);
   assert.equal(launch.argv[0], 'claude');
-  assert.ok(launch.argv.includes(run.ctx.routing().table.build.high.model), 'build.high\'s model');
+  assert.ok(launch.argv.includes(run.ctx.routing(null).table.build.high.model), 'build.high\'s model');
   assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'fresh', 'a fresh session: the seat moved');
   const fact = runEvents(run).find((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated');
   assert.ok(fact !== undefined && fact.type === 'fact' && fact.fact.kind === 'implementer-escalated');

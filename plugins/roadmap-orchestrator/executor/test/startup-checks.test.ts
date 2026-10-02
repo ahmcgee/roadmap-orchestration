@@ -24,7 +24,7 @@ import { type PreviousArcVerdict, claimHost, releaseHost } from '../src/host/loc
 import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
-import { type StartChecks, type StartInput, gitCommonDir, routingOf, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import { type StartChecks, type StartInput, gitCommonDir, readRepoConfig, runChecks, smokeCheck } from '../src/preflight/checks.ts';
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection, type StartupRejectionKind, exitCodeFor, startupRejection } from '../src/preflight/startup.ts';
@@ -191,6 +191,24 @@ describe('startup.rejections', () => {
     writeFileSync(join(t.planDir, 'rulings.md'), 'C-1 — One.\nC-1 — Two.\n');
     const [r] = refusedWith(await allChecks(input(t)), 'plan-invalid', 78);
     assert.equal(r?.kind === 'plan-invalid' ? r.problem.type : null, 'schema');
+  });
+
+  it('plan-invalid: holistic.advances names a withdrawn or unknown clause, or no world clause, of the vision (78)', T, async () => {
+    const s = setup();
+    writeFileSync(join(s.planDir, 'vision.json'), JSON.stringify({
+      schema: 'roadmap/vision-m3', rev: 1, confirmation: null, questions: [], clauses: [
+        { id: 'V-1', kind: 'purpose', text: 'Helpers anyone can trust.', rank: null, state: 'active' },
+        { id: 'V-2', kind: 'world', text: 'A developer calls a helper and trusts the answer.', rank: null, state: 'active' },
+        { id: 'V-3', kind: 'good', text: 'Terse output.', rank: null, state: 'withdrawn' },
+      ],
+    }));
+    write({ ...s, plan: { ...s.plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-3', 'V-9'] } } });
+    const rejections = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
+    assert.deepEqual(rejections.map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'schema' ? [r.problem.field, r.problem.detail] : null)), [
+      ['plan.holistic.advances', 'holistic.advances names V-3, which is withdrawn (the arc advances only active clauses)'],
+      ['plan.holistic.advances', 'holistic.advances names V-9, which is not a clause of the vision'],
+      ['plan.holistic.advances', 'holistic.advances names no active world clause (the arc advances at least one)'],
+    ]);
   });
 
   it('plan-invalid: a --plan file that does not exist (78)', T, async () => {
@@ -505,8 +523,8 @@ describe('startup.plan-in-force', () => {
     let verdict: Awaited<ReturnType<typeof evaluateApply>>;
     try {
       verdict = await evaluateApply({
-        runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, repo: s.repo, planFile: s.planFile, profile: 'default',
-        resolve: (plan) => routingOf('default', s.repo, plan), laneEnv: process.env, manifest: null, expectRev: null,
+        runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, repo: s.repo, planFile: s.planFile, routingBase: { profile: 'default', config: readRepoConfig(s.repo) },
+        laneEnv: process.env, manifest: null, expectRev: null,
       });
     } finally {
       j.close();
@@ -515,6 +533,26 @@ describe('startup.plan-in-force', () => {
     assert.deepEqual(readdirSync(inputs).sort(), before, 'the dry run kept nothing');
     const refused = await start(input(s));
     assert.deepEqual(refused.kind === 'refused' ? refused.rejections : refused.kind, [{ kind: 'plan-change-refused', reasons: [unkeptSpecReason('u1', join(s.planDir, 'u1.json'))] }]);
+  });
+
+  it('plan-change-refused: a fresh arc\'s unit with a reserved id (batch-<n>, jobs, mutants) is refused, and so is a start whose files add one', T, async () => {
+    const fresh = setup();
+    writeFileSync(join(fresh.planDir, 'batch-1.json'), JSON.stringify({ ...fresh.spec, unit: 'batch-1' }));
+    writeFileSync(fresh.planFile, JSON.stringify({ ...fresh.plan, units: [...(fresh.plan['units'] as Raw[]), { id: 'batch-1', spec: 'batch-1.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const refused = await start(input(fresh));
+    assert.ok(refused.kind === 'refused' && refused.rejections.length === 1 && refused.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(refused));
+    assert.equal(refused.rejections[0].reasons.length, 1);
+    assert.match(refused.rejections[0].reasons[0]!, /^unit id batch-1 is reserved/);
+    assert.equal(appliedFacts(fresh).rev, null, 'no revision recorded');
+
+    const added = setup();
+    assert.equal((await start(input(added))).kind, 'passed');
+    writeFileSync(join(added.planDir, 'mutants.json'), JSON.stringify({ ...added.spec, unit: 'mutants' }));
+    writeFileSync(added.planFile, JSON.stringify({ ...added.plan, units: [...(added.plan['units'] as Raw[]), { id: 'mutants', spec: 'mutants.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const later = await start(input(added));
+    assert.ok(later.kind === 'refused' && later.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(later));
+    assert.match(later.rejections[0].reasons.join('\n'), /^unit id mutants is reserved/);
+    assert.equal(appliedFacts(added).rev, 1);
   });
 
   it('plan-change-refused: a start whose files drop a started unit and move the worktree root is refused with every reason (78); the plan in force stays', T, async () => {
@@ -590,7 +628,7 @@ describe('startup.m2: over capacity, own-arc residues, the respawn smoke', () =>
     });
     j.close();
     const own = residueEntry(resourceName('db'), arcId(s.arc));
-    recordResidue(s.hostDir, { ...own, key: { ...own.key, unit: u1, inv } });
+    recordResidue(s.hostDir, { ...own, key: { arc: own.key.arc, resource: own.key.resource, unit: u1, inv } });
     const start = await once(input(s));
     assert.equal(start.checks.kind, 'passed', JSON.stringify(start.checks));
     assert.equal((await once(respawnOf(s))).checks.kind, 'passed');

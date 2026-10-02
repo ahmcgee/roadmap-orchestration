@@ -16,11 +16,10 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { type FileCount, type IgnoredCensus, type IgnoredGroup, type IgnoredReason, IGNORED_REASONS } from '../core/records.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { literalPattern } from './evidence.ts';
 import { git } from './git.ts';
-import { matchesPattern } from './salvage.ts';
 
 /** A single file this large is a dump or an artefact, not something a fix round reads. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;

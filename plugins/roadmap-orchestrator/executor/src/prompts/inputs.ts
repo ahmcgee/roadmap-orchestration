@@ -6,12 +6,17 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { LaneId, RulingId, Sha, SpecRev, UnitId } from '../core/ids.ts';
+import type { OutcomeStage } from '../core/events.ts';
+import type { DivergenceId, FindingId, JobId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, IgnoredCensus, LaneDef, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
+import type {
+  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
+  Vision, VisionClause, VisionCoverage, VisionQuestion,
+} from '../holistic/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -111,6 +116,8 @@ export type PlanCheckInputs = Readonly<{
   lanePrograms: readonly LaneProgram[];
   /** Null on the unit's first plan-check, and after any round whose patch was not applied. */
   priorRound: PlanCheckPriorRound | null;
+  /** R17: the vision as read-only context, marked non-directive; null outside a holistic arc. */
+  vision: VisionInput | null;
 }>;
 
 export type BuildInputs = Readonly<{
@@ -136,6 +143,8 @@ export type GateInputs = Readonly<{
   architecture: ArchitectureInput;
   direction: string;
   planCheckNotes: string;
+  /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
+  obligations: readonly ObligationView[];
   /** `merge-base(T, branch)..head`, recomputed after any merge-in. */
   diff: Readonly<{ base: Sha; head: Sha; text: string }>;
   laneLedger: readonly LaneLedgerEntry[];
@@ -147,13 +156,107 @@ export type GateInputs = Readonly<{
   priorRound: GatePriorRound | null;
 }>;
 
-export type RoleInputs = { readonly planCheck: PlanCheckInputs; readonly build: BuildInputs; readonly gate: GateInputs };
+// ---------------------------------------------------------------------------------------------------
+// M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
+// conflict the vision wins. Plan-check reads it as non-directive context; the gate never does (R17).
+
+/**
+ * The vision as a prompt gets it: every clause, withdrawn ones marked (H16); the open questions; and `advances`, the
+ * plan's slice of it (`holistic.advances` of the plan the inputs were captured at).
+ */
+export type VisionInput = Readonly<{ rev: number; clauses: readonly VisionClause[]; questions: readonly VisionQuestion[]; advances: readonly VisionClauseId[] }>;
+
+export const visionInputOf = (v: Vision, advances: readonly VisionClauseId[]): VisionInput => ({ rev: v.rev, clauses: v.clauses, questions: v.questions, advances });
+
+/** One obligation with its observation on the tree under review (null: none, `not covered`, never passed). */
+export type ObligationView = Readonly<{
+  obligation: ObligationDef;
+  exempt: boolean;
+  /** A future obligation latched by a publication: must-hold from then on. */
+  latched: boolean;
+  observation: Readonly<{ key: ObservationKey; verdict: ObservationVerdict }> | null;
+}>;
+
+/** A finding as a prompt shows it: enough to dedupe against and to rule on. */
+export type FindingView = Readonly<{
+  id: FindingId;
+  lens: FindingLens;
+  severity: FindingSeverity;
+  state: FindingStateName;
+  obligation: ObligationDef['id'] | null;
+  claim: string;
+  owner: UnitId | null;
+}>;
+
+export type LensInputs = Readonly<{
+  vision: VisionInput;
+  lens: LensKind;
+  obligations: readonly ObligationView[];
+  /** The audited range: the lens's watermark to the audited SHA, with its diff. */
+  range: Readonly<{ from: Sha; to: Sha; diff: string }>;
+  /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one). */
+  owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: string }>[];
+  priorFindings: readonly FindingView[];
+  contracts: readonly DocText[];
+  rulings: readonly RulingText[];
+  index: ReferenceIndex;
+  architecture: ArchitectureInput;
+  /** The audit's detached worktree at the audited SHA, the lens's cwd. */
+  checkout: AbsPath;
+}>;
+
+/**
+ * Why a unit parked, as the checkpoint reads it. `design`: a judgment's escalation or a refusal, a design question;
+ * else the executor parked it, and `detail` says why (a spent bound, the obligations its candidate left red).
+ */
+export type ParkCause = Readonly<{
+  stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
+}>;
+
+/** A checkpoint's trigger: a completed audit, or a park with its cause (null: the unit has moved on since the capture). */
+export type TriggerView =
+  | Readonly<{ type: 'audit'; job: JobId }>
+  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
+
+export type CheckpointInputs = Readonly<{
+  vision: VisionInput;
+  trigger: TriggerView;
+  /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
+  priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
+  head: Sha;
+  /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
+  plan: string;
+  findings: readonly FindingView[];
+  obligations: readonly ObligationView[];
+  coverage: VisionCoverage;
+  /** Divergences not yet covered by an acknowledged digest (H11). */
+  divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
+  contracts: readonly DocText[];
+  rulings: readonly RulingText[];
+  index: ReferenceIndex;
+  architecture: ArchitectureInput;
+  direction: string;
+}>;
+
+export type RoleInputs = {
+  readonly planCheck: PlanCheckInputs;
+  readonly build: BuildInputs;
+  readonly gate: GateInputs;
+  readonly lens: LensInputs;
+  readonly checkpoint: CheckpointInputs;
+};
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound'],
+  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   gate: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope',
+    'priorRound',
+  ],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
+  checkpoint: [
+    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'architecture', 'direction',
   ],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
@@ -163,6 +266,8 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   planCheck: true,
   build: true,
   gate: true,
+  lens: true,
+  checkpoint: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -306,4 +411,99 @@ export function patchText(ops: readonly SpecPatchOp[]): string {
 export function findingsText(findings: readonly GateFinding[]): string {
   if (findings.length === 0) return '(none)';
   return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`).join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M3 text helpers: the vision, obligations, findings, coverage and divergences as the judgments read them.
+
+/**
+ * Every clause, one per line, world clauses first; a tradeoff with its rank, a withdrawn clause marked so it is never
+ * cited (H16). Then the arc's slice and the horizon (the active clauses outside it), and the open questions with the
+ * clauses they bear on and their working assumptions (closed ones omitted).
+ */
+export function visionText(v: VisionInput): string {
+  const ordered = [...v.clauses.filter((c) => c.kind === 'world'), ...v.clauses.filter((c) => c.kind !== 'world')];
+  const lines = ordered.map((c) => {
+    const kind = c.rank === null ? c.kind : `${c.kind}, rank ${c.rank}`;
+    return `${c.id} (${kind}${c.state === 'withdrawn' ? ', WITHDRAWN: never cite it' : ''}): ${c.text}`;
+  });
+  const horizon = v.clauses.filter((c) => c.state === 'active' && !v.advances.includes(c.id)).map((c) => c.id);
+  const open = v.questions.filter((q) => q.state === 'open');
+  const questions = open.length === 0
+    ? ['Open questions: none']
+    : ['Open questions:', ...open.map((q) => `- ${q.id} (bears on ${q.bears.join(', ')}): ${q.text}\n  Working assumption: ${q.assumption}`)];
+  return [
+    `Vision revision ${v.rev}`, ...lines,
+    `This arc advances: ${v.advances.join(', ')}`, `Horizon (active, beyond this arc): ${horizon.join(', ') || 'none'}`, ...questions,
+  ].join('\n');
+}
+
+function obligationState(o: ObligationDef): string {
+  const s = o.state;
+  switch (s.type) {
+    case 'active':
+      return 'active';
+    case 'split':
+      return `split into ${s.children.join(', ')}`;
+    case 'waived':
+    case 'deferred':
+    case 'retired':
+      return `${s.type} by ${s.ruling}`;
+  }
+}
+
+/**
+ * One obligation per entry: statement, anchor, witness and its observation on the tree under review. `serves`
+ * names the vision clauses it serves; the gate renders without them (R17: the gate never reads the vision).
+ */
+export function obligationsText(views: readonly ObligationView[], opts: Readonly<{ serves: boolean }>): string {
+  if (views.length === 0) return '(none)';
+  return views.map((v) => {
+    const o = v.obligation;
+    const head = [
+      `rev ${o.rev}`, v.latched ? 'must-hold (latched)' : o.activation, obligationState(o), ...(v.exempt ? ['exempt'] : []), ...(opts.serves ? [`serves ${o.serves.join(', ') || 'none'}`] : []),
+    ];
+    const witness = o.witness === null ? 'none' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
+    const delivered = o.deliveredBy.length === 0 ? '' : `\n  Delivered by: ${o.deliveredBy.join(', ')}`;
+    const obs = v.observation === null ? 'none (not covered, which never counts as passed)' : `${v.observation.verdict} at ${JSON.stringify(v.observation.key)}`;
+    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${o.docRef.path}${o.docRef.anchor}: "${o.docRef.quotedText}"\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
+  }).join('\n');
+}
+
+export function findingViewsText(findings: readonly FindingView[]): string {
+  if (findings.length === 0) return '(none)';
+  return findings.map((f) => {
+    const tags = [f.severity, f.lens, f.state, ...(f.owner === null ? [] : [`owned by ${f.owner}`])];
+    return `- ${f.id} [${tags.join(', ')}]${f.obligation === null ? '' : ` ${f.obligation}`}: ${f.claim}`;
+  }).join('\n');
+}
+
+export function coverageText(c: VisionCoverage): string {
+  const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
+  return [
+    `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
+    `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
+    `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
+    `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
+  ].join('\n');
+}
+
+export function divergencesText(divergences: CheckpointInputs['divergences']): string {
+  return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
+}
+
+/** The previous attempt's invalid decision, as the retry reads it (empty when there was none). */
+export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
+  if (p === null) return '';
+  return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
+}
+
+/** Why the checkpoint runs, in sentences. */
+export function triggerText(t: TriggerView): string {
+  if (t.type === 'audit') return `the audit ${t.job} completed.`;
+  const c = t.cause;
+  if (c === null) return `unit ${t.unit} parked (log seq ${t.seq}); it has moved on since.`;
+  const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;
+  if (c.design) return `unit ${t.unit} parked on a design question (log seq ${t.seq}): ${ended}.`;
+  return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
 }

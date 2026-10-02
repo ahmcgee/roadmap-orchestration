@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
@@ -30,6 +31,12 @@ export function callUnit(env: Readonly<Record<string, string>>, cwd: string): st
   if (owner !== undefined) return owner.slice(owner.lastIndexOf('/') + 1);
   const name = basename(cwd).split('.')[0] ?? '';
   return name === '' ? null : name;
+}
+
+/** The lens kind a lens prompt names: `lens` then the kind, however the inputs serialise it (`"lens": "drift"`, `lens: drift`). */
+export function callLens(stdin: string): LensKindName | null {
+  const found = /\blens\W{1,4}(invariants|drift|vacuity|vision)\b/.exec(stdin)?.[1];
+  return found === undefined ? null : (found as LensKindName);
 }
 
 function parseArgs(raw: readonly string[]): { scenario: string; as: FakeName; argv: readonly string[] } {
@@ -261,18 +268,27 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
 
 const claimed = (dir: string, index: number): boolean => existsSync(join(dir, CLAIMS_DIR, String(index)));
 
-/** The steps this call may take, in order: its unit's keyed steps, or else the unkeyed ones. */
-function candidates(steps: readonly Step[], unit: string | null): readonly number[] {
+/** The steps this call may take, in order: the first non-empty of unit+lens, unit, lens and unkeyed steps (see StepBase). */
+function candidates(steps: readonly Step[], unit: string | null, lens: LensKindName | null): readonly number[] {
   const all = steps.map((_, i) => i);
-  const keyed = all.filter((i) => steps[i]?.unit !== undefined && steps[i]?.unit === unit);
-  return keyed.length > 0 ? keyed : all.filter((i) => steps[i]?.unit === undefined);
+  const tiers: ((s: Step) => boolean)[] = [
+    (s) => lens !== null && s.lens === lens && s.unit !== undefined && s.unit === unit,
+    (s) => s.lens === undefined && s.unit !== undefined && s.unit === unit,
+    (s) => lens !== null && s.lens === lens && s.unit === undefined,
+    (s) => s.lens === undefined && s.unit === undefined,
+  ];
+  for (const tier of tiers) {
+    const found = all.filter((i) => tier(steps[i] as Step));
+    if (found.length > 0) return found;
+  }
+  return [];
 }
 
 /** Take the first unconsumed candidate step when it matches the call; otherwise say why not. */
-function claimStep(dir: string, steps: readonly Step[], call: Call, unit: string | null): { index: number } | { problem: string } {
+function claimStep(dir: string, steps: readonly Step[], call: Call, unit: string | null, lens: LensKindName | null): { index: number } | { problem: string } {
   mkdirSync(join(dir, CLAIMS_DIR), { recursive: true });
   for (;;) {
-    const index = candidates(steps, unit).find((i) => !claimed(dir, i));
+    const index = candidates(steps, unit, lens).find((i) => !claimed(dir, i));
     const problem = mismatch(index === undefined ? undefined : steps[index], call);
     if (index === undefined || problem !== null) return { problem: problem ?? 'no step left in the scenario' };
     try {
@@ -293,8 +309,9 @@ export function main(): void {
   const file = JSON.parse(readFileSync(scenario, 'utf8')) as ScenarioFile;
   const dir = dirname(scenario);
   const unit = callUnit(env, call.cwd);
-  const claim = claimStep(dir, file.steps, call, unit);
-  const record: CallRecord = { ...call, step: 'index' in claim ? claim.index : null, unit };
+  const lens = callLens(call.stdin);
+  const claim = claimStep(dir, file.steps, call, unit, lens);
+  const record: CallRecord = { ...call, step: 'index' in claim ? claim.index : null, unit, lens };
   appendFileSync(join(dir, CALLS_FILE), `${JSON.stringify(record)}\n`);
   if (!('index' in claim)) {
     process.stderr.write(`fake ${as}: call ${JSON.stringify(argv)} in ${call.cwd} (unit ${unit}) does not match its next step: ${claim.problem}\n`);

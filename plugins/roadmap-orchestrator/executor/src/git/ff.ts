@@ -9,8 +9,13 @@
 // - `advanced`: T is a strict ancestor of ref and new is not: the tip moved on without us. The ff is
 //   `unpublished`; the caller re-checks the fingerprint and makes a fresh candidate (or re-gates).
 // - `foreign`: anything else (integration rewound or rewritten): the caller stops with a needs-user.
+//
+// M3 (A4): a docs publication's `ff` (subject `docs{pub}`, no fingerprint) moves integration from T to its
+// `docs.commit` commit, whose one parent is T (`publicationProblem`); `planDocsFf` plans it. M3 (B2): a repair batch's
+// `ff` (subject `batch{job}`) moves integration from T to the last merge of its chain (`planBatchFf`): its provenance is
+// a first-parent chain of two-parent merges from the new tip back to T, one per member.
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
+import { type IntentOf, type OpExpect, type OpOutcome, parentUnit } from '../core/events.ts';
 import type { Sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
@@ -51,6 +56,31 @@ export function observeIntegration(repo: AbsPath, ref: RefName, tip: Sha, next: 
 export function provenanceProblem(repo: AbsPath, next: Sha, tip: Sha, unitCommit: Sha): string | null {
   const parents = parentsOf(repo, next);
   return parents.join(' ') === `${tip} ${unitCommit}` ? null : `${next} has parents [${parents.join(', ')}], expected [${tip}, ${unitCommit}]`;
+}
+
+/**
+ * The provenance an `ff` must carry, per what it publishes: a unit's merge [T, approved unit commit]; a docs
+ * publication's commit, whose one parent is T; a batch's chain: at least two merges, each with two parents, whose first
+ * parents lead from the new tip back to T.
+ */
+export function publicationProblem(repo: AbsPath, expect: OpExpect['integration.ff']): string | null {
+  const { old, new: next } = expect;
+  if (expect.subject === undefined) return provenanceProblem(repo, next, old, expect.fingerprint.unitCommit);
+  switch (expect.subject.type) {
+    case 'docs': {
+      const parents = parentsOf(repo, next);
+      return parents.join(' ') === old ? null : `${next} has parents [${parents.join(', ')}], expected [${old}]`;
+    }
+    case 'batch': {
+      let at = next;
+      for (let merges = 0; ; merges++) {
+        if (at === old) return merges >= 2 ? null : `${next} merges ${merges} member onto ${old}: a batch merges at least two`;
+        const parents = parentsOf(repo, at);
+        if (parents.length !== 2) return `${at} in batch ${expect.subject.job}'s chain has parents [${parents.join(', ')}], not a merge's two`;
+        at = parents[0]!;
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -99,6 +129,53 @@ export function planFf(repo: AbsPath, request: FfRequest): FfDecision {
   }
 }
 
+/**
+ * A docs publication's `ff` (A7): integration from T to the done `docs.commit`'s commit, whose tree its lanes
+ * tested. The docs ref must still be at that commit; integration advanced past T (nothing publishes while the docs
+ * publication holds the slot, so only a foreign mover can) or moved anywhere else is `foreign-mover`.
+ */
+export function planDocsFf(repo: AbsPath, integration: RefName, docs: IntentOf<'docs.commit'>): FfDecision {
+  const tip = docs.expect.integrationTip;
+  const next = docs.post.new;
+  const at = refTarget(repo, docs.expect.ref);
+  if (at !== next) return { kind: 'foreign-mover', ref: docs.expect.ref, expected: next, observed: at };
+  const seen = observeIntegration(repo, integration, tip, next);
+  switch (seen.kind) {
+    case 'pending':
+      return { kind: 'ff', body: { expect: { ref: integration, old: tip, new: next, subject: { type: 'docs', pub: docs.expect.pub } }, post: null } };
+    case 'advanced':
+    case 'foreign':
+      return { kind: 'foreign-mover', ref: integration, expected: tip, observed: seen.kind === 'advanced' ? seen.tip : seen.observed };
+    case 'published':
+      throw new FfStateError(integration, `docs commit ${next} is already published (integration at ${seen.at})`);
+  }
+}
+
+/**
+ * A repair batch's `ff`: integration from T to the done batch `candidate.merge`'s last merge, which its lanes tested.
+ * The candidate ref must still be there; integration advanced past T is `unpublished` (the batch is stale: its members'
+ * fingerprints are re-checked on a fresh batch), moved anywhere else `foreign-mover`.
+ */
+export function planBatchFf(repo: AbsPath, integration: RefName, candidate: IntentOf<'candidate.merge'>): FfDecision {
+  const batch = candidate.expect.batch;
+  if (batch === undefined) throw new FfStateError(integration, `candidate ${candidate.op} is not a batch`);
+  const tip = candidate.expect.integrationTip;
+  const next = candidate.post.new;
+  const at = refTarget(repo, candidate.expect.ref);
+  if (at !== next) return { kind: 'foreign-mover', ref: candidate.expect.ref, expected: next, observed: at };
+  const seen = observeIntegration(repo, integration, tip, next);
+  switch (seen.kind) {
+    case 'pending':
+      return { kind: 'ff', body: { expect: { ref: integration, old: tip, new: next, subject: { type: 'batch', job: batch.job } }, post: null } };
+    case 'advanced':
+      return { kind: 'unpublished', tip: seen.tip };
+    case 'foreign':
+      return { kind: 'foreign-mover', ref: integration, expected: tip, observed: seen.observed };
+    case 'published':
+      throw new FfStateError(integration, `batch ${batch.job}'s candidate ${next} is already published (integration at ${seen.at})`);
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The op
 
@@ -113,12 +190,12 @@ function act(repo: AbsPath, intent: IntentOf<'integration.ff'>): void {
 }
 
 function verify(repo: AbsPath, intent: IntentOf<'integration.ff'>): OpOutcome['integration.ff'] {
-  const { ref, old, fingerprint } = intent.expect;
+  const { ref, old } = intent.expect;
   const next = intent.expect.new;
   const seen = observeIntegration(repo, ref, old, next);
   switch (seen.kind) {
     case 'published': {
-      const problem = provenanceProblem(repo, next, old, fingerprint.unitCommit);
+      const problem = publicationProblem(repo, intent.expect);
       if (problem !== null) throw new FfStateError(ref, problem);
       return { kind: 'published' };
     }

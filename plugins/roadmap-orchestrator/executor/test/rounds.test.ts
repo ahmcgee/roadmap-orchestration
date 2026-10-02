@@ -69,7 +69,7 @@ test('rounds.d4-decide: a fix round after a stalled one escalates to build.high 
   assert.equal(log.view.unit(U1).counters.chargeableFailures, 2, 'inside the bound');
 
   // Pure: only a fix round escalates, only when build.<tier> is not build.high's triple.
-  const routing = run.ctx.routing();
+  const routing = run.ctx.routing(null);
   assert.deepEqual(escalation(log, routing, U1, FIX), { kind: 'escalate', from: 'med', stalled: fix });
   assert.deepEqual(escalation(log, routing, U1, { kind: 'resume' }), { kind: 'none', why: 'not-a-fix-round' });
   const sameHigh = { ...routing, table: { ...routing.table, build: { ...routing.table.build, med: routing.table.build.high } } };
@@ -145,9 +145,9 @@ test('rounds.fresh-resolve: after a re-entry\'s conflicted preparation, the reso
   const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: Record<string, unknown>[] };
   plan.units.push({ ...plan.units[0], id: 'u2', spec: 'u2.json', reenters: { unit: 'u1' } });
   writeFileSync(d.planPath, JSON.stringify(plan));
-  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), null, [
+  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [
     { type: 'unit-added', unit: U2 }, { type: 'unit-reentered', unit: U2, reenters: U1, reset: false },
-  ]);
+  ], { profile: 'default', config: null });
   r.journal.close();
 
   const run = contextFor(d);

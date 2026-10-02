@@ -30,7 +30,13 @@ The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). The 0.x design record is
 /plugin install roadmap-orchestrator@roadmap-orchestration
 ```
 
-Then, in the repo you want to build in:
+Then, in the repo you want to build in, distil the vision the arc steers by:
+
+```
+/roadmap-orchestrator:vision
+```
+
+and run the arc:
 
 ```
 /roadmap-orchestrator:orchestrate <roadmap files...> --until "<milestone>"
@@ -46,6 +52,7 @@ plugins/roadmap-orchestrator/
   .claude-plugin/plugin.json
   executor/                         # the 1.0 executor (TypeScript on Node 24)
   skills/orchestrate/               # SKILL.md (M1 stub), RATIONALE-1.0.md, templates/
+  skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
 DESIGN-1.0.md                       # binding 1.0 design brief
 ```
 

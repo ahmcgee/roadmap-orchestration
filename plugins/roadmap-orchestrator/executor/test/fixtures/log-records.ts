@@ -6,7 +6,7 @@ import {
 } from '../../src/core/ids.ts';
 import type { Stage } from '../../src/core/records.ts';
 import { type IsoTime, absPath, gitDate, isoTime, refName } from '../../src/core/values.ts';
-import type { Role } from '../../src/routing/types.ts';
+import type { UnitRole } from '../../src/routing/types.ts';
 
 export const ARC = arcId('arc-1');
 export const AT = isoTime('2026-09-25T12:00:00.000Z');
@@ -18,7 +18,7 @@ export const U1 = unitId('u1');
 export const stageParent = (stage: Stage, attempt: number, unit = U1) => ({ type: 'stage', unit, stage, attempt }) as const;
 
 /** A backend proc.spawn intent (ordinal given) for op `<arc>/<seq>`. */
-export function spawnIntent(seq: number, opts: Readonly<{ ordinal?: number; key?: string; deadlineAt?: IsoTime | null; stage?: Stage; attempt?: number; role?: Role }> = {}): IntentRecord {
+export function spawnIntent(seq: number, opts: Readonly<{ ordinal?: number; key?: string; deadlineAt?: IsoTime | null; stage?: Stage; attempt?: number; role?: UnitRole }> = {}): IntentRecord {
   const attempt = opts.attempt ?? 1;
   return {
     type: 'intent',
@@ -38,7 +38,7 @@ export const spawnResult = (op: OpId): LogRecord =>
 export const spawnLost = (op: OpId): LogRecord =>
   ({ type: 'done', op, kind: 'proc.spawn', outcome: { kind: 'lost', treeEffects: false }, recoveredBy: 'reconciled' });
 
-export function meter(inv: InvocationId, role: Role, input: number, output: number, cacheRead: number | null): LogRecord {
+export function meter(inv: InvocationId, role: UnitRole, input: number, output: number, cacheRead: number | null): LogRecord {
   return { type: 'fact', fact: { kind: 'meter', inv, routingRev: REV, subject: { type: 'seat', role, tier: 'med', unit: U1, attempt: 1 }, usage: { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: null, turns: null, costUsd: null } } };
 }
 

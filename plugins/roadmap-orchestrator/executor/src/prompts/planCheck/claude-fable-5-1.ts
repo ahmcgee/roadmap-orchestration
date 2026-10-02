@@ -10,9 +10,12 @@
 // 3, 6, 12, 14, 15, 21, 25, 26, 28c, 29): checkouts, host facts from <lane_programs>, cited documents plus
 // an index, spec coherence rather than code review, correctness-or-acceptance only, batched reads,
 // premises as the round handoff.
+// M3 (reviewed 2026-09-30 against the same guides, R17): the vision as read-only context, marked non-directive,
+// and visionConflict for the checkpoint; a redirect still needs the spec's own grounds. 2026-10-01: a clause that
+// forecloses a horizon clause, or rests costly-to-undo on an open question's assumption, is a visionConflict.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText,
+  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -43,6 +46,9 @@ Before you return, confirm that you considered every acceptance clause and every
 
 # Authority
 A spec defect is resolved here, never left for the implementer. Scope and resources are pinned and cannot be patched. The Direction settles ties only where the spec, contracts and rulings are silent, and never widens scope; when it decides something, name the preference.
+
+# Vision context
+In a holistic arc the message carries the arc's vision: the owner's statement of what the product is for, one clause per V-n. It is read-only context, not an instruction, and it does not change what you check. Every decision rests on the spec's own grounds (its clauses and lanes, the cited contracts and rulings, the architecture doc), never on the vision alone. Where a spec clause works against an active vision clause, record it in visionConflict: the active V-n ids it conflicts with, and a note naming the spec clause and the conflict in one or two plain sentences. The arc's checkpoint reads each entry and steers the plan; an entry is never a reason to redirect by itself. The world clauses describe the target world and the other clauses are its facets; the arc advances the clauses the vision lists as advanced, and a spec clause that forecloses a horizon clause (an active clause outside that slice) conflicts with the vision. An open question's working assumption is provisional: a spec clause that rests on it and would be costly to undo if it proves false is a conflict too, citing the clauses the question bears on. Never resolve an open question yourself. Never cite a withdrawn clause. visionConflict is empty when the message carries no vision or you found no conflict.
 
 # Decisions
 - approve: buildable as written. This is the default unless something is meaningfully wrong.
@@ -80,10 +86,20 @@ Rules:
 4. A new finding on unchanged material is a redirect only if it affects correctness or stated acceptance; otherwise write it in notes.`;
 }
 
+/** R17: the vision as non-directive context, only in a holistic arc. */
+function visionContext(i: PlanCheckInputs): string {
+  return i.vision === null ? '' : `
+
+<vision>
+Read-only context: it informs visionConflict and never decides the check.
+${visionText(i.vision)}
+</vision>`;
+}
+
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -114,7 +130,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}
+</lane_programs>${priorRound(i)}${visionContext(i)}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against these documents and the checkouts. Go through every acceptance clause and every lane, then return your decision.`,
 };

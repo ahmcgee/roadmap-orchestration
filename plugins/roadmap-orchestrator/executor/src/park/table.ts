@@ -30,6 +30,8 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
   teardown: { 'cleanup-failed': 'resources' },
   lanes: { blocked: 'host', 'cleanup-failed': 'resources' },
   candidate: { blocked: 'host', 'cleanup-failed': 'resources' },
+  // M3: a vacuity repair's mutant lane parks as a lane does.
+  reproduce: { blocked: 'host', 'cleanup-failed': 'resources' },
 };
 
 /** What only the stage knows: the backend its call ran on, and the instances its cleanup failed (G6: a salvage passes its teardown's). */

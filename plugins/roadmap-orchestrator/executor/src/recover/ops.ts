@@ -4,19 +4,22 @@
 // The pipeline runs these ops; the recovery engine (recover.ts) rebuilds them from an open intent.
 import type { IntentOf, OpOutcome } from '../core/events.ts';
 import type { GitOp, IntentBody, Reconciler } from '../core/interfaces.ts';
-import type { ApprovalFingerprint } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type CandidatePlan, candidateMergeSteps } from '../git/candidate.ts';
+import { type DocsPlan, docsCommitSteps } from '../git/docs.ts';
 import { type SnapshotRequest, evidenceSnapshotSteps } from '../git/evidence.ts';
 import { type FfPlan, integrationFfSteps } from '../git/ff.ts';
 import { type MergeinRequest, mergeinSteps } from '../git/mergein.ts';
+import { type MutantRequest, mutantApplySteps } from '../git/mutant.ts';
 import { type SalvagePlan, type SalvageRules, salvageCommitSteps } from '../git/salvage.ts';
 import { type SnapshotPublishRequest, snapshotPublishSteps } from '../git/snapshot.ts';
 import { type WorktreeCreateRequest, type WorktreeRemoveRequest, worktreeCreateSteps, worktreeRemoveSteps } from '../git/worktree.ts';
 import { reconcileCandidate } from './candidate.ts';
+import { reconcileDocsCommit } from './docs.ts';
 import { reconcileEvidenceSnapshot } from './evidence.ts';
-import { reconcileIntegrationFf } from './ff.ts';
+import { type UnitRedo, reconcileIntegrationFf } from './ff.ts';
 import { reconcileMergein } from './mergein.ts';
+import { reconcileMutantApply } from './mutant.ts';
 import { reconcileSalvageCommit } from './salvage.ts';
 import { reconcileSnapshot } from './snapshot.ts';
 import { reconcileWorktreeCreate, reconcileWorktreeRemove } from './worktree.ts';
@@ -53,12 +56,23 @@ export function candidateMergeOp(repo: AbsPath): GitOp<'candidate.merge', Candid
   return { ...candidateMergeSteps(repo), reconcile: reconcileCandidate(repo) };
 }
 
+/** M3 (A4): a docs publication's commit of its rendered files and contract ops on the tip. */
+export function docsCommitOp(repo: AbsPath): GitOp<'docs.commit', DocsPlan> {
+  return { ...docsCommitSteps(repo), reconcile: reconcileDocsCommit(repo) };
+}
+
+/** M3 (B3): a vacuity finding's mutant applied in a detached worktree (the patch kept in `runDir`). */
+export function mutantApplyOp(repo: AbsPath, runDir: AbsPath): GitOp<'mutant.apply', MutantRequest> {
+  return { ...mutantApplySteps(repo, runDir), reconcile: reconcileMutantApply(repo, runDir) };
+}
+
 /**
- * `fingerprintValid` is the caller's re-check of the recorded approval fingerprint at T (gate.ts); recovery
- * redoes a CAS that never happened only when it says the approval still holds.
+ * `unitRedo` is the caller's re-check of a unit `ff`: the recorded approval fingerprint at T (gate.ts) and the unit's
+ * eligibility (G10, integrate.ts `findingBlocking`); recovery redoes a unit CAS that never happened only when it says
+ * yes. A docs publication's `ff` never asks it.
  */
-export function integrationFfOp(repo: AbsPath, fingerprintValid: (fingerprint: ApprovalFingerprint) => boolean): GitOp<'integration.ff', FfPlan> {
-  return { ...integrationFfSteps(repo), reconcile: reconcileIntegrationFf(repo, fingerprintValid) };
+export function integrationFfOp(repo: AbsPath, unitRedo: UnitRedo): GitOp<'integration.ff', FfPlan> {
+  return { ...integrationFfSteps(repo), reconcile: reconcileIntegrationFf(repo, unitRedo) };
 }
 
 export function snapshotPublishOp(repo: AbsPath): GitOp<'snapshot.publish', SnapshotPublishRequest> {

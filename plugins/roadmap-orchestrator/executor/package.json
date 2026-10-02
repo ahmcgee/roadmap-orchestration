@@ -1,13 +1,13 @@
 {
   "name": "roadmap-executor",
-  "version": "1.0.0-dev.5",
+  "version": "1.0.0-dev.6",
   "private": true,
   "type": "module",
   "description": "roadmap-orchestrator 1.0 executor: a plain Node process that owns backends, git and the event log. Runs on Node 24 type stripping; no runtime dependencies.",
   "engines": { "node": ">=24.21" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts && node --test test/serial/*.test.ts",
     "probe": "node evals/probe.ts"
   },
   "devDependencies": {

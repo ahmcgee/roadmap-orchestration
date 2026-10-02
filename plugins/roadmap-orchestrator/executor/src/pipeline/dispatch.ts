@@ -2,14 +2,23 @@
 // puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
 //
 // - The dispatch record (a `dispatch` fact) pins the unit's scope envelope and risk floor once, with the
-//   routingRev in force and the hash of the implementer seat's triple (`implementerSeatRev`). A plan-check
-//   that raises the risk re-pins it with a new fact (same scope, higher floor); nothing lowers it and
-//   nothing widens the scope (the fold refuses both).
+//   unit's routingRev in force and the hash of the implementer seat's triple (`implementerSeatRev`). A plan-check
+//   that raises the risk re-pins it with a new fact (same scope, higher floor); nothing lowers it. The scope grows
+//   only by a ruled scope-growth apply (src/input/classify.ts), which the next dispatch check re-pins; the fold
+//   refuses any other change of it.
+// - M3: the routing is the unit's (`StageContext.routing(unit)`: the arc's stack with the unit's `route` or
+//   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
+//   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
+//   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
+//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules` (a 1.0.0-dev.5
+//   lineage keeps its dev.5 rules).
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
 //   every judgment is a fresh session, so a judgment seat may change harmlessly; the implementer's session
 //   resumes, so its seat may not. The unit is re-pinned under the new rev (a new dispatch fact, scope and
 //   floor unchanged) when no build has started for it or its implementer seat hashes the same under both
 //   revs; otherwise the stage parks it (`routing-changed`) with a needs-user naming the seat, never a model.
+//   A steer round (R11) starts a fresh implementer session, so it re-pins whatever the seat (`steerDispatch`):
+//   `steer --class` moves the implementer seat on purpose.
 // - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
 //   judgment stage sits on `judgmentSeat` (transitions.ts): the role's `escalation` seat once it routed up
 //   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only).
@@ -23,29 +32,36 @@
 //   class in {usage-limit, capacity}); platform or backend error entries on a success are informational.
 // - An implementer call that resumes a session and ends `process-fault` with no complete JSON line on stdout
 //   never had its session persisted (`sessionNeverPersisted`; rounds.ts `callRound` re-runs it fresh).
+// - M3 (LR-d): the arc roles' call (`callArcRole`): a lens of an audit or a checkpoint, a job's fresh read-only session
+//   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
+//   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
+//   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes } from '../backends/argv.ts';
+import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes } from '../backends/argv.ts';
 import {
   BACKEND_PARK_CLASSES, type BackendParkClass, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
-import { type ArcId, type InvocationId, type RoutingRev, type SeatRev, type UnitId, opKey, seatRev } from '../core/ids.ts';
+import { type ArcId, type InvocationId, type JobId, type RoutingRev, type SeatRev, type UnitId, invocationId, opKey, seatRev } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
 import type { SpecState } from '../core/state.ts';
 import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
 import {
-  type BackendErrorClass, type BackendResult, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE, STDOUT_FILE, type NeedsUserContent,
+  type BackendErrorClass, type BackendResult, type Bounds, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE,
+  STDOUT_FILE, type NeedsUserContent, boundsOfRecord,
 } from '../core/records.ts';
-import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
+import { type AbsPath, type BranchName, type IsoTime, type RefName, type RepoPattern, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
 import { inputPath, keepInput } from '../input/inforce.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
-import { type AcquiringHolder, type ResourceContext, holderUnits } from '../resources/reserve.ts';
+import { type ResourceContext, type UnitAcquiringHolder, holderUnits } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
-import { type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type SeatRef } from '../routing/types.ts';
+import {
+  type ArcRole, type ArcSeatRef, type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
+} from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { abortReason } from './redlane.ts';
@@ -54,11 +70,12 @@ import { judgmentSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
- * executor `plan()` and `routing()` are the plan in force and its routing, read from the log at each call
- * (src/executor.ts `contexts`).
+ * executor `plan()` and `routing(unit)` are the plan in force and a unit's routing in force (the arc's for null),
+ * read from the log at each call (src/executor.ts `contexts`).
  */
 export type StageContext = ResourceContext & Readonly<{
-  routing: () => ResolvedRouting;
+  /** A unit's routing in force: the arc's stack with the unit's own layer on top (layers.ts); the arc's for null. */
+  routing: (unit: UnitId | null) => ResolvedRouting;
   /** The executor's own environment; backends get `backendEnv(hostEnv)`, lanes their declared `pass` names. */
   hostEnv: Readonly<Record<string, string | undefined>>;
   /** The plan file's directory: unit spec paths and the rulings ledger are relative to it. */
@@ -78,8 +95,11 @@ export type StageContext = ResourceContext & Readonly<{
   signal: AbortSignal;
 }>;
 
-/** Judgment deadline per invocation. Default, unmeasured: re-derive once arc 2 has measured judgments. */
-export const JUDGMENT_DEADLINE_MS = 45 * 60_000;
+/** Whole minutes (a bound's unit) in milliseconds. */
+export const minutesMs = (min: number): number => min * 60_000;
+
+/** A judgment's deadline per invocation: the unit's pinned `judgmentDeadlineMin` (default 45, unmeasured). */
+export const judgmentDeadlineMs = (record: DispatchRecord): number => minutesMs(boundsOfRecord(record).judgmentDeadlineMin);
 /** Grace between TERM and KILL when a backend workload is ended. */
 export const BACKEND_GRACE_MS = 10_000;
 
@@ -130,36 +150,84 @@ function buildStarted(view: JournalView, unit: UnitId): boolean {
  * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
  * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
  */
-export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord): DispatchRecord | null {
-  const seat = implementerSeatRev(routing, record.riskFloor);
+export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate = {}): DispatchRecord | null {
+  const seat = implementerSeatRev(routing, update.riskFloor ?? record.riskFloor);
   const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
   if (onFloor && seat !== record.implementerSeatRev && buildStarted(journal.view, record.unit)) return null;
-  const next: DispatchRecord = { ...record, routingRev: routing.rev, implementerSeatRev: seat, at: now() };
+  return pin(journal, routing, record, update);
+}
+
+/**
+ * What a re-pin changes besides the routing: the bounds a `limits` revision set, a ruled scope growth, a risk the plan
+ * raised above the floor (`route`: risk may rise).
+ */
+export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier }>;
+
+/** Records `record` re-pinned under `routing` with `update` (a new dispatch fact), whatever its implementer seat. */
+function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate): DispatchRecord {
+  const riskFloor = update.riskFloor ?? record.riskFloor;
+  const next: DispatchRecord = {
+    ...record, ...update, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(),
+  };
   journal.fact({ kind: 'dispatch', record: next });
   return next;
 }
 
-/** `record` under the routing in force: itself when the rev is unchanged; else re-pinned, or the park. */
+const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
+
+/**
+ * What the plan in force changes of `record` besides its routing: the unit's bounds (a `limits` revision), and its
+ * scope once a ruled scope-growth apply grew it (the classifier refuses any other scope change of a dispatched unit,
+ * so a plan scope that does not contain the pinned one is a bug).
+ */
+function pinUpdate(ctx: StageContext, record: DispatchRecord): PinUpdate {
+  const unit = ctx.plan().units.find((u) => u.id === record.unit);
+  if (unit === undefined) throw new Error(`unit ${record.unit} is dispatched but not in the plan in force`);
+  const bounds = boundsOf(ctx.plan(), unit);
+  const scope = [...unit.scope].sort();
+  if (record.scope.some((p) => !scope.includes(p))) {
+    throw new Error(`unit ${record.unit}: the plan in force scopes it ${scope.join(', ')}, which drops part of its pinned scope ${record.scope.join(', ')}`);
+  }
+  return {
+    ...(same(bounds, boundsOfRecord(record)) ? {} : { bounds }), ...(same(scope, record.scope) ? {} : { scope }),
+    ...(riskAbove(unit.risk, record.riskFloor) ? { riskFloor: unit.risk } : {}),
+  };
+}
+
+const unchanged = (update: PinUpdate): boolean => update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined;
+
+/** `record` under the plan and routing in force: itself when neither changed it; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
-  if (record.routingRev === ctx.routing().rev) return { kind: 'pinned', dispatch: record };
-  const next = repin(ctx.journal, ctx.routing(), record);
+  const routing = ctx.routing(record.unit);
+  const update = pinUpdate(ctx, record);
+  if (record.routingRev === routing.rev && unchanged(update)) return { kind: 'pinned', dispatch: record };
+  const next = repin(ctx.journal, routing, record, update);
   return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
 
 /**
- * The unit's dispatch record under the routing in force: the latest `dispatch` fact (re-pinned if the
- * routing changed and the unit can absorb it), or the first one, recorded now from the plan (scope envelope
- * and Phase-0 risk floor) and the spec revision being dispatched (its rev and file hash).
+ * The unit's dispatch record under the plan and routing in force: the latest `dispatch` fact (re-pinned if the
+ * routing, the bounds or the scope changed and the unit can absorb it), or the first one, recorded now
+ * (`firstPin`) from the plan (scope envelope and Phase-0 risk floor) and the spec revision being dispatched.
  */
 export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState): Pinned<DispatchRecord> {
   const current = ctx.journal.view.dispatchOf(unit.id);
   if (current !== null) return inForce(ctx, current);
-  const record: DispatchRecord = {
-    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor: unit.risk, routingRev: ctx.routing().rev,
-    implementerSeatRev: implementerSeatRev(ctx.routing(), unit.risk), at: now(),
-  };
+  const record = firstPin(ctx, unit, spec, unit.risk);
   ctx.journal.fact({ kind: 'dispatch', record });
   return { kind: 'pinned', dispatch: record };
+}
+
+/**
+ * A unit's first dispatch record at risk floor `riskFloor`: its plan scope, its routing in force, its bounds (`boundsOf`
+ * the plan in force) and the M3 transient rules (H15). prepare.ts pins a re-entry with it too.
+ */
+export function firstPin(ctx: StageContext, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
+  const routing = ctx.routing(unit.id);
+  return {
+    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor, routingRev: routing.rev,
+    implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(), transientRules: 'm3', bounds: boundsOf(ctx.plan(), unit),
+  };
 }
 
 /** The pinned record, which every stage after plan-check requires. */
@@ -177,9 +245,9 @@ export const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.index
  */
 export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskTier, spec: SpecState): DispatchRecord {
   if (!riskAbove(risk, record.riskFloor)) throw new Error(`raiseRisk: ${risk} is not above the floor ${record.riskFloor} of ${record.unit}`);
+  const routing = ctx.routing(record.unit);
   const next: DispatchRecord = {
-    ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, routingRev: ctx.routing().rev,
-    implementerSeatRev: implementerSeatRev(ctx.routing(), risk), at: now(),
+    ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, risk), at: now(),
   };
   ctx.journal.fact({ kind: 'dispatch', record: next });
   return next;
@@ -200,7 +268,7 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   if (pinned.kind !== 'pinned') return pinned;
   const role = ROLE_OF[stage];
   const tier = judgmentSeat(ctx.journal.view.unit(unit), stage);
-  const triple = ctx.routing().table[role][tier];
+  const triple = ctx.routing(unit).table[role][tier];
   // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
   if (triple.backend !== 'claude') throw new Error(`the ${role} seat ${tier} resolves to ${triple.backend}; judgment is Claude only in M1`);
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
@@ -214,12 +282,30 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
  */
 export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<ImplementerDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
-  if (pinned.kind !== 'pinned') return pinned;
-  const { riskFloor, routingRev, implementerSeatRev: floorSeat } = pinned.dispatch;
+  return pinned.kind === 'pinned' ? { kind: 'pinned', dispatch: seated(ctx, pinned.dispatch) } : pinned;
+}
+
+/**
+ * The implementer's seat for a steer round (R11): its session is fresh, so the unit is re-pinned under the plan and
+ * routing in force whatever its implementer seat (`steer --class` moves the seat on purpose; a later round resumes
+ * the steer session on the new seat).
+ */
+export function steerDispatch(ctx: StageContext, unit: UnitId): ImplementerDispatch {
+  const record = dispatchOf(ctx.journal.view, unit);
+  const routing = ctx.routing(unit);
+  const update = pinUpdate(ctx, record);
+  const kept = record.routingRev === routing.rev && unchanged(update);
+  return seated(ctx, kept ? record : pin(ctx.journal, routing, record, update));
+}
+
+/** The implementer's seat under a pinned record: its build tier, on the floor's pinned seat or `build.<tier>`'s. */
+function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch {
+  const { unit, riskFloor, routingRev, implementerSeatRev: floorSeat } = record;
   const tier = ctx.journal.view.unit(unit).buildTier;
   if (tier === null) throw new Error(`unit ${unit} is dispatched but has no build tier`);
-  const seat = tier === riskFloor ? floorSeat : implementerSeatRev(ctx.routing(), tier);
-  return { kind: 'pinned', dispatch: { role: 'build', tier, triple: ctx.routing().table.build[tier], routingRev, seatRev: seat } };
+  const routing = ctx.routing(unit);
+  const seat = tier === riskFloor ? floorSeat : implementerSeatRev(routing, tier);
+  return { role: 'build', tier, triple: routing.table.build[tier], routingRev, seatRev: seat };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -318,7 +404,7 @@ function isJsonLine(line: string): boolean {
  */
 export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
   const r = spec.request;
-  const seat: SeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
+  const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
@@ -346,6 +432,90 @@ export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Pro
   return { kind: 'result', inv: outcome.inv, invDir, result: outcome.result };
 }
 
+// ---------------------------------------------------------------------------------------------------
+// The arc roles' call (M3, LR-d): a lens of an audit, a checkpoint
+
+/** A durable job's parent: its ops, spawns and reservations. */
+export type JobParent = Extract<Parent, { type: 'job' }>;
+
+/** The seat an arc role's call sits on: the role's one seat `arc` of the arc's routing in force (never a unit's layer). */
+export function arcSeat(ctx: StageContext, role: ArcRole): Readonly<{ seat: ArcSeatRef; triple: ClaudeTriple; routingRev: RoutingRev }> {
+  const routing = ctx.routing(null);
+  const triple = routing.table[role].arc;
+  // Startup refuses a Codex arc seat (unsupported-routing: no Codex judgment profile), so this is a bug if it happens.
+  if (triple.backend !== 'claude') throw new Error(`the ${role} seat arc resolves to ${triple.backend}; the arc roles are Claude only in M3`);
+  return { seat: seatRef(role, 'arc') as ArcSeatRef, triple, routingRev: routing.rev };
+}
+
+/**
+ * One arc-role call of a job. `attempt` is the call's place among the job's calls of `role` (1-based): the key a
+ * resumed job finds it by (`recordedArcCall`) and its meter subject's attempt. `cwd` is the tree the session reads.
+ */
+export type ArcCallSpec = Readonly<{
+  job: JobId;
+  role: ArcRole;
+  attempt: number;
+  system: string;
+  rendered: string;
+  schema: JsonValue;
+  cwd: AbsPath;
+  evidenceDirs: readonly AbsPath[];
+  deadlineAt: IsoTime;
+}>;
+
+/**
+ * An arc-role call through `invoke`: a fresh read-only session on the judgment profile (the unit judgments' argv),
+ * spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
+ * job by role and routingRev, never a model. Its workload env is `backendEnv` alone (a judgment holds no resource).
+ * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
+ */
+export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise<BackendCallOutcome> {
+  const { seat, triple, routingRev } = arcSeat(ctx, spec.role);
+  const session = freshJudgmentSession();
+  const schemaText = canonicalJson(spec.schema);
+  const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
+  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: spec.evidenceDirs };
+  const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
+  const env = backendEnv(ctx.hostEnv);
+  const launch = (origin: SpawnOrigin): LaunchSpec => ({
+    runDir: ctx.runDir,
+    origin,
+    subject: { purpose: 'arc-backend', ...seat, routingRev, job: spec.job, attempt: spec.attempt },
+    launch: (invDir) => ({
+      argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS,
+      terminal: { type: 'backend', purpose: 'backend', routingRev, schemaPath, outputPath: absPath(join(invDir, STDOUT_FILE)), role: spec.role, session },
+    }),
+  });
+  const parent: JobParent = { type: 'job', job: spec.job };
+  const first = await invoke(ctx.journal, ctx.containment, launch({ type: 'new', key: opKey(`backend:${spec.job}`), parent, deadlineAt: spec.deadlineAt }));
+  const outcome = first.kind === 'lost' ? await invoke(ctx.journal, ctx.containment, launch({ type: 'retry', op: first.op })) : first;
+  const invDir = invocationDir(ctx.runDir, outcome.inv);
+  if (outcome.kind === 'lost') return { kind: 'lost', inv: outcome.inv, invDir, treeEffects: outcome.treeEffects };
+  if (outcome.result.type !== 'backend') throw new Error(`${outcome.inv}: an arc-backend spawn produced a ${outcome.result.type} result`);
+  return { kind: 'result', inv: outcome.inv, invDir, result: outcome.result };
+}
+
+/**
+ * The call a job made as `attempt` of `role`, read back from the log (a resumed job consumes it rather than asking
+ * again): its result, or lost; null when the job made none. An open one is a bug here: recovery settles every open
+ * spawn before a job resumes.
+ */
+export function recordedArcCall(ctx: StageContext, job: JobId, role: ArcRole, attempt: number): BackendCallOutcome | null {
+  const spawn = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'arc-backend' && s.job === job && s.role === role && s.attempt === attempt;
+  }).at(-1);
+  if (spawn === undefined) return null;
+  const done = ctx.journal.view.doneOf(spawn.op);
+  if (done === null || done.kind !== 'proc.spawn') throw new Error(`${spawn.op}: ${job}'s ${role} call ${attempt} is still open; recovery settles it before the job resumes`);
+  const inv = invocationId(spawn.op, spawn.ordinal);
+  const invDir = invocationDir(ctx.runDir, inv);
+  if (done.outcome.kind === 'lost') return { kind: 'lost', inv, invDir, treeEffects: done.outcome.treeEffects };
+  const result = runnerFiles(invDir, inv).read('result.json');
+  if (result === null || result.type !== 'backend') throw new Error(`${inv}: a done arc-backend spawn without its backend result`);
+  return { kind: 'result', inv, invDir, result };
+}
+
 /** Why a stage attempt was interrupted rather than failed. */
 export type Interruption = 'pause' | 'stop' | BackendParkClass;
 
@@ -361,14 +531,20 @@ export type BackendVerdict =
   | Readonly<{ kind: 'refusal' | 'malformed' | 'process-fault'; detail: string }>
   | Readonly<{ kind: 'interrupted'; reason: Interruption; cause: HoldCause | null; needsUser: NeedsUserContent | null }>;
 
-/** The arc-wide needs-user of a usage-limit park (D4: no auto-retry). Names the backend and the role's stage, never a model. */
-function usageLimitNeedsUser(parent: StageParent, backend: Backend, called: BackendCallOutcome): NeedsUserContent {
+/** Who a backend call ran for: a unit's stage attempt, or (M3) a job's arc-role call. */
+export type CallParent = StageParent | JobParent;
+
+/** The arc-wide needs-user of a usage-limit park (D4: no auto-retry). Names the backend and the role's stage or job, never a model. */
+function usageLimitNeedsUser(parent: CallParent, backend: Backend, called: BackendCallOutcome): NeedsUserContent {
+  const where = parent.type === 'stage' ? `at ${parent.stage} of unit ${parent.unit}` : `in ${parent.job}`;
+  const holds = parent.type === 'stage'
+    ? `Stages that need it wait; unit ${parent.unit} holds at ${parent.stage}, uncharged.`
+    : `Stages and jobs that need it wait; ${parent.job} ends and what it did not cover stays owed.`;
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'usage-limit',
-    summary: `The ${backend} backend reported a usage-limit error at ${parent.stage} of unit ${parent.unit} (${called.inv}); it is parked arc-wide. `
-      + `Stages that need it wait; unit ${parent.unit} holds at ${parent.stage}, uncharged.`,
+    summary: `The ${backend} backend reported a usage-limit error ${where} (${called.inv}); it is parked arc-wide. ${holds}`,
     recommendation: `When the limit has reset, run \`roadmap resume --backend ${backend}\`: it re-runs the ${backend} smoke before unparking.`,
     options: [],
     evidence: [absPath(join(called.invDir, STDOUT_FILE)), absPath(join(called.invDir, STDERR_FILE))],
@@ -387,7 +563,7 @@ export function backendOf(called: BackendCallOutcome): Backend {
  * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
  * is the park's epoch and the hold's cause), then the outcome itself.
  */
-export function verdictOf(ctx: StageContext, parent: StageParent, called: BackendCallOutcome): BackendVerdict {
+export function verdictOf(ctx: StageContext, parent: CallParent, called: BackendCallOutcome): BackendVerdict {
   if (called.kind === 'lost') return { kind: 'process-fault', detail: `${called.inv} was lost with its runner` };
   const { result } = called;
   if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
@@ -446,12 +622,16 @@ export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
  * the grant's `reserve` transition is that op, parented by the attempt. `entered` once it is granted (at once
  * when `request` is null); `cancelled` when the task's signal is aborted first, with nothing journaled.
  */
-export async function enter(ctx: StageContext, holder: AcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
-  if (ctx.signal.aborted) return { kind: 'cancelled', reason: abortReason(ctx.signal) };
+export async function enter(ctx: StageContext, holder: UnitAcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
+  const cancelled = cancelledNow(ctx);
+  if (cancelled !== null) return cancelled;
   if (request === null) return { kind: 'entered' };
   const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal);
   return grant.kind === 'cancelled' ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : { kind: 'entered' };
 }
+
+/** The task's cancellation when its signal is already aborted (pause, stop), else null. */
+export const cancelledNow = (ctx: StageContext): Cancelled | null => (ctx.signal.aborted ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : null);
 
 /** Where a stage attempt's evidence snapshots go. */
 export const evidenceRoot = (runDir: AbsPath, parent: StageParent): AbsPath =>
@@ -473,7 +653,7 @@ export type StageOp<K extends OpKind, R> = Readonly<{
  * `prepare`, which the caller runs first, so a refusal there (before any intent) stays the caller's.
  */
 export async function runPrepared<K extends OpKind, R>(
-  journal: Journal, op: StageOp<K, R>, key: string, parent: StageParent, body: IntentBody<K>,
+  journal: Journal, op: StageOp<K, R>, key: string, parent: Parent, body: IntentBody<K>,
 ): Promise<IntentOf<K>> {
   const { op: id } = journal.begin({ kind: op.kind, key: opKey(key), parent, deadlineAt: null, body: () => body });
   const intent = journal.view.latestIntent(id);
@@ -484,6 +664,6 @@ export async function runPrepared<K extends OpKind, R>(
   return typed;
 }
 
-export async function runOp<K extends OpKind, R>(journal: Journal, op: StageOp<K, R>, key: string, parent: StageParent, request: R): Promise<IntentOf<K>> {
+export async function runOp<K extends OpKind, R>(journal: Journal, op: StageOp<K, R>, key: string, parent: Parent, request: R): Promise<IntentOf<K>> {
   return runPrepared(journal, op, key, parent, await op.prepare(request));
 }

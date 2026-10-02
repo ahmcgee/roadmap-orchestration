@@ -32,9 +32,9 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import type { ResolvedRouting } from '../routing/layers.ts';
+import { type ResolvedRouting, seatsInForce } from '../routing/layers.ts';
 import {
-  BACKENDS, type Backend, type JudgmentRole, type ProfileName, type Role, SEAT_REFS, type Seat as SeatName, type SeatRef, atSeat, seatRef,
+  BACKENDS, type Backend, type FreshRole, type ProfileName, type Role, type Seat as SeatName, type SeatRef, atSeat, seatRef,
 } from '../routing/types.ts';
 import { chargeOf, usageFact } from '../pipeline/invoke.ts';
 import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
@@ -106,9 +106,12 @@ export function backendEnv(host: Readonly<Record<string, string | undefined>>): 
 
 export type SmokeSubject = Extract<SpawnSubject, { purpose: 'smoke' }>;
 
-/** A backend call before its invocation dir exists: the builder fills in the paths that live there. */
+/**
+ * A backend call before its invocation dir exists: the builder fills in the paths that live there. A judgment call's
+ * role is any fresh read-only role, the arc roles included (M3), so a probe can call `lens.arc` or `checkpoint.arc`.
+ */
 export type CallRequest =
-  | Readonly<{ kind: 'claude-judgment'; role: JudgmentRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
+  | Readonly<{ kind: 'claude-judgment'; role: FreshRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'codex-build'; triple: CodexTriple; session: CodexSession }>;
 
@@ -279,7 +282,7 @@ export type SmokeReport = Readonly<{ profile: ProfileName; routingRev: RoutingRe
 export type SmokeRouting = Readonly<{ profile: ProfileName; resolved: ResolvedRouting }>;
 
 function seatsOn(resolved: ResolvedRouting, backend: Backend): readonly Seat[] {
-  return SEAT_REFS.filter((s) => atSeat(resolved.table, s).backend === backend);
+  return seatsInForce(resolved).filter((s) => atSeat(resolved.table, s).backend === backend);
 }
 
 /** The backends some seat of `resolved` runs on, in BACKENDS order. */
@@ -299,6 +302,8 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   const triple = atSeat(resolved.table, seat);
   if (triple.backend === 'claude') {
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
+    // The first Claude seat is always a unit judgment's (planCheck and gate resolve to Claude; the arc seats come last).
+    if (seat.role === 'lens' || seat.role === 'checkpoint') throw new Error(`seat ${seatName(seat)}: an arc seat is never a backend's first seat`);
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
   }
   if (seat.role !== 'build') throw new Error(`seat ${seatName(seat)} resolves to Codex judgment, which the unsupported-routing row refuses before the smoke`);

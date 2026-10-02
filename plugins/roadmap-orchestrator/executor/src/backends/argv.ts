@@ -56,7 +56,7 @@ import { randomUUID } from 'node:crypto';
 import { implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import type { JudgmentRole, Triple } from '../routing/types.ts';
+import type { FreshRole, Triple } from '../routing/types.ts';
 
 export type CodexTriple = Extract<Triple, { backend: 'codex' }>;
 export type ClaudeTriple = Extract<Triple, { backend: 'claude' }>;
@@ -69,7 +69,8 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob';
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    role: JudgmentRole;
+    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): every fresh read-only session. */
+    role: FreshRole;
     triple: ClaudeTriple;
     session: JudgmentSession;
     /** The role's JSON schema text; Claude takes the schema inline, not as a path. */

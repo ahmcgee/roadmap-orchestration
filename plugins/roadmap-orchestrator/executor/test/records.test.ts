@@ -226,7 +226,7 @@ describe('records', () => {
 
   it('commands, receipts and needs-user validate', () => {
     assert.ok(commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'resume', target: { type: 'backend', backend: 'codex' } } }, 'cmd'));
-    assert.throws(() => commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'rule' } }, 'cmd'), /cmd\.body\.type/);
+    assert.throws(() => commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'admit' } }, 'cmd'), /cmd\.body\.type/);
     assert.ok(receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0, op: 'arc-1/9', verified: ['unit u1 parked'] }, 'r'));
     assert.throws(() => receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0 }, 'r'), /r\.op/);
     const nu = {

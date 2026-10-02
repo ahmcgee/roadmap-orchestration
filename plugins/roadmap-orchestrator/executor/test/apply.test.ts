@@ -21,14 +21,14 @@ import { earlierReleaseBaseline } from '../src/core/upgrade.ts';
 import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
 import { type Classified, classify, commandScope } from '../src/input/classify.ts';
 import {
-  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, specShaInForce,
+  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
 } from '../src/input/inforce.ts';
 import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
-import { commandReconciler } from '../src/recover/command.ts';
+import { recover } from '../src/recover/recover.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
@@ -38,6 +38,8 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { PLAN_APPLY, crashCells } from './matrix.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { followingContext } from './fixtures/steer-common.ts';
 import { type ArcDescriptor, type ArcRun, type UnitSpecJson, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: 60_000 };
@@ -95,12 +97,14 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
   r.journal.fact({ kind: 'stage-outcome', unit: id, stage, attempt, outcome, class: cls, chargeable: false } as Fact);
 }
 
-const resolve = (r: ArcRun) => commandContextFor(r).resolve;
+const routingBase = { profile: 'default', config: null } as const;
 
 function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
   const { runDir } = r.ctx;
+  const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
-    runDir, view: r.journal.view, inForce: requirePlanInForce(runDir, r.journal.view), next: readInputFiles(absPath(r.d.planPath)), residues, resolve: resolve(r),
+    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce, absPath(r.d.planPath)), next: readInputFiles(absPath(r.d.planPath)), residues,
+    routing: routingBase, proposer: { type: 'apply' },
   });
 }
 
@@ -108,7 +112,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classifie
 function accept(r: ArcRun): void {
   const v = classifyNow(r);
   if (v.kind !== 'accepted') assert.fail(`expected an accepted change, got ${JSON.stringify(v)}`);
-  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath)), null, v.changes);
+  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath)), v.changes, routingBase);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -150,6 +154,20 @@ const ROWS: readonly Row[] = [
     edit: (d) => editPlan(d, (p) => void p.units.push({ ...p.units[1]!, id: 'u3', spec: 'u3.json' })),
     expect: [/unit id u3 was planned before; ids are never reused/],
   },
+  {
+    name: 'add a unit with a reserved id (batch-<n>, jobs, mutants): refused, each named',
+    edit: (d) => ['batch-3', 'jobs', 'mutants'].forEach((id) => addUnit(d, id)),
+    expect: [/unit id batch-3 is reserved/, /unit id jobs is reserved/, /unit id mutants is reserved/],
+  },
+  {
+    name: 'a reserved id already in an adopted arc\'s plan in force stays: its edits and other additions apply',
+    units: [{ id: 'u1' }, { id: 'batch-2' }, { id: 'jobs' }],
+    edit: (d) => {
+      addUnit(d, 'u4');
+      editSpec(d, 'jobs', addClause);
+    },
+    expect: (r) => [{ type: 'unit-added', unit: unitId('u4') }, specChange(r.d, 'jobs', 'undispatched', 1)],
+  },
   { name: 'remove a unit that never started: now', edit: (d) => editPlan(d, (p) => void p.units.splice(2, 1)), expect: () => [{ type: 'unit-removed', unit: unitId('u3') }] },
   {
     name: 'remove a unit that started: refused, with every reason',
@@ -167,10 +185,10 @@ const ROWS: readonly Row[] = [
   { name: 'an undispatched unit\'s plan entry: now', edit: (d) => editPlan(d, (p) => void (p.units[1]!['risk'] = 'high')), expect: () => [{ type: 'unit-changed', unit: unitId('u2') }] },
   { name: 'an undispatched unit\'s spec: now', edit: (d) => editSpec(d, 'u2', addClause), expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)] },
   {
-    name: 'a dispatched unit\'s risk and scope: refused',
+    name: 'a dispatched unit\'s lower risk and its scope: refused (M3: its risk may rise)',
     setup: (r) => pin(r, 'u1'),
     edit: (d) => editPlan(d, (p) => {
-      p.units[0]!['risk'] = 'high';
+      p.units[0]!['risk'] = 'low';
       p.units[0]!['scope'] = ['src/**'];
     }),
     expect: [/unit u1 is dispatched: its risk may not change/, /unit u1 is dispatched: its scope may not change/],
@@ -821,7 +839,7 @@ test('cmd.scope: each mutation\'s scope (A12); an apply\'s follows from its clas
   const d = setupArc({ steps: [], units: THREE });
   const r = contextFor(d);
   try {
-    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), resolve: resolve(r) });
+    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase });
     const of = (body: CommandBody) => scope(body as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan());
     assert.deepEqual(of({ type: 'resume', target: { type: 'all' } }), { type: 'arc' });
     assert.deepEqual(of({ type: 'resume', target: { type: 'unit', unit: unitId('u2') } }), { type: 'units', units: ['u2'] });
@@ -875,7 +893,7 @@ test('apply.upgrade-queued-resume: a `resume <unit>` queued under 1.0.0-dev.3 af
   const files = readInputFiles(absPath(d.planPath));
   const baseline = earlierReleaseBaseline(first.view, files, d.planPath);
   assert.ok('changes' in baseline, JSON.stringify(baseline));
-  recordPlan(first, runDir, files, null, baseline.changes);
+  recordPlan(first, runDir, files, baseline.changes, routingBase);
   first.close();
 
   const r = contextFor(d);
@@ -922,11 +940,24 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
         const open = r.journal.view.openIntents().filter((i) => i.kind === 'command.apply');
         assert.equal(open.length, 1, 'the op is open');
         const intent = open[0] as IntentOf<'command.apply'>;
-        const ctx = commandContextFor(r);
-        const disposition = await commandReconciler(ctx)(intent, r.journal.view);
-        assert.ok(disposition.kind === 'done' && disposition.outcome.kind === 'applied', JSON.stringify(disposition));
-        r.journal.done(intent.op, 'command.apply', disposition.outcome, 'reconciled');
-        assert.equal(readReceipt(ctx.runDir, file.id, 'applied')?.state, 'applied');
+        assert.equal(readReceipt(r.ctx.runDir, file.id, 'applied')?.state, cell.label === 'command.apply.after-receipt' ? 'applied' : undefined);
+        const f = followingContext(r);
+        const ctx = commandContextFor(r, f);
+        const mark = events(d.runDir).length;
+        await recover({ stage: f, commands: ctx });
+
+        // The recovery engine closed the op (reconciled). Crashed before the revision, the reconciler commits it as a
+        // new op of its own (done in the ordinary way); crashed after, it commits nothing.
+        assert.deepEqual(r.journal.view.openIntents(), []);
+        const commits = r.journal.view.opsOf('revision.commit');
+        assert.equal(commits.length, 1, 'one revision.commit');
+        const committed = cell.boundary === 'B4' ? [] : [['revision.commit', commits[0]!.op, null]];
+        const written = events(d.runDir).slice(mark).flatMap((e) => (e.type === 'done' ? [[e.kind, e.op, e.recoveredBy]] : []));
+        assert.deepEqual(written, [...committed, ['command.apply', intent.op, 'reconciled']]);
+        const done = r.journal.view.doneOf(intent.op);
+        assert.ok(done?.kind === 'command.apply' && done.outcome.kind === 'applied', JSON.stringify(done));
+        const receipt = readReceipt(ctx.runDir, file.id, 'applied');
+        assert.ok(receipt?.state === 'applied' && receipt.op === intent.op, JSON.stringify(receipt));
         assert.deepEqual(pollCommands(ctx.runDir, r.journal.view.arc), []);
         const facts = applied(d);
         assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, file.id]], 'exactly one fact for the apply');
@@ -953,10 +984,10 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
       // A manual start reads the same files: its classification puts them in force as rev 2 (no command).
       accept(r);
       const intent = r.journal.view.openIntents().find((i) => i.kind === 'command.apply') as IntentOf<'command.apply'>;
-      const ctx = commandContextFor(r);
-      const disposition = await commandReconciler(ctx)(intent, r.journal.view);
-      assert.ok(disposition.kind === 'done' && disposition.outcome.kind === 'applied', JSON.stringify(disposition));
-      r.journal.done(intent.op, 'command.apply', disposition.outcome, 'reconciled');
+      const f = followingContext(r);
+      const ctx = commandContextFor(r, f);
+      await recover({ stage: f, commands: ctx });
+      assert.equal(r.journal.view.doneOf(intent.op)?.recoveredBy, 'reconciled');
       const receipt = readReceipt(ctx.runDir, file.id, 'applied');
       assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, ['the files are the plan in force already (rev 2): nothing to apply']);
       assert.deepEqual(applied(d).map((f) => [f.rev, f.command]), [[1, null], [2, null]], 'no second fact');

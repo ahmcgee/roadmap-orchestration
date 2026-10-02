@@ -10,7 +10,8 @@
         "patch": null,
         "risk": "med",
         "notes": "",
-        "premises": []
+        "premises": [],
+        "visionConflict": []
       }
     },
     {
@@ -49,7 +50,8 @@
         "patch": null,
         "risk": "med",
         "notes": "",
-        "premises": []
+        "premises": [],
+        "visionConflict": []
       }
     },
     {

@@ -6,12 +6,12 @@ import type {
   AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   PlanAppliedFact, RecoveredBy,
 } from './events.ts';
-import type { ArcId, CommandId, EdgeId, InvocationId, NeedsUserId, OpId, OpKey, ResourceUnit, UnitId } from './ids.ts';
+import type { ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
 import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -104,6 +104,18 @@ export interface JournalView {
   addedSeq(unit: UnitId): number | null;
   /** Every unit id any `plan-applied` fact named, ascending: ids are never reused. */
   plannedUnits(): readonly UnitId[];
+  /** M3: the id the next `finding-opened` must carry (`F-<findings + 1>`). */
+  nextFindingId(): FindingId;
+  /** M3: the id the next `divergence` must carry. */
+  nextDivergenceId(): DivergenceId;
+  /** M3: the next job id of `kind`: one more than the highest the log named (audits and checkpoints must open in order). */
+  nextJobId(kind: JobKind): JobId;
+  /** M3: the latest published `integration.ff`'s new head (any subject), or null before one. */
+  integrationHead(): Sha | null;
+  /** M3 (A20, H5): the seq of the latest record that is work (`isWork`); `gc` seals an arc whose completion is after it. */
+  lastWorkSeq(): number;
+  /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
+  holistic(): HolisticFold;
 }
 
 export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
@@ -201,6 +213,12 @@ export type AllowedDisposition = {
   'spec.patch': 'done' | 'redo' | 'park';
   'needsuser.raise': 'done' | 'redo';
   'command.apply': 'done' | 'redo';
+  /** M3 (A4): committed on its ref, or redone; a moved tip aborts the publication (it re-renders). */
+  'docs.commit': 'done' | 'redo' | 'abort';
+  /** M3 (B3): the patched tree verified, or the worktree re-made and the patch re-applied. */
+  'mutant.apply': 'done' | 'redo' | 'abort';
+  /** M3 (G1): the docs `ff` done or no docs step → append from the payload (done); else abort and re-evaluate the source. */
+  'revision.commit': 'done' | 'abort';
 };
 
 export type Reconciler<K extends OpKind> = (

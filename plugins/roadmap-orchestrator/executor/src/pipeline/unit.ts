@@ -21,13 +21,24 @@
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
 // interrupted attempt's invocation, read from the fold's `interrupted` fact. Before every stage the driver
 // asserts that none of the unit's invocations has a live workload, then asks its `gate`: an admission stage
-// (prepare, plan-check, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
+// (prepare, reproduce, plan-check, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
 // end the task instead (a pause, a stop: the unit is left where the fold says, holding nothing); a chain
 // stage (quiesce → evidence → salvage → teardown after a build, ff → snapshot in a publication) is only
 // announced and runs whatever pause or drain says (F5). A re-entered unit starts at `prepare` (step 6). A
 // unit re-opened (`reopened`: no decided outcome) starts over at plan-check: after a park by `resume <unit>`,
 // or in flight by the driver itself, on a spec revision an `apply` left pending, at the first boundary whose
 // next stage starts from a clean worktree (`reentryAllowed`).
+//
+// M3 (step A3): a command may set an entry outside the table (`UnitState.entry`), which runs before anything the
+// latest decision says: `steer <u>` a steer round (a fresh implementer session with the architect's brief, R11; the
+// pass then goes build chain → lanes → gate and exits by the table's steer rows), `merge-in <u>` the unit's lanes at
+// its merged commit.
+//
+// M3 (step B3): a vacuity repair (its spec repairs an active vacuity finding with a mutant, reproduce.ts `specFacts`)
+// starts at `reproduce` instead of plan-check, and so does its re-open. Around every stage the driver writes the
+// findings' moves the log calls for (`syncRepairs`: ownership by the repairing units, resolution by their publication,
+// code's dismissal of a mutant a reproduce killed). A candidate red on a surviving mutant gets its fix round from the
+// mutant's run (`mutantFix`).
 //
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
@@ -38,7 +49,7 @@ import { scan } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type UnitId, invocationId } from '../core/ids.ts';
-import type { UnitState } from '../core/state.ts';
+import type { EntryPoint, UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
@@ -48,12 +59,14 @@ import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
 import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
-import { candidate, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, snapshot } from './integrate.ts';
+import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { type LaneRecord, latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import type { FixRound } from '../prompts/inputs.ts';
 import { prepare } from './prepare.ts';
+import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
 import {
-  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound,
+  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, steerBrief,
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, quiesce, record,
@@ -119,6 +132,9 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : reason === 'steered'
+      ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
+        + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
       : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
@@ -167,6 +183,32 @@ function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
   };
 }
 
+/** Why candidate attempt `at` (an outcome `red`) was red, as its fix round reads it: the fix, and the suite's ledger. */
+function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Readonly<{ fix: FixRound; suite: readonly LaneRecord[] }> {
+  const view = ctx.journal.view;
+  // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
+  const batch = memberBatchCandidate(view, at);
+  if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
+  // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
+  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
+  const survived = mutantFix(ctx, at);
+  if (survived !== null) return { fix: survived, suite };
+  const failing = suite.filter((l) => l.verdict !== 'pass');
+  // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
+  if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
+  return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
+}
+
+/**
+ * The cause of a red candidate attempt `at` in sentences, as its fix round would read it (the checkpoint's park
+ * trigger): the suite lanes that were not green, then the fix round's directives (the obligations the brake graded red).
+ */
+export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StageParent): readonly string[] {
+  const { fix, suite } = candidateRed(ctx, unit, at);
+  return [...suite.filter((l) => l.verdict !== 'pass').map((l) => `Suite lane ${l.lane} ended ${l.verdict} on the candidate.`), ...fix.directives];
+}
+
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
   if (round !== 'fix') return { kind: round };
@@ -195,11 +237,8 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       if (f.outcome === 'transient-violation') {
         return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }
-      // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-      const at = stageParent(f);
-      const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
-      const failing = suite.filter((l) => l.verdict !== 'pass');
-      return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite, verification, tip);
+      const red = candidateRed(ctx, unit, stageParent(f));
+      return candidateFixRound(red.fix, red.suite, verification, tip);
     }
     default:
       throw new Error(`unit ${unit.id}: no fix round follows ${f.stage} ${f.outcome}`);
@@ -211,7 +250,11 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
  * since, the continue of that attempt's last invocation (a hold is only ever recorded from a call's result).
  */
 function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
-  const of = decidedInput(ctx, unit, round, f);
+  return continued(ctx, unit, decidedInput(ctx, unit, round, f));
+}
+
+/** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */
+function continued(ctx: StageContext, unit: PlanUnit, of: DecidedRound): RoundInput {
   const held = ctx.journal.view.unit(unit.id).interrupted;
   if (held === null) return of;
   const called = recordedCall(ctx, stageParent(held));
@@ -219,9 +262,26 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
   return { kind: 'continue', of, interrupted: called.inv };
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Entries a command set (M3: steer, merge-in)
+
+/** Where an entry sends the unit, as the table's target: a steer round is read as a fresh build's (`decidedRound`). */
+const entryTarget = (entry: EntryPoint): Target => (entry.kind === 'steer' ? { stage: 'build', round: 'fresh' } : { stage: 'lanes' });
+
+/**
+ * Runs the stage an entry names: a steer round (R11: a fresh session, the brief kept by the command, the budget as its
+ * window; the continue of it after a pause), or a merge-in's lanes at the merged unit commit.
+ */
+async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): Promise<StageDone<OutcomeStage> | Cancelled> {
+  if (entry.kind === 'merge-in') return lanes(ctx, unit, unitTip(ctx, unit.id));
+  return build(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
+}
+
 /** Runs the stage `target` names, from inputs read back from the journal. */
 async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
+    case 'reproduce':
+      return reproduce(ctx, unit);
     case 'plan-check':
       return planCheck(ctx, unit);
     case 'build':
@@ -319,9 +379,10 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   // A lost implementer call that may have changed the tree is consumed too (salvaged and verified); any
   // other lost call is not: its stage runs again.
   if (called === null || (called.kind === 'lost' && !(open.stage === 'build' && called.treeEffects))) return null;
-  const decided = f === null ? null : decidedBy(f);
+  const entry = ctx.journal.view.unit(unit.id).entry;
+  const decided = entry !== null || f === null ? null : decidedBy(f);
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
-  const target: Target = decided === null ? { stage: 'plan-check' } : decided.target;
+  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? { stage: 'plan-check' } : decided.target;
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
     case 'plan-check':
@@ -356,12 +417,31 @@ export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step |
  * the unit, its result (a merged unit's retire is finished first if a restart cut it short).
  */
 export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
+  // M3 (B3): the findings' moves the log calls for (ownership, a killed mutant's dismissal) before and after each stage.
+  syncRepairs(ctx);
+  const s = await stepOnce(ctx, unit);
+  syncRepairs(ctx);
+  return s;
+}
+
+async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const consumed = await consume(ctx, unit);
   if (consumed !== null) return consumed;
   const u = ctx.journal.view.unit(unit.id);
+  // M3 (B7): a repair batch's ff retired the unit with its gate's approval still its decision: only its retire is left.
+  if (u.status === 'retired') {
+    await retire(ctx, unit);
+    return { kind: 'merged' };
+  }
+  if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
   const f = u.decided;
-  // Before a decision: a re-entry prepares first (its lineage not yet prepared), anything else plan-checks.
-  if (f === null) return after(ctx, unit, u.lineage !== null && !u.lineage.prepared ? await prepare(ctx, unit) : await planCheck(ctx, unit));
+  // Before a decision: a re-entry prepares first (its lineage not yet prepared), a vacuity repair reproduces its mutant
+  // (M3), anything else plan-checks.
+  if (f === null) {
+    const first = nextStage(u, specFacts(ctx)(unit).reproduces);
+    if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : await planCheck(ctx, unit));
+  }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;
   const decided = decidedBy(f);
@@ -382,8 +462,10 @@ export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
  * running anything; null for any other unit. The scheduler raises a restarted arc's due items from it.
  */
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
-  const f = ctx.journal.view.unit(unit.id).decided;
-  if (f === null) return null;
+  const u = ctx.journal.view.unit(unit.id);
+  const f = u.decided;
+  // An entry a command set runs next, whatever the decision before it (M3).
+  if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
   if (decided.kind === 'park') return { kind: 'parked', needsUser: haltNeedsUser(ctx, unit, 'park', decided.reason, factSummary(f)) };
   if (decided.kind === 'stop') return { kind: 'stopped', needsUser: haltNeedsUser(ctx, unit, 'stop', decided.reason, factSummary(f)) };
@@ -397,7 +479,7 @@ export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResul
  * build or publication.
  */
 export function reentryAllowed(u: UnitState): boolean {
-  if (u.status !== 'active' || u.open !== null) return false;
+  if (u.status !== 'active' || u.open !== null || u.entry !== null) return false;
   if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage)) return false;
   if (u.decided === null) return true;
   const d = decidedBy(u.decided);
@@ -424,8 +506,12 @@ function reopenIfDue(ctx: StageContext, unit: UnitId): void {
 /** Whether the unit re-opens on a pending revision at this boundary. */
 const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reentryAllowed(u);
 
-/** The stage the unit starts next: plan-check when it re-opens at this boundary, else its decided next stage (`nextStage`). */
-export const upcoming = (u: UnitState): NextStage | null => (reopenDue(u) ? { kind: 'admission', stage: 'plan-check' } : nextStage(u));
+/**
+ * The stage the unit starts next: its first stage when it re-opens at this boundary (plan-check, or `reproduce` for a
+ * vacuity repair: `reproduces`, src/pipeline/reproduce.ts `specFacts`), else its decided next stage (`nextStage`).
+ */
+export const upcoming = (u: UnitState, reproduces: boolean): NextStage | null =>
+  (u.status === 'retired' ? null : reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : 'plan-check' } : nextStage(u, reproduces));
 
 // ---------------------------------------------------------------------------------------------------
 // The loop
@@ -473,7 +559,7 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
     const u = ctx.journal.view.unit(unit.id);
-    const next = upcoming(u);
+    const next = upcoming(u, specFacts(ctx)(unit).reproduces);
     if (next !== null) {
       assertQuiescent(ctx, unit.id);
       if (!(await gate(next))) {

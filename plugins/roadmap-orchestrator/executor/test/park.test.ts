@@ -66,8 +66,8 @@ describe('park table', () => {
         assert.equal(new Set(keys).size, keys.length);
       }
     }
-    assert.equal(rows, 11, 'plan-check/build/gate process-fault, build lost, four cleanup-failed, lanes and candidate blocked, salvage commit-failed');
-    assert.equal(Object.keys(PARK_TARGETS).length, 7);
+    assert.equal(rows, 13, 'plan-check/build/gate process-fault, build lost, five cleanup-failed, lanes, candidate and reproduce blocked, salvage commit-failed');
+    assert.equal(Object.keys(PARK_TARGETS).length, 8);
   });
 
   it('names each row\'s targets: backend, host, one resource per failed instance, and host plus the teardown\'s instances for a salvage (G6)', () => {

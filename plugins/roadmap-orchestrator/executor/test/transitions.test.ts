@@ -75,6 +75,13 @@ const ROWS: readonly Row[] = [
   ['prepare', 'clean-build', {}, 'build/fresh@med', 'advance', {}],
   ['prepare', 'clean-verify', {}, 'lanes', 'advance', {}],
   ['prepare', 'conflicted', {}, 'build/resolve@med', 'advance', {}],
+  // reproduce (a vacuity repair's first stage, M3)
+  ['reproduce', 'reproduced', {}, 'plan-check@med', 'advance', {}],
+  ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],
+  ['reproduce', 'inapplicable', {}, 'park:not-reproduced', 'park', {}],
+  ['reproduce', 'blocked', {}, 'park:lane-blocked', 'park', {}],
+  ['reproduce', 'interrupted', {}, 'hold', 'hold', {}],
+  ['reproduce', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   // plan-check (fresh judgment)
   ['plan-check', 'approve', {}, 'build/fresh@med', 'advance', {}],
   ['plan-check', 'redirect', {}, 'plan-check@med', 'redirect', { redirects: 1 }],
@@ -164,6 +171,9 @@ const ROWS: readonly Row[] = [
   ['candidate', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
   ['candidate', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['candidate', 'interrupted', {}, 'hold', 'hold', {}],
+  // M3: a preempting docs publication (A7) and a blocking P1 (G10) send the unit back to its candidate, uncharged
+  ['candidate', 'preempted', {}, 'candidate', 'advance', {}],
+  ['candidate', 'finding-blocked', {}, 'candidate', 'advance', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
   ['ff', 'cas-stale', {}, 'candidate', 'advance', {}],
@@ -204,6 +214,7 @@ describe('transitions', () => {
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
+      'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
     };
     const targets = [{ type: 'resource', instance: resourceInstance('estate#2') }, { type: 'host' }, { type: 'host' }] as const;
     let parks = 0;

@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { implementerSessionId, judgmentSessionId, routingRev } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type ExitFile, type LaunchFile, type LaunchTerminal, RUNNER_FILE_READERS } from '../../src/core/records.ts';
+import { type ExitFile, type LaunchFile, type LaunchTerminal, type LensKindName, RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
 import { writeShims } from '../fakes/shim.ts';
 import { type FileSet, tmpDir } from './repo.ts';
@@ -86,8 +86,14 @@ export type Act = CodexAct | ClaudeAct;
  * comes from the owner label `<arc>/<unit>` in RESOURCE_OWNER, else the basename of the call's cwd (a
  * unit worktree is `<root>/<arc>/<unit>`). A step without `unit` is consumed in file order by calls whose
  * unit owns no keyed step, so a scenario without units behaves as it always did.
+ *
+ * A job's call (audit, checkpoint) is keyed the same way, `unit` being the job id (`audit-1`, `ckpt-2`): the
+ * owner label or the cwd of the call names it. `lens` keys a step to the lens kind of the call, read from its
+ * prompt (`callLens`): a step with both is consumed by that job's calls of that lens; with `lens` only, by any
+ * job's call of that lens whose job owns no keyed step. Selection takes the first non-empty tier of
+ * unit+lens, unit, lens, neither.
  */
-export type StepBase = Readonly<{ unit?: string }>;
+export type StepBase = Readonly<{ unit?: string; lens?: LensKindName }>;
 export type Step =
   | (StepBase & Readonly<{ as: 'codex'; expect: Expect; acts: readonly CodexAct[]; /** fresh thread id; default derived from the step index */ threadId?: string }>)
   | (StepBase & Readonly<{ as: 'claude'; expect: Expect; acts: readonly ClaudeAct[] }>);
@@ -104,6 +110,8 @@ export type CallRecord = Readonly<{
   step: number | null;
   /** The unit the call was attributed to (see Step), or null when neither the owner label nor the cwd gave one. */
   unit: string | null;
+  /** The lens kind the prompt names (see Step), or null. */
+  lens: LensKindName | null;
 }>;
 
 export type Scenario = Readonly<{ path: string; dir: string; binDir: string }>;

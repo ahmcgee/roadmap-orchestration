@@ -18,7 +18,7 @@ inside the skill address agents running an arc with it; they do not bind you her
 A change is not done until the ladder passes, in order (from `executor/`):
 
 1. `npm run typecheck`
-2. `npm test` (`node --test test/*.test.ts`)
+2. `npm test` (`node --test test/*.test.ts`, then `test/serial/*.test.ts` alone: the upgrade test needs a calm host)
 3. `node evals/probe.ts`: real CLIs, pennies
 4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
 
@@ -38,7 +38,7 @@ fake-backend scripts behind PATH shims. Add no other test hooks to production co
   read-time defaults and a logged warning, and the previous release's runtime state is never refused. The
   defaulting code is temporary scaffolding, deleted once no arc started on the older release is in flight.
   `SCHEMA_VERSION` bumps only for a change that cannot be defaulted, and then both versions are read.
-  `test/upgrade.test.ts` guards it (`PREVIOUS_RELEASE`). Exception: arcs started before 1.0.0-dev.1
+  `test/serial/upgrade.test.ts` guards it (`PREVIOUS_RELEASE`). Exception: arcs started before 1.0.0-dev.1
   (a95355e) are not adopted; they are adapted by hand.
 - Hard cutover applies to 0.x layouts only: a 0.x `.roadmap/` layout is refused at startup, never converted.
 - Actors are roles, never models, in every state file and record. Model ids appear only in routing

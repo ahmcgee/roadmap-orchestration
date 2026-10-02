@@ -2,7 +2,8 @@
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
 // checkout, fast lanes before estate lanes, and keeps one evidence dir per lane. The same series runs a
 // unit's spec lanes at the salvage SHA (set `spec`, the lanes stage) and the plan's suite on the candidate
-// merge and on the integration tip alone (set `suite`, the candidate stage).
+// merge and on the integration tip alone (set `suite`, the candidate stage). Arc lanes (M3) run as a journey series
+// (`runJourneySeries`, at the end of this file) under the same rules.
 //
 // Per lane: acquire its reservation (its declared resources and, outside a legacy arc, its `@cpu` tokens,
 // `laneCpu`) through the stage's `acquire` (`LaneRuntime`) → occupancy probe → run (step 10's cycle) → `invoke`
@@ -35,12 +36,21 @@
 // Everything a later stage needs from a series (its ledger, its checkout, its dirty paths) is read back
 // from the journal and the invocation files (`seriesLedger`, `seriesTree`, `seriesDirty`), never kept in
 // memory, so a restarted executor sees the series exactly as it ran.
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { IntentOf } from '../core/events.ts';
-import { type InvocationId, type LaneId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import type { IntentOf, Parent } from '../core/events.ts';
+import {
+  type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId,
+  invocationDirName, invocationId, laneRev, opKey,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { canonicalJson } from '../core/json.ts';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { type ObservationStore, keyOf, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
+import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
+import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
+import { revParse } from '../git/git.ts';
+import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
+import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import {
   type CommandVerdict, type IgnoredCensus, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
@@ -53,25 +63,25 @@ import { statusPorcelainV2Z } from '../git/git.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type HostSample, readHostSample } from '../host/sample.ts';
 import { type HostSignatureId, outputSignatures } from '../host/signatures.ts';
-import type { LaneLedgerEntry } from '../prompts/inputs.ts';
+import type { LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
 import { instanceEnv, laneCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
-  type Reservation, type ResourceContext, type SpecLane, type StageHolder, cleanup, heldReservation, reserve, run,
+  type JobHolder, type Reservation, type ResourceContext, type SpecLane, type StageHolder, cleanup, heldReservation, jobOwnerLabel, reserve, run,
 } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { type StageContext, type StageParent, evidenceRoot, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
-import { type LaneHost, type RedEvidence, abortReason, classifyRed, redLane } from './redlane.ts';
+import { type LaneCancel, type LaneHost, type RedEvidence, classifyRed, laneAbortReason, redLane } from './redlane.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** A lane with no progress this long has hung. Default, unmeasured: re-derive once arcs have measured stalls. */
 export const LANE_STALL_MS = 10 * 60_000;
 /** A lane's deadline: only the backstop for a busy loop, which the stall watchdog cannot see. */
 export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
-const LANE_GRACE_MS = 5_000;
+export const LANE_GRACE_MS = 5_000;
 
 /**
  * One run of a lane: what the gate reads (`LaneLedgerEntry`, whose `evidenceDir` holds every snapshot of the
@@ -104,7 +114,8 @@ export type SeriesEnd =
   | Readonly<{ kind: 'red'; lane: LaneRecord }>
   /** Ended by its runner's deadline or lost with it, or a host signature without a verdict (redlane.ts). */
   | Readonly<{ kind: 'blocked'; lane: LaneRecord | null; detail: string }>
-  | Readonly<{ kind: 'interrupted'; reason: 'pause' | 'stop' }>
+  /** `preempt` only in a candidate's suite (M3, A7). */
+  | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
 
@@ -120,7 +131,7 @@ export type Series = Readonly<{
 
 /**
  * What a series needs from its stage beyond the context: `acquire` for each lane's reservation (the arbiter's,
- * with the waiter's `rank`), the stage's cancel `signal` (aborted with reason `pause` or `stop`), which also
+ * with the waiter's `rank`), the stage's cancel `signal` (aborted with reason `pause` or `stop`, or `preempt` for a candidate's suite), which also
  * cancels a wait for a clear host, and `sampleHost`, the host sampler (`readHostSample`).
  */
 export type LaneRuntime = Readonly<{ acquire: Acquire; rank: () => Rank; signal: AbortSignal; sampleHost: () => HostSample }>;
@@ -305,7 +316,7 @@ function spawnOf(view: JournalView, op: OpId): IntentOf<'proc.spawn'> {
   return intent;
 }
 
-type Ran = Readonly<{ record: LaneRun; evidence: OpId; interrupted: 'pause' | 'stop' | null; blocked: string | null }>;
+type Ran = Readonly<{ record: LaneRun; evidence: OpId; interrupted: LaneCancel | null; blocked: string | null }>;
 
 async function runLane(
   ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, tree: AbsPath, at: Sha, dir: AbsPath, held: readonly ResourceUnit[],
@@ -408,7 +419,7 @@ export async function runLaneSeries(
     if (request !== null) {
       if (!entry) {
         const grant = await rt.acquire(request, holder, rt.rank, rt.signal);
-        if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: abortReason(rt.signal) }, ran: null };
+        if (grant.kind === 'cancelled') return { kind: 'ended', end: { kind: 'interrupted', reason: laneAbortReason(rt.signal) }, ran: null };
       }
       entry = false;
       const reserved = heldReservation(ctx, holder, 'reserved');
@@ -589,3 +600,349 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
   const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
   return snap === undefined ? [] : snap.expect.globs.map(patternPath);
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Journey series (M3 B2; DESIGN-1.0.md §2.8 "Journey lanes"; plan "Journey lanes and the held-claims brake")
+//
+// Arc lanes (and a job's suite lanes) run owned by no unit, under the same arbiter, locks, watchdog, evidence and
+// red-lane rules as a series: in a unit's candidate under its stage holder (`owner: unit`), and under a job's holder
+// `job{job}` (a docs publication, a repair batch, the baseline job, an audit). Per lane: its reservation (a unit's
+// through its stage's `acquire`; a job's first of every unit, `acquireFirst`), the occupancy probe, the run as a
+// `journey{lane, laneRev, at, owner}` spawn with the lane's env plus the owner label, the instance binding and a
+// witness run's reporter env (`witnessEnv`), evidence snapshots, cleanup. A red run goes through the red-lane protocol
+// (redlane.ts): the run whose verdict counts is the one recorded.
+//
+// Evidence is per execution and immutable: each run has its own dir, named by its kind, lane and invocation (a job's
+// `jobLaneDir`, a candidate's `candidateLaneDir`, src/git/snapshot.ts), holding its `output`, its declared `tree`
+// evidence and `host.json`. A witness run's reporter writes `witness.lines` there, and its record is kept there as
+// `witness.json` (`witnessDir`), named by the `witnessed` fact of the counted run only (a diagnostic rerun or a voided run
+// is kept, never named), so the observation store (`observations`) holds exactly the verdicts that count. After the last
+// lane the checkout must still be the commit (the checkout's integrity, as a unit's suite): the paths a lane left dirty
+// are snapshotted (`_dirty-<checkout>`) and a moved HEAD recorded, and either refuses the certification (the caller's).
+//
+// Lane reuse (§9): a witness lane whose observation on the tree already exists (all four keys equal, its record's
+// hash checked when it entered the store) is not run again; the series reads the kept record (`reuse` option; the
+// baseline job runs every lane afresh).
+
+/** One lane a journey series runs: a suite lane (a job's; `witness` null), or an arc lane, whose run is a witness. */
+export type JourneyLane = Readonly<{ def: LaneDef; laneRev: LaneRev; witness: ArcLaneDef | null }>;
+
+/** A suite lane's rev, as an arc lane's (`laneRevOf`): what its `journey` spawn names. */
+export const suiteLaneRev = (lane: LaneDef): LaneRev => laneRev(sha256Hex(canonicalJson(lane)).slice(0, 16));
+export const suiteJourneyLane = (def: LaneDef): JourneyLane => ({ def, laneRev: suiteLaneRev(def), witness: null });
+export const arcJourneyLane = (def: ArcLaneDef): JourneyLane => ({ def, laneRev: laneRevOf(def), witness: def });
+
+/** Who runs a journey series: a unit's candidate stage attempt (its stage holder), or a durable job. */
+export type JourneyOwner =
+  | Readonly<{ type: 'unit'; parent: StageParent; rt: LaneRuntime }>
+  | Readonly<{ type: 'job'; job: JobId; acquireFirst: AcquireFirst }>;
+
+/** What a journey series needs: the reservation cycle's context and the executor's environment. */
+export type JourneyContext = ResourceContext & Readonly<{ hostEnv: Readonly<Record<string, string | undefined>> }>;
+
+/**
+ * One lane of a journey series: the run whose verdict counts (`inv`, `verdict`, `dir`, `flaky` after a diagnostic
+ * rerun that passed), or a reused observation (`inv`, `verdict` and `dir` null). `record`: a witness lane's record.
+ */
+export type JourneyRun = Readonly<{
+  lane: LaneId; inv: InvocationId | null; verdict: CommandVerdict | null; flaky: boolean; dir: AbsPath | null; record: WitnessRecord | null;
+}>;
+
+export type JourneyEnd =
+  /** Every lane ran or was reused (or `stop` ended the series at a lane that ran). */
+  | Readonly<{ kind: 'ran' }>
+  /** A lane's runner was lost or ended by its deadline, or the red-lane protocol gave no verdict. */
+  | Readonly<{ kind: 'blocked'; lane: LaneId; detail: string }>
+  | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
+  /** A lane's resources could not be cleaned: residues of the unit's stage attempt, or job-owned (G4). */
+  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>
+  /** A unit's series only: its stage was paused, stopped or preempted. */
+  | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>;
+
+/**
+ * The checkout after the lanes: the paths they left dirty (tracked or unignored changes, snapshotted under `evidence`)
+ * and the HEAD they moved it to (null: still at the commit). Either refuses certification.
+ */
+export type JourneyCheckout = Readonly<{ dirty: readonly RepoPath[]; movedTo: Sha | null; evidence: AbsPath }>;
+
+/** `checkout` null: no lane ran, so no checkout was made. */
+export type JourneySeries = Readonly<{ end: JourneyEnd; runs: readonly JourneyRun[]; treeSha: Sha; checkout: JourneyCheckout | null }>;
+
+/** Whether a series' checkout was still its commit after the lanes (a series that made none is). */
+export const intact = (series: JourneySeries): boolean => series.checkout === null || (series.checkout.dirty.length === 0 && series.checkout.movedTo === null);
+
+/** A job's waits are never cancelled: a job runs to its end once begun. */
+const NEVER = new AbortController().signal;
+
+/**
+ * The checkouts a job created and did not remove (a crash or a restart cut it short): each removed, citing the job's
+ * last done evidence snapshot, or one made of nothing under `<job evidence root>/_leftover` when it took none.
+ */
+export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Promise<void> {
+  const view = ctx.journal.view;
+  const parent: Parent = { type: 'job', job };
+  const same = (p: Parent): boolean => canonicalJson(p) === canonicalJson(parent);
+  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
+  for (const c of view.opsOf('worktree.create').filter((i) => same(i.parent) && view.doneOf(i.op) !== null && !removed.has(i.expect.path))) {
+    let evidence = view.opsOf('evidence.snapshot').filter((i) => same(i.parent) && view.doneOf(i.op) !== null).at(-1)?.op;
+    if (evidence === undefined) {
+      evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
+        source: c.expect.path, globs: [], dest: absPath(join(jobEvidenceRoot(ctx.runDir, job), '_leftover')),
+      })).op;
+    }
+    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path: c.expect.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  }
+}
+
+/** Where a witness run's record is kept: `witness.json` in its execution's dir (what a `witnessed` fact names). */
+export const witnessRecordPath = (runDir: AbsPath, fact: Parameters<typeof witnessDir>[1]): AbsPath => absPath(join(witnessDir(runDir, fact), WITNESS_RECORD_FILE));
+
+/** Every certifying observation the log's `witnessed` facts name, the latest per key (src/holistic/observe.ts). */
+export function observations(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ObservationStore {
+  return observationStore(ctx.journal.view.holistic().witnessed.flatMap((w) => {
+    const path = witnessRecordPath(ctx.runDir, w);
+    const o = observationOf(w, existsSync(path) ? readFileSync(path, 'utf8') : null);
+    return o === null ? [] : [o];
+  }));
+}
+
+/**
+ * Obligations as a judgment reads them (the gate's selected ones, a lens's), each with its observation on `commit`'s
+ * tree in this host's environment: the reusable one (all four keys), or null when none is there (never run, stale, a
+ * split parent, which is never witnessed directly).
+ */
+export function observedViews(
+  ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath; hostEnv: Readonly<Record<string, string | undefined>> }>,
+  obligations: Obligations | null, defs: readonly ObligationDef[], commit: Sha,
+): readonly ObligationView[] {
+  if (defs.length === 0) return [];
+  if (obligations === null) throw new Error('obligation views outside a holistic arc with obligations');
+  const tree = revParse(ctx.repo, `${commit}^{tree}`);
+  const store = observations(ctx);
+  const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
+  return defs.map((o) => {
+    const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
+    const found = lane === undefined ? null : reuse(store, keyOf(tree, lane, laneEnvId(ctx, lane)));
+    return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: found === null || o.witness === null ? null : { key: found.key, verdict: verdictOf(found.record, o.witness) } };
+  });
+}
+
+/** The environment identity of an arc lane on this host (its passed-through variables' values). */
+export const laneEnvId = (ctx: Readonly<{ hostEnv: Readonly<Record<string, string | undefined>> }>, lane: ArcLaneDef): EnvId => envIdOf(lane, hostIdentity(), ctx.hostEnv);
+
+/** One run of a journey lane, before the red-lane protocol reads it. */
+type JourneyRan = Readonly<{
+  inv: InvocationId; dir: AbsPath; verdict: CommandVerdict; evidence: RedEvidence; interrupted: LaneCancel | null; blocked: string | null; evidenceOp: OpId;
+}>;
+
+/** One run of a lane under its reservation: it ran (its cleanup passed), or the series ends without a verdict. */
+type JourneyAttempt = Readonly<{ kind: 'ran'; ran: JourneyRan }> | Readonly<{ kind: 'ended'; end: JourneyEnd; ran: JourneyRan | null }>;
+
+/**
+ * Runs `lanes` one at a time for `owner` in the detached checkout `checkout` (created before the first lane that runs,
+ * checked for integrity after the last, then removed citing the series' last evidence snapshot), keeping each run's
+ * evidence in its own execution's dir. A witness
+ * lane's counted run becomes a `witness.json` and a `witnessed{purpose: witness}` fact (`for: candidate{unit, attempt}`
+ * or `job{job}`). The series ends at the first lane without a verdict, or where `stop` says.
+ */
+export async function runJourneySeries(
+  ctx: JourneyContext, owner: JourneyOwner, lanes: readonly JourneyLane[], checkout: WorktreeCreateRequest,
+  opts: Readonly<{ reuse: boolean; stop: (run: JourneyRun) => boolean }>,
+): Promise<JourneySeries> {
+  if (checkout.checkout.type !== 'detached') throw new Error(`a journey series runs in a detached checkout, not on ${checkout.checkout.branch}`);
+  const { at } = checkout.checkout;
+  const arc = ctx.plan().arc;
+  const treeSha = revParse(ctx.repo, `${at}^{tree}`);
+  const who = owner.type === 'unit' ? owner.parent.unit : owner.job;
+  const parent: Parent = owner.type === 'unit' ? owner.parent : { type: 'job', job: owner.job };
+  const holder: StageHolder | JobHolder = owner.type === 'unit'
+    ? { type: 'stage', unit: owner.parent.unit, stage: owner.parent.stage, attempt: owner.parent.attempt }
+    : { type: 'job', job: owner.job };
+  const signal = owner.type === 'unit' ? owner.rt.signal : NEVER;
+  const sampleHost = owner.type === 'unit' ? owner.rt.sampleHost : readHostSample;
+  const label = owner.type === 'unit' ? ownerLabel(arc, owner.parent.unit) : jobOwnerLabel(arc, owner.job);
+  const worktreeKey = owner.type === 'unit' ? `worktree:${who}:verify` : `worktree:${who}`;
+  const store = opts.reuse ? observations(ctx) : null;
+  // Each execution's own evidence dir, named by its invocation once the spawn's intent names it (the launch).
+  const dirOf = (lane: JourneyLane, invDir: string): AbsPath => {
+    const kind = lane.witness === null ? 'suite' : 'arc';
+    return owner.type === 'unit'
+      ? candidateLaneDir(ctx.runDir, owner.parent.unit, owner.parent.attempt, kind, lane.def.id, basename(invDir))
+      : jobLaneDir(ctx.runDir, owner.job, kind, lane.def.id, basename(invDir));
+  };
+  const runs: JourneyRun[] = [];
+  let lastEvidence: OpId | null = null;
+  let end: JourneyEnd = { kind: 'ran' };
+
+  const envOf = (lane: JourneyLane, held: readonly ResourceUnit[], witnessFile: AbsPath): Readonly<Record<string, string>> => {
+    const env: Record<string, string> = { ...lane.def.env.set };
+    for (const name of lane.def.env.pass) {
+      const value = ctx.hostEnv[name];
+      if (value === undefined) throw new Error(`lane ${lane.def.id} passes ${name}, which the executor's environment lacks`);
+      env[name] = value;
+    }
+    const executor: Record<string, string> = { [OWNER_ENV]: label, ...instanceEnv(held), ...(lane.witness === null ? {} : witnessEnv(lane.witness.reporter, witnessFile)) };
+    for (const [name, value] of Object.entries(executor)) {
+      if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.def.id} declares ${name}, which the executor sets`);
+      env[name] = value;
+    }
+    return env;
+  };
+
+  const runOne = async (lane: JourneyLane, held: readonly ResourceUnit[]): Promise<JourneyRan> => {
+    const start = sampleHost();
+    const outcome = await invoke(ctx.journal, ctx.containment, {
+      runDir: ctx.runDir,
+      origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
+      subject: { purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job } },
+      launch: (invDir) => {
+        mkdirSync(dirOf(lane, invDir), { recursive: true });
+        return {
+          argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
+          stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
+        };
+      },
+    });
+    const endSample = sampleHost();
+    const invDir = invocationDir(ctx.runDir, outcome.inv);
+    const dir = dirOf(lane, invDir);
+    mkdirSync(dir, { recursive: true });
+    let evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, {
+      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
+    })).op;
+    if (lane.def.evidenceGlobs.length > 0) {
+      evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: lane.def.evidenceGlobs, dest: absPath(join(dir, 'tree')) })).op;
+    }
+    const host: LaneHost = { start, end: endSample };
+    exclusivePublish(join(dir, HOST_FILE), fileJson(host));
+    if (outcome.kind === 'lost') {
+      return { inv: outcome.inv, dir, verdict: 'process-fault', evidence: { signatures: [], host }, interrupted: null, blocked: `${outcome.inv} was lost with its runner`, evidenceOp };
+    }
+    if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a lane produced a ${outcome.result.type} result`);
+    const { verdict } = outcome.result;
+    const interrupted = outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
+    const blocked = verdict === 'process-fault' ? `${outcome.inv} ended by ${runnerFiles(invDir, outcome.inv).read('exit.json')?.cause ?? 'unknown'}` : null;
+    const signatures = isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)]) : [];
+    return { inv: outcome.inv, dir, verdict, evidence: { signatures, host }, interrupted, blocked, evidenceOp };
+  };
+
+  const attempt = async (lane: JourneyLane): Promise<JourneyAttempt> => {
+    const request = laneRequest(ctx, lane.def);
+    let held: Reservation<'running', StageHolder | JobHolder> | null = null;
+    if (request !== null) {
+      const grant = owner.type === 'unit'
+        ? await owner.rt.acquire(request, holder, owner.rt.rank, signal)
+        : await owner.acquireFirst(request, { type: 'job', job: owner.job }, NEVER);
+      if (grant.kind === 'cancelled') {
+        if (owner.type === 'job') throw new Error(`${owner.job}: a lane wait was cancelled, and nothing cancels it`);
+        return { kind: 'ended', end: { kind: 'interrupted', reason: laneAbortReason(signal) }, ran: null };
+      }
+      const reserved = heldReservation(ctx, holder, 'reserved');
+      const occupancy = await probe(ctx, reserved, parent);
+      if (occupancy.kind === 'parked') {
+        const cleaned = await cleanup(ctx, reserved, parent);
+        return { kind: 'ended', end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser }, ran: null };
+      }
+      held = run(ctx, reserved, parent);
+    }
+    if (lastEvidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), worktreeKey, parent, checkout);
+    const ran = await runOne(lane, held?.resources ?? []);
+    lastEvidence = ran.evidenceOp;
+    if (held !== null) {
+      const cleaned = await cleanup(ctx, held, parent);
+      if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+    }
+    return { kind: 'ran', ran };
+  };
+
+  /** A run's own end without a verdict (cancelled, blocked), or null. */
+  const noVerdict = (lane: JourneyLane, r: JourneyRan): JourneyEnd | null => {
+    if (r.interrupted !== null) return { kind: 'interrupted', reason: r.interrupted };
+    if (r.blocked !== null) return { kind: 'blocked', lane: lane.def.id, detail: r.blocked };
+    return null;
+  };
+
+  /** The counted run's witness record kept and named by its `witnessed` fact; null for a suite lane. */
+  const witness = (lane: JourneyLane, r: JourneyRan): WitnessRecord | null => {
+    if (lane.witness === null) return null;
+    const invDir = invocationDir(ctx.runDir, r.inv);
+    const tests = collectWitness(lane.witness.reporter, { witnessFile: absPath(join(r.dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
+    const record = witnessRecordOf({ lane: lane.witness, envId: laneEnvId(ctx, lane.witness), treeSha, inv: r.inv, purpose: 'witness' }, tests);
+    const recordsSha256 = writeWitnessRecord(r.dir, record);
+    ctx.journal.fact({
+      kind: 'witnessed', lane: record.lane, laneRev: record.laneRev, envId: record.envId, treeSha, inv: r.inv, recordsSha256, purpose: 'witness',
+      for: owner.type === 'unit' ? { type: 'candidate', unit: owner.parent.unit, attempt: owner.parent.attempt } : { type: 'job', job: owner.job },
+    });
+    return record;
+  };
+
+  const counted = (lane: JourneyLane, r: JourneyRan, flaky: boolean): JourneyRun => ({ lane: lane.def.id, inv: r.inv, verdict: r.verdict, flaky, dir: r.dir, record: witness(lane, r) });
+
+  for (const lane of lanes) {
+    if (store !== null && lane.witness !== null) {
+      const o = reuse(store, keyOf(treeSha, lane.witness, laneEnvId(ctx, lane.witness)));
+      if (o !== null) {
+        runs.push({ lane: lane.def.id, inv: null, verdict: null, flaky: false, dir: null, record: o.record });
+        continue;
+      }
+    }
+    const first = await attempt(lane);
+    if (first.kind === 'ended') {
+      end = first.end;
+      break;
+    }
+    const stopped = noVerdict(lane, first.ran);
+    if (stopped !== null) {
+      end = stopped;
+      break;
+    }
+    let result: JourneyRun;
+    if (!isRed(first.ran.verdict)) result = counted(lane, first.ran, false);
+    else {
+      // Red: the red-lane protocol, with at most one rerun under its own reservation.
+      const again = await redLane<JourneyRan, JourneyEnd>(first.ran.evidence, async () => {
+        const next = await attempt(lane);
+        if (next.kind === 'ended') return { kind: 'ended', end: next.end };
+        const none = noVerdict(lane, next.ran);
+        if (none !== null) return { kind: 'ended', end: none };
+        return { kind: 'ran', run: next.ran, verdict: { red: isRed(next.ran.verdict), evidence: next.ran.evidence } };
+      }, { sample: sampleHost, signal });
+      if (again.kind === 'ended') {
+        end = again.end;
+        break;
+      }
+      if (again.kind === 'interrupted') {
+        end = again;
+        break;
+      }
+      if (again.kind === 'blocked') {
+        end = { kind: 'blocked', lane: lane.def.id, detail: again.detail };
+        break;
+      }
+      if (again.verdict.kind === 'blocked') {
+        end = { kind: 'blocked', lane: lane.def.id, detail: again.verdict.detail };
+        break;
+      }
+      // After a host-signature rerun the rerun counts; after a diagnostic rerun the first run does (red, flaky when the rerun passed).
+      result = again.reason === 'host-signature' ? counted(lane, again.rerun, false) : counted(lane, first.ran, again.verdict.kind === 'red' && again.verdict.flaky);
+    }
+    runs.push(result);
+    if (opts.stop(result)) break;
+  }
+  if (lastEvidence === null) return { end, runs, treeSha, checkout: null };
+  // The checkout's integrity: what the lanes tested must be the commit itself.
+  const dirty = dirtyPaths(checkout.path);
+  const head = revParse(checkout.path, 'HEAD');
+  const seriesRoot = owner.type === 'unit' ? absPath(join(evidenceRoot(ctx.runDir, owner.parent), 'journey')) : jobEvidenceRoot(ctx.runDir, owner.job);
+  const dirtyAt = absPath(join(seriesRoot, `_dirty-${basename(checkout.path)}`));
+  let evidence: OpId = lastEvidence;
+  if (dirty.length > 0) {
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: dirty.map(pathPattern), dest: dirtyAt })).op;
+  }
+  await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), worktreeKey, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  return { end, runs, treeSha, checkout: { dirty, movedTo: head === at ? null : head, evidence: dirtyAt } };
+}
+
+/** Whether a journey run counts as red (failed or stalled); a reused observation has no verdict of its own. */
+export const journeyRed = (r: JourneyRun): boolean => r.verdict !== null && isRed(r.verdict);

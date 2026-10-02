@@ -6,18 +6,21 @@
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import {
-  type AbortRecord, type BackendParkClass, type DoneRecord, type Event, type Fact, type Holder, type IntentOf, type IntentRecord, type JudgmentInputs,
-  type JudgmentStage, type OpKind, type ParkRecord, type PlanAppliedFact, type ProbeTarget, type ResourceEdge, type RetryStage, type StageOutcomeFact,
-  JUDGMENT_STAGES, RECLAIM_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS, prevHash, probeTargetKey, serializeEvent,
+  type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
+  type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
+  type ResourceEdge, type RetryStage, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
+  prevHash, probeTargetKey, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type ArcId, type CommandId, type EdgeId, type InvocationId, type NeedsUserId, type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit,
-  type RoutingRev, type Sha256Hex, type SpecRev, type UnitId, compareResourceUnits, parseInvocationId, parseOpId,
+  type ArcId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
+  type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
+  JOB_KINDS, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import type { ApprovalFingerprint, ContainmentMode, DispatchRecord, ResidueKey, Stage } from './records.ts';
+import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
+import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
 import { legacyParkRecord, repinNamesSpec, rerouteAsUnpark } from './upgrade.ts';
 import type { IsoTime } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
@@ -36,8 +39,8 @@ export class FoldInvariantError extends Error {
 
 export type TailDiscarded = Extract<Fact, { kind: 'tail-discarded' }>;
 
-/** The third chargeable (design-class) failure parks the unit. */
-export const CHARGEABLE_BOUND = 3;
+/** The third chargeable (design-class) failure parks the unit, unless its `limits` say otherwise (M3). */
+export const CHARGEABLE_BOUND = DEFAULT_BOUNDS.chargeable;
 
 /** Cumulative per-unit counters, all `monotonic()`. */
 export type UnitCounters = Readonly<{
@@ -76,6 +79,16 @@ export type Lineage = Readonly<{ reenters: UnitId; root: UnitId; prepared: boole
 
 /** A spec revision the log recorded for a unit: its `rev` and the sha256 of the file's bytes. */
 export type SpecState = Readonly<{ rev: SpecRev; sha256: Sha256Hex }>;
+
+/**
+ * M3 (step A3): where an architect's command sends a unit next, outside the transition table, until the stage it
+ * names records an outcome that is not a hold. `steer` (R11): one steer round, the build of a fresh session with
+ * the brief (`steered`); `merge-in`: its lanes, after the integration tip was merged into its branch (`merged-in`).
+ * `seq` is the fact's.
+ */
+export type EntryPoint =
+  | Readonly<{ kind: 'steer'; seq: number; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
+  | Readonly<{ kind: 'merge-in'; seq: number; command: CommandId }>;
 
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
@@ -142,15 +155,25 @@ export type UnitState = Readonly<{
   lineage: Lineage | null;
   /** The unit that re-enters this one, once it is `superseded`; null otherwise. */
   supersededBy: UnitId | null;
+  /** M3 (`limits`): the bounds its latest dispatch record pins (`DEFAULT_BOUNDS` before one, or when it names none). */
+  bounds: Bounds;
+  /** M3: the entry a `steered` or `merged-in` fact set, until its stage records an outcome that is not a hold; else null. */
+  entry: EntryPoint | null;
+  /**
+   * M3 (R11): the steer pass in progress, from `steered` to its exit (the transition table's steer rows): its seq and
+   * whether a green exit goes on (`--resume`). Cleared by an outcome that parks, stops or retires the unit, and by a
+   * gate outcome that advances it. Null otherwise.
+   */
+  steering: Readonly<{ seq: number; resume: boolean }> | null;
 }>;
 
-export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null): UnitState {
+export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
     counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null,
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
   };
 }
 
@@ -158,6 +181,9 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
 export function maxTier(a: RiskTier, b: RiskTier | null): RiskTier {
   return b !== null && RISK_TIERS.indexOf(b) > RISK_TIERS.indexOf(a) ? b : a;
 }
+
+/** The stage an entry point runs (M3): a steer's round is a build, a merge-in re-enters at lanes. */
+export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
 
 /** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
 export const redirectsSinceEdit = (u: UnitState): number => u.counters.redirects - u.redirectBase;
@@ -270,8 +296,9 @@ export type BackendParkState = Readonly<{ backend: Backend; seq: number; class: 
  * (what a probe of the instance covers for it), and `at` the time of its done. A residue disposed of but not yet released (a
  * crash in the reclaim order) is still here: the reclaim order ends with the release.
  */
-export type ResidueState = Readonly<{ key: ResidueKey; holder: Extract<Holder, { type: 'stage' }>; fail: OpId; failSeq: number; at: IsoTime }>;
-
+export type ResidueState = Readonly<{ key: ResidueKey; holder: ResidueHolder; fail: OpId; failSeq: number; at: IsoTime }>;
+/** A residue's holder: the stage attempt, or (M3, G4) the job, whose cleanup failed. */
+export type ResidueHolder = Extract<Holder, { type: (typeof RESIDUE_HOLDERS)[number] }>;
 /** The latest probe of one target, with the time its fact was written. */
 export type ProbeState = Extract<Fact, { kind: 'probe' }> & Readonly<{ seq: number; at: IsoTime }>;
 
@@ -279,6 +306,62 @@ export type EdgeResolvedState = Readonly<{ command: CommandId; evidence: string;
 
 /** How the arc schedules (M2): fixed by its first `plan-applied` fact; null before one. */
 export type Scheduling = 'dag' | 'legacy';
+
+// ---------------------------------------------------------------------------------------------------
+// M3: the holistic layer's fold (SCHEMAS.md "M3: the holistic layer"). Raw facts, indexed and checked; the
+// derivations over them (observations, coverage watermarks, generations, convergence, digests to raise) are the
+// later steps' pure functions over this view.
+
+type Seq = Readonly<{ seq: number }>;
+type FactOf<K extends HolisticFact['kind']> = Extract<HolisticFact, { kind: K }>;
+
+/** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
+export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
+  state: FindingStateName;
+  owner: UnitId | null;
+  openedSeq: number;
+  /** The latest move's target (null while never moved). */
+  last: FindingTo | null;
+}>;
+
+export type AuditState = Readonly<{ started: AuditInputs & Seq; ended: (Omit<FactOf<'audit-ended'>, 'kind' | 'job'> & Seq) | null }>;
+/** A checkpoint job: its captured inputs, and its decision: a bundle outcome, or the plan revision its bundle applied. */
+export type CheckpointState = Readonly<{
+  inputs: Omit<FactOf<'checkpoint-inputs'>, 'kind'> & Seq;
+  decided: (Readonly<{ kind: 'applied'; planRev: PlanRev }> | BundleOutcome) | null;
+}>;
+/** A20: the latest `arc-completed`; `active` while the plan rev and the integration head are those it recorded and no reopen followed. */
+export type CompletionState = Omit<FactOf<'arc-completed'>, 'kind'> & Seq & Readonly<{ active: boolean }>;
+
+export type HolisticFold = Readonly<{
+  /** A5: the plan in force names a vision (its `plan-applied` records `visionSha256`). */
+  on: boolean;
+  witnessed: readonly (Omit<FactOf<'witnessed'>, 'kind'> & Seq)[];
+  latched: readonly (Omit<FactOf<'obligation-latched'>, 'kind'> & Seq)[];
+  findings: readonly FindingState[];
+  audits: readonly AuditState[];
+  auditRequests: readonly (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[];
+  docsCovered: readonly (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[];
+  docsPublished: readonly (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[];
+  checkpoints: readonly CheckpointState[];
+  divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
+  digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
+  steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
+  mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
+  /** `close-admissions` latched and no architect admit since (§2.10). */
+  draining: Readonly<{ command: CommandId; seq: number }> | null;
+  completion: CompletionState | null;
+}>;
+
+/** Records after which the arc is not sealed (A20, H5): every record but these quiet ones is work. */
+function isWork(record: Event): boolean {
+  if (record.type === 'fact') {
+    const k = record.fact.kind;
+    return !['executor-started', 'containment-mode', 'tail-discarded', 'arc-completed', 'docs-published', 'probe', 'backend-park', 'meter', 'usage-unavailable'].includes(k);
+  }
+  if (record.type === 'intent') return record.parent.type === 'stage' || record.parent.type === 'job' || record.parent.type === 'command' || record.kind === 'revision.commit';
+  return false;
+}
 
 /** The fold's result, and the content of the `state.json` cache. Sets are sorted arrays. */
 export type DerivedState = Readonly<{
@@ -318,6 +401,8 @@ export type DerivedState = Readonly<{
   runOnly: readonly UnitId[] | null;
   /** M2: contingent edges resolved, ascending. */
   resolvedEdges: readonly EdgeId[];
+  /** M3: the holistic layer's fold. */
+  holistic: HolisticFold;
 }>;
 
 type Closure = Readonly<{ type: 'done'; record: DoneRecord }> | Readonly<{ type: 'abort'; record: AbortRecord }>;
@@ -347,6 +432,9 @@ export class Fold implements JournalView {
   readonly #units = new Map<UnitId, UnitEntry>();
   /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
   readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
+  /** M3: the seq of each unit's latest dispatch fact, and of the latest `plan-applied` recording it `unit-changed`. */
+  readonly #pinSeq = new Map<UnitId, number>();
+  readonly #unitChangedSeq = new Map<UnitId, number>();
   /** The spec the unit's dispatch facts name: its first pin's (a re-pin keeps it; see the `dispatch` case). */
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterEntry>();
@@ -378,6 +466,28 @@ export class Fold implements JournalView {
   readonly #outcomeSeqs = new Map<string, number>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
   readonly #addedSeqs = new Map<UnitId, number>();
+  // M3
+  #holisticOn = false;
+  /** The integration head as the log knows it: the latest published `integration.ff`'s `new`. */
+  #head: Sha | null = null;
+  #lastWorkSeq = 0;
+  #lastReopenSeq = 0;
+  readonly #jobs = new Map<JobKind, number>();
+  readonly #batchMembers = new Map<JobId, readonly UnitId[]>();
+  readonly #witnessed: (Omit<FactOf<'witnessed'>, 'kind'> & Seq)[] = [];
+  readonly #latched = new Map<ObligationId, Omit<FactOf<'obligation-latched'>, 'kind'> & Seq>();
+  readonly #findings = new Map<FindingId, FindingState>();
+  readonly #audits: { started: AuditInputs & Seq; ended: AuditState['ended'] }[] = [];
+  readonly #auditRequests: (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[] = [];
+  readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
+  readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
+  readonly #checkpoints = new Map<JobId, { inputs: CheckpointState['inputs']; decided: CheckpointState['decided'] }>();
+  readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
+  readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
+  readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
+  readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
+  #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
+  #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -411,6 +521,7 @@ export class Fold implements JournalView {
         this.#fact(event.fact, fail, { seq: event.seq, at: event.at });
         break;
     }
+    if (isWork(event)) this.#lastWorkSeq = event.seq;
     this.#lastSeq = event.seq;
     this.#lastHash = lineHash;
     monotonic(before, this.#counters());
@@ -443,6 +554,17 @@ export class Fold implements JournalView {
     }
 
     this.#ops.set(r.op, { latest: r, closure: null });
+    if (r.parent.type === 'job') this.#seeJob(r.parent.job);
+    if (r.kind === 'resource.transition') {
+      const h = r.expect.holder;
+      if (h.type === 'job') this.#seeJob(h.job);
+      if (h.type === 'docs') this.#seeJob(h.pub);
+    }
+    if (r.kind === 'candidate.merge' && r.expect.batch !== undefined) {
+      this.#seeJob(r.expect.batch.job);
+      this.#batchMembers.set(r.expect.batch.job, r.expect.batch.members.map((m) => m.unit));
+    }
+    if (r.kind === 'docs.commit') this.#seeJob(r.expect.pub);
     if (r.kind === 'resource.transition') {
       for (const res of r.expect.resources) this.#resources.set(res, { status: (this.#resources.get(res) ?? FREE_RESOURCE).status, pending: r });
     }
@@ -467,9 +589,10 @@ export class Fold implements JournalView {
     return u;
   }
 
-  /** A unit with no stage state yet: at `stage`, with its latest pin's risk floor and its pinned spec. */
+  /** A unit with no stage state yet: at `stage`, with its latest pin's risk floor and bounds and its pinned spec. */
   #fresh(unit: UnitId, stage: Stage): UnitState {
-    return newUnitState(unit, stage, this.#dispatches.get(unit)?.at(-1)?.riskFloor ?? null, this.#pinnedSpec.get(unit) ?? null);
+    const pin = this.#dispatches.get(unit)?.at(-1) ?? null;
+    return newUnitState(unit, stage, pin?.riskFloor ?? null, this.#pinnedSpec.get(unit) ?? null, boundsOfRecord(pin));
   }
 
   #start(u: UnitEntry, start: string): void {
@@ -508,8 +631,20 @@ export class Fold implements JournalView {
     if (intent.kind === 'resource.transition') this.#residuesAfter(intent, at, fail);
     if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
     // A unit's publication is its ff stage's; an ff under another parent (the git primitives' own tests) publishes no unit.
-    if (intent.kind === 'integration.ff' && r.kind === 'integration.ff' && r.outcome.kind === 'published' && intent.parent.type === 'stage') {
-      this.#publications.push({ unit: intent.parent.unit, seq });
+    // M3: a batch's `ff` publishes and retires every member at once (R7, H4); a docs `ff` publishes no unit.
+    if (intent.kind === 'integration.ff' && r.kind === 'integration.ff' && r.outcome.kind === 'published') {
+      this.#head = intent.expect.new;
+      const subject = intent.expect.subject;
+      if (subject === undefined && intent.parent.type === 'stage') this.#publications.push({ unit: intent.parent.unit, seq });
+      if (subject?.type === 'batch') {
+        const members = this.#batchMembers.get(subject.job);
+        if (members === undefined) return fail(`${r.op} publishes batch ${subject.job}, which no candidate.merge named`);
+        for (const unit of members) {
+          this.#publications.push({ unit, seq });
+          const u = this.#unit(unit, 'ff');
+          u.state = { ...u.state, status: 'retired' };
+        }
+      }
     }
     if (intent.kind === 'snapshot.publish') this.#snapshotHighWater = Math.max(this.#snapshotHighWater, intent.expect.highWater);
     if (intent.kind === 'spec.patch' && intent.parent.type === 'stage') {
@@ -523,11 +658,13 @@ export class Fold implements JournalView {
     const { holder, resources, edge } = intent.expect;
     if (edge.type === 'release') for (const res of resources) this.#residues.delete(res as ResourceInstance);
     if (edge.type !== 'fail') return;
-    if (holder.type !== 'stage') return fail(`${intent.op}: a fail transition held by ${canonicalJson(holder)}; only a stage holder records residues`);
+    if (holder.type !== 'stage' && holder.type !== 'job') return fail(`${intent.op}: a fail transition held by ${canonicalJson(holder)}; only a stage or job holder records residues`);
     const failSeq = parseOpId(intent.op).seq;
     this.#failSeqs.set(failSeq, edge.residues.map((r) => r.resource));
     for (const r of edge.residues) {
-      this.#residues.set(r.resource, { key: { arc: this.arc, unit: holder.unit, inv: r.teardown, resource: r.resource }, holder, fail: intent.op, failSeq, at });
+      const base = { arc: this.arc, inv: r.teardown, resource: r.resource };
+      const key: ResidueKey = holder.type === 'stage' ? { ...base, unit: holder.unit } : { ...base, job: holder.job };
+      this.#residues.set(r.resource, { key, holder, fail: intent.op, failSeq, at });
     }
   }
 
@@ -554,7 +691,7 @@ export class Fold implements JournalView {
         // One usage fact per invocation, so a replayed or duplicated report can never count twice.
         if (this.#metered.has(f.inv)) fail(`second usage fact for ${f.inv}`);
         this.#metered.add(f.inv);
-        const charge: MeterCharge = f.subject.type === 'seat' ? { type: 'role', role: f.subject.role } : { type: 'smoke', backend: f.subject.backend };
+        const charge: MeterCharge = f.subject.type === 'smoke' ? { type: 'smoke', backend: f.subject.backend } : { type: 'role', role: f.subject.role };
         const key = `${charge.type === 'role' ? charge.role : `smoke:${charge.backend}`} ${f.routingRev}`;
         const m = this.#meter.get(key) ?? {
           charge, routingRev: f.routingRev, known: 0, unavailable: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0,
@@ -576,8 +713,13 @@ export class Fold implements JournalView {
       case 'dispatch': {
         const { unit, scope, riskFloor } = f.record;
         const prev = this.#dispatches.get(unit)?.at(-1);
-        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2).
-        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) fail(`dispatch of ${unit} changes its pinned scope`);
+        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2). M3: the scope
+        // grows only by a ruled scope-growth apply, a `unit-changed` revision of the unit since its previous pin.
+        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) {
+          const grown = prev.scope.every((p) => scope.includes(p));
+          if (!grown || (this.#unitChangedSeq.get(unit) ?? -1) < (this.#pinSeq.get(unit) ?? -1)) fail(`dispatch of ${unit} changes its pinned scope`);
+        }
+        this.#pinSeq.set(unit, at.seq);
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }
@@ -595,7 +737,7 @@ export class Fold implements JournalView {
         // (an arc 1.0.0-dev.3 started took each re-pin's, until its first plan revision: src/core/upgrade.ts).
         const spec = prev === undefined || repinNamesSpec(this.#planApplied !== null) ? specOf(f.record) : null;
         if (spec !== null) this.#pinnedSpec.set(unit, spec);
-        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, buildTier: maxTier(riskFloor, u.state.buildTier), spec: spec ?? u.state.spec };
+        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, buildTier: maxTier(riskFloor, u.state.buildTier), spec: spec ?? u.state.spec, bounds: boundsOfRecord(f.record) };
         return;
       }
       case 'stage-outcome': {
@@ -603,8 +745,9 @@ export class Fold implements JournalView {
         const existing = this.#units.get(f.unit);
         if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
         const failures = existing?.state.counters.chargeableFailures ?? 0;
-        if (f.chargeable && failures === CHARGEABLE_BOUND - 1 && f.class !== 'park') {
-          fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${CHARGEABLE_BOUND}, which parks the unit, but its class is ${f.class}`);
+        const bound = existing?.state.bounds.chargeable ?? boundsOfRecord(this.dispatchOf(f.unit)).chargeable;
+        if (f.chargeable && failures + 1 >= bound && f.class !== 'park') {
+          fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${failures + 1}, which parks the unit, but its class is ${f.class} (the unit's bound is ${bound})`);
         }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);
@@ -615,6 +758,14 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
+        // ends where it parks, stops or retires the unit, or where its gate advances it.
+        const entry = u.state.entry;
+        if (entry !== null && f.class !== 'hold' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
+        if (f.class !== 'hold') {
+          const ends = f.class === 'park' || f.class === 'stop' || f.class === 'retire' || (f.stage === 'gate' && f.class === 'advance');
+          u.state = { ...u.state, entry: null, steering: ends ? null : u.state.steering };
+        }
         u.state = afterStageOutcome(u.state, f);
         if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
@@ -638,7 +789,10 @@ export class Fold implements JournalView {
         return;
       case 'judgment-inputs': {
         const key = `${f.unit} ${f.stage}#${f.attempt}`;
-        if (this.#judgmentInputs.has(key)) fail(`second judgment-inputs for ${key}`);
+        // M3 (Checkpoint A): a judgment captures its inputs before its `@cpu` wait, so a wait its signal cancelled leaves
+        // them for an attempt that never started; the next attempt takes that number and its capture replaces them.
+        const started = this.#units.get(f.unit)?.starts.has(`${f.stage}#${f.attempt}`) ?? false;
+        if (this.#judgmentInputs.has(key) && started) fail(`second judgment-inputs for ${key}`);
         const { kind: _kind, ...inputs } = f;
         this.#judgmentInputs.set(key, inputs);
         return;
@@ -655,7 +809,7 @@ export class Fold implements JournalView {
         if (state.buildTier === null) return fail(`implementer-escalated for ${f.unit}, which was never dispatched`);
         if (state.buildTier !== f.from) fail(`implementer-escalated for ${f.unit} from ${f.from}; its build tier is ${state.buildTier}`);
         // G1: only while a charged round is left in the budget.
-        if (state.counters.chargeableFailures >= CHARGEABLE_BOUND) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
+        if (state.counters.chargeableFailures >= state.bounds.chargeable) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
         const u = this.#unit(f.unit, 'build');
         u.state = { ...u.state, buildTier: f.to };
         return;
@@ -695,13 +849,160 @@ export class Fold implements JournalView {
         return;
       case 'reopened':
         this.#reopened(f, fail);
+        this.#lastReopenSeq = at.seq;
         return;
       case 'rerouted':
         this.#rerouted(f, fail);
         return;
       case 'plan-applied':
         this.#planAppliedFact(f, at.seq, fail);
+        for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
         return;
+      default:
+        this.#holisticFact(f, fail, at);
+    }
+  }
+
+  #seeJob(job: JobId): void {
+    const { kind, n } = parseJobId(job);
+    if (n > (this.#jobs.get(kind) ?? 0)) this.#jobs.set(kind, n);
+  }
+
+  /** A job that opens with this fact must be its kind's next (`nextJobId`). */
+  #openJob(job: JobId, fail: (detail: string) => never): void {
+    const { kind } = parseJobId(job);
+    const next = this.nextJobId(kind);
+    if (job !== next) fail(`${job} opened; the next ${kind} job is ${next}`);
+    this.#seeJob(job);
+  }
+
+  /** The M3 facts (SCHEMAS.md "M3: fold invariants"). */
+  #holisticFact(f: HolisticFact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
+    const { seq } = at;
+    switch (f.kind) {
+      case 'witnessed': {
+        const { op, ordinal } = parseInvocationId(f.inv);
+        const entry = this.#ops.get(op);
+        if (entry === undefined || ordinal > entry.latest.ordinal) fail(`witnessed by ${f.inv}, which no intent opened`);
+        if (f.for.type === 'job') this.#seeJob(f.for.job);
+        const { kind: _k, ...rest } = f;
+        this.#witnessed.push({ ...rest, seq });
+        return;
+      }
+      case 'obligation-latched': {
+        if (this.#latched.has(f.obligation)) fail(`obligation ${f.obligation} latched twice`);
+        const { kind: _k, ...rest } = f;
+        this.#latched.set(f.obligation, { ...rest, seq });
+        return;
+      }
+      case 'finding-opened': {
+        const next = this.nextFindingId();
+        if (f.id !== next) fail(`finding ${f.id} opened; the next finding is ${next}`);
+        const merged = [...this.#findings.values()].find((x) => x.key === f.key && FINDING_MOVES[x.state].length > 0);
+        if (merged !== undefined) fail(`finding ${f.id} has the key of ${merged.id}, which is ${merged.state}: it merges into it`);
+        if (f.source.type === 'job') this.#seeJob(f.source.job);
+        const { kind: _k, ...rest } = f;
+        this.#findings.set(f.id, { ...rest, state: 'open', owner: null, openedSeq: seq, last: null });
+        return;
+      }
+      case 'finding-transition': {
+        const x = this.#findings.get(f.id);
+        if (x === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
+        if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
+        const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? f.to.unit : f.to.state === 'open' ? null : x.owner;
+        this.#findings.set(f.id, { ...x, state: f.to.state, owner, last: f.to });
+        return;
+      }
+      case 'audit-started': {
+        const open = this.#audits.find((a) => a.ended === null);
+        if (open !== undefined) fail(`audit ${f.job} started while ${open.started.job} is running (one audit at a time)`);
+        this.#openJob(f.job, fail);
+        const { kind: _k, ...rest } = f;
+        this.#audits.push({ started: { ...rest, seq }, ended: null });
+        return;
+      }
+      case 'audit-ended': {
+        const a = this.#audits.find((x) => x.started.job === f.job);
+        if (a === undefined || a.ended !== null) return fail(`audit-ended of ${f.job}, which is not running`);
+        for (const c of f.covered) if (!a.started.lenses.includes(c.lens)) fail(`audit ${f.job} covers lens ${c.lens}, which it did not run`);
+        for (const id of f.findings) if (!this.#findings.has(id)) fail(`audit ${f.job} names finding ${id}, which was never opened`);
+        const { kind: _k, job: _j, ...rest } = f;
+        a.ended = { ...rest, seq };
+        return;
+      }
+      case 'docs-covered': {
+        if (f.from === f.to) fail(`docs-covered of ${f.pub} is an empty edge`);
+        this.#seeJob(f.pub);
+        const { kind: _k, ...rest } = f;
+        this.#docsCovered.push({ ...rest, seq });
+        return;
+      }
+      case 'checkpoint-inputs': {
+        this.#openJob(f.job, fail);
+        const { kind: _k, ...rest } = f;
+        this.#checkpoints.set(f.job, { inputs: { ...rest, seq }, decided: null });
+        return;
+      }
+      case 'bundle-decided': {
+        const c = this.#checkpoints.get(f.job);
+        if (c === undefined || c.decided !== null) return fail(`bundle-decided of ${f.job}, which has no undecided checkpoint inputs`);
+        c.decided = f.outcome;
+        return;
+      }
+      case 'divergence': {
+        const next = this.nextDivergenceId();
+        if (f.id !== next) fail(`divergence ${f.id}; the next divergence is ${next}`);
+        if (!this.#checkpoints.has(f.job)) fail(`divergence ${f.id} of ${f.job}, which is no checkpoint job`);
+        if (this.#divergences.some((d) => d.job === f.job && d.index === f.index)) fail(`a second divergence ${f.job}#${f.index}`);
+        const { kind: _k, ...rest } = f;
+        this.#divergences.push({ ...rest, seq });
+        return;
+      }
+      case 'divergence-digest': {
+        const known = new Set(this.#divergences.map((d) => d.id));
+        const bound = new Set(this.#digests.flatMap((d) => d.ids));
+        for (const id of f.ids) {
+          if (!known.has(id)) fail(`divergence-digest names ${id}, which was never recorded`);
+          if (bound.has(id)) fail(`divergence-digest names ${id}, which an earlier digest binds (H11)`);
+        }
+        const { kind: _k, ...rest } = f;
+        this.#digests.push({ ...rest, seq });
+        return;
+      }
+      case 'steered': {
+        const { kind: _k, ...rest } = f;
+        this.#steered.push({ ...rest, seq });
+        this.#steer(f, seq, fail);
+        return;
+      }
+      case 'merged-in': {
+        const { kind: _k, ...rest } = f;
+        this.#mergedIn.push({ ...rest, seq });
+        this.#mergeIn(f, seq, fail);
+        return;
+      }
+      case 'audit-requested': {
+        const { kind: _k, ...rest } = f;
+        this.#auditRequests.push({ ...rest, seq });
+        return;
+      }
+      case 'admissions-closed':
+        if (this.#draining !== null) fail(`admissions-closed while already draining (since ${this.#draining.command})`);
+        this.#draining = { command: f.command, seq };
+        return;
+      case 'docs-published': {
+        this.#seeJob(f.pub);
+        const { kind: _k, ...rest } = f;
+        this.#docsPublished.push({ ...rest, seq });
+        return;
+      }
+      case 'arc-completed': {
+        if (this.#planApplied === null || f.planRev !== this.#planApplied.rev) fail(`arc-completed at plan rev ${f.planRev}; the plan in force is rev ${this.#planApplied?.rev ?? 'none'}`);
+        if (f.highWater >= seq) fail(`arc-completed names high-water ${f.highWater}, not before its own seq ${seq}`);
+        const { kind: _k, ...rest } = f;
+        this.#completion = { ...rest, seq };
+        return;
+      }
     }
   }
 
@@ -717,6 +1018,10 @@ export class Fold implements JournalView {
     if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
     // M2 schedules a DAG only from a log no earlier release dispatched in (the reader admits `scheduling` on rev 1 only).
     if (f.scheduling === 'dag' && this.#dispatches.size > 0) fail('plan-applied rev 1 schedules a DAG in a log that already dispatched a unit');
+    // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
+    if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
+    const bundle = f.source?.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
+    if (f.source?.type === 'bundle' && (bundle === undefined || bundle.decided !== null)) fail(`plan-applied from bundle ${f.source.job}, which has no undecided checkpoint inputs`);
     const edits: { unit: UnitId; update: (u: UnitState) => UnitState }[] = [];
     const lineages: (() => void)[] = [];
     for (const c of f.changes) {
@@ -764,6 +1069,11 @@ export class Fold implements JournalView {
     }
     for (const apply of lineages) apply();
     if (f.rev === 1) this.#scheduling = f.scheduling === 'dag' ? 'dag' : 'legacy';
+    this.#holisticOn = f.visionSha256 !== undefined;
+    if (bundle !== undefined) bundle.decided = { kind: 'applied', planRev: f.rev };
+    // §2.10: an architect admit (an apply that adds units) reopens a draining arc.
+    const architect = f.source === undefined ? f.command !== null : f.source.type === 'command';
+    if (architect && f.changes.some((c) => c.type === 'unit-added')) this.#draining = null;
     this.#planApplied = f;
     if (f.command !== null) this.#appliedBy.set(f.command, f);
     for (const unit of Object.keys(f.specs) as UnitId[]) {
@@ -820,6 +1130,42 @@ export class Fold implements JournalView {
     if (u === undefined || u.state.status !== 'park-pending' || decided === null || park === null) return fail(`unpark of unit ${unit}, which is not parked`);
     if (park.park.class !== 'operator' || park.park.kind !== 'env') fail(`unpark of unit ${unit}, whose park is ${canonicalJson(park.park)}, not operator env`);
     this.#restoreParked(u, null);
+  }
+
+  /**
+   * `steer <u>` (M3, R11): of a parked unit, or of a re-entry whose preparation decided its next stage and that has not
+   * started it. The unit is active again at a steer round (`entry`), in a steer pass (`steering`); its park and any
+   * approval are gone (approvals are invalidated); its decision stays, as the pre-steer state (a steer park that is
+   * resumed restores the decision before that park).
+   */
+  #steer(f: Extract<Fact, { kind: 'steered' }>, seq: number, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`steered unit ${f.unit}, which was never dispatched`);
+    const s = u.state;
+    const preparing = s.status === 'active' && s.decided?.stage === 'prepare';
+    if (!(s.status === 'park-pending' || preparing) || s.open !== null || s.entry !== null) {
+      fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
+    }
+    u.state = {
+      ...s, status: 'active', park: null, interrupted: null, approval: null,
+      entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
+    };
+  }
+
+  /**
+   * `merge-in <u>` (M3): the integration tip was merged into the unit's branch, so its next stage is its lanes
+   * (`entry`), whatever it had decided; its approval and any interruption are gone. A parked unit is active again; a
+   * held one stays held until resumed.
+   */
+  #mergeIn(f: Extract<Fact, { kind: 'merged-in' }>, seq: number, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`merged-in unit ${f.unit}, which was never dispatched`);
+    const s = u.state;
+    if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
+    u.state = {
+      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, approval: null,
+      entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
+    };
   }
 
   /** The unit re-runs the stage its park decided at: decision and interruption as before the park. */
@@ -1107,6 +1453,50 @@ export class Fold implements JournalView {
     return [...this.#plannedUnits].sort(compare);
   }
 
+  // M3 ------------------------------------------------------------------------------------------------
+
+  nextFindingId(): FindingId {
+    return findingIdOf(this.#findings.size + 1);
+  }
+
+  nextDivergenceId(): DivergenceId {
+    return divergenceIdOf(this.#divergences.length + 1);
+  }
+
+  nextJobId(kind: JobKind): JobId {
+    return jobId(kind, (this.#jobs.get(kind) ?? 0) + 1);
+  }
+
+  integrationHead(): Sha | null {
+    return this.#head;
+  }
+
+  lastWorkSeq(): number {
+    return this.#lastWorkSeq;
+  }
+
+  holistic(): HolisticFold {
+    const c = this.#completion;
+    const active = c !== null && this.#planApplied?.rev === c.planRev && (this.#head === null || this.#head === c.head) && this.#lastReopenSeq < c.seq;
+    return {
+      on: this.#holisticOn,
+      witnessed: this.#witnessed,
+      latched: [...this.#latched.values()],
+      findings: [...this.#findings.values()],
+      audits: this.#audits.map((a) => ({ started: a.started, ended: a.ended })),
+      auditRequests: this.#auditRequests,
+      docsCovered: this.#docsCovered,
+      docsPublished: this.#docsPublished,
+      checkpoints: [...this.#checkpoints.values()].map((x) => ({ inputs: x.inputs, decided: x.decided })),
+      divergences: this.#divergences,
+      digests: this.#digests,
+      steered: this.#steered,
+      mergedIn: this.#mergedIn,
+      draining: this.#draining,
+      completion: c === null ? null : { ...c, active },
+    };
+  }
+
   derived(): DerivedState {
     return {
       v: SCHEMA_VERSION,
@@ -1129,6 +1519,7 @@ export class Fold implements JournalView {
       resources: [...this.#resources].sort(([a], [b]) => compareResourceUnits(a, b)).map(([unit, e]) => ({ unit, status: e.status, pending: e.pending?.op ?? null })),
       runOnly: this.#runOnly,
       resolvedEdges: [...this.#resolvedEdges.keys()].sort(compare),
+      holistic: this.holistic(),
     };
   }
 }

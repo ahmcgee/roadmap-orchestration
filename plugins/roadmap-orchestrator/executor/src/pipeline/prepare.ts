@@ -6,7 +6,8 @@
 //                        its first build);
 //   2. dispatch          the unit's first `dispatch` fact: its scope must lie within the lineage's original
 //                        envelope (the root's first pin; apply refuses anything else, so a violation here is
-//                        a bug), its risk floor is the higher of the plan's and the lineage's inherited one;
+//                        a bug), its risk floor is the higher of the plan's and the lineage's inherited one; its
+//                        routing, bounds and transient rules are its own, as any first pin's (M3, `firstPin`);
 //   3. mergein.prepare   of the integration tip T into the branch, unless the branch already contains T;
 //   4. evidence.snapshot of the prepared worktree: what it holds beyond its commit (a conflicted merge's
 //                        files; a clean preparation's manifest has zero files). `retire` cites it (F14).
@@ -25,13 +26,13 @@ import type { OpId, Sha, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { DispatchRecord } from '../core/records.ts';
 import { type Lineage, maxTier } from '../core/state.ts';
-import { type AbsPath, type RefName, type RepoPattern, absPath, branchRef, isoTimeOf } from '../core/values.ts';
+import { type AbsPath, type RefName, type RepoPattern, absPath, branchRef } from '../core/values.ts';
 import { pathPattern } from '../git/evidence.ts';
 import { isAncestor } from '../git/ff.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import type { PlanUnit, ReentryPoint } from '../input/plan.ts';
 import { evidenceSnapshotOp, mergeinOp, worktreeCreateOp } from '../recover/ops.ts';
-import { type StageContext, evidenceRoot, implementerSeatRev, runOp, unitBranch, unitWorktree } from './dispatch.ts';
+import { type StageContext, evidenceRoot, firstPin, runOp, unitBranch, unitWorktree } from './dispatch.ts';
 import { dirtyPaths } from './lanes.ts';
 import { type StageDone, at, executorIdentity, integrationTip, loadUnitSpec, record, start } from './stages.ts';
 
@@ -78,11 +79,7 @@ function pinReentry(ctx: StageContext, unit: PlanUnit, lineage: Lineage): Dispat
     throw new Error(`re-entry ${unit.id}: scope ${outside.join(', ')} lies outside its lineage's envelope ${root.scope.join(', ')} (${lineage.root}'s first pin)`);
   }
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
-  const riskFloor = maxTier(unit.risk, view.unit(unit.id).risk);
-  const pinned: DispatchRecord = {
-    unit: unit.id, specRev: spec.rev, specSha256: sha256, scope: [...unit.scope].sort(), riskFloor, routingRev: ctx.routing().rev,
-    implementerSeatRev: implementerSeatRev(ctx.routing(), riskFloor), at: isoTimeOf(new Date()),
-  };
+  const pinned = firstPin(ctx, unit, { rev: spec.rev, sha256 }, maxTier(unit.risk, view.unit(unit.id).risk));
   ctx.journal.fact({ kind: 'dispatch', record: pinned });
   return pinned;
 }

@@ -13,7 +13,7 @@ import { absPath, branchName, isoTime, planPath, refName, repoPath, repoPattern 
 import { PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { RiskTier } from '../src/routing/types.ts';
-import { type ReadyInput, admitter, rankOf, ready } from '../src/schedule/ready.ts';
+import { type ReadyInput, type SpecFactsOf, admitter, rankOf, ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
 import { ARC, H, REV, chain } from './fixtures/log-records.ts';
 
@@ -109,8 +109,11 @@ class Log {
 
 type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 
+/** No unit reproduces a mutant or repairs an obligation: what a spec says, for logs that hold no finding. */
+const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set() });
+
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
-  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: ROUTING, ...extras,
+  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: () => ROUTING, spec: NO_REPAIRS, ...extras,
 });
 const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonly [UnitId, AdmissionStage])[] =>
   ready(inputOf(log, plan, extras)).map((r) => [r.unit.id, r.stage] as const);
@@ -187,7 +190,7 @@ describe('ready: DAG arcs', () => {
     log.add(fact({ kind: 'run-only', command: CMD, units: [B, C] }));
     assert.deepEqual(readyOf(log, plan), [[B, 'plan-check']], 'C is allowed but still waits on A');
     const view = log.view();
-    assert.deepEqual(admitter(ROUTING)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [] }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
+    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [] }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
     log.add(fact({ kind: 'run-only', command: CMD, units: null }));
     assert.deepEqual(readyOf(log, plan), [[A, 'plan-check'], [B, 'plan-check']]);
   });
@@ -264,7 +267,7 @@ describe('admit (A12, A17)', () => {
     ({ id: needsUserId(`nu-${100 + reason.length}`), reason, subject, unit: u });
 
   function admits(log: Log, u: PlanUnit, extras: Extras = {}): Readonly<Record<AdmissionStage, unknown>> {
-    const admit = admitter(ROUTING);
+    const admit = admitter(() => ROUTING, NO_REPAIRS);
     const view = log.view();
     return Object.fromEntries(STAGES.map((stage) => {
       const a = admit({ view, plan, unit: u, stage, blocking: [], drains: [], tripped: [], ...extras });
@@ -314,6 +317,28 @@ describe('admit (A12, A17)', () => {
     }
   });
 
+  it('p1.blocks-selecting: an active P1 over an obligation a candidate\'s approval selects holds its candidate admission alone; its repair is admitted; a ruled P1 holds nothing (G10)', () => {
+    const log = fresh();
+    const I1 = 'I-1';
+    const fingerprint = { unitCommit: sha('b'.repeat(40)), specRev: specRev(1), contractRevs: [], rulingRevs: [], obligationRevs: [{ id: I1, rev: 1 }] };
+    log.add(fact({ kind: 'approval', unit: M, attempt: 5, fingerprint }), fact({ kind: 'approval', unit: HI, attempt: 5, fingerprint: { ...fingerprint, obligationRevs: [{ id: 'I-2', rev: 1 }] } }));
+    log.add(fact({
+      kind: 'finding-opened', id: 'F-1', key: H2, lens: 'witness', severity: 'P1', obligation: I1, visionClauses: [], claim: 'I-1 is not held', evidence: [],
+      mutant: null, source: { type: 'job', job: 'audit-1' }, gateHadPassed: true,
+    }));
+    const blocked = [{ type: 'finding-blocked', finding: 'F-1', obligation: I1 }];
+    assert.deepEqual(admits(log, med), { prepare: 'admit', 'plan-check': 'admit', build: 'admit', lanes: 'admit', gate: 'admit', candidate: blocked }, 'only the candidate waits');
+    assert.equal(admits(log, high).candidate, 'admit', 'a candidate selecting other obligations is not held');
+    const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []) });
+    const view = log.view();
+    assert.deepEqual(admitter(() => ROUTING, repairs)({ view, plan, unit: med, stage: 'candidate', blocking: [], drains: [], tripped: [] }), { kind: 'admit' }, 'p1.repair-exempt: the declared repair is admitted');
+    log.add(fact({ kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: 'ckpt-1' } } }));
+    assert.equal(admits(log, med).candidate, 'admit', 'a ruled finding blocks nothing');
+    // A reproduce runs a lane: the host breaker holds it as it holds lanes.
+    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: med, stage: 'reproduce', blocking: [], drains: [], tripped: [{ type: 'host' }] }),
+      { kind: 'wait', constraints: [{ type: 'breaker', target: { type: 'host' } }] });
+  });
+
   it('admit.constraints: pause, drain and run-only hold per unit and are all reported', () => {
     const log = fresh();
     const drain = (scope: CommandScope, command: CommandId = CMD) => ({ command, scope });
@@ -355,6 +380,31 @@ describe('priority and aging (F17)', () => {
     ], 'both promoted: the older planned unit first');
     const view = log.view();
     assert.ok(compareRank(rankOf(view, plan, P), rankOf(view, plan, K)) < 0);
+  });
+
+  it('prio.repair-first: a repair unit outranks checkpoint and planned waiters, older ones included (R6), until they are promoted', () => {
+    const R = unitId('r');
+    const plan = planOf([unit(P), unit(K, { origin: 'checkpoint' }), unit(R, { origin: 'repair' })]);
+    const log = new Log('dag', [P]);
+    log.plan([P, K], [{ type: 'unit-added', unit: K }]);
+    log.plan([P, K, R], [{ type: 'unit-added', unit: R }]);
+    const order = ready(inputOf(log, plan));
+    assert.deepEqual(order.map((r) => [r.unit.id, r.rank.origin]), [[R, 'repair'], [K, 'checkpoint'], [P, 'planned']], 'origin before age: repair 0, checkpoint 1, planned 2');
+    assert.ok(order[0]!.rank.waitStartSeq > order[2]!.rank.waitStartSeq, 'the repair is the youngest waiter');
+    const view = log.view();
+    assert.ok(compareRank(rankOf(view, plan, R), rankOf(view, plan, K)) < 0 && compareRank(rankOf(view, plan, K), rankOf(view, plan, P)) < 0);
+    // M2's aging stands: promoted waiters go first, by age alone.
+    const X = unitId('x');
+    const plan2 = planOf([...plan.units, unit(X)]);
+    log.plan([P, K, R, X], [{ type: 'unit-added', unit: X }]);
+    for (let i = 0; i < PROMOTION_BYPASS; i++) {
+      const u = unitId(`m${i}`);
+      log.plan([P, K, R, X, u], [{ type: 'unit-added', unit: u }]);
+      log.add(dispatch(u));
+      log.merge(u, 1);
+    }
+    const aged = ready(inputOf(log, plan2)).map((r) => [r.unit.id, r.rank.promoted]);
+    assert.deepEqual(aged.slice(0, 3), [[P, true], [K, true], [R, true]], 'every waiter promoted: the oldest first, whatever its origin');
   });
 
   it('prio.bypass-promotion: an endless stream of checkpoint units starves a planned waiter only until it is promoted', () => {

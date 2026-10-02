@@ -2,11 +2,13 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, edgeId, needsUserId, planRev, resourceName, unitId,
+  type ArcId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, divergenceId, edgeId, needsUserId,
+  planRev, resourceName, unitId,
 } from '../core/ids.ts';
-import type { PauseTarget, ResumeTarget } from '../core/records.ts';
+import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
+import { oneOf } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
-import { type ProfileName, backend, profileName } from '../routing/types.ts';
+import { type ModelClass, type ProfileName, backend, modelClass, profileName } from '../routing/types.ts';
 
 export class CliError extends Error {
   constructor(message: string) {
@@ -43,7 +45,19 @@ export type Command =
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
-  | Readonly<{ command: 'run-only'; units: readonly UnitId[] | null; run: RunLocator }>;
+  | Readonly<{ command: 'run-only'; units: readonly UnitId[] | null; run: RunLocator }>
+  /** M3: a ruling sidecar file (`roadmap/ruling-m3`), hashed and queued. */
+  | Readonly<{ command: 'rule'; record: string; run: RunLocator }>
+  /** M3 (H13): the compensating revision of one divergence. */
+  | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
+  /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */
+  | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: ModelClass | null; resume: boolean; run: RunLocator }>
+  | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
+  /** M3: an audit of these lenses (`--lens a,b`, ascending), or of the arc's lens set (null). */
+  | Readonly<{ command: 'audit'; lenses: readonly LensKindName[] | null; run: RunLocator }>
+  | Readonly<{ command: 'close-admissions'; run: RunLocator }>
+  /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
+  | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>;
 
 type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true> }>;
 
@@ -120,9 +134,21 @@ export function parseStartArgs(argv: readonly string[]): StartArgs {
 
 /** `--wait <ms>`: a positive integer of milliseconds, digits only. */
 function waitMs(raw: string): number {
-  const ms = Number(raw);
-  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(ms) || ms < 1) throw new CliError(`start: --wait takes a positive integer of milliseconds, got ${JSON.stringify(raw)}`);
-  return ms;
+  return positiveInt('start', '--wait', raw, 'milliseconds');
+}
+
+/** A positive integer option, digits only. */
+function positiveInt(command: string, option: string, raw: string, what: string): number {
+  const n = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(n) || n < 1) throw new CliError(`${command}: ${option} takes a positive integer of ${what}, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
+/** Exactly one positional argument, named `what` in the error. */
+function onePositional(p: Parsed, command: string, what: string): string {
+  const [v] = positionals(p, command, 1);
+  if (v === undefined) throw new CliError(`${command}: ${what} is required`);
+  return v;
 }
 
 export function parseCommand(argv: readonly string[]): Command {
@@ -193,9 +219,54 @@ export function parseCommand(argv: readonly string[]): Command {
       const units = [...new Set(p.positionals.map((u) => arg(command, '<unit>', unitId, u)))].sort();
       return { command, units: clear ? null : units, run: locator(p, command) };
     }
+    case 'rule': {
+      const p = parseRest(rest, LOCATOR, command);
+      return { command, record: onePositional(p, command, '<record.json>'), run: locator(p, command) };
+    }
+    case 'reverse': {
+      const p = parseRest(rest, LOCATOR, command);
+      return { command, divergence: arg(command, '<D-n>', divergenceId, onePositional(p, command, '<D-n>')), run: locator(p, command) };
+    }
+    case 'steer': {
+      const p = parseRest(rest, { ...LOCATOR, brief: 'value', budget: 'value', class: 'value', resume: 'switch' }, command);
+      const u = onePositional(p, command, '<unit>');
+      const brief = value(p, 'brief');
+      const budget = value(p, 'budget');
+      if (brief === undefined) throw new CliError('steer: --brief <file> is required');
+      if (budget === undefined) throw new CliError('steer: --budget <minutes> is required');
+      const c = value(p, 'class');
+      return {
+        command, unit: arg(command, '<unit>', unitId, u), brief, budgetMin: positiveInt(command, '--budget', budget, 'minutes'),
+        class: c === undefined ? null : arg(command, '--class', (v, path) => modelClass(v, path ?? '--class'), c), resume: p.flags.has('resume'), run: locator(p, command),
+      };
+    }
+    case 'merge-in': {
+      const p = parseRest(rest, LOCATOR, command);
+      return { command, unit: arg(command, '<unit>', unitId, onePositional(p, command, '<unit>')), run: locator(p, command) };
+    }
+    case 'audit': {
+      const p = parseRest(rest, { ...LOCATOR, lens: 'value' }, command);
+      positionals(p, command, 0);
+      const raw = value(p, 'lens');
+      const lenses = raw === undefined ? null : [...new Set(raw.split(',').map((l) => arg(command, '--lens', (v, path) => oneOf(LENS_KIND_NAMES)(v, path ?? '--lens'), l)))].sort();
+      return { command, lenses, run: locator(p, command) };
+    }
+    case 'close-admissions': {
+      const p = parseRest(rest, LOCATOR, command);
+      positionals(p, command, 0);
+      return { command, run: locator(p, command) };
+    }
+    case 'gc': {
+      const p = parseRest(rest, { repo: 'value', keep: 'value', 'dry-run': 'switch' }, command);
+      positionals(p, command, 0);
+      const repo = value(p, 'repo');
+      if (repo === undefined) throw new CliError('gc: --repo <path> is required');
+      const keep = value(p, 'keep');
+      return { command, repo, keep: keep === undefined ? null : positiveInt(command, '--keep', keep, 'arcs'), dryRun: p.flags.has('dry-run') };
+    }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc`,
       );
   }
 }

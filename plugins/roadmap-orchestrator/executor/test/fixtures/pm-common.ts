@@ -59,6 +59,8 @@ export type Hook = Readonly<{ name: string; when: () => boolean; act: () => Prom
 export type Scenario = Readonly<{
   /** The arc; `barriers` is a directory of this run for lane barriers (pm-lane-barrier.ts). */
   arc: (barriers: string) => Omit<ExecOptions, 'steps'>;
+  /** Edits the laid-out arc's files before its steps are written (the holistic scenario's vision and obligations). */
+  prepare?: (r: ExecRun) => void;
   /** The backend steps after the startup smoke, once the arc is laid out (steps may name its run dir). */
   steps: (r: ExecRun) => readonly Step[];
   hooks: (r: ExecRun, barriers: string) => readonly Hook[];
@@ -70,6 +72,7 @@ export type Laid = Readonly<{ r: ExecRun; barriers: string; hooks: readonly Hook
 export function layout(t: Owner, s: Scenario): Laid {
   const barriers = tmpDir('pm-barriers');
   const r = setupExec(t, { ...s.arc(barriers), steps: [] });
+  s.prepare?.(r);
   appendSteps(r, [...SMOKE_DEFAULT, ...s.steps(r)]);
   return { r, barriers, hooks: s.hooks(r, barriers) };
 }

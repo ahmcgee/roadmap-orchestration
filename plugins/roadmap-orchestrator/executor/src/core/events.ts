@@ -3,18 +3,27 @@
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import {
-  type ArcId, type CommandId, type EdgeId, type InvocationId, type LaneId, type NeedsUserId, type OpId, type OpKey, type PlanRev,
-  type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, edgeId, invocationIdOf, laneId, needsUserId, opIdOf, opKey, parseInvocationId, parseOpId,
-  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
+  type ArcId, type CommandId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev,
+  type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceName, type ResourceUnit,
+  type RoutingRev, type RulingId, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
+  commandId, compareResourceUnits, divergenceId, edgeId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId,
+  obligationId, opIdOf, opKey, parseInvocationId, parseOpId, parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev,
+  rulingId, sha, sha256, specRev, unitId, visionClauseId,
 } from './ids.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
-  COMMAND_VERDICTS, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode, type DispatchRecord,
-  type KillReason, type PauseTarget, type PlanManifest, type ResidueRecord, type ResumeTarget, type SpecPatch, type Stage, type TokenUsage,
-  type UsageUnavailableReason, approvalFingerprint, containmentMode, dispatchRecord, killReason, optionId, pauseTarget, manifestSpecs,
-  resumeTarget, specPatch, stage, tokenUsage, usageUnavailableReason,
+  COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
+  type DispatchRecord, type KillReason, type LensKindName, type PauseTarget, type PlanManifest, type ResidueRecord, type ResumeTarget,
+  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type UsageUnavailableReason, approvalFingerprint, containmentMode,
+  dispatchRecord, killReason, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
+  usageUnavailableReason,
 } from './records.ts';
+import {
+  type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
+  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type RevisionVector,
+  type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger, checkpointTrigger, contractOp,
+  divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey, revisionVector,
+} from '../holistic/types.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
   version,
@@ -24,21 +33,31 @@ import {
   refName, repoPath, repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import { type Backend, type RiskTier, type SeatRef, backend, riskTier, seatFields } from '../routing/types.ts';
+import {
+  type ArcSeatRef, type Backend, type RiskTier, type RoutingProvenance, type SeatRef, type UnitSeatRef, arcSeatFields, backend, riskTier,
+  routingProvenance, seatFields, unitSeatFields,
+} from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
 
+/**
+ * M3 adds `docs.commit` (a docs publication's rendered commit on the tip, A4), `mutant.apply` (a finding's
+ * mutant applied in a detached worktree, B3) and `revision.commit` (the activation record of a revision, G1/A19:
+ * named before any docs `ff`, closed once its `plan-applied` is written).
+ */
 export const OP_KINDS = [
   'worktree.create', 'worktree.remove', 'resource.transition', 'proc.spawn', 'proc.kill', 'evidence.snapshot',
   'salvage.commit', 'mergein.prepare', 'spec.patch', 'candidate.merge', 'integration.ff', 'snapshot.publish',
-  'needsuser.raise', 'command.apply',
+  'needsuser.raise', 'command.apply', 'docs.commit', 'mutant.apply', 'revision.commit',
 ] as const;
 export type OpKind = (typeof OP_KINDS)[number];
 export const GIT_OP_KINDS = [
   'worktree.create', 'worktree.remove', 'salvage.commit', 'mergein.prepare', 'candidate.merge', 'integration.ff',
-  'snapshot.publish',
+  'snapshot.publish', 'docs.commit', 'mutant.apply',
 ] as const satisfies readonly OpKind[];
+/** A19: the one revision fence. At most one `revision.commit` is open (its key); every revision-sensitive capture waits for it. */
+export const REVISION_FENCE_KEY = 'revision';
 export type GitOpKind = (typeof GIT_OP_KINDS)[number];
 
 export type Signature = Readonly<{ name: string; email: string; date: GitDate }>;
@@ -64,9 +83,32 @@ export type Holder =
   | Readonly<{ type: 'stage'; unit: UnitId; stage: Stage; attempt: number }>
   | Readonly<{ type: 'sweep'; command: CommandId }>
   | Readonly<{ type: 'retry'; unit: UnitId; stage: Stage; attempt: number }>
-  | Readonly<{ type: 'publication'; unit: UnitId; attempt: number }>;
-/** The holders that may take `reclaim`: a sweep, or a probe reclaiming the arc's own residue. */
-export const RECLAIM_HOLDERS = ['sweep', 'retry'] as const satisfies readonly Holder['type'][];
+  | Readonly<{ type: 'publication'; unit: UnitId; attempt: number }>
+  /** M3 (A7): a docs publication's `integration-slot` holder, `pub` its `docs-<n>` job. */
+  | Readonly<{ type: 'docs'; pub: JobId }>
+  /** M3 (R7, G5, H4): a repair batch's `integration-slot` holder, per finding and candidate attempt. */
+  | Readonly<{ type: 'batch'; finding: FindingId; attempt: number }>
+  /** M3 (G4): a durable job's lanes (audit, baseline, docs and batch lanes); a failed cleanup leaves a job-owned residue. */
+  | Readonly<{ type: 'job'; job: JobId }>;
+/** The holders that may take `reclaim`: a sweep, a probe reclaiming the arc's own residue, or a job re-running its lane over its own residue (G4). */
+export const RECLAIM_HOLDERS = ['sweep', 'retry', 'job'] as const satisfies readonly Holder['type'][];
+/** The holders whose failed cleanup records residues (their owner: the unit, or the job). */
+export const RESIDUE_HOLDERS = ['stage', 'job'] as const satisfies readonly Holder['type'][];
+
+/** The unit a holder acts for: a stage, retry or publication holder's; none for a sweep, docs, batch or job holder. */
+export function holderUnit(h: Holder): UnitId | null {
+  switch (h.type) {
+    case 'stage':
+    case 'retry':
+    case 'publication':
+      return h.unit;
+    case 'sweep':
+    case 'docs':
+    case 'batch':
+    case 'job':
+      return null;
+  }
+}
 
 /**
  * The legal reservation edges: free→reserved, reserved→running, reserved|running→cleaning, cleaning→free,
@@ -83,9 +125,18 @@ export type ResourceEdge =
   | Readonly<{ type: 'release' }>
   | Readonly<{ type: 'fail'; residues: readonly Readonly<{ resource: ResourceInstance; teardown: InvocationId }>[] }>;
 
-/** What a spawn runs. Model ids never appear: a backend is named by role and routingRev. */
+/** Who a journey lane (an arc lane) runs for: a unit's candidate (its stage holder), or a job. */
+export type LaneOwner = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'job'; job: JobId }>;
+
+/**
+ * What a spawn runs. Model ids never appear: a backend is named by role and routingRev. M3: `arc-backend` (a lens
+ * or checkpoint call of a job, on an arc seat), `journey` (an arc lane), `mutant` (a finding's lane on its patched tree).
+ */
 export type SpawnSubject =
-  | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & SeatRef)
+  | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
+  | (Readonly<{ purpose: 'arc-backend'; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
+  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner }>
+  | Readonly<{ purpose: 'mutant'; finding: FindingId; lane: LaneId; laneRev: LaneRev; tree: Sha }>
   | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   | Readonly<{
@@ -135,8 +186,13 @@ export type OpExpect = {
     unitCommit: Sha;
     worktree: AbsPath;
     commit: CommitInputs<readonly [Sha, Sha]>;
+    /**
+     * M3 (R7, G5, H4): a repair batch. `commit` merges the first member onto the tip; each `chain` entry merges the
+     * next member onto the previous merge (`--no-ff`); `post.new` is the last. Absent: one unit.
+     */
+    batch?: BatchCandidate;
   }>;
-  'integration.ff': Readonly<{ ref: RefName; old: Sha; new: Sha; fingerprint: ApprovalFingerprint }>;
+  'integration.ff': IntegrationFfExpect;
   'snapshot.publish': Readonly<{
     ref: RefName;
     old: Sha | null;
@@ -147,7 +203,44 @@ export type OpExpect = {
   /** `blocking` is recorded so the fold alone knows which raised items hold the arc (terminal predicate). */
   'needsuser.raise': Readonly<{ id: NeedsUserId; path: AbsPath; blocking: boolean }>;
   'command.apply': Readonly<{ command: CommandId; commandSha256: Sha256Hex }>;
+  /** M3 (A4): the docs publication's commit of the rendered `.roadmap/` files and its contract ops on the tip, on `refs/roadmap-run/<arc>/docs/<pub>`. */
+  'docs.commit': Readonly<{ ref: RefName; old: Sha | null; pub: JobId; integrationTip: Sha; worktree: AbsPath; commit: CommitInputs<readonly [Sha]> }>;
+  /** M3 (B3): a finding's mutant (`inputs/<patchSha256>.patch`) applied in a detached worktree at `at`. */
+  'mutant.apply': Readonly<{ worktree: AbsPath; at: Sha; finding: FindingId; patchSha256: Sha256Hex }>;
+  /**
+   * M3 (G1, A19): a revision's kept payload (`inputs/<payloadSha256>.revision.json`), its base and the rev it writes;
+   * `base` 0 for an arc's first revision (its first start records rev 1, M3 step A2).
+   */
+  'revision.commit': Readonly<{ source: RevisionSource; base: RevisionBase; rev: PlanRev; payloadSha256: Sha256Hex; docs: boolean }>;
 };
+
+/** The members of a repair batch candidate and the merges chaining them. */
+export type BatchCandidate = Readonly<{
+  job: JobId;
+  members: readonly Readonly<{ unit: UnitId; unitCommit: Sha; fingerprint: ApprovalFingerprint }>[];
+  chain: readonly Readonly<{ commit: Sha; parents: readonly [Sha, Sha] }>[];
+}>;
+
+/** What an `ff` publishes besides a unit (M3): a docs publication, or a repair batch (every member's fingerprint re-checked). */
+export type FfSubject = Readonly<{ type: 'docs'; pub: JobId }> | Readonly<{ type: 'batch'; job: JobId }>;
+/**
+ * A unit's `ff` carries its approval fingerprint and no subject (the 1.0.0-dev.5 shape); a docs or batch `ff`
+ * carries its subject and no fingerprint.
+ */
+export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }> & (
+  | Readonly<{ fingerprint: ApprovalFingerprint; subject?: never }>
+  | Readonly<{ subject: FfSubject; fingerprint?: never }>
+);
+
+/** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
+export type RevisionBase = PlanRev | 0;
+
+/** Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, or the executor's own patch. */
+export type RevisionSource =
+  | Readonly<{ type: 'start' }>
+  | Readonly<{ type: 'command'; command: CommandId }>
+  | Readonly<{ type: 'bundle'; job: JobId }>
+  | Readonly<{ type: 'executor'; inv: InvocationId }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -165,6 +258,9 @@ export type OpPost = {
   'snapshot.publish': Readonly<{ new: Sha }>;
   'needsuser.raise': Readonly<{ sha256: Sha256Hex }>;
   'command.apply': null;
+  'docs.commit': Readonly<{ new: Sha }>;
+  'mutant.apply': null;
+  'revision.commit': null;
 };
 
 export type ResultSummary =
@@ -192,6 +288,11 @@ export type OpOutcome = {
   'snapshot.publish': Readonly<{ kind: 'published' }>;
   'needsuser.raise': Readonly<{ kind: 'raised' }>;
   'command.apply': Readonly<{ kind: 'applied'; receiptSha256: Sha256Hex }> | Readonly<{ kind: 'rejected'; reason: string }>;
+  'docs.commit': Readonly<{ kind: 'committed' }>;
+  /** `tree`: the patched tree's real id (G13); `inapplicable`: the patch no longer applies (re-evaluated at the next audit). */
+  'mutant.apply': Readonly<{ kind: 'applied'; tree: Sha }> | Readonly<{ kind: 'inapplicable'; detail: string }>;
+  /** The revision's `plan-applied` (and its divergence facts) are written. */
+  'revision.commit': Readonly<{ kind: 'applied' }>;
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -201,7 +302,9 @@ export type Parent =
   | Readonly<{ type: 'stage'; unit: UnitId; stage: Stage; attempt: number }>
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'op'; op: OpId }>
-  | Readonly<{ type: 'arc' }>;
+  | Readonly<{ type: 'arc' }>
+  /** M3: an op of a durable job (an audit's worktree, a docs publication's commit, a batch's merges). */
+  | Readonly<{ type: 'job'; job: JobId }>;
 
 /** null: closed on the normal path. Otherwise the reconciler disposition that closed it during recovery. */
 export type RecoveredBy = null | 'reconciled' | 'redone' | 'adopted';
@@ -234,8 +337,10 @@ export type AbortRecord = Readonly<{ type: 'abort'; op: OpId; reason: Readonly<{
  * no seat's spend.
  */
 export type MeterSubject =
-  | (Readonly<{ type: 'seat'; unit: UnitId; attempt: number }> & SeatRef)
-  | Readonly<{ type: 'smoke'; backend: Backend }>;
+  | (Readonly<{ type: 'seat'; unit: UnitId; attempt: number }> & UnitSeatRef)
+  | Readonly<{ type: 'smoke'; backend: Backend }>
+  /** M3: a job's lens or checkpoint call, charged to the arc seat of its role. */
+  | (Readonly<{ type: 'job'; job: JobId; attempt: number }> & ArcSeatRef);
 
 // ---------------------------------------------------------------------------------------------------
 // Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
@@ -246,6 +351,9 @@ export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6).
   prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted'],
+  // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
+  // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
+  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
   'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
   build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed'],
   quiesce: ['empty'],
@@ -254,7 +362,9 @@ export const STAGE_OUTCOME_KINDS = {
   teardown: ['released', 'cleanup-failed'],
   lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed'],
   gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted'],
+  // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
+  // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
+  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
@@ -352,6 +462,12 @@ export type JudgmentInputs = Readonly<{
   specSha256: Sha256Hex;
   planRev: PlanRev;
   routingRev: RoutingRev;
+  /**
+   * M3 (Checkpoint A): the gate's complete approval fingerprint, captured with its other inputs under the revision
+   * fence; an approval records exactly it. Absent on a plan-check's, and on a gate's a 1.0.0-dev.5 executor wrote
+   * (read-time default: taken at the recorded tip when the call is read, `judgmentFingerprintDefault`).
+   */
+  fingerprint?: ApprovalFingerprint;
 }>;
 
 export type Fact =
@@ -397,7 +513,7 @@ export type Fact =
    * scheduling. Absent on rev 1, the arc is legacy (started on 1.0.0-dev.4 or earlier): it keeps that release's
    * serial frontier (`legacyNext`, src/core/upgrade.ts).
    */
-  | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[]; scheduling?: 'dag' }> & PlanManifest)
+  | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[]; scheduling?: 'dag' }> & PlanManifest & PlanAppliedM3)
   /**
    * `resume <unit>` re-entered a unit parked `routing-changed` once the routing in force lets it keep its
    * implementer seat (a `dispatch` fact re-pinned it first). The unit re-enters at the stage it parked at as
@@ -439,8 +555,88 @@ export type Fact =
    * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
    */
   | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
-  | StageOutcomeFact;
+  | StageOutcomeFact
+  | HolisticFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
+
+/**
+ * M3 fields of `plan-applied`, all absent on a 1.0.0-dev.5 fact and written on every M3 revision:
+ * `source` (G1; absent: `start` for a null command, else `command`, `revisionSourceOf`); `payloadSha256` (the kept
+ * `inputs/<sha>.revision.json` it was appended from); the ledger's, obligations' and vision's bytes in force
+ * (`rulingsSha256` absent: the ledger is read live, `rulingsFromLiveFile`; `visionSha256` present exactly while the
+ * arc is holistic); `publication` (the docs publication that carried it); `routingProvenance` (H7).
+ */
+export type PlanAppliedM3 = Readonly<{
+  source?: RevisionSource;
+  payloadSha256?: Sha256Hex;
+  rulingsSha256?: Sha256Hex;
+  obligationsSha256?: Sha256Hex;
+  visionSha256?: Sha256Hex;
+  publication?: Readonly<{ pub: JobId; head: Sha }>;
+  routingProvenance?: RoutingProvenance;
+}>;
+
+/** Whom a witness run certified or measured: a candidate, a job (audit, baseline, docs, batch), or a mutant (G13). */
+export type WitnessFor =
+  | Readonly<{ type: 'candidate'; unit: UnitId; attempt: number }>
+  | Readonly<{ type: 'job'; job: JobId }>
+  | Readonly<{ type: 'mutant'; finding: FindingId; of: Sha }>;
+
+/** An audit's immutable inputs (§2.5), captured under the revision fence (A19, H2). */
+export type AuditInputs = Readonly<{
+  job: JobId;
+  triggers: readonly AuditTrigger[];
+  generation: number;
+  /** The lenses it runs, ascending: a subset of the arc's required set L. */
+  lenses: readonly LensKindName[];
+  integrationSha: Sha;
+  planRev: PlanRev;
+  ledgerSha256: Sha256Hex | null;
+  obligationsSha256: Sha256Hex | null;
+  visionSha256: Sha256Hex;
+  /** Branch heads of parked or in-flight owners of open findings, ascending by unit. */
+  owners: readonly Readonly<{ unit: UnitId; head: Sha }>[];
+  priorFindings: readonly FindingId[];
+  highWater: number;
+}>;
+
+/** One lens's covered range: `from` its watermark before, `to` the audited SHA. */
+export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
+
+/** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
+export type HolisticFact =
+  /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
+  | Readonly<{ kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor }>
+  /** A future obligation delivered and held on its publication: it is must-hold from here (after `ff{published}`, before the snapshot). */
+  | Readonly<{ kind: 'obligation-latched'; obligation: ObligationId; unit: UnitId; treeSha: Sha }>
+  | Readonly<{
+    kind: 'finding-opened'; id: FindingId; key: Sha256Hex; lens: FindingLens; severity: FindingSeverity; obligation: ObligationId | null;
+    visionClauses: readonly VisionClauseId[]; claim: string; evidence: readonly FindingEvidence[]; mutant: MutantRef | null; source: FindingSource;
+    gateHadPassed: boolean;
+  }>
+  | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
+  | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
+  | Readonly<{ kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned' }>
+  /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
+  | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
+  | Readonly<{
+    kind: 'checkpoint-inputs'; job: JobId; trigger: CheckpointTrigger; generation: number; vector: RevisionVector; headSha: Sha; visionSha256: Sha256Hex;
+    findings: readonly FindingId[]; observations: readonly ObservationKey[];
+  }>
+  | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
+  /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
+  | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
+  /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
+  | Readonly<{ kind: 'divergence-digest'; needsUser: NeedsUserId; ids: readonly DivergenceId[] }>
+  | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
+  | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
+  | Readonly<{ kind: 'audit-requested'; command: CommandId; lenses: readonly LensKindName[] | null }>
+  | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
+  | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
+  /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
+  | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
+
+export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
 /** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2. */
@@ -462,7 +658,8 @@ export type PlanChange =
   /** The undispatched units' order changed. */
   | Readonly<{ type: 'order' }>
   | Readonly<{ type: 'spec'; unit: UnitId; edit: SpecEdit; specRev: SpecRev; specSha256: Sha256Hex }>
-  | Readonly<{ type: 'routing'; routingRev: RoutingRev }>
+  /** The routing in force; `unit` (M3, `route`/`steer --class`): that unit's layer changed, and `routingRev` is its routing's. */
+  | Readonly<{ type: 'routing'; routingRev: RoutingRev; unit?: UnitId }>
   | Readonly<{ type: 'resource'; resource: ResourceName; edit: 'added' | 'changed' | 'removed' }>
   | Readonly<{ type: 'suite' }>
   | Readonly<{ type: 'plan-field'; field: PlanField }>
@@ -472,7 +669,44 @@ export type PlanChange =
    * M2: `unit` (added in the same change set) re-enters `reenters`, which is superseded: the new unit inherits its
    * counters (`chargeableFailures` reset only with a ruling: `reset`), risk floor and lineage.
    */
-  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean }>;
+  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean }>
+  /** M3: an obligation added, split (H14), re-witnessed, or disposed by a ruling in force (weakening). */
+  | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit }>
+  | Readonly<{ type: 'mapping' }>
+  /** M3: the vision's new `rev` (owner-only: source `command`). */
+  | Readonly<{ type: 'vision'; rev: number }>
+  /** M3: a unit's `limits`, or the plan's (null). */
+  | Readonly<{ type: 'limits'; unit: UnitId | null }>
+  /** M3 (A5): the plan gained `holistic`. */
+  | Readonly<{ type: 'holistic' }>
+  /** M3: `holistic.advances`, the arc's slice of the vision, changed (owner-only). */
+  | Readonly<{ type: 'advances' }>;
+
+/**
+ * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
+ * future → must-hold (strengthening, no ruling needed).
+ */
+export const OBLIGATION_EDITS = ['added', 'split', 'witness', 'disposed', 'restored', 'edited'] as const;
+export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
+
+/**
+ * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
+ * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
+ * divergences in order; recovery never reclassifies. `publication`: the rendered `.roadmap/` files and the contract
+ * ops the docs publication commits, null when the revision changes no in-tree document.
+ */
+export type RevisionPayload = Readonly<{
+  v: SchemaVersion;
+  source: RevisionSource;
+  base: RevisionBase;
+  rev: PlanRev;
+  manifest: RevisionManifest;
+  changes: readonly PlanChange[];
+  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+  divergences: readonly DivergenceDraft[];
+  publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
+  routingProvenance: RoutingProvenance;
+}>;
 
 /**
  * The backend park classes (lead ruling, 11b; F12). `usage-limit` is an operator park (`resume --backend`,
@@ -571,11 +805,36 @@ const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
   return list;
 };
 
+const jobR: Read<JobId> = (v, p) => jobIdOf(v, p);
+const docsJobR: Read<JobId> = (v, p) => jobIdOfKind('docs')(v, p);
+const batchJobR: Read<JobId> = (v, p) => jobIdOfKind('batch')(v, p);
+const findingR: Read<FindingId> = (v, p) => findingId(v, p);
+const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
+const laneR: Read<LaneId> = (v, p) => laneId(v, p);
+const laneRevR: Read<LaneRev> = (v, p) => laneRev(v, p);
+const planRevR: Read<PlanRev> = (v, p) => planRev(v, p);
+const revisionBaseR: Read<RevisionBase> = (v, p) => (v === 0 ? 0 : planRev(v, p));
+
 const holder: Read<Holder> = tagged('type', {
   stage: object((f): Holder => ({ type: f.get('type', literal('stage')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
   sweep: object((f): Holder => ({ type: f.get('type', literal('sweep')), command: f.get('command', cmdR) })),
   retry: object((f): Holder => ({ type: f.get('type', literal('retry')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
   publication: object((f): Holder => ({ type: f.get('type', literal('publication')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })),
+  docs: object((f): Holder => ({ type: f.get('type', literal('docs')), pub: f.get('pub', docsJobR) })),
+  batch: object((f): Holder => ({ type: f.get('type', literal('batch')), finding: f.get('finding', findingR), attempt: f.get('attempt', positive) })),
+  job: object((f): Holder => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
+});
+
+const laneOwner: Read<LaneOwner> = tagged('type', {
+  unit: object((f): LaneOwner => ({ type: f.get('type', literal('unit')), unit: f.get('unit', unitR) })),
+  job: object((f): LaneOwner => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
+});
+
+const revisionSource: Read<RevisionSource> = tagged('type', {
+  start: object((f): RevisionSource => ({ type: f.get('type', literal('start')) })),
+  command: object((f): RevisionSource => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
+  bundle: object((f): RevisionSource => ({ type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) })),
+  executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -592,8 +851,20 @@ const resourceEdge: Read<ResourceEdge> = tagged('type', {
 
 const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   backend: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('backend')), ...seatFields(f), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('backend')), ...unitSeatFields(f), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
+  })),
+  'arc-backend': object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('arc-backend')), ...arcSeatFields(f), routingRev: f.get('routingRev', revR),
+    job: f.get('job', jobR), attempt: f.get('attempt', positive),
+  })),
+  journey: object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('journey')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), at: f.get('at', shaR),
+    owner: f.get('owner', laneOwner),
+  })),
+  mutant: object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('mutant')), finding: f.get('finding', findingR), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR),
+    tree: f.get('tree', shaR),
   })),
   lane: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
@@ -724,23 +995,42 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'candidate.merge': {
-    expect: object((f) => ({
-      ref: f.get('ref', refR),
-      old: f.get('old', nullable(shaR)),
-      integrationTip: f.get('integrationTip', shaR),
-      unitCommit: f.get('unitCommit', shaR),
-      worktree: f.get('worktree', absR),
-      commit: f.get('commit', commitInputs<readonly [Sha, Sha]>([2])),
-    })),
+    expect: object((f) => {
+      const batch = f.optional('batch', batchCandidate);
+      return {
+        ref: f.get('ref', refR),
+        old: f.get('old', nullable(shaR)),
+        integrationTip: f.get('integrationTip', shaR),
+        unitCommit: f.get('unitCommit', shaR),
+        worktree: f.get('worktree', absR),
+        commit: f.get('commit', commitInputs<readonly [Sha, Sha]>([2])),
+        ...(batch === undefined ? {} : { batch }),
+      };
+    }),
     post: object((f) => ({ new: f.get('new', shaR) })),
     outcome: kindOnly('merged'),
-    check: (e, _post, path) => {
+    check: (e, post, path) => {
       if (!/^refs\/roadmap-run\/[^/]+\/candidate\/[^/]+$/.test(e.ref)) throw new SchemaError(`${path}.expect.ref`, 'refs/roadmap-run/<arc>/candidate/<unit>', e.ref);
       sameList(e.commit.parents, [e.integrationTip, e.unitCommit], `${path}.expect.commit.parents`);
+      if (e.batch === undefined) return;
+      const { members, chain } = e.batch;
+      if (members[0]?.unitCommit !== e.unitCommit) throw new SchemaError(`${path}.expect.batch.members[0].unitCommit`, e.unitCommit, members[0]?.unitCommit);
+      if (chain.length !== members.length - 1) throw new SchemaError(`${path}.expect.batch.chain`, `${members.length - 1} merges (one per member after the first)`, chain.length);
+      chain.forEach((c, i) => {
+        if (c.parents[1] !== members[i + 1]?.unitCommit) throw new SchemaError(`${path}.expect.batch.chain[${i}].parents[1]`, String(members[i + 1]?.unitCommit), c.parents[1]);
+        if (i > 0 && c.parents[0] !== chain[i - 1]?.commit) throw new SchemaError(`${path}.expect.batch.chain[${i}].parents[0]`, String(chain[i - 1]?.commit), c.parents[0]);
+      });
+      if (post.new !== chain.at(-1)?.commit) throw new SchemaError(`${path}.post.new`, `the last merge ${chain.at(-1)?.commit}`, post.new);
     },
   },
   'integration.ff': {
-    expect: object((f) => ({ ref: f.get('ref', refR), old: f.get('old', shaR), new: f.get('new', shaR), fingerprint: f.get('fingerprint', approvalFingerprint) })),
+    expect: (value, path) => {
+      const subject = typeof value === 'object' && value !== null && Object.hasOwn(value, 'subject');
+      return object((f): IntegrationFfExpect => {
+        const base = { ref: f.get('ref', refR), old: f.get('old', shaR), new: f.get('new', shaR) };
+        return subject ? { ...base, subject: f.get('subject', ffSubject) } : { ...base, fingerprint: f.get('fingerprint', approvalFingerprint) };
+      })(value, path);
+    },
     post: nothing,
     outcome: tagged('kind', {
       published: kindOnly('published'),
@@ -776,20 +1066,81 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
       rejected: object((f): OpOutcome['command.apply'] => ({ kind: f.get('kind', literal('rejected')), reason: f.get('reason', str) })),
     }),
   },
+  'docs.commit': {
+    expect: object((f) => ({
+      ref: f.get('ref', refR),
+      old: f.get('old', nullable(shaR)),
+      pub: f.get('pub', docsJobR),
+      integrationTip: f.get('integrationTip', shaR),
+      worktree: f.get('worktree', absR),
+      commit: f.get('commit', commitInputs<readonly [Sha]>([1])),
+    })),
+    post: object((f) => ({ new: f.get('new', shaR) })),
+    outcome: kindOnly('committed'),
+    check: (e, _post, path) => {
+      if (!e.ref.endsWith(`/docs/${e.pub}`) || !/^refs\/roadmap-run\/[^/]+\/docs\/[^/]+$/.test(e.ref)) throw new SchemaError(`${path}.expect.ref`, `refs/roadmap-run/<arc>/docs/${e.pub}`, e.ref);
+      sameList(e.commit.parents, [e.integrationTip], `${path}.expect.commit.parents`);
+    },
+  },
+  'mutant.apply': {
+    expect: object((f) => ({ worktree: f.get('worktree', absR), at: f.get('at', shaR), finding: f.get('finding', findingR), patchSha256: f.get('patchSha256', sha256R) })),
+    post: nothing,
+    outcome: tagged('kind', {
+      applied: object((f): OpOutcome['mutant.apply'] => ({ kind: f.get('kind', literal('applied')), tree: f.get('tree', shaR) })),
+      inapplicable: object((f): OpOutcome['mutant.apply'] => ({ kind: f.get('kind', literal('inapplicable')), detail: f.get('detail', str) })),
+    }),
+  },
+  'revision.commit': {
+    expect: object((f) => ({
+      source: f.get('source', revisionSource), base: f.get('base', revisionBaseR), rev: f.get('rev', planRevR), payloadSha256: f.get('payloadSha256', sha256R),
+      docs: f.get('docs', bool),
+    })),
+    post: nothing,
+    outcome: kindOnly('applied'),
+    check: (e, _post, path) => {
+      if (e.rev !== e.base + 1) throw new SchemaError(`${path}.expect.rev`, String(e.base + 1), e.rev);
+    },
+  },
 };
+
+const batchCandidate: Read<BatchCandidate> = object((f) => {
+  const out = {
+    job: f.get('job', batchJobR),
+    members: f.get('members', arrayOf(object((g) => ({ unit: g.get('unit', unitR), unitCommit: g.get('unitCommit', shaR), fingerprint: g.get('fingerprint', approvalFingerprint) })))),
+    chain: f.get('chain', arrayOf(object((g) => {
+      const parents = g.get('parents', arrayOf(shaR));
+      if (parents.length !== 2) throw new SchemaError(`${g.path}.parents`, '2 parents', parents);
+      return { commit: g.get('commit', shaR), parents: parents as unknown as readonly [Sha, Sha] };
+    }))),
+  };
+  if (out.members.length < 2) throw new SchemaError(`${f.path}.members`, 'at least two members (one unit is not a batch)', out.members);
+  assertUniqueUnits(out.members.map((m) => m.unit), `${f.path}.members`);
+  return out;
+});
+
+function assertUniqueUnits(units: readonly UnitId[], path: string): void {
+  if (new Set(units).size !== units.length) throw new SchemaError(path, 'each unit once', units);
+}
+
+const ffSubject: Read<FfSubject> = tagged('type', {
+  docs: object((f): FfSubject => ({ type: f.get('type', literal('docs')), pub: f.get('pub', docsJobR) })),
+  batch: object((f): FfSubject => ({ type: f.get('type', literal('batch')), job: f.get('job', batchJobR) })),
+});
 
 const parent: Read<Parent> = tagged('type', {
   stage: object((f): Parent => ({ type: f.get('type', literal('stage')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
   command: object((f): Parent => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
   op: object((f): Parent => ({ type: f.get('type', literal('op')), op: f.get('op', opR) })),
   arc: object((f): Parent => ({ type: f.get('type', literal('arc')) })),
+  job: object((f): Parent => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
 });
 
 const meterSubject: Read<MeterSubject> = tagged('type', {
   seat: object((f): MeterSubject => ({
-    type: f.get('type', literal('seat')), ...seatFields(f), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
+    type: f.get('type', literal('seat')), ...unitSeatFields(f), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   smoke: object((f): MeterSubject => ({ type: f.get('type', literal('smoke')), backend: f.get('backend', backend) })),
+  job: object((f): MeterSubject => ({ type: f.get('type', literal('job')), ...arcSeatFields(f), job: f.get('job', jobR), attempt: f.get('attempt', positive) })),
 });
 
 const planChange: Read<PlanChange> = tagged('type', {
@@ -801,7 +1152,10 @@ const planChange: Read<PlanChange> = tagged('type', {
     type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
-  routing: object((f): PlanChange => ({ type: f.get('type', literal('routing')), routingRev: f.get('routingRev', revR) })),
+  routing: object((f): PlanChange => {
+    const unit = f.optional('unit', unitR);
+    return { type: f.get('type', literal('routing')), routingRev: f.get('routingRev', revR), ...(unit === undefined ? {} : { unit }) };
+  }),
   resource: object((f): PlanChange => ({
     type: f.get('type', literal('resource')), resource: f.get('resource', resR), edit: f.get('edit', oneOf(['added', 'changed', 'removed'] as const)),
   })),
@@ -813,7 +1167,39 @@ const planChange: Read<PlanChange> = tagged('type', {
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
     return out;
   }),
+  obligation: object((f): PlanChange => ({ type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)) })),
+  mapping: object((f): PlanChange => ({ type: f.get('type', literal('mapping')) })),
+  vision: object((f): PlanChange => ({ type: f.get('type', literal('vision')), rev: f.get('rev', positive) })),
+  limits: object((f): PlanChange => ({ type: f.get('type', literal('limits')), unit: f.get('unit', nullable(unitR)) })),
+  holistic: object((f): PlanChange => ({ type: f.get('type', literal('holistic')) })),
+  advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
 });
+
+export const revisionPayload: Read<RevisionPayload> = object((f) => {
+  const out: RevisionPayload = {
+    v: f.get('v', version),
+    source: f.get('source', revisionSource),
+    base: f.get('base', revisionBaseR),
+    rev: f.get('rev', planRevR),
+    manifest: f.get('manifest', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) }))),
+    changes: f.get('changes', arrayOf(planChange)),
+    dispositions: f.get('dispositions', arrayOf(object((g) => ({
+      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+    })))),
+    divergences: f.get('divergences', arrayOf(divergenceDraft)),
+    publication: f.get('publication', nullable(object((g) => ({
+      renders: g.get('renders', sortedBy(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), sha256: h.get('sha256', sha256R) })), (r) => r.path)),
+      contractOps: g.get('contractOps', arrayOf(contractOp)),
+    })))),
+    routingProvenance: f.get('routingProvenance', routingProvenance),
+  };
+  if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
+  return out;
+});
+
+export function parseRevisionPayload(value: unknown): RevisionPayload {
+  return revisionPayload(value, 'revision');
+}
 
 const probeTarget: Read<ProbeTarget> = tagged('type', {
   backend: object((f): ProbeTarget => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend) })),
@@ -837,6 +1223,112 @@ const seqSet: Read<readonly number[]> = (value, path) => {
   const list = arrayOf(positive, { nonEmpty: true })(value, path);
   for (let i = 1; i < list.length; i++) if (!((list[i - 1] as number) < (list[i] as number))) throw new SchemaError(`${path}[${i}]`, 'ascending seqs, no duplicates', value);
   return list;
+};
+
+const witnessFor: Read<WitnessFor> = tagged('type', {
+  candidate: object((f): WitnessFor => ({ type: f.get('type', literal('candidate')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })),
+  job: object((f): WitnessFor => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
+  mutant: object((f): WitnessFor => ({ type: f.get('type', literal('mutant')), finding: f.get('finding', findingR), of: f.get('of', shaR) })),
+});
+const lensR = oneOf(LENS_KIND_NAMES);
+const lensSet: Read<readonly LensKindName[]> = sortedBy(lensR, (l) => l, { nonEmpty: true });
+const findingSet: Read<readonly FindingId[]> = sortedBy(findingR, (id) => id);
+const auditJobR: Read<JobId> = (v, p) => jobIdOfKind('audit')(v, p);
+const ckptJobR: Read<JobId> = (v, p) => jobIdOfKind('ckpt')(v, p);
+
+const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
+  'no-op': object((f): BundleOutcome => ({ kind: f.get('kind', literal('no-op')) })),
+  rejected: object((f): BundleOutcome => ({ kind: f.get('kind', literal('rejected')), reason: f.get('reason', oneOf(['stale', 'evidence', 'invalid'] as const)), detail: f.get('detail', str) })),
+  requested: object((f): BundleOutcome => ({ kind: f.get('kind', literal('requested')), needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)) })),
+});
+
+/** The readers of the M3 facts, spread into `fact`. */
+const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
+  witnessed: object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('witnessed')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), envId: f.get('envId', (v, p): EnvId => envId(v, p)),
+      treeSha: f.get('treeSha', shaR), inv: f.get('inv', invR), recordsSha256: f.get('recordsSha256', sha256R), purpose: f.get('purpose', oneOf(WITNESS_PURPOSES)),
+      for: f.get('for', witnessFor),
+    };
+    // G13: a mutant run is recorded as such and never certifies.
+    if ((out.purpose === 'mutant') !== (out.for.type === 'mutant')) throw new SchemaError(`${f.path}.for`, out.purpose === 'mutant' ? 'mutant{finding, of}' : 'a candidate or a job', out.for);
+    return out;
+  }),
+  'obligation-latched': object((f): Fact => ({
+    kind: f.get('kind', literal('obligation-latched')), obligation: f.get('obligation', obligationR), unit: f.get('unit', unitR), treeSha: f.get('treeSha', shaR),
+  })),
+  'finding-opened': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('finding-opened')), id: f.get('id', findingR), key: f.get('key', sha256R), lens: f.get('lens', oneOf(FINDING_LENSES)),
+      severity: f.get('severity', oneOf(FINDING_SEVERITIES)), obligation: f.get('obligation', nullable(obligationR)),
+      visionClauses: f.get('visionClauses', sortedBy((v, p): VisionClauseId => visionClauseId(v, p), (c) => c)), claim: f.get('claim', str),
+      evidence: f.get('evidence', arrayOf(findingEvidence)), mutant: f.get('mutant', nullable(mutantRef)), source: f.get('source', findingSource),
+      gateHadPassed: f.get('gateHadPassed', bool),
+    };
+    if (out.mutant !== null && out.lens !== 'vacuity') throw new SchemaError(`${f.path}.mutant`, 'null except for a vacuity finding', out.mutant);
+    // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
+    if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
+    if (out.lens === 'plan-check' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a plan-check vision conflict', out.severity);
+    // A must-hold not held on an audit snapshot opens a P1 over its obligation.
+    if (out.lens === 'witness' && (out.severity !== 'P1' || out.obligation === null)) throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation for a witness finding', out.severity);
+    if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
+    return out;
+  }),
+  'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
+  'audit-started': object((f): Fact => ({
+    kind: f.get('kind', literal('audit-started')),
+    job: f.get('job', auditJobR),
+    triggers: f.get('triggers', arrayOf(auditTrigger, { nonEmpty: true })),
+    generation: f.get('generation', positive),
+    lenses: f.get('lenses', lensSet),
+    integrationSha: f.get('integrationSha', shaR),
+    planRev: f.get('planRev', planRevR),
+    ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
+    obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
+    visionSha256: f.get('visionSha256', sha256R),
+    owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
+    priorFindings: f.get('priorFindings', findingSet),
+    highWater: f.get('highWater', positive),
+  })),
+  'audit-ended': object((f): Fact => ({
+    kind: f.get('kind', literal('audit-ended')),
+    job: f.get('job', auditJobR),
+    covered: f.get('covered', sortedBy(object((g) => ({ lens: g.get('lens', lensR), from: g.get('from', shaR), to: g.get('to', shaR) })), (c) => c.lens)),
+    findings: f.get('findings', findingSet),
+    suppressed: f.get('suppressed', nat),
+    outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
+  })),
+  'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
+  'checkpoint-inputs': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('checkpoint-inputs')), job: f.get('job', ckptJobR), trigger: f.get('trigger', checkpointTrigger),
+      generation: f.get('generation', positive), vector: f.get('vector', revisionVector), headSha: f.get('headSha', shaR), visionSha256: f.get('visionSha256', sha256R),
+      findings: f.get('findings', findingSet),
+      observations: f.get('observations', sortedBy(observationKey, (k: ObservationKey) => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)),
+    };
+    if (out.vector.visionSha256 !== out.visionSha256) throw new SchemaError(`${f.path}.vector.visionSha256`, out.visionSha256, out.vector.visionSha256);
+    return out;
+  }),
+  'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
+  divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
+  'divergence-digest': object((f): Fact => ({
+    kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
+    ids: f.get('ids', sortedBy((v, p): DivergenceId => divergenceId(v, p), (d) => d, { nonEmpty: true })),
+  })),
+  steered: object((f): Fact => ({
+    kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),
+    budgetMin: f.get('budgetMin', positive), resume: f.get('resume', bool),
+  })),
+  'merged-in': object((f): Fact => ({
+    kind: f.get('kind', literal('merged-in')), unit: f.get('unit', unitR), command: f.get('command', cmdR), integrationTip: f.get('integrationTip', shaR), head: f.get('head', shaR),
+  })),
+  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR), lenses: f.get('lenses', nullable(lensSet)) })),
+  'admissions-closed': object((f): Fact => ({ kind: f.get('kind', literal('admissions-closed')), command: f.get('command', cmdR) })),
+  'docs-published': object((f): Fact => ({ kind: f.get('kind', literal('docs-published')), pub: f.get('pub', docsJobR), source: f.get('source', literal('close-out')), commit: f.get('commit', shaR) })),
+  'arc-completed': object((f): Fact => ({
+    kind: f.get('kind', literal('arc-completed')), planRev: f.get('planRev', planRevR), head: f.get('head', shaR), highWater: f.get('highWater', positive),
+    units: f.get('units', sortedBy(unitR, (u) => u)),
+  })),
 };
 
 export const fact: Read<Fact> = tagged('kind', {
@@ -888,7 +1380,11 @@ export const fact: Read<Fact> = tagged('kind', {
       planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
     };
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
-    return out;
+    const fingerprint = f.optional('fingerprint', approvalFingerprint);
+    if (fingerprint === undefined) return out;
+    if (out.stage !== 'gate') throw new SchemaError(`${f.path}.fingerprint`, 'absent on a plan-check', fingerprint);
+    if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
+    return { ...out, fingerprint };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),
@@ -907,18 +1403,36 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
+    const m3: Record<string, unknown> = {};
+    const opt = <T>(key: keyof PlanAppliedM3, read: Read<T>): void => {
+      const v = f.optional(key, read);
+      if (v !== undefined) m3[key] = v;
+    };
+    opt('source', revisionSource);
+    opt('payloadSha256', sha256R);
+    opt('rulingsSha256', sha256R);
+    opt('obligationsSha256', sha256R);
+    opt('visionSha256', sha256R);
+    opt('publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) })));
+    opt('routingProvenance', routingProvenance);
     const out = {
       kind: f.get('kind', literal('plan-applied')), rev: f.get('rev', (v, p) => planRev(v, p)), command: f.get('command', nullable(cmdR)),
       planSha256: f.get('planSha256', sha256R), specs: f.get('specs', manifestSpecs), changes: f.get('changes', arrayOf(planChange)),
-      ...(scheduling === undefined ? {} : { scheduling }),
+      ...(scheduling === undefined ? {} : { scheduling }), ...(m3 as PlanAppliedM3),
     };
     if (scheduling !== undefined && out.rev !== 1) throw new SchemaError(`${f.path}.scheduling`, 'absent after rev 1 (the arc\'s scheduling is fixed at its first plan)', scheduling);
+    const source = m3['source'] as RevisionSource | undefined;
+    if (source !== undefined && (source.type === 'command' ? source.command !== out.command : out.command !== null)) {
+      throw new SchemaError(`${f.path}.source`, `the source naming command ${out.command}`, source);
+    }
+    if (m3['obligationsSha256'] !== undefined && m3['visionSha256'] === undefined) throw new SchemaError(`${f.path}.obligationsSha256`, 'absent without a vision (obligations are a holistic input, A5)', m3['obligationsSha256']);
     return out;
   }),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
   })),
+  ...HOLISTIC_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

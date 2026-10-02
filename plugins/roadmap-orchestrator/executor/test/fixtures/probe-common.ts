@@ -11,6 +11,7 @@ import type { HostSample } from '../../src/host/sample.ts';
 import { type ProberContext, createProber } from '../../src/park/probe.ts';
 import { backendEnv } from '../../src/preflight/smoke.ts';
 import type { RecoveryContext } from '../../src/recover/recover.ts';
+import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
 import { resolveRouting } from '../../src/routing/layers.ts';
 import type { Backend } from '../../src/routing/types.ts';
 import { tmpDir } from '../helpers/repo.ts';
@@ -45,7 +46,7 @@ export function openProbeRun(r: ProbeRun): OpenedProbe {
     stage: ctx,
     commands: {
       ...resources, hostEnv: backendEnv(hostEnv), laneEnv: hostEnv, routing: () => ({ profile: 'claude-only', resolved }),
-      resolve: () => resolved, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
+      routingBase: { profile: 'claude-only', config: null }, docs: DOCS_NOT_YET, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
       probes: { prober: createProber(ctx), signal: new AbortController().signal },
     },
   };

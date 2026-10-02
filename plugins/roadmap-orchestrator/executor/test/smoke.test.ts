@@ -59,7 +59,7 @@ describe('smoke', () => {
 
     const intents = smokeIntents(events);
     assert.equal(intents.length, 2);
-    const targets = intents.map((e) => (e.type === 'intent' && 'subject' in e.expect && e.expect.subject.purpose === 'smoke' ? e.expect.subject.target : null));
+    const targets = intents.map((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'smoke' ? e.expect.subject.target : null));
     assert.deepEqual(targets.map((t) => t !== null && t.type === 'backend' ? [t.backend, t.role] : null), [['claude', 'planCheck'], ['codex', 'build']]);
     const done = events.filter((e) => e.type === 'done' && e.kind === 'proc.spawn');
     assert.deepEqual(done.map((e) => e.type === 'done' && e.outcome.kind === 'result' ? e.outcome.summary : null), [

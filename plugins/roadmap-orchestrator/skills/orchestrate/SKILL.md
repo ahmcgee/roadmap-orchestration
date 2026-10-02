@@ -14,9 +14,21 @@ and the files it points to. The reasons are in `RATIONALE-1.0.md`.
 Each unit: plan-check, build, salvage, lanes, gate, candidate merge, fast-forward of the integration branch,
 snapshot to `refs/roadmap/<arc>`. Units run in parallel as far as their `after` edges and the host's capacity
 (the `@cpu` pool and declared resources) allow; an arc started before 1.0.0-dev.5 keeps running one unit at a
-time, in plan order. Phase 0 lands in M3 and M4. In M1 you write `plan.json` and each
+time, in plan order. Phase 0 lands in M4. Until then you write `plan.json` and each
 unit's `spec.json` by hand, following the "Input contract" and "`spec.json` M1 subset" sections of
 `executor/SCHEMAS.md`. For a worked plan, run the M1 fixture's `executor/evals/m1/setup.ts <dir>` and read `<dir>/input/`.
+
+M3 adds the holistic layer, on only when `plan.json` names `holistic` (a vision, and optionally obligations with
+their arc lanes; SCHEMAS.md "M3: the holistic layer"): obligations witnessed on the integration head, lenses that
+audit the merged history, and a checkpoint that acts through revisions and records every departure from the
+target as a divergence. `executor/evals/m3/setup.ts <dir>` writes a worked holistic input. An arc without
+`holistic` runs as before.
+
+The vision comes from the `vision` skill, never from you alone. Before writing a holistic arc's plan, the
+vision must be confirmed: `vision.md` marked confirmed, and its sha256 the one in `vision.json`'s
+`confirmation.ref`. If it is not, run the `vision` skill first. Choose `holistic.advances`, the slice of the
+vision this arc moves toward, with the owner. When an arc completes, offer the owner a calibration (`vision`)
+before the next plan.
 
 ## Branches and refs
 
@@ -51,8 +63,10 @@ git -C <repo> rev-parse main            # baseline
   the prompt as one index line that a judge reads on demand. A plan-check redirect may add cites; nothing
   removes them.
 - **Rulings ledger.** The plan's `rulings` file holds rule text only, one `C-nn — <rule>` per line.
-  Provenance ("ruled by", "architect") goes in the in-tree `constraints.md`, never here. To supersede or
-  withdraw a ruling, replace its line with `C-nn — withdrawn by C-mm`.
+  Provenance ("ruled by", "architect") goes in the ruling's sidecar, never here; the executor renders
+  `constraints.md`. You write the ledger before the first `start`; after it the executor owns it. Land,
+  supersede or withdraw a ruling only with `roadmap rule <record.json>` (it folds a superseded line to
+  `C-nn — withdrawn by C-mm` itself). An `apply` whose ledger differs from the one in force is refused.
 - **Architecture digest.** A plan may name `architectureDigest`: an owner-approved digest of the architecture
   doc (a section index plus the normative sentences, each with its line anchor). Judgments embed the digest and
   read the full doc from their checkout on demand. Get the owner's approval before you name one.
@@ -83,6 +97,13 @@ git -C <repo> rev-parse main            # baseline
 | `stop` | Park everything, tear down, release the host lock |
 | `ack <needs-user-id> [--choice <option-id>]` | Answer a needs-user item |
 | `sweep [--resource <name>]` | Run the recorded teardown for undispositioned residues |
+| `rule <record.json>` | Land a ruling: a `roadmap/ruling-m3` sidecar whose `consistency` was judged against the ledger, obligations, vision and named contracts in force. Published through a docs publication, then written back to the live ledger |
+| `steer <unit> --brief <file> --budget <min> [--class efficient\|frontier\|summit] [--resume]` | One uncharged steer round for a parked or `preparing` unit, then salvage, lanes and gate. It parks again afterwards unless the pass is green and `--resume` was given. `--class` seats that class at the unit's build tier |
+| `merge-in <unit>` | Merge the integration tip into the branch of a unit not in a task (clean merges only); the unit re-enters at lanes |
+| `reverse <D-n>` | A compensating revision that restores what divergence D-n's act changed; rejected if a later revision changed it again (use `apply`) |
+| `audit [--lens invariants,drift,vacuity,vision]` | Request an audit (holistic arcs only; lenses within the required set) |
+| `close-admissions` | Latch `draining`: checkpoint admissions become requests to you; an `apply` that adds a unit reopens |
+| `gc --repo <path> [--keep <K>] [--dry-run]` | Not queued: under the host lock, prunes sealed arcs (raw evidence; run dirs beyond K, which the ref restores), old generation files and residue archives. Exit 75 while a live process holds the host |
 | `--version` | Print the executor version |
 
 `start` prints one JSON line and returns while the run goes on: `{"kind":"ready",...}` (exit 0) once the
@@ -91,7 +112,7 @@ shows in `status` (`rejection`) and the run exits `refused`. The run's end is in
 `{"kind":"failed",...}` or `{"kind":"timeout",...}` means the supervisor died or did not report ready in time;
 read `status` and the supervisor's logs in the host dir before starting again.
 
-The other commands only queue a file and print its id. Queued is not applied: check
+The other commands, `gc` excepted, only queue a file and print its id. Queued is not applied: check
 `commands/receipts/<id>.{accepted,applied,rejected}.json`.
 
 ## Routing
@@ -116,7 +137,7 @@ Every key is optional. `seats` overrides the profile's class per seat. `classes`
 `{backend, model, effort}` triple, and it is the only place you name a model. A Claude effort is
 `low|medium|high|xhigh|max` (the built-in `frontier` and `summit` run at `high`, `claude-only`'s `efficient` at `medium`); a Codex effort `low|medium|high`. `plan.json`'s `routing` names
 classes per seat the same way and cannot rebind a class. `.roadmap/config.json` is read at `start`; the
-plan's `routing` changes with `roadmap apply`. A judgment seat may change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
+plan's `routing`, and a unit's own `routing` layer, change with `roadmap apply` (or `steer --class`). A judgment seat may change mid-unit. A change that moves the implementer seat of a unit whose build has started parks that unit
 (`routing-changed`); the needs-user names the seat (below).
 
 ## The run dir
@@ -131,9 +152,11 @@ plan's `routing` changes with `roadmap apply`. A judgment seat may change mid-un
 ## Reading `status`
 
 One JSON object. Start with `run`: `state` is `running` (some unit runs, may start, or waits for resources),
-`held` (nothing moves and a unit is paused, or held by an interrupted stage or a parked backend), `parked`
+`draining` (as `running`, with admissions closed), `held` (nothing moves and a unit is paused, or held by an
+interrupted stage or a parked backend), `parked`
 (nothing moves and a blocking needs-user waits on you), `blocked` (nothing moves and work remains: parks being
-probed, `run-only`, an unresolved contingent edge, a dependency that parked), `complete`, `refused` or `no-owner`;
+probed, `run-only`, an unresolved contingent edge, a dependency that parked), `complete` (in a holistic arc,
+only while its `arc-completed` holds; `completion.unmet` says what is missing), `refused` or `no-owner`;
 `owner` is `{state: alive|dead|none, generation, pid}`; `heartbeatAt` is the executor's last heartbeat. Then:
 
 - `needsUser`: the unacknowledged items, `{id, reason, blocking}`, ascending id, including the host-level
@@ -166,6 +189,12 @@ probed, `run-only`, an unresolved contingent edge, a dependency that parked), `c
   `tripped`), `backends` (parked backends with their class).
 - `parkedBackends`: backends parked on a usage limit, capacity or outage error.
 - `rejection`: the latest refused start's rows, or null.
+- `host.log`: the event log's `bytes`, `events` and `foldMs`.
+- A holistic arc (`holistic: true`) also has `target`, `nowTrue` and `notYetTrue` (each obligation on the
+  integration head, and what an untrue one waits on), `waived`, `deferred`, `vision` (with its coverage),
+  `divergences`, `decisionsSince` (what was decided since you last acknowledged a divergence digest),
+  `convergence`, `findings`, `audit`, `owed` and `completion`. Read `divergences` and `decisionsSince` at every
+  check-in: the checkpoint acts first and consults you afterwards.
 
 An undispositioned residue blocks every future `start` (the `undispositioned-residue` rejection) until
 swept or dispositioned.
@@ -184,6 +213,10 @@ unit is merged or parked with its needs-user acknowledged.
 Read the item's `evidence` first: the deciding call's `result.json` (a judgment's reasons and patch), its
 `stdout`, the spec file, and for a lanes or candidate park the lane evidence. The `recommendation` says which of
 these applies:
+
+In a holistic arc a design park goes to the checkpoint first (a respec, re-entry or cut); you get its
+needs-user when the checkpoint does nothing, or on a second design park of the same lineage (`respec-second`).
+`roadmap steer <unit>` is an alternative for any parked unit.
 
 - **Parked at plan-check or gate** (an escalation or refusal at the escalation seat, a redirect or revise round past
   its bound, a malformed or failed judgment): edit the unit's spec to the next rev, `roadmap apply`, then
@@ -206,7 +239,7 @@ these applies:
 
 The executor runs the plan in force, not the files: edit `plan.json` or a `spec.json` in place, then run
 `roadmap apply`. It hashes the plan file the arc started with (`start.json`; `apply` takes no `--plan`) and
-every spec, and queues the change; the executor applies it at the next stage boundary, or at once when no stage
+every spec (and, in M3, the ledger with its sidecars, the obligations and the vision), and queues the change; the executor applies it at the next stage boundary, or at once when no stage
 is running, and kills nothing. The receipt says applied (`plan rev <n> in force`) or rejected with every reason;
 nothing of a rejected apply is in force. `status` shows the plan in force (`plan.rev`). An edit you never apply is
 ignored, also after a crash restart; a `start` applies changed files by the same rules and refuses what they refuse
@@ -215,18 +248,26 @@ ignored, also after a crash restart; a `start` applies changed files by the same
 `rev`, `nextRev`, `changes`, `smoke`).
 
 - **Add a unit** at the end (or among units not yet started); a unit id is never reused. **Remove** only a unit
-  that never started. Units that have started keep their order at the front.
+  that never started. Units that have started keep their relative order.
 - **A unit not yet dispatched**: change anything.
-- **A dispatched unit**: its `scope`, `risk`, `resources` and spec path are fixed, and it may not gain an `after`.
-  Its spec: keep the schema and every item id (strike or defer, never delete or reuse), leave `scope` and
-  `resources` alone, and set `rev` to its recorded rev plus one. An active unit (not held) re-enters plan-check
+- **A dispatched unit**: its `resources` and spec path are fixed, its `risk` may only rise, and it may not gain an
+  `after`. Its `scope` may grow only when its spec cites an active ruling that applies to the unit and names
+  exactly the added patterns. Its spec: keep the schema and every item id (strike or defer, never delete or
+  reuse), leave `resources` alone, and set `rev` to its recorded rev plus one. An active unit (not held) re-enters plan-check
   on the revision at its next stage boundary before plan-check, lanes, gate or a fresh or fix build round (not a
   continue), keeping its branch and session; a unit parked at plan-check or gate waits for
   `roadmap resume <unit>`. A lane's `evidenceGlobs` and `evidenceExcludes` may change at the current rev (refused
   while a revision is pending): the next lanes attempt reads them, the approval stands. A merged, approved or
   publishing unit's spec is fixed.
-- **Routing**: a newly needed backend is smoked first. A seat change that moves the implementer of a unit whose
-  build started parks that unit `routing-changed` (above).
+- **Routing** (the plan's, or a unit's `routing` layer): a newly needed backend is smoked first. A seat change
+  that moves the implementer of a unit whose build started parks that unit `routing-changed` (above).
+- **Limits**: the plan's or a unit's `limits`; never below what a unit has already spent.
+- **Obligations**: add, split (the children keep the parent's text) or re-witness. Weakening one (remove, change
+  its statement or `docRef`, `must-hold` → `future`, waive, defer, retire) needs a ruling in force naming it:
+  land that with `rule` first.
+- **Vision**: only your `apply` changes it. Never reuse a clause id; withdraw a clause, never delete it.
+  `holistic` may be added to a running arc, never removed.
+- **Rulings ledger**: never through `apply`; use `rule`.
 - **Resources**: add any time; change or remove one only while nothing holds it and no residue names it.
   **Suite lanes**: not while a unit is past a candidate attempt.
 - `arc`, `integrationBranch`, `baseline` and `worktreeRoot` never change.

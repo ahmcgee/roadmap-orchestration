@@ -3,7 +3,7 @@
 // implemented by later steps against these signatures. The records they read and write (facts, holders,
 // `ProbeTarget`) live in src/core/events.ts.
 import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
-import type { CommandId, NeedsUserId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
+import type { CommandId, FindingId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, LaneTier, NeedsUserReason } from '../core/records.ts';
 import type { PlanM1, PlanUnit, UnitOrigin } from '../input/plan.ts';
@@ -12,8 +12,8 @@ import type { Backend } from '../routing/types.ts';
 // ---------------------------------------------------------------------------------------------------
 // Stages: admission boundaries and chains (F5)
 
-/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. */
-export const ADMISSION_STAGES = ['prepare', 'plan-check', 'build', 'lanes', 'gate', 'candidate'] as const satisfies readonly OutcomeStage[];
+/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` since M3. */
+export const ADMISSION_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'lanes', 'gate', 'candidate'] as const satisfies readonly OutcomeStage[];
 export type AdmissionStage = (typeof ADMISSION_STAGES)[number];
 /**
  * Mandatory chain stages: they run to completion whatever pause or drain says, so a build's retained
@@ -71,7 +71,8 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // ---------------------------------------------------------------------------------------------------
 // Priority and aging (F17)
 
-export const ORIGIN_RANK = { checkpoint: 0, planned: 1 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+/** R6: repair units first, then checkpoint-originated, then planned. */
+export const ORIGIN_RANK = { repair: 0, checkpoint: 1, planned: 2 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 
@@ -119,7 +120,12 @@ export type AdmissionConstraint =
   /** `base-red` blocks candidate admission. */
   | Readonly<{ type: 'base-red' }>
   /** An open blocking item that holds all admission: recovery-required, log-corrupt, a host subject, the supervisor crash limit. */
-  | Readonly<{ type: 'blocking-item'; id: NeedsUserId; reason: NeedsUserReason }>;
+  | Readonly<{ type: 'blocking-item'; id: NeedsUserId; reason: NeedsUserReason }>
+  /**
+   * M3 (§2.8, G10): an active P1 over an obligation the candidate selects holds its candidate admission (a repair
+   * declaring that obligation excepted); `finding-blocked` is also the pre-ff re-check's candidate outcome.
+   */
+  | Readonly<{ type: 'finding-blocked'; finding: FindingId; obligation: ObligationId }>;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 
