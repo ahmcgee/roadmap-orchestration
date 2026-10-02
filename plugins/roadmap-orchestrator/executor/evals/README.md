@@ -224,8 +224,8 @@ node evals/m3/check.ts /var/tmp/m3-default
   `stale-whole` (the first checkpoint, whatever its trigger), `bundles-whole` (decided bundles applied nothing;
   every unit a bundle added merged, its repaired findings resolved or ruled and its obligations held; its detail
   counts the bundle requests the driver answered, informational), `bundle-divergences` (one citing V-2),
-  `divergence-digest-bound` (each digest binds exactly the recorded ids not bound before; the driver acknowledged
-  each), `convergence-bound` (raised, each acknowledged), `drift-audit` (the vision lens alone), `final-audit`
+  `divergence-digest-bound` (each digest binds exactly the set of recorded ids not bound before; the driver acknowledged
+  each), `convergence-bound` (raised, each acknowledged), `drift-audit` (the vision lens alone, or the union its coalesced triggers require: all of L with a cadence one), `final-audit`
   (lenses of L on the last unit publication's head, then a no-op), `close-out` (docs-only, covering its own edge),
   `completion` (`arc-completed`, then the terminal snapshot; no unmet condition, so every generation quiescent),
   `lens-coverage` (each lens of L contiguous to the final head, no docs edge pending, the close-out's docs edge applied

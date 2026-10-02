@@ -15,10 +15,11 @@
 //                           every unit a bundle added merged, each finding it repairs resolved or ruled and each
 //                           obligation it serves held; the bundle requests the driver answered (informational)
 //   bundle-divergences      [5] every bundle revision recorded divergences, one citing V-2
-//   divergence-digest-bound [5] each digest binds exactly the divergences recorded before it that no earlier digest
+//   divergence-digest-bound [5] each digest binds exactly (as a set) the divergences recorded before it that no earlier digest
 //                           bound; the driver acknowledged each; none is left uncovered
 //   convergence-bound       [6] K = 1: `convergence-bound` was raised, each one acknowledged by the driver
-//   drift-audit             [8] an audit triggered by a bundle revision's drift ran the vision lens alone, completed
+//   drift-audit             [8] an audit triggered by a bundle revision's drift ran the vision lens alone, or with the
+//                           triggers coalesced into it the union they require (a cadence one: all of L), completed
 //   final-audit             [9] the last audit was `final`, ran lenses of L on the last unit publication's head; its
 //                           checkpoint no-oped
 //   close-out               [10] the close-out publication is docs-only (the rendered `.roadmap/` files) and records
@@ -348,8 +349,9 @@ function divergenceDigestBound(run: Run): Verdict {
   const bound = new Set<string>();
   const digests = factsOf(run, 'divergence-digest');
   for (const g of digests) {
-    const expected = factsOf(run, 'divergence').filter((d) => d.seq < g.seq && !bound.has(d.id)).map((d) => d.id as string);
-    if (JSON.stringify(g.ids) !== JSON.stringify(expected)) problems.push(`digest ${g.needsUser} binds ${JSON.stringify(g.ids)}, not ${JSON.stringify(expected)}`);
+    // The binding is a set: compared sorted, with the executor's own comparator (string order: D-10 before D-9).
+    const expected = factsOf(run, 'divergence').filter((d) => d.seq < g.seq && !bound.has(d.id)).map((d) => d.id as string).sort();
+    if (JSON.stringify([...g.ids].sort()) !== JSON.stringify(expected)) problems.push(`digest ${g.needsUser} binds ${JSON.stringify(g.ids)}, not ${JSON.stringify(expected)}`);
     for (const id of g.ids) bound.add(id);
   }
   const acks = run.report.devices.acks;
@@ -431,15 +433,36 @@ function latentRepair(run: Run): Verdict {
   return verdict(problems, `lens findings ${found.map((f) => `${f.id} (${f.lens}, ${f.severity})`).join(', ')} on S ${s.new}; ${repair} repairs ${JSON.stringify(named)}, published ${pub?.new}; resolved; I-2 held`);
 }
 
+/**
+ * The lenses an audit's coalesced triggers require (src/holistic/cadence.ts): drift L ∩ {drift, vision} (here the vision
+ * lens); cadence, unwitnessed and wall-clock all of L; a request its lenses ∩ L. `final` adds the lenses still
+ * outstanding, which the log does not record: with it, the required set is a floor and L the ceiling.
+ */
+function requiredLenses(run: Run, triggers: Extract<Fact, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
+  const out = new Set<string>();
+  for (const t of triggers) {
+    if (t.type === 'drift') out.add('vision');
+    else if (t.type === 'requested') {
+      const q = factsOf(run, 'audit-requested').find((f) => f.command === t.command);
+      for (const l of LENSES) if (q?.lenses == null || q.lenses.includes(l)) out.add(l);
+    } else if (t.type !== 'final') for (const l of LENSES) out.add(l);
+  }
+  return { floor: LENSES.filter((l) => out.has(l)), exact: !triggers.some((t) => t.type === 'final') };
+}
+
 function driftAudit(run: Run): Verdict {
   const revs = new Set(bundleRevisions(run).map((b) => b.rev as number));
   const audit = factsOf(run, 'audit-started').find((a) => a.triggers.some((t) => t.type === 'drift' && revs.has(t.planRev)));
   if (audit === undefined) return { pass: false, detail: `no audit triggered by the drift of bundle revisions ${[...revs].join(', ')}` };
   const problems: string[] = [];
-  if (JSON.stringify(audit.lenses) !== JSON.stringify(['vision'])) problems.push(`${audit.job} ran ${JSON.stringify(audit.lenses)}, not the vision lens alone`);
+  // A drift trigger alone runs the vision lens; coalesced with a cadence (or other) trigger the audit runs the union.
+  const { floor, exact } = requiredLenses(run, audit.triggers);
+  const ran: readonly string[] = [...audit.lenses].sort();
+  const fits = exact ? JSON.stringify(ran) === JSON.stringify([...floor].sort()) : floor.every((l) => ran.includes(l)) && ran.every((l) => (LENSES as readonly string[]).includes(l));
+  if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
   const ck = checkpointOf(run, audit.job);
-  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran vision; ${ck?.job} ${ck?.decision}`);
+  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${ck?.job} ${ck?.decision}`);
 }
 
 function finalAudit(run: Run): Verdict {
