@@ -64,6 +64,7 @@ rulings holds each ruling you issue as the text of one JSON object with exactly 
 - kind: one of ${quoted(RULING_KINDS)}.
 - supersedes: [{id, part}], part a string or null. condition: a string or null.
 - docRefs (never empty): [{path, anchor, quotedText, relation}], relation one of ${quoted(DOC_RELATIONS)}; a deviates reference needs contractOps.
+- An anchor (in docRefs and contractOps) is #<heading-slug> for a section, the heading lowercased with punctuation dropped and spaces as hyphens (## Money is #money), spanning to the next heading of its level or above; otherwise it is literal text found on exactly one line, spanning to the next heading. quotedText occurs verbatim inside that span, and a contract op's oldText exactly once.
 - contractRefs: paths, ascending. contractOps: [{path, anchor, oldText, newText}].
 - obligations: I-n ids, ascending. obligationDispositions: [{id, disposition}] ascending by id, disposition one of ${quoted(OBLIGATION_DISPOSITIONS)}.
 - cites: active V-n, ascending, never empty. evidence: strings, never empty.

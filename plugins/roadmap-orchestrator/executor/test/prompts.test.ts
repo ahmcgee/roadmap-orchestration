@@ -5,6 +5,7 @@ import { DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef,
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
+import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted } from '../src/prompts/inputs.ts';
 import {
@@ -475,6 +476,16 @@ describe('M3 prompts: the vision and the arc roles', () => {
   it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
     const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
     assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
+  });
+
+  it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    assert.match(sys, /An anchor \(in docRefs and contractOps\) is #<heading-slug> for a section, .*\(## Money is #money\).*; otherwise it is literal text found on exactly one line/);
+    const doc = '# Contract\n\n## Money\n\nformatAmount renders two decimals.\n\n## Other\n\nmoney elsewhere\n';
+    assert.equal(headingSlug('Money'), 'money', 'the example is the slug code computes');
+    assert.equal(quotedTextReason(doc, '#money', 'renders two decimals'), null);
+    assert.equal(quotedTextReason(doc, 'formatAmount renders', 'two decimals'), null, 'literal text on one line');
+    assert.match(quotedTextReason(doc, 'money', 'x') ?? '', /matches 0 lines|is not under/, 'a bare word is literal text, not a heading');
   });
 
   it('a latched future obligation renders as must-hold (latched), so a split can keep its restating child must-hold', () => {
