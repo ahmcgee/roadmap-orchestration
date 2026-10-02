@@ -15,7 +15,9 @@
 // the arc's slice and its horizon (never foreclosed), and open questions: act on the working assumption, prefer the
 // reversible choice, and request what would be costly to undo if it proves false (DESIGN §2.8 amendment). 2026-10-02
 // (paid m3 run 7): the ruling sidecar field by field, its schema value and closed enums from the reader's constants;
-// a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold.
+// a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold. Run 9: a
+// P1 is never accepted or deferred (left to its repair); anchors as `anchorSection` reads them; a retry reads the
+// rejected attempt's reasons.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   architectureDocument, coverageText, divergencesText, documentsXml, findingViewsText, obligationsText, priorInvalidText, referenceIndexText, rulingsText, triggerText,
@@ -73,7 +75,7 @@ The executor stamps ruledBy and consistency from this checkpoint's job and the r
 You cannot express an act that is irreversible or destructive outside the sandbox, that may cost more than $10, or that has legal ramifications, and you cannot touch the vision, resource declarations, .roadmap/config.json, gc or ref deletion. For any of these you may only request it: class names which, summary says what and why in plain sentences. The same holds for what an op would bring in: a lane program the plan in force does not already run, a new environment prerequisite for a lane, or a contract op on a path outside the plan's contracts and architecture docs is a request, never an op. A request raises a blocking question for the owner, so ask only for what the vision needs.
 
 # How to decide
-Weigh every open finding, every obligation not held, the coverage gaps and the uncovered divergences before you decide; do not stop at the first. For each finding, either address it with an op, or dispose of it in findingDispositions: dismissed (not a defect; say why), deferred (real, not now) or accepted (real, handled by the ops or already owned). Open the files your evidence names before you rely on them: recognising a name is not knowing its state in this repository.
+Weigh every open finding, every obligation not held, the coverage gaps and the uncovered divergences before you decide; do not stop at the first. For each finding, either address it with an op, or dispose of it in findingDispositions: dismissed (not a defect; say why), deferred (real, not now) or accepted (real, handled by the ops or already owned). A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it (one you admit or patch, or the unit that already owns it), which resolves it when that unit publishes. Open the files your evidence names before you rely on them: recognising a name is not knowing its state in this repository.
 
 Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
 

@@ -4,7 +4,7 @@
 // noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
 // bundle.withdrawn-cite-invalid (H16), bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
-// ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
+// ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,13 +17,14 @@ import { designParkRoute, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import { raiseDigest, uncoveredDivergences } from '../src/holistic/divergence.ts';
 import { findingKey } from '../src/holistic/types.ts';
-import { keptPayload } from '../src/input/inforce.ts';
+import { keptPayload, requirePlanInForce } from '../src/input/inforce.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
+import { syncRepairs } from '../src/pipeline/reproduce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { VALID_OP, checkpointAnswer, checkpointStep, interpretationOnlyNoop, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -33,7 +34,7 @@ import {
 } from './fixtures/checkpoint-common.ts';
 import { auditArc, mapped } from './fixtures/audit-common.ts';
 import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, serialRuntime } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, codexStep, contextFor, gateStep, mulBuild, stepUntil } from './fixtures/unit-common.ts';
 import { candidateTree } from './fixtures/brake-common.ts';
 import { scriptTree } from './helpers/witness.ts';
@@ -507,6 +508,46 @@ describe('design parks (OR-Q1)', () => {
       const [second] = itemsOf(r, 'respec-second');
       assert.equal(second?.blocking, true);
       assert.deepEqual(checkpointCalls(r), ['ckpt-1']);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('P1s and their repair (paid m3 run 9)', () => {
+  test('bundle.p1-left-to-repair: a checkpoint accepting a P1 is invalid; left undispositioned and named in an admitted repair\'s repairs, the bundle applies, the repair owns it, merges and resolves it', T, async () => {
+    const p1 = { severity: 'P1' as const, obligation: 'I-1', claim: 'I-1 is witnessed too weakly' };
+    const d = checkpointArc([lensStep('audit-1', 'invariants', [p1]), lensStep('audit-1', 'vision')], {
+      units: [{ id: 'u1', obligations: ['I-1'] }], mapping: mapped(['I-1']), audit: { lenses: ['invariants', 'vision'] },
+    });
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const op = admitOp(d, 'r1') as Record<string, JsonValue>;
+      const spec = { ...(JSON.parse(op['spec'] as string) as Record<string, JsonValue>), repairs: ['F-1'] };
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: JSON.stringify(spec) };
+      const accepting = checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'handled by r1' }] });
+      appendSteps(d, [
+        checkpointStep('ckpt-1', accepting), checkpointStep('ckpt-2', bundle([repair])),
+        { ...planCheckStep({ decision: 'approve' }), unit: 'r1' }, { ...mulBuild(), unit: 'r1' }, { ...gateStep({ decision: 'approve' }), unit: 'r1' },
+      ]);
+      await completedAudit(r, ctx);
+      const finding = () => r.journal.view.holistic().findings.find((f) => f.id === 'F-1')!;
+      assert.deepEqual([finding().severity, finding().obligation, finding().state], ['P1', 'I-1', 'open']);
+      const first = await runCheckpoint(ctx);
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'invalid', JSON.stringify(first));
+      assert.match(first.decision.detail, /finding F-1 is a P1: P1s never bank/);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.deepEqual(requirePlan(r).units.find((u) => u.id === 'r1')?.origin, 'repair');
+      // The executor's context follows the plan in force (this test's own does not follow a revision).
+      const plan = () => requirePlanInForce(ctx.runDir, r.journal.view).plan;
+      const live = { ...ctx, plan, ...serialRuntime({ ...ctx, plan }) };
+      syncRepairs(live);
+      assert.deepEqual([finding().state, finding().owner], ['owned', 'r1'], 'the admitted repair owns it');
+      const r1 = live.plan().units.find((u) => u.id === 'r1')!;
+      assert.deepEqual(await runUnit(live, r1, admitAll), { kind: 'merged' });
+      assert.equal(finding().state, 'resolved', 'its repair published: the P1 is resolved, never banked');
     } finally {
       r.journal.close();
     }

@@ -472,6 +472,11 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.match(sys, /appliesTo: \{"type": "arc"\} or \{"type": "units", "units": \[unit ids, ascending\]\}/);
   });
 
+  it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
+  });
+
   it('a latched future obligation renders as must-hold (latched), so a split can keep its restating child must-hold', () => {
     const view = { ...observed('I-1', 'A month reconciles.', SHA_A), obligation: { ...obligation('I-1', 'A month reconciles.'), activation: 'future' as const, deliveredBy: [unitId('report')] } };
     assert.match(obligationsText([{ ...view, latched: true }], { serves: true }), /^- I-1 \(rev 1; must-hold \(latched\); /);
