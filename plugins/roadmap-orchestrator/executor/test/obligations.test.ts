@@ -61,7 +61,7 @@ const ruling = (id: string, dispositions: readonly Readonly<{ id: string; dispos
   },
 });
 
-const ARCHITECT: ClassifyContext = { vision: VISION, rulings: [], author: { type: 'architect' } };
+const ARCHITECT: ClassifyContext = { vision: VISION, rulings: [], author: { type: 'architect' }, latched: new Set(), published: new Set() };
 const withRulings = (rulings: readonly RulingSidecar[]): ClassifyContext => ({ ...ARCHITECT, rulings });
 const replace = (id: string, over: Raw): Raw[] => BASE.map((o) => (o['id'] === id ? { ...o, ...over } : o));
 
@@ -152,6 +152,33 @@ describe('obligation edits', () => {
     const adopted = classifyObligations(PREV, adopt, ARCHITECT).reasons;
     assert.ok(adopted.includes('I-2 splits into I-3, which is not a new obligation'), JSON.stringify(adopted));
     assert.ok(adopted.includes("I-3's parent changed (a split family is fixed)"), JSON.stringify(adopted));
+  });
+
+  it('obligations.split-no-weakening: under a must-hold parent (latched included), a future child must name a delivering unit not yet published', () => {
+    // I-1 (future, delivered by report) latched; split into a restating child and a new one delivered by repair.
+    const splitI1 = (restating: Raw): Obligations => file([
+      ...replace('I-1', { witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4', 'I-5'] } }),
+      { ...restating, parent: 'I-1' },
+      ob('I-5', { parent: 'I-1', activation: 'future', deliveredBy: ['repair'], statement: 'A bad entry stops the run.' }),
+    ]);
+    const latched: ClassifyContext = { ...ARCHITECT, latched: new Set([obligationId('I-1')]), published: new Set([unitId('report')]) };
+    const asFuture = splitI1(ob('I-4', { activation: 'future', deliveredBy: ['report'], statement: 'A month reconciles in one command.' }));
+    assert.deepEqual(classifyObligations(PREV, asFuture, latched).reasons, [
+      'I-4 is future under must-hold I-1 and delivered by only published units (report): it could never latch, a must-hold → future weakening that needs a ruling; keep it must-hold',
+    ]);
+    const asMustHold = splitI1(ob('I-4', { statement: 'A month reconciles in one command.' }));
+    assert.deepEqual(classifyObligations(PREV, asMustHold, latched).reasons, []);
+    // Not latched, I-1 is future: a future child delivered by published units weakens nothing.
+    assert.deepEqual(classifyObligations(PREV, asFuture, { ...latched, latched: new Set() }).reasons, []);
+    // A must-hold parent, never latched: the same rule.
+    const i3 = file([
+      ...replace('I-3', { witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4'] } }),
+      ob('I-4', { parent: 'I-3', activation: 'future', deliveredBy: ['report'], statement: 'Unknown commands exit 2.', serves: ['V-2'] }),
+    ]);
+    assert.deepEqual(classifyObligations(PREV, i3, latched).reasons, [
+      'I-4 is future under must-hold I-3 and delivered by only published units (report): it could never latch, a must-hold → future weakening that needs a ruling; keep it must-hold',
+    ]);
+    assert.deepEqual(classifyObligations(PREV, i3, ARCHITECT).reasons, [], 'report not yet published: I-4 can still latch');
   });
 });
 

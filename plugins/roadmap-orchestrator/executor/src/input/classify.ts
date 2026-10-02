@@ -753,7 +753,10 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
   }
   if (next === null || !inputs.changed.obligations) return none;
   const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const };
-  const v = classifyObligations(prev, next, { vision: inputs.vision, rulings: inputs.sidecars, author });
+  const v = classifyObligations(prev, next, {
+    vision: inputs.vision, rulings: inputs.sidecars, author,
+    latched: new Set(input.view.holistic().latched.map((l) => l.obligation)), published: new Set(input.view.publications().map((p) => p.unit)),
+  });
   reasons.push(...v.reasons);
   const changes: PlanChange[] = [];
   const dispositions: ObligationRows['dispositions'][number][] = [];

@@ -171,6 +171,8 @@ export const visionInputOf = (v: Vision, advances: readonly VisionClauseId[]): V
 export type ObligationView = Readonly<{
   obligation: ObligationDef;
   exempt: boolean;
+  /** A future obligation latched by a publication: must-hold from then on. */
+  latched: boolean;
   observation: Readonly<{ key: ObservationKey; verdict: ObservationVerdict }> | null;
 }>;
 
@@ -442,7 +444,7 @@ export function obligationsText(views: readonly ObligationView[], opts: Readonly
   return views.map((v) => {
     const o = v.obligation;
     const head = [
-      `rev ${o.rev}`, o.activation, obligationState(o), ...(v.exempt ? ['exempt'] : []), ...(opts.serves ? [`serves ${o.serves.join(', ') || 'none'}`] : []),
+      `rev ${o.rev}`, v.latched ? 'must-hold (latched)' : o.activation, obligationState(o), ...(v.exempt ? ['exempt'] : []), ...(opts.serves ? [`serves ${o.serves.join(', ') || 'none'}`] : []),
     ];
     const witness = o.witness === null ? 'none' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
     const delivered = o.deliveredBy.length === 0 ? '' : `\n  Delivered by: ${o.deliveredBy.join(', ')}`;

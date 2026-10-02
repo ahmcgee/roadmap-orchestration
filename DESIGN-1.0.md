@@ -432,7 +432,7 @@ LR-b); M3 fixtures seed obligations by hand.
 | Edit | Rule |
 |---|---|
 | added | `rev` 1; `serves` cites active clauses; a `must-hold` one must show held in the revision's docs candidate (G12); a `future` one needs `deliveredBy` |
-| split | the parent goes to `split{children}`, its `witness` and `proofJudgment` null; each child names the parent and has its own witness. The architect's children include the parent's text verbatim; a checkpoint split may drop text only citing `V-n`, and code records the dropped text as a `split-dropped` divergence |
+| split | the parent goes to `split{children}`, its `witness` and `proofJudgment` null; each child names the parent and has its own witness. The architect's children include the parent's text verbatim; a checkpoint split may drop text only citing `V-n`, and code records the dropped text as a `split-dropped` divergence. Under a must-hold parent (latched included) a `future` child needs a `deliveredBy` unit not yet published |
 | witness | a fresh `proofJudgment`; a shrunk `testIds` set counts as weakening |
 | weakening (removed, statement or `docRef` changed, `must-hold` → `future`, waived, deferred, retired) | a ruling in force naming the id in `obligationDispositions`: the architect's, or the checkpoint's citing active `V-n` plus evidence |
 

@@ -720,10 +720,11 @@ export function observedViews(
   const tree = revParse(ctx.repo, `${commit}^{tree}`);
   const store = observations(ctx);
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
   return defs.map((o) => {
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
     const found = lane === undefined ? null : reuse(store, keyOf(tree, lane, laneEnvId(ctx, lane)));
-    return { obligation: o, exempt: isExempt(o), observation: found === null || o.witness === null ? null : { key: found.key, verdict: verdictOf(found.record, o.witness) } };
+    return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: found === null || o.witness === null ? null : { key: found.key, verdict: verdictOf(found.record, o.witness) } };
   });
 }
 

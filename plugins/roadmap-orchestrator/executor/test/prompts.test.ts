@@ -6,7 +6,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, pasted } from '../src/prompts/inputs.ts';
+import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted } from '../src/prompts/inputs.ts';
 import {
   PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateDecisionsFile, validateGateOutput,
   validatePlanCheckOutput,
@@ -41,7 +41,7 @@ const obligation = (id: string, statement: string): ObligationDef => ({
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 });
 const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
-  obligation: obligation(id, statement), exempt: false,
+  obligation: obligation(id, statement), exempt: false, latched: false,
   observation: { key: { treeSha: tree, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' as const },
 });
 const findingView = (id: string, claim: string) => ({
@@ -458,7 +458,14 @@ describe('M3 prompts: the vision and the arc roles', () => {
       /irreversible or destructive/, /more than \$10/, /legal ramifications/, /may only request it/, /lane program the plan in force does not already run/,
       /new environment prerequisite/, /outside the plan's contracts and architecture docs/, /never cited/, /no-op is legitimate/,
       /[Nn]obody can answer a question/, /not a transcript of your reasoning/,
+      /Splitting a must-hold obligation \(a latched one included\) keeps every child that restates it must-hold/,
     ]) assert.match(sys, needle);
+  });
+
+  it('a latched future obligation renders as must-hold (latched), so a split can keep its restating child must-hold', () => {
+    const view = { ...observed('I-1', 'A month reconciles.', SHA_A), obligation: { ...obligation('I-1', 'A month reconciles.'), activation: 'future' as const, deliveredBy: [unitId('report')] } };
+    assert.match(obligationsText([{ ...view, latched: true }], { serves: true }), /^- I-1 \(rev 1; must-hold \(latched\); /);
+    assert.match(obligationsText([view], { serves: true }), /^- I-1 \(rev 1; future; /);
   });
 
   it('the lens prompt carries exactly one `lens: <kind>` marker, and each kind its own brief', () => {

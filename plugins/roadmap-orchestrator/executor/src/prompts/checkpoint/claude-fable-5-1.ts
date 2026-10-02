@@ -44,7 +44,7 @@ You may amend the implementation contracts, the unit specs, routing, limits and 
 - cut: a unit leaves the plan, with the reason.
 - route: a unit's seats, by model class (efficient, frontier, summit).
 - limits: bounds for one unit, or for the arc when unit is null (convergenceK is arc-wide).
-- obligation-split: children replace an obligation, each with its own witness. Dropping part of the parent's text is recorded as a divergence the owner reviews.
+- obligation-split: children replace an obligation, each with its own witness. Dropping part of the parent's text is recorded as a divergence the owner reviews. Splitting a must-hold obligation (a latched one included) keeps every child that restates it must-hold; a future child is only for new behaviour a unit not yet published delivers.
 - obligation-dispose: waive, defer, retire or amend an obligation, under a ruling in rulings that names it in obligationDispositions.
 - invalidate-approval: a unit's plan-check or gate approval no longer stands.
 - rule: put a ruling from rulings in force. A ruling may carry contractOps: anchor-exact edits to the plan's contracts or architecture docs.

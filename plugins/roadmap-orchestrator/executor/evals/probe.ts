@@ -175,7 +175,7 @@ const MINI_OBLIGATION: ObligationDef = {
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 };
 const MINI_OBLIGATIONS: readonly ObligationView[] = [{
-  obligation: MINI_OBLIGATION, exempt: false,
+  obligation: MINI_OBLIGATION, exempt: false, latched: false,
   observation: { key: { treeSha: TREE, lane: laneId('unit'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' },
 }];
 const MINI_ARCH: ArchitectureInput = { kind: 'full', doc: { path: repoPath('docs/arch.md'), text: '# Architecture\n\nOne module, convert.ts, exports toFahrenheit and toCelsius.' } };

@@ -9,7 +9,9 @@
 //              witness and a fresh proof. Every sentence of the parent's statement must occur verbatim in a child;
 //              the architect's children may drop none, a checkpoint split drops text only citing active clauses,
 //              and the dropped sentences are returned for its `split-dropped` divergence. A split parent stays
-//              split with the same children.
+//              split with the same children. A split may not weaken: under a must-hold parent (latched included), a
+//              future child must name a delivering unit not yet published, else it could never latch and its
+//              must-hold text would go ungraded (paid m3 run 7).
 //   witness    a changed witness takes a fresh proof judgment that `proves`; a test id it no longer names is
 //              weakening (amended)
 //   disposed   weakening: removed (retired), statement or docRef changed or must-hold → future (amended),
@@ -21,7 +23,7 @@
 // Everywhere: `rev` rises by one exactly when the statement, docRef or activation changes; a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
-import type { LaneId, ObligationId, RulingId, VisionClauseId } from '../core/ids.ts';
+import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf,
@@ -85,6 +87,10 @@ export type ClassifyContext = Readonly<{
   /** The ruling sidecars in force, this revision's own included. */
   rulings: readonly RulingSidecar[];
   author: ObligationAuthor;
+  /** Future obligations latched by a publication: must-hold from then on. */
+  latched: ReadonlySet<ObligationId>;
+  /** The units published so far. */
+  published: ReadonlySet<UnitId>;
 }>;
 
 /** Classifies the obligations file `next` against the one in force (`prev`, null before any); every reason listed. */
@@ -182,6 +188,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
 
   function split(p: ObligationDef, o: ObligationDef, children: readonly ObligationId[]): void {
     const kids: ObligationDef[] = [];
+    const mustHold = p.activation === 'must-hold' || ctx.latched.has(p.id);
     for (const c of children) {
       const child = after.get(c)!;
       if (!isNew(c)) {
@@ -192,6 +199,9 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
       if (child.state.type !== 'active') reasons.push(`${c} is new and starts active, not ${child.state.type}`);
       proves(child);
       newCites(child, undefined);
+      if (mustHold && child.activation === 'future' && child.deliveredBy.every((u) => ctx.published.has(u))) {
+        reasons.push(`${c} is future under must-hold ${o.id} and delivered by only published units (${child.deliveredBy.join(', ')}): it could never latch, a must-hold → future weakening that needs a ruling; keep it must-hold`);
+      }
       kids.push(child);
     }
     const dropped = sentences(p.statement).filter((t) => !kids.some((k) => k.statement.includes(t)));

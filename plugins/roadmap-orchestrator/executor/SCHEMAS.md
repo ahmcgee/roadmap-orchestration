@@ -1355,6 +1355,8 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
 4. **The split text rule** (`classifyObligations`): every sentence of the parent's statement (split after `.`, `;`,
    `!` or `?` and white space) occurs verbatim in some child's statement. The architect's split drops none; a
    checkpoint's drops text only citing active clauses, and the dropped sentences go to its `split-dropped` divergence.
+   A split may not weaken: under a must-hold parent (a latched one included), a `future` child names at least one
+   `deliveredBy` unit not yet published, else the split is refused (such a child could never latch; paid m3 run 7).
 5. **Weakening needs a ruling** (`weakeningsOf`, `dispositionRuling`): removing an obligation is `retired` (removing
    one already retired is free); a statement or docRef change, must-hold → future, or a test id dropped from its
    witness is `amended`; a move to `waived`, `deferred` or `retired` needs that state's own ruling. Each needs a ruling
