@@ -2,7 +2,7 @@
 // `callArcRole`), over real arcs: real git, real processes, the fake claude answering lens calls keyed by job and lens, fake
 // witness lanes scripted per tree. Named tests: cadence.triggers, cadence.final-outstanding-lenses (H9),
 // audit.immutable-inputs, audit.coverage, audit.race-ends-before-merge and audit.race-merge-during-audit (both race
-// orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8),
+// orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
 // coverage.vision-reset (H3), and the crash cells of the matrix row AUDIT_JOB (test/matrix.ts).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -425,6 +425,36 @@ describe('coverage', () => {
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: D1, to: S1 }, { lens: 'vision', from: D1, to: S1 }]);
       assert.deepEqual(watermarks(ctx, L2), [['invariants', D2, false], ['vision', D2, false]], 'the gap closed: the kept edge applies');
+    } finally {
+      stop();
+      r.journal.close();
+    }
+  });
+
+  test('coverage.docs-edge-subsumed (paid m3 run 8): a docs edge the watermark passes inside an audit\'s range, without following it, is not pending', T, async () => {
+    const { d } = auditArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants')],
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
+    });
+    const r = contextFor(d);
+    const { ctx, w } = auditContext(r);
+    const stop = ticking(w);
+    try {
+      const S = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      const S1 = head(d.repo);
+      // The docs edge S1→D1 does not reach from the watermark S: kept, pending.
+      await rule(w, r, 'C-2');
+      const D1 = head(d.repo);
+      const pending = () => lensCoverage(r.journal.view.holistic(), coverageBase(ctx, D1)!, 'vision').pendingDocs.map((e) => [e.from, e.to]);
+      assert.deepEqual(pending(), [[S1, D1]]);
+      // The audit at D1 covers S→D1 across the edge: the watermark passes it without following it.
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S, to: D1 }, { lens: 'vision', from: S, to: D1 }]);
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false], ['vision', D1, false]]);
+      assert.deepEqual(pending(), [], 'subsumed by audit-1\'s range, not pending');
     } finally {
       stop();
       r.journal.close();

@@ -10,7 +10,10 @@
 // - A lens's watermark starts at the base and follows, from wherever it stands, each range an audit under the current
 //   vision covered for that lens (`audit-ended.covered`: from the lens's watermark at the audit's capture to the audited
 //   SHA, never beyond it) and each docs-only edge (`docs-covered{U→D}`, A17, H8). An edge extends the watermark only
-//   once it reaches U; until then it is kept, and applies when the gap closes. Nothing else moves a watermark.
+//   once it reaches U; until then it is kept, and applies when the gap closes. Nothing else moves a watermark. A docs
+//   edge the watermark passed without following it (an audit's range ran across it) is subsumed, never pending: its D
+//   was published before the watermark's head was, which the log orders (an audit's range ends at the head its
+//   `audit-started` read, a docs edge's at the head its `docs-covered` follows).
 // - A lens has an outstanding range while its watermark is not the integration head.
 //
 // The integration history is read from the published `integration.ff`s: a docs publication's at its intent's seq (it
@@ -131,16 +134,18 @@ export type LensCoverage = Readonly<{
  * watermark an audit captured at its start is this with `before` its `audit-started` seq.
  */
 export function lensCoverage(fold: HolisticFold, base: CoverageBase, lens: LensKind, before = Number.POSITIVE_INFINITY): LensCoverage {
-  type Edge = Readonly<{ from: Sha; to: Sha; by: 'audit' | 'docs'; job: JobId }>;
+  /** `at`: a seq by which `to` was the integration head (an audit's `audit-started`, a docs edge's `docs-covered`). */
+  type Edge = Readonly<{ from: Sha; to: Sha; by: 'audit' | 'docs'; job: JobId; at: number }>;
   const edges: Edge[] = [
     ...fold.audits.flatMap((a) => (a.ended === null || a.ended.seq >= before || a.started.seq <= base.seq || a.started.visionSha256 !== base.visionSha256
       ? []
-      : a.ended.covered.filter((c) => c.lens === lens).map((c): Edge => ({ from: c.from, to: c.to, by: 'audit', job: a.started.job })))),
-    ...fold.docsCovered.filter((d) => d.seq > base.seq && d.seq < before).map((d): Edge => ({ from: d.from, to: d.to, by: 'docs', job: d.pub })),
+      : a.ended.covered.filter((c) => c.lens === lens).map((c): Edge => ({ from: c.from, to: c.to, by: 'audit', job: a.started.job, at: a.started.seq })))),
+    ...fold.docsCovered.filter((d) => d.seq > base.seq && d.seq < before).map((d): Edge => ({ from: d.from, to: d.to, by: 'docs', job: d.pub, at: d.seq })),
   ];
   const used = new Set<number>();
   const followed: Edge[] = [];
   let watermark = base.head;
+  let reachedAt = base.seq;
   for (;;) {
     const i = edges.findIndex((e, k) => !used.has(k) && e.from === watermark);
     if (i === -1) break;
@@ -148,9 +153,12 @@ export function lensCoverage(fold: HolisticFold, base: CoverageBase, lens: LensK
     const e = edges[i]!;
     followed.push(e);
     watermark = e.to;
+    reachedAt = e.at;
   }
-  const pendingDocs = edges.flatMap((e, k) => (used.has(k) || e.by !== 'docs' ? [] : [{ pub: e.job, from: e.from, to: e.to }]));
-  return { lens, watermark, followed, pendingDocs };
+  // Pending: a docs edge not followed and published after the watermark's head (a gap still open); one published
+  // before it lies inside the history the watermark covers.
+  const pendingDocs = edges.flatMap((e, k) => (used.has(k) || e.by !== 'docs' || e.at < reachedAt ? [] : [{ pub: e.job, from: e.from, to: e.to }]));
+  return { lens, watermark, followed: followed.map(({ at: _at, ...e }) => e), pendingDocs };
 }
 
 /** Each lens of `lenses` with its coverage and whether a range is outstanding at `head`. */

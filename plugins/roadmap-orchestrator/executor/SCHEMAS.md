@@ -1789,7 +1789,8 @@ src/pipeline/dispatch.ts `callArcRole`):
 1. **Coverage (H3, lead ruling 2026-09-30).** A lens's watermark starts at the arc's base (the integration head at the
    revision that turned the arc holistic: its docs publication's head when it published, else the head its
    `revision.commit` found) and follows, from wherever it stands, each range an audit covered for that lens and each
-   docs-only edge (`docs-covered{U→D}`, applied only once the watermark reaches U, kept until then; A17, H8). A vision
+   docs-only edge (`docs-covered{U→D}`, applied only once the watermark reaches U, kept until then; A17, H8; one the
+   watermark passed inside an audit's range, D published before the watermark's head, is subsumed, not pending). A vision
    revision clears every coverage recorded before it (audits started under an older vision, docs edges before it), so
    the next audit of each lens at X covers everything up to X from the base, exactly as a first audit would: no merged
    range survives a vision change unaudited, at no extra call. The integration history is read from the published
