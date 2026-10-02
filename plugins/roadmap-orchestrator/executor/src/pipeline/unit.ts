@@ -61,7 +61,8 @@ import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCanc
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
 import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { type LaneRecord, latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import type { FixRound } from '../prompts/inputs.ts';
 import { prepare } from './prepare.ts';
 import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
 import {
@@ -182,6 +183,32 @@ function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
   };
 }
 
+/** Why candidate attempt `at` (an outcome `red`) was red, as its fix round reads it: the fix, and the suite's ledger. */
+function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Readonly<{ fix: FixRound; suite: readonly LaneRecord[] }> {
+  const view = ctx.journal.view;
+  // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
+  const batch = memberBatchCandidate(view, at);
+  if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
+  // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
+  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
+  const survived = mutantFix(ctx, at);
+  if (survived !== null) return { fix: survived, suite };
+  const failing = suite.filter((l) => l.verdict !== 'pass');
+  // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
+  if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
+  return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
+}
+
+/**
+ * The cause of a red candidate attempt `at` in sentences, as its fix round would read it (the checkpoint's park
+ * trigger): the suite lanes that were not green, then the fix round's directives (the obligations the brake graded red).
+ */
+export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StageParent): readonly string[] {
+  const { fix, suite } = candidateRed(ctx, unit, at);
+  return [...suite.filter((l) => l.verdict !== 'pass').map((l) => `Suite lane ${l.lane} ended ${l.verdict} on the candidate.`), ...fix.directives];
+}
+
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
   if (round !== 'fix') return { kind: round };
@@ -210,19 +237,8 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       if (f.outcome === 'transient-violation') {
         return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }
-      const at = stageParent(f);
-      // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
-      const batch = memberBatchCandidate(view, at);
-      if (batch !== null) return candidateFixRound(batchMemberFix(ctx, unit, batch), [], verification, tip);
-      // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-      const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
-      // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
-      const survived = mutantFix(ctx, at);
-      if (survived !== null) return candidateFixRound(survived, suite, verification, tip);
-      const failing = suite.filter((l) => l.verdict !== 'pass');
-      // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
-      if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return candidateFixRound(candidateBrakeFix(ctx, unit, at), suite, verification, tip);
-      return candidateFixRound({ failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite, verification, tip);
+      const red = candidateRed(ctx, unit, stageParent(f));
+      return candidateFixRound(red.fix, red.suite, verification, tip);
     }
     default:
       throw new Error(`unit ${unit.id}: no fix round follows ${f.stage} ${f.outcome}`);

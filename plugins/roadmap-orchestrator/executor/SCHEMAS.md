@@ -1883,7 +1883,10 @@ src/pipeline/dispatch.ts `callArcRole`):
    `bundle-request` with no options), or its latest job's `bundle-request` was acknowledged `apply`. That next job
    enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
    requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
-   checkpoint's generation is the latest recorded (1 before any).
+   checkpoint's generation is the latest recorded (1 before any). Its prompt reads the park's cause from the unit's
+   parking outcome (`triggerView`): a design question (an `escalation` or `refusal` park), or an executor-side cause
+   with its outcome, reason and detail (a spent bound; a red candidate's failing suite lanes and the fix round's
+   directives, `candidateRedCause`), so an executor-side red is never read as a design question (paid m3 run 7).
 10. **Evidence.** After `rejected{evidence}`, the lanes of the observations it cited are re-witnessed on the head under
     the rejected job before the trigger's next capture (a crash in between repeats it, reusing what ran).
 11. **Interrupted calls.** A call cancelled or failed with a backend-park class leaves the job running; a later run asks

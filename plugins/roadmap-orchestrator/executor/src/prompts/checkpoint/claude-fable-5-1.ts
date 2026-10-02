@@ -21,7 +21,7 @@ import {
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 
-const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks on a design question. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
+const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks for want of a spec revision or a re-entry. The trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
 
 This is a fresh session. Every input was captured when the checkpoint was triggered and is in the message.
 
@@ -76,7 +76,7 @@ ${visionText(i.vision)}
 </vision>
 
 <trigger>
-This checkpoint runs because ${triggerText(i.trigger)}. The integration head is ${i.head}.
+This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
 </trigger>
 
 <vision_coverage>

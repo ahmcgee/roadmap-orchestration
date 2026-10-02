@@ -6,14 +6,15 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { DivergenceId, FindingId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { OutcomeStage } from '../core/events.ts';
+import type { DivergenceId, FindingId, JobId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, IgnoredCensus, LaneDef, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  CheckpointTrigger, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
+  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
@@ -204,9 +205,22 @@ export type LensInputs = Readonly<{
   checkout: AbsPath;
 }>;
 
+/**
+ * Why a unit parked, as the checkpoint reads it. `design`: a judgment's escalation or a refusal, a design question;
+ * else the executor parked it, and `detail` says why (a spent bound, the obligations its candidate left red).
+ */
+export type ParkCause = Readonly<{
+  stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
+}>;
+
+/** A checkpoint's trigger: a completed audit, or a park with its cause (null: the unit has moved on since the capture). */
+export type TriggerView =
+  | Readonly<{ type: 'audit'; job: JobId }>
+  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
+
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
-  trigger: CheckpointTrigger;
+  trigger: TriggerView;
   head: Sha;
   /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
   plan: string;
@@ -475,6 +489,12 @@ export function divergencesText(divergences: CheckpointInputs['divergences']): s
   return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
 }
 
-export function triggerText(t: CheckpointTrigger): string {
-  return t.type === 'audit' ? `the audit ${t.job} completed` : `unit ${t.unit} parked on a design question (log seq ${t.seq})`;
+/** Why the checkpoint runs, in sentences. */
+export function triggerText(t: TriggerView): string {
+  if (t.type === 'audit') return `the audit ${t.job} completed.`;
+  const c = t.cause;
+  if (c === null) return `unit ${t.unit} parked (log seq ${t.seq}); it has moved on since.`;
+  const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;
+  if (c.design) return `unit ${t.unit} parked on a design question (log seq ${t.seq}): ${ended}.`;
+  return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
 }

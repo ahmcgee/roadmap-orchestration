@@ -4,7 +4,7 @@
 // noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
 // bundle.withdrawn-cite-invalid (H16), bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
-// ckpt.design-park-respec-first (OR-Q1), and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
+// ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,10 +31,12 @@ import { BUNDLE_ACTIVATE, CHECKPOINT_JOB, crashCells } from './matrix.ts';
 import {
   type Wired, admitOp, applyPlanEdit, applyVision, checkpointArc, checkpointContext, completedAudit, factsOfKind, limitsOp, visionLenses,
 } from './fixtures/checkpoint-common.ts';
-import { mapped } from './fixtures/audit-common.ts';
+import { auditArc, mapped } from './fixtures/audit-common.ts';
 import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps, codexStep, contextFor } from './fixtures/unit-common.ts';
+import { type ArcRun, appendSteps, codexStep, contextFor, gateStep, mulBuild, stepUntil } from './fixtures/unit-common.ts';
+import { candidateTree } from './fixtures/brake-common.ts';
+import { scriptTree } from './helpers/witness.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -501,6 +503,39 @@ describe('design parks (OR-Q1)', () => {
       const [second] = itemsOf(r, 'respec-second');
       assert.equal(second?.blocking, true);
       assert.deepEqual(checkpointCalls(r), ['ckpt-1']);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('park causes (paid m3 run 7)', () => {
+  test('ckpt.park-cause: a candidate-red park reaches the checkpoint as an executor-side cause, with the spent bound and the obligation its candidate left red, never as a design question', T, async () => {
+    const { d, control } = auditArc({
+      steps: [
+        { ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...mulBuild(), unit: 'u1' }, { ...gateStep({ decision: 'approve' }), unit: 'u1' },
+        // The fix round changes nothing: the same candidate tree, red again.
+        { ...codexStep([], { argv: ['exec', 'resume'], stdinContains: ['Obligation I-1 must hold on the candidate'] }), unit: 'u1' },
+        { ...gateStep({ decision: 'approve' }), unit: 'u1' },
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+      ],
+      units: [{ id: 'u1' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [], audit: { lenses: ['vision'] },
+    });
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
+      scriptTree(control, candidateTree(d, 'u1'), { outcomes: { t1: 'fail' } });
+      assert.equal((await runUnit(ctx, r.unit('u1'), admitAll)).kind, 'parked');
+      const park = r.journal.view.unit(unitId('u1')).decided!;
+      assert.deepEqual([park.stage, park.outcome], ['candidate', 'red']);
+      assert.deepEqual(designParkRoute(ctx, unitId('u1')), { kind: 'checkpoint' });
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.trigger.type === 'park' && out.decision.kind === 'no-op', JSON.stringify(out));
+      const stdin = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-1')!.stdin;
+      const seq = r.journal.view.decidedSeq(unitId('u1'));
+      assert.ok(stdin.includes(`This checkpoint runs because unit u1 parked (log seq ${seq}) on an executor-side cause, not a design question: its candidate attempt ${park.attempt} ended red and the executor parked it (candidate-red). Its candidate was red again after 1 fix round: the candidate-red bound is spent. Obligation I-1 must hold on the candidate and does not (red)`), stdin);
+      assert.doesNotMatch(stdin, /parked on a design question/);
     } finally {
       r.journal.close();
     }

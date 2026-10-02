@@ -51,9 +51,11 @@ import {
   type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { arcJourneyLane, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { decidedBy } from '../pipeline/transitions.ts';
+import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type CheckpointInputs, type FindingView, visionInputOf } from '../prompts/inputs.ts';
+import { type CheckpointInputs, type FindingView, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { parseRulings } from '../spec/rulings.ts';
@@ -364,13 +366,37 @@ function findingViews(ctx: CheckpointContext, ids: readonly Captured['findings']
   });
 }
 
+/**
+ * The trigger as the checkpoint reads it: a park with its cause from the unit's parking outcome (null when the unit
+ * has decided something since), so an executor-side red is never read as a design question (paid m3 run 7).
+ */
+function triggerView(ctx: CheckpointContext, t: CheckpointTrigger): TriggerView {
+  if (t.type === 'audit') return t;
+  const view = ctx.journal.view;
+  const u = view.unit(t.unit);
+  const f = u.decided;
+  if (f === null || view.decidedSeq(t.unit) !== t.seq) return { ...t, cause: null };
+  const d = decidedBy(f);
+  if (d.kind !== 'park') throw new Error(`checkpoint trigger ${t.unit}@${t.seq}: the outcome there is no park`);
+  const unit = ctx.plan().units.find((x) => x.id === t.unit);
+  if (unit === undefined) throw new Error(`checkpoint trigger: unit ${t.unit} is not planned`);
+  const detail = [
+    ...(d.reason === 'chargeable-bound' ? [`Its chargeable failures reached the unit's bound of ${u.bounds.chargeable}.`] : []),
+    ...(d.reason === 'candidate-red' ? [`Its candidate was red again after ${u.bounds.candidateReds} fix round${u.bounds.candidateReds === 1 ? '' : 's'}: the candidate-red bound is spent.`] : []),
+    ...(f.stage === 'candidate' && f.outcome === 'red' ? candidateRedCause(ctx, unit, { type: 'stage', unit: f.unit, stage: f.stage, attempt: f.attempt }) : []),
+  ];
+  // A judgment's escalation or a refusal past the escalation seat is a design question; anything else the executor decided.
+  const design = d.reason === 'escalation' || d.reason === 'refusal';
+  return { ...t, cause: { stage: f.stage, attempt: f.attempt, outcome: f.outcome, reason: d.reason, design, detail } };
+}
+
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
   return {
     vision: visionInputOf(r.vision, advancesOf(r.plan)),
-    trigger: s.trigger,
+    trigger: triggerView(ctx, s.trigger),
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
     findings: findingViews(ctx, s.findings),
