@@ -371,12 +371,22 @@ export function gradeTree(
   const effects = obligationEffects({ obligations: defs, selected: claims.selected, latched: claims.latched, completing, verdict });
   const mustHold = (o: ObligationDef): boolean => o.activation === 'must-hold' || claims.latched.has(o.id);
   const red = new Set([...claims.selected].filter((id) => effects.get(id) === 'red'));
+  const byId = new Map(defs.map((d) => [d.id, d]));
+  // A repair holds when its witness shows held on this tree, whatever its activation: a split parent's when every
+  // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
+  // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
+  const holds = (o: ObligationDef): boolean => {
+    if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
+    return o.state.children.every((c) => {
+      const child = byId.get(c);
+      if (child === undefined) throw new Error(`split child ${c} of ${o.id} is not in force`);
+      return isExempt(child) || holds(child);
+    });
+  };
   for (const id of repairs) {
-    const o = defs.find((d) => d.id === id);
+    const o = byId.get(id);
     if (o === undefined) throw new Error(`repaired obligation ${id} is not in force`);
-    if (isExempt(o)) continue;
-    const held = o.state.type === 'split' ? effects.get(id) === 'discharged' : o.witness !== null && verdict(o, o.witness) === 'held';
-    if (!held) red.add(id);
+    if (!isExempt(o) && !holds(o)) red.add(id);
   }
   const background = new Map<LaneId, string[]>();
   const unexplained = new Set<LaneId>();

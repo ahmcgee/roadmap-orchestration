@@ -35,7 +35,10 @@ export type ObligationJson = Readonly<{
   testIds: readonly string[];
   lane?: string;
   deliveredBy?: readonly string[];
+  /** A split parent (`{type: 'split', children}`) has no witness: its `testIds` are ignored. */
   state?: Json;
+  /** A split child's parent. */
+  parent?: string;
 }>;
 
 export type HolisticOptions = Readonly<{
@@ -76,10 +79,13 @@ export function obligationsJson(opts: Pick<HolisticOptions, 'obligations' | 'map
     obligations: opts.obligations.map((o) => {
       const lane = o.lane ?? 'journey';
       const activation = o.activation ?? 'must-hold';
+      const split = o.state?.['type'] === 'split';
       return {
         id: o.id, rev: 1, statement: `${o.id} holds.`, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: { lane, testIds: [...o.testIds] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never), witness: { lane, testIds: [...o.testIds] } },
+        witness: split ? null : { lane, testIds: [...o.testIds] },
+        proofJudgment: split ? null : { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never), witness: { lane, testIds: [...o.testIds] } },
         deliveredBy: activation === 'future' ? [...(o.deliveredBy ?? [])] : [], activation, contracts: [], state: o.state ?? { type: 'active' },
+        ...(o.parent === undefined ? {} : { parent: o.parent }),
       };
     }),
   };

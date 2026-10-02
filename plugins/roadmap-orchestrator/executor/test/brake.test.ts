@@ -1,6 +1,6 @@
 // M3 step B2: journey lanes in a unit's candidate and the held-claims brake (src/pipeline/integrate.ts, lanes.ts), over
 // real arcs (real git, real processes, fake backends, fake witness lanes scripted per tree). Named tests:
-// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.known-regression-
+// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.split-repair, brake.known-regression-
 // test-level (G11), brake.unmapped-paths, fingerprint.obligation-revs, witness records and lane reuse, and the crash
 // cells of the matrix row LATCH (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
@@ -130,6 +130,52 @@ describe('future obligations', () => {
       scriptTree(control, tipTree(d), { outcomes: { t1: 'pass', t2: 'pass' } });
       await stepUntil(r, 'u3', (f) => f.stage === 'candidate');
       assert.equal(outcomes(d, 'u3').at(-1), 'candidate:red', outcomes(d, 'u3').join(' '));
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('repairs', () => {
+  test('brake.split-repair: a repair of a split parent is held when every child\'s witness holds on its candidate, whatever the child\'s effect (must-hold discharged, a future child it completes latching, one delivered by another unit measured): green, and the child it completes latches', T, async () => {
+    const { d, control } = holisticArc({
+      steps, units: [{ id: 'u1', obligations: ['I-1'], repairs: ['I-1'] }, { id: 'u2' }],
+      obligations: [
+        { id: 'I-1', testIds: [], state: { type: 'split', children: ['I-2', 'I-3', 'I-4'] } },
+        { id: 'I-2', testIds: ['t2'], parent: 'I-1' },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u1'], testIds: ['t3'], parent: 'I-1' },
+        { id: 'I-4', activation: 'future', deliveredBy: ['u2'], testIds: ['t4'], parent: 'I-1' },
+      ],
+      mapping: MAPPED, trees: {},
+    });
+    scriptTree(control, tipTree(d), { outcomes: { t2: 'pass', t3: 'fail', t4: 'pass' } });
+    const r = contextFor(d);
+    try {
+      await approveThenScript(r, control, { t2: 'pass', t3: 'pass', t4: 'pass' });
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.ok(outcomes(d).includes('candidate:green'), outcomes(d).join(' '));
+      assert.deepEqual(latched(r), [['I-3', 'u1']]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('brake.split-repair: a child of the repaired split parent not held on the candidate leaves the repair red', T, async () => {
+    const { d, control } = holisticArc({
+      steps, units: [{ id: 'u1', obligations: ['I-1'], repairs: ['I-1'] }, { id: 'u2' }],
+      obligations: [
+        { id: 'I-1', testIds: [], state: { type: 'split', children: ['I-2', 'I-4'] } },
+        { id: 'I-2', testIds: ['t2'], parent: 'I-1' },
+        { id: 'I-4', activation: 'future', deliveredBy: ['u2'], testIds: ['t4'], parent: 'I-1' },
+      ],
+      mapping: MAPPED, trees: {},
+    });
+    scriptTree(control, tipTree(d), { outcomes: { t2: 'pass', t4: 'fail' } });
+    const r = contextFor(d);
+    try {
+      await approveThenScript(r, control, { t2: 'pass', t4: 'fail' });
+      await step(r.ctx, r.unit('u1'));
+      assert.equal(outcomes(d).at(-1), 'candidate:red', outcomes(d).join(' '));
     } finally {
       r.journal.close();
     }

@@ -1671,10 +1671,12 @@ supersede the A4 items they name):
    run again (`reuse`); the baseline job always runs afresh.
 3. **The brake** (src/pipeline/integrate.ts `heldClaims`, `gradeTree`, `brakeVerdict`): after a green suite, the arc lanes
    of the selected non-exempt obligations run on the candidate. Clean = checkout intact, no selected effect `red`, every
-   declared repair held, and no lane failure left. A failing test of a future (not latched) or exempt obligation is never
-   graded; one of an unselected must-hold obligation over which an active P1 is open is a background failure; any other
-   failing test (or a red lane with none) is unexplained. Not clean → the same lanes on the tip alone: a blocking failure
-   (a brake red, a repair not held, an unexplained lane, a changed checkout) the tip reproduces → `base-red`, else `red`
+   declared repair held (its witness `held` on the candidate, whatever its activation; a split parent's, every non-exempt
+   child's; not the effect, which for a held future child is `latch` or `measured`), and no lane failure left. A failing
+   test of a future (not latched) or exempt obligation is never graded; one of an unselected must-hold obligation over
+   which an active P1 is open is a background failure; any other failing test (or a red lane with none) is unexplained.
+   Not clean → the same lanes on the tip alone: a blocking failure (a brake red, a repair not held, an unexplained lane,
+   a changed checkout) the tip reproduces → `base-red`, else `red`
    (charged; `candidateBrakeFix` names the red obligations in the fix round). A repaired obligation's red is never the
    base's. Background failures only: the tip failing exactly those tests per lane → green (known regression); failing
    none → `red`; else `base-red`.
