@@ -25,11 +25,12 @@
 //   completion              [11] `arc-completed` names the plan in force, the head and every merged unit; then the
 //                           terminal snapshot (its high-water past the completion); status shows the completion active
 //                           with no unmet condition (every generation quiescent under the vision)
-//   lens-coverage           every lens of L has a contiguous watermark at the final head (status.audit), the docs edge
-//                           applied only from the final audit's SHA, nothing outstanding
+//   lens-coverage           every lens of L has a contiguous watermark at the final head (status.audit), no docs edge
+//                           pending, the docs edges after the final audit applied from its SHA, nothing outstanding
 //   snapshot-closure        the terminal ref verifies as a closure (every file named by a record), and carries each
 //                           witness record and each kept revision payload the log names
-//   obligations-discharged  status: every obligation holds on the head, none pending
+//   obligations-discharged  status: every non-exempt obligation in force at the end (not the seed) holds on the head,
+//                           none pending
 // Branch R only:
 //   regression-unselected   [2] tidy's approval selected I-3 and not I-2; I-2 not held on the tree tidy published (S)
 //   audit-race              [3] the first audit ran L on S; report published inside it (S′) and latched I-1; the audit's
@@ -59,9 +60,9 @@ import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot, witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import { type Obligations, type ObservationVerdict, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import { type Obligations, type ObservationVerdict, isExempt, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
-import { requirePlanInForce } from '../../src/input/inforce.ts';
+import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
 import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
@@ -460,8 +461,12 @@ function lensCoverage(run: Run): Verdict {
     else if (c.coveredTo !== head || c.outstanding || c.pendingDocs.length > 0) problems.push(`${lens}: covered to ${c.coveredTo}, outstanding ${c.outstanding}, pending docs ${JSON.stringify(c.pendingDocs)}`);
   }
   if (audit.uncovered.length > 0) problems.push(`uncovered ${JSON.stringify(audit.uncovered)}`);
+  // Mid-arc revisions publish docs edges of their own (a checkpoint's bundle); only the close-out's, after the final
+  // audit, must start at its SHA. Status grades the earlier ones (pending only while a gap is open).
   const last = factsOf(run, 'audit-started').at(-1);
-  for (const d of factsOf(run, 'docs-covered')) if (last === undefined || d.from !== last.integrationSha) problems.push(`the docs edge ${d.from}→${d.to} does not start at the final audit's SHA ${last?.integrationSha}`);
+  const after = factsOf(run, 'docs-covered').filter((d) => last === undefined || d.seq > last.seq);
+  if (after.length === 0) problems.push('no docs edge after the final audit');
+  for (const d of after) if (last === undefined || d.from !== last.integrationSha) problems.push(`the docs edge ${d.from}→${d.to} does not start at the final audit's SHA ${last?.integrationSha}`);
   return verdict(problems, `${LENSES.join(', ')} covered to ${head}; docs edge from ${last?.integrationSha}`);
 }
 
@@ -486,14 +491,26 @@ function snapshotClosure(run: Run): Verdict {
   return verdict(problems, `${v.manifest.files.length} files, every one named by a record; high-water ${v.manifest.highWater}`);
 }
 
+/** The obligations in force at the end: the last revision's kept obligations file (checkpoints split and add along the way). */
+function obligationsInForce(run: Run): Obligations {
+  const sha = factsOf(run, 'plan-applied').at(-1)?.obligationsSha256;
+  if (sha === undefined) throw new Error('the last plan-applied names no obligations file');
+  const bytes = keptInput(run.runDir, sha, OBLIGATIONS_INPUT);
+  if (bytes === null) throw new Error(`the kept obligations file ${sha} is missing`);
+  return parseObligations(JSON.parse(bytes.toString('utf8')));
+}
+
 function obligationsDischarged(run: Run): Verdict {
   const { nowTrue, notYetTrue } = run.report.status;
   const problems = [
     ...nowTrue.filter((o) => o.verdict !== 'held').map((o) => `${o.obligation} ${o.verdict}`),
     ...notYetTrue.map((o) => `${o.obligation} pending (${o.reason})`),
   ];
-  if (nowTrue.length !== run.obligations.obligations.length) problems.push(`${nowTrue.length} obligations true, of ${run.obligations.obligations.length}`);
-  return verdict(problems, nowTrue.map((o) => `${o.obligation} ${o.verdict}`).join(', '));
+  // Every non-exempt obligation in force (split parents through their children, as status grades them) is true.
+  const live = obligationsInForce(run).obligations.filter((o) => !isExempt(o)).map((o) => o.id as string).sort();
+  const shown = nowTrue.map((o) => o.obligation as string).sort();
+  if (live.join() !== shown.join()) problems.push(`true: ${shown.join(', ')}; in force, not exempt: ${live.join(', ')}`);
+  return verdict(problems, `${nowTrue.map((o) => `${o.obligation} ${o.verdict}`).join(', ')}: every non-exempt obligation in force`);
 }
 
 // ---------------------------------------------------------------------------------------------------
