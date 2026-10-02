@@ -880,8 +880,9 @@ ladder with its own runnable fixture:
   own edge; `arc-completed`, then the terminal snapshot. Honest judges may refuse the regression, so the paid
   story is branch-tolerant and records which branch it took: **R (regressed)**, the story above, or **P
   (prevented)**, where plan-check or the gate stops `tidy` upstream and a checkpoint disposes of it (a cut, a
-  respec, a repair or replacement unit) with its divergences recorded. Both branches run to the end, and both
-  must show the stale-whole rejection, the acknowledged digest and `convergence-bound`, every admitted unit
+  respec, a repair or replacement unit) with its divergences recorded, or **L (latent)** (paid run 9): `tidy`
+  publishes with I-2's witness held on its tree, an audit's lenses find the defect the witness cannot see, and a
+  checkpoint admits a repair that merges with I-2 held. Every branch runs to the end, and each must show the stale-whole rejection, the acknowledged digest and `convergence-bound`, every admitted unit
   merged with its obligation held, a drift audit, a final audit, close-out and completion. The literal merged
   regression → P1 → repair path stays asserted by the `evals-m3` fake. Not exercised in the paid run (reported): `rule`,
   `reverse`, `steer`, `merge-in`, reproduction, batch repair, the per-identity bound, `owner-request`,

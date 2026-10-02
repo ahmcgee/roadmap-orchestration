@@ -15,6 +15,11 @@
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
 //              vision lens) and ckpt-3 no-op; report and the repair merge; audit-2 (final: both lenses) and ckpt-4
 //              no-op.
+//   latent     branch L, after paid run 9: tidy's build rounds through formatAmount before formatDisplay, so I-2's
+//              witness holds on S while `format` still renders through a binary Number (large amounts lose cents).
+//              audit-1's invariants lens opens a P1 over I-2 (F-1); ckpt-1, held, is rejected stale; ckpt-2 admits the
+//              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens) and ckpt-3
+//              no-op; report and the repair merge; audit-3 (final: both lenses) and ckpt-4 no-op.
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
@@ -114,7 +119,33 @@ const JOB_STEPS_P: readonly Step[] = [
   checkpointStep('ckpt-4', NO_OP),
 ];
 
-export const STORIES = ['story', 'prevented'] as const;
+/** The unit calls of branch L's story: tidy's build keeps I-2's witness held; report builds on that tidy. */
+export const UNIT_STORY_L: Readonly<Record<string, readonly M1Step[]>> = {
+  parse: UNIT_STORY['parse']!,
+  tidy: UNIT_STORY['tidy']!.map((s) => (s.role === 'build' ? build('tidy: format rounds, then prints through formatDisplay', unitFiles('tidy-latent')) : s)),
+  report: UNIT_STORY['report']!.map((s) => (s.role === 'build' ? build('report: reconcile a month', { ...unitFiles('report'), ...unitFiles('report-on-tidy-latent') }) : s)),
+  [REPAIR_UNIT.id]: UNIT_STORY[REPAIR_UNIT.id]!,
+};
+
+/** audit-1's invariants lens on S (branch L): the latent defect, a P1 over I-2 the witness cannot see. */
+const LATENT_P1 = {
+  severity: 'P1', obligation: 'I-2', visionClauses: ['V-2'], evidence: [{ path: 'src/cli.js', line: 20 }],
+  claim: '`format` renders formatAmount\'s cents through a binary Number and toFixed: `format 100000000000000.01` prints 100,000,000,000,000.02. The money witness only tests amounts below 11.',
+} as const;
+
+const JOB_STEPS_L: readonly Step[] = [
+  lensStep('audit-1', 'vision'),
+  lensStep('audit-1', 'invariants', [LATENT_P1]),
+  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
+  checkpointStep('ckpt-2', REPAIR_BUNDLE),
+  lensStep('audit-2', 'vision'),
+  checkpointStep('ckpt-3', NO_OP),
+  lensStep('audit-3', 'invariants'),
+  lensStep('audit-3', 'vision'),
+  checkpointStep('ckpt-4', NO_OP),
+];
+
+export const STORIES = ['story', 'prevented', 'latent'] as const;
 export type StoryName = (typeof STORIES)[number];
 
 export function storyName(value: string): StoryName {
@@ -126,7 +157,7 @@ export function storyName(value: string): StoryName {
 /** The fake backend steps that play `story` under `profile`. */
 export function storySteps(story: StoryName, profile: ProfileName): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
-  const unitStory = story === 'story' ? UNIT_STORY : UNIT_STORY_P;
+  const [unitStory, jobs] = story === 'story' ? [UNIT_STORY, JOB_STEPS_R] : story === 'prevented' ? [UNIT_STORY_P, JOB_STEPS_P] : [UNIT_STORY_L, JOB_STEPS_L];
   const units = Object.entries(unitStory).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
-  return [...smoke, ...units, ...(story === 'story' ? JOB_STEPS_R : JOB_STEPS_P)];
+  return [...smoke, ...units, ...jobs];
 }

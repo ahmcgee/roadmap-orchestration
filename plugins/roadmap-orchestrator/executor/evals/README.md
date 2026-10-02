@@ -188,15 +188,22 @@ node evals/m3/check.ts /var/tmp/m3-default
   (plan-check traced `formatDisplay`'s `toFixed` to `docs/money.md` and V-2, tidy parked for design, the park's
   checkpoint was rejected stale, its re-evaluation cut tidy and admitted a repair). **R (regressed)**: tidy merges,
   audit A1 finds the I-2 P1, a repair is admitted and merges. **P (prevented)**: tidy is redirected, parked or cut
-  upstream and a checkpoint disposes of it (cut, respec, repair or replacement unit). The driver records the branch
-  in `report.json` (`devices.branch`) and both run to the end; check.ts grades the common criteria in both and each
-  branch's own.
+  upstream and a checkpoint disposes of it (cut, respec, repair or replacement unit). **L (latent)**, after paid run 9:
+  plan-check redirected tidy so that `format` rounds through `formatAmount` before `formatDisplay`; tidy published
+  with I-2's witness held on S (it tests amounts below 11) while large amounts still lose cents through a binary
+  Number; audit A1's lenses found that (a P1 over I-2), and a checkpoint admits a repair. R is told from L by I-2 on
+  S: not held (or the money barrier holding A1) is R, held is L. The driver records the branch in `report.json`
+  (`devices.branch`) and every branch runs to the end; check.ts grades the common criteria and the branch's own
+  (R: regression-unselected, audit-race, repair-resolved; P: prevention; L: latent-repair, an audit of S opened lens
+  findings over I-2, an added unit repairing them merged, they were resolved and I-2 holds on the head). The others'
+  are not applicable and not listed.
 - `driver.ts <dir> --profile default` queues `run-only parse tidy` before `start`, then applies each device once
   its condition holds in the log, `status` or a barrier file, each independently of the others' order. First at
   every poll, whatever the branch, the acks: every `divergence-digest` and `convergence-bound` item acknowledged as
   it opens, every `bundle-request` answered as an architect who trusts the checkpoint would (`ack <id> --choice
   apply` when it offers `apply`, so the next job enacts the bundle; a plain `ack` when it offers nothing). Then:
-  the branch (R once tidy publishes; P once a bundle revision cuts, respecifies or re-enters tidy unpublished); in
+  the branch (R once tidy published and A1 waits at the money barrier or I-2's witness ran on S not held; L once it
+  ran on S held; P once a bundle revision cuts, respecifies or re-enters tidy unpublished); in
   branch R only, `report` added to `run-only` once the first audit to see the regression (checked to be the
   cadence audit of tidy's publication S) waits at the money barrier, and the barrier released once `report` merged
   (S′), so A1 audits S and re-witnesses its P1 over I-2 on S′; at the first `checkpoint-inputs`, whatever its
@@ -205,7 +212,7 @@ node evals/m3/check.ts /var/tmp/m3-default
   (G18); once the drift audit after the first bundle revision has started, `run-only` every plan unit not cut and
   every added unit; `run-only --clear` once every added unit merged. Each device is recorded in `report.json`
   (`devices`). The run stops `device-failed`, with a reason naming the observed job, trigger, outcome or item,
-  only when it is off the story in either branch: the first checkpoint not rejected stale (or applying its
+  only when it is off the story in any branch: the first checkpoint not rejected stale (or applying its
   bundle); a checkpoint that disposes of nothing before any bundle applied (a no-op, or a request with nothing to
   apply); an `owner-request` (an owner-only act the driver never answers); in branch R, the barrier's audit not the
   cadence audit of S, or ending without a witness P1 over I-2; a rejected apply. Finding ids are never assumed
@@ -213,7 +220,7 @@ node evals/m3/check.ts /var/tmp/m3-default
   parked run is stopped as in M1. It refuses a used dir, uses the machine's host lock, and kills only the pids
   `status` names.
 - `check.ts <dir>` prints one JSON line with the branch and every criterion, then the two lists, and exits non-zero
-  on any failed criterion. In both branches: `baseline`, `branch` (the log's branch, as the driver recorded it),
+  on any failed criterion. In every branch: `baseline`, `branch` (the log's branch, as the driver recorded it),
   `stale-whole` (the first checkpoint, whatever its trigger), `bundles-whole` (decided bundles applied nothing;
   every unit a bundle added merged, its repaired findings resolved or ruled and its obligations held; its detail
   counts the bundle requests the driver answered, informational), `bundle-divergences` (one citing V-2),
@@ -221,9 +228,11 @@ node evals/m3/check.ts /var/tmp/m3-default
   each), `convergence-bound` (raised, each acknowledged), `drift-audit` (the vision lens alone), `final-audit`
   (lenses of L on the last unit publication's head, then a no-op), `close-out` (docs-only, covering its own edge),
   `completion` (`arc-completed`, then the terminal snapshot; no unmet condition, so every generation quiescent),
-  `lens-coverage` (each lens of L contiguous to the final head, the docs edge applied only from the final audit's
-  SHA), `snapshot-closure`, `obligations-discharged`. Branch R adds `regression-unselected`, `audit-race` and
-  `repair-resolved`; branch P adds `prevention` (tidy never published; its disposal recorded a divergence).
+  `lens-coverage` (each lens of L contiguous to the final head, no docs edge pending, the close-out's docs edge applied
+  from the final audit's SHA), `snapshot-closure`, `obligations-discharged` (every non-exempt obligation in force at the
+  end). Branch R adds `regression-unselected`, `audit-race` and
+  `repair-resolved`; branch P adds `prevention` (tidy never published; its disposal recorded a divergence); branch L
+  adds `latent-repair`.
   Standing: run-ended, units-settled (merged, or cut by a bundle), head-is-publication, diff-product-and-docs
   (every changed path matches a scope in force, bundle-admitted units' and ruled growth included, or is a living
   `.roadmap/` doc; the close-out put `constraints.md` or `invariants.md` in the diff; a failure names each path
@@ -238,7 +247,7 @@ park's checkpoints the cadence audit). Paid run 4 (branch P) was still working a
 admitting a further unit for real V-3 gaps in the seed, since closed: expect 100 to 200 minutes; the driver stops
 at 240.
 
-`--fake story` and `--fake prevented` run the same driver against the fake backends (`evals/m3/scenario.ts`:
+`--fake story`, `--fake prevented` and `--fake latent` run the same driver against the fake backends (`evals/m3/scenario.ts`:
 unit calls as M1-style steps keyed by unit, lens and checkpoint calls as scripted judgments keyed by job and lens)
 with a host dir inside the fixture, for free (15 minute timeout). `story` plays branch R and also the literal
 partial bundle (A18, G19): after the stale rejection, the next checkpoint answers the repair admit followed by an
@@ -247,7 +256,10 @@ the merged regression → P1 → repair path stays asserted offline whatever the
 branch P as paid run 3 did: tidy's plan-check answers infeasible with a V-2 conflict, tidy parks for design, the
 park's checkpoint is held and rejected stale, its re-evaluation cuts tidy and admits the repair. The fake first
 checkpoint waits at `fake/ckpt-1.hold` until the driver's apply is applied; a real one simply takes longer than
-the apply (if not, the run stops naming it). `test/evals-m3.test.ts` runs both and requires every criterion.
+the apply (if not, the run stops naming it). `latent` plays branch L as paid run 9 did: tidy's build rounds through
+`formatAmount` first, so I-2's witness holds on S; A1's invariants lens opens a P1 over I-2; the held first checkpoint
+is rejected stale and its re-evaluation admits the repair, leaving the P1 undispositioned for the repair to resolve.
+`test/evals-m3.test.ts` runs all three and requires every criterion.
 
 `NOT EXERCISED: …` names what the journal shows no trace of, from: rule, reverse, steer, merge-in, reproduction,
 batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid run takes
@@ -259,7 +271,8 @@ What real judges may still do differently, each ending the run `device-failed` (
 saying where: a real first checkpoint may decide before the stale `apply` commits; a checkpoint may no-op where it
 must dispose of tidy (or of I-2's P1), or ask the owner with nothing to apply; it may propose an owner-only act
 (`owner-request`), which the driver never answers; Codex may build tidy without regressing I-2 (keep `format` on
-`formatAmount`, or fix `formatDisplay` too), which leaves branch R with no P1 for audit A1 to find; lenses may open
+`formatAmount`, or fix `formatDisplay` too), which takes branch L when a lens finds what is left (paid run 9) and
+ends the run off the story when nothing is left to find; lenses may open
 further findings that make the checkpoint act again: with K = 1 a second bundle while the brake is open becomes a
 bundle request, which the driver applies, so the story still converges but takes more checkpoint calls than the
 23 counted above; a design park the checkpoint respecifies may park again (`respec-second`, blocking), which stops

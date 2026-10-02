@@ -7,7 +7,7 @@
 // the literal partial bundle applies nothing (A18, G19), a used fixture dir is refused, and the criteria
 // discriminate. Also the latch-during-audit race: I-1 latches while audit-1 runs, and the audit grades latches as of
 // its capture. Named tests: evals-m3.setup-valid, evals-m3.fake, evals-m3.partial-bundle, evals-m3.latch-during-audit,
-// evals-m3.rerun-refused, evals-m3.tamper-digest, evals-m3.tamper-stale.
+// evals-m3.rerun-refused, evals-m3.tamper-digest, evals-m3.tamper-stale, evals-m3.prevented, evals-m3.latent.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -373,6 +373,36 @@ describe('evals-m3: the fake-backed fixture run, branch P', () => {
     assert.ok(outcomes.every((o) => o.startsWith('plan-check:')), `tidy never got past plan-check: ${outcomes.join(', ')}`);
     const firstCheckpoint = events.find((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs');
     assert.ok(firstCheckpoint?.type === 'fact' && firstCheckpoint.fact.kind === 'checkpoint-inputs' && firstCheckpoint.fact.trigger.type === 'park', 'the stale apply fired on the park\'s checkpoint');
+    assertEveryStepPlayed(fx.dir);
+  });
+});
+
+describe('evals-m3: the fake-backed fixture run, branch L', () => {
+  let fx: Fixture;
+
+  before(async () => {
+    ({ fx } = await runStory('latent'));
+  }, T);
+
+  test('evals-m3.latent: branch L (as paid run 9); tidy publishes with I-2\'s witness held, the lens P1 over I-2 is repaired by a checkpoint admit, the arc completes, and every criterion passes', () => {
+    const { driver, report, checked } = fx;
+    assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
+    assert.equal(report.endedBy, 'exit', JSON.stringify(report.devices));
+    const d = report.devices;
+    assert.equal(d.failed, null);
+    assert.equal(d.branch?.branch, 'L');
+    assert.match(d.branch!.why, /I-2 is held there/);
+    assert.deepEqual([d.barrier, d.release], [null, null], 'I-2\'s witness held on S: the money barrier never held');
+    for (const name of ['runOnly', 'staleApply', 'staleApplied', 'admit', 'unlimited'] as const) assert.notEqual(d[name], null, `device ${name} fired`);
+    assert.deepEqual(d.added.map((a) => a.unit), [REPAIR_UNIT.id]);
+    assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
+    assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
+    assert.equal(checked.result.branch, 'L');
+    assert.equal(checked.result.criteria.length, 23);
+    assert.match(criterion(checked, 'latent-repair').detail, /F-1 \(invariants, P1\)/);
+    for (const name of ['regression-unselected', 'audit-race', 'repair-resolved', 'prevention']) {
+      assert.ok(!checked.result.criteria.some((c) => c.name === name), `${name} is not applicable on L`);
+    }
     assertEveryStepPlayed(fx.dir);
   });
 });

@@ -72,6 +72,10 @@ export function layout(dir: string): Layout {
 /** The money barrier's files: `reached` holds the waiting audit's job id. */
 export const barrierFile = (l: Layout, what: 'reached' | 'release'): string => join(l.barriers, `${MONEY_LANE}.${what}`);
 
-/** The paid story's two honest branches (DESIGN-1.0.md §10 M3): tidy's regression merged, or prevented upstream. */
-export const STORY_BRANCHES = ['R', 'P'] as const;
+/**
+ * The paid story's honest branches (DESIGN-1.0.md §10 M3): tidy's regression merged with I-2's witness not held on S
+ * (R), prevented upstream (P), or tidy published with the witness held on S while a defect the witness cannot see
+ * remains, which the lenses find (L, latent; paid run 9).
+ */
+export const STORY_BRANCHES = ['R', 'P', 'L'] as const;
 export type StoryBranch = (typeof STORY_BRANCHES)[number];

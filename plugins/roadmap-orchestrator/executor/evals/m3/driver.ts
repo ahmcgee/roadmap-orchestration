@@ -8,9 +8,10 @@
 // inside the fixture; hard timeout 15 min. `claude-only` takes `codex` off PATH as in evals/m1/driver.ts.
 //
 // The story is branch-tolerant (DESIGN-1.0.md §10 M3, after three paid runs whose judges refused the regression):
-// branch R (regressed: tidy merges, the audit finds I-2's P1, a repair is admitted and merges) or branch P (prevented:
-// tidy is redirected, parked or cut upstream and a checkpoint disposes of it). The driver records the branch the log
-// shows (`devices.branch`) and both run to the end. The forcing devices, each a durable gate on the log, `roadmap
+// branch R (regressed: tidy merges, the audit finds I-2's P1, a repair is admitted and merges), branch P (prevented:
+// tidy is redirected, parked or cut upstream and a checkpoint disposes of it) or branch L (latent: tidy merges with I-2's
+// witness held, the lenses find the defect it cannot see, a repair is admitted and merges). The driver records the
+// branch the log shows (`devices.branch`) and every branch runs to the end. The forcing devices, each a durable gate on the log, `roadmap
 // status` or a barrier file, never on timing, and each independent of the others' order; each is recorded in the
 // report (`devices`), which check.ts reads:
 //
@@ -21,7 +22,10 @@
 //                offers nothing
 //   runOnly      before `start`, the driver creates the run dir and queues `run-only parse tidy`: `report` never
 //                starts before the regression's audit (R) or the bundle's drift audit (P)
-//   branch       R once tidy publishes; P once a bundle revision cuts, respecifies or re-enters tidy before it did
+//   branch       R once tidy published S and the first audit of S waits at the money barrier, or I-2's witness ran on S
+//                not held; L once it ran on S held (tidy published, the regression latent: the lenses find what the
+//                witness cannot see, a checkpoint repair follows, paid run 9); P once a bundle revision cuts,
+//                respecifies or re-enters tidy before it published
 //   barrier      R only: once the first audit to see the regression waits at the money barrier (barrier.ts writes
 //                `barriers/money.reached` with its job id) and it is the cadence audit of tidy's publication S:
 //                `run-only parse report tidy`, so `report` merges at S′ while A1 audits S
@@ -38,7 +42,7 @@
 //   unlimited    once every added unit is merged: `run-only --clear`
 //
 // The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger, outcome or
-// item) only when it is off the story in either branch: the first checkpoint decides anything but `rejected{stale}`
+// item) only when it is off the story in any branch: the first checkpoint decides anything but `rejected{stale}`
 // or applies its bundle; a checkpoint disposes of nothing before any bundle applied (a no-op, or a request with
 // nothing to apply); an `owner-request` opens (an owner-only act, A16, which the driver never answers); in branch R,
 // the barrier's audit is not the cadence audit of S, or ends without a witness P1 over I-2; the stale apply is
@@ -66,8 +70,13 @@ import type { ArcState, Status } from '../../src/status.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import type { BundleOutcome, CheckpointTrigger } from '../../src/holistic/types.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
+import { revParse } from '../../src/git/git.ts';
+import { witnessDir } from '../../src/git/snapshot.ts';
+import { verdictOf } from '../../src/holistic/observe.ts';
+import { type ObservationVerdict, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD, FIRST, type Layout, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
+import { FAKE_CKPT_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
 import { type StoryName, storyName, storySteps } from './scenario.ts';
 import { DIRECTION_EDITED, json } from './setup.ts';
 
@@ -263,7 +272,7 @@ function tidyHead(events: readonly Event[]): string | null {
 type Poll = Readonly<{ l: Layout; c: Cli; run: readonly string[]; fake: boolean; d: Devices; s: Status; events: readonly Event[] }>;
 
 /**
- * Why the run is off the story in either branch, naming the facts it observed (job, trigger, outcome, item), or null:
+ * Why the run is off the story in any branch, naming the facts it observed (job, trigger, outcome, item), or null:
  * the first checkpoint not rejected stale (or applying its bundle); a checkpoint that disposes of nothing before any
  * bundle applied (a no-op, or a request with nothing to apply); an open `owner-request`; in branch R, the audit held at
  * the barrier ending without a witness P1 over I-2.
@@ -302,10 +311,32 @@ function offStory(p: Poll): string | null {
   return null;
 }
 
-/** The branch the log shows, once it shows one: R when tidy published, P when a bundle disposed of tidy unpublished. */
-function branchOf(events: readonly Event[]): Readonly<{ branch: StoryBranch; why: string }> | null {
+/** I-2's verdict in the witness record a `witnessed` fact names (its witness as the fixture's obligations file has it). */
+function i2Verdict(l: Layout, f: Extract<Fact, { kind: 'witnessed' }>): ObservationVerdict {
+  const witness = parseObligations(JSON.parse(readFileSync(l.obligations, 'utf8'))).obligations.find((o) => o.id === 'I-2')?.witness ?? null;
+  if (witness === null) throw new Error('the fixture\'s I-2 has no witness');
+  const path = join(witnessDir(absPath(l.runDir), f), WITNESS_RECORD_FILE);
+  return verdictOf(witnessRecord(JSON.parse(readFileSync(path, 'utf8')), path), witness);
+}
+
+/**
+ * The branch the log shows, once it shows one. Tidy published S: R once the first audit of S waits at the money barrier
+ * (the regression is on S) or I-2's witness ran on S not held; L once it ran there held (paid run 9: the witness cannot
+ * see what is left, the lenses can). P when a bundle disposed of tidy unpublished.
+ */
+function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: StoryBranch; why: string }> | null {
   const head = tidyHead(events);
-  if (head !== null) return { branch: 'R', why: `tidy published ${head}` };
+  if (head !== null) {
+    if (existsSync(barrierFile(l, 'reached'))) return { branch: 'R', why: `tidy published ${head}; the first audit of it waits at the money barrier` };
+    const tree = revParse(absPath(l.repo), `${head}^{tree}`);
+    const onS = factsOf(events, 'witnessed').filter((f) => f.lane === MONEY_LANE && f.treeSha === tree && f.purpose === 'witness');
+    const first = onS[0];
+    if (first === undefined) return null;
+    const v = i2Verdict(l, first);
+    return v === 'held'
+      ? { branch: 'L', why: `tidy published ${head}; I-2 is held there (seq ${first.seq})` }
+      : { branch: 'R', why: `tidy published ${head}; I-2 is ${v} there (seq ${first.seq})` };
+  }
   for (const b of factsOf(events, 'plan-applied')) {
     if (b.source?.type !== 'bundle') continue;
     const disposal = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === TIDY);
@@ -330,7 +361,7 @@ function fire(p: Poll): string | null {
   const failure = offStory(p);
   if (failure !== null) return failure;
   if (d.branch === null) {
-    const b = branchOf(events);
+    const b = branchOf(l, events);
     if (b !== null) d.branch = { ...b, at: now() };
   }
 

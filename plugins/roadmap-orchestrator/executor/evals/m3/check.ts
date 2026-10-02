@@ -2,12 +2,13 @@
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
 //
-// The story is branch-tolerant (DESIGN-1.0.md §10 M3): branch R (regressed) or branch P (prevented), read from the log
-// (R: tidy published; P: a bundle revision disposed of tidy before it published) and matched with the driver's record.
-// M3 criteria in both branches (the story's steps in brackets):
+// The story is branch-tolerant (DESIGN-1.0.md §10 M3): branch R (regressed), P (prevented) or L (latent), read from the
+// log (R: tidy published and I-2 not shown held on S; L: tidy published and I-2 held on S every time its lane ran there;
+// P: a bundle revision disposed of tidy before it published) and matched with the driver's record. Each branch grades
+// only its own criteria; the others' are not applicable. M3 criteria in every branch (the story's steps in brackets):
 //   baseline                the baseline job witnessed every arc lane on the baseline before any unit was dispatched,
 //                           and raised no `obligation-baseline`: I-2 and I-3 held, I-1 not
-//   branch                  the log shows branch R or P, and the driver recorded the same
+//   branch                  the log shows branch R, P or L, and the driver recorded the same
 //   stale-whole             [4] the first checkpoint, whatever its trigger, was rejected stale whole: the driver's apply
 //                           committed between its capture and its decision, and nothing of its bundle applied
 //   bundles-whole           every bundle decided rejected or requested applied nothing; at least one bundle revision;
@@ -36,6 +37,9 @@
 //   audit-race              [3] the first audit ran L on S; report published inside it (S′) and latched I-1; the audit's
 //                           code opened a P1 over I-2, and re-witnessed I-2 on S′ (not held)
 //   repair-resolved         [7] a unit repairing that P1 (or I-2) merged, the P1 was resolved, and I-2 holds on the head
+// Branch L only:
+//   latent-repair           tidy published with I-2 held on S; an audit of S opened lens findings over I-2; a bundle
+//                           admitted a unit repairing them, it merged, they were resolved, and I-2 holds on the head
 // Branch P only:
 //   prevention              tidy never published; a bundle revision cut, respecified or re-entered it, recording a
 //                           divergence citing an active clause
@@ -163,10 +167,25 @@ function specOf(run: Run, unit: UnitId) {
 /** The changes by which a bundle revision disposes of tidy (branch P). */
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
-/** The branch the log shows: R when tidy published, P when a bundle disposed of tidy unpublished, else null. */
+/** The witness runs of I-2's lane on tidy's published tree S (none before an audit of S ran it). */
+function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Fact, { kind: 'witnessed' }>>[] {
+  const tree = treeOf(run, s.new);
+  return factsOf(run, 'witnessed').filter((f) => f.lane === MONEY_LANE && f.treeSha === tree && f.purpose === 'witness');
+}
+
+/**
+ * The branch the log shows: once tidy published, L when I-2's witness ran on S and held there every time, else R; P
+ * when a bundle disposed of tidy unpublished; else null.
+ */
 function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> | null {
   const pub = unitPublication(run, 'tidy');
-  if (pub !== undefined) return { branch: 'R', detail: `tidy published ${pub.new}` };
+  if (pub !== undefined) {
+    const onS = moneyOnS(run, pub);
+    if (onS.length > 0 && onS.every((f) => witnessVerdict(run, f, 'I-2') === 'held')) {
+      return { branch: 'L', detail: `tidy published ${pub.new}, and I-2 is held there (seq ${onS.map((f) => f.seq).join(', ')})` };
+    }
+    return { branch: 'R', detail: `tidy published ${pub.new}, and I-2 is not shown held there` };
+  }
   for (const b of bundleRevisions(run)) {
     const d = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy');
     if (d !== undefined && b.source?.type === 'bundle') return { branch: 'P', detail: `${b.source.job}'s revision ${b.rev} made ${d.type} of tidy, which never published` };
@@ -320,7 +339,7 @@ function prevention(run: Run): Verdict {
 function branchMatches(run: Run): Verdict {
   const b = branchOf(run);
   const recorded = run.report.devices.branch?.branch ?? null;
-  if (b === null) return { pass: false, detail: `the log shows neither branch (driver recorded ${recorded})` };
+  if (b === null) return { pass: false, detail: `the log shows no branch (driver recorded ${recorded})` };
   return { pass: b.branch === recorded, detail: `branch ${b.branch}: ${b.detail}; the driver recorded ${recorded}` };
 }
 
@@ -385,6 +404,31 @@ function repairResolved(run: Run): Verdict {
   const i2 = run.report.status.nowTrue.find((o) => o.obligation === 'I-2');
   if (i2?.verdict !== 'held') problems.push(`I-2 is ${i2?.verdict ?? 'absent'} on the head`);
   return verdict(problems, `${repair} published ${pub?.new}; ${p1?.id} resolved at seq ${resolved?.seq}; I-2 held`);
+}
+
+/**
+ * Branch L: an audit of S opened lens findings over I-2 (the witness held there, so code opened none); a bundle admitted
+ * a unit repairing them (or I-2), it merged, the findings it names were resolved, and I-2 holds on the head.
+ */
+function latentRepair(run: Run): Verdict {
+  const s = unitPublication(run, 'tidy');
+  if (s === undefined) return { pass: false, detail: 'tidy never published' };
+  const audits = new Set(factsOf(run, 'audit-started').filter((a) => a.integrationSha === s.new).map((a) => a.job as string));
+  const found = factsOf(run, 'finding-opened').filter((f) => f.obligation === 'I-2' && f.lens !== 'witness' && f.source.type === 'job' && audits.has(f.source.job));
+  if (found.length === 0) return { pass: false, detail: `no lens finding over I-2 opened by an audit of S ${s.new} (${[...audits].join(', ') || 'none'})` };
+  const ids = new Set(found.map((f) => f.id as string));
+  const repair = addedUnits(run).map((a) => a.unit).find((u) => (specOf(run, u).repairs ?? []).some((r) => ids.has(r) || r === 'I-2')) ?? null;
+  if (repair === null) return { pass: false, detail: `no added unit repairs ${[...ids].join(', ')} or I-2` };
+  const problems: string[] = [];
+  const pub = unitPublication(run, repair);
+  if (pub === undefined) problems.push(`${repair} never published`);
+  const named = (specOf(run, repair).repairs ?? []).filter((r) => ids.has(r));
+  for (const id of named) {
+    if (!factsOf(run, 'finding-transition').some((t) => t.id === id && t.to.state === 'resolved')) problems.push(`${id} was not resolved`);
+  }
+  const i2 = run.report.status.nowTrue.find((o) => o.obligation === 'I-2');
+  if (i2?.verdict !== 'held') problems.push(`I-2 is ${i2?.verdict ?? 'absent'} on the head`);
+  return verdict(problems, `lens findings ${found.map((f) => `${f.id} (${f.lens}, ${f.severity})`).join(', ')} on S ${s.new}; ${repair} repairs ${JSON.stringify(named)}, published ${pub?.new}; resolved; I-2 held`);
 }
 
 function driftAudit(run: Run): Verdict {
@@ -708,6 +752,7 @@ const COMMON: readonly Grade[] = [
 const BRANCH_CRITERIA: Readonly<Record<StoryBranch, readonly Grade[]>> = {
   R: [['regression-unselected', regressionUnselected], ['audit-race', auditRace], ['repair-resolved', repairResolved]],
   P: [['prevention', prevention]],
+  L: [['latent-repair', latentRepair]],
 };
 
 // ---------------------------------------------------------------------------------------------------
