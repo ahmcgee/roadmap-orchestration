@@ -18,7 +18,7 @@
 // a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, coverageText, divergencesText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, triggerText,
+  architectureDocument, coverageText, divergencesText, documentsXml, findingViewsText, obligationsText, priorInvalidText, referenceIndexText, rulingsText, triggerText,
   visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
@@ -86,7 +86,8 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   system,
   schema: CHECKPOINT_SCHEMA,
   fields: [
-    'vision', 'trigger', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index', 'architecture', 'direction',
+    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'architecture', 'direction',
   ],
   render: (i) => `<vision>
 ${visionText(i.vision)}
@@ -94,7 +95,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>
+</trigger>${priorInvalidText(i.priorInvalid)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}

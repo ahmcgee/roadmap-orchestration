@@ -369,7 +369,7 @@ async function main(): Promise<void> {
     validates("m3.lens", "lens", () => true));
 
   const checkpointInputs: CheckpointInputs = {
-    vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, head: HEAD,
+    vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, head: HEAD,
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',

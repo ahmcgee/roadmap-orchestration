@@ -9,7 +9,8 @@
 //      design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
 //      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
-//      was rejected (`stale` or `evidence`: re-evaluated whole; `invalid`: once, the second goes to the owner), or its
+//      was rejected (`stale` or `evidence`: re-evaluated whole; `invalid`: once, its prompt carrying the rejected
+//      job's reasons verbatim (`priorInvalid`), the second goes to the owner), or its
 //      latest job's bundle request was acknowledged `apply` (the next job enacts that bundle: no call, the brakes and
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
 //      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
@@ -390,6 +391,13 @@ function triggerView(ctx: CheckpointContext, t: CheckpointTrigger): TriggerView 
   return { ...t, cause: { stage: f.stage, attempt: f.attempt, outcome: f.outcome, reason: d.reason, design, detail } };
 }
 
+/** The previous job of `job`'s trigger, when its decision was rejected invalid: what the retry must not repeat. */
+function priorInvalid(ctx: CheckpointContext, job: JobId): CheckpointInputs['priorInvalid'] {
+  const prev = previousOf(ctx, job);
+  const d = prev?.decided;
+  return d?.kind === 'rejected' && d.reason === 'invalid' ? { job: prev!.inputs.job, reasons: d.detail } : null;
+}
+
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
@@ -397,6 +405,7 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
   return {
     vision: visionInputOf(r.vision, advancesOf(r.plan)),
     trigger: triggerView(ctx, s.trigger),
+    priorInvalid: priorInvalid(ctx, s.job),
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
     findings: findingViews(ctx, s.findings),

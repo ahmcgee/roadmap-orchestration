@@ -1881,7 +1881,7 @@ src/pipeline/dispatch.ts `callArcRole`):
 9. **Due and re-queue.** A trigger (`audit{job}` for a completed audit; `park{unit, seq}` for an operator-design park,
    `seq` the park's) is due while it has no job, or its latest job was rejected (stale or evidence: always; invalid:
    the next is the last, since a trigger's second invalid decision, a failed call included, is a non-blocking
-   `bundle-request` with no options), or its latest job's `bundle-request` was acknowledged `apply`. That next job
+   `bundle-request` with no options; its prompt carries the rejected job's reasons verbatim, `<prior_attempt>`), or its latest job's `bundle-request` was acknowledged `apply`. That next job
    enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
    requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
    checkpoint's generation is the latest recorded (1 before any). Its prompt reads the park's cause from the unit's

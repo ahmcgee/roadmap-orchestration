@@ -1,6 +1,6 @@
 // M3 step B6: the checkpoint job and its bundles (src/holistic/{checkpoint,bundle,convergence,divergence}.ts), over real
 // arcs: real git, real processes, the fake claude answering lens and checkpoint calls keyed by job, fake witness lanes.
-// Named tests: bundle.stale, bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
+// Named tests: bundle.stale, bundle.partial (with the retry's prior_attempt), bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
 // noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
 // bundle.withdrawn-cite-invalid (H16), bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
@@ -120,6 +120,10 @@ describe('the checkpoint and its bundle', () => {
       assert.ok(second.kind === 'decided' && second.decision.kind === 'requested' && second.decision.reason === 'bundle-request', JSON.stringify(second));
       const n = item(r, second.decision.needsUser);
       assert.deepEqual([n.blocking, n.options], [false, []], 'non-blocking, and nothing to apply as proposed');
+      // The retry read the first attempt's invalid reasons verbatim (paid m3 run 9: ckpt-3 repeated ckpt-2's mistakes).
+      const stdin = (job: string) => readCalls(d.scenarioPath).find((c) => c.unit === job)!.stdin;
+      assert.doesNotMatch(stdin('ckpt-1'), /<prior_attempt>/);
+      assert.ok(stdin('ckpt-2').includes(`<prior_attempt>\nThe previous checkpoint on this trigger, ckpt-1, decided a bundle the executor rejected as invalid, for these reasons: ${first.decision.detail}\n`), stdin('ckpt-2'));
       assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:invalid'], ['ckpt-2', 'requested']]);
       assert.equal(r.journal.view.planApplied()!.rev, rev);
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });

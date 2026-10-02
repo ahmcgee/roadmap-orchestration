@@ -221,6 +221,8 @@ export type TriggerView =
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
   trigger: TriggerView;
+  /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
+  priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
   head: Sha;
   /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
   plan: string;
@@ -253,7 +255,8 @@ export const ROLE_INPUTS = {
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
   checkpoint: [
-    'vision', 'trigger', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index', 'architecture', 'direction',
+    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'architecture', 'direction',
   ],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
@@ -487,6 +490,12 @@ export function coverageText(c: VisionCoverage): string {
 
 export function divergencesText(divergences: CheckpointInputs['divergences']): string {
   return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
+}
+
+/** The previous attempt's invalid decision, as the retry reads it (empty when there was none). */
+export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
+  if (p === null) return '';
+  return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
 }
 
 /** Why the checkpoint runs, in sentences. */
