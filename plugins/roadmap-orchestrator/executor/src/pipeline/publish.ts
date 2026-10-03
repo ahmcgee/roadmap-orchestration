@@ -278,8 +278,9 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   const edited = new Map<RepoPath, string>();
   const docAt = (path: RepoPath): string | null => edited.get(path) ?? base.docAt(path);
   for (const s of landed) {
-    reasons.push(...validateRuling(s, { ...base, ledger: parseRulings(ledgerText, 'the rulings ledger') }));
-    ledgerText = ledgerAfter(ledgerText, s);
+    const why = validateRuling(s, { ...base, ledger: parseRulings(ledgerText, 'the rulings ledger') });
+    reasons.push(...why);
+    if (why.length === 0) ledgerText = ledgerAfter(ledgerText, s); // an invalid ruling never folds in (bundle.ts proposalOf)
     const applied = applyContractOps(s.contractOps, s.id, docAt);
     if ('reasons' in applied) reasons.push(...applied.reasons.map((r) => `${s.id} ${r}`));
     else for (const e of applied.edits) edited.set(e.path, e.text);

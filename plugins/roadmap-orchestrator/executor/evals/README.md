@@ -312,8 +312,9 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   (postconditions, never file names; never staged).
 - `driver.ts <dir>` stages the plugin without `executor/evals`, `executor/test` and `node_modules`, then plays the
   harness and the owner around `claude -p --model claude-opus-5-5 --effort high --plugin-dir <stage> --permission-mode
-  bypassPermissions --output-format stream-json`: a turn ending in the skill's `ROADMAP-SESSION: stopped <reason>` ends
-  the session; numbered questions go to the owner simulator (code answers K = 1, the first slice, the issue policy and
+  bypassPermissions --strict-mcp-config --settings '{"autoMemoryEnabled":false}' --output-format stream-json` (no MCP
+  server, no auto-memory: a turn whose init event shows either is killed and fails the session): a turn ending in the
+  skill's `ROADMAP-SESSION: stopped <reason>` ends the session; the last numbered block goes to the owner simulator (code answers K = 1, the first slice, the issue policy and
   brief acks, which the owner never gives; anything else goes to a frontier-medium `claude -p` given only the key's
   owner answers released so far: the cancellation cutoff only once arc 1 completed); any other turn end is the skill's
   headless wait, resumed on `roadmap watch` events (new needs-user items, the run reaching complete). Allowlisted env,

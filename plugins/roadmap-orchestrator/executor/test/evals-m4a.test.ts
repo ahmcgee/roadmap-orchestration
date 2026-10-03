@@ -6,7 +6,7 @@
 // arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice candidate, stop vision-silent).
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
-// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.untrusted-start.
+// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.untrusted-start, evals-m4a.owner-questions.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -23,7 +23,7 @@ import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
 import { type CheckResult, CRITERIA, arcView, chainOf } from '../evals/m4a/check.ts';
-import { type Report, ghOnPath, launchEnv, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
+import { type Report, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
 import { type ArcView, defectVerdicts, readKey, spanPresent } from '../evals/m4a/key.ts';
@@ -398,4 +398,26 @@ test('evals-m4a.untrusted-start: under PUBLIC + ALL, phase0 check and start refu
   assert.equal(start.status, 78, `${start.stdout} ${start.stderr}`);
   assert.match(start.stdout, /issue-policy-untrusted/);
   assert.ok(!existsSync(join(l.fake, 'arc-1', 'calls.jsonl')), 'no backend was called');
+});
+
+test('evals-m4a.owner-questions (paid run 1): the owner simulator gets the final text\'s last numbered block only, never a status list or a brief\'s numbered lines before it', () => {
+  const text = [
+    '1. **Status:** three units are merged.',
+    '2. **The crash:** ckpt-8 proposed C-2.',
+    '```',
+    '# Roadmap brief 0cd1e8d2b06a8a32',
+    '- #1 P-5: gateway outbox file format?',
+    '1. not a question either',
+    '```',
+    '## Questions',
+    '',
+    '1. **P-5:** what file format does the gateway read?',
+    '   *If no view: one JSON file per text.*',
+    '2. Do you acknowledge brief `0cd1e8d2b06a8a32`?',
+  ].join('\n');
+  assert.deepEqual(numberedQuestions(text), [
+    '1. **P-5:** what file format does the gateway read? *If no view: one JSON file per text.*',
+    '2. Do you acknowledge brief `0cd1e8d2b06a8a32`?',
+  ]);
+  assert.deepEqual(numberedQuestions('Arc started; waiting on watch.'), []);
 });

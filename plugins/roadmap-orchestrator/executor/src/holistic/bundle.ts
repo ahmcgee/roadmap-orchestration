@@ -18,10 +18,12 @@
 //      is never newly cited); the observations and findings it cites were in its inputs. Finding dispositions
 //      (`rulingRefusal`). Rulings: each JSON text parsed with `ruledBy: checkpoint{job}` and `consistency` stamped by
 //      the executor from the captured inputs (lead ruling: the model echoes no revisions), validated at the tip in
-//      order (`validateRuling`); each lands through exactly one `rule` op. M4a: the corpus amendments and the issue
-//      outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured issue exactly once; an
-//      `acted` outcome through ops of this output only). A split child anchored at a rule takes its hash from the pin in
-//      force. The proposal: the revision in force plus the ops (`proposalOf`). Any reason → `rejected{invalid}`; a
+//      order (`validateRuling`; only a valid one is folded into the ledger the next is checked against, so no model
+//      output reaches the ledger reader as a repeated id); each lands through exactly one `rule` op. M4a: the corpus
+//      amendments and the issue outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured
+//      issue exactly once; an `acted` outcome through ops of this output only). A split child anchored at a rule takes
+//      its hash from the pin in force. The proposal: the revision in force plus the ops (`proposalOf`, built before
+//      step 1, which reads what it touches; it never throws on model output). Any reason → `rejected{invalid}`; a
 //      trigger's second invalid bundle → `bundle-request`.
 //   3. Owner-only (A16, H10). A `request` op, or an op with a nested owner-only effect (a lane whose argv[0] no lane of
 //      the plan in force runs, a lane env prerequisite no lane in force passes, a contract op outside the plan's
@@ -491,13 +493,17 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     }
   });
 
-  // The rulings, each at the tip with the earlier ones landed (their contract ops outside the documents are H10's).
+  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's).
+  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
+  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
+  // crashed the executor).
   const tip = rulingContextAt(readerOf(ctx), integrationHead(ctx));
   let ledger = revision.ledger.bytes.toString('utf8');
   for (const s of landing) {
     const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
-    reasons.push(...validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') }));
-    ledger = ledgerAfter(ledger, s);
+    const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
+    reasons.push(...why);
+    if (why.length === 0) ledger = ledgerAfter(ledger, s);
   }
 
   let parsed: PlanM1 | null = null;

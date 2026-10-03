@@ -94,8 +94,8 @@ elapsed time with the result. A branch over budget gets re-planned (split, narro
 waited on.
 
 Keep the arc's inputs in their own directory outside the product working tree, for example
-`<repo>/../roadmap-inputs/<arc>/`. `executor/evals/m3/setup.ts <dir>` writes a worked corpus arc into `<dir>`;
-read `<dir>/input/` and `<dir>/repo/.roadmap/` for the shapes.
+`<repo>/../roadmap-inputs/<arc>/`. For the shapes, read `reference.md` ("Files", "The corpus guide") and the
+`executor/SCHEMAS.md` sections it names; nothing else of the plugin is an example to copy.
 
 1. **Corpus intake and curation** by tier (above). Rules blocks for every normative claim.
 2. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
@@ -201,7 +201,7 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 
 **Stop.** Give a final check-in, ask the owner to merge the stacked PRs in order, first into `main`, each with a
 merge commit, then end with exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
-`vision-silent` or `owner` (the owner told you to stop).
+`vision-silent` or `owner` (the owner told you to stop, or an executor defect stopped the arc: "Handling parks").
 
 ## Handling parks
 
@@ -221,8 +221,10 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   ack the old item, `roadmap apply`.
 - **Usage limit**: the backend is parked arc-wide and nothing retries. Once the limit resets,
   `roadmap resume --backend <name>`. Never switch profiles to route around it.
-- **Supervisor crash limit** (`sup-*`): read the crashed executors' stderr logs, fix the cause, `roadmap ack
-  sup-<g>-<n> --repo <repo> --arc <arc>`, then `roadmap start`.
+- **Supervisor crash limit** (`sup-*`): the executor crashed on a defect of its own. Never patch the plugin or
+  touch the run dir, and do not ack the item or restart. Read the crashed executors' stderr logs
+  (`/var/tmp/roadmap/executor.<generation>.err`), then give a final check-in that reports the defect with that
+  evidence (the error line and the frames under it) and stop with reason `owner`.
 
 ## Changing the plan
 

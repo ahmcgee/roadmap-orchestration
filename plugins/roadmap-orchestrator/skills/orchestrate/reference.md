@@ -235,7 +235,8 @@ Blocking unless noted. Read the item file before acting.
   "Handling parks".
 - `usage-limit`: `resume --backend <name>` once the limit resets.
 - Host-level (`supervisor-crash-limit`, `log-corrupt`, `owner-mismatch`, `recovery-holder-dead`,
-  `previous-arc-unreconciled`): SKILL.md "Handling parks"; never edit host files.
+  `previous-arc-unreconciled`): SKILL.md "Handling parks"; never edit host files. `supervisor-crash-limit` is an
+  executor defect: report it and stop the session, never patch the plugin.
 - Non-blocking: `park-escalated`, `env-blocked` (a retryable park probing for long), `bundle-request` (`--choice
   apply|reject`), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
   acknowledges the digest and convergence-bound items).

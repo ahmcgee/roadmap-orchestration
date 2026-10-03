@@ -3,12 +3,16 @@
 // for check.ts.
 //
 // The session (plan "Driver"). Real: `claude -p --model claude-opus-5-5 --effort high --plugin-dir <staged plugin>
-// --permission-mode bypassPermissions --output-format stream-json --verbose` (bypass kept: the skill needs Bash; LR-f),
-// resumed by `--resume <session>` turn after turn; hard timeout 360 min. Fake: the scripted root agent (fake-root.ts,
+// --permission-mode bypassPermissions --strict-mcp-config --settings {"autoMemoryEnabled":false} --output-format
+// stream-json --verbose` (bypass kept: the skill needs Bash; LR-f), resumed by `--resume <session>` turn after turn;
+// hard timeout 360 min. Paid M4a run 1: without the last two the session saw the owner's claude.ai connectors and wrote
+// an auto-memory note into the owner's Claude project dir for the fixture cwd; a turn whose init event still names an
+// MCP server or a memory path is killed and fails the session (`isolation`). Fake: the scripted root agent (fake-root.ts,
 // one process per turn, the same stream-json) against the fake backends; hard timeout 30 min. After each turn:
 //   - a final text with the skill's session-end line `ROADMAP-SESSION: stopped <reason>` ends the session (reason in
 //     the skill's closed set: k-limit, vision-silent, owner);
-//   - a final text ending in numbered questions goes to the owner simulator: code answers K (= 1), the first slice
+//   - a final text ending in numbered questions goes to the owner simulator, its last numbered block only (paid M4a
+//     run 1: a status list and a brief's numbered lines earlier in the text were answered as questions): code answers K (= 1), the first slice
 //     (accepted), the issue policy (the owner restores PUBLIC + COLLABORATORS_ONLY, then says so) and a brief ack (the
 //     owner has read none: never acknowledged); every other question goes to a frontier-medium `claude -p` (fake: a
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
@@ -141,12 +145,21 @@ export function forgeCanary(): Canary {
 type OwnerAnswer = Readonly<{ topic: string; from: 'bootstrap' | 'arc-1-complete'; answer: string; match: readonly string[] }>;
 const ownerAnswers = (): readonly OwnerAnswer[] => (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: readonly OwnerAnswer[] }).ownerAnswers;
 
-/** The numbered questions a final text ends with: each `N.` or `N)` line and the lines after it, until the next. */
+/**
+ * The numbered questions a final text ends with: its last numbered block (a `1.` or `1)` line starts a block), each
+ * `N.` or `N)` line and the lines after it, until the next; a heading or a code fence ends an item.
+ */
 export function numberedQuestions(text: string): readonly string[] {
-  const out: string[] = [];
+  let out: string[] = [];
+  let open = false;
   for (const line of text.split('\n')) {
-    if (/^\s*\d+[.)]\s+\S/.test(line)) out.push(line.trim());
-    else if (out.length > 0 && line.trim() !== '' && !SESSION_END.test(line)) out[out.length - 1] = `${out.at(-1)!} ${line.trim()}`;
+    const item = /^\s*(\d+)[.)]\s+\S/.exec(line);
+    if (item !== null) {
+      if (item[1] === '1') out = [];
+      out.push(line.trim());
+      open = true;
+    } else if (/^\s*(#|```)/.test(line)) open = false;
+    else if (open && line.trim() !== '' && !SESSION_END.test(line)) out[out.length - 1] = `${out.at(-1)!} ${line.trim()}`;
   }
   return out;
 }
@@ -183,6 +196,9 @@ function codeAnswer(c: OwnerCtx, q: string): string | null {
 
 const NO_VIEW = 'No view: keep your working assumption.';
 
+/** Every real `claude -p` the driver launches: no MCP server (not the owner's claude.ai connectors), no auto-memory. */
+const CLAUDE_ISOLATION = ['--strict-mcp-config', '--settings', JSON.stringify({ autoMemoryEnabled: false })] as const;
+
 async function simulatorAnswer(c: OwnerCtx, q: string): Promise<string> {
   const released = ownerAnswers().filter((a) => a.from === 'bootstrap' || firstArcComplete(absPath(c.l.product)));
   if (c.fake) return released.find((a) => a.match.some((m) => q.toLowerCase().includes(m)))?.answer ?? NO_VIEW;
@@ -199,7 +215,7 @@ async function simulatorAnswer(c: OwnerCtx, q: string): Promise<string> {
   ].join('\n');
   const dir = join(c.l.dir, 'owner');
   mkdirSync(dir, { recursive: true });
-  const r = spawnSync('claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--tools', '', '--output-format', 'json', prompt], { cwd: dir, env: c.env, encoding: 'utf8', timeout: 10 * 60_000 });
+  const r = spawnSync('claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--tools', '', ...CLAUDE_ISOLATION, '--output-format', 'json', prompt], { cwd: dir, env: c.env, encoding: 'utf8', timeout: 10 * 60_000 });
   if (r.status !== 0) throw new Error(`the owner simulator exited ${r.status}: ${r.stderr}`);
   const out = JSON.parse(r.stdout) as { result?: unknown; is_error?: unknown };
   if (typeof out.result !== 'string' || out.is_error === true) throw new Error(`the owner simulator answered ${r.stdout}`);
@@ -259,16 +275,20 @@ const INITIAL_PROMPT = [
   'resumes you on `roadmap watch` events. End the session with the skill\'s session-end line.',
 ].join('\n');
 
-/** One turn: launch or resume, stream events into the transcript, return the final text and session id. */
-async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number): Promise<{ session: string | null; result: string | null; exit: number | null }> {
+/**
+ * One turn: launch or resume, stream events into the transcript, return the final text and session id, or the
+ * isolation breach its init event shows (an MCP server or a memory path), on which the turn is killed.
+ */
+async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null }> {
   const argv = mode.kind === 'real'
-    ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
+    ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', ...CLAUDE_ISOLATION, '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
     : [process.execPath, [FAKE_ROOT, '--fixture', l.dir, '--script', mode.script, ...(session === null ? [] : ['--resume', session]), '--', prompt]] as const;
   const child: ChildProcess = spawn(argv[0], [...argv[1]], { cwd: l.product, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let buffered = '';
   let stderr = '';
   let sid = session;
   let result: string | null = null;
+  let isolation: string | null = null;
   const writes: Promise<void>[] = [];
   child.stdout!.setEncoding('utf8');
   child.stdout!.on('data', (chunk: string) => {
@@ -277,7 +297,7 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
       const line = buffered.slice(0, i);
       buffered = buffered.slice(i + 1);
       if (line.trim() === '') continue;
-      let event: { type?: unknown; session_id?: unknown; result?: unknown };
+      let event: { type?: unknown; subtype?: unknown; session_id?: unknown; result?: unknown; mcp_servers?: unknown; memory_paths?: unknown };
       try {
         event = JSON.parse(line) as typeof event;
       } catch {
@@ -285,6 +305,13 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
       }
       if (typeof event.session_id === 'string') sid = event.session_id;
       if (event.type === 'result' && typeof event.result === 'string') result = event.result;
+      if (event.type === 'system' && event.subtype === 'init' && isolation === null) {
+        const mcp = Array.isArray(event.mcp_servers) ? event.mcp_servers.length : 0;
+        if (mcp > 0 || event.memory_paths !== undefined) {
+          isolation = `turn ${n}'s session is not isolated: mcp_servers ${JSON.stringify(event.mcp_servers)}, memory_paths ${JSON.stringify(event.memory_paths)}`;
+          child.kill('SIGTERM');
+        }
+      }
       writes.push(appendFile(l.transcript, `${JSON.stringify({ turn: n, event })}\n`));
     }
   });
@@ -295,7 +322,7 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
   clearTimeout(timer);
   await Promise.all(writes);
   if (exit !== 0) writeFileSync(join(l.dir, `turn-${n}.stderr`), stderr);
-  return { session: sid, result, exit };
+  return { session: sid, result, exit, isolation };
 }
 
 /** The roadmap CLI as the session runs it (real: the staged bin with HOST_DIR; fake: stage-cli with the fixture's host). */
@@ -423,6 +450,11 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
       const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs));
       turns.push({ n, kind, prompt, session: r.session, result: r.result, exit: r.exit, ms: Date.now() - t0 });
       session = r.session;
+      if (r.isolation !== null) {
+        endedBy = 'session-failed';
+        failure = r.isolation;
+        break;
+      }
       if (r.exit !== 0 || r.result === null) {
         endedBy = Date.now() >= deadline ? 'timeout' : 'session-failed';
         failure = `turn ${n} exited ${r.exit}${r.result === null ? ' without a result' : ''} (turn-${n}.stderr)`;
