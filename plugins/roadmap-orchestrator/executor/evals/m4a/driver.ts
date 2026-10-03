@@ -423,6 +423,11 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
   if (!existsSync(l.product)) throw new Error(`${dir} holds no fixture: run evals/m4a/setup.ts first`);
   if (existsSync(l.report) || existsSync(l.transcript)) throw new Error(`${l.report} or the transcript exists: a fixture dir is run once`);
   if (repositoryPaths().some((r) => resolve(dir).startsWith(`${r}/`))) throw new Error(`the fixture dir ${dir} is inside this repository: stage it outside`);
+  if (mode.kind === 'real') {
+    // Paid run 3: a previous run's arc still held the host, so the session could never start one.
+    const held = readClaim(HOST_DIR);
+    if (held !== null) throw new Error(`the host is held by arc ${held.arc} of ${held.repo}: stop it (roadmap stop --repo ... --arc ...) before a run`);
+  }
   stagePlugin(l);
   if (mode.kind === 'fake') prepareFake(l);
   const env = launchEnv(l, process.env);
