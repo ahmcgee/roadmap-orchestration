@@ -539,7 +539,7 @@ describe('cli.m4a', () => {
     const repo = tmpDir('m4a-cli-repo');
     for (const argv of [
       ['phase0', 'check', '--repo', repo, '--plan', 'plan.json'],
-      ['brief', '--repo', repo], ['pr', '--repo', repo, '--arc', 'arc-1'], ['issues', '--repo', repo], ['chain', 'status', '--repo', repo],
+      ['brief', '--repo', repo], ['chain', 'status', '--repo', repo],
     ]) {
       await assert.rejects(runCli(argv, host), NotYetError, argv.join(' '));
     }
