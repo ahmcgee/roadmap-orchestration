@@ -672,7 +672,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
-  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
+  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
   const now = vectorAt(ctx, inForce, revision, current, integrationHead(ctx));
   const p = a.output.decision === 'no-op'
     ? { files: current, landing: [], touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() }, lanes: [], outsidePaths: [], reasons: [] }

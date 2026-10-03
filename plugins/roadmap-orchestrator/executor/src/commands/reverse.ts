@@ -146,7 +146,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   const postM = manifestOf(ctx.runDir, post);
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
-  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
+  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
 
   // The touched artifacts as the preimage recorded them, and a later revision that changed any of them again.
   const preSpecs = new Map((Object.entries(d.preimage.specs) as [UnitId, number][]).map(([u, rev]) => [u, specAtRev(ctx, events, u, rev, decided.planRev)] as const));

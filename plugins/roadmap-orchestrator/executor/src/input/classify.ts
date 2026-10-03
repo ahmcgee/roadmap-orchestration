@@ -38,6 +38,15 @@
 //   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate
 //   arc, integrationBranch, baseline, worktreeRoot: always refused
 //
+// M4a (step C1):
+//   target kind                 the plan target (`architecture-doc` or `corpus`) never changes (`target-kind-changed`, R17)
+//   chain                       `plan.chain` is fixed at revision 1 (`chain-immutable`, H7)
+//   corpus                      a re-pin (the pin's or the guide's bytes changed): `corpus{pinSha256, guideSha256}`, an
+//                               architect `apply` only; what it may re-pin is the shared Phase-0 rows' (src/phase0/rows.ts:
+//                               re-derivation, census, rules resolved, the vision confirmed), which the apply runs
+//   phase0                      the Phase-0 record or its issue capture changed: `phase0{sha256, issuesSha256}`, an
+//                               architect `apply` only; a new `promote` disposition while draining is refused
+//
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
 //   rulings ledger + sidecars   executor-owned after start (A3): only `rule` and a checkpoint bundle change them; a
@@ -68,9 +77,11 @@
 import type { IntentOf, PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
-  type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type UnitId, type VisionClauseId,
+  type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
   parseResourceUnit,
 } from '../core/ids.ts';
+import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
+import type { Phase0Record } from '../phase0/types.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
@@ -95,7 +106,7 @@ import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
 import {
-  type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planRouting,
+  type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
 } from './inforce.ts';
 import { type PlanM1, type PlanUnit, boundsOf, parsePlan, planFieldValue, reservedUnitIdReason } from './plan.ts';
@@ -115,8 +126,10 @@ export type NextInputs = Readonly<{
   sidecars: readonly RulingSidecar[];
   obligations: Obligations | null;
   vision: Vision | null;
+  /** M4a: a corpus arc's pin and Phase-0 record (null when absent or not loading: the rows refuse them). */
+  corpus: Readonly<{ pin: CorpusPin | null; phase0: Phase0Record | null }> | null;
   /** What changed against the inputs in force. */
-  changed: Readonly<{ rulings: boolean; obligations: boolean; vision: boolean }>;
+  changed: Readonly<{ rulings: boolean; obligations: boolean; vision: boolean; corpus: boolean; phase0: boolean }>;
 }>;
 
 export type Classified =
@@ -385,6 +398,8 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
   const vision = next.vision === null ? null : parsedInput('vision file', next.vision.path, next.vision.bytes, parseVision, reasons);
   const sha = (bytes: Buffer | null | undefined): string | null => (bytes === null || bytes === undefined ? null : bytesSha256(bytes));
   const sidecarShas = Object.fromEntries([...next.sidecars].map(([id, f]) => [id, bytesSha256(f.bytes)]));
+  const c = next.corpus;
+  const m = revision.manifest;
   return {
     ledger,
     inputs: {
@@ -392,13 +407,27 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
       sidecars,
       obligations,
       vision,
+      corpus: c === null ? null : { pin: quietly(c.pin.bytes, parseCorpusPin), phase0: phase0RecordOf(c.phase0.bytes) },
       changed: {
         rulings: sha(next.ledger.bytes) !== revision.ledger.sha256 || !same(sidecarShas, revision.manifest.rulings.sidecars),
         obligations: sha(next.obligations?.bytes) !== (revision.obligations?.sha256 ?? null),
         vision: sha(next.vision?.bytes) !== (revision.vision?.sha256 ?? null),
+        corpus: sha(c?.pin.bytes) !== (m.corpus ?? null) || sha(c?.guide.bytes) !== (m.corpusGuide ?? null),
+        phase0: sha(c?.phase0.bytes) !== (m.phase0 ?? null) || sha(c?.capture?.bytes) !== (m.phase0Issues ?? null),
       },
     },
   };
+}
+
+/** `bytes` parsed, or null when absent or not loading (the shared Phase-0 rows say why). */
+function quietly<T>(bytes: Buffer | null, parse: (v: unknown) => T): T | null {
+  if (bytes === null) return null;
+  try {
+    return parse(JSON.parse(bytes.toString('utf8')));
+  } catch (error) {
+    if (error instanceof SchemaError || error instanceof SyntaxError) return null;
+    throw error;
+  }
 }
 
 /** The literal prefix of a pattern (before its first glob character): two patterns may overlap when one's prefixes the other's. */
@@ -462,6 +491,9 @@ export function classify(input: ClassifyInput): Classified {
   for (const field of FIXED) {
     if (!same(cur[field], plan[field])) reasons.push(`${field} may never change (in force: ${String(cur[field])}; plan.json: ${String(plan[field])})`);
   }
+  // M4a: the target kind (R17) and the chain (H7) are fixed.
+  if (cur.target !== plan.target) reasons.push(`target-kind-changed: the plan target is ${cur.target} in force and ${plan.target} in plan.json; an apply never changes it`);
+  if (!same(cur.chain, plan.chain)) reasons.push(`chain-immutable: plan.chain is fixed at revision 1 (in force: ${canonicalJson(cur.chain ?? null)}; plan.json: ${canonicalJson(plan.chain ?? null)})`);
 
   // Units: removals, additions, order.
   const curIds = cur.units.map((u) => u.id);
@@ -719,10 +751,11 @@ export function classify(input: ClassifyInput): Classified {
   const obligations = obligationRows(input, inputs, reasons);
   changes.push(...obligations.changes);
   specRows(input, inputs, specs, changes, reasons);
+  corpusRows(input, inputs, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
-  const sameInputs = !inputs.changed.rulings && !inputs.changed.obligations && !inputs.changed.vision;
+  const sameInputs = !inputs.changed.rulings && !inputs.changed.obligations && !inputs.changed.vision && !inputs.changed.corpus && !inputs.changed.phase0;
   if (changes.length === 0 && bytesSha256(next.planBytes) === inForce.manifest.planSha256 && sameSpecs(input) && sameInputs) return { kind: 'unchanged' };
   return {
     kind: 'accepted', changes, scoped: plan.units.map((u) => u.id).filter((id) => scoped.has(id)), routings,
@@ -813,6 +846,35 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
   }
 }
 
+/**
+ * M4a: a corpus arc's re-pin (`corpus`) and Phase-0 record edit (`phase0`), each an architect `apply` only (H7). Their
+ * content is the shared Phase-0 rows' (the apply runs them); here: who may change them, and no new `promote`
+ * disposition while the arc drains.
+ */
+function corpusRows(input: ClassifyInput, inputs: NextInputs, changes: PlanChange[], reasons: string[]): void {
+  const c = input.next.corpus;
+  if (c === null || inputs.corpus === null || input.next.plan.target !== input.inForce.plan.target) return;
+  const sha = (bytes: Buffer | null | undefined): Sha256Hex | null => (bytes === null || bytes === undefined ? null : bytesSha256(bytes));
+  const architectOnly = (what: string): void => void reasons.push(`${what} changes only through an architect \`apply\`, not a ${input.proposer.type}`);
+  if (inputs.changed.corpus) {
+    const pin = sha(c.pin.bytes);
+    const guide = sha(c.guide.bytes);
+    if (input.proposer.type !== 'apply') architectOnly('the corpus pin');
+    else if (pin !== null && guide !== null) changes.push({ type: 'corpus', pinSha256: pin, guideSha256: guide });
+  }
+  if (inputs.changed.phase0) {
+    const record = sha(c.phase0.bytes);
+    const capture = sha(c.capture?.bytes);
+    if (input.proposer.type !== 'apply') architectOnly('the Phase-0 record');
+    else if (record !== null && capture !== null) changes.push({ type: 'phase0', sha256: record, issuesSha256: capture });
+    const before = new Set((input.revision.corpus?.phase0.value.debt ?? []).filter((d) => d.disposition.type === 'promote').map((d) => canonicalJson(d)));
+    const promoted = (inputs.corpus.phase0?.debt ?? []).filter((d) => d.disposition.type === 'promote' && !before.has(canonicalJson(d)));
+    if (input.view.holistic().draining !== null && promoted.length > 0) {
+      reasons.push(`the arc is draining (close-admissions): a debt item may not be promoted now (${promoted.map((d) => d.id).join(', ')})`);
+    }
+  }
+}
+
 /** Whether every unit's spec file is its spec in force (by hash). */
 function sameSpecs(input: ClassifyInput): boolean {
   return [...input.next.specs].every(([unit, file]) => {
@@ -855,7 +917,11 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'vision':
       case 'holistic':
       case 'advances':
+      case 'corpus':
         return ARC;
+      // A Phase-0 record edit changes only the required-review key: nothing running is touched.
+      case 'phase0':
+        break;
       case 'unit-added':
       case 'unit-removed':
       case 'unit-changed':
@@ -904,6 +970,11 @@ function manifestMismatch(files: InputFiles, expected: RevisionManifest, actual:
   if (!same(expected.rulings, actual.rulings)) differ.push(files.ledger.path);
   if (expected.obligations !== actual.obligations) differ.push(files.obligations?.path ?? 'the obligations file (no longer in the plan)');
   if (expected.vision !== actual.vision) differ.push(files.vision?.path ?? 'the vision file (no longer in the plan)');
+  const c = files.corpus;
+  if (expected.corpus !== actual.corpus) differ.push(c?.pin.path ?? 'the corpus pin (no longer in the plan)');
+  if (expected.corpusGuide !== actual.corpusGuide) differ.push(c?.guide.path ?? 'the corpus guide (no longer in the plan)');
+  if (expected.phase0 !== actual.phase0) differ.push(c?.phase0.path ?? 'the Phase-0 record (no longer in the plan)');
+  if (expected.phase0Issues !== actual.phase0Issues) differ.push(c?.capture?.path ?? 'the issue capture (no longer in the plan)');
   return `the files changed since \`roadmap apply\` hashed them: ${differ.join(', ')}; run it again`;
 }
 
@@ -913,6 +984,7 @@ function manifestMismatch(files: InputFiles, expected: RevisionManifest, actual:
 /** What an apply's scope reads: its classification's inputs. */
 export type ScopeContext = Readonly<{
   runDir: AbsPath;
+  repo: AbsPath;
   hostDir: AbsPath;
   planFile: AbsPath;
   routingBase: RoutingBase;
@@ -948,7 +1020,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         if (inForce === null) return NONE;
         let files: InputFiles;
         try {
-          files = readInputFiles(sc.planFile);
+          files = readInputFiles(sc.planFile, sc.repo);
         } catch (error) {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;

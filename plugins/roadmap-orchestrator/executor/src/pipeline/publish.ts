@@ -77,6 +77,7 @@ import { spawnReconciler } from '../recover/spawn.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
+import { rulingCorpusOf } from '../phase0/rows.ts';
 import { preemptCandidate } from './integrate.ts';
 import { type JourneySeries, arcJourneyLane, runJourneySeries, suiteJourneyLane } from './lanes.ts';
 import { runOp, runPrepared } from './dispatch.ts';
@@ -174,13 +175,17 @@ export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
   const revision = revisionInForce(ctx.runDir, inForce);
   return {
     ledger: parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force'),
-    inForce: { head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null },
+    inForce: {
+      head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null,
+      ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),
+    },
     docAt: (path) => textAt(ctx.repo, tip, path),
     blobAt: (path) => blobAt(ctx.repo, tip, path),
     documents: contractOpDocuments(inForce.plan),
     obligations: revision.obligations?.value ?? null,
     vision: revision.vision?.value ?? null,
     units: inForce.plan.units.map((u) => u.id),
+    corpus: revision.corpus === null ? null : rulingCorpusOf(revision.corpus),
   };
 }
 

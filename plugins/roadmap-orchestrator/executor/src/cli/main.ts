@@ -104,7 +104,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
       try {
-        manifest = revisionManifestOf(readInputFiles(start.planFile));
+        manifest = revisionManifestOf(readInputFiles(start.planFile, start.repo));
       } catch (error) {
         if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
@@ -163,7 +163,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'corpus-pin': {
-      const outcome = await corpusPin({ repo: repoOf(command.repo), commit: command.commit, out: absPath(resolve(command.out)) });
+      const outcome = await corpusPin({ repo: repoOf(command.repo), commit: command.commit, baseline: command.baseline, out: absPath(resolve(command.out)) });
       if (outcome.kind === 'refused') return refused(outcome.rejection);
       process.stdout.write(`${canonicalJson({ pin: outcome.pin, sha256: outcome.sha256 })}\n`);
       return;

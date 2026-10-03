@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { corpusPin } from '../src/commands/corpus.ts';
-import { ruleId, sha256 } from '../src/core/ids.ts';
+import { ruleId, sha, sha256 } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { absPath, repoPath } from '../src/core/values.ts';
 import { guideAt, parseGuideText } from '../src/corpus/guide.ts';
@@ -83,8 +83,9 @@ function productRepo(name: string, source: Source, rules = RULES_1, extra: Recor
 /** Where a test writes a repo's pin: inside its git dir, so it is never part of a tree. */
 const pinFile = (repo: string): string => join(repo, '.git', 'pin.json');
 
-async function pinIn(repo: string, commit = 'HEAD'): Promise<Awaited<ReturnType<typeof corpusPin>>> {
-  return corpusPin({ repo: absPath(repo), commit, out: absPath(pinFile(repo)) });
+/** The pin at `commit` against the baseline `baseline` (default the repo's HEAD: where the guide and registry are committed). */
+async function pinIn(repo: string, commit = 'HEAD', baseline = git(repo, 'rev-parse', 'HEAD')): Promise<Awaited<ReturnType<typeof corpusPin>>> {
+  return corpusPin({ repo: absPath(repo), commit, baseline: sha(baseline), out: absPath(pinFile(repo)) });
 }
 
 async function pinned(repo: string, commit = 'HEAD'): Promise<{ pin: CorpusPin; file: string }> {
@@ -276,6 +277,26 @@ describe('the pin against the registry', () => {
   });
 });
 
+describe('the pin baseline (LR-A1-1)', () => {
+  it('pin.baseline-explicit: the guide and the registry are read at --baseline, never at HEAD', async () => {
+    const repo = productRepo('baseline', { kind: 'same-repo', root: ROOT });
+    const baseline = git(repo, 'rev-parse', 'HEAD');
+    const first = await pinned(repo);
+    // After the baseline: the registry publishes T-1..T-2, and the guide's prose changes. Neither moves a pin taken at the baseline.
+    publishRegistry(repo, first.pin);
+    writeFiles(repo, { '.roadmap/corpus.md': guideText({ kind: 'same-repo', root: ROOT }, ' Edited after the baseline.') });
+    commitAll(repo, 'after the baseline');
+    const at = await pinIn(repo, baseline, baseline);
+    assert.equal(at.kind === 'pinned' && at.sha256, pinSha256(first.pin));
+    // Pinned against HEAD instead, the guide hashes otherwise: drift against the baseline's guide.
+    const head = await pinIn(repo, baseline, git(repo, 'rev-parse', 'HEAD'));
+    assert.equal(head.kind, 'pinned');
+    if (head.kind !== 'pinned') return;
+    assert.notEqual(head.pin.guideSha256, first.pin.guideSha256);
+    assert.deepEqual(rederivePin(absPath(repo), head.pin, guideAt(absPath(repo), baseline), registryAt(absPath(repo), baseline) ?? EMPTY_REGISTRY), { kind: 'refused', problems: [{ type: 'pin-drift' }] });
+  });
+});
+
 describe('the published registry block', () => {
   it('registry.block-round-trip: rendered after the obligations block, read back, absent when not rendered', () => {
     const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [], obligations: [], mapping: { paths: [] } });
@@ -315,13 +336,13 @@ const roadmap = (args: readonly string[]) => runUntilExit(process.execPath, [BIN
 describe('bin/roadmap corpus pin', () => {
   it('cli.corpus-pin: prints the pin and its sha256 (exit 0), or the refused row (exit 78)', { timeout: 60_000 }, async () => {
     const repo = productRepo('cli', { kind: 'same-repo', root: ROOT });
-    const ok = await roadmap(['corpus', 'pin', '--repo', repo, '--commit', 'HEAD', '--out', pinFile(repo)]);
+    const ok = await roadmap(['corpus', 'pin', '--repo', repo, '--commit', 'HEAD', '--baseline', git(repo, 'rev-parse', 'HEAD'), '--out', pinFile(repo)]);
     assert.equal(ok.code, 0, ok.stderr);
     const printed = JSON.parse(ok.stdout) as { pin: unknown; sha256: string };
     assert.equal(printed.sha256, sha256Hex(readFileSync(pinFile(repo))));
     assert.deepEqual(printed.pin, JSON.parse(readFileSync(pinFile(repo), 'utf8')));
     const empty = makeRepo(tmpDir('cli-noguide'), { files: { 'README.md': 'x\n' } });
-    const no = await roadmap(['corpus', 'pin', '--repo', empty, '--commit', 'HEAD', '--out', pinFile(empty)]);
+    const no = await roadmap(['corpus', 'pin', '--repo', empty, '--commit', 'HEAD', '--baseline', git(empty, 'rev-parse', 'HEAD'), '--out', pinFile(empty)]);
     assert.equal(no.code, 78, no.stderr);
     assert.deepEqual(JSON.parse(no.stdout), { refused: { kind: 'corpus-invalid', problems: [{ type: 'guide-missing' }] } });
     assert.equal(existsSync(pinFile(empty)), false);

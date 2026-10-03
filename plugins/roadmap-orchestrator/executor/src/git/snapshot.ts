@@ -58,7 +58,8 @@ import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { START_FILE } from '../executor.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT,
+  SPEC_INPUT, VISION_INPUT, inputPath,
 } from '../input/inforce.ts';
 import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
@@ -180,6 +181,11 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
     for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
+    // M4a (C1, minimal; C2 adds the pin's corpus files): a corpus arc's pin, guide, Phase-0 record and issue capture.
+    if (m.corpus !== undefined) input(m.corpus, CORPUS_INPUT, from);
+    if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
+    if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
+    if (m.phase0Issues !== undefined) input(m.phase0Issues, ISSUES_INPUT, from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
 

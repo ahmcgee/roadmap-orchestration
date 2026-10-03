@@ -1,7 +1,8 @@
 // `roadmap pr --repo <path> --arc <arc>` (M4a, OR-Q19, OR-L5, OR-L7): a host act, idempotent, the forge its only record.
 //
-// It reads the arc from its verified `refs/roadmap/<arc>` alone: the plan in force (integration branch, `chain`), the
-// latest `arc-completed` head (no plan revision after it), and the `corpus-amendment` facts. Then:
+// It reads the arc from its verified `refs/roadmap/<arc>` alone, through the chain's one derivation (src/chain.ts, H20):
+// the plan in force (integration branch, `chain`), the latest `arc-completed` head (no plan revision after it), and the
+// `corpus-amendment` facts. Then:
 // 1. pushes the completed head to `origin`'s integration branch by a leased fast-forward, never `main` (src/forge/push.ts);
 // 2. derives the base: `main` for the chain's first arc, else the previous arc's branch. A previous arc whose PR merged
 //    with a merge commit (its head in the merge's history) hands its own base down, walking the chain; one merged by
@@ -9,19 +10,16 @@
 // 3. finds the arc's PR by head: an open one is re-targeted when its base differs; a merged one is reported as is; none
 //    is created with a code-rendered body that lists the arc's amendments and says to merge with merge commits.
 // A closed, unmerged PR is the owner's decision and is refused, as is any forge or git failure (a CLI error).
-import { type ArcId, type Sha, amendmentRefOf } from '../core/ids.ts';
-import { type Event, type Fact, parseEventLine } from '../core/events.ts';
+import { type ArcRef, ArcRefError, amendmentsOf, completedHeadOf, readArcRef } from '../chain.ts';
+import type { ArcId, Sha } from '../core/ids.ts';
 import { type AbsPath, type BranchName, branchName } from '../core/values.ts';
 import { GhError, resolveRepo } from '../forge/gh.ts';
 import { type Pull, createPull, onlyIn, pullBody, pullTitle, pullsByHead, retargetPull } from '../forge/pr.ts';
 import { MAIN_BRANCH, PushError, inHistoryOnOrigin, pushBranch } from '../forge/push.ts';
 import type { RepoIdentity } from '../forge/types.ts';
-import { GitError, git, refTarget } from '../git/git.ts';
-import { snapshotRef, verifySnapshot } from '../git/snapshot.ts';
-import { PLAN_INPUT } from '../input/inforce.ts';
+import { GitError } from '../git/git.ts';
+import { snapshotRef } from '../git/snapshot.ts';
 import { CliError } from '../input/cli.ts';
-import { parsePlan } from '../input/plan.ts';
-import { EVENTS_FILE } from '../core/log.ts';
 
 export type PrArgs = Readonly<{ repo: AbsPath; arc: ArcId }>;
 export type PrOutcome = Readonly<{ number: number; url: string; base: string; created: boolean; retargeted: boolean; needsRebase: boolean }>;
@@ -32,31 +30,26 @@ type CompletedArc = Readonly<{
   branch: BranchName;
   head: Sha;
   previousArc: ArcId | null;
-  amendments: readonly Extract<Fact, { kind: 'corpus-amendment' }>[];
+  amendments: ReturnType<typeof amendmentsOf>;
 }>;
 
 function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
-  const ref = snapshotRef(arc);
-  const commit = refTarget(repo, ref);
-  if (commit === null) throw new CliError(`pr: no ${ref}; arc ${arc} has published no snapshot`);
-  const check = verifySnapshot(repo, commit);
-  if (check.kind === 'mismatch') throw new CliError(`pr: ${ref} at ${commit} does not verify: ${check.detail}`);
-  if (check.manifest.arc !== arc) throw new CliError(`pr: ${ref} at ${commit} is a snapshot of arc ${check.manifest.arc}`);
-  const events: readonly Event[] = git(repo, ['cat-file', 'blob', `${commit}:${EVENTS_FILE}`]).split('\n').filter((l) => l !== '').map(parseEventLine);
-  const facts = events.flatMap((e) => (e.type === 'fact' ? [{ seq: e.seq, fact: e.fact }] : []));
-  const applied = facts.findLast((f) => f.fact.kind === 'plan-applied');
-  const completed = facts.findLast((f) => f.fact.kind === 'arc-completed');
-  if (applied === undefined || applied.fact.kind !== 'plan-applied') throw new CliError(`pr: arc ${arc} has no plan in force in ${ref}`);
-  if (completed === undefined || completed.fact.kind !== 'arc-completed' || completed.seq < applied.seq) {
-    throw new CliError(`pr: arc ${arc} has not completed (${ref} holds no arc-completed after its latest plan revision)`);
+  let ref: ArcRef | null;
+  try {
+    ref = readArcRef(repo, arc);
+  } catch (error) {
+    if (error instanceof ArcRefError) throw new CliError(`pr: ${error.message}`);
+    throw error;
   }
-  const plan = parsePlan(JSON.parse(git(repo, ['cat-file', 'blob', `${commit}:inputs/${applied.fact.planSha256}.${PLAN_INPUT}`])));
+  if (ref === null) throw new CliError(`pr: no ${snapshotRef(arc)}; arc ${arc} has published no snapshot`);
+  const completed = completedHeadOf(ref);
+  if (completed === null) throw new CliError(`pr: arc ${arc} has not completed (${snapshotRef(arc)} holds no arc-completed after its latest plan revision)`);
   return {
     arc,
-    branch: plan.integrationBranch,
-    head: completed.fact.head,
-    previousArc: plan.chain?.previousArc ?? null,
-    amendments: facts.flatMap((f) => (f.fact.kind === 'corpus-amendment' ? [f.fact] : [])),
+    branch: ref.plan.integrationBranch,
+    head: completed.head,
+    previousArc: ref.plan.chain?.previousArc ?? null,
+    amendments: amendmentsOf(ref),
   };
 }
 
@@ -102,7 +95,7 @@ export async function openPr(args: PrArgs): Promise<PrOutcome> {
     if (closed !== undefined) throw new CliError(`pr: ${closed.url} for ${arc.branch} was closed unmerged; reopen it or delete it, then re-run`);
     const body = pullBody({
       arc: arc.arc, branch: arc.branch, head: arc.head, previousArc: arc.previousArc,
-      amendments: arc.amendments.map((a) => ({ ref: amendmentRefOf(arc.arc, a.id), rules: a.rules, proposal: a.proposal, why: a.why })),
+      amendments: arc.amendments.map((a) => ({ ref: a.id, rules: a.fact.rules, proposal: a.fact.proposal, why: a.fact.why })),
     });
     return outcome(createPull(args.repo, forge, { base: base.branch, head: arc.branch, title: pullTitle(arc.arc), body }), true, false, base.needsRebase);
   } catch (error) {

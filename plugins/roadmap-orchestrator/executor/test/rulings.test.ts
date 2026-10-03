@@ -3,7 +3,7 @@
 // ruling in the ledger, and the byte-stable constraints.md with its close-out retirement.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Sha, rulingId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { type Sha, ruleId, rulingId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { type RepoPath, repoPath } from '../src/core/values.ts';
 import { anchorSection, applyContractOps, citeRuling, headingSlug } from '../src/docs/contracts.ts';
 import { renderConstraints } from '../src/docs/constraints.ts';
@@ -80,6 +80,7 @@ function context(over: Partial<RulingContext> = {}): RulingContext {
     obligations: OBLIGATIONS,
     vision: VISION,
     units: [unitId('tidy'), unitId('report')],
+    corpus: null,
     ...over,
   };
 }
@@ -193,6 +194,33 @@ describe('ruling sidecars', () => {
     refused(sidecar({ cites: ['V-2', 'V-3'] }), /cites V-3, which is withdrawn/);
     refused(sidecar({ cites: ['V-9'] }), /cites V-9, which is not a clause/);
     refused(sidecar({ cites: ['V-1'] }), /cites V-1/, context({ vision: null }));
+  });
+});
+
+describe('a corpus arc\'s rulings (M4a step C1)', () => {
+  const T1 = sha256('3'.repeat(64));
+  /** A corpus in force with T-1 active, whose same-repo file set holds `docs/money.md` (a state the plan rows prevent; the guard is here too). */
+  const corpus = (inFileSet: (p: RepoPath) => boolean = (p) => p === 'docs/money.md') => ({ rules: new Map([[ruleId('T-1'), T1]]), inFileSet });
+  const noDocRefs = { docRefs: [], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [] };
+
+  it('ruling.contract-op-on-corpus-refused: a contract op on a corpus file is refused, whatever the plan documents list (R32)', () => {
+    refused(sidecar(), /contract op on docs\/money\.md, which is a corpus file/, context({ corpus: corpus() }));
+    const other = validateRuling(sidecar(), context({ corpus: corpus(() => false) }));
+    assert.ok(!other.some((r) => /corpus file/.test(r)), JSON.stringify(other));
+  });
+
+  it('ruling.rule-ref: a rule ref resolves to {T-n, textSha256} active in the pin in force; outside a corpus arc it is refused', () => {
+    const ruleRef = (textSha256: string) => sidecar({ ...noDocRefs, docRefs: [{ rule: 'T-1', textSha256, relation: 'consistent' }] });
+    const ok = validateRuling(ruleRef(T1), context({ corpus: corpus() }));
+    assert.ok(!ok.some((r) => /rule ref/.test(r)), JSON.stringify(ok));
+    refused(ruleRef('4'.repeat(64)), /rule ref T-1: not an active rule of the corpus pin in force/, context({ corpus: corpus() }));
+    refused(sidecar({ ...noDocRefs, docRefs: [{ rule: 'T-7', textSha256: T1, relation: 'refines' }] }), /rule ref T-7: not an active rule/, context({ corpus: corpus() }));
+    refused(ruleRef(T1), /rule ref T-1: the arc has no corpus pin/, context());
+  });
+
+  it('ruling.consistency-corpus: a judgment of another pin than the one in force is stale (judgedRevs.corpusSha256)', () => {
+    const inForce = { head: HEAD, ledgerSha256: LEDGER_SHA, obligationsSha256: OBL_SHA, visionSha256: VIS_SHA, corpusSha256: sha256('5'.repeat(64)) };
+    refused(sidecar(), /consistency is stale: judged corpusSha256/, context({ inForce, corpus: corpus(() => false) }));
   });
 });
 

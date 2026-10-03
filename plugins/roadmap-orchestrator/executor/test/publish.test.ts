@@ -441,7 +441,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
     };
     const revs = applied(start).length;
-    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath))), [], 'no false ledger-edit refusal');
+    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo))), [], 'no false ledger-edit refusal');
     assert.equal(applied(start).length, revs, 'the files wait for the next start');
   } finally {
     start.journal.close();
@@ -465,7 +465,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
     };
     const revs = applied(back).length;
-    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath))), []);
+    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo))), []);
     assert.equal(applied(back).length, revs, 'unchanged');
   } finally {
     back.journal.close();

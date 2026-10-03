@@ -277,7 +277,7 @@ function capture(ctx: CheckpointContext, due: Due): Captured {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
-  const files = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
+  const files = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
   const head = integrationHeadNow(ctx);
   const vector = vectorAt(ctx, inForce, revision, files, head);
   const tree = revParse(ctx.repo, `${head}^{tree}`);

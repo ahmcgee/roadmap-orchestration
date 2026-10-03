@@ -102,7 +102,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classifie
   const { runDir } = r.ctx;
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
-    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath)), residues,
+    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), residues,
     routing: routingBase, proposer: { type: 'apply' },
   });
 }
@@ -111,7 +111,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classifie
 function accept(r: ArcRun): void {
   const v = classifyNow(r);
   if (v.kind !== 'accepted') assert.fail(`expected an accepted change, got ${JSON.stringify(v)}`);
-  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath)), v.changes, routingBase);
+  recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), v.changes, routingBase);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -813,7 +813,7 @@ test('cmd.scope: each mutation\'s scope (A12); an apply\'s follows from its clas
   const d = setupArc({ steps: [], units: THREE });
   const r = contextFor(d);
   try {
-    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase });
+    const scope = commandScope({ runDir: r.ctx.runDir, repo: absPath(d.repo), hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase });
     const of = (body: CommandBody) => scope(body as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan());
     assert.deepEqual(of({ type: 'resume', target: { type: 'all' } }), { type: 'arc' });
     assert.deepEqual(of({ type: 'resume', target: { type: 'unit', unit: unitId('u2') } }), { type: 'units', units: ['u2'] });

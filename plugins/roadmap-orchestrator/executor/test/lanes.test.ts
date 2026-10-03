@@ -270,7 +270,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   writeFileSync(run.specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/b.log'], evidenceExcludes: ['out/secret/**'] })) }));
   assert.equal(spec.rev, 1);
   // The architect's evidence-only edit, applied: the unit's spec in force at once.
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json'))), [
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), absPath(run.repo)), [
     { type: 'spec', unit: U1, edit: 'evidence', specRev: specRev(1), specSha256: fileSha256(run.specPath) },
   ], { profile: 'default', config: null });
   assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');

@@ -53,7 +53,11 @@
 //            must build the same payload (`commitUnderFence`); then the bytes are kept and the revision committed
 //            (src/recover/revision.ts: payload, `revision.commit`, docs publication, `plan-applied`), the
 //            postcondition. All or nothing: a rejection lists every reason. `reenters`, `cut`, `route`,
-//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c). Mutation.
+//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c). M4a: so are a re-pin
+//            (`corpus`) and a Phase-0 record edit (`phase0`); the shared Phase-0 rows (src/phase0/rows.ts) run over
+//            every apply (`tree-uncommitted`, `vision-unconfirmed`, `corpus-invalid`, `phase0-invalid` are rejected
+//            receipt reasons, as are the classifier's `target-kind-changed` and `chain-immutable`), and the corpus
+//            files the re-derived pin read are kept before the commit. Mutation.
 //   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
 //            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
@@ -98,13 +102,15 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import { type NextInputs, type Proposer, applyProposal, classify } from '../input/classify.ts';
 import {
-  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepInput, keepRevisionFiles, planInForce, planRouting,
+  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, planInForce, planRouting,
   readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
 } from '../input/inforce.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -652,7 +658,8 @@ export type ApplyVerdict =
   | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
   | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
-  | Readonly<{ kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[] }>;
+  /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
+  | Readonly<{ kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[] }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
 const rowText = (r: StartupRejection): string => canonicalJson(r);
@@ -687,7 +694,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if (stale !== null) return { kind: 'rejected', reasons: [stale] };
   let files: InputFiles;
   try {
-    files = readInputFiles(input.planFile);
+    files = readInputFiles(input.planFile, input.repo);
   } catch (error) {
     if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
     return { kind: 'rejected', reasons: [`${input.planFile} does not load: ${error.message}`] };
@@ -708,11 +715,14 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
     runDir: input.runDir, hostDir: input.hostDir,
   };
   const routingChanged = verdict.routings.length > 0 || verdict.draft.changes.some((c) => c.type === 'holistic');
-  const rows = await applyRows(context, verdict.scoped, routingChanged, input.laneEnv);
+  // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin
+  // re-derived, corpus overlap, census, debt, questions, amendments, intake and the vision confirmed.
+  const p0 = phase0Rows(phase0InputOf(proposal, input.routingBase.config), APPLY);
+  const rows = [...(await applyRows(context, verdict.scoped, routingChanged, input.laneEnv)), ...p0.rows];
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
   const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
   const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
-  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke };
+  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [] };
 }
 
 /** The apply's manifest is the revision in force already. */
@@ -754,6 +764,8 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
         const failures = smokeRejections(report);
         if (failures.length > 0) return { kind: 'rejected', reason: rejectedText(failures.map(rowText)) };
       }
+      // The corpus files the re-derived pin read, kept before the commit names them (content-addressed: idempotent).
+      keepCorpusFiles(ctx.runDir, verdict.corpusFiles);
       const committed = await commitUnderFence(ctx, verdict.evaluated, { type: 'apply' }, { type: 'command', command: id }, parentOf(id));
       if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
       return { kind: 'applied', verified: appliedText(committed.fact.rev, committed.fact.changes) };

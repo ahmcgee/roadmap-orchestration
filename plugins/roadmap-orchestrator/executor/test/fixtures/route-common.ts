@@ -41,7 +41,7 @@ export const editUnit = (d: ArcDescriptor, id: string, edit: (u: Json) => void):
 /** Records the files as revision 1, as an M3 first start does (payload, `revision.commit`, `plan-applied` with provenance). */
 export function recordFirst(d: ArcDescriptor, base: RoutingBase = BASE): void {
   const j = openJournal(absPath(d.runDir), d.arc as never);
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [], base);
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], base);
   j.close();
 }
 

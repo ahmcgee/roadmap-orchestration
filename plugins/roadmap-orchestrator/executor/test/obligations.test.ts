@@ -105,7 +105,7 @@ describe('obligation edits', () => {
   });
 
   it('obligations.revs-and-proofs: the rev rises exactly with a normative change; a stale proof judgment is refused; a new witness must prove; a proof binds the complete witness definition', () => {
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef or activation changes)']);
+    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef, rule or activation changes)']);
     assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), laneRev: '0000000000000000' } })), ARCHITECT).reasons,
       [`I-2's proof judgment is stale (judged obligation rev 1, lane 0000000000000000; now rev 1, lane ${LANE_REV})`]);
     // Checkpoint A: a witness whose test set grows (lane and obligation revs unchanged) needs a fresh proof of that witness.

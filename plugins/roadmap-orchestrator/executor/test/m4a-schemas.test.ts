@@ -512,7 +512,10 @@ describe('cli.m4a', () => {
   it('parses every M4a host act', () => {
     assert.deepEqual(parseCommand(['phase0', 'check', '--repo', '.', '--plan', 'plan.json']), { command: 'phase0-check', repo: '.', source: { type: 'plan', plan: 'plan.json' } });
     assert.deepEqual(parseCommand(['phase0', 'check', '--repo', '.', '--from-ref', 'arc-1']), { command: 'phase0-check', repo: '.', source: { type: 'ref', arc: 'arc-1' } });
-    assert.deepEqual(parseCommand(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--out', 'pin.json']), { command: 'corpus-pin', repo: '.', commit: 'HEAD', out: 'pin.json' });
+    assert.deepEqual(
+      parseCommand(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--baseline', '0123456789abcdef0123456789abcdef01234567', '--out', 'pin.json']),
+      { command: 'corpus-pin', repo: '.', commit: 'HEAD', baseline: '0123456789abcdef0123456789abcdef01234567', out: 'pin.json' },
+    );
     assert.deepEqual(parseCommand(['brief', '--repo', '.']), { command: 'brief', repo: '.', json: false, ack: null });
     assert.deepEqual(parseCommand(['brief', '--repo', '.', '--json', '--ack', '0123456789abcdef']), { command: 'brief', repo: '.', json: true, ack: '0123456789abcdef' });
     assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-1']), { command: 'pr', repo: '.', arc: 'arc-1' });
@@ -527,7 +530,9 @@ describe('cli.m4a', () => {
     refuses(['phase0', 'check', '--repo', '.', '--plan', 'p', '--from-ref', 'arc-1'], /exactly one of/);
     refuses(['phase0', 'check', '--plan', 'p'], /--repo <path> is required/);
     refuses(['phase0', 'run'], /phase0: expected the subcommand check/);
-    refuses(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD'], /--out <file> is required/);
+    refuses(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--baseline', '0123456789abcdef0123456789abcdef01234567'], /--out <file> is required/);
+    refuses(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--out', 'pin.json'], /--baseline <sha> is required/);
+    refuses(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--baseline', 'HEAD', '--out', 'pin.json'], /Sha/);
     refuses(['brief', '--repo', '.', '--ack', 'nope'], /BriefId/);
     refuses(['pr', '--repo', '.'], /--arc <arc> is required/);
     refuses(['issues', '--repo', '.', 'extra'], /unexpected argument/);
@@ -538,10 +543,7 @@ describe('cli.m4a', () => {
   it('the final dispatch reaches each placeholder module, which throws not-yet loudly', async () => {
     const host = absPath(tmpDir('m4a-cli-host'));
     const repo = tmpDir('m4a-cli-repo');
-    for (const argv of [
-      ['phase0', 'check', '--repo', repo, '--plan', 'plan.json'],
-      ['brief', '--repo', repo], ['chain', 'status', '--repo', repo],
-    ]) {
+    for (const argv of [['brief', '--repo', repo], ['chain', 'status', '--repo', repo]]) {
       await assert.rejects(runCli(argv, host), NotYetError, argv.join(' '));
     }
   });

@@ -15,6 +15,12 @@
 // `revision.commit` intent (`beginRevision`) before any docs `ff`; `plan-applied` is appended from it exactly, then
 // its divergences (`appendRevision`). The inputs in force beyond plan and specs are the latest `plan-applied`'s
 // payload manifest's (`revisionInForce`).
+//
+// M4a (step C1): a corpus arc's revision adds four inputs (`RevisionInputs.corpus*`, `phase0*`): the pin and the
+// Phase-0 record beside the plan, the issue capture the record names (beside the plan), and the corpus guide committed
+// at the plan's baseline (LR-A1-1), kept as `inputs/<sha>.corpus.json`, `.phase0.json`, `.issues.json` and
+// `.corpus-guide.md`; its vision record is `<repo>/.roadmap/vision.json` (R1). The corpus files the pin names are kept as
+// `inputs/<sha>.corpus-file` from the source the pin re-derived from (`keepCorpusFiles`, src/phase0/rows.ts).
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -23,12 +29,17 @@ import {
 } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { type OpId, type PlanRev, type RulingId, type Sha256Hex, type UnitId, opKey, planRev, rulingId } from '../core/ids.ts';
+import { CORPUS_GUIDE_PATH } from '../corpus/guide.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
+import { type IssueCapture, parseIssueCapture } from '../forge/types.ts';
+import { gitRun } from '../git/git.ts';
+import { type Phase0Record, parsePhase0Record } from '../phase0/types.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { PlanManifest, RevisionManifest, SpecM1 } from '../core/records.ts';
-import { notYet } from '../core/notyet.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type PlanPath, absPath } from '../core/values.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { type RepoConfig, type ResolvedRouting, planStack, resolveRouting } from '../routing/layers.ts';
@@ -43,6 +54,12 @@ export const RULING_INPUT = 'ruling.json';
 export const OBLIGATIONS_INPUT = 'obligations.json';
 export const VISION_INPUT = 'vision.json';
 export const REVISION_INPUT = 'revision.json';
+/** M4a: a corpus arc's pin, guide bytes, corpus files, Phase-0 record and issue capture (H5, H8). */
+export const CORPUS_INPUT = 'corpus.json';
+export const CORPUS_GUIDE_INPUT = 'corpus-guide.md';
+export const CORPUS_FILE_INPUT = 'corpus-file';
+export const PHASE0_INPUT = 'phase0.json';
+export const ISSUES_INPUT = 'issues.json';
 /** An executor-rendered `.roadmap/` document a revision's docs publication commits (`RevisionPayload.publication.renders`). */
 export const RENDER_INPUT = 'render';
 
@@ -76,11 +93,20 @@ export function keptInput(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer 
 export type InputFile = Readonly<{ path: AbsPath; bytes: Buffer | null }>;
 
 /**
+ * M4a: a corpus arc's inputs beyond M3's. `pin` and `phase0` are the files `plan.corpus` and `plan.phase0` name (beside
+ * the plan); `capture` the issue capture the Phase-0 record names (beside the plan; null when the record does not load);
+ * `guide` the corpus guide committed at the plan's baseline (its path names it as `<repo>/.roadmap/corpus.md`).
+ */
+export type CorpusInputFiles = Readonly<{ pin: InputFile; guide: InputFile; phase0: InputFile; capture: InputFile | null }>;
+
+/**
  * plan.json, the spec.json of each of its units, and (M3) the rulings ledger with its sidecars, the obligations and
  * the vision: what an apply or a start would put in force. A revision built in memory (a rule, a bundle, a reverse)
- * has the same shape, its paths naming where the files are.
+ * has the same shape, its paths naming where the files are. M4a: the product repo (a corpus arc's vision record and
+ * guide live there) and a corpus arc's inputs.
  */
 export type InputFiles = Readonly<{
+  repo: AbsPath;
   /** The plan file read: its directory is where unit spec paths and the rulings ledger resolve. */
   planFile: AbsPath;
   plan: PlanM1;
@@ -94,6 +120,8 @@ export type InputFiles = Readonly<{
   /** M3 (A5): the obligations and vision files `plan.holistic` names; null when it names none. */
   obligations: InputFile | null;
   vision: InputFile | null;
+  /** M4a: a corpus arc's pin, guide, Phase-0 record and capture; null for an `architecture-doc` arc. */
+  corpus: CorpusInputFiles | null;
 }>;
 
 export const specFilePath = (planFile: AbsPath, unit: PlanUnit): AbsPath => absPath(join(dirname(planFile), unit.spec));
@@ -120,26 +148,50 @@ function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: A
 }
 
 /**
- * The vision file beside the plan (`visionFile`), or null when the arc has none. A corpus arc's record lives in the
- * product repo (`<repo>/.roadmap/vision.json`, R1), which lands in step C1.
+ * The vision file (`visionFile`): beside the plan for an `architecture-doc` arc, `<repo>/.roadmap/vision.json` for a
+ * corpus arc (R1); null when the arc has none.
  */
-function besideVision(plan: PlanM1, beside: (path: PlanPath) => InputFile): InputFile | null {
+function visionInput(plan: PlanM1, repo: AbsPath, read: (path: AbsPath) => InputFile, planFile: AbsPath): InputFile | null {
   const at = visionFile(plan);
   if (at === null) return null;
-  return at.base === 'plan' ? beside(at.path) : notYet(`a corpus arc's vision record (${at.path} in the repo)`, 'C1');
+  return read(absPath(join(at.base === 'plan' ? dirname(planFile) : repo, at.path)));
+}
+
+/** The corpus guide committed at `rev` of the product repo (LR-A1-1: a corpus arc's is at its baseline); bytes null when none. */
+export function guideFileAt(repo: AbsPath, rev: string): InputFile {
+  const r = gitRun(repo, ['cat-file', 'blob', `${rev}:${CORPUS_GUIDE_PATH}`], { okCodes: [0, 128] });
+  return { path: absPath(join(repo, CORPUS_GUIDE_PATH)), bytes: r.code === 0 ? Buffer.from(r.stdout, 'utf8') : null };
+}
+
+/** The Phase-0 record's bytes parsed, or null when they are absent or do not load (the rows report why). */
+export function phase0RecordOf(bytes: Buffer | null): Phase0Record | null {
+  if (bytes === null) return null;
+  try {
+    return parsePhase0Record(JSON.parse(bytes.toString('utf8')));
+  } catch (error) {
+    if (error instanceof SchemaError || error instanceof SyntaxError) return null;
+    throw error;
+  }
 }
 
 /** Reads the plan (parsed: throws SchemaError or SyntaxError) and the bytes of every input it names. */
-export function readInputFiles(planFile: AbsPath): InputFiles {
+export function readInputFiles(planFile: AbsPath, repo: AbsPath): InputFiles {
   const planBytes = readFileSync(planFile);
   const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
   const specs = new Map(plan.units.map((u) => [u.id, inputFile(specFilePath(planFile, u))] as const));
   const ledger = ledgerPath(planFile, plan);
   const beside = (path: string): InputFile => inputFile(absPath(join(dirname(planFile), path)));
+  let corpus: CorpusInputFiles | null = null;
+  if (plan.target === 'corpus') {
+    const phase0 = beside(plan.phase0);
+    const record = phase0RecordOf(phase0.bytes);
+    corpus = { pin: beside(plan.corpus), guide: guideFileAt(repo, plan.baseline), phase0, capture: record === null ? null : beside(record.issueCapture.file) };
+  }
   return {
-    planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: readSidecars(ledger),
+    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: readSidecars(ledger),
     obligations: plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations),
-    vision: besideVision(plan, beside),
+    vision: visionInput(plan, repo, inputFile, planFile),
+    corpus,
   };
 }
 
@@ -163,11 +215,22 @@ export function revisionManifestOf(files: InputFiles): RevisionManifest | Readon
   };
   const obligations = optional('obligations', files.obligations);
   const vision = optional('vision', files.vision);
+  const c = files.corpus;
+  let corpus: Pick<RevisionManifest, 'corpus' | 'corpusGuide' | 'phase0' | 'phase0Issues'> = {};
+  if (c !== null) {
+    const pin = optional('corpus pin', c.pin);
+    const guide = c.guide.bytes === null ? null : bytesSha256(c.guide.bytes);
+    if (guide === null) missing.push(`the corpus guide ${CORPUS_GUIDE_PATH} is not committed at the plan's baseline ${files.plan.baseline}`);
+    const phase0 = optional('Phase-0 record', c.phase0);
+    if (c.capture === null && c.phase0.bytes !== null) missing.push(`the Phase-0 record ${c.phase0.path} does not load, so its issue capture is unknown`);
+    const capture = optional('issue capture', c.capture);
+    if (pin !== null && guide !== null && phase0 !== null && capture !== null) corpus = { corpus: pin, corpusGuide: guide, phase0, phase0Issues: capture };
+  }
   if (missing.length > 0 || ledger === null) return { missing };
   return {
     planSha256: bytesSha256(files.planBytes), specs,
     rulings: { ledgerSha256: bytesSha256(ledger), sidecars: Object.fromEntries([...files.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)])) },
-    obligations, vision,
+    obligations, vision, ...corpus,
   };
 }
 
@@ -181,12 +244,26 @@ export function keepInputFiles(runDir: AbsPath, files: InputFiles): PlanManifest
   return { planSha256: keepInput(runDir, files.planBytes, PLAN_INPUT), specs };
 }
 
-/** Keeps every input's bytes (all must exist) and returns the revision manifest. */
+/**
+ * Keeps every input's bytes (all must exist) and returns the revision manifest. A corpus arc's corpus files are kept
+ * beforehand from the source its pin re-derived from (`keepCorpusFiles`); every one the pin names must be kept.
+ */
 export function keepRevisionFiles(runDir: AbsPath, files: InputFiles): RevisionManifest {
-  const bytes = (f: InputFile): Buffer => {
-    if (f.bytes === null) throw new Error(`keepRevisionFiles: ${f.path} does not exist`);
+  const bytes = (f: InputFile | null): Buffer => {
+    if (f === null || f.bytes === null) throw new Error(`keepRevisionFiles: ${f?.path ?? 'an issue capture'} does not exist`);
     return f.bytes;
   };
+  const c = files.corpus;
+  let corpus: Pick<RevisionManifest, 'corpus' | 'corpusGuide' | 'phase0' | 'phase0Issues'> = {};
+  if (c !== null) {
+    const pin = parseCorpusPin(JSON.parse(bytes(c.pin).toString('utf8')));
+    const unkept = pin.files.filter((f) => keptInput(runDir, f.sha256, CORPUS_FILE_INPUT) === null);
+    if (unkept.length > 0) throw new Error(`keepRevisionFiles: the corpus files ${unkept.map((f) => f.path).join(', ')} of the pin are not kept (keepCorpusFiles first)`);
+    corpus = {
+      corpus: keepInput(runDir, bytes(c.pin), CORPUS_INPUT), corpusGuide: keepInput(runDir, bytes(c.guide), CORPUS_GUIDE_INPUT),
+      phase0: keepInput(runDir, bytes(c.phase0), PHASE0_INPUT), phase0Issues: keepInput(runDir, bytes(c.capture), ISSUES_INPUT),
+    };
+  }
   return {
     ...keepInputFiles(runDir, files),
     rulings: {
@@ -195,7 +272,16 @@ export function keepRevisionFiles(runDir: AbsPath, files: InputFiles): RevisionM
     },
     obligations: files.obligations === null ? null : keepInput(runDir, bytes(files.obligations), OBLIGATIONS_INPUT),
     vision: files.vision === null ? null : keepInput(runDir, bytes(files.vision), VISION_INPUT),
+    ...corpus,
   };
+}
+
+/** Keeps the corpus files a re-derived pin read from its source (`inputs/<sha>.corpus-file`), each hashing as pinned. */
+export function keepCorpusFiles(runDir: AbsPath, files: readonly SourceFile[]): void {
+  for (const f of files) {
+    const sha = keepInput(runDir, Buffer.from(f.text, 'utf8'), CORPUS_FILE_INPUT);
+    if (sha !== f.sha256) throw new Error(`keepCorpusFiles: ${f.path} hashes to ${sha}, its source says ${f.sha256}`);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -377,8 +463,18 @@ export type RevisionInForce = Readonly<{
   sidecars: ReadonlyMap<RulingId, Readonly<{ sha256: Sha256Hex; bytes: Buffer; sidecar: RulingSidecar }>>;
   obligations: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Obligations }> | null;
   vision: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Vision }> | null;
+  /** M4a: a corpus arc's pin, guide bytes, Phase-0 record and issue capture in force; null for an `architecture-doc` arc. */
+  corpus: CorpusInForce | null;
   /** The whole revision manifest in force. */
   manifest: RevisionManifest;
+}>;
+
+type Kept<T> = Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: T }>;
+export type CorpusInForce = Readonly<{
+  pin: Kept<CorpusPin>;
+  guide: Readonly<{ sha256: Sha256Hex; bytes: Buffer }>;
+  phase0: Kept<Phase0Record>;
+  capture: Kept<IssueCapture>;
 }>;
 
 function kept(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer {
@@ -400,11 +496,18 @@ export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInFo
     const bytes = kept(runDir, sha, ext);
     return { sha256: sha, bytes, value: parse(json(bytes)) };
   };
+  const { corpus: pinSha, corpusGuide, phase0, phase0Issues } = manifest;
   return {
     ledger: { sha256: manifest.rulings.ledgerSha256, bytes: kept(runDir, manifest.rulings.ledgerSha256, RULINGS_INPUT) },
     sidecars,
     obligations: parsed(manifest.obligations, OBLIGATIONS_INPUT, parseObligations),
     vision: parsed(manifest.vision, VISION_INPUT, parseVision),
+    corpus: pinSha === undefined || corpusGuide === undefined || phase0 === undefined || phase0Issues === undefined ? null : {
+      pin: parsed(pinSha, CORPUS_INPUT, parseCorpusPin)!,
+      guide: { sha256: corpusGuide, bytes: kept(runDir, corpusGuide, CORPUS_GUIDE_INPUT) },
+      phase0: parsed(phase0, PHASE0_INPUT, parsePhase0Record)!,
+      capture: parsed(phase0Issues, ISSUES_INPUT, parseIssueCapture)!,
+    },
     manifest,
   };
 }
@@ -414,7 +517,7 @@ export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInFo
  * adds its ops, a `rule` its sidecar, a `reverse` restores a preimage). A unit's spec is the one an unchanged file
  * would hold: its pending revision, else its recorded spec, else the manifest's. Paths name the arc's files.
  */
-export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForce, revision: RevisionInForce, planFile: AbsPath): InputFiles {
+export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForce, revision: RevisionInForce, planFile: AbsPath, repo: AbsPath): InputFiles {
   const plan = inForce.plan;
   const ledger = ledgerPath(planFile, plan);
   const specs = new Map(plan.units.map((u) => {
@@ -426,12 +529,18 @@ export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForc
   const beside = (path: string, bytes: Buffer): InputFile => ({ path: absPath(join(dirname(planFile), path)), bytes });
   const planBytes = keptInput(runDir, inForce.manifest.planSha256, PLAN_INPUT);
   if (planBytes === null) throw new Error(`the plan in force (rev ${inForce.rev}) is not kept`);
+  const c = revision.corpus;
+  if ((c === null) !== (plan.target !== 'corpus')) throw new Error(`the revision in force (rev ${inForce.rev}) ${c === null ? 'keeps no' : 'keeps'} corpus inputs for a ${plan.target} plan`);
   return {
-    planFile, plan, planBytes, specs,
+    repo, planFile, plan, planBytes, specs,
     ledger: { path: ledger, bytes: revision.ledger.bytes },
     sidecars: new Map([...revision.sidecars].map(([id, s]) => [id, { path: sidecarPath(ledger, id), bytes: s.bytes }] as const)),
     obligations: revision.obligations === null || plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations, revision.obligations.bytes),
-    vision: revision.vision === null ? null : besideVision(plan, (path) => beside(path, revision.vision!.bytes)),
+    vision: revision.vision === null ? null : visionInput(plan, repo, (path) => ({ path, bytes: revision.vision!.bytes }), planFile),
+    corpus: c === null || plan.target !== 'corpus' ? null : {
+      pin: beside(plan.corpus, c.pin.bytes), guide: { path: absPath(join(repo, CORPUS_GUIDE_PATH)), bytes: c.guide.bytes },
+      phase0: beside(plan.phase0, c.phase0.bytes), capture: beside(c.phase0.value.issueCapture.file, c.capture.bytes),
+    },
   };
 }
 

@@ -395,7 +395,7 @@ describe('status: dev.6 routing revs (K12, OR-L3)', () => {
       const provenance = routingProvenanceOf({ profile: 'default', config: null }, plan);
       const first = r.journal.view.planApplied()!;
       r.journal.fact({
-        kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath))), changes: [],
+        kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath), absPath(d.repo))), changes: [],
         source: { type: 'start' }, payloadSha256: first.payloadSha256, rulingsSha256: first.rulingsSha256, routingProvenance: provenance,
       });
       // The rev dev.6 recorded: the M2 table under its catalogue (frontier Opus high, summit Fable high), by hand.

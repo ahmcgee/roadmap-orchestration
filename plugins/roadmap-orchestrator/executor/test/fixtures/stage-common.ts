@@ -107,12 +107,12 @@ function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: 
 /** Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). */
 export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
   writeStart(runDir, repo, planPath, profile);
-  recordPlan(journal, runDir, readInputFiles(planPath), [], { profile, config: null });
+  recordPlan(journal, runDir, readInputFiles(planPath, repo), [], { profile, config: null });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
 export function applyFilesNow(run: StageRun): void {
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json'))), [], { profile: 'default', config: null });
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */

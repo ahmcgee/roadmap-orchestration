@@ -11,24 +11,26 @@
 //                   status active, a one-line statement that is not a withdrawn fold
 //   supersession    every target an active ruling of the ledger, each once, never itself
 //   docRefs         each anchor names exactly one place of its document at the tip, and the quoted text is under it
-//                   (M4a: a rule ref resolves to `{T-n, textSha256}` in the corpus pin, which lands in step C1)
-//   contract ops    only on the plan's contracts and architecture docs, each listed in `contractRefs`; anchor-exact,
+//                   (M4a, step C1: a rule ref resolves to `{T-n, textSha256}` active in the corpus pin in force; a rule
+//                   ref outside a corpus arc is refused)
+//   contract ops    only on the plan's contracts and architecture docs, never on a corpus file (M4a, R32: the same-repo
+//                   corpus file set, pinned files and include matches), each listed in `contractRefs`; anchor-exact,
 //                   old text exactly once under the anchor, no two ops of one document with overlapping anchors
 //                   (`deviates` without ops is refused by the reader)
 //   obligations     named ids exist; every disposition's id is among `obligations`
 //   vision          every cited clause active (`citeReasons`); appliesTo names planned units
 //   consistency     (G21) the verdict `consistent`, judged by the checkpoint's own judgment for a checkpoint ruling,
 //                   and `judgedRevs` equal to the revisions in force: the ledger, the obligations and the vision
-//                   bytes, and the blob of every contract it names or edits (`consistencyRevs`). The judged head is
+//                   bytes, the corpus pin in a corpus arc (M4a), and the blob of every contract it names or edits
+//                   (`consistencyRevs`). The judged head is
 //                   provenance only: a merge that leaves those untouched keeps the judgment fresh (lead ruling,
 //                   2026-09-30), and docRefs are re-checked at the tip regardless
 
 // `ledgerAfter` and `sidecarsAfter` put a validated ruling in force: its line appended, every fully superseded
 // ruling folded to `withdrawn by` (and its sidecar marked `superseded`), the ledger's other bytes kept.
 import { readFileSync } from 'node:fs';
-import { type RulingId, type Sha, type Sha256Hex, type UnitId, rulingId } from '../core/ids.ts';
+import { type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, rulingId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { notYet } from '../core/notyet.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { RepoPath } from '../core/values.ts';
 import { applyContractOps, quotedTextReason } from '../docs/contracts.ts';
@@ -72,8 +74,14 @@ export function nextRulingId(ledger: readonly Ruling[]): RulingId {
   return rulingId(`C-${Math.max(0, ...ledger.map((r) => rulingNumber(r.id))) + 1}`);
 }
 
-/** The revisions a ruling is checked against: those in force at its commit (G21). */
-export type InForceRevs = Readonly<{ head: Sha; ledgerSha256: Sha256Hex; obligationsSha256: Sha256Hex | null; visionSha256: Sha256Hex | null }>;
+/** The revisions a ruling is checked against: those in force at its commit (G21). M4a: a corpus arc's pin (absent otherwise). */
+export type InForceRevs = Readonly<{ head: Sha; ledgerSha256: Sha256Hex; obligationsSha256: Sha256Hex | null; visionSha256: Sha256Hex | null; corpusSha256?: Sha256Hex }>;
+
+/**
+ * M4a: the corpus pin in force (a corpus arc's), against which a rule ref resolves; `inFileSet` tells a product path in
+ * the same-repo corpus file set (R32), which no contract op may edit (always false for another source kind).
+ */
+export type RulingCorpus = Readonly<{ rules: ReadonlyMap<RuleId, Sha256Hex>; inFileSet: (path: RepoPath) => boolean }>;
 
 /** What `validateRuling` reads: the ledger and sidecars in force, the tip's documents, and the plan's records. */
 export type RulingContext = Readonly<{
@@ -88,6 +96,8 @@ export type RulingContext = Readonly<{
   obligations: Obligations | null;
   vision: Vision | null;
   units: readonly UnitId[];
+  /** M4a: the corpus in force; null outside a corpus arc. */
+  corpus: RulingCorpus | null;
 }>;
 
 /** The contracts a ruling names or edits, ascending: what its `consistency` must have judged. */
@@ -121,14 +131,19 @@ export function validateRuling(s: RulingSidecar, ctx: RulingContext): readonly s
   });
   // Document references.
   for (const d of s.docRefs.map(rulingRefSource)) {
-    if (d.kind === 'rule') notYet(`${at}'s rule ref ${d.rule} (resolved in the corpus pin)`, 'C1');
+    if (d.kind === 'rule') {
+      if (ctx.corpus === null) out.push(`${at} rule ref ${d.rule}: the arc has no corpus pin (a rule ref is a corpus arc's)`);
+      else if (ctx.corpus.rules.get(d.rule) !== d.textSha256) out.push(`${at} rule ref ${d.rule}: not an active rule of the corpus pin in force with text hash ${d.textSha256}`);
+      continue;
+    }
     const doc = ctx.docAt(d.path);
     const why = doc === null ? 'no such document at the head' : quotedTextReason(doc, d.anchor, d.quotedText);
     if (why !== null) out.push(`${at} docRef ${d.path}: ${why}`);
   }
   // Contract ops.
   for (const op of s.contractOps) {
-    if (!ctx.documents.includes(op.path)) out.push(`${at} contract op on ${op.path}, which is not a plan contract or architecture doc`);
+    if (ctx.corpus?.inFileSet(op.path) === true) out.push(`${at} contract op on ${op.path}, which is a corpus file (contract ops never target the corpus: propose a corpus amendment)`);
+    else if (!ctx.documents.includes(op.path)) out.push(`${at} contract op on ${op.path}, which is not a plan contract or architecture doc`);
     if (!s.contractRefs.includes(op.path)) out.push(`${at} contract op on ${op.path}, which its contractRefs do not list`);
   }
   const applied = applyContractOps(s.contractOps, s.id, ctx.docAt);
@@ -151,8 +166,8 @@ export function validateRuling(s: RulingSidecar, ctx: RulingContext): readonly s
 }
 
 function staleParts(judged: Consistency['judgedRevs'], now: Consistency['judgedRevs']): readonly string[] {
-  const keys = ['ledgerSha256', 'obligationsSha256', 'visionSha256', 'contracts'] as const;
-  return keys.filter((k) => canonicalJson(judged[k]) !== canonicalJson(now[k]));
+  const keys = ['ledgerSha256', 'obligationsSha256', 'visionSha256', 'corpusSha256', 'contracts'] as const;
+  return keys.filter((k) => canonicalJson(judged[k] ?? null) !== canonicalJson(now[k] ?? null));
 }
 
 /** The ledger text with `s` in force: fully superseded rulings folded to `withdrawn by`, its line appended, every other byte kept. */

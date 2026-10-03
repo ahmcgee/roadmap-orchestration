@@ -124,7 +124,7 @@ function addRuling(d: ArcDescriptor, id: string, statement: string, over: Json =
 /** Records the files as revision 1, as an M3 first start does (payload, `revision.commit`, `plan-applied`). */
 function recordFirst(d: ArcDescriptor): void {
   const j = openJournal(absPath(d.runDir), d.arc as never);
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [], BASE);
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], BASE);
   j.close();
 }
 
@@ -225,7 +225,7 @@ test('apply.stale-base: without --expect-rev an apply is refused when the revisi
     // A machine revision (source executor): the plan in force plus a changed direction.
     const rctx = rctxOf(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(d.planPath), absPath(d.repo));
     const planBytes = Buffer.from(JSON.stringify({ ...JSON.parse(current.planBytes.toString('utf8')), direction: 'Machine direction.' }));
     const v = evaluateRevision(rctx, { ...current, planBytes, plan: { ...current.plan, direction: 'Machine direction.' } }, { type: 'executor' });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -251,7 +251,7 @@ test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routi
   const r = contextFor(d);
   try {
     editPlan(d, (p) => void (p.units[0]!['routing'] = { gate: { med: 'summit' } }));
-    const scope = commandScope({ runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE });
+    const scope = commandScope({ runDir: r.ctx.runDir, repo: absPath(d.repo), hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE });
     assert.deepEqual(scope(applyBody(d) as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan()), { type: 'units', units: ['u1'] });
     const { outcome } = await command(r, applyBody(d));
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
@@ -454,10 +454,10 @@ test('apply.holistic-add: `holistic` and the vision may be added (A5); removing 
   try {
     writeJson(join(planDirOf(d), 'vision.json'), VISION);
     editPlan(d, (p) => void (p['holistic'] = { vision: 'vision.json', advances: ADVANCES }));
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath)), { type: 'apply' });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply' });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind === 'accepted') assert.deepEqual(v.draft.changes, [{ type: 'holistic' }, { type: 'vision', rev: 1 }]);
-    const start = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath)), { type: 'start' });
+    const start = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'start' });
     assert.ok(start.kind === 'rejected' && start.reasons.some((x) => /the vision is owner-only \(A14\): only an architect `apply` changes it, not a start/.test(x)));
   } finally {
     r.journal.close();
@@ -476,7 +476,7 @@ test('apply.advances: the plan\'s slice names active clauses of the revision\'s 
   try {
     const visionFile = join(planDirOf(h.d), 'vision.json');
     const reasons = (proposer: Parameters<typeof evaluateRevision>[2] = { type: 'apply' }): readonly string[] => {
-      const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath)), proposer);
+      const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), proposer);
       return v.kind === 'rejected' ? v.reasons : assert.fail(`expected a rejection, got ${JSON.stringify(v)}`);
     };
     // The vision withdraws the world clause the plan advances (a new one takes its place): the apply is refused.
@@ -495,7 +495,7 @@ test('apply.advances: the plan\'s slice names active clauses of the revision\'s 
     ]);
     // The slice follows the vision: it applies, and a change of it is listed.
     editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-1', 'V-4']));
-    const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath)), { type: 'apply' });
+    const v = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), { type: 'apply' });
     assert.ok(v.kind === 'accepted', JSON.stringify(v));
     assert.deepEqual(v.draft.changes, [{ type: 'vision', rev: 2 }, { type: 'advances' }]);
     // Owner-only: no other proposer moves the slice.
@@ -515,7 +515,7 @@ test('apply.core-proposal: the core evaluates an in-memory proposal from any pro
   try {
     const rctx = rctxOf(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(r.d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(r.d.planPath), absPath(r.d.repo));
     assert.equal(evaluateRevision(rctx, current, { type: 'rule' }).kind, 'unchanged', 'the plan in force as files changes nothing');
     const ledger = { ...current.ledger, bytes: Buffer.concat([current.ledger.bytes!, Buffer.from('C-3 — A rule.\n')]) };
     const proposal = { ...current, ledger };
@@ -549,7 +549,7 @@ test('fence.capture-waits: a capture under the fence waits for a revision holdin
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(seen, [], 'the capture waits while a revision holds the fence');
     addUnit(d, 'u2');
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath)), { type: 'apply' });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply' });
     assert.ok(v.kind === 'accepted');
     keepRevision(r.ctx.runDir, v);
     commitRevisionNow(r.journal, r.ctx.runDir, payloadOf(v.draft, { type: 'start' }), { type: 'arc' });
@@ -574,10 +574,10 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
     p['baseline'] = revParse(repo, 'main');
   });
   const context = (): StartupContext => {
-    const files = readInputFiles(absPath(d.planPath));
+    const files = readInputFiles(absPath(d.planPath), absPath(d.repo));
     return { repo, planFile: absPath(d.planPath), plan: files.plan, specOf: () => null, profile: 'default', runDir: absPath(d.runDir), hostDir: absPath(d.hostDir) };
   };
-  const dropped = (): readonly string[] => obligationDropped(context(), readInputFiles(absPath(d.planPath)));
+  const dropped = (): readonly string[] => obligationDropped(context(), readInputFiles(absPath(d.planPath), absPath(d.repo)));
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0]] });
   assert.deepEqual(dropped(), ['obligation-dropped: I-2 (removed) has no Phase-0 ruling naming it retired']);
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0], obligation('I-2', 'add stays fixed, mostly.', { rev: 2 })] });
@@ -620,7 +620,7 @@ const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft =
 function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): void {
   checkpointInputs(r);
   addUnit(r.d, 'u2');
-  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
+  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
@@ -699,7 +699,7 @@ test('reverse.spec-preimage-exact: a checkpoint that revised a spec a machine `s
       x['rev'] = 3;
       (x['facts'] as Json[]).push({ id: 'F9', text: 'the checkpoint narrowed mul', state: 'active' });
     });
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     keepRevision(r.ctx.runDir, v);
@@ -730,7 +730,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     checkpointInputs(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const revision = revisionInForce(r.ctx.runDir, inForce);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath), absPath(d.repo));
     const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
     const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'] };
     const v = evaluateRevision(rctxOf(r), { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(amended)) } }, proposer);
@@ -762,7 +762,7 @@ test('split.checkpoint-drop-divergence: a checkpoint split may drop text only ci
     checkpointInputs(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const revision = revisionInForce(r.ctx.runDir, inForce);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(r.d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(r.d.planPath), absPath(r.d.repo));
     const split = {
       ...OBLIGATIONS,
       obligations: [

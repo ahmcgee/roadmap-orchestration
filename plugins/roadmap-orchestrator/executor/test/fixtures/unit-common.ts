@@ -154,7 +154,7 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
 
 /** An `apply` of the plan and specs as the files hold them now (what `roadmap apply` submits). */
 export function applyBody(d: ArcDescriptor, expectRev: PlanRev | null = null): CommandBody {
-  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath)));
+  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
   return { type: 'apply', expectRev, manifest };
 }

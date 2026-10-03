@@ -212,7 +212,7 @@ means before any *pipeline* intent.
 
 | `kind` | Row | Fields | Exit |
 |---|---|---|---|
-| `legacy-roadmap-dir` | in-tree `.roadmap/` beyond `contracts/`, `constraints.md`, `invariants.md`, `debt.md`, `config.json` | `path, unexpected[]` | 78 |
+| `legacy-roadmap-dir` | in-tree `.roadmap/` beyond `contracts/`, `constraints.md`, `invariants.md`, `debt.md`, `config.json` (M4a: and `vision.json`, `corpus.md`) | `path, unexpected[]` | 78 |
 | `worktree-root-unusable` | `worktreeRoot` on tmpfs or not writable | `path, problem: tmpfs\|not-writable, detail` | 78 |
 | `spec-lane-unrunnable` | lane `argv[0]` unresolvable, env prerequisite missing, estate lane for the implementer; resource variant (lead ruling, 13b): a declared resource's probe or teardown `argv[0]` unresolvable or env prerequisite missing | `unit\|null, lane, problem` \| `resource, command: probe\|teardown, problem` | 78 |
 | `unsupported-routing` | a seat's class binds an unsupported triple (every Codex judgment triple) | `role, tier` (a seat), `layer` (that chose the class), `class, unit\|null, why: codex-judgment\|no-prompt` | 78 |
@@ -2223,7 +2223,7 @@ DocRef | null`, `+ rule: T-n | null`, exactly one non-null (its schema in `CHECK
 
 **CLI** (`src/input/cli.ts`, host acts, not queued; dispatch final in `src/cli/main.ts`): `phase0 check --repo (--plan
 <file> | --from-ref <arc>)` → `phase0-check{repo, source: plan{plan} | ref{arc}}` (exit 0 or 78); `corpus pin --repo
---commit <ref> --out <file>`; `brief --repo [--json] [--ack <briefId>]`; `pr --repo --arc`; `issues --repo [--out
+--commit <ref> --baseline <sha> --out <file>` (C1, LR-A1-1); `brief --repo [--json] [--ack <briefId>]`; `pr --repo --arc`; `issues --repo [--out
 <file>]`; `chain status --repo`. Each module (`src/commands/{phase0,corpus,brief,pr,issues,chain}.ts`) exports its final
 signature and outcome type; step 0a's bodies throw `NotYetError` (`src/core/notyet.ts`) until the landing step replaces
 them (A1 corpus, A3 issues and pr, C1 phase0, C4 brief and chain).
@@ -2258,3 +2258,63 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    without them reads as none through `checkpointOutputM4Default`. The split child's `rule` is in the schema now.
 6. **The M4a facts are validated but not folded** in 0a: the fold sees the job they name (`nextJobId`), and the steps
    that write them fold them (A4 debt, C3 amendments, intake, pack review, captures).
+
+**Readings of M4a A1, A3, B1 and C1** (recorded in step C1):
+
+1. **The corpus pin's baseline is explicit** (LR-A1-1): `corpus pin --baseline <sha>` reads the guide and the rules
+   registry committed at that commit (the plan's baseline, which holds the committed `.roadmap/` inputs), never at
+   HEAD; `start` and `apply` re-derive from the guide and registry at `plan.baseline` and the source at the pin's
+   commit. A pin made against any other baseline is `pin-drift` (its `guideSha256` or its `retired`/`highWater` differ).
+2. **Checkout cache** (A1, H22): `$(git-common-dir)/roadmap/corpus/<sha256 of the canonical remote>/{remote.json,repo/}`;
+   the canonical remote is the guide's remote trimmed with trailing slashes dropped and nothing more folded (two
+   spellings are two clones, never one clone for two remotes); `remote.json` is published before the first clone and
+   checked before every use; a clone is made in a temp sibling and renamed into place. **Malformed corpus text** (a
+   malformed rule line, an empty or unclosed rules block, a duplicate id, a guide without exactly one block) throws
+   `CorpusFormatError` (`file:line`, LR-A1-2): loud, never a row. **Materialised views** (`<runDir>/corpus/<pinSha8>/`,
+   `<pinSha8>.no-vision/` for the gate and build) are written from kept bytes, files 0444, built in a temp sibling.
+3. **The shared Phase-0 rows** (`src/phase0/rows.ts` `phase0Rows(input, mode)`, synchronous) run in four modes:
+   a fresh start and `phase0 check --plan` (everything), a restart of an arc with a plan in force (no chain rows), an
+   `apply` (no forge, no chain) and `--from-ref` (the closure rows only). `tree-uncommitted` runs for every arc; every
+   other row only for a corpus arc. A respawn runs none. `phase0 check --plan` also runs `runChecks`' pure rows (the
+   `.roadmap/` layout, `plan-invalid`, the revisioned inputs, routing, lanes) and `holistic-needs-corpus`.
+4. **`holistic-needs-corpus` is `phase0 check`'s alone for now**: `start` of a fresh holistic `architecture-doc` arc is
+   still accepted, because the M3 fixtures and the integrated M3 tests start such arcs and cannot move to a corpus arc
+   before C2 and C3 land; wiring the row into `runChecks` is a carry-forward to the fixture migration (D1/D3).
+5. **A record that names something absent is `plan-invalid{schema}`** naming the record entry (`plan.phase0.debt.B-n`,
+   `plan.phase0.amendments.<arc>/M-n`, `plan.phase0.intake.issue-n`): a debt disposition of no open baseline item, a
+   `promote` to a unit the plan does not hold, a `resolve` by a ruling the ledger does not hold active, an amendment
+   disposition of no amendment of the previous arc, a Phase-0 `acted` on a unit or rule absent from the plan or pin.
+   A corpus arc without `holistic.obligations` (LR-0a-2), or whose obligations carry no census, is too.
+6. **Debt**: a `keep` of an item whose history keeps it in each of the two previous arcs needs a question whose `text`
+   names the item id as a word (`bears` holds only `T-n` and `V-n`); a `promote` or `resolve` needs no question.
+7. **Intake**: the capture is the file the record names, required to hash to its `issueCapture.sha256` (else
+   `capture-missing`); `intake-duplicate` is read from the raw record before its reader (which refuses a second
+   outcome for one issue); `capture-foreign{expected, actual}` has `expected` the identity `gh repo view` resolves now and
+   `actual` the capture's.
+8. **Questions** (H23): the closure is every Phase-0 record any revision of each previous chained arc kept (by its
+   verified ref); a question whose id the closure holds must have the one text the closure holds; a new id must be
+   above the closure's highest.
+9. **The chain** (`src/chain.ts`, the one derivation, H20): an arc's ref is read only when it verifies (`ArcRefError`
+   otherwise, loud). A start's chain row is the first failing of, in order, `previous-incomplete` (no ref, or no
+   `arc-completed` after its latest plan revision that is active or sealed in the ref), `baseline` (H12's order),
+   `k-unset`, `limit`; `limit.unacked` counts the unacked starts with this one. The ack that counts is the committed
+   ack (`<briefId>.json`, never a pending marker) whose `chainHead` is furthest along the chain; with none, the
+   bootstrap arc is acked. `roadmap pr` reads arcs through it.
+10. **Vision**: a corpus arc's `confirmation.ref` must be the `corpus:` form and hash to the pinned file at its path
+    (`vision-unconfirmed{ref, expected, actual}`; the M3 form in a corpus arc is `actual: null`). The load label of a
+    corpus arc's vision record is `.roadmap/vision.json` (an `architecture-doc` arc's stays `plan.holistic.vision`).
+11. **A rule anchor's hash refresh** (R5): the same `T-n` with another `textSha256` and the statement unchanged is
+    `obligation{edited}` (fields `rule`), not normative (the rev stays, the proof stays valid), never a weakening; another
+    `T-n` is a weakening (`amended`, "rule changed") and normative.
+12. **Rulings in a corpus arc**: a rule ref resolves to `{T-n, textSha256}` active in the pin in force (outside a corpus
+    arc it is refused); a contract op on a path in the same-repo corpus file set is refused whatever the plan documents
+    list; a sidecar's `consistency.judgedRevs.corpusSha256` must equal the pin in force (absent on both sides outside a
+    corpus arc).
+13. **Kept corpus bytes** (`inputs/<sha>.corpus.json`, `.corpus-guide.md`, `.phase0.json`, `.issues.json`,
+    `.corpus-file`): the corpus files are kept from the source the re-derived pin read, before the revision that names
+    the pin is kept (`keepRevisionFiles` refuses a pin whose files are not kept). The snapshot closure carries the pin,
+    guide, Phase-0 record and capture a payload's manifest names (C1); the pin's corpus files are C2's.
+14. **Prompt inputs** (B1): every judgment's target input is `target` (`TargetInput = ArchitectureInput | CorpusInput`;
+    the gate's `GateTargetInput` never carries the vision doc); `CheckpointInputs.issues` holds the checkpoint's captured
+    issues; the checkpoint schema requires `corpusAmendments` and `issueIntake` (a recorded dev.6 answer reads them as
+    none through `checkpointOutputM4Default`).

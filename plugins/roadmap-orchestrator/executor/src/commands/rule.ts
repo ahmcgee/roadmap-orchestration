@@ -101,7 +101,7 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
 
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
-  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
+  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
   const before = writtenBackOf(revision.manifest);
   const ledger = Buffer.from(ledgerAfter(revision.ledger.bytes.toString('utf8'), sidecar), 'utf8');
   const sidecars = new Map(sidecarsAfter([...revision.sidecars.values()].map((s) => s.sidecar), sidecar).map((s) => {

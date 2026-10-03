@@ -243,7 +243,7 @@ async function sealArc(s: Stack, name: string, from: string, previous: Sealed | 
   mkdirSync(runDir, { recursive: true });
   const j = openJournal(runDir, arc);
   try {
-    const applied = recordPlan(j, runDir, readInputFiles(absPath(planPath)), [], BASE);
+    const applied = recordPlan(j, runDir, readInputFiles(absPath(planPath), absPath(s.repo)), [], BASE);
     for (let n = 1; n <= amendments; n++) {
       j.fact({
         kind: 'corpus-amendment', id: amendmentIdOf(n), source: { type: 'divergence', divergence: divergenceIdOf(n) }, rules: [ruleId(`T-${n}`)],

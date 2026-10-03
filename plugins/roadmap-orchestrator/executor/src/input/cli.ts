@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, briefId, divergenceId,
-  edgeId, needsUserId, planRev, resourceName, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type Sha, type UnitId, arcId, briefId, divergenceId,
+  edgeId, needsUserId, planRev, resourceName, sha, unitId,
 } from '../core/ids.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
@@ -61,8 +61,8 @@ export type Command =
   // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,issues,chain}.ts.
   /** `phase0 check`: the shared Phase-0 rows, read-only, over a plan file or (K20) the digests an arc's ref recorded. */
   | Readonly<{ command: 'phase0-check'; repo: string; source: Phase0Source }>
-  /** `corpus pin`: derive the corpus pin from the guide's source at `commit` and write it to `out`. */
-  | Readonly<{ command: 'corpus-pin'; repo: string; commit: string; out: string }>
+  /** `corpus pin`: derive the corpus pin from the guide at `baseline` (the plan's, LR-A1-1) and its source at `commit`, and write it to `out`. */
+  | Readonly<{ command: 'corpus-pin'; repo: string; commit: string; baseline: Sha; out: string }>
   /** `brief`: everything since the last ack across the chain (`json`: the payload, else its Markdown); `ack` acknowledges one brief. */
   | Readonly<{ command: 'brief'; repo: string; json: boolean; ack: BriefId | null }>
   /** `pr`: open or update the arc's stacked pull request. */
@@ -295,10 +295,11 @@ export function parseCommand(argv: readonly string[]): Command {
     case 'corpus': {
       const [sub, ...args] = rest;
       if (sub !== 'pin') throw new CliError(`corpus: expected the subcommand pin, got ${JSON.stringify(sub ?? '')}`);
-      const p = parseRest(args, { repo: 'value', commit: 'value', out: 'value' }, 'corpus pin');
+      const p = parseRest(args, { repo: 'value', commit: 'value', baseline: 'value', out: 'value' }, 'corpus pin');
       positionals(p, 'corpus pin', 0);
       return {
-        command: 'corpus-pin', repo: required(p, 'corpus pin', 'repo', '<path>'), commit: required(p, 'corpus pin', 'commit', '<ref>'), out: required(p, 'corpus pin', 'out', '<file>'),
+        command: 'corpus-pin', repo: required(p, 'corpus pin', 'repo', '<path>'), commit: required(p, 'corpus pin', 'commit', '<ref>'),
+        baseline: arg('corpus pin', '--baseline', sha, required(p, 'corpus pin', 'baseline', '<sha>')), out: required(p, 'corpus pin', 'out', '<file>'),
       };
     }
     case 'brief': {

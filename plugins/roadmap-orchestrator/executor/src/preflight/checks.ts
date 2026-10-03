@@ -19,6 +19,13 @@
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
+// M4a (step C1): group 1 ends with the shared Phase-0 rows over the files (src/phase0/rows.ts `phase0Rows`, one rule
+// with `apply` and `phase0 check`): `tree-uncommitted` for every arc; for a corpus arc the pin re-derived, corpus overlap,
+// census, debt, questions, amendments, intake, the vision confirmed, the issue policy and the capture's repo, and at a
+// fresh start (no plan in force) the chain rows. The corpus files the re-derived pin read are kept when the files come
+// into force (`settlePlan`). `holistic-needs-corpus` (H4) is `phase0 check`'s until the M3 fixtures start corpus arcs
+// (a fresh holistic `architecture-doc` start is still accepted here).
+//
 // A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
 //
 // `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
@@ -47,10 +54,12 @@ import { advancesReasons } from '../holistic/vision.ts';
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keptPayload, openRevision, planInForce, readInputFiles, recordPlan,
-  specBytesOf, specShaInForce,
+  type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
+  recordPlan, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
-import { type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason } from '../input/plan.ts';
+import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import { FRESH_START, RESTART, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
@@ -67,7 +76,7 @@ import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } f
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
 /** The in-tree `.roadmap/` entries 1.0 keeps; anything else is a 0.x layout (hard cutover: refused, never converted). */
-export const ROADMAP_DIR_ALLOWED = ['config.json', 'constraints.md', 'contracts', 'debt.md', 'invariants.md'] as const;
+export const ROADMAP_DIR_ALLOWED = ['config.json', 'constraints.md', 'contracts', 'corpus.md', 'debt.md', 'invariants.md', 'vision.json'] as const;
 /** statfs(2) f_type of tmpfs. */
 const TMPFS_MAGIC = 0x01021994;
 
@@ -263,7 +272,8 @@ export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[
     });
   }
   if (files.obligations !== null) load('plan.holistic.obligations', files.obligations.path, files.obligations.bytes, parseObligations);
-  const vision = files.vision === null ? null : load('plan.holistic.vision', files.vision.path, files.vision.bytes, parseVision);
+  const visionField = visionFile(files.plan)?.base === 'repo' ? CORPUS_VISION_FILE : 'plan.holistic.vision';
+  const vision = files.vision === null ? null : load(visionField, files.vision.path, files.vision.bytes, parseVision);
   if (vision !== null && files.plan.holistic !== undefined) {
     for (const detail of advancesReasons(vision, files.plan.holistic.advances)) out.push({ kind: 'plan-invalid', problem: { type: 'schema', field: 'plan.holistic.advances', detail } });
   }
@@ -442,10 +452,10 @@ export function gitCommonDir(repo: AbsPath): AbsPath {
 type Source = Readonly<{ plan: PlanM1; specOf: (unit: PlanUnit) => Buffer | null; files: InputFiles | null }>;
 
 /** plan.json and its specs as the files hold them, or the schema rejection of the plan. */
-function fileSource(planFile: AbsPath): Source | Rejection<'plan-invalid'> {
+function fileSource(planFile: AbsPath, repo: AbsPath): Source | Rejection<'plan-invalid'> {
   const plan = loadPlan(planFile);
   if ('kind' in plan) return plan;
-  const files = readInputFiles(planFile);
+  const files = readInputFiles(planFile, repo);
   return { plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, files };
 }
 
@@ -475,7 +485,9 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): Re
  * classifies them like `roadmap apply` (no command) and refuses what the rules refuse. A respawn runs the plan
  * in force and asks nothing.
  */
-export function settlePlan(journal: OpenJournal, context: StartupContext, files: InputFiles | null): readonly Rejection<'plan-change-refused'>[] {
+export function settlePlan(
+  journal: OpenJournal, context: StartupContext, files: InputFiles | null, corpusFiles: readonly SourceFile[] = [],
+): readonly Rejection<'plan-change-refused'>[] {
   // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
   // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
   const open = openRevision(journal.view);
@@ -495,6 +507,7 @@ export function settlePlan(journal: OpenJournal, context: StartupContext, files:
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
+    keepCorpusFiles(context.runDir, corpusFiles);
     recordPlan(journal, context.runDir, files, [], routingBase);
     return [];
   }
@@ -515,6 +528,7 @@ export function settlePlan(journal: OpenJournal, context: StartupContext, files:
           reasons: ['the changed files need a docs publication (their obligations or rulings render into .roadmap/): start on the plan in force, then `roadmap apply` them'],
         }];
       }
+      keepCorpusFiles(context.runDir, corpusFiles);
       keepRevision(context.runDir, verdict);
       commitRevisionNow(journal, context.runDir, payloadOf(verdict.draft, { type: 'start' }), { type: 'arc' });
       return [];
@@ -547,7 +561,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
 
   // 1. input
   const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc);
-  const source = inForce ?? fileSource(input.planFile);
+  const source = inForce ?? fileSource(input.planFile, input.repo);
   if ('kind' in source) return refused([...legacyRoadmapDir(input.repo), source]);
   const { plan } = source;
   let profile: ProfileName;
@@ -561,6 +575,15 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.files === null ? [] : revisionInputRows(source.files))];
   if (inputRows.length > 0) return refused(inputRows);
+  // The shared Phase-0 rows over the files (a respawn runs the plan in force and asks nothing); the chain's at a fresh start.
+  let corpusFiles: readonly SourceFile[] = [];
+  if (source.files !== null) {
+    const log = arcLog(context);
+    const fresh = log !== 'corrupt' && log.planApplied() === null;
+    const p0 = phase0Rows(phase0InputOf(source.files, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
+    if (p0.rows.length > 0) return refused(p0.rows);
+    corpusFiles = p0.opened?.files ?? [];
+  }
 
   // 2. environment
   let routingRows: readonly StartupRejection[];
@@ -589,7 +612,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
-  const planRows = settlePlan(journal, context, source.files);
+  const planRows = settlePlan(journal, context, source.files, corpusFiles);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
