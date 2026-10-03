@@ -2,7 +2,7 @@
 // over real chained corpus arcs: real repos and pins, real run dirs and folds, real snapshot refs (the brief reads only
 // them), the fake forge for the PRs, the CLI as a child for the crash rows (BRIEF_ACK). Named tests:
 // brief.since-ack-across-arcs, brief.coverage-vector, brief.payload-hash-whole, brief.markdown-from-payload,
-// brief.ack-stale-refused, brief.ack-nonblocking-only, brief.ack-crash-rerun, brief.ack-ids-ordinal, chain.status-render.
+// brief.ack-stale-refused, brief.ack-nonblocking-only, brief.ack-crash-rerun, brief.ack-crash-start, brief.ack-ids-ordinal, chain.status-render.
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,12 +23,15 @@ import { debtKey } from '../src/debt/ledger.ts';
 import { snapshotRequestOf } from '../src/git/snapshot.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA } from '../src/holistic/types.ts';
 import { PACK_REVIEW_INPUT, keepInput } from '../src/input/inforce.ts';
+import { selfIdentity } from '../src/host/liveness.ts';
+import { claimHost, releaseHost } from '../src/host/lock.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { type BriefPayload, parseAckMarker, parseBriefPayload } from '../src/phase0/types.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
+import { runChecks } from '../src/preflight/checks.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { type CorpusArc, betweenArc, corpusArc, editPhase0, inForce, nextArc, runDirOfArc, seal, withForge } from './helpers/corpusarc.ts';
+import { type CorpusArc, betweenArc, corpusArc, editPhase0, inForce, newHostDir, nextArc, runDirOfArc, seal, withForge } from './helpers/corpusarc.ts';
 import { runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { BRIEF_ACK, crashCells } from './matrix.ts';
@@ -317,6 +320,32 @@ describe('roadmap brief', () => {
       assert.deepEqual(ackFiles(a2), [`${b.id}.json`]);
       assert.deepEqual(incoming(a2), ids.map((c) => `${c}.json`), 'each ack command once, under its deterministic id');
       assert.deepEqual((await payloadOf(a2)).payload.chain.unackedStarts, [], 'the committed marker acks the chain head');
+    });
+
+    it(`brief.ack-crash-start @ ${cell.label}: the next start finishes the pending marker before its rows read the acks`, T, async () => {
+      const { a2 } = await chained();
+      const b = await payloadOf(a2);
+      const trigger = writeTrigger(tmpDir('brief-crash'), { label: cell.label, occurrence: 1 });
+      const crashed = await cli(a2, ['brief', '--repo', a2.repo, '--ack', b.id], { ROADMAP_TEST_CRASH: trigger });
+      assertFired(trigger);
+      assert.notEqual(crashed.code, 0);
+      assert.deepEqual(ackFiles(a2), [`${b.id}.pending.json`], 'the marker is still pending');
+      const marker = parseAckMarker(JSON.parse(readFileSync(join(acksDir(a2.repo), `${b.id}.pending.json`), 'utf8')));
+      const ids = marker.items.map((_, i) => ackCommandId(marker.at, i));
+      // `roadmap start` of arc 2 (its startup checks, as the executor runs them).
+      const hostDir = newHostDir();
+      const out = await withForge(a2.forge, () => runChecks({
+        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null,
+        claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
+      }));
+      out.journal?.close();
+      if (out.claim !== null) releaseHost(hostDir, out.claim);
+      assert.equal(out.kind, 'passed', JSON.stringify(out.kind === 'refused' ? out.rejections : 'passed'));
+      assert.deepEqual(ackFiles(a2), [`${b.id}.json`], 'start committed the marker');
+      assert.deepEqual(incoming(a2), ids.map((c) => `${c}.json`), 'each ack command once, under its deterministic id');
+      assert.deepEqual((await payloadOf(a2)).payload.chain.unackedStarts, [], 'the committed marker acks the chain head');
+      const rerun = await cli(a2, ['brief', '--repo', a2.repo, '--ack', b.id]);
+      assert.deepEqual([rerun.code, JSON.parse(rerun.stdout)], [0, { acked: b.id, commands: ids }]);
     });
   }
 });

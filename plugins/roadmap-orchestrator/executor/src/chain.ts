@@ -3,7 +3,8 @@
 //   arcs   each arc's verified snapshot ref `refs/roadmap/<arc>` (`readArcRef`): its events folded, the plan in force at
 //          its high-water and the bytes it keeps; an arc's previous arc is its plan's `chain.previousArc`;
 //   acks   the ack log, write-once files in `$(git-common-dir)/roadmap/acks/`: `<briefId>.pending.json` committed by rename
-//          to `<briefId>.json` (C4's `brief --ack` writes them; only committed ones count here);
+//          to `<briefId>.json` (`brief --ack` writes them; only committed ones count here). A pending marker a crash left
+//          is finished here (`finishPendingAcks`) by `brief`, `brief --ack` and `start`;
 //   K      `.roadmap/config.json` `chain.k` only.
 // A start is acked when no chained start lies between it and the chainHead of the committed ack furthest along the
 // chain; the bootstrap arc (no `chain`) counts as acked (R11). Consumers: `phase0Rows` (src/phase0/rows.ts), `roadmap
@@ -11,7 +12,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Event, type Fact, parseEventLine, prevHash } from './core/events.ts';
-import { type AmendmentRef, type ArcId, type PhaseQuestionId, type Sha, type Sha256Hex, amendmentRefOf, arcId } from './core/ids.ts';
+import { type AmendmentRef, type ArcId, type BriefId, type CommandId, type PhaseQuestionId, type Sha, type Sha256Hex, amendmentRefOf, arcId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE } from './core/log.ts';
 import { type RevisionManifest } from './core/records.ts';
@@ -23,6 +24,11 @@ import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT } from './input/inforce.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
 import { parseRevisionPayload } from './core/events.ts';
 import { type AckMarker, type PhaseQuestion, parseAckMarker, parsePhase0Record } from './phase0/types.ts';
+import { ackCommandId, enqueueCommand } from './commands/queue.ts';
+import { crashPoint } from './core/crash.ts';
+import { durableRename } from './core/fsx.ts';
+import { SCHEMA_VERSION } from './core/version.ts';
+import { runDir } from './input/cli.ts';
 
 /** A snapshot ref that exists but does not verify, or holds another arc: loud, never a row. */
 export class ArcRefError extends Error {
@@ -147,6 +153,42 @@ export function committedAcks(repo: AbsPath): readonly AckMarker[] {
   return readdirSync(dir).filter((n) => COMMITTED.test(n)).sort().map((n) => {
     const marker = parseAckMarker(JSON.parse(readFileSync(join(dir, n), 'utf8')));
     if (`${marker.briefId}.json` !== n) throw new Error(`${join(dir, n)} holds the ack of brief ${marker.briefId}`);
+    return marker;
+  });
+}
+
+const PENDING = /^([0-9a-f]{16})\.pending\.json$/;
+export const pendingAckPath = (repo: AbsPath, id: BriefId): string => join(acksDir(repo), `${id}.pending.json`);
+export const committedAckPath = (repo: AbsPath, id: BriefId): string => join(acksDir(repo), `${id}.json`);
+export const readAckMarker = (path: string): AckMarker => parseAckMarker(JSON.parse(readFileSync(path, 'utf8')));
+
+/** The ack commands of `marker`, one per item, by ordinal (R26). */
+export const ackCommandsOf = (marker: AckMarker): readonly CommandId[] => marker.items.map((_, i) => ackCommandId(marker.at, i));
+
+/**
+ * `brief --ack` steps 3–4 (src/commands/brief.ts) from the marker's bytes alone: enqueue each item's `ack` (idempotent),
+ * then commit the marker by rename (crash label `brief.ack.after-enqueue`).
+ */
+export function commitAckMarker(repo: AbsPath, marker: AckMarker): readonly CommandId[] {
+  const ids = ackCommandsOf(marker);
+  const common = gitCommonDir(repo);
+  marker.items.forEach((item, i) => {
+    enqueueCommand(runDir(common, item.arc), { v: SCHEMA_VERSION, id: ids[i]!, arc: item.arc, at: marker.at, body: { type: 'ack', needsUser: item.id, choice: null } });
+  });
+  crashPoint('brief.ack.after-enqueue');
+  durableRename(pendingAckPath(repo, marker.briefId), committedAckPath(repo, marker.briefId));
+  return ids;
+}
+
+/** Finishes every pending marker a crash left (steps 3–4); returns them. `brief`, `brief --ack` and `start` call it first. */
+export function finishPendingAcks(repo: AbsPath): readonly AckMarker[] {
+  const dir = acksDir(repo);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((n) => PENDING.test(n)).sort().map((n) => {
+    const marker = readAckMarker(join(dir, n));
+    if (`${marker.briefId}.pending.json` !== n) throw new Error(`${join(dir, n)} holds the pending ack of brief ${marker.briefId}`);
+    if (existsSync(committedAckPath(repo, marker.briefId))) throw new Error(`brief ${marker.briefId} is both pending and committed in ${dir}`);
+    commitAckMarker(repo, marker);
     return marker;
   });
 }

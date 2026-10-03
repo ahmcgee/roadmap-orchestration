@@ -3,7 +3,7 @@
 // confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the issue policy, the kept corpus inputs.
 // Real repos, real pins (`roadmap corpus pin`), real issue captures against the fake forge.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type ApplyVerdict, evaluateApply, evaluateRevision } from '../src/commands/apply.ts';
@@ -11,7 +11,7 @@ import { corpusPin } from '../src/commands/corpus.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
 import { commandId, sha } from '../src/core/ids.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../src/core/log.ts';
+import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost, releaseHost } from '../src/host/lock.ts';
@@ -349,7 +349,7 @@ describe('the tree and the forge at start', () => {
 });
 
 describe('holistic arcs target a corpus (H4)', () => {
-  it('start.holistic-needs-corpus: phase0 check refuses a fresh holistic architecture-doc plan; an adopted arc with a plan in force starts', T, async () => {
+  it('start.holistic-needs-corpus: phase0 check and start refuse a fresh holistic architecture-doc plan; an adopted arc with a plan in force starts', T, async () => {
     const a = await corpusArc();
     writeFileSync(join(a.planDir, 'vision.json'), JSON.stringify(visionRecord(null)));
     editPlan(a, (p) => {
@@ -358,9 +358,12 @@ describe('holistic arcs target a corpus (H4)', () => {
     });
     const report = await withForge(a.forge, () => phase0Check({ repo: a.repo, source: { type: 'plan', plan: a.planPath } }));
     assert.ok(report.rows.some((r) => r.kind === 'holistic-needs-corpus'), JSON.stringify(report.rows));
+    // `start` of the fresh arc refuses it too (runChecks), recording nothing.
+    const adopted = { ...a, arc: 'adopted-1' } as CorpusArc;
+    assert.deepEqual(refusedRows(await start(adopted)), [{ kind: 'holistic-needs-corpus' }]);
+    assert.equal(existsSync(join(runDirOfArc(adopted), EVENTS_FILE)), false, 'a refused fresh start records no plan');
 
     // An adopted arc: the same plan in force as revision 1 (as dev.6 left it); its next start is accepted.
-    const adopted = { ...a, arc: 'adopted-1' } as CorpusArc;
     const runDir = runDirOfArc(adopted);
     mkdirSync(runDir, { recursive: true });
     const j = openJournal(runDir, adopted.arc);

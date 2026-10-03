@@ -22,9 +22,12 @@
 // M4a (step C1): group 1 ends with the shared Phase-0 rows over the files (src/phase0/rows.ts `phase0Rows`, one rule
 // with `apply` and `phase0 check`): `tree-uncommitted` for every arc; for a corpus arc the pin re-derived, corpus overlap,
 // census, debt, questions, amendments, intake, the vision confirmed, the issue policy and the capture's repo, and at a
-// fresh start (no plan in force) the chain rows. The corpus files the re-derived pin read are kept when the files come
-// into force (`settlePlan`). `holistic-needs-corpus` (H4) is `phase0 check`'s until the M3 fixtures start corpus arcs
-// (a fresh holistic `architecture-doc` start is still accepted here).
+// fresh start (no plan in force) the chain rows and `holistic-needs-corpus` (H4, R17: a fresh holistic arc targets a
+// corpus; an arc with a plan in force, such as an adopted dev.6 one, is never refused it). The corpus files the
+// re-derived pin read are kept when the files come into force (`settlePlan`).
+//
+// Before the Phase-0 rows, a start (not a respawn) finishes every brief ack a crash left pending (`finishPendingAcks`,
+// crash row BRIEF_ACK), so the chain rows read the acks the architect gave.
 //
 // A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
 //
@@ -59,7 +62,8 @@ import {
 } from '../input/inforce.ts';
 import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { FRESH_START, RESTART, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
+import { finishPendingAcks } from '../chain.ts';
+import { FRESH_START, RESTART, holisticNeedsCorpus, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
@@ -578,10 +582,13 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   // The shared Phase-0 rows over the files (a respawn runs the plan in force and asks nothing); the chain's at a fresh start.
   let corpusFiles: readonly SourceFile[] = [];
   if (source.files !== null) {
+    // A brief ack a crash left pending is finished first: the chain rows read the committed acks (BRIEF_ACK).
+    finishPendingAcks(input.repo);
     const log = arcLog(context);
     const fresh = log !== 'corrupt' && log.planApplied() === null;
     const p0 = phase0Rows(phase0InputOf(source.files, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
-    if (p0.rows.length > 0) return refused(p0.rows);
+    const rows = [...(fresh ? holisticNeedsCorpus(source.files.plan) : []), ...p0.rows];
+    if (rows.length > 0) return refused(rows);
     corpusFiles = p0.opened?.files ?? [];
   }
 

@@ -2278,9 +2278,9 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    `apply` (no forge, no chain) and `--from-ref` (the closure rows only). `tree-uncommitted` runs for every arc; every
    other row only for a corpus arc. A respawn runs none. `phase0 check --plan` also runs `runChecks`' pure rows (the
    `.roadmap/` layout, `plan-invalid`, the revisioned inputs, routing, lanes) and `holistic-needs-corpus`.
-4. **`holistic-needs-corpus` is `phase0 check`'s alone for now**: `start` of a fresh holistic `architecture-doc` arc is
-   still accepted, because the M3 fixtures and the integrated M3 tests start such arcs and cannot move to a corpus arc
-   before C2 and C3 land; wiring the row into `runChecks` is a carry-forward to the fixture migration (D1/D3).
+4. **`holistic-needs-corpus`** (D0, R17, H4) is `phase0 check --plan`'s and a fresh start's (`runChecks`, no plan in
+   force: the same `fresh` as the chain rows): a fresh holistic `architecture-doc` start is refused. A start of an arc
+   with a plan in force (an adopted dev.6 arc) is never refused it.
 5. **A record that names something absent is `plan-invalid{schema}`** naming the record entry (`plan.phase0.debt.B-n`,
    `plan.phase0.amendments.<arc>/M-n`, `plan.phase0.intake.issue-n`): a debt disposition of no open baseline item, a
    `promote` to a unit the plan does not hold, a `resolve` by a ruling the ledger does not hold active, an amendment
@@ -2399,8 +2399,8 @@ src/commands/{brief,chain,queue}.ts):
    (`ackCommandId`, at most 65 536); each command is `{type: ack, needsUser, choice: null}` in its arc's run dir, written by
    `enqueueCommand` (the same bytes already there: enqueued; other bytes: fails loud). `--ack` of an id already committed
    reports its commands and writes nothing; a stale id is `{stale: {expected: the id given, actual: the brief now}}`, exit
-   78, nothing written. `brief` and `brief --ack` first finish every pending marker (`finishPendingAcks`); `start` is to
-   call it too (a carry-forward: the start path is not C4's).
+   78, nothing written. `brief`, `brief --ack` and `start` (`runChecks`, before the Phase-0 rows, D0) first finish every
+   pending marker (`finishPendingAcks`).
 7. **PRs** (`prsOf`): an arc's PR by its integration branch: the open one, else the merged one, else a closed one, else
    `none` (`main` has none); an open PR's `needsRebase` is `roadmap pr`'s base walk (`baseOf`, exported by
    src/commands/pr.ts); a `gh`, push or git failure is `unavailable{reason}` for that arc (all arcs when the repo does not
