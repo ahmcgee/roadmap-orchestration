@@ -47,8 +47,8 @@
 // M1/M2 standing criteria, over this run:
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
-//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens and
-//   checkpoint calls), meter-covers-calls (unit and arc calls), no-model-ids
+//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
+//   checkpoint and pack-review calls), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
 // reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
@@ -659,7 +659,7 @@ function snapshotVerifies(run: Run): Verdict {
   return { pass: v.manifest.highWater >= floor, detail: `${ref} at ${at}: high-water ${v.manifest.highWater}, last integration.ff done at seq ${floor}` };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate', 'lens', 'checkpoint']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate', 'lens', 'checkpoint', 'packReview']);
 
 /** The role of a backend call (a unit's, a job's, or a smoke's), else null. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {
