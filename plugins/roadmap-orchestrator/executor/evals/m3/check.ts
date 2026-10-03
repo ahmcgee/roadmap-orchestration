@@ -47,7 +47,7 @@
 // M1/M2 standing criteria, over this run:
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
-//   constraints.md and invariants.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens and
+//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens and
 //   checkpoint calls), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
@@ -71,6 +71,7 @@ import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce } from '../../src/inpu
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
 import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
+import { DEBT_DOC } from '../../src/docs/debt.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { MODEL_IDS } from '../../src/routing/types.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
@@ -479,8 +480,8 @@ function finalAudit(run: Run): Verdict {
   return verdict(problems, `${last.job} final on ${last.integrationSha}, ran ${last.lenses.join(', ')}; ${ck?.job} no-op`);
 }
 
-/** The executor-rendered `.roadmap/` files a docs-only publication may carry. */
-const RENDERED = ['.roadmap/constraints.md', '.roadmap/invariants.md'];
+/** The executor-rendered `.roadmap/` files a docs-only publication may carry (debt.md: a corpus arc's, M4a). */
+const RENDERED: readonly string[] = ['.roadmap/constraints.md', '.roadmap/invariants.md', DEBT_DOC];
 
 function closeOut(run: Run): Verdict {
   const published = factsOf(run, 'docs-published').filter((f) => f.source === 'close-out');

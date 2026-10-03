@@ -3,6 +3,8 @@
 // for it to end, and writes `<dir>/report.json` for check.ts.
 //
 // Real run (no --fake): `bin/roadmap`, the host's real CLIs and the host dir /var/tmp/roadmap; hard timeout 240 min.
+// Either run has the fixture's fake `gh` (setup.ts, `forge/bin`) first on PATH: the corpus arc's Phase-0 rows and
+// checkpoints read the forge, and the fixture has no real one.
 // Paid: once per merged batch, `--profile default` (evals/README.md). Fake run (--fake <story>, evals/m3/scenario.ts):
 // the fake backends behind PATH shims play the story, the CLI runs through test/fixtures/exec-cli.ts with a host dir
 // inside the fixture; hard timeout 15 min. `claude-only` takes `codex` off PATH as in evals/m1/driver.ts.
@@ -171,7 +173,8 @@ function prepare(args: Args): Cli {
   if (!existsSync(l.plan)) throw new Error(`${args.dir} holds no fixture: run evals/m3/setup.ts first`);
   if (existsSync(l.report)) throw new Error(`${l.report} exists: a fixture dir is run once`);
   if (existsSync(l.runDir)) throw new Error(`${l.runDir} exists: this fixture was started before; set up a fresh dir`);
-  let path = (process.env['PATH'] ?? '').split(':').filter((d) => d !== '');
+  // The fixture's fake forge (setup.ts) goes first on PATH in a real run too: the fixture has no real forge.
+  let path = [l.forgeBin, ...(process.env['PATH'] ?? '').split(':').filter((d) => d !== '')];
   let entry: (a: readonly string[]) => readonly string[] = (a) => [BIN_ROADMAP, ...a];
   let hostDir = HOST_DIR;
   if (args.fake !== null) {

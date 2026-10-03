@@ -9,20 +9,27 @@
 //             `src/display.js` (`formatDisplay`, thousands separators over `toFixed(2)`), the unit tests under
 //             test/unit/ (the suite, `npm test`), the journey tests under journeys/ (`*.journey.js`: the arc lanes;
 //             outside `node --test`'s default discovery, so neither the suite nor a bare `node --test` an implementer
-//             runs picks them up), docs/money.md (the rounding rule, I-2's docRef: no spec cites it, and it is
-//             neither a plan contract nor the architecture doc, so no plan-check or gate is handed it); branch `main`
-//             and an `integration` branch cut from it; in-tree `.roadmap/` holds contracts/ledger.md, the C-nn
-//             ledger, a hand-written invariants.md (the close-out renders it, so the close-out publication has
-//             something to change) and config.json (empty routing)
-//   input/    plan.json (holistic: vision, advances V-1..V-4, obligations, audit every 2 with L = {invariants, vision};
-//             limits.convergenceK 1), vision.json, obligations.json, rulings.md and one spec per unit
+//             runs picks them up), docs/money.md (the rounding rule's prose: no spec cites it, and it is not a plan
+//             contract); the one-file corpus (M4a R17: a fresh holistic arc targets a corpus) under docs/corpus/:
+//             `ledger.md`, whose one rules block holds T-1..T-3 (the obligations' anchors), and the vision document
+//             `vision.md`; branch `main` and an `integration` branch cut from it; in-tree `.roadmap/` holds
+//             contracts/ledger.md, the C-nn ledger, a hand-written invariants.md (the close-out renders it, so the
+//             close-out publication has something to change), config.json (empty routing), the corpus guide corpus.md
+//             and vision.json (confirmed against the vision document)
+//   input/    plan.json (a corpus arc: the pin, the Phase-0 record; holistic: advances V-1..V-4, obligations, audit
+//             every 2 with L = {invariants, vision}; limits.convergenceK 1), corpus.pin.json (`roadmap corpus pin` at
+//             the baseline), issues.json (the fake forge's capture: no issue), phase0.json, obligations.json (rule
+//             anchors and their census), rulings.md and one spec per unit
+//   forge/    the fake forge (trusted, no issue) and its `gh` (forge/bin), first on PATH for the capture here and for
+//             the driver's runs
 //   barriers/ empty: in branch R the money lane writes `money.reached` here, the driver `money.release`
 //
 // The vision (plan "Fixture evals/m3/"): V-1 purpose "bookkeepers reconcile a month in one command", V-2
 // non-negotiable "money is never silently mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input",
 // V-4 world: a bookkeeper's month-end the other three are facets of. No open questions (a question's working
 // assumption would invite requests the story does not script). The arc advances all four, so the horizon is empty.
-// The obligations, each witnessed by one node-test arc lane over one journey test:
+// The obligations, each anchored at the corpus rule of its number (I-n at T-n) and witnessed by one node-test arc lane
+// over one journey test; the census holds each rule as its obligation:
 //   I-1 future, serves V-1 and V-4, delivered by `parse` and `report`: `node src/cli.js reconcile 2026-09 <file>` prints
 //       the month's balance (fails at the baseline: there is no reconcile command)
 //   I-2 must-hold, serves V-2: `format` prints amounts rounded to the cent half to even, `format 0.125` prints
@@ -44,9 +51,17 @@
 // and the check accepts any repair that makes I-2 hold.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { captureIssues } from '../../src/commands/issues.ts';
+import { corpusPin } from '../../src/commands/corpus.ts';
+import { sha } from '../../src/core/ids.ts';
+import { sha256Hex } from '../../src/core/json.ts';
+import { absPath } from '../../src/core/values.ts';
+import type { CorpusPin } from '../../src/corpus/types.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
+import { STORE_FILE, writeStore } from '../../test/fakes/gh-store.ts';
+import { writeGhShim } from '../../test/fakes/shim.ts';
 import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, UNITS, layout } from './layout.ts';
 
 export const BARRIER_SCRIPT = fileURLToPath(new URL('./barrier.ts', import.meta.url));
@@ -82,10 +97,15 @@ export const WITNESS_TESTS = {
   'I-3': 'unknown commands exit 2',
 } as const;
 
-const VISION = {
+/** The corpus root and its vision document (evals/m3/files/base/docs/corpus/). */
+export const CORPUS_ROOT = 'docs/corpus';
+export const VISION_DOC = 'vision.md';
+
+/** The vision record, confirmed against the vision document's bytes (`visionText`). */
+const visionRecord = (visionText: string) => ({
   schema: 'roadmap/vision-m3',
   rev: 1,
-  confirmation: null,
+  confirmation: { ref: `corpus:${VISION_DOC}#sha256:${sha256Hex(visionText)}`, at: '2026-10-03T00:00:00.000Z' },
   clauses: [
     { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
     { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
@@ -96,7 +116,7 @@ const VISION = {
     },
   ],
   questions: [],
-};
+});
 const ADVANCES = ['V-1', 'V-2', 'V-3', 'V-4'] as const;
 
 const PASS_PATH = { set: {}, pass: ['PATH'] };
@@ -108,23 +128,23 @@ function arcLane(l: Layout, id: string, file: string) {
   return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test' };
 }
 
-type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; anchor: string; quotedText: string; docPath: string; serves: readonly string[]; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
+type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; rule: string; serves: readonly string[]; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
 
 const OBLIGATIONS: readonly ObligationSeed[] = [
   {
     id: 'I-1', lane: 'reconcile', activation: 'future', deliveredBy: ['parse', 'report'], serves: ['V-1', 'V-4'], contracts: [CONTRACT_PATH],
     statement: 'A bookkeeper reconciles a month of a ledger file in one command: `reconcile <YYYY-MM> <file>` prints the month\'s balance.',
-    docPath: CONTRACT_PATH, anchor: '#commands', quotedText: '`reconcile <YYYY-MM> <file>` prints `<YYYY-MM> balance <amount>`',
+    rule: 'T-1',
   },
   {
     id: 'I-2', lane: MONEY_LANE, activation: 'must-hold', deliveredBy: [], serves: ['V-2'], contracts: [],
     statement: '`format <amount>` prints the amount rounded to the cent on its decimal digits, half to even: `format 0.125` prints 0.12 and `format 2.675` prints 2.68.',
-    docPath: 'docs/money.md', anchor: '#rounding', quotedText: 'half to even',
+    rule: 'T-2',
   },
   {
     id: 'I-3', lane: 'cli', activation: 'must-hold', deliveredBy: [], serves: ['V-3'], contracts: [CONTRACT_PATH],
     statement: 'Unknown commands exit 2.',
-    docPath: CONTRACT_PATH, anchor: '#commands', quotedText: 'Unknown commands exit 2',
+    rule: 'T-3',
   },
 ];
 
@@ -145,7 +165,13 @@ const MAPPING = [
   { pattern: 'test/unit/report.test.js', obligations: ['I-1'] },
 ];
 
-export function obligationsFile(l: Layout): unknown {
+/** The obligations file over `pin`: each obligation anchored at its rule with the pinned text hash, and the census. */
+export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
+  const ruleRef = (id: string) => {
+    const r = pin.rules.find((x) => x.id === id);
+    if (r === undefined) throw new Error(`the m3 corpus pins no ${id}`);
+    return { id, textSha256: r.textSha256 };
+  };
   const lanes = [arcLane(l, 'cli', 'journeys/cli.journey.js'), arcLane(l, MONEY_LANE, 'journeys/money.journey.js'), arcLane(l, 'reconcile', 'journeys/reconcile.journey.js')];
   const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
   return {
@@ -155,12 +181,13 @@ export function obligationsFile(l: Layout): unknown {
     obligations: OBLIGATIONS.map((o) => {
       const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]] };
       return {
-        id: o.id, rev: 1, statement: o.statement, docRef: { path: o.docPath, anchor: o.anchor, quotedText: o.quotedText }, serves: o.serves,
+        id: o.id, rev: 1, statement: o.statement, rule: ruleRef(o.rule), serves: o.serves,
         witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
         deliveredBy: [...o.deliveredBy], activation: o.activation, contracts: [...o.contracts], state: { type: 'active' },
       };
     }),
     mapping: { paths: MAPPING },
+    census: OBLIGATIONS.map((o) => ({ rule: o.rule, state: { type: 'obligation', id: o.id } })),
   };
 }
 
@@ -253,24 +280,57 @@ export const DIRECTION = 'Grow `ledger` until a bookkeeper reconciles a month in
 /** The driver's stale-making edit (story step 4): the architect rewords the direction while the first checkpoint runs. */
 export const DIRECTION_EDITED = `${DIRECTION} Clear errors come first.`;
 
-export function setup(dir: string): void {
+/** The fake forge's store and `gh` shim under `l.forge`: the fixture's repo identity, trusted (PUBLIC + COLLABORATORS_ONLY), no issue. */
+function writeForge(l: Layout): void {
+  mkdirSync(l.forge, { recursive: true });
+  const store = join(l.forge, STORE_FILE);
+  writeStore(store, {
+    repo: { host: 'forge.test', owner: 'ledger-fixture', name: 'ledger' },
+    policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' },
+    originPath: null, nextNumber: 1, nextCommentId: 1000, issues: [], comments: {}, labels: [], pulls: [], mutations: [],
+  });
+  writeGhShim(l.forgeBin, store);
+}
+
+/** `PATH` with the fixture's fake gh first. */
+export const forgePath = (l: Layout): string => `${l.forgeBin}:${process.env['PATH'] ?? ''}`;
+
+export async function setup(dir: string): Promise<void> {
   if (existsSync(dir) && readdirSync(dir).length > 0) throw new Error(`fixture dir ${dir} is not empty: a fixture dir is set up and run once`);
   const l = layout(dir);
-  for (const d of [l.worktrees, l.barriers, l.repo]) mkdirSync(d, { recursive: true });
+  for (const d of [l.worktrees, l.barriers, l.repo, l.input]) mkdirSync(d, { recursive: true });
+  writeForge(l);
 
   git(l.repo, '-c', `init.defaultBranch=${MAIN}`, 'init', '--quiet');
   git(l.repo, 'config', 'user.name', 'M3 Fixture');
   git(l.repo, 'config', 'user.email', 'm3-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
   for (const [path, text] of Object.entries(filesOf(join(FILES, 'base')))) write(join(l.repo, path), text);
+  write(l.vision, json(visionRecord(readFileSync(join(l.repo, CORPUS_ROOT, VISION_DOC), 'utf8'))));
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm3 fixture: the ledger CLI');
   git(l.repo, 'branch', INTEGRATION, MAIN);
   const baseline = git(l.repo, 'rev-parse', MAIN);
 
+  const pinned = await corpusPin({ repo: absPath(l.repo), commit: baseline, baseline: sha(baseline), out: absPath(l.pin) });
+  if (pinned.kind !== 'pinned') throw new Error(`corpus pin refused: ${JSON.stringify(pinned.rejection)}`);
+  const path = process.env['PATH'];
+  process.env['PATH'] = forgePath(l);
+  let captured: Awaited<ReturnType<typeof captureIssues>>;
+  try {
+    captured = await captureIssues({ repo: absPath(l.repo), out: absPath(l.capture) });
+  } finally {
+    process.env['PATH'] = path;
+  }
+  if (captured.kind !== 'captured') throw new Error(`issue capture refused: ${JSON.stringify(captured.rejection)}`);
+  write(l.phase0, json({
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    issueCapture: { file: basename(l.capture), sha256: captured.sha256 }, intake: [],
+    slice: { advances: ADVANCES, why: 'the first slice: the whole month-end story' },
+  }));
+
   write(join(l.input, 'rulings.md'), readFileSync(join(FILES, 'base', '.roadmap', 'constraints.md'), 'utf8'));
-  write(l.vision, json(VISION));
-  write(l.obligations, json(obligationsFile(l)));
+  write(l.obligations, json(obligationsFile(l, pinned.pin)));
   for (const unit of UNITS) write(join(l.input, `${unit}.json`), json(specOf(unit)));
   const after: Readonly<Record<(typeof UNITS)[number], readonly string[]>> = { parse: [], tidy: ['parse'], report: ['parse'] };
   write(l.plan, json({
@@ -281,7 +341,8 @@ export function setup(dir: string): void {
     worktreeRoot: l.worktrees,
     contracts: [CONTRACT_PATH],
     rulings: 'rulings.md',
-    architectureDoc: 'ARCHITECTURE.md',
+    corpus: basename(l.pin),
+    phase0: basename(l.phase0),
     direction: DIRECTION,
     suite: {
       lanes: [{
@@ -290,7 +351,7 @@ export function setup(dir: string): void {
       }],
     },
     resources: [],
-    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
+    holistic: { advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
     limits: { convergenceK: CONVERGENCE_K },
     units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPES[id], resources: [], after: after[id] })),
   }));
@@ -300,6 +361,6 @@ if (import.meta.main) {
   const [dir] = process.argv.slice(2);
   if (dir === undefined) throw new Error('usage: node evals/m3/setup.ts <dir>');
   const abs = resolve(dir);
-  setup(abs);
+  await setup(abs);
   process.stdout.write(`${JSON.stringify({ fixture: abs, plan: layout(abs).plan, repo: layout(abs).repo })}\n`);
 }

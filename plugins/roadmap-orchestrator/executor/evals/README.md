@@ -163,10 +163,16 @@ node evals/m3/check.ts /var/tmp/m3-default
   the cents from the amount's decimal digits, half to even, without saying so;
   `src/display.js` whose `formatDisplay` separates thousands over `toFixed(2)`; unit tests under `test/unit/` for
   the suite; journey tests `journeys/*.journey.js` for
-  the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule, which only I-2's
-  docRef names; in-tree `.roadmap/` with the ledger contract, the C-nn ledger, a hand-written `invariants.md`
-  and an empty-routing config), `input/`
-  (plan.json, vision.json, obligations.json, rulings.md, one spec per unit) and `barriers/`. The plan is holistic:
+  the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule's prose; the
+  one-file corpus under `docs/corpus/` (M4a: a fresh holistic arc targets a corpus): `ledger.md`, whose rules
+  block holds T-1..T-3, the obligations' anchors, and the vision document `vision.md`; in-tree `.roadmap/` with the
+  ledger contract, the C-nn ledger, a hand-written `invariants.md`, an empty-routing config, the corpus guide
+  `corpus.md` and `vision.json`, confirmed against the vision document), `input/` (plan.json, the pin
+  `corpus.pin.json`, the Phase-0 record `phase0.json`, its issue capture `issues.json`, obligations.json with rule
+  anchors and the census, rulings.md, one spec per unit), `forge/` (a fake `gh` over a trusted, empty fake forge:
+  the fixture has no real one, so the driver puts `forge/bin` first on PATH for a paid run too) and `barriers/`.
+  Every judge reads the rules index, T-2 (half to even) included, and the pack review (`review-1`) runs once
+  before the first admission. The plan is holistic:
   audits every 2 publications with the required lens set L = {invariants, vision}, `limits.convergenceK` 1. The
   vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
   mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input", V-4 world (a bookkeeper's month-end), no
