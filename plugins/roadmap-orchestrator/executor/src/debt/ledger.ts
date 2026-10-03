@@ -3,11 +3,9 @@
 import { type DebtId, type Sha256Hex, type UnitId, debtIdOf, debtSeq, sha256 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type BankReason, type DebtItem, type DebtLedger, DEBT_SCHEMA } from './types.ts';
+import { normalizeText } from '../corpus/rules.ts';
 
 /** Trimmed, every whitespace run collapsed to one space. (Corpus rules hash the same normal form, `textSha256`.) */
-export function normalizeText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
-}
 
 /** `sha256(canonicalJson({unit, bankReason, normalizedWhat}))`: equal wording up to whitespace on the same unit and reason is one item. */
 export function debtKey(input: Readonly<{ unit: UnitId | null; bankReason: BankReason; what: string }>): Sha256Hex {

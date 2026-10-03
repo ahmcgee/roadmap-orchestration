@@ -3,7 +3,8 @@
 // obligation-affecting finding is refused, and directive overflow is not a source.
 import type { Fact } from '../core/events.ts';
 import type { DebtId, FindingId, ObligationId, UnitId } from '../core/ids.ts';
-import { debtKey, nextDebtId, normalizeText } from './ledger.ts';
+import { normalizeText } from '../corpus/rules.ts';
+import { debtKey, nextDebtId } from './ledger.ts';
 import type { BankReason, DebtLedger, DebtSource } from './types.ts';
 
 export type DebtBanked = Extract<Fact, { kind: 'debt-banked' }>;
