@@ -78,6 +78,12 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'checkpoint.after-call': NONE,
   'bundle.after-applied': NONE,
   'bundle.after-decided': NONE,
+  // M4a (a corpus arc): the pack review's facts, a checkpoint's kept issue capture, its amendment settlement.
+  'packreview.after-started': NONE,
+  'packreview.after-call': NONE,
+  'packreview.after-ended': NONE,
+  'issues.after-keep': NONE,
+  'amendment.after-decided': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),

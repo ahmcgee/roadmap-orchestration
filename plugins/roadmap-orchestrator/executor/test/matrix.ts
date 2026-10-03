@@ -166,7 +166,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B2: [
     'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'checkpoint.after-inputs',
-    'docs.act-start',
+    'docs.act-start', 'packreview.after-started',
   ],
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'snapshot.after-commit-tree',
@@ -175,16 +175,16 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
-    'closeout.before-published',
+    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided',
   ],
   B5: ['spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact'],
 };
 
 const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) is absent after the restart, a torn line discarded once: the job resumes and writes it once (a capture from the same inputs), the arc ends as uncrashed',
-  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens or checkpoint call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the arc ends as uncrashed',
+  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments and issue outcomes once each); one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); the arc ends as uncrashed',
 };
 
@@ -992,7 +992,8 @@ export const MATRIX: readonly Row[] = [
     cells: pipelineCells(MERGEIN_LABELS, PIPELINE_RECOVERY),
   },
   {
-    // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC): baseline-1, u1 with a journey lane and I-2 latched,
+    // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC), a corpus arc (M4a D0): review-1 (the pack review),
+    // each checkpoint's issue capture and amendment settlement, baseline-1, u1 with a journey lane and I-2 latched,
     // audit-1, ckpt-1 applying a bundle (revision, divergence, digest), audit-2, ckpt-2 an interpretation-only no-op,
     // the close-out docs-1, arc-completed and the terminal snapshot, through `roadmap start`. Its occurrences are
     // sampled by context (`sampleHolistic`): each M3-only label at 1 and 2, each log append at each M3 fact kind's
@@ -1050,11 +1051,11 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_AUDIT,
     test: 'test/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', ...JOB_OPS], {
+    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', 'issues.after-keep', ...JOB_OPS], {
       B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
       B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
       B3: 'inside the audit\'s op or after its lens was read: finished or redone; the job resumes, consuming the call it made',
-      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once',
+      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once; or the audit ended and its checkpoint\'s issue capture kept (the corpus arc\'s, its last record still the audit\'s): the restart captures again (the same bytes) and records it once',
       B5: 'nothing open: the job runs on from its facts; one audit-ended, the lens called once',
     }, PEERS_IN_BUILDS, 'no audit label falls on this boundary'),
   },

@@ -1,8 +1,9 @@
-// The holistic whole-pipeline scenario (M3 B8; test/pipeline-matrix.test.ts): an exec-common arc made holistic (a
-// vision, obligations witnessed on a fake `journey` arc lane, the required lens set L = {vision}) and run by the real
-// supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed per unit and per job.
+// The holistic whole-pipeline scenario (M3 B8; test/pipeline-matrix.test.ts): an exec-common arc made holistic on a
+// corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
+// `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
+// whole-pipeline harness (pm-common.ts), keyed per unit and per job.
 //
-// The story: the start's revision 1; the baseline witness job (A6) runs the journey lane on the baseline before any
+// The story: the start's revision 1; the pack review `review-1` (no finding) before the first admission; the baseline witness job (A6) runs the journey lane on the baseline before any
 // admission; u1 (declaring I-1 must-hold and delivering I-2 future) walks its pipeline, its candidate running the
 // journey lane, and its ff latches I-2 (obligation-latched); the final audit `audit-1` (the journey lane, its vision
 // lens); the checkpoint `ckpt-1` applies a bundle (an arc-wide limits op: a revision committed through the fence,
@@ -17,11 +18,12 @@ import type { Event, IntentRecord, Parent } from '../../src/core/events.ts';
 import { type InvocationId, type JobId, parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep } from '../helpers/holistic.ts';
+import { checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
+import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
@@ -36,19 +38,16 @@ const OBLIGATIONS = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'f
 const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 
 /**
- * Makes the laid-out arc holistic: vision, obligations over a journey witness lane, L = {vision}. The lane passes t1 on
- * every tree and t2 on every tree but the baseline's (I-2 is future: held on the baseline it would be vacuous, A6).
+ * Makes the laid-out arc holistic on a corpus target (corpus-target.ts): obligations over a journey witness lane,
+ * L = {vision}. The lane passes t1 on every tree and t2 on every tree but the baseline's (I-2 is future: held on the
+ * baseline it would be vacuous, A6); the baseline is the corpus commit, so its tree is read after it.
  */
 function holistic(r: ExecRun): void {
   const control = join(tmpDir('pm-witness-control'), 'control.json');
+  corpusTarget(r, { obligations: obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED }, control), advances: ADVANCES, audit: { lenses: ['vision'] } });
   const baseline = git(r.repo, 'rev-parse', 'main^{tree}');
   writeWitnessControl(control, { trees: { [baseline]: { outcomes: { t1: 'pass', t2: 'fail' } }, '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
-  const planDir = join(r.planPath, '..');
-  writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
-  writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED }, control)));
-  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
-  const spec = join(planDir, 'u1.json');
+  const spec = join(join(r.planPath, '..'), 'u1.json');
   writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1', 'I-2'] }));
 }
 
@@ -58,6 +57,7 @@ export const HOLISTIC: Scenario = {
   arc: () => ({}),
   prepare: holistic,
   steps: () => [
+    packReviewStep('review-1'),
     ...keyed('u1', [
       planCheckStep({ decision: 'approve' }),
       codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] }),
