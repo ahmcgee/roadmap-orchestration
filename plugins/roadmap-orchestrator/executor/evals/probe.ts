@@ -30,26 +30,40 @@
 //                       over a tiny input set; the output must validate (a no-op is expected)
 //   m3.plan-check       planCheck.med seat with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
 //                       the output must validate and carry a visionConflict array
+//   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
+//                       resolveRepo, queryPolicy + trusted, the REST issues and comments shapes (pull_request entries,
+//                       author_association), fetchIssueCapture
+//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 xhigh
+//   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
+//                       answer must validate against PackReviewOutput
+//   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
+//   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
+//                       (low then medium); reports whether each CLI accepts the change
 //
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
+import { ghApi, resolveRepo } from '../src/forge/gh.ts';
+import { fetchIssueCapture } from '../src/forge/issues.ts';
+import { queryPolicy } from '../src/forge/policy.ts';
+import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, sha, specRev, unitId, visionClauseId,
+  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, sha, sha256, specRev, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type BackendResult, STDOUT_FILE, type Usage } from '../src/core/records.ts';
 import { type AbsPath, absPath, repoPath, repoPattern } from '../src/core/values.ts';
-import type { ObligationDef } from '../src/holistic/types.ts';
+import { type ObligationDef, parseObligations } from '../src/holistic/types.ts';
+import { parsePhase0Record } from '../src/phase0/types.ts';
 import { promptFor } from '../src/prompts/index.ts';
-import type { ArchitectureInput, CheckpointInputs, LensInputs, ObligationView, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
+import type { ArchitectureInput, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
 import { ROLE_VALIDATORS, type RoleOutputs } from '../src/prompts/schemas.ts';
 import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
@@ -206,7 +220,7 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
  * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
-function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck'>(
+function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview'>(
   resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: JudgmentRole; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
@@ -374,8 +388,8 @@ async function main(): Promise<void> {
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
   };
-  await backend(ctx, 'm3.checkpoint', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
-    validates('m3.checkpoint', 'checkpoint', () => true));
+  await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
+    validates('m4a.checkpoint-summit', 'checkpoint', () => true));
 
   const planCheckInputs: PlanCheckInputs = {
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
@@ -385,6 +399,115 @@ async function main(): Promise<void> {
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
   await backend(ctx, 'm3.plan-check', planCheck,
     (v) => validates('m3.plan-check', 'planCheck', (out) => Array.isArray(out.visionConflict))(v) && Array.isArray((v as { visionConflict?: unknown }).visionConflict));
+
+  // M4a forge: the executor's own gh functions against the real repository, read-only (no write is ever issued).
+  const repoDir = absPath(join(import.meta.dirname, '..', '..', '..', '..'));
+  try {
+    const repo = resolveRepo(repoDir);
+    report(repo.host === 'github.com' && repo.owner === 'ahmcgee' && repo.name === 'roadmap-orchestration', 'forge.identity', JSON.stringify(repo));
+    const policy = queryPolicy(repoDir, repo);
+    const trust = trusted(policy);
+    report(policy.visibility === 'PUBLIC' && policy.issueCreationPolicy === 'COLLABORATORS_ONLY' && policy.hasIssuesEnabled && trust.kind === 'trusted' && trust.intake,
+      'forge.policy', `${JSON.stringify(policy)} trust=${trust.kind}`);
+    const base = `repos/${repo.owner}/${repo.name}`;
+    const listed = ghApi(repoDir, repo, [`${base}/issues?state=all&per_page=100`]);
+    if (!Array.isArray(listed)) throw new Error(`issues answer is not an array: ${JSON.stringify(listed).slice(0, 200)}`);
+    const shaped = listed.every((e) => {
+      const r = e as Record<string, unknown>;
+      return typeof r['number'] === 'number' && typeof r['title'] === 'string' && Array.isArray(r['labels']) && typeof (r['user'] as { login?: unknown } | null)?.['login'] === 'string'
+        && (r['body'] === null || typeof r['body'] === 'string');
+    });
+    const pulls = listed.filter((e) => (e as Record<string, unknown>)['pull_request'] !== undefined).length;
+    report(shaped && listed.length > 0, 'forge.issues-shape', `entries=${listed.length} pullRequestEntries=${pulls} issuesOnly=${listed.length - pulls}`);
+    const withComments = listed.find((e) => typeof (e as { comments?: unknown }).comments === 'number' && (e as { comments: number }).comments > 0) as { number: number } | undefined;
+    if (withComments === undefined) {
+      report(false, 'forge.comments-shape', 'no issue or pull request entry has comments on this repository to read');
+    } else {
+      const comments = ghApi(repoDir, repo, [`${base}/issues/${withComments.number}/comments?per_page=100`]);
+      const rows = Array.isArray(comments) ? comments : [];
+      const assoc = rows.map((c) => (c as { author_association?: unknown }).author_association);
+      report(rows.length > 0 && assoc.every((a) => typeof a === 'string') && rows.every((c) => typeof (c as { id?: unknown }).id === 'number' && typeof (c as { user?: { login?: unknown } }).user?.login === 'string'),
+        'forge.comments-shape', `#${withComments.number} comments=${rows.length} author_association=${JSON.stringify([...new Set(assoc)])}`);
+    }
+    if (trust.kind === 'trusted') {
+      const capture = fetchIssueCapture(repoDir, repo, trust);
+      report(capture.repo.name === repo.name, 'forge.capture', `issues=${capture.issues.length} filtered=${JSON.stringify(capture.filtered)}`);
+    }
+  } catch (e) {
+    report(false, 'forge.error', e instanceof Error ? e.message : String(e));
+  }
+
+  // M4a routing: the rebound classes, as the default table resolves them.
+  const corpusArc = resolveRouting({ ...arcStack('default', null, null), arcScope: 'corpus' });
+  const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
+  const summitT = atSeat(corpusArc.table, { role: 'checkpoint', tier: 'arc' });
+  report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
+    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'xhigh', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
+
+  // packReview on a tiny corpus pack, frontier seat, corpus arc scope.
+  const m4Dir = dir(join(root, 'm4a'));
+  writeFileSync(join(m4Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
+  const rules = [{ id: 'T-1', text: 'toFahrenheit(100) returns 212.' }, { id: 'T-2', text: 'toCelsius(32) returns 0.' }]
+    .map((r) => ({ ...r, textSha256: createHash('sha256').update(r.text).digest('hex'), file: 'docs/target.md', section: 'Convert' }));
+  const obligationsJson = {
+    schema: 'roadmap/obligations-m3', cutLine: 'T-1 is tested; T-2 is out of this slice.',
+    lanes: [{ id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
+    obligations: [{
+      id: 'I-1', rev: 1, statement: rules[0]?.text, rule: { id: 'T-1', textSha256: rules[0]?.textSha256 }, serves: ['V-1'], witness: { lane: 'unit', testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef', witness: { lane: 'unit', testIds: ['convert'] } },
+      deliveredBy: ['u-convert'], activation: 'future', contracts: [], state: { type: 'active' },
+    }],
+    mapping: { paths: [{ pattern: 'convert.ts', obligations: ['I-1'] }] },
+    census: [{ rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }],
+  };
+  const phase0Json = {
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    issueCapture: { file: 'issues.json', sha256: '0'.repeat(64) }, intake: [], slice: { advances: ['V-1'], why: 'The smallest conversion first.' },
+  };
+  try {
+    const packInputs: PackReviewPromptInputs = {
+      vision: MINI_VISION, plan: 'Unit u-convert (pending): implements convert.ts. No other units.',
+      specs: [{ unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n- unit' }],
+      obligations: parseObligations(obligationsJson),
+      rulesIndex: rules.map((r) => ({ id: ruleId(r.id), textSha256: sha256(r.textSha256), text: r.text, file: repoPath(r.file), section: r.section })),
+      phase0: parsePhase0Record(phase0Json),
+    };
+    const pack = seatCall(corpusArc, 'packReview', 'arc', { role: 'planCheck', tier: 'high' }, 'm4a-pack-review', m4Dir, packInputs);
+    await backend(ctx, 'm4a.pack-review', pack, validates('m4a.pack-review', 'packReview', (out) => Array.isArray(out.findings) && out.reasons.length > 0));
+  } catch (e) {
+    report(false, 'm4a.pack-review.build', e instanceof Error ? e.message : String(e));
+  }
+
+  // Effort-changed resume (OI-2): the same session, a different effort.
+  const wordSchema = strict({ word: { type: 'string' } });
+  const isKestrel = (v: JsonValue): boolean => JSON.stringify(v) === '{"word":"kestrel"}';
+  const effortDir = dir(join(root, 'effort-claude'));
+  const effortSession = freshClaudeImplementerSession();
+  const effortFresh = await backend(ctx, 'effort.claude.fresh', {
+    check: 'effort-claude-fresh', routingRev: rev, tier: 'high', system: SYSTEM, schema: wordSchema, cwd: effortDir,
+    rendered: 'Remember the word "kestrel". Reply with {"word": "kestrel"}.',
+    request: { kind: 'claude-build', triple: { ...OPUS, effort: 'high' }, session: effortSession, evidenceDirs: [] },
+  }, isKestrel);
+  if (effortFresh.result.outcome.kind === 'success') {
+    await backend(ctx, 'effort.claude.resume-medium', {
+      check: 'effort-claude-resume', routingRev: rev, tier: 'high', system: SYSTEM, schema: wordSchema, cwd: effortDir,
+      rendered: 'Which word did I ask you to remember? Reply with {"word": "<it>"}.',
+      request: { kind: 'claude-build', triple: { ...OPUS, effort: 'medium' }, session: { ...effortSession, mode: 'resume' }, evidenceDirs: [] },
+    }, isKestrel);
+  }
+  const effortCodexDir = dir(join(root, 'effort-codex'));
+  const codexFresh = await backend(ctx, 'effort.codex.fresh', {
+    check: 'effort-codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
+    rendered: 'Remember the word "kestrel". Reply with {"word": "kestrel"}.',
+    request: { kind: 'codex-build', triple: { ...SOL, effort: 'low' }, session: { backend: 'codex', mode: 'fresh' } },
+  }, isKestrel);
+  const effortThread = codexFresh.result.role === 'build' ? codexFresh.result.session : null;
+  if (effortThread !== null) {
+    await backend(ctx, 'effort.codex.resume-medium', {
+      check: 'effort-codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
+      rendered: 'Which word did I ask you to remember? Reply with {"word": "<it>"}.',
+      request: { kind: 'codex-build', triple: { ...SOL, effort: 'medium' }, session: { backend: 'codex', mode: 'resume', id: effortThread } },
+    }, isKestrel);
+  }
 
   journal.close();
   for (const [key, t] of [...usage].sort(([a], [b]) => a.localeCompare(b))) {
