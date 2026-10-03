@@ -140,7 +140,7 @@ test('redirect.no-widen: a redirect that widens the envelope or lowers the risk 
   assert.equal(dispatches.length, 1, 'the dispatch record is never re-pinned lower');
   assert.equal(run.journal.view.dispatchOf(U1)?.riskFloor, 'med');
   const calls = readCalls(run.scenario.path);
-  assert.ok(calls[1]!.argv.includes('claude-fable-5-1'), 'the routed-up check ran on the escalation seat');
+  assert.ok(calls[1]!.argv.includes('xhigh'), 'the routed-up check ran on the escalation seat');
 });
 
 test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {

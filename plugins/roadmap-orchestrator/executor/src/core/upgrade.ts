@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { type ApplyManifest, type CancelFile, type DispatchRecord, type ExitFile, type ResultFile, type RevisionInputs, isRevisionManifest } from './records.ts';
 import type { RoutingProvenance } from '../routing/types.ts';
+import type { ClassCatalogue } from '../routing/classes.ts';
 import type { CensusEntry, ConfirmationRef, Obligations } from '../holistic/types.ts';
 import type { InputFiles } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
@@ -330,3 +331,22 @@ export function splitChildRuleDefault(): null {
   warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');
   return null;
 }
+
+/**
+ * The class catalogue 1.0.0-dev.6 bound (frontier Opus 5.5 `high`, summit Fable 5.1 `high`), kept only so `status`
+ * can join a dev.6 meter row's recorded `routingRev` (K12, src/status.ts `dev6RevAlias`). OR-L3: nothing routes under
+ * it; HEAD binds every revision through `CLASS_CATALOGUE` (src/routing/classes.ts). A dev.6 dispatch record needs no
+ * decoder: its `implementerSeatRev` reads back through `seatTripleOf` (src/pipeline/dispatch.ts) like any other.
+ */
+export const DEV6_CLASS_CATALOGUE: ClassCatalogue = {
+  default: {
+    efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
+  },
+  'claude-only': {
+    efficient: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
+    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
+  },
+};

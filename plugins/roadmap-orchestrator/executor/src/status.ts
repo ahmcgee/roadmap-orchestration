@@ -90,7 +90,7 @@ import {
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import { legacyNext, legacySettled, revisionSourceOf, routingProvenanceOf, warnPlanFromFile } from './core/upgrade.ts';
+import { DEV6_CLASS_CATALOGUE, legacyNext, legacySettled, revisionSourceOf, routingProvenanceOf, warnPlanFromFile } from './core/upgrade.ts';
 import {
   type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce,
   routingProvenanceOf as rebuiltProvenance,
@@ -114,7 +114,9 @@ import { specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
 import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, dischargingObservation, readOnlyContexts, recordedLaneEnv, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
-import { type ResolvedRouting, type SeatSources, planStack, provenanceStack, resolveRouting } from './routing/layers.ts';
+import {
+  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, planStack, provenanceStack, resolveRouting, resolveRoutingUnder,
+} from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type RoutingProvenance, type SeatRef,
   type RoutingTable,
@@ -482,7 +484,9 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
 
 /**
  * The routing table of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
- * their recorded provenance only: what `spend.byModel` renders historical usage with (never the live repo config).
+ * their recorded provenance only: what `spend.byModel` renders historical usage with (never the live repo config). The
+ * class catalogue binds every revision (OR-L3), so a 1.0.0-dev.6 meter row's recorded rev is also registered, aliased to
+ * its revision's current table (`dev6RevAlias`, scaffolding K12): its spend joins and is attributed to today's bindings.
  */
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, RoutingTable> {
   const out = new Map<RoutingRev, RoutingTable>();
@@ -490,13 +494,25 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
     const provenance = recordedProvenance(runDir, e.fact);
     if (provenance === null) continue;
-    const holistic = keptPlan(runDir, e.fact).holistic !== undefined;
+    const scope = arcScopeOf(keptPlan(runDir, e.fact));
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
-      const r = resolveRouting(provenanceStack(provenance, holistic, unit));
+      const stack = provenanceStack(provenance, scope, unit);
+      const r = resolveRouting(stack);
       out.set(r.rev, r.table);
+      const alias = dev6RevAlias(stack);
+      if (alias !== null) out.set(alias, r.table);
     }
   }
   return out;
+}
+
+/**
+ * TEMPORARY SCAFFOLDING (K12; BACKLOG "Scaffolding to delete", dev.6): the `routingRev` a 1.0.0-dev.6 executor recorded
+ * for `stack`, its resolution under the dev.6 catalogue. The dev.6 role set (no `packReview`) is the `architecture-doc`
+ * scope's (layers.ts `ARC_ROLES_IN_FORCE`), so only the catalogue differs. A corpus arc never ran on dev.6: null.
+ */
+function dev6RevAlias(stack: RoutingStack): RoutingRev | null {
+  return stack.arcScope === 'corpus' ? null : resolveRoutingUnder(DEV6_CLASS_CATALOGUE, stack).rev;
 }
 
 /**
@@ -781,14 +797,14 @@ function routingInForce(runDir: AbsPath, start: Readonly<{ record: RunStart; pla
     return { profile: start.record.profile, of: () => r };
   }
   const provenance = provenanceInForce(runDir, inForce, start.record);
-  const holistic = inForce.plan.holistic !== undefined;
+  const scope = arcScopeOf(inForce.plan);
   const cache = new Map<UnitId | null, ResolvedRouting>();
   return {
     profile: provenance.profile,
     of: (unit) => {
       let r = cache.get(unit);
       if (r === undefined) {
-        r = resolveRouting(provenanceStack(provenance, holistic, unit));
+        r = resolveRouting(provenanceStack(provenance, scope, unit));
         cache.set(unit, r);
       }
       return r;

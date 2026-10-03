@@ -66,7 +66,7 @@ import {
 import { parsePlan } from '../input/plan.ts';
 import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
-import { provenanceStack, resolveRouting } from '../routing/layers.ts';
+import { arcScopeOf, provenanceStack, resolveRouting } from '../routing/layers.ts';
 import { type RoutingProvenance, routingProvenance } from '../routing/types.ts';
 import { manifestPath } from './evidence.ts';
 import { MUTANT_PATCH_INPUT } from './mutant.ts';
@@ -339,8 +339,7 @@ export function adoptLegacyProvenance(runDir: AbsPath, events: readonly Event[],
     const fact = facts.get(rev)!;
     const plan = parsePlan(JSON.parse(mustRead(inputPath(runDir, fact.planSha256, PLAN_INPUT), `plan rev ${rev}`).toString('utf8')));
     const provenance = rebuiltProvenance({ profile, config }, plan);
-    const holistic = plan.holistic !== undefined;
-    const rebuilt = new Set([null, ...plan.units.map((u) => u.id)].map((u) => resolveRouting(provenanceStack(provenance, holistic, u)).rev));
+    const rebuilt = new Set([null, ...plan.units.map((u) => u.id)].map((u) => resolveRouting(provenanceStack(provenance, arcScopeOf(plan), u)).rev));
     const foreign = [...revs].filter((r) => !rebuilt.has(r)).sort();
     const record: LegacyProvenance = foreign.length === 0
       ? { kind: 'reconstructed', provenance, matched: [...revs].sort() }

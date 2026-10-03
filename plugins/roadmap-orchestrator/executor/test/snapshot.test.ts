@@ -188,7 +188,7 @@ type Holistic = Run & Readonly<{ planSha: string; specSha: string; witnessInv: s
 
 /** The routing rev plan `PLAN` resolves to under the default profile and `config`. */
 const routingRevUnder = (config: RepoConfig | null) =>
-  resolveRouting(provenanceStack(routingProvenanceOf({ profile: 'default' as never, config }, parsePlan(PLAN)), false, null)).rev;
+  resolveRouting(provenanceStack(routingProvenanceOf({ profile: 'default' as never, config }, parsePlan(PLAN)), 'none', null)).rev;
 
 /**
  * The base run plus the records a snapshot must follow beyond it: a 1.0.0-dev.5 `plan-applied` (kept plan and

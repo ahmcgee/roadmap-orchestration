@@ -357,7 +357,7 @@ async function main(): Promise<void> {
   { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
 
   // M3 judgment roles: the real prompt modules and strict schemas, on their own seats, holistic routing in force.
-  const holistic = resolveRouting({ ...arcStack('default', null, null), holistic: true });
+  const holistic = resolveRouting({ ...arcStack('default', null, null), arcScope: 'architecture-doc' });
   const m3Dir = dir(join(root, 'm3'));
   writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
 

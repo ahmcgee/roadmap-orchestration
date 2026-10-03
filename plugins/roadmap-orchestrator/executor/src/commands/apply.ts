@@ -26,7 +26,7 @@
 //              operator env    re-run the parked stage: the park's open needs-user is acknowledged by this
 //                              command, then an `unparked` fact. A unit parked `routing-changed` (`reroute`)
 //                              first needs the routing in force to resolve its implementer seat to the pinned
-//                              `implementerSeatRev` (or no build started): it is re-pinned under that routing
+//                              seat's backend and model (or no build started): it is re-pinned under that routing
 //                              (a `dispatch` fact, when the rev differs); otherwise it is rejected.
 //              operator design re-open on an applied revision (`reopen`), only at a judgment stage (plan-check
 //                              or gate): an `apply` holds the unit's recorded spec rev + 1 pending (SCHEMAS.md
