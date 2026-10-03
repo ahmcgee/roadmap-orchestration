@@ -7,8 +7,8 @@
 import { type CorpusPin, activeRules } from '../corpus/types.ts';
 import { parseInvariantsBlock } from '../docs/invariants.ts';
 import type { Phase0Problem } from '../phase0/types.ts';
-import { dispositionRuling, weakeningsOf } from './obligations.ts';
-import { type CensusEntry, type Obligations, type RulingSidecar, isExempt, obligationSource } from './types.ts';
+import { dispositionRuling, ruleAnchorResolves, weakeningsOf } from './obligations.ts';
+import { type CensusEntry, type Obligations, type RulingSidecar, obligationSource } from './types.ts';
 
 /** Why the new obligations drop or weaken a published one silently; empty when nothing is dropped. */
 export function rederive(baselineInvariants: string | null, next: Obligations | null, rulings: readonly RulingSidecar[]): readonly string[] {
@@ -25,8 +25,8 @@ export function rederive(baselineInvariants: string | null, next: Obligations | 
 /**
  * The census diff of a corpus arc (M4a, DESIGN §2.8 "Re-derivation"): every active `T-n` of the pin has its one census
  * state (`census-incomplete`), no entry names a rule the pin does not hold active (`census-dangling`), and every
- * non-exempt obligation's `{T-n, textSha256}` resolves to an active rule of the pin (`obligation-rule-unresolved`). An
- * exempt (waived, deferred, retired) obligation binds nothing and may keep an anchor the pin no longer holds. Pure.
+ * obligation's `{T-n, textSha256}` resolves in the pin (`obligation-rule-unresolved`, `ruleAnchorResolves`): a binding
+ * one's to an active rule, an exempt (waived, deferred, retired) one's to an active or a retired one (LR-C1-2). Pure.
  */
 export function censusProblems(o: Obligations & Readonly<{ census: readonly CensusEntry[] }>, pin: CorpusPin): readonly Phase0Problem[] {
   const active = activeRules(pin);
@@ -37,9 +37,7 @@ export function censusProblems(o: Obligations & Readonly<{ census: readonly Cens
   const dangling = o.census.filter((e) => !active.has(e.rule)).map((e) => e.rule);
   if (dangling.length > 0) out.push({ type: 'census-dangling', rules: dangling });
   for (const ob of o.obligations) {
-    const src = obligationSource(ob);
-    if (src.kind !== 'rule' || isExempt(ob)) continue;
-    if (active.get(src.rule.id)?.textSha256 !== src.rule.textSha256) out.push({ type: 'obligation-rule-unresolved', obligation: ob.id });
+    if (obligationSource(ob).kind === 'rule' && !ruleAnchorResolves(ob, pin)) out.push({ type: 'obligation-rule-unresolved', obligation: ob.id });
   }
   return out;
 }

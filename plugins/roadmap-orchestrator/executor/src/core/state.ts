@@ -324,6 +324,8 @@ function unclassedParkRecord(f: StageOutcomeFact): ParkRecord {
 
 type Seq = Readonly<{ seq: number }>;
 type FactOf<K extends HolisticFact['kind']> = Extract<HolisticFact, { kind: K }>;
+/** M4a: a banked debt item as the fold keeps it: its fact (what `mintDebt` and `ledgerAfterArc` read) and seq. */
+export type BankedDebt = Extract<Fact, { kind: 'debt-banked' }> & Seq;
 
 /** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
 export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
@@ -358,6 +360,8 @@ export type HolisticFold = Readonly<{
   digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
   mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
+  /** M4a (R7): the debt this arc banked, in log order; one per source, id and key (src/debt/mint.ts `mintDebt`). */
+  debt: readonly BankedDebt[];
   /** `close-admissions` latched and no architect admit since (§2.10). */
   draining: Readonly<{ command: CommandId; seq: number }> | null;
   completion: CompletionState | null;
@@ -493,6 +497,7 @@ export class Fold implements JournalView {
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
+  readonly #debt: BankedDebt[] = [];
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
 
@@ -861,9 +866,14 @@ export class Fold implements JournalView {
         this.#planAppliedFact(f, at.seq, fail);
         for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
         return;
-      // M4a (frozen in step 0a): read and validated, and a job they name is seen (`nextJobId`); their folding (the pack-
-      // review hold, intake, amendments, debt) lands with the steps that write them (A4, C3).
-      case 'debt-banked':
+      // M4a: debt (C2) is folded; the others are read and validated, and a job they name is seen (`nextJobId`); their
+      // folding (the pack-review hold, intake, amendments) lands with the step that writes them (C3).
+      case 'debt-banked': {
+        const same = this.#debt.find((d) => d.id === f.id || d.key === f.key || canonicalJson(d.source) === canonicalJson(f.source));
+        if (same !== undefined) fail(`debt ${f.id} banked again: ${same.id} (seq ${same.seq}) has its id, key or source (banking is idempotent per source)`);
+        this.#debt.push({ ...f, seq: at.seq });
+        return;
+      }
       case 'corpus-amendment':
         return;
       case 'issue-intake':
@@ -1484,6 +1494,7 @@ export class Fold implements JournalView {
       digests: this.#digests,
       steered: this.#steered,
       mergedIn: this.#mergedIn,
+      debt: this.#debt,
       draining: this.#draining,
       completion: c === null ? null : { ...c, active },
     };

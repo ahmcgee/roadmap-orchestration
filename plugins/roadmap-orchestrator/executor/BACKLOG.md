@@ -174,14 +174,11 @@ None.
 
 ## Scaffolding to delete
 
-- M4a step 0a's construction placeholders, before the M4a PR: `src/core/notyet.ts` and every `notYet` call (the
-  command modules `src/commands/{corpus,issues,pr,phase0,brief,chain}.ts`, a corpus arc's judgment input in
-  src/pipeline/stages.ts and src/prompts/inputs.ts, its vision record in src/input/inforce.ts, a rule ref in
-  src/spec/rulings.ts, a rule-anchored split child in src/prompts/schemas.ts), each replaced by its landing step; and
-  the packReview placeholder module (`src/prompts/packReview/claude-opus-5-5.ts`, B1).
+- M4a step 0a's construction placeholders, before the M4a PR: `src/core/notyet.ts` and every `notYet` call left (the
+  command modules `src/commands/{brief,chain}.ts`, C4; a rule-anchored split child in src/prompts/schemas.ts, C3), each
+  replaced by its landing step.
 - The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
   - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
-  - `visionVerifiable`: the M3 confirmation form `vision.md#sha256:<hex>`, never verified.
   - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
   - `splitChildRuleDefault`: a split child without `rule`.
   - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's

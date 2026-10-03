@@ -75,15 +75,17 @@ import { MergeinStateError, mergeHead, mergeinCompleted } from '../git/mergein.t
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import {
-  type LoadedSpec, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
+  type CorpusInForce, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput,
+  keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import { type PlanUnit, advancesOf, parsePlan, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
-import { notYet } from '../core/notyet.ts';
+import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, Checkout, DocText, FastLane, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText, VisionInput,
+  ArchitectureInput, Checkout, CorpusInput, DocText, FastLane, GateTargetInput, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex, RulingText, TargetInput,
+  VisionInput,
 } from '../prompts/inputs.ts';
 import { visionInputOf } from '../prompts/inputs.ts';
 import {
@@ -349,15 +351,51 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
 }
 
 /**
- * The target a judgment embeds at `tip`: the plan's architecture digest when it names one, else the whole doc. A corpus
- * arc's (the rules index and the materialised pin) lands in step C2.
+ * The target a judgment embeds at `tip` (plan-check, the lenses, the checkpoint): an `architecture-doc` arc's digest when
+ * the plan names one, else the whole doc; a corpus arc's pinned corpus in force (`corpusTarget`), the vision document
+ * included. The gate's is `gateTarget`.
  */
-export function architecture(ctx: StageContext, tip: Sha): ArchitectureInput {
+export function architecture(ctx: StageContext, tip: Sha): TargetInput {
+  return documentTarget(ctx, tip) ?? corpusTarget(ctx, 'full');
+}
+
+/** The gate's target: as `architecture`, but a corpus arc's view omits the vision document (M3 R17). */
+export function gateTarget(ctx: StageContext, tip: Sha): GateTargetInput {
+  return documentTarget(ctx, tip) ?? { ...corpusTarget(ctx, 'without-vision'), visionDoc: null };
+}
+
+/** The directories a judgment reads beside its checkout for `target`: a corpus arc's materialised pin (`--add-dir`). */
+export const targetDirs = (target: TargetInput): readonly AbsPath[] => (target.kind === 'corpus' ? [target.dir] : []);
+
+function documentTarget(ctx: StageContext, tip: Sha): ArchitectureInput | null {
   const t = targetDocuments(ctx.plan());
-  if (t === null) return notYet('a corpus arc\'s judgment input (the rules index and the materialised pin)', 'C2');
+  if (t === null) return null;
   return t.digest === null
     ? { kind: 'full', doc: docAt(ctx, tip, t.doc) }
     : { kind: 'digest', digest: docAt(ctx, tip, t.digest), doc: t.doc };
+}
+
+/** A corpus arc's corpus inputs in force (the pin, guide, Phase-0 record and capture), from the revision in force. */
+export function corpusInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): CorpusInForce {
+  const corpus = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).corpus;
+  if (corpus === null) throw new Error(`arc ${ctx.journal.view.arc}: the revision in force keeps no corpus inputs`);
+  return corpus;
+}
+
+/**
+ * A corpus arc's target (M4a "Corpus, pin and census" 5): every active pinned rule embedded (the rules index; the vision
+ * document holds none), and the pinned files materialised read-only from their kept bytes under
+ * `<runDir>/corpus/<pinSha8>/` (`view` without-vision: `<pinSha8>.no-vision/`, M3 R17). Idempotent: the view is
+ * content-addressed, so a capture under the fence makes it once per pin.
+ */
+function corpusTarget(ctx: StageContext, view: CorpusView): CorpusInput {
+  const { pin } = corpusInForce(ctx);
+  const dir = materialiseCorpus(ctx.runDir, pin.value, pin.sha256, view, (f) => {
+    const bytes = keptInput(ctx.runDir, f.sha256, CORPUS_FILE_INPUT);
+    if (bytes === null) throw new Error(`the pin in force (${pin.sha256}) names ${f.path} (${f.sha256}), which is not kept`);
+    return bytes;
+  });
+  return { kind: 'corpus', rulesIndex: pin.value.rules, dir, visionDoc: view === 'full' ? pin.value.vision.path : null };
 }
 
 /** The product documents whose change touches the unit's authority: every plan contract, the architecture doc and its digest. */
@@ -550,8 +588,9 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const captured = await captureUnderFence(ctx.journal, () => {
     const now = loadUnitSpec(ctx, unit);
     const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
+    const target = architecture(ctx, checkouts.tip.at);
     const rendered = prompt.render({
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target: architecture(ctx, checkouts.tip.at),
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target,
       direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
@@ -559,15 +598,15 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       vision: visionInput(ctx),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
-    return { checkouts, rendered };
+    return { checkouts, rendered, target };
   });
-  const { checkouts, rendered } = captured;
+  const { checkouts, rendered, target } = captured;
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
   // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
   await removePlanCheckCheckouts(ctx, unit.id, parent);
   await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
-  const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx)];
+  const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx), ...targetDirs(target)];
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: dirs },
     system: prompt.system, rendered, schema: prompt.schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),

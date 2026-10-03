@@ -94,6 +94,8 @@ import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, RevisionManife
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
+import { registryOf } from '../corpus/registry.ts';
+import type { RulesRegistry } from '../corpus/types.ts';
 import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
 import type { ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
@@ -580,13 +582,21 @@ function publicationOf(view: JournalView, revision: RevisionInForce, inputs: Nex
     const after = renderConstraints(inputs.ledger, inputs.sidecars, 'living');
     if (after !== before) renders.push({ path: CONSTRAINTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
-  if (inputs.changed.obligations && inputs.obligations !== null) {
-    const before = revision.obligations === null ? null : renderInvariants(revision.obligations.value, latched);
-    const after = renderInvariants(inputs.obligations, latched);
+  // M4a (R3): a corpus arc's `invariants.md` carries the rules registry of its pin, so a re-pin re-renders it too.
+  if ((inputs.changed.obligations || inputs.changed.corpus) && inputs.obligations !== null) {
+    const before = revision.obligations === null ? null : renderInvariants(revision.obligations.value, latched, revision.corpus === null ? undefined : registryOf(revision.corpus.pin.value));
+    const after = renderInvariants(inputs.obligations, latched, nextRegistry(inputs));
     if (after !== before) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
   const contractOps = inputs.sidecars.filter((s) => !revision.sidecars.has(s.id)).flatMap((s) => s.contractOps);
   return { renders, contractOps };
+}
+
+/** The rules registry the proposal's pin publishes; undefined for an `architecture-doc` arc. An accepted corpus proposal loads its pin. */
+function nextRegistry(inputs: NextInputs): RulesRegistry | undefined {
+  if (inputs.corpus === null) return undefined;
+  if (inputs.corpus.pin === null) throw new Error('an accepted corpus revision whose pin does not load (the Phase-0 rows refuse it)');
+  return registryOf(inputs.corpus.pin);
 }
 
 /**

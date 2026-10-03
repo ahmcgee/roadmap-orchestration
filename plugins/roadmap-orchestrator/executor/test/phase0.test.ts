@@ -13,6 +13,10 @@ import { canonicalJson, sha256Hex } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { renderDebt } from '../src/docs/debt.ts';
+import { normalizeText } from '../src/corpus/rules.ts';
+import { parseCorpusPin } from '../src/corpus/types.ts';
+import { ruleAnchorResolves } from '../src/holistic/obligations.ts';
+import { parseObligations } from '../src/holistic/types.ts';
 import { planInForce, revisionInForce } from '../src/input/inforce.ts';
 import { rulingCorpusOf } from '../src/phase0/rows.ts';
 import { UNTRUSTED_POLICY } from './helpers/forge.ts';
@@ -136,6 +140,44 @@ describe('phase0 check', () => {
     } finally {
       j.close();
     }
+  });
+});
+
+describe('exempt obligations and retired rules (LR-C1-2)', () => {
+  /** The baseline publishes T-9 active (the corpus no longer holds it, so the pin retires it with this hash). */
+  const RETIRED_TEXT = 'A berth may be held overnight.';
+  const RETIRED = { id: 'T-9', textSha256: sha256Hex(normalizeText(RETIRED_TEXT)) };
+  const SAMPLE = ['A berth is never double-booked.', 'A booking names one berth and one tide window.', 'A cancelled booking frees its berth at once.'];
+  const active = [...SAMPLE.map((text, i) => ({ id: `T-${i + 1}`, textSha256: sha256Hex(normalizeText(text)) })), RETIRED];
+  const invariants = `# Invariants\n\n\`\`\`json roadmap-rules\n${canonicalJson({ highWater: 9, active, retired: [] })}\n\`\`\`\n`;
+  /** I-1, then I-2 (`state`, anchored at `rule`, absent from the census). */
+  const withI2 = (a: CorpusArc, rule: Json, state: Json): void => editJsonFile(join(a.planDir, 'obligations.json'), (o) => {
+    const i1 = (o['obligations'] as Json[])[0]!;
+    return { ...o, obligations: [i1, { ...i1, id: 'I-2', statement: 'A berth is held overnight.', rule, state }] };
+  });
+
+  it('phase0.exempt-rule-anchor: an exempt obligation may keep a rule the pin retired (same hash) and stay out of the census; another hash, or no such rule, is unresolved', T, async () => {
+    const a = await corpusArc({ files: { '.roadmap/invariants.md': invariants } });
+    const pin = JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')) as { retired: Json[]; highWater: number };
+    assert.deepEqual(pin.retired, [RETIRED], 'the pin retires T-9');
+    await green(a);
+    withI2(a, RETIRED, { type: 'deferred', ruling: 'C-1' });
+    await green(a);
+    withI2(a, { ...RETIRED, textSha256: sha256Hex('another text') }, { type: 'deferred', ruling: 'C-1' });
+    assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
+    withI2(a, { id: 'T-8', textSha256: RETIRED.textSha256 }, { type: 'waived', ruling: 'C-1' });
+    assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
+  });
+
+  it('a binding obligation resolves only to an active rule: a retired one, whatever its hash, does not (ruleAnchorResolves)', T, async () => {
+    const a = await corpusArc({ files: { '.roadmap/invariants.md': invariants } });
+    const pin = parseCorpusPin(JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')));
+    const o = parseObligations(JSON.parse(readFileSync(join(a.planDir, 'obligations.json'), 'utf8'))).obligations[0]!;
+    assert.equal(ruleAnchorResolves(o, pin), true);
+    const at = (rule: Json, state: Json) => ({ ...o, rule, state }) as unknown as typeof o;
+    assert.equal(ruleAnchorResolves(at(RETIRED, { type: 'active' }), pin), false);
+    assert.equal(ruleAnchorResolves(at(RETIRED, { type: 'retired', ruling: 'C-1' }), pin), true);
+    assert.equal(ruleAnchorResolves(at({ id: 'T-1', textSha256: sha256Hex('reworded') }, { type: 'waived', ruling: 'C-1' }), pin), false);
   });
 });
 

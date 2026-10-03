@@ -74,7 +74,7 @@ export type VisionQuestion = Readonly<{ id: QuestionId; text: string; bears: rea
  * The root record (OR-V). Owner-only: only an architect `apply` changes it. `confirmation` is the Phase-0
  * playback's confirmation reference (`parseConfirmationRef`): since M4a `corpus:<path under root>#sha256:<hex>`, verified
  * at every start and apply against the pinned corpus file (C1); the M3 form `vision.md#sha256:<hex>` an adopted dev.6
- * arc carries is not verified (`visionVerifiable`, scaffolding). At least one active `world` clause.
+ * (`architecture-doc`) arc carries is never verified (only a corpus arc's is). At least one active `world` clause.
  */
 export type Vision = Readonly<{
   schema: typeof VISION_SCHEMA;
@@ -362,8 +362,9 @@ export const obligations: Read<Obligations> = object((f) => {
       if (inCensus.has(e.state.id)) throw new SchemaError(`${f.path}.census[${i}].state.id`, 'an obligation the census names once', e.state.id);
       inCensus.set(e.state.id, e.rule);
     });
+    // LR-C1-2: an exempt obligation binds nothing, so the census (one state per active rule) need not name it.
     ruled.forEach((o) => {
-      if (!inCensus.has(o.id)) throw new SchemaError(`${f.path}.census`, `an entry naming ${o.id} (every rule obligation is in the census)`, out.census);
+      if (!isExempt(o) && !inCensus.has(o.id)) throw new SchemaError(`${f.path}.census`, `an entry naming ${o.id} (every rule obligation is in the census unless exempt)`, out.census);
     });
   }
   return out;

@@ -387,8 +387,8 @@ is the one text verifier, gate and fixer read. Fields: `lanes [{id, argv[], cwd,
 fast|estate, resources, evidenceGlobs, until?: {unitMerged}, then?}]` (`argv[0]` resolves at plan load — no
 shell strings, so no bare `access.sh`; `until` resolves through `supersedes`, C-126), `acceptance [{id, clause,
 failLoudIfUndelivered}]`, `scope`, `resources`, `decisions [R1…]` verbatim for the implementer,
-`obligations? [I-nn]`, `repairs? [finding or I-nn]` (required non-empty for `origin: repair`), `debt? [B-n]`
-(the debt items a Phase-0 `promote` assigns the unit, §2.9), `facts`. `contractRequests` and `owedAfterMerge` are
+`obligations? [I-nn]`, `repairs? [finding or I-nn]` (required non-empty for `origin: repair`), `facts` (a debt item a
+Phase-0 `promote` assigns the unit is named by that disposition alone, §2.9). `contractRequests` and `owedAfterMerge` are
 withdrawn (M4a): a contract need is a corpus amendment or a ruling, owed work is debt. `patch-spec` ops (`add |
 replace | strike | defer`) target ids with the expected revision, and are also how plan-check redirects apply;
 changing a lane or clause invalidates the evidence that graded it.
@@ -698,14 +698,14 @@ by tree. Being docs-only, it covers its own edge (§2.5).
 | `roadmap gc` | Claims the host lock and prunes only **sealed** arcs (§2.10; A20, H5): the log's last mutation fact is `arc-completed`, no queued or pending command, the completion head is reachable from the integration ref, and `refs/roadmap/<arc>` verifies at its high-water. It deletes only after that verification (G6): raw evidence, then run dirs beyond the last K (via a `.gc-deleting` rename), then host generation files beyond K and archives no longer retained. |
 | Event-log compaction | Deferred (LR-e, §8); `status.host.log {bytes, events, foldMs}` reports the growth. |
 
-**Debt across arcs (M4a).** A debt item `B-n` (global, stable) records its origin arc, a closed `bankReason`
+**Debt across arcs (M4a).** A corpus arc banks debt (its Phase 0 dispositions the ledger). A debt item `B-n` (global, stable) records its origin arc, a closed `bankReason`
 (`gate-note`: a gate note on an approved attempt, banked after the approval; `finding-deferred`: a P2 or P3
 finding with no obligation that a checkpoint defers), `what`, its unit, a disposition history and a state
 `open | promoted | resolved`. One `debtKey` over `{unit, bankReason, normalizedWhat}` dedupes it. Directive
 overflow never banks: every directive reaches the fix round. Obligation-affecting items are findings, never debt.
 `debt.md` is rendered by code (a human list plus the `json roadmap-debt` block) and published with any docs
 publication whose rendering changed, and at close-out. Phase 0 dispositions every open item in the Phase-0 record
-(`promote{unit}`, the unit's spec naming it in `debt`; `keep{reason}`; `resolve{ruling}`), or `start` refuses
+(`promote{unit}`, the one link between the item and the unit; `keep{reason}`; `resolve{ruling}`), or `start` refuses
 (`debt-undispositioned`); an item kept in each of the two previous arcs needs a `P-n` question bearing on it
 (`debt-kept-twice-unasked`). A disposition changes only through a `phase0` `apply` edit; there is no debt
 command.

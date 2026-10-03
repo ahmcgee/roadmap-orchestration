@@ -1,17 +1,28 @@
 // The snapshot closure over a real arc (src/git/snapshot.ts; plan "Snapshot = the transitive closure of
 // authoritative records", G6/H6): `roadmap start` runs one unit through plan-check, build, gate, ff and snapshot
 // with fake backends, then the published ref is checked against the log. Named tests: snapshot.closure,
-// snapshot.reconstruct-alone.
+// snapshot.reconstruct-alone. M4a step C2, over a sealed corpus arc (test/helpers/corpusarc.ts): snapshot.corpus-closure,
+// snapshot.phase0-capture-closure, snapshot.issues-and-packreview-closure, and snapshot.reconstruct-alone extended to the
+// corpus inputs, a checkpoint's issue capture and a pack review's inputs.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import type { Event } from '../src/core/events.ts';
-import { type Sha, arcId, invocationDirName, invocationId, sha } from '../src/core/ids.ts';
+import { type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, jobId, sha, sha256 } from '../src/core/ids.ts';
+import { canonicalJson, sha256Hex } from '../src/core/json.ts';
+import { materialiseCorpus } from '../src/corpus/materialise.ts';
+import { type CorpusPin, parseCorpusPin } from '../src/corpus/types.ts';
+import { parseIssueCapture } from '../src/forge/types.ts';
+import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holistic/types.ts';
+import { packReviewKey } from '../src/holistic/packreview.ts';
+import {
+  CORPUS_FILE_INPUT, ISSUES_INPUT, PACK_REVIEW_INPUT, keepInput, keptInput, planInForce, revisionInForce,
+} from '../src/input/inforce.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import { git as gitRaw, gitRun, lsTree } from '../src/git/git.ts';
-import { snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
+import { type SnapshotFile, snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
 import { status } from '../src/status.ts';
@@ -20,6 +31,9 @@ import { EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, setupExec, startExec } fr
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { gateStep, mulBuild } from './fixtures/unit-common.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
+import { CAPTURE_FILE, type CorpusArc, PHASE0_FILE, PIN_FILE, corpusArc, newHostDir, runDirOfArc, seal } from './helpers/corpusarc.ts';
+import { DEFAULT_REPO } from './helpers/forge.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 
 after(assertNoSurvivors);
 
@@ -132,5 +146,141 @@ test('snapshot.reconstruct-alone: the run dir deleted and restored from the ref 
   // heartbeat.json is liveness, not a record: the only field the snapshot does not carry. `host.log` measures the log
   // file itself, which the snapshot carries up to its high-water (its own publication's op lines come after).
   const records = (s: typeof before) => ({ ...s, run: { ...s.run, heartbeatAt: null }, host: { ...s.host, log: null } });
+  assert.deepEqual(records(after), records(before));
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4a (C2): a corpus arc's closure
+
+type Sealed = Readonly<{ a: CorpusArc; at: Sha; captureSha: Sha256Hex; packSha: Sha256Hex; pinSha: Sha256Hex }>;
+
+/**
+ * A corpus arc in force, completed and sealed by its terminal snapshot, after a checkpoint's issue capture (`issues-captured`,
+ * its bytes kept as `inputs/<sha>.issues.json`) and a pack review's kept inputs (`pack-review-started`).
+ */
+async function sealedCorpusArc(): Promise<Sealed> {
+  const a = await corpusArc();
+  const runDir = runDirOfArc(a);
+  let captureSha: Sha256Hex | null = null;
+  let packSha: Sha256Hex | null = null;
+  await seal(a, {
+    before: (j) => {
+      // The checkpoint's capture: the Phase-0 one with its issue since closed (other bytes, so its own naming record).
+      const phase0Capture = parseIssueCapture(JSON.parse(readFileSync(join(a.planDir, CAPTURE_FILE), 'utf8')));
+      assert.ok(phase0Capture.issues.length > 0);
+      captureSha = keepInput(runDir, Buffer.from(canonicalJson({ ...phase0Capture, issues: [] }), 'utf8'), ISSUES_INPUT);
+      j.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: captureSha, repo: DEFAULT_REPO, filtered: { comments: 0, pullRequests: 0 } });
+      const inForce = planInForce(runDir, j.view)!;
+      const revision = revisionInForce(runDir, inForce);
+      const inputs = parsePackReviewInputs({
+        schema: PACK_REVIEW_INPUTS_SCHEMA, job: 'review-1', planRev: inForce.rev, planSha256: inForce.manifest.planSha256,
+        specs: Object.entries(inForce.manifest.specs).map(([unit, sha256]) => ({ unit, sha256 })), obligationsSha256: revision.obligations!.sha256,
+        corpusPinSha256: revision.corpus!.pin.sha256, phase0Sha256: revision.corpus!.phase0.sha256, visionSha256: revision.vision!.sha256,
+        head: git(a.repo, 'rev-parse', 'HEAD'), routingRev: '0123456789abcdef',
+      });
+      packSha = keepInput(runDir, Buffer.from(canonicalJson(inputs), 'utf8'), PACK_REVIEW_INPUT);
+      j.fact({ kind: 'pack-review-started', job: jobId('review', 1), planRev: inForce.rev, inputsSha256: packSha, key: packReviewKey(inputs) });
+    },
+  });
+  const at = sha(gitRaw(a.repo, ['rev-parse', snapshotRef(a.arc)]).trim());
+  return { a, at, captureSha: captureSha!, packSha: packSha!, pinSha: sha256(sha256Hex(readFileSync(join(a.planDir, PIN_FILE)))) };
+}
+
+/** The verified manifest of `s`'s ref, by path. */
+function listedOf(s: Sealed): ReadonlyMap<string, SnapshotFile> {
+  const check = verifySnapshot(s.a.repo, s.at);
+  assert.equal(check.kind, 'verified', check.kind === 'mismatch' ? check.detail : '');
+  if (check.kind !== 'verified') throw new Error('unreachable');
+  return new Map(check.manifest.files.map((f) => [f.path as string, f]));
+}
+
+const pinOf = (s: Sealed): CorpusPin => parseCorpusPin(JSON.parse(readFileSync(join(s.a.planDir, PIN_FILE), 'utf8')));
+
+/** The tree of `commit` without `drop`, its manifest rewritten to match: what a collector that missed `drop` would publish. */
+function withoutFile(repo: AbsPath, commit: Sha, drop: string): Sha {
+  const manifest = JSON.parse(gitRun(repo, ['cat-file', 'blob', `${commit}:manifest.json`]).stdout) as { files: { path: string }[] };
+  const rewritten = { ...manifest, files: manifest.files.filter((f) => f.path !== drop) };
+  const blob = gitRaw(repo, ['hash-object', '-w', '--stdin'], { input: canonicalJson(rewritten) }).trim();
+  const entries = lsTree(repo, commit).filter((e) => e.path !== drop).map((e) => `${e.mode} ${e.type} ${e.path === 'manifest.json' ? blob : e.object}\t${e.path}`);
+  const index = absPath(join(tmpDir('c2-tamper'), 'index'));
+  gitRaw(repo, ['update-index', '--add', '--index-info'], { indexFile: index, input: `${entries.join('\n')}\n` });
+  const tree = gitRaw(repo, ['write-tree'], { indexFile: index }).trim();
+  return sha(gitRaw(repo, ['commit-tree', tree, '-m', 'tampered'], { identity: executorIdentity() }).trim());
+}
+
+test('snapshot.corpus-closure: the ref carries the guide, the pin and every pinned corpus file (named by the pin); one missing fails verification', T, async () => {
+  const s = await sealedCorpusArc();
+  const listed = listedOf(s);
+  const pinPath = `inputs/${s.pinSha}.corpus.json`;
+  assert.ok(listed.get(pinPath)?.namedBy.type === 'item', 'the pin is named by its revision payload');
+  const guide = [...listed.keys()].filter((p) => p.endsWith('.corpus-guide.md'));
+  assert.equal(guide.length, 1);
+  assert.equal(gitRun(s.a.repo, ['cat-file', 'blob', `${s.at}:${guide[0]}`]).stdout, readFileSync(join(s.a.repo, '.roadmap/corpus.md'), 'utf8'));
+  const pin = pinOf(s);
+  for (const f of pin.files) {
+    const entry = listed.get(`inputs/${f.sha256}.corpus-file`);
+    assert.ok(entry !== undefined, `${f.path} is carried`);
+    assert.deepEqual(entry.namedBy, { type: 'item', path: pinPath });
+  }
+  const dropped = `inputs/${pin.files[0]!.sha256}.corpus-file`;
+  const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, dropped));
+  assert.equal(tampered.kind, 'mismatch');
+  if (tampered.kind === 'mismatch') assert.match(tampered.detail, new RegExp(`^${dropped.replace(/[.]/g, '\\.')}, which inputs/`));
+});
+
+test('snapshot.phase0-capture-closure: the ref carries the Phase-0 record and the issue capture it names, as the plan dir holds them', T, async () => {
+  const s = await sealedCorpusArc();
+  const listed = listedOf(s);
+  for (const [file, ext] of [[PHASE0_FILE, 'phase0.json'], [CAPTURE_FILE, 'issues.json']] as const) {
+    const bytes = readFileSync(join(s.a.planDir, file));
+    const path = `inputs/${sha256Hex(bytes)}.${ext}`;
+    assert.ok(listed.get(path)?.namedBy.type === 'item', `${file} is named by its revision payload`);
+    assert.equal(gitRun(s.a.repo, ['cat-file', 'blob', `${s.at}:${path}`]).stdout, bytes.toString('utf8'));
+  }
+  const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, `inputs/${sha256Hex(readFileSync(join(s.a.planDir, CAPTURE_FILE)))}.issues.json`));
+  assert.equal(tampered.kind, 'mismatch');
+});
+
+test('snapshot.issues-and-packreview-closure: a checkpoint\'s kept capture and a pack review\'s kept inputs are named by their facts', T, async () => {
+  const s = await sealedCorpusArc();
+  const listed = listedOf(s);
+  const events = readJournal(runDirOfArc(s.a), s.a.arc).events;
+  const seqOf = (kind: string): number => events.find((e) => e.type === 'fact' && e.fact.kind === kind)!.seq;
+  assert.deepEqual(listed.get(`inputs/${s.captureSha}.issues.json`)?.namedBy, { type: 'event', seq: seqOf('issues-captured') });
+  assert.deepEqual(listed.get(`inputs/${s.packSha}.pack-review.json`)?.namedBy, { type: 'event', seq: seqOf('pack-review-started') });
+  const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, `inputs/${s.packSha}.pack-review.json`));
+  assert.equal(tampered.kind, 'mismatch');
+});
+
+test('snapshot.reconstruct-alone (corpus): the run dir deleted and restored from the ref alone holds the corpus inputs in force, the pinned files, the captures and the pack-review inputs; status is unchanged', T, async () => {
+  const s = await sealedCorpusArc();
+  const runDir = runDirOfArc(s.a);
+  const hostDir = newHostDir();
+  const before = status(runDir, s.a.arc, hostDir);
+  rmSync(runDir, { recursive: true, force: true });
+  for (const e of lsTree(s.a.repo, s.at)) {
+    if (e.path === 'manifest.json') continue;
+    mkdirSync(dirname(join(runDir, e.path)), { recursive: true });
+    writeFileSync(join(runDir, e.path), gitRun(s.a.repo, ['cat-file', 'blob', `${s.at}:${e.path}`]).stdout);
+  }
+  const journal = openJournal(runDir, s.a.arc);
+  try {
+    const corpus = revisionInForce(runDir, planInForce(runDir, journal.view)!).corpus;
+    assert.ok(corpus !== null, 'the corpus inputs in force read back');
+    assert.equal(corpus.pin.sha256, s.pinSha);
+    assert.equal(corpus.guide.bytes.toString('utf8'), readFileSync(join(s.a.repo, '.roadmap/corpus.md'), 'utf8'));
+    assert.equal(corpus.capture.bytes.toString('utf8'), readFileSync(join(s.a.planDir, CAPTURE_FILE), 'utf8'));
+    for (const f of corpus.pin.value.files) assert.ok(keptInput(runDir, f.sha256, CORPUS_FILE_INPUT) !== null, `${f.path} restored`);
+    const dir = materialiseCorpus(runDir, corpus.pin.value, corpus.pin.sha256, 'without-vision', (f) => keptInput(runDir, f.sha256, CORPUS_FILE_INPUT)!);
+    assert.ok(existsSync(join(dir, corpus.pin.value.rules[0]!.file)), 'the gate\'s view materialises from the restored bytes');
+    assert.ok(keptInput(runDir, s.captureSha, ISSUES_INPUT) !== null, 'the checkpoint\'s capture restored');
+    const pack = keptInput(runDir, s.packSha, PACK_REVIEW_INPUT);
+    assert.ok(pack !== null, 'the pack review\'s inputs restored');
+    assert.equal(parsePackReviewInputs(JSON.parse(pack.toString('utf8'))).corpusPinSha256, s.pinSha);
+  } finally {
+    journal.close();
+  }
+  const after = status(runDir, s.a.arc, hostDir);
+  const records = (x: typeof before) => ({ ...x, run: { ...x.run, heartbeatAt: null }, host: { ...x.host, log: null } });
   assert.deepEqual(records(after), records(before));
 });

@@ -15,6 +15,9 @@ import { type OpenJournal, openJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost, releaseHost } from '../src/host/lock.ts';
+import { registryOf } from '../src/corpus/registry.ts';
+import { parseCorpusPin } from '../src/corpus/types.ts';
+import { INVARIANTS_DOC, parseRulesRegistryBlock } from '../src/docs/invariants.ts';
 import { classify, changesScope } from '../src/input/classify.ts';
 import { CORPUS_FILE_INPUT, keptInput, planInForce, readInputFiles, recordPlan, revisionInForce } from '../src/input/inforce.ts';
 import { type StartChecks, type StartInput, runChecks } from '../src/preflight/checks.ts';
@@ -121,6 +124,22 @@ describe('re-pin (the corpus edit class)', () => {
       assert.deepEqual(v.corpusFiles.map((f) => f.path).sort(), (pin['files'] as Json[]).map((f) => f['path']).sort());
       const cur = planInForce(runDirOfArc(a), j.view)!.plan;
       assert.deepEqual(changesScope(v.evaluated.draft.changes, cur, filesOf(a).plan), { type: 'arc' });
+    } finally {
+      j.close();
+    }
+  });
+
+  it('apply.repin-renders-registry: a re-pin\'s docs publication renders invariants.md with the new pin\'s rules registry (M4a C2, R3)', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      const commit = commitCorpus(a, '0020_Berths.md', (t) => t.replace('A booking names one berth and one tide window.', 'A booking names exactly one berth and one tide window.'));
+      await repin(a, commit);
+      const v = accepted(await apply(a, j));
+      const renders = new Map(v.evaluated.renders.map((r) => [r.path as string, r.bytes.toString('utf8')]));
+      assert.deepEqual([...renders.keys()], [INVARIANTS_DOC]);
+      const pin = parseCorpusPin(readJsonFile(join(a.planDir, PIN_FILE)));
+      assert.deepEqual(parseRulesRegistryBlock(renders.get(INVARIANTS_DOC)!), registryOf(pin));
+      assert.ok(v.evaluated.draft.publication !== null, 'a re-pin publishes');
     } finally {
       j.close();
     }

@@ -116,6 +116,7 @@ export const NOOP_DIVERGENCE = 'no-op divergences (M3 H12: bundle-decided{no-op}
 export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
 export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
+export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, then its gate notes banked as debt-banked facts)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
@@ -1572,6 +1573,23 @@ export const MATRIX: readonly Row[] = [
         labels: ['retry.after-disposition', 'resource.after-done'],
         recovery: 'the disposition durable, the instance cleaning under the job\'s retry: recovery releases it, no second disposition; after each transition\'s done the holder\'s state is recovered as at B2, nothing open',
       },
+    },
+  },
+  {
+    // A corpus arc's gate approves with a note: `approval`, then `debt-banked` keyed by its source (src/pipeline/gate.ts
+    // `bankGateNotes`), driven in a child (test/fixtures/corpus-gate-child.ts) that a restart recovers and steps on.
+    row: DEBT_BANK,
+    test: 'test/corpus-judgment.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the approval and the banked items are facts written from the gate call\'s recorded result, which recovery closed before (proc.spawn rows)' },
+      B3: { status: 'excluded', why: 'there is no act between the approval and the banking beyond the fact appends B4 crashes between' },
+      B4: {
+        status: 'crash',
+        labels: ['debt.after-approval'],
+        recovery: 'the approval written, no debt-banked: the restart consumes the recorded gate call (never asked again), keeps the approval and banks each note once; one approval, one debt-banked per source, gate:approve once',
+      },
+      B5: { status: 'excluded', why: 'a banked fact is durable and keyed by its source: a re-read of the answer mints nothing again (mintDebt); the stage-outcome after it is the gate\'s own row' },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },

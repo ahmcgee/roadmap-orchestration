@@ -5,7 +5,7 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { ClassCatalogue } from '../routing/classes.ts';
-import type { CensusEntry, ConfirmationRef, Obligations } from '../holistic/types.ts';
+import type { CensusEntry, Obligations } from '../holistic/types.ts';
 
 const warned = new Set<string>();
 
@@ -29,16 +29,6 @@ export function censusOf(o: Obligations): readonly CensusEntry[] | null {
   if (o.census !== undefined) return o.census;
   warnDefaulted('obligations.census', 'an obligations file without a census (docRef obligations, a 1.0.0-dev.6 arc): census checks are vacuous');
   return null;
-}
-
-/**
- * Whether a vision's confirmation can be verified against the pinned corpus (OR-V+): the `corpus:` form can; the M3
- * form `vision.md#sha256:<hex>` an adopted dev.6 arc carries is not verified (R18), warned once.
- */
-export function visionVerifiable(ref: ConfirmationRef): ref is Extract<ConfirmationRef, { form: 'corpus' }> {
-  if (ref.form === 'corpus') return true;
-  warnDefaulted('vision.confirmation', `the vision's confirmation ${ref.path}#sha256:… is the M3 form (a 1.0.0-dev.6 arc); it is not verified`);
-  return false;
 }
 
 /**

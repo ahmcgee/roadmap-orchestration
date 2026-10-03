@@ -60,6 +60,8 @@ export const CORPUS_GUIDE_INPUT = 'corpus-guide.md';
 export const CORPUS_FILE_INPUT = 'corpus-file';
 export const PHASE0_INPUT = 'phase0.json';
 export const ISSUES_INPUT = 'issues.json';
+/** M4a (K8): a pack review's `PackReviewInputs`, kept before its spawn and named by its `pack-review-started`. */
+export const PACK_REVIEW_INPUT = 'pack-review.json';
 /** An executor-rendered `.roadmap/` document a revision's docs publication commits (`RevisionPayload.publication.renders`). */
 export const RENDER_INPUT = 'render';
 

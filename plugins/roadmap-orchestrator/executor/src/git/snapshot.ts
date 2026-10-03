@@ -10,9 +10,13 @@
 // |----------------------------------------|--------------------------------------------------------------------|
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
-// |                                        | inputs, sidecars, renders), a `spec.patch` done, a `dispatch`,      |
+// |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide, Phase-0  |
+// |                                        | record and its issue capture), a kept pin (each pinned corpus file, |
+// |                                        | `.corpus-file`), a `spec.patch` done, a `dispatch`,                 |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
-// |                                        | a vacuity `finding-opened` (its mutant `.patch`)                   |
+// |                                        | a vacuity `finding-opened` (its mutant `.patch`), an `issues-captured` |
+// |                                        | fact (a checkpoint's capture), a `pack-review-started` fact (its   |
+// |                                        | kept `PackReviewInputs`)                                           |
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
@@ -56,10 +60,11 @@ import { Fields, type Read, literal, nat, object, positive, sortedBy, tagged, ve
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { START_FILE } from '../executor.ts';
+import { parseCorpusPin } from '../corpus/types.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT, RULING_INPUT, RULINGS_INPUT,
-  SPEC_INPUT, VISION_INPUT, inputPath,
+  CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT,
+  RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
 } from '../input/inforce.ts';
 import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
@@ -160,8 +165,13 @@ type Item = Readonly<{
   generation?: number;
 }>;
 
-/** The closure of the records `events` name, in naming order, each path once (its first naming record). */
-function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => RevisionPayload): readonly Item[] {
+/**
+ * The closure of the records `events` name, in naming order, each path once (its first naming record). `read` gives the
+ * bytes of a kept input the closure follows (a revision payload, a corpus pin): from the run dir when collecting, from
+ * the tree when verifying, so the guide, the pin and every pinned corpus file are reconstructible from the ref alone.
+ */
+function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string) => Buffer): readonly Item[] {
+  const json = (sha: Sha256Hex, ext: string): unknown => JSON.parse(read(sha, ext).toString('utf8'));
   const items = new Map<string, Item>();
   const add = (item: Omit<Item, 'optional'> & { optional?: boolean }): void => {
     if (!items.has(item.path)) items.set(item.path, { optional: false, ...item });
@@ -172,7 +182,7 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
     const path = repoPath(`inputs/${sha}.${REVISION_INPUT}`);
     if (items.has(path)) return;
     input(sha, REVISION_INPUT, by);
-    const p = payloadOf(sha);
+    const p = parseRevisionPayload(json(sha, REVISION_INPUT));
     const m = p.manifest;
     const from: NamedBy = { type: 'item', path };
     input(m.planSha256, PLAN_INPUT, from);
@@ -181,13 +191,20 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
     for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
-    // M4a (C1, minimal; C2 adds the pin's corpus files): a corpus arc's pin, guide, Phase-0 record and issue capture.
-    if (m.corpus !== undefined) input(m.corpus, CORPUS_INPUT, from);
+    // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide, Phase-0 record and issue capture.
+    if (m.corpus !== undefined) pin(m.corpus, from);
     if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
     if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
     if (m.phase0Issues !== undefined) input(m.phase0Issues, ISSUES_INPUT, from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
+
+  function pin(sha: Sha256Hex, by: NamedBy): void {
+    const path = repoPath(`inputs/${sha}.${CORPUS_INPUT}`);
+    if (items.has(path)) return;
+    input(sha, CORPUS_INPUT, by);
+    for (const f of parseCorpusPin(json(sha, CORPUS_INPUT)).files) input(f.sha256, CORPUS_FILE_INPUT, { type: 'item', path });
+  }
 
   add({ path: repoPath(EVENTS_FILE), namedBy: { type: 'log' }, sha256: null, source: { type: 'log' } });
   add({ path: repoPath(STATE_FILE), namedBy: { type: 'log' }, sha256: null, source: { type: 'fold' } });
@@ -246,6 +263,12 @@ function closureOf(events: readonly Event[], payloadOf: (sha: Sha256Hex) => Revi
         break;
       case 'finding-opened':
         if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
+        break;
+      case 'issues-captured':
+        input(f.sha256, ISSUES_INPUT, by);
+        break;
+      case 'pack-review-started':
+        input(f.inputsSha256, PACK_REVIEW_INPUT, by);
         break;
       case 'witnessed':
         // A job's, a candidate's and a mutant's lane run alike (a mutant's record never certifies, G13).
@@ -358,7 +381,6 @@ export function witnessDir(runDir: AbsPath, f: WitnessedFact): AbsPath {
 export function collectSnapshot(request: SnapshotPublishRequest): Collected {
   const { arc, runDir, highWater } = request;
   const { bytes: log, events } = eventsPrefix(runDir, highWater);
-  const payloadOf = (s: Sha256Hex): RevisionPayload => parseRevisionPayload(JSON.parse(mustRead(inputPath(runDir, s, REVISION_INPUT), 'revision payload').toString('utf8')));
   const startPath = join(runDir, START_FILE);
   const bytesOf = (source: Source): Buffer | null => {
     switch (source.type) {
@@ -383,7 +405,7 @@ export function collectSnapshot(request: SnapshotPublishRequest): Collected {
     }
   };
   const files = new Map<RepoPath, Readonly<{ bytes: Buffer; namedBy: NamedBy }>>();
-  for (const item of closureOf(events, payloadOf)) {
+  for (const item of closureOf(events, (s, ext) => mustRead(inputPath(runDir, s, ext), `kept ${ext}`))) {
     const bytes = bytesOf(item.source);
     if (bytes === null) continue;
     const problem = namingProblem(item, bytes);
@@ -472,11 +494,11 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
 
   let closure: readonly Item[];
   try {
-    closure = closureOf(events, (s) => {
-      const path = `inputs/${s}.${REVISION_INPUT}`;
+    closure = closureOf(events, (s, ext) => {
+      const path = `inputs/${s}.${ext}`;
       const bytes = blobs.get(path);
       if (bytes === undefined) throw new Mismatch(`the closure names ${path}, which the tree does not hold`);
-      return parseRevisionPayload(JSON.parse(bytes.toString('utf8')));
+      return bytes;
     });
   } catch (e) {
     if (e instanceof Mismatch) return mismatch(e.message);

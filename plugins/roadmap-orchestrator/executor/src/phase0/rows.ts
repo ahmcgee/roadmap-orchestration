@@ -8,8 +8,9 @@
 //                  a same-repo source, no unit scope and no plan contract overlapping the corpus file set (every pinned
 //                  file plus every path matching root/include, R32): `scope-overlaps-corpus`, `contract-overlaps-corpus`.
 //                  Malformed corpus text throws `CorpusFormatError` (LR-A1-2), never a row.
-//   2-3. census    one state per active pinned rule, none dangling, every non-exempt obligation's rule resolved
-//                  (src/holistic/rederive.ts `censusProblems`). A corpus arc names its obligations file (LR-0a-2).
+//   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
+//                  active, an exempt one's active or retired (LR-C1-2; src/holistic/rederive.ts `censusProblems`). An
+//                  exempt obligation need not be in the census. A corpus arc names its obligations file (LR-0a-2).
 //   4. debt        every open item of the baseline's `debt.md` block dispositioned (`debt-undispositioned`); a third
 //                  `keep` of an item kept in each of the two previous arcs needs a question whose text names the item
 //                  (`debt-kept-twice-unasked`); question ids against the chain closure (`question-reused`, H23).
@@ -37,7 +38,8 @@ import { rederivePin } from '../corpus/pin.ts';
 import { EMPTY_REGISTRY, registryAt } from '../corpus/registry.ts';
 import type { OpenedSource } from '../corpus/source.ts';
 import { type CorpusGuide, type CorpusPin, activeRules, parseCorpusPin } from '../corpus/types.ts';
-import { keptInEachOfLastTwoArcs, openItems } from '../debt/ledger.ts';
+import { EMPTY_LEDGER, keptInEachOfLastTwoArcs, openItems } from '../debt/ledger.ts';
+import type { DebtLedger } from '../debt/types.ts';
 import { DEBT_DOC, parseDebtBlock } from '../docs/debt.ts';
 import { resolveRepo } from '../forge/gh.ts';
 import { queryPolicy } from '../forge/policy.ts';
@@ -225,17 +227,21 @@ function overlapProblems(plan: PlanM1, pin: CorpusPin, guide: CorpusGuide): read
 // ---------------------------------------------------------------------------------------------------
 // 4-5. Debt, questions, amendments, intake
 
-/** The baseline's debt ledger (`.roadmap/debt.md` at the plan's baseline), or null when it has none. */
-function baselineDebt(input: Phase0Input): ReturnType<typeof parseDebtBlock> {
-  const r = gitRun(input.repo, ['cat-file', 'blob', `${input.plan.baseline}:${DEBT_DOC}`], { okCodes: [0, 128] });
-  return r.code === 0 ? parseDebtBlock(r.stdout) : null;
+/**
+ * The debt ledger published at `rev` of the product repo (`.roadmap/debt.md`; a corpus arc's baseline holds the previous
+ * arc's), the empty ledger when it has none. Phase 0 dispositions its open items; the arc's banking and rendering
+ * (src/pipeline/{gate,publish}.ts) continue from it.
+ */
+export function baselineDebtAt(repo: AbsPath, rev: string): DebtLedger {
+  const r = gitRun(repo, ['cat-file', 'blob', `${rev}:${DEBT_DOC}`], { okCodes: [0, 128] });
+  return (r.code === 0 ? parseDebtBlock(r.stdout) : null) ?? EMPTY_LEDGER;
 }
 
 /** A question names a debt item when its text holds the id as a word (`bears` holds only `T-n` and `V-n`). */
 const names = (text: string, id: DebtId): boolean => new RegExp(`(^|[^A-Za-z0-9-])${id}($|[^0-9])`).test(text);
 
 function debtProblems(input: Phase0Input, record: Phase0Record, rows: StartupRejection[]): readonly Phase0Problem[] {
-  const open = openItems(baselineDebt(input) ?? { schema: 'roadmap/debt-m4', items: [] });
+  const open = openItems(baselineDebtAt(input.repo, input.plan.baseline));
   const byId = new Map(record.debt.map((d) => [d.id, d.disposition]));
   const units = new Set<UnitId>(input.plan.units.map((u) => u.id));
   const out: Phase0Problem[] = [];

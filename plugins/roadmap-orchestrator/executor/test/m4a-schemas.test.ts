@@ -17,7 +17,7 @@ import {
 import { canonicalJson } from '../src/core/json.ts';
 import { NotYetError } from '../src/core/notyet.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
-import { censusOf, checkpointOutputM4Default, visionVerifiable } from '../src/core/upgrade.ts';
+import { censusOf, checkpointOutputM4Default } from '../src/core/upgrade.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import { parseCorpusGuide, parseCorpusPin, parseRulesRegistry } from '../src/corpus/types.ts';
@@ -475,13 +475,11 @@ describe('startup rows, brief and ack', () => {
 });
 
 describe('upgrade.defaults-dev6', () => {
-  it('a dev.6 obligations file reads with no census (vacuous); a dev.6 vision ref is unverified; corpus refs verify', () => {
+  it('a dev.6 obligations file reads with no census (vacuous)', () => {
     const { rule: _r, ...noAnchor } = ruleObligation('I-1', 'T-2');
     const dev6 = parseObligations(obligationsFile([{ ...noAnchor, docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' } }]));
     assert.equal(censusOf(dev6), null);
     assert.deepEqual(censusOf(parseObligations(obligationsFile([], []))), []);
-    assert.equal(visionVerifiable(parseConfirmationRef(`vision.md#sha256:${H}`)), false);
-    assert.equal(visionVerifiable(parseConfirmationRef(`corpus:0005_Vision.md#sha256:${H}`)), true);
   });
 
   it('a recorded dev.6 checkpoint answer reads with no amendments, no intake, and docRef split children', () => {

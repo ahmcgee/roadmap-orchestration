@@ -110,7 +110,7 @@ completes as in M3.
 | `plan.json` | parsed into the closed target union (`target: architecture-doc \| corpus`, K7); `+ corpus?`, `+ phase0?`, `+ chain?{previousArc, previousHead}` | `architectureDoc` present: the `architecture-doc` variant (lasting for non-holistic arcs; scaffolding for holistic ones) |
 | `PlanChange` | `+ corpus{pinSha256, guideSha256}`, `+ phase0{sha256, issuesSha256}` (H7) | none |
 | `obligations-m3` | obligation: exactly one of `docRef \| rule{id, textSha256}`; file `+ census?` | docRef obligations, no census: M3 semantics, census checks vacuous (`censusOf`) |
-| `vision-m3` | `confirmation.ref` gains `corpus:<path>#sha256:<hex>` | the `vision.md#…` form, never verified (`visionVerifiable`) |
+| `vision-m3` | `confirmation.ref` gains `corpus:<path>#sha256:<hex>` | the `vision.md#…` form of an `architecture-doc` arc, never verified (only a corpus arc's ref is) |
 | `ruling-m3` sidecar | `docRefs[]` `+` the rule arm `{rule, textSha256, relation: consistent \| refines}` (K19); `consistency.judgedRevs + corpusSha256?` | none (lasting) |
 | `ApprovalFingerprint` | `+ corpus?` (the pin's sha256) | absent: none (lasting, byte-identical to dev.6) |
 | `RevisionManifest` (`RevisionInputs`) | `+ corpus?, corpusGuide?, phase0?, phase0Issues?` (all four or none) | absent: none |
@@ -2125,7 +2125,7 @@ textSha256}], retired: [{id, textSha256}]}` (each ascending by number, disjoint,
 `+ census?: [{rule: T-n, state: obligation{id: I-n} | out-of-slice | untestable | prod-only}]` (ascending by rule
 number, one entry per rule). The reader checks: one anchor kind for every obligation of a file; a census exactly beside
 rule anchors (absent beside docRefs, required beside rules); an `obligation` state names an obligation of the file
-anchored at that rule, each once; every rule obligation appears in the census. One entry per active pinned rule and none
+anchored at that rule, each once; every non-exempt rule obligation appears in the census (LR-C1-2). One entry per active pinned rule and none
 for a retired or unknown one is checked against the pin (`census-incomplete`, `census-dangling`, C1).
 
 **Ruling sidecars.** `docRefs[]` is `RulingDocRef | RulingRuleRef`; on disk the rule arm is told by `rule`: `{rule: T-n,
@@ -2134,8 +2134,8 @@ only a doc ref deviates and needs contract ops. `consistency.judgedRevs + corpus
 
 **Vision.** A corpus arc's record is `<repo>/.roadmap/vision.json` (R1), its vision document a corpus file with no rules
 block. `confirmation.ref` (`parseConfirmationRef`): `corpus:<path under root>#sha256:<hex>`, verified at every start and
-apply against the pinned file (`vision-unconfirmed`, C1); the M3 form `<file>#sha256:<hex>` of an adopted dev.6 arc is
-never verified (`visionVerifiable`, scaffolding).
+apply against the pinned file (`vision-unconfirmed`, C1); the M3 form `<file>#sha256:<hex>` of an adopted dev.6
+(`architecture-doc`) arc is never verified.
 
 **Phase-0 record** (`roadmap/phase0-m4`, `plan.phase0`; `parsePhase0Record`; revisioned like the vision). `{schema,
 curation: [{tier: structural | fact-currency, what, files (non-empty), rules}], corpusDivergences: [{tier: semantic,
@@ -2313,8 +2313,41 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
 13. **Kept corpus bytes** (`inputs/<sha>.corpus.json`, `.corpus-guide.md`, `.phase0.json`, `.issues.json`,
     `.corpus-file`): the corpus files are kept from the source the re-derived pin read, before the revision that names
     the pin is kept (`keepRevisionFiles` refuses a pin whose files are not kept). The snapshot closure carries the pin,
-    guide, Phase-0 record and capture a payload's manifest names (C1); the pin's corpus files are C2's.
+    guide, Phase-0 record and capture a payload's manifest names (C1), and every corpus file the pin names (C2).
 14. **Prompt inputs** (B1): every judgment's target input is `target` (`TargetInput = ArchitectureInput | CorpusInput`;
     the gate's `GateTargetInput` never carries the vision doc); `CheckpointInputs.issues` holds the checkpoint's captured
     issues; the checkpoint schema requires `corpusAmendments` and `issueIntake` (a recorded dev.6 answer reads them as
     none through `checkpointOutputM4Default`).
+
+**Readings of M4a C2** (recorded in step C2):
+
+1. **Judgment targets** (`src/pipeline/stages.ts`): `architecture(ctx, tip)` is every judgment's `TargetInput` but the
+   gate's; in a corpus arc it is `{kind: corpus, rulesIndex: the pin's active rules, dir, visionDoc: the pin's vision
+   path}`, read from `revisionInForce(...).corpus` and materialised read-only from the kept `.corpus-file` bytes at
+   `<runDir>/corpus/<pinSha8>/` inside the judgment's capture under the fence. The gate's `gateTarget` is the
+   `<pinSha8>.no-vision/` view with `visionDoc: null` (`GateTargetInput`, R17). The view's directory joins the session's
+   readable dirs (`targetDirs`, Claude `--add-dir`) for plan-check and the gate; the lens and checkpoint add theirs in C3.
+2. **Fingerprint** (R6): `ApprovalFingerprint.corpus` is the sha256 of the pin in force at capture, present exactly in a
+   corpus arc; the ff re-check recomputes it, so a re-pin invalidates every approval (`fingerprint-invalid`, a re-gate).
+3. **Gate-note debt** (R7, DEBT_BANK): only a corpus arc banks (its Phase 0 dispositions the ledger it publishes). After
+   the `approval`, each `note` finding of the approving answer with non-blank text is minted (`mintDebt`) against the
+   ledger published at the plan's baseline (`baselineDebtAt`) and the arc's banked items, source `gate{unit, attempt,
+   index}` (index: the finding's place in the answer). A crash after the approval (`debt.after-approval`) is finished by
+   the consumed answer's re-read (`gateRead` keeps the approval and banks what is missing).
+4. **The debt fold**: `HolisticFold.debt` holds every `debt-banked` fact with its seq, in log order; a second fact with an
+   id, key or source already banked fails the fold.
+5. **`debt.md`** (R8): `arcDebtLedger` = `ledgerAfterArc(baseline ledger, arc, the Phase-0 dispositions in force, the
+   banked items, debtUnitOf)`, a finding-sourced item's unit its finding's owner. It is rendered at the publication's tip
+   and committed with any docs publication (a revision's, beside its kept renders, or the close-out) whose tip holds
+   another text; its bytes live in the docs commit, not in `RevisionPayload.publication.renders`. The close-out always
+   carries it when the tip differs, so a corpus arc's close-out publishes `debt.md` even for an empty ledger.
+6. **The rules registry** (R3): `invariants.md` renders `registryOf(pin)` in a corpus arc, at the close-out and in an
+   apply's publication; an apply re-renders it when the obligations or the pin change.
+7. **Snapshot closure**: a kept pin names each pinned corpus file (`inputs/<sha>.corpus-file`, named by the pin's item);
+   an `issues-captured` fact names its capture (`inputs/<sha>.issues.json`); a `pack-review-started` fact names its
+   `PackReviewInputs` (`inputs/<inputsSha256>.pack-review.json`, `PACK_REVIEW_INPUT`). Verification follows the pin from
+   the tree, so the rules index, the vision path and the include patterns reconstruct from the ref alone.
+8. **Exempt rule anchors** (LR-C1-2): an exempt (waived, deferred, retired) obligation's `{T-n, textSha256}` resolves to
+   an active or a retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active
+   rule. The obligations reader requires only non-exempt rule obligations in the census.
+9. **No spec `debt` field** (LR-C1-1): a Phase-0 `promote{unit}` is the one link between a debt item and its unit.

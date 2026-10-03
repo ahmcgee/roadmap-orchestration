@@ -27,6 +27,7 @@
 // non-exempt obligation serves a clause, and newly cited clauses are active.
 import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
+import { type CorpusPin, activeRules } from '../corpus/types.ts';
 import {
   type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf, obligationSource,
 } from './types.ts';
@@ -91,6 +92,19 @@ function ruleRefreshed(prev: ObligationDef, next: ObligationDef): boolean {
   const a = obligationSource(prev);
   const b = obligationSource(next);
   return a.kind === 'rule' && b.kind === 'rule' && a.rule.id === b.rule.id && a.rule.textSha256 !== b.rule.textSha256;
+}
+
+/**
+ * Whether a rule-anchored obligation's `{T-n, textSha256}` resolves in `pin` (M4a; LR-C1-2): a binding obligation's to an
+ * active rule with that text hash; an exempt one's (waived, deferred, retired: it binds nothing) also to a rule the pin
+ * retired with that hash, so retiring a rule does not force an edit of an obligation already exempted from it. A
+ * docRef obligation is not asked (it has no rule).
+ */
+export function ruleAnchorResolves(o: ObligationDef, pin: CorpusPin): boolean {
+  const src = obligationSource(o);
+  if (src.kind !== 'rule') throw new Error(`${o.id} is docRef-anchored: only a rule anchor resolves in a pin`);
+  if (activeRules(pin).get(src.rule.id)?.textSha256 === src.rule.textSha256) return true;
+  return isExempt(o) && pin.retired.some((r) => r.id === src.rule.id && r.textSha256 === src.rule.textSha256);
 }
 
 /** The active ruling in force that names `id` with `disposition` (the given one when `ruling` is set), or null. */

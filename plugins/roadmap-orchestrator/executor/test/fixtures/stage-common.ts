@@ -17,7 +17,8 @@ import { type AbsPath, absPath, isoTimeOf } from '../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../src/core/version.ts';
 import { START_FILE } from '../../src/executor.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
@@ -104,10 +105,19 @@ function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: 
   atomicJson(join(runDir, START_FILE), start);
 }
 
-/** Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). */
+/**
+ * Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). A
+ * corpus arc's files pass the shared Phase-0 rows first, which open its corpus source, and its corpus files are kept.
+ */
 export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
   writeStart(runDir, repo, planPath, profile);
-  recordPlan(journal, runDir, readInputFiles(planPath, repo), [], { profile, config: null });
+  const files = readInputFiles(planPath, repo);
+  if (files.corpus !== null) {
+    const rows = phase0Rows(phase0InputOf(files, null), APPLY);
+    if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
+    keepCorpusFiles(runDir, rows.opened.files);
+  }
+  recordPlan(journal, runDir, files, [], { profile, config: null });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
