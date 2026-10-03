@@ -6,7 +6,7 @@
 // arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice candidate, stop vision-silent).
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
-// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.untrusted-start, evals-m4a.owner-questions.
+// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.untrusted-start, evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.wake-key.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -23,7 +23,7 @@ import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
 import { type CheckResult, CRITERIA, arcView, chainOf } from '../evals/m4a/check.ts';
-import { type Report, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
+import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin, wakeKey } from '../evals/m4a/driver.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
 import { type ArcView, defectVerdicts, readKey, spanPresent } from '../evals/m4a/key.ts';
@@ -420,4 +420,16 @@ test('evals-m4a.owner-questions (paid run 1): the owner simulator gets the final
     '2. Do you acknowledge brief `0cd1e8d2b06a8a32`?',
   ]);
   assert.deepEqual(numberedQuestions('Arc started; waiting on watch.'), []);
+});
+
+test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-limit` is not the K question; K is asked case-sensitively', () => {
+  const c = {} as OwnerCtx; // neither question below reaches the forge branch
+  assert.equal(codeAnswer(c, 'Do you acknowledge brief a636215e877ff428? If you do, I can chain a third arc. If you have no view, the chain stops after arc 2 (`k-limit`).'), 'I have not read the brief yet; do not acknowledge it.');
+  assert.equal(codeAnswer(c, 'K: how many arcs may I run past your last acknowledged brief?'), 'K = 1.');
+  assert.equal(codeAnswer(c, 'How many arcs may I run past your last acknowledged brief before I stop and wait (K)? Working assumption: 1.'), 'K = 1.');
+  assert.equal(codeAnswer(c, 'Should the cut-off be checked against k-limit style rules?'), null);
+});
+
+test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id reused by the next arc still wakes the session', () => {
+  assert.notEqual(wakeKey('no-double-promise', 'nu-31'), wakeKey('berth-that-fits', 'nu-31'));
 });

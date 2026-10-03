@@ -174,13 +174,16 @@ function firstArcComplete(product: AbsPath): boolean {
   });
 }
 
-type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; fake: boolean; devices: Devices }>;
+export type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; fake: boolean; devices: Devices }>;
 
 const TRUSTED = { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' } as const;
 
 /** The answers code gives (plan "Driver"), or null for the simulator. */
-function codeAnswer(c: OwnerCtx, q: string): string | null {
-  if (/\bK\b|how many arcs/i.test(q)) return 'K = 1.';
+export function codeAnswer(c: OwnerCtx, q: string): string | null {
+  // A request to ack a brief ("acknowledge brief <id>", "ack the brief"), never the K question's "acknowledged brief".
+  if (/\b(acknowledge|ack)\b[^.?]*\bbrief\b/i.test(q)) return 'I have not read the brief yet; do not acknowledge it.';
+  // Case-sensitive K (paid run 2: `k-limit` in a brief-ack question matched /\bK\b/i).
+  if (/\bK\b(?!-)/.test(q) || /how many arcs/i.test(q)) return 'K = 1.';
   if (/issue (creation|policy)|PUBLIC \+ ALL|anyone (can )?open issues/i.test(q)) {
     const store = readStore(c.l.store);
     if (store.policy.issueCreationPolicy !== TRUSTED.issueCreationPolicy || store.policy.visibility !== TRUSTED.visibility) {
@@ -189,7 +192,6 @@ function codeAnswer(c: OwnerCtx, q: string): string | null {
     }
     return 'Done: issue creation is restricted to collaborators again.';
   }
-  if (/acknowledg|\back(ed)?\b/i.test(q) && /brief/i.test(q)) return 'I have not read the brief yet; do not acknowledge it.';
   if (/\b(first|next|this) slice\b/i.test(q) && /\b(accept|agree|approve|ok)\b/i.test(q)) return 'Yes, I accept that slice.';
   return null;
 }
@@ -336,6 +338,9 @@ type Watched = { arc: string | null; terminal: Set<string>; items: Set<string>; 
 
 const TERMINAL_RUN = ['complete', 'refused', 'no-owner'];
 
+/** A needs-user item's wake key: ids are arc-scoped, so the arc is part of it. */
+export const wakeKey = (arc: string, id: string): string => `${arc}:${id}`;
+
 /**
  * Waits for the next wake-up of the arc last seen holding the host: new needs-user lines, or its run reaching a
  * terminal state. Returns the lines; '' at the deadline; null when there is nothing to wait on (no arc seen, or the last
@@ -351,8 +356,9 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   if (w.arc === null) return null;
   const held = claim !== null && claim.arc === w.arc;
   if (!held && [...w.terminal].some((t) => t.startsWith(`${w.arc}:`))) return null;
-  onArc(w.arc);
-  const [cmd, args] = roadmapArgv(l, mode, ['watch', '--repo', l.product, '--arc', w.arc]);
+  const arc = w.arc;
+  onArc(arc);
+  const [cmd, args] = roadmapArgv(l, mode, ['watch', '--repo', l.product, '--arc', arc]);
   const child = spawn(cmd, [...args], { cwd: l.product, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let buffered = '';
@@ -364,9 +370,10 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
       const line = buffered.slice(0, i);
       buffered = buffered.slice(i + 1);
       const e = JSON.parse(line) as { event: string; id?: string; run?: string };
-      const fresh = (e.event === 'needs-user' && e.id !== undefined && !w.items.has(e.id))
+      const fresh = (e.event === 'needs-user' && e.id !== undefined && !w.items.has(wakeKey(arc, e.id)))
         || (e.event === 'units' && e.run !== undefined && TERMINAL_RUN.includes(e.run) && !w.terminal.has(`${w.arc}:${e.run}`));
-      if (e.event === 'needs-user' && e.id !== undefined) w.items.add(e.id);
+      // Item ids are arc-scoped (paid run 2: arc 2's nu-31 was taken for arc 1's and never woke the session).
+      if (e.event === 'needs-user' && e.id !== undefined) w.items.add(wakeKey(arc, e.id));
       if (e.event === 'units' && e.run !== undefined && TERMINAL_RUN.includes(e.run)) w.terminal.add(`${w.arc}:${e.run}`);
       if (fresh) {
         lines.push(line);
