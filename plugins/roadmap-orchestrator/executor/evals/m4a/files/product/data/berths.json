@@ -1,0 +1,8 @@
+[
+  { "id": "B1", "maxDraught": 1.5 },
+  { "id": "B2", "maxDraught": 1.8 },
+  { "id": "B3", "maxDraught": 2.2 },
+  { "id": "B4", "maxDraught": 2.2 },
+  { "id": "B5", "maxDraught": 2.8 },
+  { "id": "B6", "maxDraught": 3.5 }
+]

@@ -1,0 +1,291 @@
+{
+  "schema": "roadmap/m4a-answer-key",
+  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
+  "defects": [
+    {
+      "id": "D1",
+      "what": "One claim (tide windows come only from the printed tide table) restated three ways: the overview, the tide-windows page and ADR 0002.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "tide table"
+            ],
+            [
+              "window"
+            ]
+          ]
+        },
+        {
+          "type": "spans-at-most",
+          "arc": 1,
+          "max": 1,
+          "spans": [
+            {
+              "file": "0010_Overview.md",
+              "sha256": "bf8a57698a06107296b1dfbd73d524f745ff0d155b6171ce9ffb9cd276f7f9be",
+              "length": 112
+            },
+            {
+              "file": "0020_Berths/tide-windows.md",
+              "sha256": "077ddbb1de6ea2085ff990691f6e64a6bf4012269b45289fb877401b46c58513",
+              "length": 151
+            },
+            {
+              "file": "0070_ADRs/0002-static-tide-table.md",
+              "sha256": "19648e5958c58059e35ca3fb92a13d8cff323c17bcb4393a714171d22d41c633",
+              "length": 71
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D2",
+      "what": "Tense blur: bookings are said to be confirmed by text, which is not built.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "confirm"
+            ],
+            [
+              "text",
+              "sms"
+            ]
+          ],
+          "census": {
+            "state": "obligation",
+            "activation": "future"
+          }
+        }
+      ]
+    },
+    {
+      "id": "D3",
+      "what": "Vision-resolvable contradiction: the bookings page lets the harbour master override a clash and double-book; the rules of the quay and the non-negotiable V-2 say never.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "never"
+            ],
+            [
+              "two vessels",
+              "double-book",
+              "double book",
+              "twice"
+            ]
+          ]
+        },
+        {
+          "type": "no-rule",
+          "arc": 1,
+          "match": [
+            [
+              "override"
+            ]
+          ]
+        },
+        {
+          "type": "absent",
+          "arc": 1,
+          "span": {
+            "file": "0030_Bookings.md",
+            "sha256": "2e034005ff6ad003be4eba02dc38696c2ca466540bdfaa32aa1bea118cf97d1a",
+            "length": 127
+          }
+        },
+        {
+          "type": "divergence",
+          "arc": 1,
+          "cites": "V-2",
+          "rule": [
+            [
+              "never"
+            ],
+            [
+              "two vessels",
+              "double-book",
+              "double book",
+              "twice"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D4",
+      "what": "Vision-silent contradiction: the cancellation cutoff is 24 hours in the bookings page and 48 hours in the notifications page; the owner answers 48 hours after arc 1.",
+      "postconditions": [
+        {
+          "type": "question",
+          "arc": 1,
+          "bears": [
+            [
+              "cancel"
+            ],
+            [
+              "hour",
+              "24",
+              "48"
+            ]
+          ],
+          "state": "open"
+        },
+        {
+          "type": "question-answered",
+          "arc": 2,
+          "askedIn": 1,
+          "bears": [
+            [
+              "cancel"
+            ],
+            [
+              "hour",
+              "24",
+              "48"
+            ]
+          ]
+        },
+        {
+          "type": "rule",
+          "arc": 2,
+          "match": [
+            [
+              "cancel"
+            ],
+            [
+              "48",
+              "forty-eight"
+            ]
+          ]
+        },
+        {
+          "type": "no-rule",
+          "arc": 2,
+          "match": [
+            [
+              "cancel"
+            ],
+            [
+              "24",
+              "twenty-four"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D5",
+      "what": "Stale boundary paragraph: the architecture page still routes bookings through the PortLink bridge, which ADR 0004 retired.",
+      "postconditions": [
+        {
+          "type": "absent",
+          "arc": 1,
+          "span": {
+            "file": "0050_Architecture.md",
+            "sha256": "c7d9450f8f9d13e4972583564ded28bae4eba54ab7b9760a1696e976dffe5900",
+            "length": 144
+          }
+        },
+        {
+          "type": "curation",
+          "arc": 1,
+          "tiers": [
+            "fact-currency",
+            "structural"
+          ],
+          "file": "0050_Architecture.md"
+        }
+      ]
+    },
+    {
+      "id": "D6",
+      "what": "Untestable principle: Tidewater should feel calm to use.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "calm"
+            ]
+          ],
+          "census": {
+            "state": "untestable"
+          }
+        }
+      ]
+    },
+    {
+      "id": "D7",
+      "what": "Production-only claim: the ledger is backed up nightly to the harbour office's network drive.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "backed up",
+              "backup",
+              "back up",
+              "backs up"
+            ],
+            [
+              "night"
+            ]
+          ],
+          "census": {
+            "state": "prod-only"
+          }
+        }
+      ]
+    }
+  ],
+  "ownerAnswers": [
+    {
+      "topic": "the cancellation cutoff (24 or 48 hours before the window)",
+      "from": "arc-1-complete",
+      "answer": "48 hours before the window opens. The 24-hour figure in the bookings page is an old draft; the notifications page is right.",
+      "match": [
+        "cancel"
+      ]
+    },
+    {
+      "topic": "texts confirming bookings",
+      "from": "bootstrap",
+      "answer": "They are not built yet, whatever the docs say. We want them: every booking confirmed by text.",
+      "match": [
+        "text message",
+        "by text",
+        "texts"
+      ]
+    },
+    {
+      "topic": "nightly backups of the booking ledger",
+      "from": "bootstrap",
+      "answer": "That is the office's job on the office machine, outside Tidewater. Keep it written down, but Tidewater does not do it.",
+      "match": [
+        "backup",
+        "backed up"
+      ]
+    },
+    {
+      "topic": "the harbour master overriding a clash in busy weeks",
+      "from": "bootstrap",
+      "answer": "No. That paragraph predates the vision. A berth is never promised twice; in a busy week the office finds the later boat another berth or window.",
+      "match": [
+        "override",
+        "double-book",
+        "double book"
+      ]
+    }
+  ]
+}
