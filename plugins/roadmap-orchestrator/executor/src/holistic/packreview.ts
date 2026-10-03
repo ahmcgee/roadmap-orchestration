@@ -14,7 +14,8 @@
 //   that record's bytes (K8), never the live files. A recorded call is consumed, never asked again; an interrupted one
 //   (a pause, a stop, a backend park) leaves the job running. Then `pack-review-ended{completed, findings}` and, when a
 //   finding is blocking, one blocking `pack-review` item for the job (raised once: `settlePackReviews` finishes it
-//   after a crash). A call that gives no valid report (a refusal, a malformed answer, a fault, lost twice) ends the job
+//   after a crash). A call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call recovery
+//   closed lost is asked again once) ends the job
 //   `abandoned` with one blocking `pack-review` item saying so: the architect fixes the pack (a new key, so a new
 //   review) or acknowledges it.
 // - **Hold** (K14, H9, R25), a pure function of the started and ended facts, the items and the current key: before the
@@ -231,7 +232,8 @@ async function ask(ctx: CheckpointContext, inputs: PackReviewInputs): Promise<As
   for (let attempt = 1; ; attempt++) {
     const recorded = recordedArcCall(ctx, job, 'packReview', attempt);
     if (recorded !== null && interruptedCall(recorded)) continue;
-    if (recorded !== null) return read(ctx, job, recorded);
+    // A call recovery closed lost (its runner died with the executor) is asked again, as a checkpoint's is; a second loss fails.
+    if (recorded !== null && recorded.kind === 'result') return read(ctx, job, recorded);
     const why = skip(ctx);
     if (why !== null) return { kind: 'skipped', reason: why };
     const { triple } = arcSeat(ctx, 'packReview');

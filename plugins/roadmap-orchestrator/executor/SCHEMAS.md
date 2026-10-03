@@ -2364,8 +2364,8 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
 2. **Superseded pack items** (K14, `supersededPackItems`, src/needsuser.ts): the item of every review ended before the latest
    ended one is superseded: it neither blocks completion (`openBlocking`) nor holds admission, and `status.packReview`
    shows it `superseded`.
-3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice) ends
-   `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
+3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call
+   recovery closed lost is asked again once, as a checkpoint's is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
    (a new key: a superseding review) or acknowledges it.
 4. **The census and splits**: a checkpoint's split never edits the census (Phase 0's); a split child anchored at its
    parent's rule is counted through the ancestor the census names (one state per rule).
