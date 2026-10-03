@@ -8,14 +8,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { runCli } from '../src/cli/main.ts';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
 import {
   InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, issueContentRef, issueId, issueOfContent, jobId, jobIdOf,
   parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { NotYetError } from '../src/core/notyet.ts';
+import { brief } from '../src/commands/brief.ts';
+import { chainStatus } from '../src/commands/chain.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
 import { censusOf, checkpointOutputM4Default } from '../src/core/upgrade.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
@@ -36,7 +36,7 @@ import { m3Blocking } from '../src/needsuser.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { ARC_ROLES, ROLES } from '../src/routing/types.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { makeRepo, tmpDir } from './helpers/repo.ts';
 import { appliedFields } from './fixtures/log-records.ts';
 
 const ARC = arcId('arc-2');
@@ -464,6 +464,7 @@ describe('startup rows, brief and ack', () => {
         ],
         questions: [{ id: 'P-4', rank: 1, text: 't', assumption: 'a', state: { type: 'open' } }],
         amendments: [{ id: 'arc-2/M-1', rules: ['T-2'], proposal: 'p' }],
+        packReviewNotes: [{ job: 'review-1', index: 1, claim: 'the cut line is vague' }],
         census: { held: 3, obligationRules: 4, outOfSlice: 2, untestable: 1, prodOnly: 1 },
         timings: [{ stage: 'build', count: 3, p50Ms: 60_000, maxMs: 90_000 }],
         pr: { type: 'pr', number: 7, url: 'https://example.invalid/pull/7', state: 'open', base: 'arc-1', needsRebase: false },
@@ -538,12 +539,10 @@ describe('cli.m4a', () => {
     refuses(['debt', 'resolve', 'B-1'], /unknown command "debt"/);
   });
 
-  it('the final dispatch reaches each placeholder module, which throws not-yet loudly', async () => {
-    const host = absPath(tmpDir('m4a-cli-host'));
-    const repo = tmpDir('m4a-cli-repo');
-    for (const argv of [['brief', '--repo', repo], ['chain', 'status', '--repo', repo]]) {
-      await assert.rejects(runCli(argv, host), NotYetError, argv.join(' '));
-    }
+  it('the landed brief and chain status refuse a repo none of whose arcs published a snapshot (C4 replaced the placeholders)', async () => {
+    const repo = absPath(makeRepo(tmpDir('m4a-cli-repo'), { files: { 'README.md': 'x\n' } }));
+    await assert.rejects(brief({ repo, ack: null }), (err: unknown) => err instanceof CliError && /no arc of .* has published a snapshot/.test(err.message));
+    await assert.rejects(chainStatus({ repo }), (err: unknown) => err instanceof CliError && /no arc of .* has published a snapshot/.test(err.message));
   });
 });
 

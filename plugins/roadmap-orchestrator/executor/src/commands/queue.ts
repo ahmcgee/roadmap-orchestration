@@ -8,16 +8,19 @@
 // The executor polls every POLL_MS (`pollCommands`): each incoming command without a terminal receipt is
 // pending, and gets its `accepted` receipt on first sight. An accepted command is not done; only the
 // terminal receipt is. Ids are minted time-ordered (`newCommandId`), so id order is submission order.
+//
+// M4a (K9, R26, H21): `brief --ack` enqueues its `ack` commands under deterministic ids (`ackCommandId`: the pending
+// marker's `at` and each item's ordinal), idempotently (`enqueueCommand`): a rerun after a crash finds its own files.
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { durableMkdir, exclusivePublish } from '../core/fsx.ts';
+import { AlreadyExistsError, durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import { type ArcId, type CommandId, type Sha256Hex, commandId, sha256 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import {
   CONTROL_COMMANDS, type CommandBody, type CommandFile, type Receipt, commandFile, receipt,
 } from '../core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
+import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 
 /** How often the executor looks for new commands. */
@@ -45,14 +48,47 @@ export function newCommandId(): CommandId {
   return commandId(`cmd-${Date.now().toString(16).padStart(12, '0')}${randomBytes(2).toString('hex')}`);
 }
 
+/** The ordinals an ack command id can carry (4 hex). */
+export const MAX_ACK_ITEMS = 0x1_0000;
+
+/**
+ * R26 (K9, H21): the id of a brief ack's command: `cmd-` + 12 hex of the pending marker's `at` (ms) + 4 hex of the item's
+ * ordinal (0-based) in the marker's sorted unique item list. It keeps `newCommandId`'s form and submission order, and two
+ * items of one marker never collide; more than `MAX_ACK_ITEMS` items fail loud.
+ */
+export function ackCommandId(at: IsoTime, ordinal: number): CommandId {
+  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= MAX_ACK_ITEMS) throw new Error(`ack command ordinal ${ordinal} outside 0..${MAX_ACK_ITEMS - 1} (one brief acks at most ${MAX_ACK_ITEMS} items)`);
+  return commandId(`cmd-${Date.parse(at).toString(16).padStart(12, '0')}${ordinal.toString(16).padStart(4, '0')}`);
+}
+
+const commandBytes = (file: CommandFile): string => canonicalJson(commandFile(JSON.parse(canonicalJson(file)), 'command'));
+
 /** CLI side: writes one command, atomically and write-once. The run dir must exist (a started arc). */
 export function submitCommand(runDir: AbsPath, arc: ArcId, body: CommandBody): CommandFile {
   if (!existsSync(runDir)) throw new Error(`run dir ${runDir} does not exist; has arc ${arc} been started on this repo?`);
   const file: CommandFile = { v: SCHEMA_VERSION, id: newCommandId(), arc, at: isoTimeOf(new Date()), body };
-  const bytes = canonicalJson(commandFile(JSON.parse(canonicalJson(file)), 'command'));
   durableMkdir(incomingDir(runDir));
-  exclusivePublish(incomingPath(runDir, file.id), bytes);
+  exclusivePublish(incomingPath(runDir, file.id), commandBytes(file));
   return file;
+}
+
+/**
+ * Writes a command whose id and `at` the caller fixed (a brief ack's, R26), idempotently: an incoming file with these
+ * exact bytes is already enqueued; one with other bytes under the id is a bug and fails loud. Returns whether it wrote.
+ */
+export function enqueueCommand(runDir: AbsPath, file: CommandFile): boolean {
+  if (!existsSync(runDir)) throw new Error(`run dir ${runDir} does not exist; has arc ${file.arc} been started on this repo?`);
+  const bytes = commandBytes(file);
+  const path = incomingPath(runDir, file.id);
+  durableMkdir(incomingDir(runDir));
+  try {
+    exclusivePublish(path, bytes);
+    return true;
+  } catch (error) {
+    if (!(error instanceof AlreadyExistsError)) throw error;
+    if (readFileSync(path, 'utf8') !== bytes) throw new Error(`${path} exists with other bytes than the command ${file.id} enqueued again`);
+    return false;
+  }
 }
 
 export type IncomingCommand = Readonly<{ file: CommandFile; sha256: Sha256Hex }>;

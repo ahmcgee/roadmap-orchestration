@@ -11,7 +11,8 @@
 // Every raised item is a `needs-user` line, blocking or not: the Monitor wakes the session on each (DESIGN §2), so the
 // holistic layer's items wake it as any other does: `owner-request`, the `divergence-digest`, the `convergence-bound`
 // and `convergence-identity` brakes, `audit-owed`, `finding-p1-escalated` and `new-finding-draining` (test
-// watch.m3-kinds). `run` may be `draining` (admissions closed).
+// watch.m3-kinds), and M4a's blocking `pack-review` and `issue-policy-untrusted`. `run` may be `draining` (admissions
+// closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
 // `waiting:resources`, `awaiting-admission:paused`, `parked:retryable`, `merged`… The view is re-derived

@@ -100,6 +100,28 @@ describe('meter', () => {
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
   });
 
+  it('meter.packreview-seat: a pack review\'s calls count at the packReview arc seat of a corpus arc\'s revision, by role and per review job, never per unit; byModel resolves its seat (frontier)', () => {
+    const corpus = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'corpus' });
+    const rev = corpus.rev;
+    const review = (j: string, attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role: 'packReview', tier: 'arc' }) as const;
+    const log = [
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: review('review-1', 1), usage: tokens(400, 40, 10) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(2), routingRev: rev, subject: review('review-2', 1), reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(3), routingRev: rev, subject: review('review-2', 2), usage: tokens(300, 30) }),
+    ];
+    const m = meterOf(log);
+    assert.deepEqual(m.byRole.map((t) => [t.role, t.routingRev, t.calls, t.input, t.unavailable]), [['packReview', rev, 3, 700, 1]]);
+    assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['packReview', 'arc', 3]]);
+    assert.deepEqual(m.byJob.map((t) => [t.job, t.role, t.calls, t.input]), [['review-1', 'packReview', 1, 400], ['review-2', 'packReview', 2, 300]]);
+    assert.deepEqual(m.byUnit, [], 'a review\'s call is in no unit total');
+    assert.deepEqual(byModel(m.bySeat, new Map([[rev, corpus.table]])).map((x) => [x.model, x.calls]), [[corpus.table.packReview.arc.model, 3]]);
+    assert.equal(corpus.table.packReview.arc.model, 'claude-opus-5-5', 'frontier binds Opus 5.5 (OR-Q17)');
+    // The architecture-doc scope has the seat in its table too (every SeatTable maps every role), so its revs resolve it.
+    const doc = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
+    assert.notEqual(doc.rev, rev, 'packReview is in force only in a corpus arc (LR-0a-1), so the revs differ');
+    assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
+  });
+
   it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {
     const table = (profile: 'default' | 'claude-only') => resolveRouting({ profile, classes: null, repoConfig: null, plan: null, unit: null });
     const def = table('default');

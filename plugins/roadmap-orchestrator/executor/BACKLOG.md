@@ -69,7 +69,8 @@ at triage stay in git history.
   and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
   PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
   review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
-- Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path.
+- Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
+  replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
 - Directive overflow is not banked (R7): every directive still goes to the fix round.
 
 ### M4b (after M4a)
@@ -174,9 +175,6 @@ None.
 
 ## Scaffolding to delete
 
-- M4a step 0a's construction placeholders, before the M4a PR: `src/core/notyet.ts` and every `notYet` call left (the
-  command modules `src/commands/{brief,chain}.ts`, C4; a rule-anchored split child in src/prompts/schemas.ts, C3), each
-  replaced by its landing step.
 - The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
   - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
   - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.

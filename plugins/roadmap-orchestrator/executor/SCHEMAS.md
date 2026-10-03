@@ -906,7 +906,8 @@ last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, byJo
 output, cacheRead, cacheWrite, turns, costUsd, unavailable`; `bySmoke` per backend and revision, in no role or
 model total); `host{…, log}` (below); `parkedBackends`; `rejection`; and the M3 keys (`holistic`, `target`, `nowTrue`,
 `notYetTrue`, `waived`, `deferred`, `vision`, `divergences`, `decisionsSince`, `convergence`, `findings`, `audit`,
-`owed`, `completion`: "Choices made in M3 B9"). The log is read with `readJournal`
+`owed`, `completion`: "Choices made in M3 B9"); and the M4a keys (`holds`, `packReview`, `corpus`, `census`, `amendments`,
+`debt`, `issues`, `chain`, `timings`: "Readings of M4a C4"). The log is read with `readJournal`
 (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
 the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
 id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, resolved from the routing
@@ -2073,7 +2074,7 @@ ran the holistic layer before it: no defaulting and no `SCHEMA_VERSION` bump):
 ## M4a: corpus, debt, forge, brief, chaining (frozen in M4a step 0a)
 
 The records and signatures of M4a (plan `/claude-state/plans/m4a-convergence.md`, revision 2.1). The types and readers
-are in `src/core/{ids,records,events,state,upgrade,notyet}.ts`, `src/input/{plan,cli}.ts`, `src/holistic/{types,packreview}.ts`,
+are in `src/core/{ids,records,events,state,upgrade}.ts`, `src/input/{plan,cli}.ts`, `src/holistic/{types,packreview}.ts`,
 `src/corpus/types.ts`, `src/forge/types.ts`, `src/debt/types.ts`, `src/phase0/types.ts`, `src/preflight/startup.ts`,
 `src/routing/{types,profiles,layers}.ts` and `src/prompts/{inputs,schemas,index}.ts`; the behaviour is the later steps'
 (A1–A4, B1, X0, C1–C4). DESIGN-1.0.md (draft 9) is the prose.
@@ -2225,8 +2226,8 @@ DocRef | null`, `+ rule: T-n | null`, exactly one non-null (its schema in `CHECK
 <file> | --from-ref <arc>)` → `phase0-check{repo, source: plan{plan} | ref{arc}}` (exit 0 or 78); `corpus pin --repo
 --commit <ref> --baseline <sha> --out <file>` (C1, LR-A1-1); `brief --repo [--json] [--ack <briefId>]`; `pr --repo --arc`; `issues --repo [--out
 <file>]`; `chain status --repo`. Each module (`src/commands/{phase0,corpus,brief,pr,issues,chain}.ts`) exports its final
-signature and outcome type; step 0a's bodies throw `NotYetError` (`src/core/notyet.ts`) until the landing step replaces
-them (A1 corpus, A3 issues and pr, C1 phase0, C4 brief and chain).
+signature and outcome type; step 0a's placeholder bodies threw `NotYetError` until the landing step replaced them (A1
+corpus, A3 issues and pr, C1 phase0, C4 brief and chain); C4 deleted `src/core/notyet.ts` with the last of them.
 
 **Brief ack log** (K9, K10, H6; `src/phase0/types.ts`): `$(git-common-dir)/roadmap/acks/<briefId>.pending.json`, committed
 by rename to `<briefId>.json`: `{briefId, at, chainHead, coverage: [{arc, snapshotCommit, highWater}] (ascending by
@@ -2234,7 +2235,7 @@ arc), items: [{arc, id: NeedsUserId}] (ascending, unique)}`. **Brief payload** (
 coverage, items, chain: {position, k|null, unackedStarts}, arcs: [{arc, divergences [{id, type, what}], digests
 [{needsUser, ids}], decisions, curation, corpusDivergences, debt: {banked [{id, what}], dispositioned [{id,
 disposition}]}, intake [{issue, job: null (Phase 0) | ckpt-n, outcome}], questions [{id, rank, text, assumption,
-state}], amendments [{id: <arc>/M-n, rules, proposal}], census: {held, obligationRules, outOfSlice, untestable,
+state}], amendments [{id: <arc>/M-n, rules, proposal}], packReviewNotes [{job: review-n, index, claim}] (C4), census: {held, obligationRules, outOfSlice, untestable,
 prodOnly}|null, timings [{stage, count, p50Ms, maxMs}], pr: pr{number, url, state, base, needsRebase} | none |
 unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 hex of sha256 over its canonical bytes.
 
@@ -2256,8 +2257,8 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
 5. **The checkpoint's new keys are read, not yet required of the model**: the strict schema gains `corpusAmendments` and
    `issueIntake` with B1's prompt text and fakes (as M3's B4 keys landed with their modules); until then an answer
    without them reads as none through `checkpointOutputM4Default`. The split child's `rule` is in the schema now.
-6. **The M4a facts are validated but not folded** in 0a: the fold sees the job they name (`nextJobId`), and the steps
-   that write them fold them (A4 debt, C3 amendments, intake, pack review, captures).
+6. **The M4a facts were validated but not folded** in 0a: the fold saw the job they name (`nextJobId`), and the steps
+   that write them fold them: C2 the debt, C3 the amendments, intake, pack reviews and captures (all folded since C3).
 
 **Readings of M4a A1, A3, B1 and C1** (recorded in step C1):
 
@@ -2326,7 +2327,7 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    path}`, read from `revisionInForce(...).corpus` and materialised read-only from the kept `.corpus-file` bytes at
    `<runDir>/corpus/<pinSha8>/` inside the judgment's capture under the fence. The gate's `gateTarget` is the
    `<pinSha8>.no-vision/` view with `visionDoc: null` (`GateTargetInput`, R17). The view's directory joins the session's
-   readable dirs (`targetDirs`, Claude `--add-dir`) for plan-check and the gate; the lens and checkpoint add theirs in C3.
+   readable dirs (`targetDirs`, Claude `--add-dir`) for plan-check and the gate; the lens and checkpoint add theirs too (C3).
 2. **Fingerprint** (R6): `ApprovalFingerprint.corpus` is the sha256 of the pin in force at capture, present exactly in a
    corpus arc; the ff re-check recomputes it, so a re-pin invalidates every approval (`fingerprint-invalid`, a re-gate).
 3. **Gate-note debt** (R7, DEBT_BANK): only a corpus arc banks (its Phase 0 dispositions the ledger it publishes). After
@@ -2351,3 +2352,64 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    an active or a retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active
    rule. The obligations reader requires only non-exempt rule obligations in the census.
 9. **No spec `debt` field** (LR-C1-1): a Phase-0 `promote{unit}` is the one link between a debt item and its unit.
+
+**Readings of M4a C3** (recorded in step C4):
+
+1. **Fold invariants of the M4a facts** (`src/core/state.ts`): a `corpus-amendment` carries the next arc-scoped id
+   (`nextAmendmentId` = `M-<amendments + 1>`) and a source no earlier amendment has; an `issue-intake` is one per `(job,
+   issue)`, its `finding` opened and its `amendment` recorded before it; a `pack-review-started` opens its `review-n` job
+   while no review runs, and its `pack-review-ended` ends exactly that running review; an `issues-captured` names the next
+   checkpoint job (before that job's `checkpoint-inputs`), once per job, and a `checkpoint-inputs` naming captured issues
+   must name that capture's sha. Each violation fails the fold.
+2. **Superseded pack items** (K14, `supersededPackItems`, src/needsuser.ts): the item of every review ended before the latest
+   ended one is superseded: it neither blocks completion (`openBlocking`) nor holds admission, and `status.packReview`
+   shows it `superseded`.
+3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice) ends
+   `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
+   (a new key: a superseding review) or acknowledges it.
+4. **The census and splits**: a checkpoint's split never edits the census (Phase 0's); a split child anchored at its
+   parent's rule is counted through the ancestor the census names (one state per rule).
+5. **Crash label `packreview.after-call`** (beyond the plan's three): the call recorded, the review not ended; the restart
+   consumes the recorded call.
+6. **No checkpoint capture in an `architecture-doc` arc**: only a corpus arc captures issues at its checkpoints.
+
+**Readings of M4a C4** (`status`, `brief`, `chain status`, the queue's ack ids; src/{status,brief,meter,watch}.ts,
+src/commands/{brief,chain,queue}.ts):
+
+1. **The brief reads the verified snapshot refs only** (src/chain.ts): what an arc has not published to its ref is not in
+   it yet. **The chain's head** (src/commands/chain.ts `chainHead`) is the newest tip: of the arcs with a ref that no
+   other arc's plan names as its previous arc, the one whose log began last (its first event's `at`; ties by id). A
+   running arc joins the chain with its first snapshot (its first ff or docs publication).
+2. **Since** (H6): the last committed ack is the one with the latest `at` (ties by brief id); an arc's delta is its ref's
+   events after the vector's `highWater` for it, from seq 0 when the vector omits it. The new vector is each chained
+   arc's ref commit and manifest high-water.
+3. **Per arc** (`BriefArc`): divergences, digests, decisions (`status`'s `decisionsAfter` read from the ref: a `reverse`
+   shows by its changes only), banked debt, the checkpoints' intake, amendments (`<arc>/M-n`) and pack-review notes come
+   from the delta's facts; the Phase-0 record (curation, corpus divergences, questions, debt dispositions, Phase-0 intake)
+   when a revision in the delta changed it; `timings` over the attempts whose outcome is in the delta (an attempt runs
+   from its first journaled op to its `stage-outcome`; one with no op is not timed; p50 is the lower median). Not
+   deltas: the census at the ref (a corpus arc's; `held` = obligation-state rules whose obligation holds on the arc's
+   latest published integration head, else its baseline, by `status`'s rule over the ref's witness records) and the PR now.
+4. **`packReviewNotes`** (`[{job, index, claim}]`) joined `BriefArc` (the plan routes pack-review notes to the brief; the
+   0a payload had no field for them): every `note` finding of a pack review ended in the delta.
+5. **Items** (R10): the open (unacknowledged at the ref), non-blocking `divergence-digest` and `convergence-bound` items of
+   each live arc (its run dir is in this repo and its ref holds no done completion), less those a committed ack already
+   lists (enqueued, applied or not).
+6. **Ack** (K9, R26): the marker's `at` is the ack's clock; ordinals are 0-based over the marker's sorted items
+   (`ackCommandId`, at most 65 536); each command is `{type: ack, needsUser, choice: null}` in its arc's run dir, written by
+   `enqueueCommand` (the same bytes already there: enqueued; other bytes: fails loud). `--ack` of an id already committed
+   reports its commands and writes nothing; a stale id is `{stale: {expected: the id given, actual: the brief now}}`, exit
+   78, nothing written. `brief` and `brief --ack` first finish every pending marker (`finishPendingAcks`); `start` is to
+   call it too (a carry-forward: the start path is not C4's).
+7. **PRs** (`prsOf`): an arc's PR by its integration branch: the open one, else the merged one, else a closed one, else
+   `none` (`main` has none); an open PR's `needsRebase` is `roadmap pr`'s base walk (`baseOf`, exported by
+   src/commands/pr.ts); a `gh`, push or git failure is `unavailable{reason}` for that arc (all arcs when the repo does not
+   resolve).
+8. **`status`'s M4a keys**: `holds` is the scheduler's `arcHolds` over its read-only contexts with the routing in force (the
+   pack review's key binds the arc's routing rev; the baseline job's running is the live scheduler's alone: false);
+   `packReview{state, reviews[{job, planRev, key, outcome|null, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256,
+   source{kind, commit, root}, files, rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state,
+   held|null}], counts, heldPct}` (held: the obligation is in `nowTrue`), `debt{banked, ledger}` (`arcDebtLedger`),
+   `issues{lastCapture, intake}` and `chain` (`chain status`'s view of the chain ending at this arc, ref or not, plus
+   `position`) are null outside a corpus arc; `amendments` and `timings` are always present. `chain status` and the brief
+   read K from the working tree's `.roadmap/config.json`.

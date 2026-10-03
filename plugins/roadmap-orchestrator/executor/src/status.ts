@@ -70,18 +70,30 @@
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
 //                 clauses of the completion predicate now (the scheduler's `completionBlockers`: one rule)
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
+//
+// M4a (A-M4-13; SCHEMAS "Readings of M4a C4"; null outside a corpus arc unless said):
+//   holds         the scheduler's arc-wide holds now (`arcHolds`: baseline, pack-review, issue-policy-untrusted), read
+//                 through its read-only contexts with the routing in force; empty outside a holistic arc
+//   packReview    the pack reviews (key, end, findings by severity, item, superseded) and what they ask now
+//   corpus        the pin in force: its sha, source, file and rule counts, and the Phase-0 record's sha
+//   census        each pinned rule's state, whether its obligation is now true (`nowTrue`), the counts and % held
+//   amendments    the corpus amendments (every arc; empty outside a corpus arc)
+//   debt          what this arc banked and its ledger now (`arcDebtLedger`)
+//   issues        the latest checkpoint capture and the checkpoints' intake outcomes
+//   chain         the chain ending at this arc (src/commands/chain.ts: K, acked starts, PRs non-fatal), its position
+//   timings       per stage, the completed attempts' count, median and maximum (`stageTimings`, LR-c; every arc)
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { COMMANDS_DIR, incomingPath, pendingCommandIds, readCommand, terminalReceipt } from './commands/queue.ts';
 import { type Sealing, sealingOf } from './commands/gc.ts';
 import {
-  type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, type OperatorParkKind, type PlanAppliedFact, type ProbeTarget, holderUnit, parentUnit,
-  probeTargetKey,
+  type AmendmentSource, type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
+  type ProbeTarget, type RevisionPayload, holderUnit, parentUnit, probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
-  type ArcId, CPU_POOL, type CommandId, type DivergenceId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
+  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId,
   commandId, compareResourceUnits, cpuToken, parseJobId, parseOpId,
 } from './core/ids.ts';
@@ -89,13 +101,13 @@ import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
 import { DEV6_CLASS_CATALOGUE } from './core/upgrade.ts';
-import { type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce } from './input/inforce.ts';
+import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
-import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf } from './needsuser.ts';
+import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf, supersededPackItems } from './needsuser.ts';
 import { type PlanM1, type PlanUnit, advancesOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type JobTotal, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
@@ -107,7 +119,19 @@ import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
-import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, dischargingObservation, readOnlyContexts, recordedLaneEnv, schedFile, unitSettled } from './schedule/scheduler.ts';
+import {
+  type ArcHold, type CompletionBlocker, type HolisticContexts, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
+  readOnlyContexts, recordedLaneEnv, schedFile, unitSettled,
+} from './schedule/scheduler.ts';
+import { chainBack } from './chain.ts';
+import { type ChainStatus, chainStatusOf, linkOf } from './commands/chain.ts';
+import type { CorpusPin } from './corpus/types.ts';
+import type { BankReason, DebtItem, DebtLedger } from './debt/types.ts';
+import type { IssueIntakeOutcome, RepoIdentity } from './forge/types.ts';
+import type { CheckpointContext } from './holistic/bundle.ts';
+import { type PackReviewStatus, packItemOf, packReviewStatus } from './holistic/packreview.ts';
+import type { BriefArc, StageTiming } from './phase0/types.ts';
+import { arcDebtLedger } from './pipeline/publish.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
   type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, provenanceStack, resolveRouting, resolveRoutingUnder,
@@ -125,10 +149,10 @@ import { coverageBase, coverageOf } from './holistic/coverage.ts';
 import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric, findingMetrics, isActive } from './holistic/findings.ts';
-import { type Observation, verdictOf } from './holistic/observe.ts';
+import { type Observation, type ObservationStore, type WitnessedEntry, verdictOf } from './holistic/observe.ts';
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
-  type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt,
+  type ArcLaneDef, type CensusEntry, type CensusState, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt,
   observationKeyText, parseRulingSidecar,
 } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
@@ -395,7 +419,7 @@ export type Status = Readonly<{
   spend: Readonly<{
     byRole: readonly RoleTotal[];
     byModel: Readonly<{ models: readonly ModelTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
-    /** M3: each job's lens and checkpoint calls (also in `byRole` and `byModel`). */
+    /** M3: each job's lens and checkpoint calls, M4a's pack review calls (also in `byRole` and `byModel`). */
     byJob: readonly JobTotal[];
     /** Start-up smokes per backend: in neither `byRole` nor `byModel`. */
     bySmoke: readonly SmokeTotal[];
@@ -423,6 +447,24 @@ export type Status = Readonly<{
   audit: AuditView | null;
   owed: Readonly<{ audits: readonly NeedsUserId[] }>;
   completion: CompletionView;
+  /** M4a: the arc-wide holds on every admission now (the scheduler's `arcHolds`; empty outside a holistic arc). */
+  holds: readonly ArcHold[];
+  /** M4a: a corpus arc's pack reviews and what they ask of the arc now; null outside a corpus arc. */
+  packReview: PackReviewView | null;
+  /** M4a: a corpus arc's pin in force; null outside a corpus arc. */
+  corpus: CorpusView | null;
+  /** M4a: a corpus arc's census, each rule's state and whether its obligation holds on the head; null outside one. */
+  census: CensusView | null;
+  /** M4a: the corpus amendments, in id order. */
+  amendments: readonly AmendmentLine[];
+  /** M4a: a corpus arc's debt: what this arc banked and its ledger now (`arcDebtLedger`); null outside one. */
+  debt: DebtView | null;
+  /** M4a: a corpus arc's checkpoint issue captures (the latest) and their intake outcomes; null outside one. */
+  issues: IssuesView | null;
+  /** M4a: a corpus arc's chain up to it (src/commands/chain.ts, PRs non-fatal); null outside one. */
+  chain: ChainView | null;
+  /** M4a (LR-c): per stage, the completed attempts' count, median and maximum duration, derived at read time. */
+  timings: readonly StageTiming[];
 }>;
 
 /** How many terminal receipts `status` shows. */
@@ -873,31 +915,31 @@ function unmergedOf(view: JournalView, units: readonly UnitId[]): readonly UnitI
   return [...new Set(units.map((u) => effectiveDependency(view, u)).filter((u) => view.unit(u).status !== 'retired'))].sort();
 }
 
-/** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
-function truths(
-  runDir: AbsPath, view: JournalView, lines: readonly UnitStatusLine[], obligations: Obligations, tree: Sha,
-): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
+/** An obligation's witness verdict on a tree, the `witnessed` facts of the observations read, and the units it waits on. */
+export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; witnessed: readonly WitnessedEntry[]; units: readonly UnitId[] }>;
+
+/**
+ * Each obligation's leaf on `tree` under the completion predicate's rule (strict reuse): the observation on the tree in
+ * the environment the executor recorded for the lane (`recordedLaneEnv`), whatever this process's environment is. A
+ * split parent's is its non-exempt children's (held when every one holds). `store` is the run dir's (`observations`) or
+ * a snapshot ref's (the brief): one rule.
+ */
+export function obligationLeaves(view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
   const fold = view.holistic();
-  // The completion predicate's rule (strict reuse): the observation on the tree in the environment the executor
-  // recorded for the lane, whatever this process's environment is.
-  const store = observations({ journal: { view }, runDir });
   const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation(store, tree, lane, (l) => recordedLaneEnv(view, l));
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
   const latched = new Set(fold.latched.map((l) => l.obligation));
-  const byUnit = new Map(lines.map((l) => [l.unit, l]));
   const owners = (id: ObligationId): readonly UnitId[] =>
     fold.findings.flatMap((f) => (isActive(f) && f.obligation === id && f.owner !== null ? [f.owner] : []));
-
-  type Leaf = Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[]; units: readonly UnitId[] }>;
-  const leaf = (o: ObligationDef): Leaf => {
+  const leaf = (o: ObligationDef): ObligationLeaf => {
     if (o.state.type === 'split') {
       const kids = o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).map(leaf);
       const verdicts = new Set(kids.map((k) => k.verdict));
-      const verdict: Leaf['verdict'] = kids.every((k) => k.verdict === 'held') ? 'held'
+      const verdict: ObligationLeaf['verdict'] = kids.every((k) => k.verdict === 'held') ? 'held'
         : (['not-held', 'partial', 'unwitnessed', 'not-covered'] as const).find((v) => verdicts.has(v))!;
-      return { verdict, evidence: kids.flatMap((k) => k.evidence), units: [...new Set(kids.flatMap((k) => k.units))].sort() };
+      return { verdict, witnessed: kids.flatMap((k) => k.witnessed), units: [...new Set(kids.flatMap((k) => k.units))].sort() };
     }
     if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
     const lane = lanes.get(o.witness.lane);
@@ -905,10 +947,24 @@ function truths(
     const future = o.activation === 'future' && !latched.has(o.id);
     const units = future ? unmergedOf(view, o.deliveredBy) : unmergedOf(view, owners(o.id));
     const found = onTree(lane);
-    if (found === null) return { verdict: 'not-covered', evidence: [], units };
+    if (found === null) return { verdict: 'not-covered', witnessed: [], units };
     const entry = witnessed.get(found.seq);
     if (entry === undefined) throw new Error(`observation ${observationKeyText(found.key)} names seq ${found.seq}, which no witnessed fact has`);
-    return { verdict: verdictOf(found.record, o.witness), evidence: [witnessDir(runDir, entry)], units };
+    return { verdict: verdictOf(found.record, o.witness), witnessed: [entry], units };
+  };
+  return leaf;
+}
+
+/** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
+function truths(
+  runDir: AbsPath, view: JournalView, lines: readonly UnitStatusLine[], obligations: Obligations, tree: Sha,
+): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
+  const latched = new Set(view.holistic().latched.map((l) => l.obligation));
+  const byUnit = new Map(lines.map((l) => [l.unit, l]));
+  const leafOf = obligationLeaves(view, obligations, observations({ journal: { view }, runDir }), tree);
+  const leaf = (o: ObligationDef): Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[]; units: readonly UnitId[] }> => {
+    const l = leafOf(o);
+    return { verdict: l.verdict, evidence: l.witnessed.map((w) => witnessDir(runDir, w)), units: l.units };
   };
 
   const nowTrue: ObligationTruth[] = [];
@@ -1030,16 +1086,41 @@ function commandBody(runDir: AbsPath, arc: ArcId, id: CommandId): CommandBody | 
   return existsSync(incomingPath(runDir, id)) ? readCommand(runDir, id, arc).file.body : null;
 }
 
-/**
- * The decisions since the architect last acknowledged a divergence digest (the whole arc before one), in log order: each
- * revision's rulings, bundle or reversal, cuts, re-entries and spec patches; the executor's spec patches; steers; and
- * divergences.
- */
-function decisionsSince(runDir: AbsPath, arc: ArcId, view: JournalView, events: readonly Event[], acks: ReadonlyMap<NeedsUserId, number>): readonly Decision[] {
-  const since = Math.max(0, ...view.holistic().digests.flatMap((g) => {
+/** Where the decisions read a revision's kept bytes and a command's body: the run dir, or a snapshot ref (the brief). */
+export type DecisionReader = Readonly<{
+  payload: (sha: Sha256Hex) => RevisionPayload;
+  ruling: (sha: Sha256Hex) => Buffer;
+  /** null when the incoming file is not there (a ref, or a run dir restored from one: commands are outside the closure). */
+  command: (id: CommandId) => CommandBody | null;
+}>;
+
+/** The run dir's decision reader. */
+function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
+  return {
+    payload: (sha) => keptPayload(runDir, sha),
+    ruling: (sha) => {
+      const bytes = keptInput(runDir, sha, RULING_INPUT);
+      if (bytes === null) throw new Error(`a revision names ruling ${sha}, whose bytes the run dir does not keep`);
+      return bytes;
+    },
+    command: (id) => commandBody(runDir, arc, id),
+  };
+}
+
+/** The seq after which `status.decisionsSince` lists: the architect's latest acknowledgement of a divergence digest (0 before one). */
+function digestAckedAt(view: JournalView, acks: ReadonlyMap<NeedsUserId, number>): number {
+  return Math.max(0, ...view.holistic().digests.flatMap((g) => {
     const seq = acks.get(g.needsUser);
     return seq === undefined ? [] : [seq];
   }));
+}
+
+/**
+ * The decisions after `since`, in log order: each revision's rulings, bundle or reversal, cuts, re-entries and spec
+ * patches; the executor's spec patches; steers; and divergences. `status` lists them since the latest acknowledged
+ * divergence digest; the brief since its coverage vector's high-water.
+ */
+export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
   let sidecars = new Set<string>();
   for (const e of events) {
@@ -1057,16 +1138,14 @@ function decisionsSince(runDir: AbsPath, arc: ArcId, view: JournalView, events: 
       const added = new Set<string>();
       let ids = sidecars;
       if (f.payloadSha256 !== undefined) {
-        const payload = keptPayload(runDir, f.payloadSha256);
+        const payload = read.payload(f.payloadSha256);
         const rulings = payload.manifest.rulings.sidecars;
         ids = new Set(Object.keys(rulings));
         // The arc's first revision states its starting rulings: nothing was decided in the arc yet.
         if (payload.base !== 0) for (const id of ids) if (!sidecars.has(id)) added.add(id);
         if (e.seq > since) {
           for (const id of [...added].sort((a, b) => idNumber(a) - idNumber(b))) {
-            const bytes = keptInput(runDir, rulings[id as RulingId]!, RULING_INPUT);
-            if (bytes === null) throw new Error(`plan rev ${f.rev} names ruling ${id}, whose bytes the run dir does not keep`);
-            const r = parseRulingSidecar(JSON.parse(bytes.toString('utf8')));
+            const r = parseRulingSidecar(JSON.parse(read.ruling(rulings[id as RulingId]!).toString('utf8')));
             const ruledBy: RuledBy = r.ruledBy.type === 'checkpoint' ? { type: 'checkpoint', job: r.ruledBy.job } : { type: 'architect', command: f.command };
             out.push({ seq: e.seq, kind: 'ruling', id, oneLine: r.statement, ruledBy });
           }
@@ -1077,7 +1156,7 @@ function decisionsSince(runDir: AbsPath, arc: ArcId, view: JournalView, events: 
       const ruledBy = rulerOf(f);
       const summary = f.changes.length === 0 ? 'no change' : f.changes.map((c) => ('unit' in c && c.unit !== undefined && c.unit !== null ? `${c.type} ${c.unit}` : c.type)).join(', ');
       if (ruledBy.type === 'checkpoint') out.push({ seq: e.seq, kind: 'bundle', id: ruledBy.job, oneLine: `plan rev ${f.rev}: ${summary}`, ruledBy });
-      const body = ruledBy.type === 'architect' && ruledBy.command !== null ? commandBody(runDir, arc, ruledBy.command) : null;
+      const body = ruledBy.type === 'architect' && ruledBy.command !== null ? read.command(ruledBy.command) : null;
       if (body?.type === 'reverse') out.push({ seq: e.seq, kind: 'reverse', id: body.divergence, oneLine: `plan rev ${f.rev} reverses ${body.divergence}: ${summary}`, ruledBy });
       for (const c of f.changes) {
         if (c.type === 'unit-cut') out.push({ seq: e.seq, kind: 'cut', id: c.unit, oneLine: `${c.unit} cut (plan rev ${f.rev})`, ruledBy });
@@ -1188,6 +1267,137 @@ function logOf(runDir: AbsPath, d: Derived): LogView {
   return { bytes, events: d.events.length, foldMs: d.foldMs, compactionDue: bytes >= LOG_COMPACTION_BYTES || d.foldMs >= LOG_COMPACTION_FOLD_MS };
 }
 
+// ---------------------------------------------------------------------------------------------------
+// M4a: the corpus, census, amendments, debt, issues, chain, timings and holds (DESIGN §2.4; plan "Brief and chain")
+
+export type PackReviewView = Readonly<{
+  /** `packReviewStatus` now: none (past the first admission), running, due, held or clear. */
+  state: PackReviewStatus['kind'];
+  /** In job order: each review's inputs key, its end (null while running), its findings by severity, its item and whether a later review superseded it (K14). */
+  reviews: readonly Readonly<{
+    job: JobId; planRev: PlanRev; key: Sha256Hex; outcome: 'completed' | 'abandoned' | null; blocking: number; notes: number; needsUser: NeedsUserId | null; superseded: boolean;
+  }>[];
+}>;
+
+export type CorpusView = Readonly<{
+  pinSha256: Sha256Hex;
+  source: Readonly<{ kind: CorpusPin['source']['kind']; commit: Sha; root: string }>;
+  files: number;
+  rules: Readonly<{ active: number; retired: number; highWater: number }>;
+  phase0Sha256: Sha256Hex;
+}>;
+
+/** The census counts (the brief payload's `census`): `% held` = held / obligationRules. */
+export type CensusCounts = NonNullable<BriefArc['census']>;
+export type CensusView = Readonly<{
+  /** Ascending by rule: `held` for an obligation state (its obligation holds on the integration head), else null. */
+  rules: readonly Readonly<{ rule: RuleId; state: CensusState; held: boolean | null }>[];
+  counts: CensusCounts;
+  /** 100 × held / obligationRules, rounded down; null without an obligation-state rule. */
+  heldPct: number | null;
+}>;
+
+export type AmendmentLine = Readonly<{ id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string }>;
+export type DebtView = Readonly<{
+  banked: readonly Readonly<{ id: DebtId; bankReason: BankReason; what: string; seq: number }>[];
+  ledger: readonly Readonly<{ id: DebtId; state: DebtItem['state']; originArc: ArcId; what: string }>[];
+}>;
+export type IssuesView = Readonly<{
+  lastCapture: Readonly<{ job: JobId; sha256: Sha256Hex; repo: RepoIdentity; filtered: Readonly<{ comments: number; pullRequests: number }> }> | null;
+  intake: readonly Readonly<{ job: JobId; issue: IssueId; outcome: IssueIntakeOutcome }>[];
+}>;
+export type ChainView = ChainStatus & Readonly<{ position: number }>;
+
+/** The census counts of `census`, `held` telling whether an obligation holds. */
+export function censusCounts(census: readonly CensusEntry[], held: (id: ObligationId) => boolean): CensusCounts {
+  const of = (type: CensusState['type']): readonly CensusEntry[] => census.filter((c) => c.state.type === type);
+  const obligationRules = of('obligation');
+  return {
+    held: obligationRules.filter((c) => c.state.type === 'obligation' && held(c.state.id)).length, obligationRules: obligationRules.length,
+    outOfSlice: of('out-of-slice').length, untestable: of('untestable').length, prodOnly: of('prod-only').length,
+  };
+}
+
+export const heldPct = (c: CensusCounts): number | null => (c.obligationRules === 0 ? null : Math.floor((100 * c.held) / c.obligationRules));
+
+/**
+ * LR-c: per stage (in stage order), the completed attempts' count, median (the lower one) and maximum duration in ms; an
+ * attempt runs from its first journaled op to its `stage-outcome`, and one that journaled no op is not timed. Only
+ * outcomes after `after` count: `status` reads all (0), the brief the delta since its coverage.
+ */
+export function stageTimings(events: readonly Event[], after = 0): readonly StageTiming[] {
+  const starts = attemptStarts(events);
+  const by = new Map<OutcomeStage, number[]>();
+  for (const e of events) {
+    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || e.seq <= after) continue;
+    const f = e.fact;
+    const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
+    if (start === undefined) continue;
+    by.set(f.stage, [...(by.get(f.stage) ?? []), Math.max(0, Date.parse(e.at) - Date.parse(start))]);
+  }
+  return OUTCOME_STAGES.flatMap((stage) => {
+    const ms = [...(by.get(stage) ?? [])].sort((a, b) => a - b);
+    return ms.length === 0 ? [] : [{ stage, count: ms.length, p50Ms: ms[Math.floor((ms.length - 1) / 2)]!, maxMs: ms.at(-1)! }];
+  });
+}
+
+function packReviewOf(ctx: CheckpointContext): PackReviewView {
+  const view = ctx.journal.view;
+  const superseded = supersededPackItems(view);
+  return {
+    state: packReviewStatus(ctx).kind,
+    reviews: view.holistic().packReviews.map((r) => {
+      const item = packItemOf(view, r.started.job);
+      return {
+        job: r.started.job, planRev: r.started.planRev, key: r.started.key, outcome: r.ended?.outcome ?? null,
+        blocking: r.ended?.findings.filter((f) => f.severity === 'blocking').length ?? 0, notes: r.ended?.findings.filter((f) => f.severity === 'note').length ?? 0,
+        needsUser: item, superseded: item !== null && superseded.has(item),
+      };
+    }),
+  };
+}
+
+function corpusOf(c: CorpusInForce): CorpusView {
+  const pin = c.pin.value;
+  return {
+    pinSha256: c.pin.sha256, source: { kind: pin.source.kind, commit: pin.source.commit, root: pin.source.root }, files: pin.files.length,
+    rules: { active: pin.rules.length, retired: pin.retired.length, highWater: pin.highWater }, phase0Sha256: c.phase0.sha256,
+  };
+}
+
+function censusOf(obligations: Obligations, nowTrue: readonly ObligationTruth[]): CensusView | null {
+  if (obligations.census === undefined) return null;
+  const held = new Set(nowTrue.map((t) => t.obligation));
+  const counts = censusCounts(obligations.census, (id) => held.has(id));
+  return {
+    rules: obligations.census.map((c) => ({ rule: c.rule, state: c.state, held: c.state.type === 'obligation' ? held.has(c.state.id) : null })),
+    counts, heldPct: heldPct(counts),
+  };
+}
+
+function debtOf(view: JournalView, ledger: DebtLedger): DebtView {
+  return {
+    banked: view.holistic().debt.map((d) => ({ id: d.id, bankReason: d.bankReason, what: d.what, seq: d.seq })),
+    ledger: ledger.items.map((i) => ({ id: i.id, state: i.state, originArc: i.originArc, what: i.what })),
+  };
+}
+
+function issuesOf(view: JournalView): IssuesView {
+  const fold = view.holistic();
+  const last = fold.captures.at(-1);
+  return {
+    lastCapture: last === undefined ? null : { job: last.job, sha256: last.sha256, repo: last.repo, filtered: last.filtered },
+    intake: fold.intake.map((x) => ({ job: x.job, issue: x.issue, outcome: x.outcome })),
+  };
+}
+
+/** The chain up to `arc` (its plan in force names its previous arc); the arc is its last link whether or not it has a ref yet. */
+function chainOf(repo: AbsPath, plan: PlanM1): ChainView {
+  const back = plan.chain === undefined ? [] : chainBack(repo, plan.chain.previousArc).arcs.map(linkOf);
+  const links = [...back, { arc: plan.arc, branch: plan.integrationBranch, previousArc: plan.chain?.previousArc ?? null }];
+  return { ...chainStatusOf(repo, links), position: links.length };
+}
+
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const d = derive(runDir, arc, hostDir);
   const { view, events, start, inForce } = d;
@@ -1217,6 +1427,11 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     : truths(runDir, view, d.units, obligations, revParse(on.repo, `${head}^{tree}`));
   const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
   const owed = needsUser.filter((n) => n.reason === 'audit-owed').map((n) => n.id);
+  // M4a: the scheduler's holds and the pack review read through the read-only contexts, with the routing in force (the
+  // pack review's key binds the arc's routing rev); the baseline job's running is the live scheduler's alone (false).
+  const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
+  const corpus = revision?.corpus ?? null;
+  const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
 
   return {
     arc,
@@ -1248,7 +1463,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     deferred: exemptBy(obligations, 'deferred'),
     vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
     divergences: divergencesOf(view),
-    decisionsSince: decisionsSince(runDir, arc, view, events, acks),
+    decisionsSince: decisionsAfter(view, events, digestAckedAt(view, acks), runDirDecisions(runDir, arc)),
     convergence: on === null ? null : convergenceOf(runDir, view, on.plan),
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
@@ -1257,5 +1472,25 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     audit,
     owed: { audits: owed },
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
+    holds: h === null ? [] : arcHolds(h, d.blocking, false),
+    packReview: h === null || corpus === null ? null : packReviewOf(h.checkpoint),
+    corpus: corpus === null ? null : corpusOf(corpus),
+    census: corpus === null || obligations === null ? null : censusOf(obligations, t.nowTrue),
+    amendments: fold.amendments.map((a) => ({ id: a.id, source: a.source, rules: a.rules, proposal: a.proposal, why: a.why })),
+    debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
+    issues: corpus === null ? null : issuesOf(view),
+    chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
+    timings: stageTimings(events),
   };
+}
+
+/** The holistic contexts `status` reads the scheduler's rules through: read-only, with the routing in force. */
+function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: InForce): HolisticContexts {
+  const start = d.start!;
+  const h = readOnlyContexts({
+    view: d.view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
+    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
+  });
+  const routing = routingInForce(inForce).of;
+  return { ...h, audit: { ...h.audit, routing }, checkpoint: { ...h.checkpoint, routing } };
 }

@@ -120,6 +120,7 @@ export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, th
 export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
 export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
 export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
+export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
@@ -1648,6 +1649,27 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the decision durable and some of its amendments and outcomes written: the next run settles it from the consumed output (never asked again), writing each missing corpus-amendment (by source) and issue-intake (by job and issue) once, the issue finding once',
       },
       B5: { status: 'excluded', why: 'the settlement is idempotent per source and (job, issue): settling again writes nothing' },
+    },
+  },
+  {
+    // `roadmap brief --ack` (src/commands/brief.ts), a CLI process crashed at each label and run again (or a plain `brief`
+    // after it), over two chained corpus arcs' refs.
+    row: BRIEF_ACK,
+    test: 'test/brief.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the pending marker is published write-once by link (exclusivePublish): it is there whole or not at all, and before it nothing is written' },
+      B2: {
+        status: 'crash',
+        labels: ['brief.ack.after-pending'],
+        recovery: 'the pending marker durable, nothing enqueued: the next brief, brief --ack or start finishes it from its bytes alone, enqueueing each item\'s ack under its deterministic id and committing the marker; the rerun reports the same commands',
+      },
+      B3: { status: 'excluded', why: 'each ack command is one write-once publish; a crash between two is the B4 rerun\'s case (a command file with its own bytes counts as enqueued)' },
+      B4: {
+        status: 'crash',
+        labels: ['brief.ack.after-enqueue'],
+        recovery: 'every ack enqueued, the marker still pending: the rerun finds each command file with its own bytes (enqueues nothing again) and commits the marker; each command once',
+      },
+      B5: { status: 'excluded', why: 'the committed marker is the ack\'s last write; a rerun of a committed id reports its commands and writes nothing' },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },

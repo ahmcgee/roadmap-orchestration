@@ -286,6 +286,8 @@ export type BriefArc = Readonly<{
   intake: readonly (Readonly<{ issue: IssueId; job: null; outcome: Phase0IntakeOutcome }> | Readonly<{ issue: IssueId; job: JobId; outcome: IssueIntakeOutcome }>)[];
   questions: readonly Readonly<{ id: PhaseQuestionId; rank: number; text: string; assumption: string; state: QuestionState }>[];
   amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string }>[];
+  /** The pack reviews' `note` findings (a blocking one is its review's needs-user item), each by `(job, index)` (K13). */
+  packReviewNotes: readonly Readonly<{ job: JobId; index: number; claim: string }>[];
   /** `% held` = held / obligationRules (obligation-state rules held on the head); null outside a corpus arc. */
   census: Readonly<{ held: number; obligationRules: number; outOfSlice: number; untestable: number; prodOnly: number }> | null;
   timings: readonly StageTiming[];
@@ -331,6 +333,7 @@ const briefArc: Read<BriefArc> = object((f) => ({
     id: g.get('id', (v, p) => phaseQuestionId(v, p)), rank: g.get('rank', positive), text: g.get('text', str), assumption: g.get('assumption', str), state: g.get('state', questionState),
   })))),
   amendments: f.get('amendments', arrayOf(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), rules: g.get('rules', rules), proposal: g.get('proposal', str) })))),
+  packReviewNotes: f.get('packReviewNotes', arrayOf(object((g) => ({ job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), claim: g.get('claim', str) })))),
   census: f.get('census', nullable(object((g) => ({
     held: g.get('held', nat), obligationRules: g.get('obligationRules', nat), outOfSlice: g.get('outOfSlice', nat), untestable: g.get('untestable', nat), prodOnly: g.get('prodOnly', nat),
   })))),

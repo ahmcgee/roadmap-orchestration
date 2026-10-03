@@ -84,13 +84,13 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
   }
 });
 
-test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-user does: an owner request, a divergence digest, both convergence brakes, an owed audit and the finding items, each once with its reason and blocking flag', { timeout: 30_000 }, async () => {
+test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-user does: an owner request, a divergence digest, both convergence brakes, an owed audit, the finding items and M4a\'s pack-review and issue-policy-untrusted, each once with its reason and blocking flag', { timeout: 30_000 }, async () => {
   const runDir = absPath(tmpDir('watch-m3-run'));
   const hostDir = openHostDir(absPath(join(tmpDir('watch-m3-host'), 'roadmap')));
   const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
   const kinds = [
     ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['audit-owed', false],
-    ['finding-p1-escalated', true], ['new-finding-draining', true],
+    ['finding-p1-escalated', true], ['new-finding-draining', true], ['pack-review', true], ['issue-policy-untrusted', true],
   ] as const;
   const lines: Line[] = [];
   const stop = new AbortController();

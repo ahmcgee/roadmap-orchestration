@@ -106,15 +106,24 @@ describe('status.subset', () => {
       audit: null,
       owed: { audits: [] },
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
+      holds: [],
+      packReview: null,
+      corpus: null,
+      census: null,
+      amendments: [],
+      debt: null,
+      issues: null,
+      chain: null,
+      timings: [],
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'arc', 'audit', 'commands', 'completion', 'convergence', 'decisionsSince', 'deferred', 'divergences', 'edges', 'findings', 'holistic', 'host',
-      'needsUser', 'notYetTrue', 'nowTrue', 'owed', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'units', 'vision',
-      'waived',
+      'amendments', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'divergences', 'edges',
+      'findings', 'holds', 'holistic', 'host', 'issues', 'needsUser', 'notYetTrue', 'nowTrue', 'owed', 'packReview', 'parkedBackends', 'plan', 'rejection', 'routing',
+      'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
@@ -151,6 +160,10 @@ describe('status.subset', () => {
     assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences, s.decisionsSince], [null, null, null, null, [], [], [], []]);
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
+    // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).
+    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.amendments, s.debt, s.issues, s.chain], [[], null, null, null, [], null, null, null]);
+    assert.ok(s.timings.some((t) => t.stage === 'build'), JSON.stringify(s.timings));
+    for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });
 });
 

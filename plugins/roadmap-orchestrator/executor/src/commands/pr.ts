@@ -53,10 +53,10 @@ function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
   };
 }
 
-type Base = Readonly<{ branch: string; needsRebase: boolean }>;
+export type Base = Readonly<{ branch: string; needsRebase: boolean }>;
 
-/** The branch the arc's PR targets now (step 2 of the header). */
-function baseOf(repo: AbsPath, forge: RepoIdentity, arc: CompletedArc): Base {
+/** The branch the arc's PR targets now (step 2 of the header); the brief and `chain status` read its `needsRebase` (C4). */
+export function baseOf(repo: AbsPath, forge: RepoIdentity, arc: Pick<CompletedArc, 'arc' | 'branch' | 'previousArc'>): Base {
   const seen = new Set<ArcId>([arc.arc]);
   for (let previous = arc.previousArc; previous !== null;) {
     if (seen.has(previous)) throw new CliError(`pr: the chain of ${arc.arc} loops at ${previous}`);
