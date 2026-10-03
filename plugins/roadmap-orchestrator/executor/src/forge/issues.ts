@@ -5,13 +5,13 @@
 // entries united by number. An entry carrying `pull_request` is a PR, dropped before anything else reads it and counted.
 // A kept issue's comments come from `issues/<n>/comments`; a comment is kept when its `author_association` is OWNER,
 // MEMBER or COLLABORATOR, or its author wrote a kept issue; the rest are counted. Every body is wrapped by the
-// `<pasted_content>` sanitiser (src/prompts/inputs.ts `pasted`, labelled with its content ref). The result is ordered
+// `<pasted_content>` sanitiser (src/prompts/inputs.ts `pastedAs`, id = the content ref). The result is ordered
 // (issues and comments ascending by number and id, labels ascending) and carries no clock, so a re-run over unchanged
 // issues gives identical bytes. Issues disabled: an empty capture, nothing fetched.
 import { type Sha256Hex, issueContentRef, issueIdOf, sha256 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { AbsPath } from '../core/values.ts';
-import { pasted } from '../prompts/inputs.ts';
+import { pastedAs } from '../prompts/inputs.ts';
 import { GhError, ghApi } from './gh.ts';
 import type { Trusted } from './trust.ts';
 import {
@@ -96,10 +96,10 @@ export function fetchIssueCapture(cwd: AbsPath, repo: RepoIdentity, trust: Trust
     const keptComments = comments.filter((c) => KEPT.includes(c.association) || authors.has(c.author));
     droppedComments += comments.length - keptComments.length;
     return {
-      id, title: e.title, labels: [...e.labels].sort(byCodeUnit), body: pasted(id, e.body),
+      id, title: e.title, labels: [...e.labels].sort(byCodeUnit), body: pastedAs(id, e.body),
       comments: keptComments.map((c): CapturedComment => {
         const ref = issueContentRef(`${id}/c-${c.id}`);
-        return { id: ref, association: c.association, body: pasted(ref, c.body) };
+        return { id: ref, association: c.association, body: pastedAs(ref, c.body) };
       }),
     };
   });

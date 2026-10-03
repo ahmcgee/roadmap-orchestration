@@ -313,9 +313,9 @@ describe('fakes.checkpoint-m4a', () => {
     assert.deepEqual(out.issueIntake.map((e) => [e.issue, e.outcome.type]), [['issue-1', 'finding'], ['issue-2', 'amendment'], ['issue-3', 'acted'], ['issue-4', 'none']]);
   });
 
-  it('an answer names the fields only when its spec does (the reader defaults the rest); a malformed outcome throws at build time', () => {
+  it('an answer always carries both fields (the schema requires them), empty unless its spec names them; a malformed outcome throws at build time', () => {
     const plain = checkpointAnswer({ decision: 'no-op' }) as Record<string, unknown>;
-    assert.deepEqual(['corpusAmendments' in plain, 'issueIntake' in plain], [false, false]);
+    assert.deepEqual([plain['corpusAmendments'], plain['issueIntake']], [[], []]);
     assert.deepEqual(validateCheckpointOutput(plain).issueIntake, []);
     assert.deepEqual((checkpointAnswer({ decision: 'no-op', issueIntake: [] }) as Record<string, unknown>)['issueIntake'], []);
     assert.throws(() => checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'not-an-issue', outcome: intakeOutcome.none('x') }] }));

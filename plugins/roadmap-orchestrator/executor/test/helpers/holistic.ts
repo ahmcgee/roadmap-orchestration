@@ -76,10 +76,8 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),
     cites: { vision: ['V-1'], observations: [], findings: [] },
     premises: [],
-    // Emitted only when a spec names them: the checkpoint JSON schema (B1) does not yet admit the keys, and an unnamed key
-    // is the reader's recorded-dev.6 default. B1 flips these to always-emitted when the schema requires them.
-    ...(spec.corpusAmendments === undefined ? {} : { corpusAmendments: spec.corpusAmendments.map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })) }),
-    ...(spec.issueIntake === undefined ? {} : { issueIntake: spec.issueIntake.map((e) => ({ issue: e.issue, outcome: e.outcome })) }),
+    corpusAmendments: (spec.corpusAmendments ?? []).map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })),
+    issueIntake: (spec.issueIntake ?? []).map((e) => ({ issue: e.issue, outcome: e.outcome })),
   };
   validateCheckpointOutput(value);
   return value;

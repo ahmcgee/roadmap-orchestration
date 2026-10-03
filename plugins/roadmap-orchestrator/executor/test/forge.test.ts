@@ -134,11 +134,12 @@ describe('issues', () => {
       assert.deepEqual(capture.issues[0]?.labels, ['area:berths', 'roadmap:bug', 'roadmap:feedback']);
       assert.deepEqual(capture.issues[0]?.comments.map((c) => c.id), [`issue-${a}/c-${Math.min(c1, c2)}`, `issue-${a}/c-${Math.max(c1, c2)}`]);
       for (const issue of capture.issues) {
-        assert.match(issue.body, /^<pasted_content id="[0-9a-f]{8}">\n[\s\S]*\n<\/pasted_content id="[0-9a-f]{8}">$/);
-        for (const c of issue.comments) assert.match(c.body, /^<pasted_content id=/);
+        assert.equal(issue.body.startsWith(`<pasted_content id="${issue.id}">\n`), true);
+        assert.equal(issue.body.endsWith(`\n</pasted_content id="${issue.id}">`), true);
+        for (const c of issue.comments) assert.equal(c.body.startsWith(`<pasted_content id="${c.id}">\n`), true);
       }
       assert.match(capture.issues[0]?.comments.find((c) => c.association === 'OWNER')?.body ?? '', /‹\/pasted_content> tag/, 'a closing tag is defanged');
-      assert.match(capture.issues[1]?.body ?? '', /^<pasted_content id="[0-9a-f]{8}">\n\n<\/pasted_content/, 'a null body is empty');
+      assert.equal(capture.issues[1]?.body, `<pasted_content id="issue-${b}">\n\n</pasted_content id="issue-${b}">`, 'a null body is empty');
     } finally {
       restorePath();
     }
