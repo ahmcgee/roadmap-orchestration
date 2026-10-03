@@ -18,24 +18,29 @@
 //   2. Before the capture: for an audit's trigger, its cited P1s re-witnessed on the head (B5's `rewitnessP1s`, the
 //      race of §2.5); after an evidence rejection, the lanes of the observations it cited re-witnessed on the head.
 //   3. The capture (H2, A19), under the revision fence in one synchronous step: `checkpoint-inputs{job, trigger,
-//      generation, vector, headSha, visionSha256, findings, observations}`. The vector is the plan rev, every unit's
-//      spec rev, the obligations', ledger's and vision's bytes, and the blob of every plan contract and the
-//      architecture doc at the head. The generation is the trigger audit's (a park's: the latest recorded, else 1).
+//      generation, vector, headSha, visionSha256, findings, observations, issues?, corpusSha256?}`. The vector is the
+//      plan rev, every unit's spec rev, the obligations', ledger's and vision's bytes, and the blob of every plan
+//      contract and the architecture doc at the head. The generation is the trigger audit's (a park's: the latest
+//      recorded, else 1). M4a: in a corpus arc, the issues are captured first (src/holistic/intake.ts: the kept capture,
+//      or `unavailable{reason}`; an untrusted issue policy holds the job uncaptured, `skipped{issue-policy-untrusted}`),
+//      and `corpusSha256` names the pin in force. An enactment (no call) captures no issues.
 //   4. The call: a fresh session on the checkpoint seat (`callArcRole`, `arc-backend{role: checkpoint}`, metered to the
 //      job), `@cpu`×1 under the job, in a detached checkout `<job>.checkpoint` of the captured head, the prompt rendered
 //      from the recorded inputs alone: the vision first and in full (by its kept bytes), the trigger and head, vision
 //      coverage, the findings, the obligations with their observations on the head, the uncovered divergences, the plan
 //      in force at the captured rev (units with state, edges, limits and routing, and one unit's spec in force as the
-//      shape an `admit`'s spec takes), the contracts at the head, the rulings, the direction. A resumed job consumes a
+//      shape an `admit`'s spec takes), the contracts at the head, the rulings, the direction, the captured issues; a
+//      corpus arc's materialised pin is readable beside the checkout (`targetDirs`). A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
 //      again as the next attempt. A refusal, malformed answer or fault is an invalid decision.
-//   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`.
+//   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`; then (an
+//      applied or no-op decision) its amendments and issue outcomes (src/holistic/{amendments,intake}.ts).
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { Parent } from '../core/events.ts';
+import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type InvocationId, type JobId, type LaneId, type Sha, type UnitId, parseInvocationId } from '../core/ids.ts';
@@ -54,7 +59,7 @@ import {
 import { arcJourneyLane, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
-import { architecture, docAt, inMs, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
+import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type FindingView, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
@@ -67,6 +72,7 @@ import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
+import { captureCheckpointIssues, issuesInputOf } from './intake.ts';
 import { keyOf } from './observe.ts';
 import { type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
@@ -76,8 +82,11 @@ export type { CheckpointContext } from './bundle.ts';
 export type CheckpointOutcome =
   /** Nothing is due. */
   | Readonly<{ kind: 'none' }>
-  /** Due, but not asked: the checkpoint backend is parked, or the arc is paused or stopped. */
-  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>
+  /**
+   * Due, but not asked: the checkpoint backend is parked, or the arc is paused or stopped; or (M4a) an untrusted issue
+   * policy's item is open and the job waits uncaptured (R31).
+   */
+  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' | 'issue-policy-untrusted' }>
   /** The call was interrupted (a pause, a stop, a backend park): the job stays running and resumes at a later call. */
   | Readonly<{ kind: 'interrupted'; job: JobId; detail: string }>
   | Readonly<{ kind: 'decided'; job: JobId; trigger: CheckpointTrigger; decision: BundleDecision }>;
@@ -91,7 +100,7 @@ const checkoutOf = (ctx: CheckpointContext, job: JobId, what: 'checkpoint' | 're
 // Consumed calls
 
 /** Whether a recorded call was already read as an interruption (a pause, a stop, a backend park): a later run asks again. */
-function interruptedCall(called: BackendCallOutcome): boolean {
+export function interruptedCall(called: BackendCallOutcome): boolean {
   if (called.kind !== 'result') return false;
   const { outcome, backendErrors } = called.result;
   return outcome.kind === 'cancelled' || (outcome.kind !== 'success' && backendErrors.some((e) => (BACKEND_PARK_CLASSES as readonly string[]).includes(e.class)));
@@ -272,8 +281,8 @@ export function checkpointPending(ctx: CheckpointContext): boolean {
 // ---------------------------------------------------------------------------------------------------
 // The capture (H2)
 
-/** `checkpoint-inputs` of `due`, captured synchronously under the revision fence. */
-function capture(ctx: CheckpointContext, due: Due): Captured {
+/** `checkpoint-inputs` of `due` with `issues` (M4a: absent outside a corpus arc), captured synchronously under the revision fence. */
+function capture(ctx: CheckpointContext, due: Due, issues: CheckpointIssues | null): Captured {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
@@ -292,6 +301,8 @@ function capture(ctx: CheckpointContext, due: Due): Captured {
     kind: 'checkpoint-inputs' as const, job, trigger: due.trigger, generation: due.generation, vector, headSha: head, visionSha256: vector.visionSha256,
     findings: view.holistic().findings.filter(isActive).map((f) => f.id).sort(),
     observations: shown,
+    ...(issues === null ? {} : { issues }),
+    ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),
   };
   const seq = ctx.journal.fact(fact);
   const { kind: _k, ...inputs } = fact;
@@ -417,8 +428,7 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
     target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
-    // No capture before step C3 lands checkpoint intake (it renders the kept `inputs/<sha>.issues.json` here).
-    issues: { type: 'captured', issues: [] },
+    issues: issuesInputOf(ctx.runDir, s),
   };
 }
 
@@ -468,9 +478,10 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const checkout = checkoutOf(ctx, s.job, 'checkpoint');
     await removeJobCheckouts(ctx, s.job);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
-    const rendered = prompt.render(checkpointInputs(ctx, s, r));
+    const inputs = checkpointInputs(ctx, s, r);
+    const rendered = prompt.render(inputs);
     const called = await withCpu(ctx, s.job, () => callArcRole(ctx, {
-      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx)],
+      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
     }));
     await removeCheckout(ctx, s.job, checkout);
@@ -545,7 +556,13 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
     }
     if (due.trigger.type === 'audit') await rewitnessP1s(ctx, due.trigger.job);
     if (due.prev !== null) await rewitnessCited(ctx, due.prev);
-    s = await captureUnderFence(ctx.journal, () => capture(ctx, due));
+    let issues: CheckpointIssues | null = null;
+    if (ctx.plan().target === 'corpus' && !approved(ctx, due.prev)) {
+      const captured = captureCheckpointIssues(ctx);
+      if (captured.kind === 'held') return { kind: 'skipped', reason: 'issue-policy-untrusted' };
+      issues = captured.issues;
+    }
+    s = await captureUnderFence(ctx.journal, () => capture(ctx, due, issues));
     crashPoint('checkpoint.after-inputs');
   }
   const { job } = s;

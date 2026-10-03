@@ -362,9 +362,18 @@ export const obligations: Read<Obligations> = object((f) => {
       if (inCensus.has(e.state.id)) throw new SchemaError(`${f.path}.census[${i}].state.id`, 'an obligation the census names once', e.state.id);
       inCensus.set(e.state.id, e.rule);
     });
-    // LR-C1-2: an exempt obligation binds nothing, so the census (one state per active rule) need not name it.
+    // LR-C1-2: an exempt obligation binds nothing, so the census (one state per active rule) need not name it. M4a C3: a
+    // split child on its parent's rule is counted through the ancestor the census names (one state per rule; a
+    // checkpoint's split never edits the census, Phase 0's).
+    const counted = (o: ObligationDef): boolean => {
+      const rule = (obligationSource(o) as Extract<ObligationSource, { kind: 'rule' }>).rule.id;
+      for (let at: ObligationDef | undefined = o; at !== undefined; at = at.parent === undefined ? undefined : ids.get(at.parent)) {
+        if (inCensus.get(at.id) === rule) return true;
+      }
+      return false;
+    };
     ruled.forEach((o) => {
-      if (!isExempt(o) && !inCensus.has(o.id)) throw new SchemaError(`${f.path}.census`, `an entry naming ${o.id} (every rule obligation is in the census unless exempt)`, out.census);
+      if (!isExempt(o) && !counted(o)) throw new SchemaError(`${f.path}.census`, `an entry naming ${o.id} or the split parent it restates (every rule obligation is in the census unless exempt)`, out.census);
     });
   }
   return out;

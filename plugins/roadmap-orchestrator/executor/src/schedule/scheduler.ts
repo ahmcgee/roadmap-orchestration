@@ -31,7 +31,8 @@
 // keeps it waiting. Chain stages (quiesce → evidence → salvage → teardown; ff → snapshot) are never gated: they run
 // to completion under pause, drain and stop (F5).
 //
-// Start and restart (G2): before the loop's first iteration a published repair batch a crash cut short is finished
+// Start and restart (G2): before the loop's first iteration a checkpoint's decision and a pack review's end a crash cut
+// short are settled (`settleLatest`, `settlePackReviews`), a published repair batch a crash cut short is finished
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
 // started for every unit whose decided next stage is a chain stage (recovery kept a green publication's slot; a
 // build's chain has its reservation cleaned), whatever pause or readiness says, and for every merged unit (its
@@ -47,7 +48,8 @@
 // run ends `stop`.
 //
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
-// this order of preference: the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
+// this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
+// R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
 // (`runCheckpoint`, B6) while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running
 // (one audit at a time, its clock `processClock`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
@@ -58,8 +60,12 @@
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
-//   - baseline (A6): while the baseline is owed or running, or its blocking `obligation-baseline` is open, no unit
-//     is admitted to any stage (chains run on).
+//   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
+//       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
+//       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
+//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts);
+//       - issue-policy-untrusted (M4a OR-L6, R31): its blocking item is open (a checkpoint capture found the issue
+//         policy untrusted; the checkpoint waits uncaptured meanwhile, src/holistic/intake.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -107,6 +113,7 @@ import { type CheckpointContext, type DesignParkRoute, checkpointPending, design
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
+import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
 import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
@@ -387,6 +394,22 @@ export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
 const TERMINAL: readonly string[] = ['retired', 'cut', 'superseded'];
 
+/** What holds every admission of a holistic arc now (the scheduler's arc-wide holds; see the header), in this order. */
+export const ARC_HOLDS = ['baseline', 'pack-review', 'issue-policy-untrusted'] as const;
+export type ArcHold = (typeof ARC_HOLDS)[number];
+
+/**
+ * The arc-wide holds of a holistic arc now: the baseline owed, running (`baselineRunning`) or its item open (A6); the pack
+ * review running, due or held (K14, H9); an open `issue-policy-untrusted` item (OR-L6, R31). Empty: none.
+ */
+export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[], baselineRunning: boolean): readonly ArcHold[] {
+  const out = new Set<ArcHold>();
+  if (baselineRunning || baselineOwed(h.audit) !== null || blocking.some((b) => b.reason === 'obligation-baseline')) out.add('baseline');
+  if (packReviewHolds(h.checkpoint)) out.add('pack-review');
+  if (blocking.some((b) => b.reason === 'issue-policy-untrusted')) out.add('issue-policy-untrusted');
+  return ARC_HOLDS.filter((x) => out.has(x));
+}
+
 /**
  * A6: the baseline the arc owes before any admission under holistic (`baselineDue`), or null. `baselineDue` reads the
  * tip now; a baseline job that already witnessed every arc lane on one tree the tip has since left is done.
@@ -663,7 +686,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const route = designRoute(h);
   // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
   // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
-  if (holistic()) settleLatest(h.checkpoint);
+  if (holistic()) {
+    settleLatest(h.checkpoint);
+    settlePackReviews(h.checkpoint);
+  }
 
   const tasks = new Map<UnitId, Task>();
   const jobs = new Map<string, Promise<void>>();
@@ -776,10 +802,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   // -------------------------------------------------------------------------------------------------
-  // The scheduler's holds: the baseline (A6) and repair batches (R7)
+  // The scheduler's holds: arc-wide (the baseline, the pack review, an untrusted issue policy) and repair batches (R7)
 
-  type Holds = Readonly<{ baseline: boolean; batch: ReadonlySet<UnitId> }>;
-  const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean => holds.baseline || (stage === 'candidate' && holds.batch.has(unit));
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId> }>;
+  const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean => holds.arc || (stage === 'candidate' && holds.batch.has(unit));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -991,9 +1017,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The holistic jobs
 
-  /** Whether the baseline holds every admission: owed or running, or its blocking item unacknowledged. */
-  const baselineHolds = (blocking: readonly BlockingItem[]): boolean =>
-    holistic() && (jobs.has('holistic:baseline') || baselineOwed(x.stage) !== null || blocking.some((b) => b.reason === 'obligation-baseline'));
+  /** Whether every admission is held (`arcHolds`; the baseline job running counts as owed). */
+  const arcHeld = (blocking: readonly BlockingItem[]): boolean => holistic() && arcHolds(h, blocking, jobs.has('holistic:baseline')).length > 0;
 
   /** OR-Q1: a second design park whose `respec-second` the checkpoint job has yet to raise (it raises it when run). */
   const respecSecondDue = (): boolean => plan().units.some((u) => view().unit(u.id).status === 'park-pending'
@@ -1004,7 +1029,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (!holistic()) return;
     if (due('holistic')) {
       const job = baselineOwed(x.stage);
-      if (job !== null) {
+      if (packReviewPending(h.checkpoint)) {
+        trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
+      } else if (job !== null) {
         trackRetrying('holistic:baseline', 'holistic', async () => {
           const out = await runBaseline(h.audit);
           return out.kind === 'incomplete' ? { kind: 'no-verdict', job, detail: endDetail(out.end) } : PROGRESS;
@@ -1020,7 +1047,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       }
     }
     const ready = batch.ready;
-    if (ready !== null && !holds.baseline && due('batch') && heldBatch(view()) === null) {
+    if (ready !== null && !holds.arc && due('batch') && heldBatch(view()) === null) {
       trackRetrying('batch', 'batch', async () => {
         const out = await publishBatch({ ...x.stage, acquireFirst: arbiter.acquireFirst }, ready.finding, ready.members);
         const settled = settleBatch(x.stage, ready.finding, ready.members, out);
@@ -1159,7 +1186,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       raiseHolistic();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { baseline: baselineHolds(blocking), batch: batch.held };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held };
       startHolistic(holds, batch);
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);

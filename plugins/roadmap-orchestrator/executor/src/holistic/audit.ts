@@ -20,7 +20,8 @@
 //      metered to the job by role and routingRev) holding `@cpu`×1 under `job{audit-n}`, reading a detached checkout
 //      of the audited SHA: the vision first, then the obligations with their observations there, the lens's range
 //      (its watermark to the audited SHA) with its diff, the branch diffs of parked or in-flight owners of findings,
-//      the prior findings with their states, the contracts and rulings in force. A resumed job consumes a call it
+//      the prior findings with their states, the contracts and rulings in force, the target (a corpus arc's materialised
+//      pin readable beside the checkout, `targetDirs`). A resumed job consumes a call it
 //      already made (`recordedArcCall`) and asks again only for one lost. Each report's findings are opened at once.
 //   5. The lens checkout removed, citing an evidence snapshot of it; then `audit-ended{covered, findings, suppressed,
 //      outcome}`: `completed` when every lens reported, else `abandoned` (a lens failed, or its backend parked:
@@ -55,7 +56,7 @@ import {
   type BackendCallOutcome, type JobParent, type StageContext, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { type JourneyEnd, arcJourneyLane, dirtyPaths, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
-import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
+import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type FindingView, type LensInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
@@ -402,9 +403,10 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
-      const rendered = prompt.render(lensInputs(ctx, s, r, lens, from, checkout));
+      const inputs = lensInputs(ctx, s, r, lens, from, checkout);
+      const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
-        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx)],
+        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
       }));
     }

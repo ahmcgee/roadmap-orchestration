@@ -18,8 +18,11 @@
 //      is never newly cited); the observations and findings it cites were in its inputs. Finding dispositions
 //      (`rulingRefusal`). Rulings: each JSON text parsed with `ruledBy: checkpoint{job}` and `consistency` stamped by
 //      the executor from the captured inputs (lead ruling: the model echoes no revisions), validated at the tip in
-//      order (`validateRuling`); each lands through exactly one `rule` op. The proposal: the revision in force plus the
-//      ops (`proposalOf`). Any reason → `rejected{invalid}`; a trigger's second invalid bundle → `bundle-request`.
+//      order (`validateRuling`); each lands through exactly one `rule` op. M4a: the corpus amendments and the issue
+//      outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured issue exactly once; an
+//      `acted` outcome through ops of this output only). A split child anchored at a rule takes its hash from the pin in
+//      force. The proposal: the revision in force plus the ops (`proposalOf`). Any reason → `rejected{invalid}`; a
+//      trigger's second invalid bundle → `bundle-request`.
 //   3. Owner-only (A16, H10). A `request` op, or an op with a nested owner-only effect (a lane whose argv[0] no lane of
 //      the plan in force runs, a lane env prerequisite no lane in force passes, a contract op outside the plan's
 //      contracts and architecture doc) → one blocking `owner-request`; nothing is applied.
@@ -38,15 +41,16 @@
 //      publication (a ruling's `constraints.md`, contract ops; `invariants.md`) runs inside it; a publication refused at
 //      the tip → `rejected{stale}`.
 //
-// After an applied or no-op decision: its finding dispositions (`ruleFinding`, by `checkpoint{job}`), the convergence
-// bound when due, the divergence digest when due. Each is idempotent, and `settleDecided` rewrites what a crash lost.
+// After an applied or no-op decision: its finding dispositions (`ruleFinding`, by `checkpoint{job}`); in a corpus arc the
+// debt its deferrals bank, its amendments and issue outcomes; the convergence bound when due, the divergence digest when
+// due. Each is idempotent, and `settleDecided` rewrites what a crash lost.
 import { join } from 'node:path';
 import type { Parent } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { holdFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RulingId, type UnitId,
+  type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha256Hex, type UnitId,
   parseInvocationId, specRev,
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
@@ -69,13 +73,17 @@ import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
 import { ledgerAfter, parseRulings, sidecarsAfter, validateRuling } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
+import { mintDebt } from '../debt/mint.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
+import { amendmentReasons, appendAmendment, checkpointAmendments, divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
 import { type AppliedBundle, brakesOf, raiseBound, secondChanges } from './convergence.ts';
 import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
+import { intakeReasons, settleIntake } from './intake.ts';
 import { keyOf, reuse } from './observe.ts';
 import {
-  type BundleRejection, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector, type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations,
+  type BundleRejection, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector, type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations,
   parseRulingSidecar,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
@@ -259,11 +267,14 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
   });
 }
 
-/** A split child as the obligations file holds it; its proof is the checkpoint's own judgment of the witness it names. */
-function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-split' }>, c: Extract<BundleOp, { op: 'obligation-split' }>['children'][number], laneRev: string): Record<string, unknown> {
+/**
+ * A split child as the obligations file holds it, anchored at its doc ref or at its rule with the hash `anchor` resolved
+ * in the pin in force; its proof is the checkpoint's own judgment of the witness it names.
+ */
+function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-split' }>, c: Extract<BundleOp, { op: 'obligation-split' }>['children'][number], laneRev: string, anchor: ObligationAnchor): Record<string, unknown> {
   const serves = [...new Set([...parent.serves, ...op.cites])].sort();
   return {
-    id: c.id, rev: 1, statement: c.statement, ...splitChildAnchor(c), serves, witness: c.witness,
+    id: c.id, rev: 1, statement: c.statement, ...anchor, serves, witness: c.witness,
     proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: c.witness },
     deliveredBy: c.deliveredBy, activation: c.activation, parent: parent.id, contracts: parent.contracts, state: { type: 'active' },
   };
@@ -287,6 +298,8 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   const specs = new Map<UnitId, InputFile>(current.specs);
   const obligationsRaw = current.obligations?.bytes == null ? null : JSON.parse(current.obligations.bytes.toString('utf8')) as RawObligations;
   const obligationsNow = revision.obligations?.value ?? null;
+  const pinRules = new Map<string, Sha256Hex>((revision.corpus?.pin.value.rules ?? []).map((r) => [r.id, r.textSha256]));
+  const pinned = (id: RuleId): Sha256Hex | null => pinRules.get(id) ?? null;
   const unit = (id: string): RawUnit | undefined => plan.units.find((u) => u.id === id);
   const specOf = (id: UnitId): SpecM1 | null => {
     const f = specs.get(id);
@@ -430,7 +443,12 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
             reasons.push(`${at}: child ${c.id}'s witness lane ${c.witness.lane} is not an arc lane`);
             return [];
           }
-          return [childOf(parent, op, c, laneRevOf(lane))];
+          const anchor = splitChildAnchor(c, pinned);
+          if (anchor === null) {
+            reasons.push(`${at}: child ${c.id} is anchored at ${c.rule}, which is no active rule of the pin in force`);
+            return [];
+          }
+          return [childOf(parent, op, c, laneRevOf(lane), anchor)];
         });
         raw.state = { type: 'split', children: op.children.map((c) => c.id) };
         raw.witness = null;
@@ -686,7 +704,10 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   const invalid = (reasons: readonly string[]): BundleDecision => (a.secondInvalid
     ? decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, `it is invalid a second time (${reasons.join('; ')})`, false), reason: 'bundle-request' })
     : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
-  const reasons = [...citeAndDispositionReasons(ctx, a, revision), ...p.reasons];
+  const pin = revision.corpus?.pin.value ?? null;
+  const reasons = [
+    ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...intakeReasons(ctx.runDir, a.captured, pin, a.output), ...p.reasons,
+  ];
   if (reasons.length > 0) return invalid(reasons);
 
   // 3. Owner-only (A16, H10): nothing applied.
@@ -766,8 +787,10 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
 
 /**
  * What follows an applied or no-op decision, each only where missing (a crash may cut it short): a no-op's
- * interpretation divergences (H12), the finding dispositions still applicable, the convergence bound when due, the
- * digest when due.
+ * interpretation divergences (H12), the finding dispositions still applicable, then (M4a, a corpus arc) the debt the
+ * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), the
+ * issue outcomes (src/holistic/intake.ts), and one amendment per `target-departed` or `interpretation` divergence of
+ * `job` (src/holistic/amendments.ts); the convergence bound when due, the digest when due.
  */
 export function settleDecided(ctx: CheckpointContext, job: JobId, output: CheckpointOutput, captured: Captured, applied: readonly AppliedBundle[]): void {
   const view = ctx.journal.view;
@@ -779,11 +802,41 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
     if (f === undefined || !isActive(f)) continue;
     ruleFinding(ctx.journal, d.finding, d.disposition, { type: 'checkpoint', job });
   }
+  if (ctx.plan().target === 'corpus') {
+    bankDeferred(ctx, job, output);
+    for (const draft of checkpointAmendments(captured.job, output)) appendAmendment(ctx.journal, draft);
+    settleIntake(ctx.journal, captured.job, output);
+    for (const draft of divergenceAmendments(ctx.journal.view, job)) appendAmendment(ctx.journal, draft);
+  }
   const plan = requirePlanInForce(ctx.runDir, ctx.journal.view).plan;
   const rootOf = (u: UnitId): UnitId => ctx.journal.view.unit(u).lineage?.root ?? u;
   const all = c.decided.kind === 'applied' && !applied.some((x) => x.job === job) ? [...applied, ...appliedNow(ctx, job, output)] : applied;
   raiseBound(ctx, brakesOf(ctx.journal.view, ctx.runDir, plan, all, new Set(), rootOf), all);
   raiseDigest(ctx);
+}
+
+/**
+ * R7: each finding the output deferred that `job` ruled deferred, a P2 or P3 with no obligation, banked as
+ * `finding-deferred` debt (`mintDebt`: once per finding, deduped by key against the baseline ledger and the arc's banked
+ * items), under the unit that owned it (null: none). A deferred finding with an obligation is never debt (correctness
+ * never banks): it stays a finding.
+ */
+function bankDeferred(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): void {
+  const fold = ctx.journal.view.holistic();
+  const deferred = output.findingDispositions.flatMap((d) => {
+    const f = fold.findings.find((x) => x.id === d.finding);
+    const by = f?.last?.state === 'ruled' ? f.last : null;
+    const mine = d.disposition === 'deferred' && by?.disposition === 'deferred' && by.by.type === 'checkpoint' && by.by.job === job;
+    return f !== undefined && mine && f.obligation === null && f.severity !== 'P1' ? [f] : [];
+  });
+  if (deferred.length === 0) return;
+  const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
+  for (const f of deferred) {
+    const fact = mintDebt(baseline, ctx.journal.view.holistic().debt, {
+      type: 'finding-deferred', finding: f.id, severity: f.severity, obligation: f.obligation, unit: f.owner, what: f.claim,
+    });
+    if (fact !== null) ctx.journal.fact(fact);
+  }
 }
 
 /** The bundle `job` just applied, as an applied bundle (its revision.commit's seq). */

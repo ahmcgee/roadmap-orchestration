@@ -117,6 +117,9 @@ export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committe
 export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
 export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, then its gate notes banked as debt-banked facts)';
+export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
+export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
+export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
@@ -1590,6 +1593,61 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the approval written, no debt-banked: the restart consumes the recorded gate call (never asked again), keeps the approval and banks each note once; one approval, one debt-banked per source, gate:approve once',
       },
       B5: { status: 'excluded', why: 'a banked fact is durable and keyed by its source: a re-read of the answer mints nothing again (mintDebt); the stage-outcome after it is the gate\'s own row' },
+    },
+  },
+  {
+    // A corpus arc's pack review before its first admission (src/holistic/packreview.ts `runPackReview`), driven in a child
+    // (test/fixtures/corpus-job-child.ts) that a restart in process recovers and runs again.
+    row: PACK_REVIEW_JOB,
+    test: 'test/packreview.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['packreview.after-inputs', 'packreview.after-started'],
+        recovery: 'the inputs kept (content-addressed), no fact: the restart keeps the same bytes as review-1 and starts it once; started, nothing asked: the job resumes from its kept inputs alone and asks once',
+      },
+      B3: { status: 'excluded', why: 'the call is a proc.spawn: its runner-exit cells (spawn.*) cover a crash inside it; the job consumes the recorded call on resume' },
+      B4: {
+        status: 'crash',
+        labels: ['packreview.after-call', 'packreview.after-ended'],
+        recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its blocking item not raised: the restart raises it once (settlePackReviews); one review, one item',
+      },
+      B5: { status: 'excluded', why: 'the item is the job\'s last record; the hold is a pure function of the facts, the items and the current key' },
+    },
+  },
+  {
+    // A corpus arc's checkpoint capture (src/holistic/intake.ts `captureCheckpointIssues`) against the fake gh, driven in a
+    // child (test/fixtures/corpus-job-child.ts) that a restart in process recovers and runs again.
+    row: ISSUE_CAPTURE,
+    test: 'test/intake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'the identity, policy and fetch are forge reads that write nothing: a crash before the capture is kept re-queries and re-fetches' },
+      B3: { status: 'excluded', why: 'the capture\'s bytes are kept content-addressed (keepInput) in one write the B4 cell follows' },
+      B4: {
+        status: 'crash',
+        labels: ['issues.after-keep'],
+        recovery: 'the capture kept, no issues-captured: the restart re-queries and re-fetches (the same bytes), records one issues-captured, then the checkpoint-inputs naming its sha, and asks once',
+      },
+      B5: { status: 'fixture', test: 'intake.capture-reused', crashedIn: ISSUE_CAPTURE },
+    },
+  },
+  {
+    // A corpus arc's checkpoint decision and what follows it (src/holistic/bundle.ts `settleDecided`): the amendments and
+    // issue outcomes, each crash point after one of their facts, at the first, third and sixth.
+    row: CORPUS_AMENDMENT,
+    test: 'test/intake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the facts are written from the decided output, which the decision\'s own rows (BUNDLE_ACTIVATE, REVISION_COMMIT) settle' },
+      B3: { status: 'excluded', why: 'nothing is acted between the facts beyond their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['amendment.after-decided'],
+        recovery: 'the decision durable and some of its amendments and outcomes written: the next run settles it from the consumed output (never asked again), writing each missing corpus-amendment (by source) and issue-intake (by job and issue) once, the issue finding once',
+      },
+      B5: { status: 'excluded', why: 'the settlement is idempotent per source and (job, issue): settling again writes nothing' },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },

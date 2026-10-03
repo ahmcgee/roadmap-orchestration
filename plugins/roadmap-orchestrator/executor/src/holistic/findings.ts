@@ -2,7 +2,8 @@
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //
-// - **Opening and dedupe.** `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
+// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s, plan-check (R17) and a checkpoint's issue
+//   intake (M4a, lens `issue`). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc). A vacuity finding's mutant patch
@@ -24,7 +25,7 @@
 //   timeToResolveMs}`, over the log's events (their times).
 import { canonicalJson } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import type { FindingId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { FindingId, IssueId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -114,6 +115,17 @@ export function visionConflictDraft(input: Readonly<{
   return {
     lens: 'plan-check', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
     evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'plan-check', attempt: input.attempt }, gateHadPassed: false,
+  };
+}
+
+/**
+ * A captured issue's finding (M4a: a checkpoint's intake outcome `finding`, lens `issue`, P2 or P3): one stable cause per
+ * issue and cause, opened by the checkpoint whose capture held the issue.
+ */
+export function issueFindingDraft(input: Readonly<{ issue: IssueId; job: JobId; severity: 'P2' | 'P3'; claim: string; cause: string }>): FindingDraft {
+  return {
+    lens: 'issue', severity: input.severity, obligation: null, visionClauses: [], claim: input.claim, cause: `${input.issue}: ${input.cause}`,
+    evidence: [], mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: false,
   };
 }
 

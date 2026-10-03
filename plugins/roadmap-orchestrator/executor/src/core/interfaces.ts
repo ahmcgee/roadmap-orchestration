@@ -6,7 +6,7 @@ import type {
   AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   PlanAppliedFact, RecoveredBy,
 } from './events.ts';
-import type { ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
+import type { AmendmentId, ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
 import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
@@ -104,6 +104,8 @@ export interface JournalView {
   nextFindingId(): FindingId;
   /** M3: the id the next `divergence` must carry. */
   nextDivergenceId(): DivergenceId;
+  /** M4a: the id the next `corpus-amendment` must carry (arc-scoped `M-n`). */
+  nextAmendmentId(): AmendmentId;
   /** M3: the next job id of `kind`: one more than the highest the log named (audits and checkpoints must open in order). */
   nextJobId(kind: JobKind): JobId;
   /** M3: the latest published `integration.ff`'s new head (any subject), or null before one. */

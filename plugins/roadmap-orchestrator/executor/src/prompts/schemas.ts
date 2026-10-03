@@ -10,11 +10,10 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FindingId, type IssueId, type LaneId, type ObligationId, type RuleId, type RulingId, type UnitId, type VisionClauseId, clauseId,
+  type ClauseId, type FindingId, type IssueId, type LaneId, type ObligationId, type RuleId, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
   findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
-import { notYet } from '../core/notyet.ts';
 import type { JsonValue } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type NoteDef, type SpecPatchOp, specPatchOp } from '../core/records.ts';
 import {
@@ -480,12 +479,13 @@ const splitChild: Read<SplitChild> = object((g) => {
 });
 
 /**
- * The anchor a split child's obligation takes (H10): its doc ref. A rule-anchored child's `{T-n, textSha256}` is resolved
- * in the corpus pin when the bundle applies, which lands in step C3.
+ * The anchor a split child's obligation takes (H10): its doc ref, or its rule as `{T-n, textSha256}` with the hash the
+ * pin in force gives it (`pinned`); null when the pin holds no such active rule (the bundle is then invalid).
  */
-export function splitChildAnchor(c: SplitChild): ObligationAnchor {
-  if (c.rule !== null) return notYet(`split child ${c.id}'s rule anchor ${c.rule} (resolved in the corpus pin)`, 'C3');
-  return { docRef: c.docRef as DocRef };
+export function splitChildAnchor(c: SplitChild, pinned: (id: RuleId) => Sha256Hex | null): ObligationAnchor | null {
+  if (c.rule === null) return { docRef: c.docRef as DocRef };
+  const textSha256 = pinned(c.rule);
+  return textSha256 === null ? null : { rule: { id: c.rule, textSha256 } };
 }
 
 const ruleList: Read<readonly RuleId[]> = uniqueIds((v, p) => ruleId(v, p));
