@@ -135,15 +135,10 @@ None.
   class rebind or (M4a) a new chain K needs a restart, acceptable between arcs (and a dry run reads it fresh, so the two can disagree); a build's decisions are
   not appended while a revision of its spec is pending; a suite change is refused while any unit is active past a
   candidate attempt. Trigger: any of these blocking or misleading a real arc.
-- Upgrade test variants not yet covered: the previous release crashing mid-op, a backend parked on a usage
-  limit across the update, the Claude-only profile, a lane launched by the previous release. Trigger: a record
-  change that touches one of them. Also a unit parked by the previous release with a `resume <unit>` queued
-  after a rev + 1 edit: the M1 driver stops the arc on the park before the queued resume applies, so
-  `apply.upgrade-queued-resume` covers it in process. Trigger: a driver mode that waits on parks.
-- An arc 1.0.0-dev.3 started is baselined from its files without the dispatched spec bytes (never kept): a changed
-  spec at the recorded rev is taken as `evidence` and one at rev + 1 as a revision, with scope and resources
-  unchecked; a log whose last re-pin set a re-opened unit back to its first rev records a spurious pending revision,
-  so that unit re-opens once more. Trigger: either seen on a real upgraded arc.
+- Upgrade test variants not yet covered: a backend parked on a usage limit across the update, the Claude-only
+  profile, a lane launched by the previous release, a unit parked by the previous release with a `resume <unit>`
+  queued after a rev + 1 edit (the M1 driver stops the arc on the park before the queued resume applies). Trigger: a
+  record change that touches one of them, or a driver mode that waits on parks.
 - A `sweep` whose teardown fails leaves the instance cleaning under the sweep with its residue undisposed. That
   residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
   `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the
@@ -185,51 +180,12 @@ None.
   - `visionVerifiable`: the M3 confirmation form `vision.md#sha256:<hex>`, never verified.
   - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
   - `splitChildRuleDefault`: a split child without `rule`.
-  - `dev6SeatTriple` (K2, step A2) and status's `dev6RevAlias` (K12, step A2).
+  - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's
+    recorded `routingRev` through it.
   - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks
     at the tip, `contractRevs` carrying the architecture doc, an `apply` adding `holistic` to an `architecture-doc` arc.
     Lasting, not scaffolding: the `architecture-doc` variant of a non-holistic arc, `target-kind-changed`, a fingerprint
     without `corpus`, and a sidecar's doc-ref arm for contract docRefs.
-- Every layer below older than 1.0.0-dev.6 is deleted in M4a step X0 (OR-L4).
-
-- `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
-  `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.
-- The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, each with its callers' branch and the optional field it
-  reads, once no arc started on 1.0.0-dev.5 is in flight:
-  - `revisionSourceOf`: a `plan-applied` without `source`.
-  - `transientRulesOf` and the `dev5` rules it selects in src/git/transient.ts (`ROADMAP_ALLOWLIST`, no scope check).
-  - `applyInputsOf` and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15).
-  - `rulingsFromLiveFile`: a revision without `rulingsSha256` reads the live ledger (src/pipeline/stages.ts,
-    src/input/inforce.ts).
-  - `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-  - `judgmentFingerprintDefault`: a gate's `judgment-inputs` without `fingerprint` (src/pipeline/gate.ts).
-  - `planCheckVisionConflict`: a plan-check answer without `visionConflict`.
-- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: the routing-provenance adoption
-  (`adoptLegacyProvenance`, `readLegacyProvenance`, `routing-provenance/<rev>.json` in src/git/snapshot.ts; its
-  run in `runChecks`; `adoptedProvenance` in src/executor.ts; status's read of it); `sched.json`'s absent `jobQueue`
-  read as empty (`schedFile`, src/schedule/scheduler.ts); `rule`'s ledger preimage for a dev.5 previous revision
-  (`keepLegacyPreimage`, `legacyPreimage`, `commands/rule-preimages/`, src/commands/rule.ts). A dev.5 snapshot
-  manifest (no `namedBy`, verified by allowlist: `legacyAllowlisted`, `warnLegacy`) is read while a ref it
-  wrote may still be verified (`gc`, recovery): delete once no `refs/roadmap/<arc>` last written by 1.0.0-dev.5 is left.
-
-- The 1.0.0-dev.4 → M2 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.4 (or a dev.3 arc
-  baselined after dispatch) is in flight: `legacyParkRecord` (a park without `park`) and its call in the fold's
-  stage-outcome case; `rerouteAsUnpark` and the `rerouted` fact kind (reader, fold case, `Fact` member);
-  `judgmentInputsDefault` (a judgment attempt without `judgment-inputs`, src/pipeline/gate.ts);
-  `isLegacy`, `legacyNext` and `legacySettled`, with the legacy branches of readiness and resources; the
-  cause-less-hold release in the fold's `resumed{backend}` (`#releaseBackendHolds(..., legacy)`); and the
-  `scheduling` field's absent case (every arc then writes `dag`).
 - Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
-  src/pipeline/transitions.ts).
-
-- `src/core/upgrade.ts` 1.0.0-dev.1 defaults (launch.json `stallMs`, the lane deadline `laneRecord` derives a
-  start from) and the `stallMs === null` branch in `laneRecord`: once no arc started on 1.0.0-dev.1 is in flight.
-- The 1.0.0-dev.3 plan-revision scaffolding, once no arc started on 1.0.0-dev.3 is in flight: in
-  `src/core/upgrade.ts` `warnPlanFromFile`, `specBytesFromLiveFile`, `repinNamesSpec`, `earlierReleaseBaseline` and
-  `unkeptSpecReason`; their callers' branches (the fold's re-pin rule in `src/core/state.ts`, the no-plan-yet branch
-  of `settlePlan` in `src/preflight/checks.ts` back to recording the files with no changes, the unkept-spec refusal in
-  `src/input/classify.ts`, the live-file fallback of `specBytesOf` in `src/input/inforce.ts`, the file-plan branch of
-  `status`); and `JournalView.unitsWithState` if nothing else reads it by then.
-- `commandCancelled` in `src/core/upgrade.ts` (a cancelled lane's `process-fault` result.json read as
-  `cancelled{reason}`), its call in `runnerFiles().read` and the kept-bytes branch of `writeResult`
-  (`src/backends/adapter.ts`): once no arc started on 1.0.0-dev.3 is in flight.
+  src/pipeline/transitions.ts), and the fold's reading of such a fact as an operator park (`unclassedParkRecord`,
+  src/core/state.ts). A behaviour shim, not a release layer (kept by M4a step X0).

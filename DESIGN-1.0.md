@@ -143,8 +143,8 @@ with teardown, ownership labels and pools, replacing the concurrency knobs, load
 and census.
 
 - **One scheduler.** One plan schema with additive optional fields and one scheduler; every arc has the semantics
-  above. dev.4's serial frontier for legacy arcs (lead ruling 2026-09-30) was upgrade scaffolding and is deleted in
-  M4a with every other pre-dev.6 layer (§10).
+  above. dev.4's serial frontier for legacy arcs (lead ruling 2026-09-30) was upgrade scaffolding, deleted in
+  M4a step X0 with every other pre-dev.6 layer (§10).
 - **Admission.** The scheduler is the only admitter of stages. Admission boundaries sit before `prepare`,
   `plan-check`, `build`, `lanes`, `gate` and `candidate`; pause, drain and every constraint are re-checked at
   each. Constraints hold per stage: a limited or parked backend blocks the stages that call it (running calls
@@ -807,9 +807,9 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
   gate.
 - **Merge** (candidate-first): in the integration slot a candidate worktree makes a `--no-ff` merge onto the
   current tip, held on the named ref `refs/roadmap-run/<arc>/candidate/<unit>`. The **transient check** (code)
-  runs first (G17, H15): a unit dispatched under 1.0.0-dev.6 (`transientRules: 'm3'` in its dispatch record) may
-  touch only its pinned scope and ruling-added paths, and no in-tree `.roadmap/` path (dev.5's rules are deleted
-  with the pre-dev.6 layers, §10); a docs candidate may touch only the rendered `.roadmap/` files and its ops' paths. A denylisted path (declared
+  runs first (G17, H15): a unit (`transientRules: 'm3'` in its dispatch record) may touch only its pinned scope and
+  ruling-added paths, and no in-tree `.roadmap/` path (dev.5's rules were deleted with the pre-dev.6 layers in M4a
+  step X0, §10); a docs candidate may touch only the rendered `.roadmap/` files and its ops' paths. A denylisted path (declared
   `evidenceGlobs`, worktree state dirs, lane outputs, ignored patterns, `__preview`, `__codex`) refuses the
   candidate as a scope-growth finding, fixed by a normal fix round. Suite and journey lanes run, graded by exit
   code, witness records and the held-claims brake; a suite that mutates the tree is refused; on green,
@@ -1013,9 +1013,9 @@ ladder with its own runnable fixture:
   judgment session freshness, metering, `start`/`status`/`pause`/`resume`/`stop`, durable `needs-user`, a serial
   terminal predicate. Fixture: one redirect, one failed lane and its fix, a merge conflict, a red candidate, a
   crash at every boundary, both backend probes.
-- **M2 DAG and resources.** DAG dispatch (legacy arcs keep dev.4's serial frontier), pools and `@cpu`, aging,
+- **M2 DAG and resources.** DAG dispatch (legacy arcs kept dev.4's serial frontier until M4a), pools and `@cpu`, aging,
   retryable parks with probes, flake reruns and host signatures, D4 escalation, `reenter` and `cut` through
-  `apply`, `resolve-edge`, `run-only`. The legacy-arc defaulting was scaffolding, deleted in M4a. Fixture: no overlapping holders, bounded service for planned work, `cleanup-failed` survival, a
+  `apply`, `resolve-edge`, `run-only`. The legacy-arc defaulting was scaffolding, deleted in M4a step X0. Fixture: no overlapping holders, bounded service for planned work, `cleanup-failed` survival, a
   conflicted re-entry, no duplicate writer after concurrent recovery.
 - **M3 Holistic layer and revisioned commands** (lead ruling LR-a: this bullet, BACKLOG "M3", and from M2's
   deferrals `merge-in`, `route`, `limits`, `steer --class` and the `repair` origin; the Codex judgment profile,
@@ -1029,8 +1029,8 @@ ladder with its own runnable fixture:
   residue compaction at `start`, `roadmap gc`) and the snapshot closure. Version 1.0.0-dev.6 adopts dev.5 arcs:
   such an arc runs without a vision or the holistic layer, spends nothing new and completes on M2's predicate; `apply`
   may opt it in. The dev.5 defaulting (the live-ledger reader `rulingsFromLiveFile`, the legacy manifest reader,
-  dev.5 routing reconstruction, dev.5 transient rules and the other read-time defaults BACKLOG lists) was
-  scaffolding, deleted in M4a. Fixture (one paid run, `--profile default`, obligations seeded by hand, lead ruling LR-f): the Node
+  dev.5 routing reconstruction, dev.5 transient rules and the other read-time defaults BACKLOG listed) was
+  scaffolding, deleted in M4a step X0. Fixture (one paid run, `--profile default`, obligations seeded by hand, lead ruling LR-f): the Node
   CLI `ledger`; vision V-1 (purpose: "bookkeepers reconcile a month in one command"), V-2 (non-negotiable:
   "money is never silently mis-rounded"), V-3 (tradeoff, rank 1: "clear errors over permissive input");
   obligations I-1 (future, serves V-1, delivered by `parse` and `report`), I-2 (must-hold, serves V-2), I-3
@@ -1062,7 +1062,8 @@ ladder with its own runnable fixture:
   variant. That defaulting (the vacuous census, the unverified `vision.md#` reference, checkpoint answers without
   the M4a fields, the dev.6 seat decoder and routing-rev alias, the holistic `architecture-doc` variant) is
   scaffolding, deleted once no dev.6 arc is in flight. Every pre-dev.6 layer (dev.1, dev.3, dev.4 and dev.5,
-  including the legacy serial frontier, dev.5 transient rules and dev.5 routing reconstruction) is deleted in M4a
-  with the tests that exist only for it (owner ruling OR-L4); an older in-flight arc finishes on its own release.
+  including the legacy serial frontier, dev.5 transient rules and dev.5 routing reconstruction) was deleted in M4a
+  step X0 with the tests that existed only for it (owner ruling OR-L4); an older in-flight arc finishes on its own
+  release.
 - **M4b Flow** (seeded from M4a arcs' refs, LR-c). The flow loop, SPC, the flow role, givens, proposals and
   verdicts, the ruler fence, test-set-preserving lane edits, and the two plants.
