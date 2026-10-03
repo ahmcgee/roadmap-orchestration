@@ -1,0 +1,29 @@
+# Reference copy shipped with the roadmap-orchestrator skill (see roadmap-bug.yml's header). It labels feedback
+# `roadmap:feedback`: a request, a proposal for new work, or a reaction to what an arc built. The orchestrator
+# weighs it against the vision at the next Phase 0 and at each checkpoint of a running arc.
+name: Give feedback or propose work
+description: A request, a proposal for new work, or a reaction to what was built. Read at the next Phase 0 and, while an arc runs, at its next checkpoint.
+title: "[feedback] "
+labels: ["roadmap:feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feedback is input, not a spec. It is weighed against the product's vision at the **next Phase 0** and, while an arc runs, at its **next checkpoint**, and gets one recorded outcome: a finding, a corpus amendment, a change to the plan, or no action with a reason. Say what you want to be true, not how to build it. Something broken? File a **bug** instead.
+  - type: textarea
+    id: want
+    attributes:
+      label: What I want
+      description: What should be true, for whom, when this is done.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: What happens today, and what would be better.
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The area, page or command, if you know.

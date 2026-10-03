@@ -12,14 +12,19 @@ conversation. Expect to start from scattered, disorganised thoughts. Organising 
 
 ## The files
 
-Two files, side by side in the directory that holds the arc's `plan.json`. A plan names its vision by a path
-under its own directory, so keep the vision at the root of the arc inputs and reuse it across arcs.
+Two files. The vision document lives in the product's corpus; its compiled record lives in the product repo.
 
-- **`vision.md` is the vision.** You write it and the owner reads and confirms it. It is a coherent piece
-  someone would want to read: prose, not a form. Never save the owner's raw words, your notes or unresolved
-  tensions in it; what it holds is always the best coherent form so far.
-- **`vision.json` is compiled from it** at confirmation (`roadmap/vision-m3`, SCHEMAS.md). Never edit it by hand
-  and never write it before the owner confirms.
+- **The vision document is the vision.** Its path is the `vision` field of the corpus guide,
+  `.roadmap/corpus.md` (under the guide's `root`); `vision.md` below stands for that path, whatever its name. You
+  write it and the owner reads and confirms it. It is a coherent piece someone would want to read: prose, not a
+  form. Never save the owner's raw words, your notes or unresolved tensions in it; what it holds is always the best
+  coherent form so far. It carries no `rules` block: rules belong to the rest of the corpus, and the executor
+  refuses a vision document holding one (`rules-in-vision`).
+- **`.roadmap/vision.json` is compiled from it** at confirmation (`roadmap/vision-m3`, SCHEMAS.md "M3: the
+  holistic layer" and "M4a"). Never edit it by hand and never write it before the owner confirms. It is committed,
+  like the document: `start` and `apply` refuse `tree-uncommitted` while it differs from `HEAD`.
+
+No guide yet: the `orchestrate` bootstrap writes `.roadmap/corpus.md` first. Never choose the corpus home yourself.
 
 Pick the mode from the files; never ask the owner which:
 
@@ -142,10 +147,12 @@ On confirmation:
 
 1. Set the status line to `Confirmed, rev <n>, <date>`. `n` is the previous `vision.json` rev plus one, or 1;
    keep the previous rev when calibration changed nothing.
-2. Hash the final file: `sha256sum vision.md`.
+2. Hash the final file: `sha256sum <root>/<vision path>`.
 3. Compile `vision.json`:
    - `schema` `roadmap/vision-m3`, `rev` `n`.
-   - `confirmation` `{"ref": "vision.md#sha256:<hex>", "at": "<now, ISO 8601>"}`.
+   - `confirmation` `{"ref": "corpus:<vision path>#sha256:<hex>", "at": "<now, ISO 8601>"}`, the path as the
+     guide's `vision` field spells it (relative to `root`). The executor hashes the pinned copy of that file at
+     every `start` and `apply` and refuses a mismatch (`vision-unconfirmed`).
    - `clauses`: every anchored clause as `{id, kind, text, rank, state: "active"}`. The kind follows the
      section: world, purpose, serves, good, non-negotiable, tradeoff. `rank` is the trade-off's position and
      null otherwise. `text` is the clause's prose with its cost and its `(in: …)` note. Every withdrawn clause
@@ -156,19 +163,24 @@ On confirmation:
      that keeps a clause's meaning keeps its id. A change to what it demands withdraws the old id and adds a new
      one.
 4. Validate with the executor's own parser, from the plugin root:
-   `node --input-type=module -e "import {readFileSync} from 'node:fs'; import {parseVision} from './executor/src/holistic/types.ts'; parseVision(JSON.parse(readFileSync('<dir>/vision.json', 'utf8')))"`
+   `node --input-type=module -e "import {readFileSync} from 'node:fs'; import {parseVision} from './executor/src/holistic/types.ts'; parseVision(JSON.parse(readFileSync('<repo>/.roadmap/vision.json', 'utf8')))"`
    Silence means the record is sound. On a refusal, fix the compilation, never the vision.
+5. Commit the vision document and `.roadmap/vision.json` together: in the bootstrap commit, or between arcs
+   in the between-arc commit (for an `other-repo` or `checkout` corpus, the document is committed in the corpus
+   source and `vision.json` in the product repo). Then re-pin the corpus (`orchestrate`): the pin carries the
+   document the confirmation hashes.
 
-Then hand back to `orchestrate`. The arc's `plan.json` names `vision.json` in `holistic.vision` and the slice it
-advances in `holistic.advances`: the clauses this arc moves toward, at least one of them a scene. Choose the
-slice with the owner. On a running arc, a new vision rev goes in with `roadmap apply`, which refuses a slice
-naming a withdrawn clause.
+Then hand back to `orchestrate`. The arc's plan names no vision file (a corpus arc reads `.roadmap/vision.json`);
+its `holistic.advances` and the Phase-0 record's `slice.advances` name the slice it advances: the clauses this arc
+moves toward, at least one of them a scene. Choose the first slice with the owner; later slices `orchestrate`
+chooses from the census and reports. A vision change belongs between arcs. On a running arc it takes a commit, a
+re-pin and `roadmap apply`, which refuses a slice naming a withdrawn clause.
 
 ## Calibrate
 
-Between arcs, before the next plan is written. Same dialogue, but from evidence: `status` of the arc that just
-ran (its vision coverage, its divergence digest and its checkpoints' interpretations), the product as it now
-stands, and `vision.md`.
+Between arcs, before the next plan is written. Same dialogue, but from evidence: `roadmap brief` and `status` of
+the arc that just ran (its vision coverage, divergences, the checkpoints' interpretations, the census and the
+questions the corpus raised), the product as it now stands, and `vision.md`.
 
 1. **Open questions first.** For each one: is it answered now? Fold the answer into the world and close the
    question. If the answer contradicts the working assumption, name what the arc built on that assumption.
@@ -192,3 +204,4 @@ calibration that changes nothing still re-confirms: same rev, fresh `confirmatio
 - Save raw notes, transcripts or tensions in `vision.md`.
 - Compile `vision.json` without an explicit "confirmed", edit it by hand, or reuse an id.
 - Start a holistic arc on a vision that is draft or whose hash does not match.
+- Put a `rules` block in the vision document, or a mechanism the corpus rules should carry.
