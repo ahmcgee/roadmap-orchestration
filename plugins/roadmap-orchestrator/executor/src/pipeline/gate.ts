@@ -251,7 +251,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const rendered = prompt.render({
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), architecture: architecture(ctx, tip),
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target: architecture(ctx, tip),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },

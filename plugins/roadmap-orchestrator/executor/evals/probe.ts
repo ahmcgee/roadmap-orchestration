@@ -363,7 +363,7 @@ async function main(): Promise<void> {
 
   const lensInputs: LensInputs = {
     vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { from: TREE, to: HEAD, diff: MINI_DIFF }, owners: [], priorFindings: [],
-    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, checkout: m3Dir,
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir,
   };
   await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
     validates("m3.lens", "lens", () => true));
@@ -372,14 +372,14 @@ async function main(): Promise<void> {
     vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, head: HEAD,
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
-    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
   };
   await backend(ctx, 'm3.checkpoint', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m3.checkpoint', 'checkpoint', () => true));
 
   const planCheckInputs: PlanCheckInputs = {
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
-    contracts: [], rulings: [], index: MINI_INDEX, architecture: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
     scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION,
   };
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);

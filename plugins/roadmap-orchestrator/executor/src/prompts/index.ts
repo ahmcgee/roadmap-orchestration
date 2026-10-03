@@ -37,7 +37,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-sonnet-5-5': {
       type: 'inherits',
       from: 'claude-opus-5-5',
-      reviewed: '2026-09-29: Sonnet 5.5 migration guidance (Anthropic) checked against the Opus 5.5 build brief; no Sonnet-specific change needed',
+      reviewed: '2026-10-03: Sonnet 5.5 migration guidance (Anthropic) checked against the Opus 5.5 build brief with its unattended-run instruction (M4a); no Sonnet-specific change needed',
     },
     'gpt-5.6-luna': { type: 'prompt', prompt: BUILD_LUNA },
     // OpenAI's GPT-5.6 guidance gives Sol, Terra and Luna one prompt skeleton: the tiers differ in cost,
@@ -78,21 +78,22 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-opus-5-5': {
       type: 'inherits',
       from: 'claude-fable-5-1',
-      reviewed: '2026-09-30: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt; no Opus-specific change needed',
+      reviewed: '2026-10-03: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt with its M4a corpus amendments and issue intake; no Opus-specific change needed',
     },
     'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
-  // M4a (OR-Q16): the pack review on frontier (Opus). The module is step 0a's placeholder until B1 ports the review
-  // brief; Fable reads it unchanged, as it reads the Opus lens prompt.
+  // M4a (OR-Q16): the pack review on frontier (Opus), ported from the former Phase-0 review brief. Fable reads it
+  // unchanged, as it reads the Opus lens prompt: its rules (read everything before judging, file:line evidence, plain
+  // one-sentence claims, the pack as the only scope, change nothing) are what the Fable guide asks of a judgment.
   packReview: {
     'claude-opus-5-5': { type: 'prompt', prompt: PACK_REVIEW_OPUS },
     'claude-fable-5-1': {
       type: 'inherits',
       from: 'claude-opus-5-5',
-      reviewed: '2026-10-03: placeholder (M4a step 0a); B1 reviews the ported pack-review prompt for Fable',
+      reviewed: '2026-10-03: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 pack-review prompt; no Fable-specific change needed',
     },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },

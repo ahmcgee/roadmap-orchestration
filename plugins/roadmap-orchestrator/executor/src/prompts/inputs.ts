@@ -18,8 +18,8 @@ import type {
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
-import { notYet } from '../core/notyet.ts';
 import type { PinnedRule } from '../corpus/types.ts';
+import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
@@ -54,12 +54,14 @@ export type ArchitectureInput =
 /**
  * M4a: a corpus arc's target as a judgment gets it, in place of the architecture doc: every active pinned rule (the
  * rules index, by file and section; the vision doc carries none) embedded in full, and the pinned files materialised
- * read-only under `dir` to read on demand. `visionDoc`: the vision document's path under `dir`, null for the gate and
- * the build, whose view omits it (M3 R17).
+ * read-only under `dir` to read on demand. `visionDoc`: the vision document's path under `dir`, null for the gate,
+ * whose view omits it (M3 R17).
  */
 export type CorpusInput = Readonly<{ kind: 'corpus'; rulesIndex: readonly PinnedRule[]; dir: AbsPath; visionDoc: RepoPath | null }>;
-/** What a judgment's `architecture` input holds: an `architecture-doc` arc's doc or digest, or a corpus arc's corpus. */
+/** What a judgment's `target` input holds: an `architecture-doc` arc's doc or digest, or a corpus arc's corpus. */
 export type TargetInput = ArchitectureInput | CorpusInput;
+/** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
+export type GateTargetInput = ArchitectureInput | (CorpusInput & Readonly<{ visionDoc: null }>);
 
 /** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
  * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
@@ -119,7 +121,7 @@ export type PlanCheckInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: TargetInput;
+  target: TargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
   scope: readonly RepoPattern[];
@@ -154,7 +156,7 @@ export type GateInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: TargetInput;
+  target: GateTargetInput;
   direction: string;
   planCheckNotes: string;
   /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
@@ -214,7 +216,7 @@ export type LensInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: TargetInput;
+  target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
 }>;
@@ -248,9 +250,19 @@ export type CheckpointInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: TargetInput;
+  target: TargetInput;
   direction: string;
+  /** M4a: the issues captured for this checkpoint (trusted, LR-d), or why none were captured (R21). */
+  issues: CheckpointIssuesInput;
 }>;
+
+/**
+ * A checkpoint's issues as its prompt gets them: the kept capture's issues, each body and comment already wrapped by
+ * `pastedAs` at capture (`roadmap/issues-capture-m4`), or the reason the capture failed (non-fatal, R21).
+ */
+export type CheckpointIssuesInput =
+  | Readonly<{ type: 'captured'; issues: readonly CapturedIssue[] }>
+  | Readonly<{ type: 'unavailable'; reason: string }>;
 
 /**
  * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
@@ -276,16 +288,15 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
+  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
   gate: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope',
-    'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout'],
   checkpoint: [
     'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'architecture', 'direction',
+    'target', 'direction', 'issues',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
@@ -348,7 +359,14 @@ export function laneCommand(worktree: AbsPath, lane: LaneDef): string {
  * the text cannot end its own block.
  */
 export function pasted(label: string, body: string): string {
-  const id = createHash('sha256').update(`${label}\0${body}`).digest('hex').slice(0, 8);
+  return pastedAs(createHash('sha256').update(`${label}\0${body}`).digest('hex').slice(0, 8), body);
+}
+
+/**
+ * The sanitiser itself, under a caller's stable id: an issue capture wraps each issue body as `issue-<n>` and each
+ * comment as `issue-<n>/c-<id>` (M4a), so evidence can name the block.
+ */
+export function pastedAs(id: string, body: string): string {
   const safe = body.replace(/<(\/?)pasted_content/gi, '‹$1pasted_content');
   return `<pasted_content id="${id}">\n${safe}\n</pasted_content id="${id}">`;
 }
@@ -401,18 +419,40 @@ export function ignoredText(c: IgnoredCensus): string | null {
 }
 
 /**
- * The architecture doc's entry in a documents block: the whole doc, or the digest naming the doc's path. A corpus arc's
- * rules index and corpus directory render in step B1.
+ * The target's entry in a documents block: the whole architecture doc, or the digest naming the doc's path; or, in a
+ * corpus arc, the rules index (every active T-n by file and section) naming the read-only directory of the pinned
+ * corpus files, and the vision document there when the role reads it. `hashes` adds each rule's text hash, which a
+ * ruling's rule reference must quote (the checkpoint).
  */
-export function architectureDocument(a: TargetInput): Readonly<{ source: string; content: string }> {
-  switch (a.kind) {
+export function targetDocument(t: TargetInput, opts: Readonly<{ hashes: boolean }> = { hashes: false }): Readonly<{ source: string; content: string }> {
+  switch (t.kind) {
     case 'full':
-      return { source: `architecture doc ${a.doc.path}`, content: a.doc.text };
+      return { source: `architecture doc ${t.doc.path}`, content: t.doc.text };
     case 'digest':
-      return { source: `architecture digest ${a.digest.path} (the full architecture doc is ${a.doc} in the repository)`, content: a.digest.text };
-    case 'corpus':
-      return notYet('the corpus input\'s rendering (rules index and pinned corpus)', 'B1');
+      return { source: `architecture digest ${t.digest.path} (the full architecture doc is ${t.doc} in the repository)`, content: t.digest.text };
+    case 'corpus': {
+      const vision = t.visionDoc === null ? '' : `; the vision document is ${t.dir}/${t.visionDoc} (it holds no rules)`;
+      return { source: `corpus rules index (the pinned corpus files are read-only under ${t.dir}${vision})`, content: rulesIndexText(t.rulesIndex, opts) };
+    }
   }
+}
+
+/** Every active rule, grouped by file (ascending), then by section (the nearest heading above its rules block), rules ascending. */
+export function rulesIndexText(rules: readonly PinnedRule[], opts: Readonly<{ hashes: boolean }> = { hashes: false }): string {
+  if (rules.length === 0) return '(no active rules)';
+  const files = new Map<string, Map<string, PinnedRule[]>>();
+  for (const r of rules) {
+    const sections = files.get(r.file) ?? new Map<string, PinnedRule[]>();
+    files.set(r.file, sections);
+    const heading = r.section ?? '(before any heading)';
+    sections.set(heading, [...(sections.get(heading) ?? []), r]);
+  }
+  return [...files.keys()].sort().flatMap((file) => [
+    `${file}:`,
+    ...[...files.get(file)!].flatMap(([heading, rs]) => [
+      `  ${heading}`, ...rs.map((r) => `    ${r.id}${opts.hashes ? ` [textSha256 ${r.textSha256}]` : ''}: ${r.text}`),
+    ]),
+  ]).join('\n');
 }
 
 /** The reference index as data: one line per uncited contract and per ruling not embedded. */
@@ -547,4 +587,18 @@ export function triggerText(t: TriggerView): string {
   const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;
   if (c.design) return `unit ${t.unit} parked on a design question (log seq ${t.seq}): ${ended}.`;
   return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
+}
+
+/**
+ * The checkpoint's issues (M4a): each issue's id, labels and title, then its body and kept comments as the capture
+ * wrapped them (`<pasted_content id="issue-<n>">`, `issue-<n>/c-<id>`). An unavailable capture says why.
+ */
+export function issuesText(i: CheckpointIssuesInput): string {
+  if (i.type === 'unavailable') return `The issue capture failed (${i.reason}). There are no issues this checkpoint; issueIntake is empty.`;
+  if (i.issues.length === 0) return '(no open roadmap:bug or roadmap:feedback issues)';
+  return i.issues.map((issue) => [
+    `${issue.id} [${issue.labels.join(', ')}], title ${JSON.stringify(issue.title)}:`,
+    issue.body,
+    ...issue.comments.map((c) => `Comment ${c.id} (${c.association}):\n${c.body}`),
+  ].join('\n')).join('\n\n');
 }

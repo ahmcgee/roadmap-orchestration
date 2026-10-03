@@ -13,9 +13,11 @@
 // M3 (reviewed 2026-09-30 against the same guides, R17): the vision as read-only context, marked non-directive,
 // and visionConflict for the checkpoint; a redirect still needs the spec's own grounds. 2026-10-01: a clause that
 // forecloses a horizon clause, or rests costly-to-undo on an open question's assumption, is a visionConflict.
+// M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
+// the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, visionText,
+  bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -28,7 +30,7 @@ Your working directory is a detached checkout of the integration tip, read-only.
 
 Host facts are given in <lane_programs>: where each lane's program resolves under that lane's own environment. Do not assert a host fact (a tool missing, a path absent) that you could not verify from <lane_programs> or the checkouts.
 
-The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
+The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
 </workspace>
 
 <how_to_read>
@@ -105,11 +107,11 @@ ${visionText(i.vision)}
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
-    architectureDocument(i.architecture),
+    targetDocument(i.target),
   ])}
 
 <rulings>
