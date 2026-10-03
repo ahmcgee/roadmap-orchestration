@@ -175,6 +175,13 @@ None.
 
 ## Scaffolding to delete
 
+- Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the
+  `architecture-doc` arm of the holistic code paths and the M3 fixtures that put such a plan in force as revision 1
+  by `recordPlan` (adopted-arc coverage, lead ruling LR-D0b): `brake-common` (`holisticArc`), `audit-common`,
+  `checkpoint-common`, `repair-common`, `batch-common` and their tests (audit, baseline, batch, brake, checkpoint,
+  repair, scheduler-m3, publish, gate, revision, snapshot, status-m3, startup-checks). Migrate those tests to corpus
+  arcs (`test/fixtures/corpus-target.ts`) when deleting, once no dev.6 arc is in flight.
+
 - The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
   - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
   - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
