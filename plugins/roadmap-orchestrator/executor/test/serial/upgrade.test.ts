@@ -54,6 +54,25 @@
 //                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
 //                              a no-op checkpoint, the brake on `page-id`'s candidate, the final audit and a no-op
 //                              checkpoint, the close-out, `arc-completed`.
+//   upgrade.dev6-holistic-completes
+//                              (M4a) the arc holistic from its first revision (architecture-doc target, a future
+//                              obligation with a docRef, no census), stopped mid-build; HEAD starts it, is stopped,
+//                              starts it again (no `holistic-needs-corpus`: a plan is in force), and completes.
+//   upgrade.dev6-rebind-inflight
+//                              (M4a, OR-L3) a high-risk `page-id` stopped mid-build on build.high (Opus high);
+//                              HEAD re-pins at Opus medium, resumes the same session with `--effort medium`, parks
+//                              nothing; `status` spend resolves every dev.6 routing rev.
+//   upgrade.dev6-rebind-summit-pending
+//                              a plan-check escalated, its summit call stopped mid-call; HEAD re-asks it at xhigh.
+//   upgrade.dev6-fingerprint-open-ff
+//                              `page-id` approved, the ff open at a crash; HEAD compares the fingerprint byte for byte.
+//   upgrade.dev6-checkpoint-open
+//                              a holistic arc crashed after a checkpoint's call; HEAD consumes the recorded output
+//                              (no issues, corpusAmendments or issueIntake) with no new call.
+//   upgrade.dev6-config-without-chain
+//                              no chain K in the repo config: no chain row applies to the adopted arc.
+//   upgrade.dev6-target-kind-fixed
+//                              an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
 //
 // Not covered: a backend parked on a usage limit, the Claude-only profile.
 import assert from 'node:assert/strict';
@@ -80,7 +99,10 @@ import { requirePlanInForce } from '../../src/input/inforce.ts';
 import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/pipeline/rounds.ts';
+import { seatTripleOf } from '../../src/pipeline/dispatch.ts';
+import { meterOf } from '../../src/meter.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
+import { corpusTarget } from '../fixtures/corpus-target.ts';
 import type { CheckResult } from '../../evals/m1/check.ts';
 import type { Report } from '../../evals/m1/driver.ts';
 import { type Layout, RESOURCE, UNITS, layout } from '../../evals/m1/layout.ts';
@@ -121,6 +143,12 @@ type PreviousModules = Readonly<{
   fakeSteps: typeof import('../../evals/m1/scenario.ts').fakeSteps;
   readScenario: typeof import('../../evals/m1/scenario.ts').readScenario;
   writeShims: typeof import('../fakes/shim.ts').writeShims;
+  /** The previous release's scripted arc judgments (the shapes its reader accepts). */
+  holistic: Readonly<{
+    lensStep: typeof import('../helpers/holistic.ts').lensStep;
+    checkpointStep: typeof import('../helpers/holistic.ts').checkpointStep;
+    checkpointAnswer: typeof import('../helpers/holistic.ts').checkpointAnswer;
+  }>;
   /** The previous release's host sample and its busy/clear thresholds (the host park's classification). */
   sample: Readonly<{
     readHostSample: typeof import('../../src/host/sample.ts').readHostSample;
@@ -144,11 +172,12 @@ before(async () => {
   const root = join(dir, EXECUTOR_PATH);
   assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.6"/);
   const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
-  const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
+  const [scenario, shim, sample, holistic] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts'), load('test/helpers/holistic.ts')]);
   previous = {
     root,
     modules: {
       fakeSteps: scenario['fakeSteps'], readScenario: scenario['readScenario'], writeShims: shim['writeShims'],
+      holistic: { lensStep: holistic['lensStep'], checkpointStep: holistic['checkpointStep'], checkpointAnswer: holistic['checkpointAnswer'] },
       sample: { readHostSample: sample['readHostSample'], isBusy: sample['isBusy'], isClear: sample['isClear'] },
     } as PreviousModules,
   };
@@ -381,8 +410,8 @@ const outcomesOf = (events: readonly Event[], unit: string): readonly string[] =
  * interrupted); `resume` is queued through its CLI unless `queueResume` is false (the caller releases it later).
  * Returns the phase and HEAD's steps to finish it (the build resumed with the continue directive, then the gate).
  */
-async function stoppedMidBuild(c: Clean, edit?: (l: Layout) => void, queueResume = true): Promise<Readonly<{ p: Phase1; head: readonly M1Step[] }>> {
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c))], edit);
+async function stoppedMidBuild(c: Clean, edit?: (l: Layout) => void, queueResume = true, extra: readonly Step[] = []): Promise<Readonly<{ p: Phase1; head: readonly M1Step[] }>> {
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c)), ...extra], edit);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -785,9 +814,9 @@ function remainingSteps(p: Phase1, c: Clean): readonly M1Step[] {
 type HeadRun = Readonly<{ exit: ExitReason; calls: readonly CallRecord[]; after: readonly Event[]; view: JournalView }>;
 
 /** Starts HEAD on the fixture with `steps` behind its fake backends and waits for the run to end; `during` runs alongside. */
-async function runOnHead(p: Phase1, steps: readonly Step[], during: () => Promise<void>): Promise<HeadRun> {
+async function runOnHead(p: Phase1, steps: readonly Step[], during: () => Promise<void>, name = 'fake-head'): Promise<HeadRun> {
   const highWater = journalOf(p).view.highWater();
-  const s = writeScenario(join(p.dir, 'fake-head'), steps);
+  const s = writeScenario(join(p.dir, name), steps);
   const env = { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` };
   const start = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'start', '--repo', p.l.repo, '--plan', p.l.plan, '--profile', 'default'], { env, timeoutMs: START_MS });
   assert.equal(start.code, 0, `HEAD start: ${start.stdout} ${start.stderr}`);
@@ -875,4 +904,252 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previou
   assert.equal(completed.planRev, 2);
   assert.equal(completed.head, git(p.l.repo, 'rev-parse', 'integration'));
   assert.equal(r.view.holistic().on, true);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4a: the previous release's holistic arcs (architecture-doc target) on HEAD
+
+/** The architect's holistic plan from the first revision: written before the previous release starts. */
+function holisticFromStart(l: Layout): void {
+  writeFileSync(join(l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
+  // slug is not merged yet: the obligation is future, delivered by slug, its witness failing until then (the baseline).
+  const base = obligations() as { obligations: object[] };
+  const future = { ...base, obligations: base.obligations.map((o) => ({ ...o, activation: 'future', deliveredBy: ['slug'] })) };
+  writeFileSync(join(l.input, 'obligations.json'), `${JSON.stringify(future, null, 2)}\n`);
+  editJson<object>(l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
+}
+
+/** The previous release's scripted judgments for two audits, each followed by a no-op checkpoint (unused ones are never called). */
+function previousJudgments(): readonly Step[] {
+  const { lensStep: lens, checkpointStep: checkpoint, checkpointAnswer: answer } = previous.modules.holistic;
+  return (['1', '2'] as const).flatMap((n) => [lens(`audit-${n}`, 'invariants'), checkpoint(`ckpt-${n}`, answer({ decision: 'no-op' }))]);
+}
+
+/** HEAD's start-up smoke, then `steps` (the scenario steps `head` plays by role, via the M1 driver's translation). */
+const headSmoke = (): readonly Step[] => headFakeSteps({ steps: [] }, 'default');
+
+test('upgrade.dev6-holistic-completes: a holistic architecture-doc arc stopped mid-arc runs on HEAD, which starts it twice (a stop between) without `holistic-needs-corpus`, with docRef obligations and no census, and completes', T, async () => {
+  const c = clean();
+  const { p, head } = await stoppedMidBuild(c, holisticFromStart, false, previousJudgments());
+  const mid = journalOf(p).view.holistic();
+  assert.equal(mid.on, true, 'the previous release ran the arc holistic from its first revision');
+
+  // HEAD's first start: the interrupted build is resumed and held at a barrier; then `stop`.
+  const hold: Step = { as: 'codex', expect: { argv: ['exec', 'resume', MID_BUILD_THREAD] }, acts: [{ type: 'barrier', name: 'head-mid', timeoutMs: PHASE_MS }] };
+  const scope = scopeOf(p);
+  track(scope);
+  let first: HeadRun;
+  let second: HeadRun;
+  try {
+    const resume = await p.cli(['resume', ...p.run]);
+    assert.equal(resume.code, 0, resume.stderr);
+    first = await runOnHead(p, [...headSmoke(), hold], async () => {
+      await until('HEAD\'s first start reaches the held build', PHASE_MS, () => (existsSync(join(p.dir, 'fake-head-1', 'head-mid.reached')) ? true : null));
+      const stop = await headCli(p, ['stop', ...p.run]);
+      assert.equal(stop.code, 0, stop.stderr);
+    }, 'fake-head-1');
+    assert.notEqual(first.exit.kind, 'complete');
+    const again = await headCli(p, ['resume', ...p.run]);
+    assert.equal(again.code, 0, again.stderr);
+    // The final audit and its checkpoint: the previous release's arc ran no audit before the stop.
+    second = await runOnHead(p, [
+      ...headFakeSteps({ steps: head }, 'default'),
+      lensStep('audit-1', 'invariants'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+    ], async () => {}, 'fake-head-2');
+  } finally {
+    await teardown(scope);
+  }
+  assert.deepEqual(second.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  assert.deepEqual(factsOf([...first.after, ...second.after], 'plan-applied'), [], 'HEAD recorded no plan revision');
+  assert.deepEqual(factsOf(second.after, 'audit-started').map((a) => [a.job, a.triggers.map((t) => t.type)]), [['audit-1', ['final']]]);
+  assert.deepEqual(factsOf(second.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-1', { kind: 'no-op' }]]);
+  assert.equal(factsOf(second.after, 'arc-completed').length, 1);
+  assert.equal(second.view.holistic().on, true);
+  const census = (JSON.parse(readFileSync(join(p.l.input, 'obligations.json'), 'utf8')) as { census?: unknown }).census;
+  assert.equal(census, undefined, 'the dev.6 obligations carry no census');
+});
+
+test('upgrade.dev6-rebind-inflight: a dev.6 build at build.high stopped mid-build re-pins on HEAD with --effort medium and resumes its session; no routing-changed; spend still resolves', T, async () => {
+  const c = clean();
+  const sessionStep: Step = {
+    as: 'claude', expect: { argv: ['--effort', 'high', '--session-id'] },
+    acts: [{ type: 'dirty', files: pageIdFiles(c) }, { type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }],
+  };
+  const planCheck = c.pageId.planCheck;
+  assert.ok(planCheck.role === 'planCheck');
+  const planCheckHigh: M1Step = { ...planCheck, answer: { ...(planCheck.answer as object), risk: 'high' } };
+  const p = await preparePrevious([...c.slug, planCheckHigh], [sessionStep], (l) => {
+    editJson<{ units: { id: string; risk: string }[] }>(l.plan, (plan) => ({ ...plan, units: plan.units.map((u) => (u.id === 'page-id' ? { ...u, risk: 'high' } : u)) }));
+  });
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await midCall(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const buildCall = readCalls(join(p.fakeDir, 'scenario.json')).find((call) => call.as === 'claude' && call.argv.includes('--session-id') && call.argv.includes('--permission-mode'));
+  assert.ok(buildCall !== undefined, 'the previous release started the claude build');
+  const session = buildCall.argv[buildCall.argv.indexOf('--session-id') + 1]!;
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+  const pinned = factsOf(journalOf(p).events, 'dispatch').at(-1)!.record;
+  assert.deepEqual(seatTripleOf(pinned.implementerSeatRev), { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' }, 'dev.6 pinned build.high at Opus high');
+
+  const [smokeClaude, smokeCodex, gate] = headFakeSteps({ steps: [c.pageId.gate] }, 'default');
+  const build: Step = {
+    as: 'claude', expect: { argv: ['--effort', 'medium', '--resume', session], argvLacks: ['--session-id'], stdinContains: [CONTINUE_DIRECTIVE] },
+    acts: [...c.pageId.build.acts, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [] } }],
+  };
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, [smokeClaude!, smokeCodex!, build, gate!], async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.deepEqual(r.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  const repinned = factsOf(r.after, 'dispatch');
+  assert.equal(repinned.length, 1, 'one re-pin');
+  assert.deepEqual(seatTripleOf(repinned[0]!.record.implementerSeatRev), { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(factsOf(r.after, 'stage-outcome').filter((o) => o.outcome === 'routing-changed'), [], 'no routing-changed');
+  assert.deepEqual(r.after.flatMap((e) => (e.type === 'intent' && e.kind === 'needsuser.raise' ? [e.expect.id] : [])), [], 'HEAD raised no needs-user');
+
+  const out = await headCli(p, ['status', ...p.run]);
+  assert.equal(out.code, 0, out.stderr);
+  const spend = (JSON.parse(out.stdout) as { spend: { byRole: { calls: number }[]; byModel: { models: { model: string; calls: number }[]; unresolvedRevs: string[] } } }).spend;
+  const total = (xs: readonly { calls: number }[]): number => xs.reduce((n, x) => n + x.calls, 0);
+  const metered = meterOf(journalOf(p).events);
+  assert.deepEqual(spend.byModel.unresolvedRevs, []);
+  assert.equal(total(spend.byModel.models), total(metered.bySeat), 'every metered seat call resolves to a model');
+  assert.equal(total(spend.byRole), total(metered.byRole));
+  const opus = spend.byModel.models.find((m) => m.model === 'claude-opus-5-5');
+  assert.ok(opus !== undefined && opus.calls >= 4, `the dev.6 frontier calls are attributed to the current binding: ${JSON.stringify(spend.byModel.models)}`);
+});
+
+test('upgrade.dev6-rebind-summit-pending: a dev.6 escalation (summit) judgment stopped mid-call is re-asked on HEAD at Opus xhigh', T, async () => {
+  const c = clean();
+  // page-id's plan-check escalates on its own seat; the escalation seat's call (summit) is parked at the barrier.
+  const p = await preparePrevious([...c.slug, ESCALATE], [midPlanCheck]);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await midCall(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const held = journalOf(p).view.unit(unitId('page-id'));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['plan-check', 'held', 'interrupted']);
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [{ ...ESCALATE, answer: { ...(ESCALATE.answer as object), visionConflict: [] } } as M1Step, c.pageId.planCheck, c.pageId.build, c.pageId.gate]);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  // The interrupted plan-check starts over on HEAD: its own seat (frontier, Opus medium) escalates, then the summit seat.
+  const [own, summit] = f.calls.slice(SMOKE_CALLS).filter((call) => call.as === 'claude');
+  const flags = (argv: readonly string[]): readonly string[] => [argv[argv.indexOf('--model') + 1]!, argv[argv.indexOf('--effort') + 1]!];
+  assert.deepEqual(flags(own!.argv), ['claude-opus-5-5', 'medium']);
+  assert.deepEqual(flags(summit!.argv), ['claude-opus-5-5', 'xhigh'], 'the escalation seat runs Opus xhigh, never the dev.6 summit model');
+});
+
+test('upgrade.dev6-fingerprint-open-ff: dev.6 approved page-id and crashed with its ff open; HEAD\'s recovery compares the dev.6 fingerprint byte for byte and publishes, with no new judgment', T, async () => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], []);
+  await crashPrevious(p, { label: 'ff.act-start', occurrence: 1, unit: 'page-id' });
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  const open = mid.opsOf('integration.ff').filter((i) => mid.doneOf(i.op) === null);
+  assert.equal(open.length, 1, 'page-id\'s ff intent is open');
+  const approval = mid.unit(unitId('page-id')).approval;
+  assert.ok(approval !== null, 'dev.6 recorded page-id\'s approval');
+  assert.equal('corpus' in approval.fingerprint, false, 'a dev.6 fingerprint has no corpus pin');
+
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, []);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  assert.equal(f.calls.length, SMOKE_CALLS, 'no judgment, no build: the smoke only');
+  assert.deepEqual(factsOf(f.after, 'judgment-inputs'), []);
+  assert.deepEqual(outcomesOf(f.after, 'page-id'), ['ff:published', 'snapshot:published'], 'the recovered ff published, then the snapshot');
+  const done = f.view.doneOf(open[0]!.op);
+  assert.ok(done !== null && done.kind === 'integration.ff');
+  assert.equal(canonicalJson(f.view.unit(unitId('page-id')).approval?.fingerprint), canonicalJson(approval.fingerprint), 'the approval is read as dev.6 wrote it');
+});
+
+test('upgrade.dev6-checkpoint-open: dev.6 crashed after a checkpoint\'s call; HEAD consumes the recorded call without issues, corpusAmendments or issueIntake, makes no new call, and completes', T, async () => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], previousJudgments(), holisticFromStart);
+  await crashPrevious(p, { label: 'checkpoint.after-call', occurrence: 1 });
+  const mid = journalOf(p).view.holistic();
+  const open = mid.checkpoints.filter((k) => k.decided === null);
+  assert.equal(open.length, 1, 'the checkpoint is open: inputs recorded, no decision');
+  assert.equal('issues' in open[0]!.inputs, false, 'a dev.6 checkpoint-inputs has no issues');
+
+  const scope = scopeOf(p);
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, headSmoke(), async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.deepEqual(r.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  assert.deepEqual(r.calls.map((call) => call.unit), ['smoke', 'smoke'], 'HEAD made no judgment call: the recorded one was consumed');
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [[open[0]!.inputs.job, { kind: 'no-op' }]]);
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+});
+
+test('upgrade.dev6-config-without-chain: an adopted arc whose repo config names no chain K finishes on HEAD with no chain row applied, and its chain is itself alone', T, async () => {
+  const { p, head } = await stoppedMidBuild(clean());
+  const config = JSON.parse(readFileSync(join(p.l.repo, '.roadmap', 'config.json'), 'utf8')) as object;
+  assert.equal('chain' in config, false, 'the dev.6 fixture\'s repo config names no chain K');
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, head);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  assert.equal(f.report.status.chain, null, 'status shows no chain outside a corpus arc');
+  const out = await headCli(p, ['chain', 'status', '--repo', p.l.repo]);
+  assert.equal(out.code, 0, out.stderr);
+  const chain = JSON.parse(out.stdout) as { arcs: { arc: string; previousArc: string | null }[]; k: number | null; unackedStarts: string[] };
+  assert.deepEqual([chain.k, chain.arcs.map((a) => [a.arc, a.previousArc])], [null, [[p.l.arc, null]]]);
+});
+
+test('upgrade.dev6-target-kind-fixed: an apply cannot switch an adopted architecture-doc arc to a corpus one (target-kind-changed)', T, async () => {
+  const { p, head } = await stoppedMidBuild(clean());
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, head);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  // The architect moves the plan files onto a corpus target (pin, Phase-0 record, anchored obligations, a fake forge's gh).
+  const binDir = join(p.dir, 'bin-gh');
+  mkdirSync(binDir, { recursive: true });
+  corpusTarget({ arc: p.l.arc, repo: p.l.repo, planPath: p.l.plan, runDir: p.l.runDir, hostDir: p.host, binDir, scenarioPath: '', scenarioDir: '' }, { obligations: obligations() as Record<string, unknown>, advances: ['V-1'] });
+  const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
+  const out = JSON.parse(dry.stdout) as { kind: string; reasons?: string[] };
+  assert.equal(out.kind, 'rejected', dry.stdout);
+  assert.ok(out.reasons?.some((reason) => reason.startsWith('target-kind-changed')), dry.stdout);
 });
