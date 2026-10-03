@@ -138,6 +138,9 @@ function ruleC2(r: ExecRun): string {
   return path;
 }
 
+/** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
+const gateNote = (what: string) => ({ severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null }) as const;
+
 export type HolisticConcurrent = Readonly<{ peer: HolisticPeer; laid: Laid }>;
 
 /** Lays out the `peer` scenario for test `t`: the arc, its keyed steps (after the unkeyed startup smoke) and the watcher's hooks. */
@@ -152,8 +155,8 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     appendSteps(r, [
       ...SMOKE_DEFAULT,
       packReviewStep('review-1'),
-      ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve' })]),
-      ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve' })]),
+      ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve', findings: [gateNote('mul')] })]),
+      ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve', findings: [gateNote('two')] })]),
       lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
       lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP),
       lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NOOP),

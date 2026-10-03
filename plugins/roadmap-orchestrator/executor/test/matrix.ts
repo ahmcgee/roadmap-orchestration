@@ -111,6 +111,7 @@ export const CONCURRENT_AUDIT = 'concurrent job: an audit job stepping (audit-1:
 export const CONCURRENT_BUNDLE = 'concurrent job: a checkpoint job activating a bundle (ckpt-1: its call, its revision, divergence), units u1 and u2 in live build runners';
 export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batch-1: its slot, chained candidate, lanes, batch ff, snapshot), unit u3 in a live build runner';
 export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
+export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the audit and checkpoint jobs step';
 export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs, audit-started, checkpoint-inputs never inside an open revision.commit)';
 export const NOOP_DIVERGENCE = 'no-op divergences (M3 H12: bundle-decided{no-op}, then its interpretation divergences keyed (job, i))';
 export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
@@ -175,7 +176,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
-    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided',
+    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided', 'debt.after-approval',
   ],
   B5: ['spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact'],
 };
@@ -184,7 +185,7 @@ const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) is absent after the restart, a torn line discarded once: the job resumes and writes it once (a capture from the same inputs), the arc ends as uncrashed',
   B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments and issue outcomes once each); one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments and issue outcomes once each; a gate note banked once after its approval); one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); the arc ends as uncrashed',
 };
 
@@ -1084,6 +1085,23 @@ export const MATRIX: readonly Row[] = [
       B4: 'the candidate made (abandoned, run again), or the batch ff moved integration with no done (reconciled published, finishBatch writes the snapshot and releases); both members retired by the one ff',
       B5: 'nothing open: the batch goes on from its records',
     }, 'peer u3: its build open at the crash, adopted (or re-adapted once it exited) and consumed once; it merges after the batch; F-1 resolved once', 'no batch label falls on this boundary'),
+  },
+  {
+    // The jobs scenario's units approve with a note each (the corpus arc banks it as `debt-banked`, src/pipeline/gate.ts
+    // `bankGateNotes`); a crash at each unit's `debt.after-approval` while the other unit and the stepping jobs go on.
+    row: CONCURRENT_DEBT,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the banked facts are written from the gate call\'s recorded result' },
+      B3: { status: 'excluded', why: 'there is no act between the approval and the banking beyond the fact appends B4 crashes between' },
+      B4: {
+        status: 'crash',
+        labels: ['debt.after-approval'],
+        recovery: 'the approval written, no debt-banked: the restart consumes the recorded gate call (never asked again), keeps the approval and banks the note once, whatever the peer unit and the jobs were doing; one approval and one debt-banked per unit, the holistic records as uncrashed',
+      },
+      B5: { status: 'excluded', why: 'a banked fact is durable and keyed by its source: a re-read of the answer mints nothing again (mintDebt)' },
+    },
   },
   {
     row: CONCURRENT_PREEMPT,

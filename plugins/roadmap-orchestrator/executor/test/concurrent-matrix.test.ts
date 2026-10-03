@@ -67,7 +67,7 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import {
   type Boundary, CONCURRENT_AUDIT, CONCURRENT_BUILD, CONCURRENT_BUNDLE, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PREEMPT,
-  CONCURRENT_BATCH, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
+  CONCURRENT_BATCH, CONCURRENT_DEBT, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
 } from './matrix.ts';
 import {
   type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryTrace,
@@ -573,7 +573,16 @@ test('concurrent crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000
       run: (x) => jobCell(x, ref, row, c),
     }));
   });
-  const cells = [...refs.flatMap(cellsOf), ...named, ...jobCellSpecs];
+  // The debt row: a crash at each of the jobs scenario's two gate approvals' banking (one note each).
+  const debtRef = jobs.get('jobs')!;
+  const reached = debtRef.recordText.split('\n').filter((l) => l.split(' ')[2] === 'debt.after-approval').length;
+  assert.equal(reached, 2, 'jobs: each unit\'s approval reaches debt.after-approval once');
+  assert.deepEqual(crashCells(CONCURRENT_DEBT).map((c) => c.label), ['debt.after-approval']);
+  const debtCells = [1, 2].map((occurrence): CellSpec => ({
+    name: `debt B4 debt.after-approval#${occurrence}`,
+    run: (x) => debtCell(x, debtRef, occurrence),
+  }));
+  const cells = [...refs.flatMap(cellsOf), ...named, ...jobCellSpecs, ...debtCells];
   await Promise.all(cells.map((c) => t.test(c.name, CELL, c.run)));
   t.diagnostic(`${cells.length} cells in ${Math.round((Date.now() - started) / 1000)} s: ${refs.map((r) => `${r.peer} ${cellsOf(r).length}`).join(', ')}, jobs ${jobCellSpecs.length}`);
 });
@@ -774,6 +783,41 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
     assert.ok(builds[0]!.seq < crashSeq, `${u}'s build is the one live at the crash`);
   }
   const trace: Trace = { recoveredBy: [...new Set([...label.recoveredBy, ...PEER_RECOVERY])], required: true, tailDiscarded: label.tailDiscarded };
+  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[ref.peer], trace });
+  assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
+  assert.deepEqual(holisticRecords(end), holisticRecords(ref.snap), 'the holistic layer\'s records as uncrashed');
+  assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
+}
+
+/**
+ * The debt row's cell: the jobs scenario (a corpus arc; u1 and u2 each approve with a note, the audit and checkpoint
+ * jobs stepping around them) crashed at the `occurrence`th debt.after-approval. At the crash the approval is durable
+ * and its note not yet banked; at the end each unit's note is banked once, from the recorded gate call.
+ */
+async function debtCell(t: Owner, ref: JobReference, occurrence: number): Promise<void> {
+  const hc = layoutHolisticConcurrent(t, ref.peer);
+  const { r } = hc.laid;
+  const trigger = writeTrigger(tmpDir('cm-trigger'), { label: 'debt.after-approval', occurrence });
+  let atCrash: LogSnapshot | null = null;
+  await supervisedRun(hc.laid, { trigger, keyed: true, whileDown: (x) => void (atCrash = journalOf(x)) });
+  assertFired(trigger);
+  if (atCrash === null) throw new Error('the crash was not observed while the executor was down');
+  const kinds = (snap: LogSnapshot, kind: string): number => snap.events.filter((e) => e.type === 'fact' && e.fact.kind === kind).length;
+  const crash = atCrash as LogSnapshot;
+  assert.ok(kinds(crash, 'approval') >= occurrence, 'the approval is durable at the crash');
+  assert.equal(kinds(crash, 'debt-banked'), occurrence - 1, 'the crashed unit\'s note is not yet banked');
+  assert.equal(stateOf(r).crashes.length, 1, 'one executor crash, which the supervisor restarted');
+  assert.deepEqual(finalReason(r), ref.reason);
+  const m = callsMatchSteps(r);
+  assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: the gate is never asked again');
+  const end = journalOf(r);
+  const banked = end.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'debt-banked' ? [JSON.stringify(e.fact.source)] : []));
+  assert.equal(banked.length, 2, 'one debt-banked per unit\'s note');
+  assert.equal(new Set(banked).size, 2, `each from its own source: ${banked.join(' ')}`);
+  for (const u of jobUnits(ref.peer)) assertWorkloadsDisjoint(r, end, u);
+  const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
+  const units = Object.fromEntries(jobUnits(ref.peer).map((u) => [u, 'merged' as const]));
+  const trace: Trace = { recoveredBy: ['reconciled', 'redone', 'adopted'], required: false, tailDiscarded: false };
   assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[ref.peer], trace });
   assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
   assert.deepEqual(holisticRecords(end), holisticRecords(ref.snap), 'the holistic layer\'s records as uncrashed');

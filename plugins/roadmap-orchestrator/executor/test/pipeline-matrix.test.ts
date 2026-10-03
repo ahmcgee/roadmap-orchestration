@@ -339,7 +339,7 @@ test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60
   assert.deepEqual(holisticRecords(holistic.snap), {
     counts: {
       'obligation-latched': 1, 'audit-started': 2, 'audit-ended': 2, 'checkpoint-inputs': 2, 'plan-applied': 2, divergence: 2, 'divergence-digest': 1,
-      'bundle-decided': 1, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1,
+      'bundle-decided': 1, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1,
     },
     audits: ['audit-1', 'audit-2'], ended: [['audit-1', 'completed'], ['audit-2', 'completed']], checkpoints: ['ckpt-1', 'ckpt-2'],
     divergences: [['D-1', 'ckpt-1'], ['D-2', 'ckpt-2']], terminal: 1, completion: true,

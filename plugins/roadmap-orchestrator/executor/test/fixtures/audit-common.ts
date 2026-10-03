@@ -1,3 +1,4 @@
+// adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the audit tests (test/audit.test.ts) and their crash child (audit-child.ts): a holistic arc (brake-common's
 // vision and fake witness lanes) whose plan sets `holistic.audit` (the cadence N, the required lens set L), the audit
 // context over the run's one arbiter, the scenario steps that take a unit to its merge, and log readers.
