@@ -180,7 +180,8 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   there.
 - `items[{arc, id}]`: the open non-blocking `divergence-digest` and `convergence-bound` items an ack acknowledges.
 - `chain{position, k, unackedStarts}`.
-- `arcs[]`, per chained arc: `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
+- `arcs[]`, per chained arc: `slice{advances, why}` (the arc's Phase-0 slice in force, null without a record; you pick it,
+  the owner sees it here afterwards), `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
   `debt{banked, dispositioned}`, `intake` (`job` null for Phase 0), `questions`, `amendments`, `packReviewNotes`,
   `census{held, obligationRules, outOfSlice, untestable, prodOnly}` (`% held` = held / obligationRules), `timings`
   (the attempts completed since the last ack), `pr` (`pr{number, url, state, base, needsRebase}`, `none` or

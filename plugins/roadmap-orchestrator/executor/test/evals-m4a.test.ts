@@ -286,8 +286,8 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
 
   test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries the amendments, intake, debt and P-1', () => {
     const l = layout(story.dir);
-    // The driver scrambled the live `.roadmap/` and corpus files (K20); the brief reads the committed config.
-    spawnSync('git', ['-C', l.product, 'checkout', '--', '.'], { encoding: 'utf8' });
+    // check.ts restored the scrambled live files (K20) after its from-ref check; the brief reads the committed config.
+    assert.equal(spawnSync('git', ['-C', l.product, 'status', '--porcelain', '--', ...story.report.scrambled], { encoding: 'utf8' }).stdout.trim(), '', 'check.ts restored every scrambled path');
     const env = { ...ENV, PATH: `${l.forgeBin}:${ENV['PATH'] ?? ''}` };
     const r = spawnSync(process.execPath, [join(EVALS, 'stage-cli.ts'), ...STAGE_ARGS(story.dir, fakeHostDir(story.dir)), 'brief', '--repo', l.product, '--json'], { env, encoding: 'utf8', timeout: 120_000 });
     assert.equal(r.status, 0, r.stderr);

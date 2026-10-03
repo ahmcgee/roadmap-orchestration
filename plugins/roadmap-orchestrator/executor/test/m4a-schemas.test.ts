@@ -455,7 +455,7 @@ describe('startup rows, brief and ack', () => {
     const payload = {
       schema: 'roadmap/brief-m4', coverage, items, chain: { position: 2, k: 1, unackedStarts: ['arc-2'] },
       arcs: [{
-        arc: 'arc-2', divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], digests: [{ needsUser: 'nu-12', ids: ['D-1'] }], decisions: ['d'],
+        arc: 'arc-2', slice: { advances: ['V-1', 'V-2'], why: 'first slice' }, divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], digests: [{ needsUser: 'nu-12', ids: ['D-1'] }], decisions: ['d'],
         curation: phase0.curation, corpusDivergences: phase0.corpusDivergences,
         debt: { banked: [{ id: 'B-3', what: 'tidy x' }], dispositioned: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }] },
         intake: [

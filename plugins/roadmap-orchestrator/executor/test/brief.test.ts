@@ -175,6 +175,8 @@ describe('roadmap brief', () => {
     assert.deepEqual(p.chain, { position: 2, k: 1, unackedStarts: ['arc-2'] });
     assert.deepEqual(p.arcs.map((x) => x.arc), ['arc-1', 'arc-2']);
     const one = arcOf(p, 'arc-1');
+    assert.deepEqual(one.slice, { advances: ['V-1'], why: 'the first slice' }, 'the Phase-0 slice in force (Q19)');
+    assert.deepEqual(arcOf(p, 'arc-2').slice, { advances: ['V-1'], why: 'the first slice' });
     assert.deepEqual(one.divergences, [{ id: 'D-1', type: 'interpretation', what: 'trust means tested' }]);
     assert.deepEqual(one.digests, [{ needsUser: items.arc1Digest, ids: ['D-1'] }]);
     assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (ckpt-1)']);
@@ -264,7 +266,7 @@ describe('roadmap brief', () => {
     const b = await payloadOf(a2);
     assert.equal(renderBrief(b.id, parseBriefPayload(JSON.parse(canonicalJson(b.payload)))), b.markdown);
     for (const text of [
-      `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2',
+      `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2', 'slice: advances V-1: the first slice',
       'D-1 interpretation: a berth is a slot', '#### Questions (working assumptions)', '#1 P-1 open: Is the cancellation window 24 h or 48 h? — assuming: 48 h',
       'arc-1/M-1 (T-2): Name the tide window in every booking.', 'B-1: Tidy the berth helpers.', 'review-1#0: the cut line is vague',
       'census: 0% held (0/1 obligation rules held; 1 out of slice, 1 untestable, 0 prod-only)', `arc-2/${items.digest}`,

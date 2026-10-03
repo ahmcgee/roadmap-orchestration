@@ -273,6 +273,8 @@ export type StageTiming = Readonly<{ stage: OutcomeStage; count: number; p50Ms: 
 /** Everything a brief renders of one chained arc since the coverage it starts from. */
 export type BriefArc = Readonly<{
   arc: ArcId;
+  /** The arc's Phase-0 slice in force at its ref (not a delta; Q19: the root agent picks it, the owner sees it here); null without a Phase-0 record. */
+  slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }> | null;
   divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
   digests: readonly Readonly<{ needsUser: NeedsUserId; ids: readonly DivergenceId[] }>[];
   decisions: readonly string[];
@@ -319,6 +321,7 @@ const briefIntake: Read<BriefArc['intake'][number]> = object((f) => {
 });
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
+  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', sortedBy(vidR, (c) => c, { nonEmpty: true })), why: g.get('why', str) })))),
   divergences: f.get('divergences', arrayOf(object((g) => ({ id: g.get('id', divR), type: g.get('type', oneOf(DIVERGENCE_KINDS)), what: g.get('what', str) })))),
   digests: f.get('digests', arrayOf(object((g) => ({ needsUser: g.get('needsUser', (v, p) => needsUserId(v, p)), ids: g.get('ids', arrayOf(divR, { nonEmpty: true })) })))),
   decisions: f.get('decisions', arrayOf(str)),

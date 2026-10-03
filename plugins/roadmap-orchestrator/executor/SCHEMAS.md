@@ -2232,7 +2232,7 @@ corpus, A3 issues and pr, C1 phase0, C4 brief and chain); C4 deleted `src/core/n
 **Brief ack log** (K9, K10, H6; `src/phase0/types.ts`): `$(git-common-dir)/roadmap/acks/<briefId>.pending.json`, committed
 by rename to `<briefId>.json`: `{briefId, at, chainHead, coverage: [{arc, snapshotCommit, highWater}] (ascending by
 arc), items: [{arc, id: NeedsUserId}] (ascending, unique)}`. **Brief payload** (`roadmap/brief-m4`, H16): `{schema,
-coverage, items, chain: {position, k|null, unackedStarts}, arcs: [{arc, divergences [{id, type, what}], digests
+coverage, items, chain: {position, k|null, unackedStarts}, arcs: [{arc, slice: {advances: V-n[], why}|null, divergences [{id, type, what}], digests
 [{needsUser, ids}], decisions, curation, corpusDivergences, debt: {banked [{id, what}], dispositioned [{id,
 disposition}]}, intake [{issue, job: null (Phase 0) | ckpt-n, outcome}], questions [{id, rank, text, assumption,
 state}], amendments [{id: <arc>/M-n, rules, proposal}], packReviewNotes [{job: review-n, index, claim}] (C4), census: {held, obligationRules, outOfSlice, untestable,
@@ -2383,7 +2383,8 @@ src/commands/{brief,chain,queue}.ts):
 2. **Since** (H6): the last committed ack is the one with the latest `at` (ties by brief id); an arc's delta is its ref's
    events after the vector's `highWater` for it, from seq 0 when the vector omits it. The new vector is each chained
    arc's ref commit and manifest high-water.
-3. **Per arc** (`BriefArc`): divergences, digests, decisions (`status`'s `decisionsAfter` read from the ref: a `reverse`
+3. **Per arc** (`BriefArc`): the Phase-0 `slice` `{advances, why}` (Q19: the root agent picks each arc's slice and the owner
+   sees it afterwards here; the record in force at the ref, not a delta, null without a Phase-0 record), divergences, digests, decisions (`status`'s `decisionsAfter` read from the ref: a `reverse`
    shows by its changes only), banked debt, the checkpoints' intake, amendments (`<arc>/M-n`) and pack-review notes come
    from the delta's facts; the Phase-0 record (curation, corpus divergences, questions, debt dispositions, Phase-0 intake)
    when a revision in the delta changed it; `timings` over the attempts whose outcome is in the delta (an attempt runs

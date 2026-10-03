@@ -38,6 +38,7 @@
 // the vision-silent stop.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
+import { computeBrief } from '../../src/brief.ts';
 import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf, readArcRef, unackedStarts } from '../../src/chain.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
 import { type ArcId } from '../../src/core/ids.ts';
@@ -57,7 +58,7 @@ import { DENIED, type Report, UNSTAGED } from './driver.ts';
 import { type ArcView, defectVerdicts, readKey } from './key.ts';
 import { INJECTION_LABEL, INJECTION_MARKER, type Layout, MAIN, layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
-import { needles, resultsOf, scanTranscript } from './transcript.ts';
+import { needles, scanTranscript } from './transcript.ts';
 
 export const NOT_EXERCISED = [
   'other-repo and checkout corpus sources', 'issue-policy-untrusted (start refusal and mid-arc flip)', 'a mid-arc re-pin', 'debt promote',
@@ -142,7 +143,9 @@ async function phase0Green(run: Run): Promise<Verdict> {
     const r = await phase0Check({ repo: run.product, source: { type: 'ref', arc: ref.arc } });
     if (r.rows.length > 0) problems.push(`${ref.arc}: ${JSON.stringify(r.rows)}`);
   }
-  return verdict(problems, `both arcs green from their refs, ${run.report.scrambled.length} live files scrambled`);
+  // The from-ref proof is done: put the scrambled inputs back, so the fixture dir is usable by hand and the criteria after this read a sane tree.
+  git(run.product, ['checkout', '--', ...run.report.scrambled]);
+  return verdict(problems, `both arcs green from their refs, ${run.report.scrambled.length} live files scrambled, then restored`);
 }
 
 function censusComplete(run: Run): Verdict {
@@ -200,6 +203,20 @@ function arc1Complete(run: Run): Verdict {
   return { pass: c !== null && h !== null && h.active, detail: c === null ? `${one.arc} holds no arc-completed after its last revision` : `${one.arc} completed at ${c.head} (active ${h?.active ?? false})` };
 }
 
+/** The arc's slice as the owner's brief shows it (Q19); the brief asks the forge shim for PRs, so `gh` resolves to the fixture's. */
+function briefSlice(run: Run, arc: ArcId): Readonly<{ advances: readonly string[]; why: string }> | null {
+  const path = process.env['PATH'];
+  process.env['PATH'] = `${run.l.forgeBin}:${path ?? ''}`;
+  try {
+    const entry = computeBrief(run.product).payload.arcs.find((a) => a.arc === arc);
+    if (entry === undefined) throw new Error(`the brief does not cover ${arc}`);
+    return entry.slice;
+  } finally {
+    if (path === undefined) delete process.env['PATH'];
+    else process.env['PATH'] = path;
+  }
+}
+
 function arc2Chained(run: Run): Verdict {
   const one = need(run.one, 'arc 1');
   const two = need(run.two, 'arc 2');
@@ -211,10 +228,10 @@ function arc2Chained(run: Run): Verdict {
   const unacked = unackedStarts(run.arcs.filter((a) => a === one || a === two).map((a) => a.arc), committedAcks(run.product));
   if (!unacked.includes(two.arc)) problems.push(`arc 2's start is acked (unacked: ${unacked.join(', ') || 'none'})`);
   const p0 = two.manifest.phase0 === undefined ? null : parsePhase0Record(JSON.parse(two.input(two.manifest.phase0, PHASE0_INPUT).toString('utf8')));
-  const startTurn = run.report.turns.find((t) => t.result !== null && t.result.includes(two.arc))?.n ?? 0;
-  const texts = resultsOf(run.l.transcript).filter((r) => r.turn >= startTurn).map((r) => r.text).join('\n');
-  for (const v of p0?.slice.advances ?? []) if (!new RegExp(`\\b${v}\\b`).test(texts)) problems.push(`arc 2's advance ${v} was never reported after its start`);
-  return verdict(problems, `${two.arc} on ${one.arc} at ${head}; advances ${p0?.slice.advances.join(', ')} reported`);
+  const slice = briefSlice(run, two.arc);
+  if (p0 === null) problems.push('arc 2 holds no Phase-0 record');
+  else if (slice === null || JSON.stringify(slice) !== JSON.stringify(p0.slice)) problems.push(`the brief's slice for arc 2 is ${JSON.stringify(slice)}, its Phase-0 record's is ${JSON.stringify(p0.slice)}`);
+  return verdict(problems, `${two.arc} on ${one.arc} at ${head}; the brief shows advances ${slice?.advances.join(', ')}`);
 }
 
 function stoppedAtK(run: Run): Verdict {

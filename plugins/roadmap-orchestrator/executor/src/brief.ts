@@ -103,8 +103,10 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr): BriefA
     ruling: (sha) => ref.input(sha, RULING_INPUT),
     command: (): CommandBody | null => null,
   });
+  const inForce = now === undefined ? null : parsePhase0Record(JSON.parse(ref.input(now, PHASE0_INPUT).toString('utf8')));
   return {
     arc: ref.arc,
+    slice: inForce === null ? null : inForce.slice,
     divergences: facts.flatMap((f) => (f.kind === 'divergence' ? [{ id: f.id, type: f.type, what: f.what }] : [])),
     digests: facts.flatMap((f) => (f.kind === 'divergence-digest' ? [{ needsUser: f.needsUser, ids: f.ids }] : [])),
     decisions: decisions.map(decisionLine),
@@ -191,6 +193,7 @@ function arcMarkdown(a: BriefArc): string {
   const pct = c === null ? null : heldPct(c);
   return `\n### ${a.arc}\n\n${list([
     prLine(a.pr),
+    ...(a.slice === null ? [] : [`slice: advances ${a.slice.advances.join(', ')}: ${a.slice.why}`]),
     ...(c === null ? [] : [`census: ${pct === null ? 'no obligation rules' : `${pct}% held`} (${c.held}/${c.obligationRules} obligation rules held; ${c.outOfSlice} out of slice, ${c.untestable} untestable, ${c.prodOnly} prod-only)`]),
   ])}${[
     section('Divergences', a.divergences.map((d) => `${d.id} ${d.type}: ${d.what}`)),
