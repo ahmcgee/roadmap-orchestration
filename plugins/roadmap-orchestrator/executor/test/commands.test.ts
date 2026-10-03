@@ -292,7 +292,7 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
     park: { class: 'retryable', targets: [BACKEND, HOST_TARGET] },
   });
 
-  it('operator env (a park 1.0.0-dev.4 wrote at lanes-blocked, read as env): the park\'s needs-user is acknowledged and the unit re-runs its lanes (unparked)', T, async () => {
+  it('operator env (a park at lanes-blocked without its class, the interim M2 shim\'s, read as env): the park\'s needs-user is acknowledged and the unit re-runs its lanes (unparked)', T, async () => {
     const run = newCmdRun();
     const { ctx, journal } = openCommandRun(run);
     journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park', chargeable: false });
@@ -365,8 +365,9 @@ describe('resume --backend', () => {
     ]);
     const run = newCmdRun(s.binDir);
     const { ctx, journal } = openCommandRun(run);
-    journal.fact({ kind: 'backend-park', backend: 'claude', class: 'usage-limit', inv: invocationId(opId(ctx.journal.view.arc, 1), 1) });
-    holdUnit(journal);
+    const parkSeq = journal.fact({ kind: 'backend-park', backend: 'claude', class: 'usage-limit', inv: invocationId(opId(ctx.journal.view.arc, 1), 1) });
+    // The hold that park caused (G5): `resume --backend` releases it.
+    journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'build', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'backend', backend: 'claude', parkSeq } });
     assert.deepEqual(journal.view.parkedBackends(), ['claude']);
 
     const failed = submit(ctx, { type: 'resume', target: { type: 'backend', backend: 'claude' } });

@@ -21,7 +21,8 @@ import {
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const SPEC_1 = { rev: specRev(1), sha256: sha256('1'.repeat(64)) };
+/** The unit's spec in force at rev 1: the kept spec its first start recorded. */
+const spec1 = (run: StageRun) => ({ rev: specRev(1), sha256: run.journal.view.planApplied()!.specs[U1]! });
 
 /** The run's context under the default profile with `plan` as the plan's routing layer. */
 const rerouted = (run: StageRun, plan: unknown): StageContext => {
@@ -32,7 +33,7 @@ const dispatches = (run: StageRun): readonly DispatchRecord[] => facts(run).flat
 
 test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRev and the implementer seat', () => {
   const run = setupUnit({ steps: [], risk: 'low' });
-  const first = seated(pinDispatch(run.ctx, run.unit, SPEC_1));
+  const first = seated(pinDispatch(run.ctx, run.unit, spec1(run)));
   assert.deepEqual(first.scope, ['src/**', 'test/**']);
   assert.equal(first.riskFloor, 'low');
   assert.equal(first.routingRev, run.ctx.routing(null).rev);
@@ -61,7 +62,7 @@ test('dispatch.risk-raise: a plan-check that raises the risk records a new dispa
 
 test('dispatch.repin-before-build: a routing change before any build re-pins the unit, whatever it moves', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' })] });
-  seated(pinDispatch(run.ctx, run.unit, SPEC_1));
+  seated(pinDispatch(run.ctx, run.unit, spec1(run)));
   const changed = rerouted(run, { build: { med: 'frontier' }, planCheck: { med: 'summit' } });
   const done = started(await planCheck(changed, run.unit));
   assert.equal(done.outcome.kind, 'approve');

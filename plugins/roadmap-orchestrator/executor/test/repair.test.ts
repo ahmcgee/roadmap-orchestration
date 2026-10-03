@@ -390,7 +390,7 @@ describe('plan-check and the findings store', () => {
 
   test('plancheck.reads-captured-spec: an evidence-only edit landing between the capture and the @cpu grant keeps the captured rev; the redirect is read against it and patches the spec in force at that rev', T, async () => {
     const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const d = setupArc({ dag: true, steps: [planCheckStep({ decision: 'redirect', patch })] });
+    const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
     const r = contextFor(d);
     try {
       let open = (): void => {};

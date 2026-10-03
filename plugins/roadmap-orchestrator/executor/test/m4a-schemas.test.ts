@@ -37,6 +37,7 @@ import { parseRepoConfig } from '../src/routing/layers.ts';
 import { ARC_ROLES, ROLES } from '../src/routing/types.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import { tmpDir } from './helpers/repo.ts';
+import { appliedFields } from './fixtures/log-records.ts';
 
 const ARC = arcId('arc-2');
 const A = sha('a'.repeat(40));
@@ -357,7 +358,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   it('PlanChange arms corpus and phase0 round-trip in plan-applied', () => {
     roundTrip(fact({
       kind: 'plan-applied', rev: 2, command: CMD, planSha256: H, specs: { u1: H },
-      changes: [{ type: 'corpus', pinSha256: H, guideSha256: H2 }, { type: 'phase0', sha256: H2, issuesSha256: H }], source: { type: 'command', command: CMD },
+      changes: [{ type: 'corpus', pinSha256: H, guideSha256: H2 }, { type: 'phase0', sha256: H2, issuesSha256: H }], ...appliedFields(2, CMD),
     }));
   });
 

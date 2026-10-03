@@ -86,7 +86,7 @@ test('evals-m2.setup-valid: setup lays out a plan parsePlan accepts, specs the v
     assert.equal(spec.unit, id);
     assert.ok(spec.lanes.some((x) => x.resources.includes(resourceName(POOL))), `${id} has an estate lane`);
   }
-  assert.deepEqual(overCapacity(plan, { cpu: CPU_CAPACITY }, specs, null), [], 'no request is over the @cpu capacity');
+  assert.deepEqual(overCapacity(plan, { cpu: CPU_CAPACITY }, specs), [], 'no request is over the @cpu capacity');
   assert.equal(git(l.repo, 'rev-parse', INTEGRATION), git(l.repo, 'rev-parse', MAIN));
   assert.equal(plan.baseline, git(l.repo, 'rev-parse', MAIN));
   const suite = await runUntilExit('npm', ['test'], { env: process.env, cwd: l.repo, timeoutMs: 60_000 });

@@ -17,7 +17,7 @@ import {
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { ARC, AT, H, U1, chain } from './fixtures/log-records.ts';
+import { ARC, AT, H, U1, appliedFields, chain } from './fixtures/log-records.ts';
 import { tmpDir } from './helpers/repo.ts';
 
 const I1 = obligationId('I-1');
@@ -110,7 +110,7 @@ describe('opening and dedupe', () => {
 const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const plan = (rev: number): LogRecord => fact({
   kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : commandId('cmd-0123456789abcdef'), planSha256: H, specs: { u1: H, u2: H }, changes: [],
-  ...(rev === 1 ? { scheduling: 'dag' } : {}), visionSha256: V,
+  ...appliedFields(rev, rev === 1 ? null : 'cmd-0123456789abcdef'), visionSha256: V,
 });
 const opened = (n: number, over: object = {}): LogRecord => fact({
   kind: 'finding-opened', id: `F-${n}`, key: sha256(String(n).repeat(64)), lens: 'invariants', severity: 'P1', obligation: 'I-1', visionClauses: [], claim: 'c',

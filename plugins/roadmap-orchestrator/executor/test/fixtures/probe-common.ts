@@ -3,6 +3,7 @@
 // routing, an injected host sample), a recovery context, and builders for the facts that park units.
 import { join } from 'node:path';
 import type { Fact, ProbeTarget, StageOutcomeFact } from '../../src/core/events.ts';
+import { appliedFields } from './log-records.ts';
 import { type InvocationId, type UnitId, planRev, routingRev, seatRev, sha256, specRev } from '../../src/core/ids.ts';
 import type { Journal } from '../../src/core/interfaces.ts';
 import type { OpenJournal } from '../../src/core/log.ts';
@@ -61,14 +62,14 @@ const H = sha256('d'.repeat(64));
 /** Revision 1 of a DAG arc naming `units`, then a dispatch of each: what parks need to exist. */
 export function seedArc(journal: Journal, units: readonly UnitId[]): void {
   journal.fact({
-    kind: 'plan-applied', rev: planRev(1), command: null, planSha256: H, specs: Object.fromEntries(units.map((u) => [u, H])), changes: [], scheduling: 'dag',
+    kind: 'plan-applied', rev: planRev(1), command: null, planSha256: H, specs: Object.fromEntries(units.map((u) => [u, H])), changes: [], ...appliedFields(1, null),
   } as Fact);
   for (const unit of units) {
     journal.fact({
       kind: 'dispatch',
       record: {
         unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: routingRev('0123456789abcdef'),
-        implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()),
+        implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
       },
     });
   }

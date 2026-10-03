@@ -250,11 +250,15 @@ describe('M3 event records', () => {
     routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: { build: { low: 'frontier' } }, unitLayers: { u1: { gate: { med: 'summit' } } } },
   };
 
-  it('plan-applied: the M3 fields round-trip; a dev.5 fact without them is read as written', () => {
+  it('plan-applied: the M3 fields round-trip; source, payload, ledger and routing provenance are required', () => {
     roundTrip(fact(planApplied));
-    const { source: _s, payloadSha256: _p, rulingsSha256: _r, obligationsSha256: _o, visionSha256: _v, publication: _pub, routingProvenance: _rp, ...dev5 } = planApplied;
-    const back = roundTrip(fact({ ...dev5, changes: [{ type: 'routing', routingRev: REV }] }));
-    assert.ok(back.type === 'fact' && back.fact.kind === 'plan-applied' && back.fact.source === undefined);
+    for (const key of ['source', 'payloadSha256', 'rulingsSha256', 'routingProvenance'] as const) {
+      const { [key]: _, ...without } = planApplied;
+      refusesFact(without, new RegExp(`${key}$`));
+    }
+    refusesFact({ ...planApplied, scheduling: 'dag' }, /scheduling$/);
+    refusesFact({ ...planApplied, rev: 1 }, /scheduling$/);
+    roundTrip(fact({ ...planApplied, rev: 1, scheduling: 'dag' }));
     refusesFact({ ...planApplied, source: { type: 'start' } }, /source/);
     refusesFact({ ...planApplied, source: { type: 'bundle', job: 'audit-1' } }, /source/);
     refusesFact({ ...planApplied, command: null, source: { type: 'command', command: CMD } }, /source/);
@@ -325,10 +329,10 @@ describe('M3 event records', () => {
     for (const out of ['preempted', 'finding-blocked']) roundTrip(fact({ kind: 'stage-outcome', unit: U1, stage: 'candidate', attempt: 4, outcome: out, class: 'advance', chargeable: false }));
   });
 
-  it('judgment-inputs: a gate\'s carry its captured fingerprint at its head (Checkpoint A); a dev.5 one has none; a plan-check\'s never', () => {
+  it('judgment-inputs: a gate\'s carry its captured fingerprint at its head (Checkpoint A); a plan-check\'s never', () => {
     const gate = { kind: 'judgment-inputs', unit: U1, stage: 'gate', attempt: 4, tip: A, head: B, specRev: 2, specSha256: H, planRev: 3, routingRev: REV };
     const fingerprint = { unitCommit: B, specRev: 2, contractRevs: [{ path: 'ARCHITECTURE.md', blob: A }], rulingRevs: [{ id: 'C-1', rev: 2 }] };
-    roundTrip(fact(gate));
+    refusesFact(gate, /\.fingerprint$/);
     roundTrip(fact({ ...gate, fingerprint }));
     refusesFact({ ...gate, fingerprint: { ...fingerprint, unitCommit: A } }, /fingerprint\.unitCommit$/);
     refusesFact({ ...gate, stage: 'plan-check', head: null, fingerprint }, /\.fingerprint$/);
@@ -336,7 +340,7 @@ describe('M3 event records', () => {
 });
 
 describe('M3 file records', () => {
-  it('the approval fingerprint: obligationRevs absent exactly when there are none (a dev.5 fingerprint reads as none)', () => {
+  it('the approval fingerprint: obligationRevs absent exactly when there are none', () => {
     const fp = { unitCommit: A, specRev: 2, contractRevs: [], rulingRevs: [] };
     assert.deepEqual(obligationRevsOf(approvalFingerprint(fp, 'fp')), []);
     const withRevs = { ...fp, obligationRevs: [{ id: 'I-1', rev: 1 }, { id: 'I-2', rev: 3 }] };
@@ -345,10 +349,12 @@ describe('M3 file records', () => {
     assert.throws(() => approvalFingerprint({ ...fp, obligationRevs: [{ id: 'I-2', rev: 1 }, { id: 'I-1', rev: 1 }] }, 'fp'), /obligationRevs/);
   });
 
-  it('the dispatch record: transientRules and bounds are optional and kept as written', () => {
-    const d = { unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: AT };
+  it('the dispatch record: transientRules required, bounds optional, kept as written', () => {
+    const d = { unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: AT, transientRules: 'm3' };
     assert.deepEqual(dispatchRecord(d, 'd'), d);
-    const m3 = { ...d, transientRules: 'm3', bounds: { ...DEFAULT_BOUNDS, chargeable: 4 } };
+    const { transientRules: _, ...without } = d;
+    assert.throws(() => dispatchRecord(without, 'd'), /transientRules/);
+    const m3 = { ...d, bounds: { ...DEFAULT_BOUNDS, chargeable: 4 } };
     assert.deepEqual(dispatchRecord(m3, 'd'), m3);
     assert.throws(() => dispatchRecord({ ...d, transientRules: 'dev5' }, 'd'), /transientRules/);
     assert.throws(() => dispatchRecord({ ...d, bounds: { chargeable: 4 } }, 'd'), /bounds/);
@@ -362,7 +368,7 @@ describe('M3 file records', () => {
     assert.throws(() => residueKey(base, 'k'), /unit/);
   });
 
-  it('command bodies: the M3 commands, and an apply manifest in either shape (G15)', () => {
+  it('command bodies: the M3 commands, and an apply manifest with its revision inputs (G15)', () => {
     const bodies = [
       { type: 'rule', path: '/r/rulings/C-7.json', sha256: H },
       { type: 'reverse', divergence: 'D-3' },
@@ -372,13 +378,13 @@ describe('M3 file records', () => {
       { type: 'audit', lenses: ['drift', 'vision'] },
       { type: 'audit', lenses: null },
       { type: 'close-admissions' },
-      { type: 'apply', expectRev: 3, manifest: { planSha256: H, specs: { u1: H } } },
       { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
     assert.throws(() => commandBody({ type: 'steer', unit: 'u1', brief: { path: '/r/b', sha256: H }, budgetMin: 0, class: null, resume: false }, 'b'), /budgetMin/);
     assert.throws(() => commandBody({ type: 'audit', lenses: ['vision', 'drift'] }, 'b'), /lenses/);
     assert.throws(() => commandBody({ type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
+    assert.throws(() => commandBody({ type: 'apply', expectRev: 3, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
   });
 
   it('spec: obligations and repairs, absent when none', () => {

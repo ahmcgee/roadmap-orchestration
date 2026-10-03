@@ -583,9 +583,9 @@ describe('M3 prompts: the vision and the arc roles', () => {
     for (const bad of [[{ clauses: [], note: 'n' }], [{ clauses: ['V-1', 'V-1'], note: 'n' }], [{ clauses: ['C-1'], note: 'n' }], [{ clauses: ['V-1'] }]]) {
       assert.throws(() => validatePlanCheckOutput({ ...ok, visionConflict: bad }), SchemaError, JSON.stringify(bad));
     }
-    // A plan-check answer a 1.0.0-dev.5 executor recorded has no visionConflict: read as none (upgrade in place).
-    const { visionConflict: _v, ...dev5 } = ok;
-    assert.deepEqual(validatePlanCheckOutput(dev5).visionConflict, []);
+    // visionConflict is required.
+    const { visionConflict: _v, ...without } = ok;
+    assert.throws(() => validatePlanCheckOutput(without), SchemaError);
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {

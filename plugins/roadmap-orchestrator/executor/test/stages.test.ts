@@ -26,7 +26,7 @@ import { reached } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
-  BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
+  BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, applyFilesNow, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
   planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
@@ -556,6 +556,7 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
     '# Rulings', '', 'C-1 — Arithmetic helpers live in src/ and are tested under test/.', 'C-2 — Second rule here. More text follows.',
     'C-3 — withdrawn by C-2', '',
   ].join('\n'));
+  applyFilesNow(run);
   setSteps(run, [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }),
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: [], rulings: ['C-2'] }] }, {
@@ -577,6 +578,7 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
 test('library.withdrawn-not-embedded: a cited ruling that is withdrawn is never embedded in full; its fold line is indexed', () => {
   const run = setupUnit({ steps: [] });
   writeFileSync(join(run.planDir, 'rulings.md'), 'C-1 — withdrawn by C-2\nC-2 — Helpers live in lib/. Tests too.\n');
+  applyFilesNow(run);
   const lib = library(run.ctx, loadUnitSpec(run.ctx, run.unit).spec, run.base);
   assert.deepEqual(lib.rulings, [], 'the spec cites C-1, which is withdrawn');
   assert.deepEqual(lib.index.rulings, [{ id: 'C-1', line: 'withdrawn by C-2' }, { id: 'C-2', line: 'Helpers live in lib/.' }]);

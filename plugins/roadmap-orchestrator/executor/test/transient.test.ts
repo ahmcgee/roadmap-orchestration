@@ -1,6 +1,6 @@
 // The transient check, the diff base and the prefix-collision guard (src/git/transient.ts), through
 // planCandidate on real git: the plan's merge.transient-refusal and merge.prefix-collision, M3's H15 rules
-// (transient.dev5-rules-kept, pinned-scope enforcement) and the G17 docs check.
+// (pinned-scope enforcement) and the G17 docs check.
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
@@ -19,7 +19,7 @@ before(() => {
 const worktree = (s: Scene) => absPath(join(s.root, 'candidate'));
 
 describe('transient check', () => {
-  it('merge.transient-refusal: .roadmap/state.json and evidence paths refuse the candidate; .roadmap/contracts/x.md passes', () => {
+  it('merge.transient-refusal: .roadmap/state.json and evidence paths refuse the candidate; a product path passes', () => {
     const s = scene(base, 'clean');
     const refused = [
       ['.roadmap/state.json', 'roadmap-dir'],
@@ -34,12 +34,12 @@ describe('transient check', () => {
       assert.deepEqual(decision.violations, [{ path, rule }]);
       assert.equal(git(s.repo, 'for-each-ref', 'refs/roadmap-run'), '', 'no candidate ref written');
     }
-    const ok = commitOn(s.repo, s.m0, { '.roadmap/contracts/x.md': '# contract\n', 'src/d.ts': 'export const d = 4;\n' }, 'unit with a contract\n');
+    const ok = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n' }, 'unit in its scope\n');
     assert.equal(planCandidate(s.repo, candidateRequest(worktree(s), ok)).kind, 'merge');
   });
 
-  it('refuses every transient rule and passes product and allowlisted paths', () => {
-    const rules: TransientRules = { kind: 'dev5', evidenceGlobs: [repoPattern('out/lanes'), repoPattern('**/*.lane.log')] };
+  it('refuses every transient rule and passes product paths', () => {
+    const rules: TransientRules = { evidenceGlobs: [repoPattern('out/lanes'), repoPattern('**/*.lane.log')], scope: [repoPattern('**')] };
     const paths = [
       '.roadmap/config.json', '.roadmap/constraints.md', '.roadmap/contracts/api/v1.md', '.roadmap/debt.md', '.roadmap/invariants.md',
       '.roadmap/notes.md', '.roadmap/runtime/x', '.roadmap-runtime/arc/events.jsonl', 'a/__preview/x.png', 'a/__codex/log',
@@ -48,6 +48,11 @@ describe('transient check', () => {
     ].map((p) => repoPath(p));
     assert.deepEqual(transientViolations(rules, paths), [
       { path: '.roadmap-runtime/arc/events.jsonl', rule: 'run-state' },
+      { path: '.roadmap/config.json', rule: 'roadmap-dir' },
+      { path: '.roadmap/constraints.md', rule: 'roadmap-dir' },
+      { path: '.roadmap/contracts/api/v1.md', rule: 'roadmap-dir' },
+      { path: '.roadmap/debt.md', rule: 'roadmap-dir' },
+      { path: '.roadmap/invariants.md', rule: 'roadmap-dir' },
       { path: '.roadmap/notes.md', rule: 'roadmap-dir' },
       { path: '.roadmap/runtime/x', rule: 'roadmap-dir' },
       { path: 'a/__codex/log', rule: 'run-state' },
@@ -63,26 +68,9 @@ describe('transient check', () => {
     ]);
   });
 
-  it('transient.dev5-rules-kept: a dev.5 dispatch carries an allowlisted .roadmap/ entry and out-of-scope paths; an m3 one is refused both', () => {
-    const s = scene(base, 'clean');
-    const unit = commitOn(s.repo, s.m0, { '.roadmap/constraints.md': '# constraints\n', 'lib/other.ts': 'export const o = 1;\n', 'src/d.ts': 'export const d = 4;\n' }, 'unit beyond its scope\n');
-    const dev5 = candidateRequest(worktree(s), unit);
-    assert.equal(dev5.rules.kind, 'dev5');
-    assert.equal(planCandidate(s.repo, dev5).kind, 'merge');
-    const m3: TransientRules = { kind: 'm3', evidenceGlobs: dev5.rules.evidenceGlobs, scope: [repoPattern('src')] };
-    const decision = planCandidate(s.repo, { ...dev5, rules: m3 });
-    assert.equal(decision.kind, 'transient-violation');
-    if (decision.kind !== 'transient-violation') return;
-    assert.deepEqual(decision.violations, [
-      { path: '.roadmap/constraints.md', rule: 'roadmap-dir' },
-      { path: 'lib/other.ts', rule: 'out-of-scope' },
-    ]);
-    assert.equal(git(s.repo, 'for-each-ref', 'refs/roadmap-run'), '', 'no candidate ref written');
-  });
-
   it('m3 rules: the pinned scope passes, a path outside it and every .roadmap/ path are refused', () => {
     const s = scene(base, 'clean');
-    const rules: TransientRules = { kind: 'm3', evidenceGlobs: [repoPattern('out/lanes')], scope: [repoPattern('src'), repoPattern('docs/**/*.md')] };
+    const rules: TransientRules = { evidenceGlobs: [repoPattern('out/lanes')], scope: [repoPattern('src'), repoPattern('docs/**/*.md')] };
     const inScope = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'docs/guide/x.md': '# x\n' }, 'unit in scope\n');
     assert.equal(planCandidate(s.repo, { ...candidateRequest(worktree(s), inScope), rules }).kind, 'merge');
 

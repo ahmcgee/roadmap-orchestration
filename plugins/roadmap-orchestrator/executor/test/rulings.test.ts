@@ -239,7 +239,7 @@ describe('landing a ruling', () => {
   it('rulings.effective-revs: a cited ruling\'s effective revision rises with each partial supersession of it, and again when that one leaves force', () => {
     const plain = (id: string, supersedes: readonly Record<string, unknown>[] = []): RulingSidecar => sidecar({ id, supersedes });
     const partial = (id: string, of: string): RulingSidecar => plain(id, [{ id: of, part: 'the cent' }]);
-    // No partial supersession (a dev.5 ledger has no sidecars at all): every ruling is at its first revision.
+    // No partial supersession (no sidecars at all): every ruling is at its first revision.
     assert.deepEqual([...effectiveRulingRevs([])], []);
     assert.deepEqual([...effectiveRulingRevs([plain('C-3', [{ id: 'C-1', part: null }])])], [], 'a full supersession withdraws, it does not revise');
     // C-3 partially supersedes C-1 (a ledger ruling without a sidecar): C-1 moves to 2.

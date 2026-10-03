@@ -3,7 +3,7 @@
 // the log, with and without a fact; an apply's rejections (a stale expectRev, files changed since they were
 // hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
-// apply.upgrade-queued-resume, apply.crash-cells, apply.recovered-after-start; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
+// apply.crash-cells, apply.recovered-after-start; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
 // apply.stale-after-evidence-revision.
 import assert from 'node:assert/strict';
@@ -13,15 +13,14 @@ import { describe, test } from 'node:test';
 import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
 import { pollCommands, readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, PlanChange } from '../src/core/events.ts';
-import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, routingRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
+import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, sha, specRev, unitId } from '../src/core/ids.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
 import type { CommandBody, ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
-import { earlierReleaseBaseline } from '../src/core/upgrade.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
+import { absPath } from '../src/core/values.ts';
 import { type Classified, classify, commandScope } from '../src/input/classify.ts';
 import {
-  PLAN_INPUT, SPEC_INPUT, keepInputFiles, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
+  PLAN_INPUT, SPEC_INPUT, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
 } from '../src/input/inforce.ts';
 import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -103,7 +102,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classifie
   const { runDir } = r.ctx;
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
-    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce, absPath(r.d.planPath)), next: readInputFiles(absPath(r.d.planPath)), residues,
+    runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath)), residues,
     routing: routingBase, proposer: { type: 'apply' },
   });
 }
@@ -126,8 +125,6 @@ type Row = Readonly<{
   setup?: (r: ArcRun) => void;
   edit: (d: ArcDescriptor, r: ArcRun) => void;
   residues?: readonly ResidueKey[];
-  /** Revision 1 records `scheduling: 'dag'` (an arc started on M2); otherwise the arc is legacy. */
-  dag?: boolean;
   expect: 'unchanged' | ((r: ArcRun) => readonly PlanChange[]) | readonly RegExp[];
 }>;
 
@@ -173,15 +170,9 @@ const ROWS: readonly Row[] = [
     name: 'remove a unit that started: refused, with every reason',
     setup: (r) => pin(r, 'u1'),
     edit: (d) => editPlan(d, (p) => void p.units.splice(0, 1)),
-    expect: [/unit u1 has started; it cannot be removed/, /units that have started \(u1\) must stay first in plan order/],
+    expect: [/unit u1 has started; it cannot be removed/],
   },
   { name: 'reorder units that never started: now', setup: (r) => pin(r, 'u1'), edit: (d) => editPlan(d, (p) => void p.units.reverse().unshift(p.units.pop()!)), expect: () => [{ type: 'order' }] },
-  {
-    name: 'a started unit behind one that never started: refused',
-    setup: (r) => pin(r, 'u1'),
-    edit: (d) => editPlan(d, (p) => void p.units.push(p.units.shift()!)),
-    expect: [/units that have started \(u1\) must stay first/],
-  },
   { name: 'an undispatched unit\'s plan entry: now', edit: (d) => editPlan(d, (p) => void (p.units[1]!['risk'] = 'high')), expect: () => [{ type: 'unit-changed', unit: unitId('u2') }] },
   { name: 'an undispatched unit\'s spec: now', edit: (d) => editSpec(d, 'u2', addClause), expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)] },
   {
@@ -353,20 +344,8 @@ function reserveDb(r: ArcRun): void {
   assert.equal(reserve(r.ctx, holder, requestOf(r.ctx.plan(), [resourceName('db')], 0), { ...holder }).state, 'reserved');
 }
 
-/**
- * Records the files as revision 1 of an arc started on M2 (`scheduling: 'dag'`), before `contextFor` would
- * record them as a legacy arc's. Its `@cpu` pool is sized 8, so no row depends on the host's parallelism.
- */
-function dagArc(d: ArcDescriptor): void {
-  editPlan(d, (p) => void (p['capacity'] = { cpu: 8 }));
-  const journal = openJournal(absPath(d.runDir), arcId(d.arc));
-  try {
-    const manifest = keepInputFiles(absPath(d.runDir), readInputFiles(absPath(d.planPath)));
-    journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
-  } finally {
-    journal.close();
-  }
-}
+/** Sizes the arc's `@cpu` pool 8 before its first context records the files, so no row depends on the host's parallelism. */
+const sizeCpu = (d: ArcDescriptor): void => editPlan(d, (p) => void (p['capacity'] = { cpu: 8 }));
 
 // ---------------------------------------------------------------------------------------------------
 // M2 rows: cut, re-entry, the effective graph, pools, capacity, started order (G3)
@@ -534,16 +513,13 @@ const M2_ROWS: readonly Row[] = [
   },
   {
     name: 'apply.capacity-over: builds above the @cpu pool\'s size: refused (a DAG arc)',
-    dag: true,
     edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 3 })),
     expect: ['u1', 'u2', 'u3'].map((u) => new RegExp(`^\\{"kind":"plan-invalid","problem":\\{"lane":null,"requested":4,"resource":"@cpu","total":3,"type":"over-capacity","unit":"${u}"\\}\\}$`)),
   },
-  { name: 'apply.capacity-within: now', dag: true, edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 4 })), expect: () => [{ type: 'plan-field', field: 'capacity' }] },
-  { name: 'apply.capacity-legacy: a legacy arc requests no @cpu: now', edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 1 })), expect: () => [{ type: 'plan-field', field: 'capacity' }] },
+  { name: 'apply.capacity-within: now', edit: (d) => editPlan(d, (p) => void (p['capacity'] = { cpu: 4 })), expect: () => [{ type: 'plan-field', field: 'capacity' }] },
   // G3: started units keep their relative order
   {
     name: 'apply.after-non-prefix-dispatch: a DAG arc started u2 and u3 before u1: an unrelated edit applies',
-    dag: true,
     setup: (r) => {
       pin(r, 'u2');
       pin(r, 'u3');
@@ -553,7 +529,6 @@ const M2_ROWS: readonly Row[] = [
   },
   {
     name: 'apply.after-non-prefix-order: an unstarted unit moves past started ones: now; started ones swapped: refused',
-    dag: true,
     setup: (r) => {
       pin(r, 'u2');
       pin(r, 'u3');
@@ -563,7 +538,6 @@ const M2_ROWS: readonly Row[] = [
   },
   {
     name: 'apply.after-non-prefix-swap: started units swapped: refused',
-    dag: true,
     setup: (r) => {
       pin(r, 'u2');
       pin(r, 'u3');
@@ -577,7 +551,7 @@ function runRow(row: Row): void {
   test(row.name, T, () => {
     const d = setupArc({ steps: [], units: row.units ?? THREE });
     row.before?.(d);
-    if (row.dag === true) dagArc(d);
+    sizeCpu(d);
     const r = contextFor(d);
     try {
       row.setup?.(r);
@@ -645,7 +619,7 @@ test('apply.fold: the plan in force is the latest plan-applied fact (none before
     editSpec(d, 'u1', (s) => void (s['acceptance'] = (s['acceptance'] as Json[]).slice(0, 1)));
 
     // The fold refuses a revision out of order, and a spec edit the unit's state does not allow.
-    const next = { kind: 'plan-applied', command: null, ...baseline.manifest, changes: [] } as const;
+    const { scheduling: _, ...next } = { ...baseline.fact, changes: [] };
     assert.throws(() => r.journal.fact({ ...next, rev: planRev(3) }), (e: unknown) => e instanceof FoldInvariantError && /the next plan revision is 2/.test(e.message));
     const evidence = (sha: string): PlanChange => ({ type: 'spec', unit: U1, edit: 'evidence', specRev: specRev(1), specSha256: sha as never });
     assert.throws(() => r.journal.fact({ ...next, rev: planRev(2), changes: [evidence(u1Sha)] }), /never dispatched/);
@@ -870,45 +844,6 @@ test('cmd.scope: each mutation\'s scope (A12); an apply\'s follows from its clas
   }
 });
 
-test('apply.upgrade-queued-resume: a `resume <unit>` queued under 1.0.0-dev.3 after a rev + 1 edit of a parked unit re-opens it once the first start records the edit as a pending revision', T, async () => {
-  const d = setupArc({ steps: [] });
-  const runDir = absPath(d.runDir);
-  // The log 1.0.0-dev.3 leaves: u1 dispatched on its spec file and parked at its gate; no plan revision.
-  const old = openJournal(runDir, arcId(d.arc));
-  old.fact({
-    kind: 'dispatch',
-    record: {
-      unit: U1, specRev: specRev(1), specSha256: fileSha256(absPath(specPath(d, 'u1'))), scope: [repoPattern('src/**')], riskFloor: 'med',
-      routingRev: routingRev('0123456789abcdef'), implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()),
-    },
-  });
-  old.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false });
-  old.close();
-  revise(d);
-  const revision = fileSha256(absPath(specPath(d, 'u1')));
-  const file = submitCommand(runDir, arcId(d.arc), { type: 'resume', target: { type: 'unit', unit: U1 } });
-
-  // HEAD's first start (settlePlan): revision 1 as that release ran the files.
-  const first = openJournal(runDir, arcId(d.arc));
-  const files = readInputFiles(absPath(d.planPath));
-  const baseline = earlierReleaseBaseline(first.view, files, d.planPath);
-  assert.ok('changes' in baseline, JSON.stringify(baseline));
-  recordPlan(first, runDir, files, baseline.changes, routingBase);
-  first.close();
-
-  const r = contextFor(d);
-  try {
-    assert.deepEqual(r.journal.view.unit(U1).pendingRevision, { rev: 2, sha256: revision, command: null });
-    assert.equal((await applyCommand(commandContextFor(r), file)).kind, 'applied');
-    const receipt = readReceipt(r.ctx.runDir, file.id, 'applied');
-    assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, ['unit u1 re-opened at plan-check on spec rev 2']);
-    const u = r.journal.view.unit(U1);
-    assert.deepEqual([u.status, u.stage, u.spec, u.reopened], ['active', 'plan-check', { rev: 2, sha256: revision }, { command: file.id, specRev: 2 }]);
-  } finally {
-    r.journal.close();
-  }
-});
-
 // ---------------------------------------------------------------------------------------------------
 // Crash cells
 
@@ -949,8 +884,8 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
         // The recovery engine closed the op (reconciled). Crashed before the revision, the reconciler commits it as a
         // new op of its own (done in the ordinary way); crashed after, it commits nothing.
         assert.deepEqual(r.journal.view.openIntents(), []);
-        const commits = r.journal.view.opsOf('revision.commit');
-        assert.equal(commits.length, 1, 'one revision.commit');
+        const commits = r.journal.view.opsOf('revision.commit').filter((i) => i.expect.rev === 2);
+        assert.equal(commits.length, 1, 'one revision.commit of the apply (the first start committed rev 1)');
         const committed = cell.boundary === 'B4' ? [] : [['revision.commit', commits[0]!.op, null]];
         const written = events(d.runDir).slice(mark).flatMap((e) => (e.type === 'done' ? [[e.kind, e.op, e.recoveredBy]] : []));
         assert.deepEqual(written, [...committed, ['command.apply', intent.op, 'reconciled']]);

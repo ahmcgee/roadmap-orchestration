@@ -1,11 +1,11 @@
 // `roadmap status`'s M3 keys (src/status.ts; DESIGN-1.0.md §2.4, plan "`status` (additive)"), in process over holistic
 // arcs whose log is written directly (real repos, real run dirs, the real fold): the facts are the frozen M3 ones, so
 // what a later step writes renders the same. Named tests: status.target, status.findings-audit, status.coverage-per-lens,
-// status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.dev5-arc,
+// status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
 // status.dev6-alias.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, it } from 'node:test';
@@ -16,7 +16,7 @@ import {
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { legacyProvenancePath, snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
+import { snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
 import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
 import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
 import {
@@ -359,8 +359,8 @@ describe('status M3', () => {
     }
   });
 
-  it('status.dev5-arc: an adopted 1.0.0-dev.5 arc renders its holistic keys vacuous and its spend by model from the adopted provenance; without that record the revision is unresolved, never read from the live config', T, () => {
-    const d = setupArc({ steps: [], dag: true, units: [{ id: 'u1' }] });
+  it('status.non-holistic-arc: an arc without the holistic layer renders its holistic keys vacuous and its spend by model from its revision\'s recorded provenance', T, () => {
+    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
     const r = contextFor(d);
     try {
       const rev = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }).rev;
@@ -372,20 +372,13 @@ describe('status M3', () => {
         kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', role: 'build', tier: 'med', unit: U('u1'), attempt: 1 },
         usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
       });
-      let s = statusOf(r);
-      assert.equal(r.journal.view.planApplied()?.routingProvenance, undefined, 'a dev.5 revision');
+      const s = statusOf(r);
       assert.deepEqual([s.holistic, s.target, s.vision, s.audit, s.convergence], [false, null, null, null, null]);
       assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings, s.owed], [[], [], [], [], [], [], { active: [], metrics: [] }, { audits: [] }]);
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
       noModelIds(s);
-
-      // Without the adoption record the history is unresolved: status never reads the live repo config for it.
-      rmSync(legacyProvenancePath(r.ctx.runDir, planRev(1)));
-      s = statusOf(r);
-      assert.deepEqual(s.spend.byModel, { models: [], unresolvedRevs: [rev] });
-      assert.equal(s.run.state, 'no-owner');
     } finally {
       r.journal.close();
     }
@@ -394,13 +387,17 @@ describe('status M3', () => {
 
 describe('status: dev.6 routing revs (K12, OR-L3)', () => {
   it('status.dev6-alias: a dev.6 revision\'s recorded routingRev joins its meter rows to the revision\'s current table: totals equal the meter\'s, nothing unresolved, byModel on today\'s bindings', T, () => {
-    const d = setupArc({ steps: [], dag: true, units: [{ id: 'u1', risk: 'high' }] });
+    const d = setupArc({ steps: [], units: [{ id: 'u1', risk: 'high' }] });
     const r = contextFor(d);
     try {
-      // Revision 2 is shaped as dev.6 recorded it: its routing provenance, no payload.
+      // Revision 2 as dev.6 recorded it: revision 1's payload and ledger, and its routing provenance.
       const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
       const provenance = routingProvenanceOf({ profile: 'default', config: null }, plan);
-      r.journal.fact({ kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath))), changes: [], routingProvenance: provenance });
+      const first = r.journal.view.planApplied()!;
+      r.journal.fact({
+        kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath))), changes: [],
+        source: { type: 'start' }, payloadSha256: first.payloadSha256, rulingsSha256: first.rulingsSha256, routingProvenance: provenance,
+      });
       // The rev dev.6 recorded: the M2 table under its catalogue (frontier Opus high, summit Fable high), by hand.
       const now = resolveRouting(provenanceStack(provenance, 'none', null));
       const dev6Triple = (t: Triple): Triple => (t.model === 'claude-opus-5-5' ? (t.effort === 'xhigh' ? FABLE_HIGH : OPUS_HIGH) : t);

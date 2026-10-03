@@ -159,7 +159,7 @@ const DEADLINE = '2026-09-25T13:00:00.000Z';
 export function writeLaunch(invDir: string, spec: Readonly<{ argv: readonly string[]; cwd: string; terminal: LaunchTerminal; stdinPath: string | null; env?: Readonly<Record<string, string>> }>): LaunchFile {
   const launch = {
     ...BIND, argv: spec.argv, cwd: spec.cwd, env: spec.env ?? {}, stdinPath: spec.stdinPath, deadlineAt: DEADLINE,
-    graceMs: 1000, containment: 'session', test: null, terminal: spec.terminal,
+    stallMs: null, graceMs: 1000, containment: 'session', test: null, terminal: spec.terminal,
   };
   const parsed = RUNNER_FILE_READERS['launch.json'](launch, 'launch.json');
   writeFileSync(join(invDir, 'launch.json'), JSON.stringify(launch));

@@ -5,7 +5,7 @@
 // apply.stale-base, apply.route-unit, apply.route-unsupported, apply.limits-below-spent, apply.obligation-added,
 // apply.obligation-witness, apply.obligation-split, apply.obligation-disposed, apply.obligation-restored-edited,
 // apply.obligation-split-parent-stays, apply.scope-growth-ruling, apply.holistic-add, apply.core-proposal,
-// startup.obligation-dropped, apply.legacy-manifest-queued, apply.legacy-manifest-open, reverse.preimage-restores,
+// startup.obligation-dropped, reverse.preimage-restores,
 // reverse.conflict-refused, reverse.repair-unit-refused, reverse.spec-preimage-exact, reverse.obligation-fresh-rev,
 // split.checkpoint-drop-divergence, fence.capture-waits,
 // revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells),
@@ -21,28 +21,27 @@ import { newCommandId, readReceipt, submitCommand, terminalReceipt } from '../sr
 import { captureUnderFence, holdFence } from '../src/core/fence.ts';
 import type { Fact, IntentOf, PlanAppliedFact } from '../src/core/events.ts';
 import {
-  type DivergenceId, clauseId, invocationId, invocationIdOf, jobId, opKey, planRev, sha, sha256, unitId,
+  type DivergenceId, clauseId, invocationId, invocationIdOf, jobId, planRev, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { commitRevision } from '../src/recover/revision.ts';
 import { runOp } from '../src/pipeline/dispatch.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
-import { type CommandBody, isRevisionManifest } from '../src/core/records.ts';
+import type { CommandBody } from '../src/core/records.ts';
 import { absPath, branchName, branchRef } from '../src/core/values.ts';
 import { renderInvariants } from '../src/docs/invariants.ts';
 import { type DivergenceDraft, laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commandScope } from '../src/input/classify.ts';
 import {
-  RENDER_INPUT, type RoutingBase, inForceFiles, keptInput, keptPayload, planManifestOf, readInputFiles, recordPlan, requirePlanInForce, revisionInForce,
-  revisionManifestOf, unitRouting,
+  RENDER_INPUT, type RoutingBase, inForceFiles, keptInput, keptPayload, readInputFiles, recordPlan, requirePlanInForce, revisionInForce,
+  unitRouting,
 } from '../src/input/inforce.ts';
 import { commitRevisionNow } from '../src/input/inforce.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { obligationDropped } from '../src/preflight/checks.ts';
 import type { StartupContext } from '../src/preflight/startup.ts';
-import { commandReconciler } from '../src/recover/command.ts';
 import { recover } from '../src/recover/recover.ts';
 import { bytesSha256 as fileSha256Bytes, fileSha256, parseSpec } from '../src/spec/spec.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
@@ -175,7 +174,7 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
   try {
     const d = r.d;
     const body = applyBody(d, planRev(1));
-    assert.ok(body.type === 'apply' && isRevisionManifest(body.manifest));
+    assert.ok(body.type === 'apply');
     const m = body.manifest;
     assert.equal(m.rulings.ledgerSha256, fileSha256(absPath(ledgerPathOf(d))));
     assert.deepEqual(Object.keys(m.rulings.sidecars), ['C-2']);
@@ -196,7 +195,7 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     const commit = r.journal.view.opsOf('revision.commit').at(-1)!;
     assert.deepEqual([commit.expect.payloadSha256, commit.expect.base, commit.expect.docs], [fact.payloadSha256, 1, false]);
     assert.equal(r.journal.view.doneOf(commit.op)?.kind, 'revision.commit');
-    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(d.planPath));
+    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
     assert.deepEqual([...inForce.sidecars.keys()], ['C-2']);
     assert.equal(inForce.vision?.value.rev, 1);
   } finally {
@@ -226,7 +225,7 @@ test('apply.stale-base: without --expect-rev an apply is refused when the revisi
     // A machine revision (source executor): the plan in force plus a changed direction.
     const rctx = rctxOf(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce, absPath(d.planPath)), absPath(d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(d.planPath));
     const planBytes = Buffer.from(JSON.stringify({ ...JSON.parse(current.planBytes.toString('utf8')), direction: 'Machine direction.' }));
     const v = evaluateRevision(rctx, { ...current, planBytes, plan: { ...current.plan, direction: 'Machine direction.' } }, { type: 'executor' });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -516,7 +515,7 @@ test('apply.core-proposal: the core evaluates an in-memory proposal from any pro
   try {
     const rctx = rctxOf(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce, absPath(r.d.planPath)), absPath(r.d.planPath));
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(r.d.planPath));
     assert.equal(evaluateRevision(rctx, current, { type: 'rule' }).kind, 'unchanged', 'the plan in force as files changes nothing');
     const ledger = { ...current.ledger, bytes: Buffer.concat([current.ledger.bytes!, Buffer.from('C-3 — A rule.\n')]) };
     const proposal = { ...current, ledger };
@@ -532,7 +531,7 @@ test('apply.core-proposal: the core evaluates an in-memory proposal from any pro
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
     const fact = lastApplied(r);
     assert.deepEqual([fact.rev, fact.command, fact.rulingsSha256, fact.publication?.pub], [2, rule, fileSha256Bytes(ledger.bytes), 'docs-1']);
-    const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(r.d.planPath));
+    const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
     assert.match(now.ledger.bytes.toString('utf8'), /C-3 — A rule\.\n$/, 'the ledger in force is the kept one, not the live file');
   } finally {
     r.journal.close();
@@ -594,59 +593,6 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
     ],
   });
   assert.deepEqual(dropped(), [], 'a split parent counts as present');
-});
-
-// ---------------------------------------------------------------------------------------------------
-// The legacy manifest (G15)
-
-/** An apply as 1.0.0-dev.5 queued it: a plan manifest only. */
-function legacyBody(d: ArcDescriptor, expectRev: number | null): CommandBody {
-  const m = revisionManifestOf(readInputFiles(absPath(d.planPath)));
-  assert.ok(!('missing' in m));
-  return { type: 'apply', expectRev: expectRev === null ? null : planRev(expectRev), manifest: planManifestOf(m) };
-}
-
-test('apply.legacy-manifest-queued: a dev.5 command\'s plan manifest applies (the ledger live, no obligations or vision); its bytes are never rewritten', T, async () => {
-  const d = setupArc({ steps: [] });
-  const r = contextFor(d);
-  try {
-    addUnit(d, 'u2');
-    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, legacyBody(d, 1));
-    const path = join(r.ctx.runDir, 'commands', 'incoming', `${file.id}.json`);
-    const before = readFileSync(path);
-    const outcome = await applyCommand(ctxOf(r), file);
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    assert.deepEqual(readFileSync(path), before, 'the command file is untouched');
-    const fact = lastApplied(r);
-    assert.deepEqual([fact.rev, fact.command, fact.rulingsSha256], [2, file.id, fileSha256(absPath(ledgerPathOf(d)))]);
-    assert.equal(fact.visionSha256, undefined);
-    assert.deepEqual(keptPayload(r.ctx.runDir, fact.payloadSha256!).manifest.obligations, null);
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('apply.legacy-manifest-open: a dev.5 command whose op a dev.5 executor opened is finished by recovery under the legacy reading', T, async () => {
-  const d = setupArc({ steps: [] });
-  const r = contextFor(d);
-  try {
-    addUnit(d, 'u2');
-    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, legacyBody(d, 1));
-    const bytes = readFileSync(join(r.ctx.runDir, 'commands', 'incoming', `${file.id}.json`));
-    const { op } = r.journal.begin({
-      kind: 'command.apply', key: opKey(`command:${file.id}`), parent: { type: 'command', command: file.id }, deadlineAt: null,
-      body: () => ({ expect: { command: file.id, commandSha256: fileSha256(absPath(join(r.ctx.runDir, 'commands', 'incoming', `${file.id}.json`))) }, post: null }),
-    });
-    const intent = r.journal.view.latestIntent(op) as IntentOf<'command.apply'>;
-    const disposition = await commandReconciler(ctxOf(r))(intent, r.journal.view);
-    assert.ok(disposition.kind === 'done' && disposition.outcome.kind === 'applied', JSON.stringify(disposition));
-    r.journal.done(op, 'command.apply', disposition.outcome, 'reconciled');
-    assert.deepEqual(readFileSync(join(r.ctx.runDir, 'commands', 'incoming', `${file.id}.json`)), bytes);
-    assert.deepEqual(applied(r).map((f) => [f.rev, f.command]), [[1, null], [2, file.id]]);
-    assert.equal(readReceipt(r.ctx.runDir, file.id, 'applied')?.state, 'applied');
-  } finally {
-    r.journal.close();
-  }
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -783,7 +729,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
   try {
     checkpointInputs(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const revision = revisionInForce(r.ctx.runDir, inForce, absPath(d.planPath));
+    const revision = revisionInForce(r.ctx.runDir, inForce);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath));
     const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
     const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'] };
@@ -801,7 +747,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
 
     const { outcome } = await command(r, { type: 'reverse', divergence: 'D-1' as DivergenceId });
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(d.planPath)).obligations!.value;
+    const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value;
     const i1 = now.obligations.find((o) => o.id === 'I-1')!;
     assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } }]);
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'disposed' }], JSON.stringify(lastApplied(r).changes));
@@ -815,7 +761,7 @@ test('split.checkpoint-drop-divergence: a checkpoint split may drop text only ci
   try {
     checkpointInputs(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const revision = revisionInForce(r.ctx.runDir, inForce, absPath(r.d.planPath));
+    const revision = revisionInForce(r.ctx.runDir, inForce);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(r.d.planPath));
     const split = {
       ...OBLIGATIONS,

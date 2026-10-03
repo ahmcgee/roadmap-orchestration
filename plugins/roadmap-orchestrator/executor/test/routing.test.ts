@@ -193,7 +193,7 @@ describe('routing: the arc seats (M3)', () => {
       assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview'), []);
       assert.deepEqual(unsupportedSeats(r, null), [], p);
       const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate };
-      assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the 1.0.0-dev.5 rev`);
+      assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the M2 rev`);
       // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
       assert.equal(resolveRouting(arcStack(p, null, layer({ lens: { arc: 'summit' } }))).rev, r.rev);
     }

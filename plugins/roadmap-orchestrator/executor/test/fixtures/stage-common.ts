@@ -7,18 +7,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type Sha, type UnitId, arcId, invocationId, planRev, sha, unitId } from '../../src/core/ids.ts';
+import { type Sha, type Sha256Hex, type UnitId, arcId, invocationId, sha, specRev, unitId } from '../../src/core/ids.ts';
 import type { Journal } from '../../src/core/interfaces.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
-import { adoptLegacyProvenance } from '../../src/git/snapshot.ts';
+import { type OpenJournal, openJournal } from '../../src/core/log.ts';
 import { atomicJson } from '../../src/core/fsx.ts';
 import { type LaunchFile, RUNNER_FILE_READERS, type RunStart } from '../../src/core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../src/core/version.ts';
 import { START_FILE } from '../../src/executor.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { keepInputFiles, readInputFiles } from '../../src/input/inforce.ts';
+import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
@@ -36,6 +35,9 @@ import { createProber } from '../../src/park/probe.ts';
 import type { Gate } from '../../src/pipeline/unit.ts';
 
 export const U1: UnitId = unitId('u1');
+/** The unit's kept spec at rev 1, as its first start recorded it: what a test pins a dispatch at. */
+export const keptSpec = (journal: Readonly<{ view: Readonly<{ planApplied: () => { specs: Readonly<Record<UnitId, Sha256Hex>> } | null }> }>, unit: UnitId = U1) =>
+  ({ rev: specRev(1), sha256: journal.view.planApplied()!.specs[unit]! });
 export const DB = 'db';
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -68,8 +70,6 @@ export type SetupOptions = Readonly<{
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
-  /** An arc started on M2 (`scheduling: 'dag'`: `@cpu` entry reservations); default a legacy arc's first revision. */
-  dag?: true;
 }>;
 
 export type StageRun = Readonly<{
@@ -97,41 +97,22 @@ function laneJson(l: LaneJson): Record<string, unknown> {
 
 /**
  * Writes start.json as the executor does before any stage runs (src/executor.ts `runExecutor`): generation 1, the
- * repo, the plan file and the profile. A 1.0.0-dev.5 revision's routing provenance is reconstructed under its
- * profile when this release adopts the arc (H7, `adopted`).
+ * repo, the plan file and the profile.
  */
 function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
   const start: RunStart = { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo, planFile: planPath, profile };
   atomicJson(join(runDir, START_FILE), start);
 }
 
-/**
- * Records the plan file as revision 1 of a legacy arc (no `scheduling`), as 1.0.0-dev.4 did: the serial
- * frontier and no `@cpu` requests. Tests of one serial unit keep this default; a first start on M2 records a DAG.
- */
-export function recordLegacyPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
+/** Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). */
+export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
   writeStart(runDir, repo, planPath, profile);
-  const manifest = keepInputFiles(runDir, readInputFiles(planPath));
-  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [] });
-  adopted(journal, runDir);
+  recordPlan(journal, runDir, readInputFiles(planPath), [], { profile, config: null });
 }
 
-/**
- * The revision these fixtures record is shaped as the release that wrote it did (no payload, no routing provenance),
- * so the arc is one this release adopted: its first start reconstructs that revision's routing provenance under the
- * repo config (none here) before anything else runs (src/preflight/checks.ts `runChecks`, H7).
- */
-function adopted(journal: Journal, runDir: AbsPath): void {
-  const unreconstructable = adoptLegacyProvenance(runDir, readJournal(runDir, journal.view.arc).events, null);
-  if (unreconstructable.length > 0) throw new Error(`the fixture's revision is unreconstructable: ${unreconstructable.join('; ')}`);
-}
-
-/** Records the plan file as revision 1 of an arc started on M2 (`scheduling: 'dag'`), as an M2 first start does. */
-export function recordDagPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
-  writeStart(runDir, repo, planPath, profile);
-  const manifest = keepInputFiles(runDir, readInputFiles(planPath));
-  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, ...manifest, changes: [], scheduling: 'dag' });
-  adopted(journal, runDir);
+/** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
+export function applyFilesNow(run: StageRun): void {
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json'))), [], { profile: 'default', config: null });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */
@@ -196,8 +177,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
-  if (opts.dag === true) recordDagPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile);
-  else recordLegacyPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile);
+  recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const resources = {

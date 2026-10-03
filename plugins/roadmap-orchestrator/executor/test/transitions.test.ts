@@ -373,7 +373,7 @@ type Driven = Readonly<{ nexts: readonly Next[]; facts: readonly ReturnType<type
  */
 function drive(outcomes: readonly StageOutcome[]): Driven {
   const records: LogRecord[] = [{
-    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT } },
+    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } },
   }];
   const attempts = new Map<OutcomeStage, number>();
   const nexts: Next[] = [];

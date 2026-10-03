@@ -8,7 +8,7 @@ import { Fold, FoldInvariantError } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
 import { effectiveDependency } from '../src/schedule/graph.ts';
 import type { RiskTier } from '../src/routing/types.ts';
-import { ARC, H, REV, U1, chain } from './fixtures/log-records.ts';
+import { ARC, H, REV, U1, appliedFields, chain } from './fixtures/log-records.ts';
 
 const U2 = unitId('u2');
 const U3 = unitId('u3');
@@ -19,12 +19,12 @@ const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const outcome = (unit: UnitId, stage: string, attempt: number, out: string, cls: string, extra: object = {}): LogRecord =>
   fact({ kind: 'stage-outcome', unit, stage, attempt, outcome: out, class: cls, chargeable: false, ...extra });
 const dispatch = (unit: UnitId, riskFloor: RiskTier = 'med'): LogRecord => fact({
-  kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER },
+  kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
 });
-const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[] = [], scheduling?: 'dag'): LogRecord => fact({
-  kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : commandId(`cmd-${String(rev).padStart(16, '0')}`), planSha256: H,
-  specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...(scheduling === undefined ? {} : { scheduling }),
-});
+const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[] = []): LogRecord => {
+  const command = rev === 1 ? null : commandId(`cmd-${String(rev).padStart(16, '0')}`);
+  return fact({ kind: 'plan-applied', rev: planRev(rev), command, planSha256: H, specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...appliedFields(rev, command) });
+};
 const probe = (target: object, covers: readonly number[], result: 'pass' | 'fail'): LogRecord =>
   fact({ kind: 'probe', target, covers, result, nextProbeAt: result === 'pass' ? null : LATER });
 const retryable = (...targets: object[]) => ({ park: { class: 'retryable', targets } });
@@ -152,7 +152,7 @@ describe('fold: parks (A7, F9, F10, G7)', () => {
     refuses([dispatch(U1), outcome(U1, 'candidate', 1, 'base-red', 'park', { park: { class: 'operator', kind: 'env' } }), probe({ type: 'host' }, [2], 'pass')], 3, /operator park/);
   });
 
-  it('a park without a class (1.0.0-dev.4) reads as operator: design for the design rows, env otherwise', () => {
+  it('a park without a class (the interim M2 shim) reads as operator: design for the design rows, env otherwise', () => {
     const f = folded([
       dispatch(U1), outcome(U1, 'lanes', 1, 'blocked', 'park'), // 2: env
       dispatch(U2), outcome(U2, 'gate', 1, 'escalate', 'park'), // 4: design
@@ -161,7 +161,7 @@ describe('fold: parks (A7, F9, F10, G7)', () => {
     assert.deepEqual(f.unit(U2).park?.park, { class: 'operator', kind: 'design' });
   });
 
-  it('unparked re-runs an operator-env park and is refused for any other; rerouted reads as unparked', () => {
+  it('unparked re-runs an operator-env park and is refused for any other', () => {
     const envPark = [dispatch(U1), outcome(U1, 'lanes', 1, 'green', 'advance'), outcome(U1, 'gate', 2, 'approve', 'advance'), outcome(U1, 'candidate', 3, 'base-red', 'park', { park: { class: 'operator', kind: 'env' } })];
     const f = folded([...envPark, fact({ kind: 'unparked', unit: U1, command: CMD })]);
     assert.equal(f.unit(U1).status, 'active');
@@ -169,8 +169,6 @@ describe('fold: parks (A7, F9, F10, G7)', () => {
     assert.equal(f.unit(U1).park, null);
     refuses([dispatch(U1), outcome(U1, 'gate', 1, 'empty-diff', 'park', { park: { class: 'operator', kind: 'design' } }), fact({ kind: 'unparked', unit: U1, command: CMD })], 3, /not operator env/);
     refuses([...lanesPark, fact({ kind: 'unparked', unit: U1, command: CMD })], 4, /not operator env/);
-    const rerouted = folded([dispatch(U1), outcome(U1, 'build', 1, 'routing-changed', 'park'), fact({ kind: 'rerouted', unit: U1, command: CMD })]);
-    assert.equal(rerouted.unit(U1).status, 'active');
   });
 });
 
@@ -211,19 +209,19 @@ describe('fold: backend parks (F12, G5)', () => {
     assert.deepEqual(replaced.backendParks(), [{ backend: 'codex', seq: 2, class: 'usage-limit' }]);
   });
 
-  it('resume --backend keeps releasing cause-less holds of unpaused units (the pre-M2 usage-limit hold) but not other backends\' holds', () => {
+  it('resume --backend releases the holds that backend caused, not a cause-less hold or another backend\'s', () => {
     const f = folded([
-      dispatch(U1), dispatch(U2), park('codex', 'usage-limit'), park('claude', 'capacity'), // 1-4
-      outcome(U1, 'build', 1, 'interrupted', 'hold'), held(U2, 1, 'claude', 4), // 5, 6
-      fact({ kind: 'resumed', command: CMD, target: { type: 'backend', backend: 'codex' } }), // 7
+      dispatch(U1), dispatch(U2), dispatch(U3), park('codex', 'usage-limit'), park('claude', 'capacity'), // 1-5
+      outcome(U1, 'build', 1, 'interrupted', 'hold'), held(U2, 1, 'claude', 5), held(U3, 1, 'codex', 4), // 6-8
+      fact({ kind: 'resumed', command: CMD, target: { type: 'backend', backend: 'codex' } }), // 9
     ]);
-    assert.deepEqual([f.unit(U1).status, f.unit(U2).status], ['active', 'held']);
+    assert.deepEqual([f.unit(U1).status, f.unit(U2).status, f.unit(U3).status], ['held', 'held', 'active']);
   });
 });
 
 describe('fold: lineage, cut, build tier, scheduling', () => {
   const parkedU1 = [
-    planApplied(1, [U1, U2], [], 'dag'), // 1
+    planApplied(1, [U1, U2]), // 1
     dispatch(U1, 'med'), // 2
     outcome(U1, 'lanes', 1, 'red', 'advance', { chargeable: true }), // 3
     outcome(U1, 'lanes', 2, 'cleanup-failed', 'park', { park: { class: 'operator', kind: 'env' } }), // 4
@@ -245,18 +243,18 @@ describe('fold: lineage, cut, build tier, scheduling', () => {
   });
 
   it('refuses a re-entry of an unparked unit, a reused id, a lowered lineage floor and a prepare outside a lineage', () => {
-    refuses([planApplied(1, [U1], [], 'dag'), dispatch(U1), planApplied(2, [U1, U3], [{ type: 'unit-reentered', unit: U3, reenters: U1, reset: false }])], 3, /which is active, not parked or held/);
+    refuses([planApplied(1, [U1]), dispatch(U1), planApplied(2, [U1, U3], [{ type: 'unit-reentered', unit: U3, reenters: U1, reset: false }])], 3, /which is active, not parked or held/);
     refuses([...parkedU1, planApplied(2, [U1, U2], [{ type: 'unit-reentered', unit: U2, reenters: U1, reset: false }])], 5, /an id already used/);
     refuses([...parkedU1, planApplied(2, [U1, U2, U3], [{ type: 'unit-reentered', unit: U3, reenters: U1, reset: false }]), dispatch(U3, 'low')], 6, /lowers its lineage's riskFloor med to low/);
     refuses([dispatch(U1), outcome(U1, 'prepare', 1, 'clean-build', 'advance')], 2, /re-enters no unit/);
   });
 
   it('a cut unit takes no dispatch or outcome; a merged unit cannot be cut', () => {
-    const cut = [planApplied(1, [U1, U2], [], 'dag'), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])];
+    const cut = [planApplied(1, [U1, U2]), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])];
     assert.equal(folded(cut).unit(U2).status, 'cut');
     refuses([...cut, dispatch(U2)], 3, /dispatch of u2, which is cut/);
     refuses([...cut, outcome(U2, 'plan-check', 1, 'approve', 'advance')], 3, /which is cut/);
-    refuses([planApplied(1, [U1], [], 'dag'), outcome(U1, 'snapshot', 1, 'published', 'retire'), planApplied(2, [U1], [{ type: 'unit-cut', unit: U1 }])], 3, /cuts u1, which is retired/);
+    refuses([planApplied(1, [U1]), outcome(U1, 'snapshot', 1, 'published', 'retire'), planApplied(2, [U1], [{ type: 'unit-cut', unit: U1 }])], 3, /cuts u1, which is retired/);
   });
 
   it('buildTier: the dispatch floor, raised to high by implementer-escalated and kept there', () => {
@@ -273,12 +271,8 @@ describe('fold: lineage, cut, build tier, scheduling', () => {
     ], 5, /at the chargeable bound/);
   });
 
-  it('scheduling: dag only on a first revision of an undispatched log; no scheduling on rev 1 is legacy', () => {
-    assert.equal(folded([]).scheduling(), null);
-    assert.equal(folded([planApplied(1, [U1], [], 'dag')]).scheduling(), 'dag');
-    assert.equal(folded([dispatch(U1), planApplied(1, [U1])]).scheduling(), 'legacy');
-    assert.equal(folded([planApplied(1, [U1]), planApplied(2, [U1])]).scheduling(), 'legacy');
-    refuses([dispatch(U1), planApplied(1, [U1], [], 'dag')], 2, /already dispatched a unit/);
+  it('scheduling: the first revision comes before any dispatch', () => {
+    refuses([dispatch(U1), planApplied(1, [U1])], 2, /already dispatched a unit/);
   });
 
   it('judgment inputs, resolved edges and the run-only allowlist', () => {

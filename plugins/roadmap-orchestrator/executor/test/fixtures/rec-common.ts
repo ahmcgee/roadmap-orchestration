@@ -99,6 +99,12 @@ const UNIT_CRASH: Partial<Record<RecKind, string>> = {
   'resource.transition': 'resource.after-intent',
   'spec.patch': 'spec.patch.before-write',
 };
+/**
+ * The occurrence of a unit crash label that leaves the op of its kind open, where it is not the first: plan-check's `@cpu`
+ * takes four transitions (reserve, run, clean, release) before the build reserves `db` with its own `@cpu`, the open
+ * reservation whose recovery tears `db` down.
+ */
+const UNIT_CRASH_OCCURRENCE: Partial<Record<RecKind, number>> = { 'resource.transition': 5 };
 
 export type DeadRun = Readonly<{ d: ArcDescriptor; kind: RecKind; stateDir: string }>;
 
@@ -114,7 +120,7 @@ export async function deadRun(kind: RecKind, opts: Partial<ArcOptions> = {}): Pr
       writeFileSync(join(stateDir, 'db.teardown-fails'), '');
     }
     straight(d, { dirty: kind === 'salvage.commit' });
-    await crashUnit(d, unitLabel);
+    await crashUnit(d, unitLabel, UNIT_CRASH_OCCURRENCE[kind] ?? 1);
     return { d, kind, stateDir };
   }
   switch (kind) {

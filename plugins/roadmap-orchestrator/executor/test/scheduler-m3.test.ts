@@ -95,7 +95,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       const [covered] = factsOf(r, 'docs-covered');
       assert.deepEqual([covered!.pub, covered!.from, covered!.to], ['docs-1', started!.integrationSha, head(d)], 'docs-only: it covers its own edge (A17)');
       // A8: the close-out renderings are in the tree (arc-lifetime and withdrawn rulings retired), with the obligations' block.
-      const revision = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(d.planPath));
+      const revision = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
       const expected = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'ledger'), [...revision.sidecars.values()].map((s) => s.sidecar), 'close-out');
       assert.equal(`${git(d.repo, 'show', 'main:.roadmap/constraints.md')}\n`, expected);
       assert.match(git(d.repo, 'show', 'main:.roadmap/invariants.md'), /json roadmap-obligations/);

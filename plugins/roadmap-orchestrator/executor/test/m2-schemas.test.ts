@@ -10,6 +10,7 @@ import { commandBody, laneDef, residueKey } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { parsePlan } from '../src/input/plan.ts';
+import { appliedFields } from './fixtures/log-records.ts';
 
 const arc = arcId('arc-1');
 const op = opId(arc, 7);
@@ -108,16 +109,20 @@ describe('M2 event records', () => {
       { kind: 'unparked', unit, command: cmd },
       { kind: 'probe', target: { type: 'host' }, covers: [12, 40], result: 'fail', nextProbeAt: at },
       { kind: 'probe', target: { type: 'backend', backend: 'codex' }, covers: [7], result: 'pass', nextProbeAt: null },
-      { kind: 'judgment-inputs', unit, stage: 'gate', attempt: 4, tip: A, head: A, specRev: specRev(2), specSha256: H, planRev: planRev(3), routingRev: rev },
+      {
+        kind: 'judgment-inputs', unit, stage: 'gate', attempt: 4, tip: A, head: A, specRev: specRev(2), specSha256: H, planRev: planRev(3), routingRev: rev,
+        fingerprint: { unitCommit: A, specRev: 2, contractRevs: [], rulingRevs: [] },
+      },
       { kind: 'judgment-inputs', unit, stage: 'plan-check', attempt: 1, tip: A, head: null, specRev: specRev(1), specSha256: H, planRev: planRev(1), routingRev: rev },
       { kind: 'edge-resolved', edge: 'e-top', command: cmd, evidence: 'the migration landed in #412' },
       { kind: 'run-only', command: cmd, units: ['a', 'b'] },
       { kind: 'run-only', command: cmd, units: null },
       { kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 5 },
-      { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { u1: H }, changes: [], scheduling: 'dag' },
+      { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(1, null) },
       {
         kind: 'plan-applied', rev: 2, command: cmd, planSha256: H, specs: { u1: H, u2: H },
         changes: [{ type: 'unit-cut', unit: 'u3' }, { type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false }, { type: 'plan-field', field: 'capacity' }],
+        ...appliedFields(2, cmd),
       },
     ];
     for (const f of facts) roundTrip(event(fact(f)));
@@ -133,8 +138,8 @@ describe('M2 event records', () => {
     refusesLine(fact({ kind: 'run-only', command: cmd, units: [] }), /non-empty/);
     refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'high', to: 'high', stalled: 5 }), /below high/);
     refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 6 }), /a build attempt before 6/);
-    refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [], scheduling: 'dag' }), /absent after rev 1/);
-    refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [{ type: 'unit-reentered', unit: 'u1', reenters: 'u1', reset: false }] }), /other than the re-entering one/);
+    refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(2, null), scheduling: 'dag' }), /absent after rev 1/);
+    refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [{ type: 'unit-reentered', unit: 'u1', reenters: 'u1', reset: false }], ...appliedFields(2, null) }), /other than the re-entering one/);
     assert.deepEqual(edgeId('e-top'), 'e-top');
   });
 });

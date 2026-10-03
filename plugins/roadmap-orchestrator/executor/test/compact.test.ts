@@ -9,13 +9,10 @@
 //                                     disposition; compaction keeps that pair; recovery and the next probe release it
 //   compact.disposer-arc-holds        a pair disposed of by another arc is kept while that arc's fold holds the instance
 //   compact.unreadable-log-retains    an arc with no log, or a corrupt one, keeps every pair it is part of
-//   compact.dev5-arc                  an index and logs written by the 1.0.0-dev.5 executor, a retry crashed after its
-//                                     disposition among them: compacted by HEAD, bodies unchanged, then released
 //   compact.stray-archive-link        a crash after the link, then appends: the next compaction relinks under the new name
 //   compact.at-start                  the supervisor compacts at `roadmap start`, and the arc runs to complete
 //   host.prune-generation-files       generation files before the last K go; a log that claimed nothing stays
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +25,7 @@ import { type AbsPath, absPath } from '../src/core/values.ts';
 import { COMPACT_TMP, compactResidues } from '../src/host/compact.ts';
 import { RESIDUES, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import {
-  RESIDUE_ARCHIVE, bodyOf, ownArcResidue, readResidueIndex, readResidues, recordDisposition, recordResidue, residueArchiveName, undispositioned,
+  RESIDUE_ARCHIVE, bodyOf, readResidueIndex, readResidues, recordDisposition, recordResidue, residueArchiveName, undispositioned,
   undispositionedResidueCheck,
 } from '../src/host/residues.ts';
 import type { StartupContext } from '../src/preflight/startup.ts';
@@ -179,31 +176,31 @@ describe('compact.drops-disposed-keeps-open', () => {
 // ---------------------------------------------------------------------------------------------------
 // H1: fold-held retention
 
-const pool = (mode: string, r: ResRun, trigger: string | null, root?: string) =>
-  runUntilExit(process.execPath, [join(root ?? fileURLToPath(new URL('.', import.meta.url)), 'fixtures', 'pool-child.ts'), mode, JSON.stringify(r)], {
+const pool = (mode: string, r: ResRun, trigger: string | null) =>
+  runUntilExit(process.execPath, [join(fileURLToPath(new URL('.', import.meta.url)), 'fixtures', 'pool-child.ts'), mode, JSON.stringify(r)], {
     env: trigger === null ? { ...process.env } : { ...process.env, ROADMAP_TEST_CRASH: trigger },
     timeoutMs: CHILD_TIMEOUT_MS,
   });
 
-async function poolOk(mode: string, r: ResRun, root?: string): Promise<string> {
-  const exit = await pool(mode, r, null, root);
+async function poolOk(mode: string, r: ResRun): Promise<string> {
+  const exit = await pool(mode, r, null);
   assert.equal(exit.code, 0, `${mode}: ${exit.stderr}`);
   return exit.stdout.trim();
 }
 
 /** The retry scenario of pool-crash.test.ts, its run dir under `root`, killed at `retry.after-disposition` (or run through). */
-async function retryRun(root: string, host: string, crash: boolean, testRoot?: string): Promise<ResRun> {
+async function retryRun(root: string, host: string, crash: boolean): Promise<ResRun> {
   const base = newRun();
   const r: ResRun = { ...base, hostDir: host, runDir: join(root, base.arc) };
   mkdirSync(r.stateDir, { recursive: true });
   emptyLog(r.runDir, arcId(r.arc));
   writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
   if (!crash) {
-    assert.equal(await poolOk('retry', r, testRoot), 'pass');
+    assert.equal(await poolOk('retry', r), 'pass');
     return r;
   }
   const trigger = writeTrigger(tmpDir('trigger'), { label: 'retry.after-disposition', occurrence: 1 });
-  const exit = await pool('retry', r, trigger, testRoot);
+  const exit = await pool('retry', r, trigger);
   assert.equal(exit.signal, 'SIGKILL', exit.stderr);
   assertFired(trigger);
   return r;
@@ -280,58 +277,6 @@ describe('compact.unreadable-log-retains', () => {
     const left = new Set(readResidues(dir).map((l) => keyText(l.key)));
     for (const k of kept) assert.ok(left.has(keyText(k)), keyText(k));
     for (const k of dropped) assert.ok(!left.has(keyText(k)), keyText(k));
-  });
-});
-
-// ---------------------------------------------------------------------------------------------------
-// dev.5
-
-/** The 1.0.0-dev.5 release (the merge of PR #105): its executor tree, extracted from git. */
-const DEV5_RELEASE = 'be76132';
-const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
-
-function extractDev5(): string {
-  const executor = fileURLToPath(new URL('../', import.meta.url));
-  const top = spawnSync('git', ['-C', executor, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-  assert.equal(top.status, 0, top.stderr);
-  const archive = spawnSync('git', ['-C', top.stdout.trim(), 'archive', '--format=tar', DEV5_RELEASE, EXECUTOR_PATH], { maxBuffer: 1 << 30 });
-  assert.equal(archive.status, 0, `git archive ${DEV5_RELEASE}: ${archive.stderr}`);
-  const dir = tmpDir('compact-dev5');
-  const tar = spawnSync('tar', ['-x', '-C', dir], { input: archive.stdout });
-  assert.equal(tar.status, 0, `tar: ${tar.stderr}`);
-  const root = join(dir, EXECUTOR_PATH);
-  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.5"/);
-  return join(root, 'test');
-}
-
-describe('compact.dev5-arc', () => {
-  it('an index and logs the dev.5 executor wrote (one retry finished, one crashed after its disposition) compact under HEAD with bodies unchanged; HEAD then releases the crashed one', T, async () => {
-    const dev5 = extractDev5();
-    const root = tmpDir('compact-runtime');
-    const host = join(tmpDir('compact-host'), 'roadmap');
-    const finished = await retryRun(root, host, false, dev5);
-    const crashed = await retryRun(root, host, true, dev5);
-    const dir = absPath(host);
-    const written = indexBytes(dir);
-    const lines = readResidues(dir);
-    assert.equal(lines.length, 4);
-    for (const l of lines) assert.ok(l.key.unit === U1 && l.key.job === undefined, 'a dev.5 key names its unit');
-    const crashedBodies = lines.filter((l) => l.key.arc === crashed.arc).map((l) => canonicalJson(bodyOf(l)));
-
-    const done = compactResidues(dir, runDirs(root), 1);
-    assert.deepEqual(done.kind === 'compacted' ? [done.dropped, done.kept] : done, [1, 2]);
-    assert.ok(readFileSync(hostPath(dir, archives(dir)[0]!)).equals(written), 'the dev.5 index archived byte for byte');
-    assert.deepEqual(bodies(dir), crashedBodies, 'the kept dev.5 records unchanged');
-    assert.ok(!readResidues(dir).some((l) => l.key.arc === finished.arc));
-    const residue = readResidues(dir).find((l) => l.type === 'residue')!;
-    assert.equal(ownArcResidue(readJournal(absPath(crashed.runDir), arcId(crashed.arc)).view, residue.key), true, 'still proven the dev.5 arc\'s own');
-
-    // HEAD's recovery and probe finish the dev.5 retry.
-    await poolOk('recover', crashed);
-    assert.equal(await poolOk('reclaim', crashed), 'pass');
-    assert.deepEqual(statusOf(crashed), { state: 'free' });
-    const next = compactResidues(dir, runDirs(root), 1);
-    assert.deepEqual(next.kind === 'compacted' ? [next.dropped, next.kept] : next, [1, 0]);
   });
 });
 

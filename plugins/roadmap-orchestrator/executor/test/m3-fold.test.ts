@@ -8,7 +8,7 @@ import { type UnitId, commandId, invocationId, jobId, opId, opKey, planRev, seat
 import { DEFAULT_BOUNDS } from '../src/core/records.ts';
 import { Fold, FoldInvariantError } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
-import { ARC, H, REV, U1, chain } from './fixtures/log-records.ts';
+import { ARC, H, REV, U1, appliedFields, chain } from './fixtures/log-records.ts';
 
 const U2 = unitId('u2');
 const CMD = commandId('cmd-0123456789abcdef');
@@ -22,7 +22,7 @@ const AT = isoTime('2026-09-30T12:00:00.000Z');
 const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const planApplied = (rev: number, extra: object = {}, changes: readonly object[] = []): LogRecord => fact({
   kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : CMD, planSha256: H, specs: { u1: H, u2: H }, changes,
-  ...(rev === 1 ? { scheduling: 'dag' } : {}), ...extra,
+  ...appliedFields(rev, rev === 1 ? null : CMD), ...extra,
 });
 const holisticPlan = (rev: number, extra: object = {}, changes: readonly object[] = []): LogRecord => planApplied(rev, { visionSha256: V, ...extra }, changes);
 const opened = (n: number, key = H, extra: object = {}): LogRecord => fact({
@@ -49,8 +49,8 @@ const divergence = (n: number, job: string, index: number): LogRecord => fact({
 const digest = (seq: number, ids: readonly string[]): LogRecord => fact({ kind: 'divergence-digest', needsUser: `nu-${seq}`, ids });
 const dispatch = (unit: UnitId, bounds?: object): LogRecord => fact({
   kind: 'dispatch', record: {
-    unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT,
-    ...(bounds === undefined ? {} : { transientRules: 'm3', bounds }),
+    unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3',
+    ...(bounds === undefined ? {} : { bounds }),
   },
 });
 const chargeable = (unit: UnitId, attempt: number, cls: string): LogRecord =>

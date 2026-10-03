@@ -106,7 +106,7 @@ describe('the baseline witness (A6)', () => {
     }
   });
 
-  test('baseline.not-holistic: a dev.5-style arc (no vision) owes no baseline and spends nothing', T, () => {
+  test('baseline.not-holistic: an arc without the holistic layer (no vision) owes no baseline and spends nothing', T, () => {
     const d = publishArc({ steps: [] });
     const r = contextFor(d);
     try {

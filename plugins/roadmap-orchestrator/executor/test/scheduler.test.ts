@@ -27,7 +27,7 @@ import { reached, release } from './helpers/barrier.ts';
 import { fixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type Step, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
-import { ARC, H, REV, chain } from './fixtures/log-records.ts';
+import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
 import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
@@ -93,7 +93,7 @@ test('sched.parallel, sched.one-task-per-unit: two independent units build at on
   const build = codexStep([{ type: 'commit', message: 'add mul', files: MUL }, { type: 'barrier', name: 'build', timeoutMs: 120_000, perUnit: true }], { argv: ['exec', '-C'] });
   const units = ['u1', 'u2'];
   const d = setupArc({
-    dag: true, units: units.map((id) => ({ id })),
+    units: units.map((id) => ({ id })),
     steps: units.flatMap((u) => of(u, [planCheckStep({ decision: 'approve' }), build, gateStep({ decision: 'approve' })])),
   });
   const r = contextFor(d);
@@ -143,7 +143,7 @@ test('sched.parallel, sched.one-task-per-unit: two independent units build at on
 test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission boundary: a wait for its build\'s entry reservation is cancelled with nothing journaled, and a paused live build is interrupted and its reservation released', T, async () => {
   const check = planCheckStep({ decision: 'approve' });
   const d = setupArc({
-    dag: true, units: [{ id: 'u1' }, { id: 'u2' }],
+    units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
       ...of('u1', [check, codexStep([{ type: 'commit', message: 'add mul', files: MUL }, { type: 'barrier', name: 'b1', timeoutMs: 120_000 }], { argv: ['exec', '-C'] })]),
       ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step]),
@@ -180,7 +180,7 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
 
 test('sched.chain-completes-under-pause: a pause while a build\'s chain runs (its teardown slow) lets the chain finish; the unit then stops at its next admission boundary holding nothing, and a resume runs it to merge', T, async () => {
   const dir = tmpDir('teardown-barrier');
-  const d = setupArc({ dag: true, steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   slowTeardown(d, dir, tmpDir('res-state'));
   const r = contextFor(d);
   try {
@@ -203,7 +203,7 @@ test('sched.chain-completes-under-pause: a pause while a build\'s chain runs (it
 
 test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) never kills it: control commands still apply while the scheduler waits for it, and the run ends stop once it finishes', T, async () => {
   const dir = tmpDir('teardown-barrier');
-  const d = setupArc({ dag: true, steps: [planCheckStep({ decision: 'approve' }), mulBuild()] });
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()] });
   slowTeardown(d, dir, tmpDir('res-state'));
   const r = contextFor(d);
   try {
@@ -241,7 +241,7 @@ for (const [name, stage, rest] of [
   ['sched.restart-paused-ff-before-snapshot', 'ff', ['snapshot:published']],
 ] as const) {
   test(`${name}: a paused unit whose green publication stopped before ${rest[0]!.split(':')[0]} continues its chain at the restart, whatever the pause, and merges`, T, async () => {
-    const d = setupArc({ dag: true, steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
     const r = contextFor(d);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === stage);
@@ -271,7 +271,7 @@ const parkClaude = (r: ArcRun): number => usageLimit(r, 'claude');
 const smokeAt = (name: string): Step => ({ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'barrier', name, timeoutMs: 120_000 }, { type: 'emit', value: OK }] });
 
 test('sched.no-double-apply: a mutation whose job is still running (resume --backend, its smoke parked) is never started again, poll after poll; it applies once', T, async () => {
-  const d = setupArc({ dag: true, steps: [smokeAt('smoke')] });
+  const d = setupArc({ steps: [smokeAt('smoke')] });
   const r = contextFor(d);
   try {
     await command(r, { type: 'pause', target: { type: 'all' } });
@@ -296,7 +296,7 @@ test('sched.no-double-apply: a mutation whose job is still running (resume --bac
 });
 
 test('sched.stop-during-smoke: a stop kills a running smoke (resume --backend); the run ends stop without a verdict on that command, whose open op the next start\'s recovery applies once', T, async () => {
-  const d = setupArc({ dag: true, steps: [smokeAt('smoke'), { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }] });
+  const d = setupArc({ steps: [smokeAt('smoke'), { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }] });
   const r = contextFor(d);
   try {
     await command(r, { type: 'pause', target: { type: 'all' } });
@@ -329,7 +329,7 @@ test('sched.stop-during-smoke: a stop kills a running smoke (resume --backend); 
 
 test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (building on codex) waits at its build\'s admission while u2 (building on claude) runs to merge; resume --backend releases u1', T, async () => {
   const d = setupArc({
-    dag: true, units: [{ id: 'u1' }, { id: 'u2', risk: 'high' }],
+    units: [{ id: 'u1' }, { id: 'u2', risk: 'high' }],
     steps: [
       // u1 builds after u2 merged mul: its own file too, so its commit is not empty.
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
@@ -358,7 +358,6 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
 
 test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-check parks claude with an epoch and holds the unit; the scheduler\'s probe job passes and releases the hold, and the unit runs to merge', T, async () => {
   const d = setupArc({
-    dag: true,
     steps: [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
   });
   // A `claude` whose first call answers with the CLI's capacity error (HTTP 529); every later call is the fake's.
@@ -392,7 +391,6 @@ test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-ch
 
 test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`apply` of a unit that reenters it at verify): prepare, lanes, gate, candidate, publication, and the retire cites the preparation\'s snapshot', T, async () => {
   const d = setupArc({
-    dag: true,
     steps: [
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' }),
       gateStep({ decision: 'approve' }),
@@ -438,11 +436,11 @@ describe('arc.state-predicates', () => {
   const outcome = (unit: UnitId, stage: string, attempt: number, out: string, cls: string, extra: object = {}): LogRecord =>
     fact({ kind: 'stage-outcome', unit, stage, attempt, outcome: out, class: cls, chargeable: false, ...extra });
   const dispatch = (unit: UnitId): LogRecord => fact({
-    kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER },
+    kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
   });
   const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[] = []): LogRecord => fact({
     kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : `cmd-${String(rev).padStart(16, '0')}`, planSha256: H,
-    specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...(rev === 1 ? { scheduling: 'dag' } : {}),
+    specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...appliedFields(rev, rev === 1 ? null : `cmd-${String(rev).padStart(16, '0')}`),
   });
   const folded = (records: readonly LogRecord[]): Fold => {
     const f = new Fold(ARC);
@@ -456,7 +454,7 @@ describe('arc.state-predicates', () => {
     assert.equal(unitSettled(folded([...base, outcome(U1, 'snapshot', 1, 'published', 'retire')]), U1), true, 'merged');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'build', 1, 'interrupted', 'hold')]), U1), false, 'held');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })]), U1), true, 'an operator park');
-    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park')]), U1), true, 'a dev.4 park, read as operator');
+    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park')]), U1), true, 'a park without its class (the interim M2 shim), read as operator');
     const retry = outcome(U1, 'build', 1, 'process-fault', 'park', { park: { class: 'retryable', targets: [{ type: 'backend', backend: 'codex' }] } });
     assert.equal(unitSettled(folded([...base, retry]), U1), false, 'a retryable park is probed until it recovers');
     const cut = folded([planApplied(1, [U1, U2]), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])]);

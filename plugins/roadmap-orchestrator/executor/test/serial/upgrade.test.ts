@@ -7,16 +7,16 @@
 // HEAD (same repo, run dir and host dir; setup does not re-run; the spec inputs stay as the previous release
 // left them), with HEAD's driver, graded by HEAD's check.ts (every criterion passes, and the upgrade forced no
 // park and no new session), or, where the story needs arc judgments the M1 scenario format cannot express, with
-// HEAD's CLI and fakes directly. The previous release (1.0.0-dev.5) scheduled a DAG, so every arc it started is a
-// DAG arc under HEAD too (`scheduling: dag`, `@cpu` reserved). It has no holistic layer: HEAD runs its arcs with
-// M2 semantics and no new spend unless the architect opts in (plan "Upgrade in place (dev.5 → dev.6)").
+// HEAD's CLI and fakes directly. The previous release (1.0.0-dev.6, the only one adopted: OR-L4) scheduled a DAG
+// and kept every M3 record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic layer
+// runs with M2 semantics and no new spend unless the architect opts in.
 //
 // A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
 // is frozen (SIGSTOP) as soon as it is ready, so no generation of the previous release recovers the crash; once
 // the executor is gone the supervisor is SIGKILLed. HEAD's start takes over the dead claim of the same arc and its
 // recovery finishes what the previous release left open.
 //
-// The M2 variants (1.0.0-dev.4 → dev.5), now run against dev.5:
+// The variants:
 //   upgrade.stop-mid-build     unit `slug` merged; `page-id` stopped mid-build (its Codex thread started, its
 //                              worktree dirty), so held with an interrupted attempt; `resume` queued through
 //                              the previous release's CLI. HEAD continues the same thread.
@@ -28,53 +28,27 @@
 //                              the plan-check and merges it on rev 2, recording no plan revision of its own; the
 //                              finished arc then classifies an apply adding a unit as accepted (revision 3).
 //   upgrade.park-adopted       unit `slug` merged; `page-id`'s lane killed by a signal twice (blocked, then its
-//                              retry) on a calm host (the test waits, bounded, for dev.5's own host sample to clear:
-//                              on a busy one dev.5 parks it as host pressure), so parked `lane-blocked` operator-env
-//                              (dev.5 records the park class); its needs-user acknowledged, and the previous release
-//                              ends the arc. `resume page-id` (queued through the previous release's CLI) re-runs its
-//                              lanes on HEAD, which now pass, and it merges.
+//                              retry) on a calm host (the test waits, bounded, for the previous release's own host
+//                              sample to clear: on a busy one it parks it as host pressure), so parked `lane-blocked`
+//                              operator-env; its needs-user acknowledged, and the previous release ends the arc.
+//                              `resume page-id` (queued through the previous release's CLI) re-runs its lanes on
+//                              HEAD, which now pass, and it merges.
 //   upgrade.named-cpu-low-host (F18) the plan declares a named resource `cpu`, which both units reserve; `page-id`
-//                              stopped mid-build as in stop-mid-build. A dev.5 arc is a DAG arc: on a one-CPU
-//                              host (`taskset -c 0`) HEAD refuses it over the `@cpu` capacity, as dev.5 does, and
-//                              changes nothing; on this host HEAD finishes it reserving both the named `cpu` and
-//                              `@cpu` tokens.
-//
-// The M3 variants (1.0.0-dev.5 → dev.6; plan "Upgrade in place", G14–G16, H7, H15, A5a, B4):
-//   upgrade.dev5-completes     stopped mid-build as in stop-mid-build: HEAD finishes it with no vision and no
-//                              holistic layer: no holistic fact, no arc call, no job, no plan revision.
-//   upgrade.dev5-approval-open-ff
-//                              (G14) dev.5 approved `page-id` and crashed with its unit `ff` open (`ff.act-start`):
-//                              HEAD's recovery compares the dev.5 approval's fingerprint byte for byte, redoes the
-//                              ff and publishes it, with no new judgment.
-//   upgrade.dev5-plan-check-answer
-//                              (B4) dev.5 crashed after `page-id`'s plan-check result was written (`spawn.after-result`):
-//                              HEAD consumes that answer, which has no `visionConflict` (read as none), and builds.
-//   upgrade.dev5-apply-queued  (G15) stopped mid-build, `page-id` left held; on HEAD's running arc the architect's
-//                              `apply` (a new `direction`) queued through dev.5's CLI: HEAD applies its dev.5 body
-//                              (legacy interpretation, ledger live) as plan revision 2, the command's bytes unchanged.
-//   upgrade.dev5-apply-open    (G15) `page-id` parked at plan-check as in reopen-mid-plan-check; the architect's
-//                              `apply` of its rev 2 spec, queued through dev.5's CLI, crashed open after its
-//                              revision 2 (`command.apply.after-effect`, no receipt); `resume page-id` queued. HEAD's
-//                              start leaves the files to the open command, its recovery finishes it, then re-opens
-//                              `page-id`, which merges on rev 2 (HEAD's CLI and fakes: the M1 driver stops a run it
-//                              sees parked).
-//   upgrade.dev5-spend-by-model
-//                              (G16, H7) the repo config binds `efficient` to a non-default triple; stopped
-//                              mid-build. HEAD adopts dev.5's revision with its routing provenance reconstructed from
-//                              that binding, and `status` attributes every build, dev.5's and HEAD's, to the bound
-//                              model.
-//   upgrade.rule-on-dev5-arc   stopped mid-build; while `page-id` waits at its lane on HEAD, `roadmap rule` lands
-//                              C-3 on the dev.5 revision (its live ledger): the ledger's preimage kept, the docs
-//                              publication of constraints.md, the write-back; then `page-id` merges.
-//   upgrade.dev5-roadmap-diff-branch
-//                              (H15) `page-id`'s dev.5 build edits the allowlisted `.roadmap/constraints.md`, its gate
-//                              approves, and dev.5 is stopped in its candidate's suite: HEAD admits the candidate
-//                              under dev.5's transient rules (m3's would refuse the path) and publishes it.
-//   upgrade.compact-with-dev5-retry
-//                              (A5a, H1) `slug`'s resource teardown fails once; dev.5's retry crashes after its
-//                              `cleaned` disposition (`retry.after-disposition`), the instance still held; 64
-//                              released pairs of another arc fill the index. HEAD's start compacts it: the fillers
-//                              go, the dev.5 pair stays byte for byte; recovery releases it and the arc merges.
+//                              stopped mid-build as in stop-mid-build. On a one-CPU host (`taskset -c 0`) HEAD
+//                              refuses the DAG arc over the `@cpu` capacity and changes nothing; on this host HEAD
+//                              finishes it reserving both the named `cpu` and `@cpu` tokens.
+//   upgrade.dev6-apply-queued  stopped mid-build, `page-id` left held; on HEAD's running arc the architect's `apply`
+//                              (a new `direction`) queued through the previous release's CLI: HEAD applies it as plan
+//                              revision 2, the command's bytes unchanged.
+//   upgrade.rule-on-dev6-arc   stopped mid-build; while `page-id` waits at its lane on HEAD, `roadmap rule` lands
+//                              C-3 on the previous release's revision: the docs publication of constraints.md, the
+//                              write-back; then `page-id` merges.
+//   upgrade.compact-with-dev6-retry
+//                              (A5a, H1) `slug`'s resource teardown fails once; the previous release's retry crashes
+//                              after its `cleaned` disposition (`retry.after-disposition`), the instance still held;
+//                              64 released pairs of another arc fill the index. HEAD's start compacts it: the fillers
+//                              go, the previous release's pair stays byte for byte; recovery releases it and the arc
+//                              merges.
 //   upgrade.opt-in-holistic    stopped mid-build, `page-id` left held; on HEAD the architect's
 //                              `apply` adds `holistic` (a vision, one must-hold obligation witnessed by a node-test
 //                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
@@ -96,10 +70,9 @@ import type { JournalView } from '../../src/core/interfaces.ts';
 import { canonicalJson } from '../../src/core/json.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
-import { absPath, repoPath } from '../../src/core/values.ts';
+import { absPath } from '../../src/core/values.ts';
 import { incomingPath, terminalReceipt } from '../../src/commands/queue.ts';
 import type { ExitReason } from '../../src/executor.ts';
-import { transientViolations } from '../../src/git/transient.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { readOwner } from '../../src/host/owner.ts';
 import { RESIDUE_ARCHIVE, bodyOf, readResidues, recordDisposition, recordResidue } from '../../src/host/residues.ts';
@@ -124,10 +97,11 @@ after(assertNoSurvivors);
 /**
  * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
  * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.5, merged to main as
- * PR #105 (schema version 1). Arcs started before 1.0.0-dev.1 (a95355e) are not adopted; they are adapted by hand.
+ * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.6, merged to main as
+ * PR #106 (schema version 1). Arcs started before 1.0.0-dev.6 are not adopted (owner ruling OR-L4): each finishes on
+ * the executor release it started on.
  */
-const PREVIOUS_RELEASE = 'be761320c0c0b2323b856ed42dd571ff3a98bea8';
+const PREVIOUS_RELEASE = '0a58349bca2b76a1b40be1204e97f1862764f4d0';
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../../', import.meta.url));
@@ -168,7 +142,7 @@ before(async () => {
   const tar = spawnSync('tar', ['-x', '-C', dir], { input: archive.stdout });
   assert.equal(tar.status, 0, `tar: ${tar.stderr}`);
   const root = join(dir, EXECUTOR_PATH);
-  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.5"/);
+  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.6"/);
   const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
   const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
   previous = {
@@ -203,13 +177,6 @@ const ESCALATE: M1Step = {
   role: 'planCheck',
   answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] },
 };
-
-/** The scenario file is HEAD's format; dev.5's strict plan-check schema rejects `visionConflict` (added after it). */
-function forPrevious(step: M1Step): M1Step {
-  if (step.role !== 'planCheck') return step;
-  const { visionConflict: _, ...answer } = step.answer as Record<string, unknown>;
-  return { ...step, answer } as M1Step;
-}
 
 /** Where the previous release is stopped: a fake call parked at a barrier in its scenario dir. */
 const MID_CALL = 'mid-call';
@@ -255,7 +222,7 @@ async function preparePrevious(
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1).map(forPrevious) }));
+  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1) }));
   const { fakeSteps, readScenario, writeShims } = previous.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
@@ -344,7 +311,9 @@ async function crashPrevious(p: Phase1, spec: TriggerSpec, act: () => Promise<vo
 // ---------------------------------------------------------------------------------------------------
 // Phase 2: HEAD finishes the arc
 
-type Finished = Readonly<{ driver: Exit; report: Report; check: CheckResult; calls: readonly CallRecord[]; after: readonly Event[]; view: JournalView }>;
+type Finished = Readonly<{
+  driver: Exit; report: Report; check: CheckResult; calls: readonly CallRecord[]; events: readonly Event[]; after: readonly Event[]; view: JournalView;
+}>;
 
 /**
  * HEAD's driver on the same fixture with `m1` (its smoke prepended), then HEAD's check. `during` runs alongside the
@@ -366,7 +335,7 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
   const steps = (JSON.parse(readFileSync(scenario, 'utf8')) as ScenarioFile).steps;
   assert.deepEqual(calls.map((c) => c.step), steps.map((_, i) => i), 'HEAD\'s calls matched every step of its scenario, in order');
   const { view, events } = journalOf(p);
-  return { driver, report, check, calls, after: events.filter((e) => e.seq > highWater), view };
+  return { driver, report, check, calls, events, after: events.filter((e) => e.seq > highWater), view };
 }
 
 /** Every check.ts criterion passes, both units merged, one HEAD generation ran it, and the upgrade forced no park. */
@@ -390,7 +359,7 @@ function assertFinished(f: Finished): void {
  * stages it runs (an ff and a snapshot reserve none).
  */
 function assertDag(f: Finished): void {
-  assert.equal(f.view.scheduling(), 'dag');
+  assert.equal(factsOf(f.events, 'plan-applied')[0]?.scheduling, 'dag');
   const ran = factsOf(f.after, 'stage-outcome').filter((o) => o.stage !== 'ff' && o.stage !== 'snapshot');
   const cpu = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'resource.transition' ? e.expect.resources.filter((r) => r.startsWith('@cpu#')) : []));
   assert.equal(cpu.length > 0, ran.length > 0, `HEAD reserved @cpu exactly when it ran a stage that takes it: ${JSON.stringify(ran.map((o) => o.stage))}`);
@@ -398,12 +367,6 @@ function assertDag(f: Finished): void {
 
 /** HEAD's calls after its start-up smoke (Claude, then Codex, under `default`). */
 const SMOKE_CALLS = 2;
-
-/** The upgrade defaults (src/core/upgrade.ts) HEAD's executor of `generation` warned it applied, from its stderr in the host dir. */
-function defaulted(p: Phase1, generation: number): ReadonlySet<string> {
-  const text = readFileSync(executorLogs(absPath(p.host), generation).err, 'utf8');
-  return new Set([...text.matchAll(/^roadmap: upgrade default \(([^)]+)\)/gm)].map((m) => m[1]!));
-}
 
 const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Extract<Fact, { kind: K }>[] =>
   events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Fact, { kind: K }>] : []));
@@ -530,7 +493,7 @@ async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M2 variants
+// Parks and resources
 
 /** Rewrites a JSON input file of the fixture in place. */
 function editJson<T>(path: string, edit: (value: T) => T): void {
@@ -600,7 +563,7 @@ test('upgrade.park-adopted: a unit the previous release parked lane-blocked (ope
   assert.deepEqual(outcomesOf(f.after, 'page-id'), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'], 'HEAD re-ran the lanes, and nothing before them');
 });
 
-test('upgrade.named-cpu-low-host: a dev.5 plan\'s named resource `cpu` is reserved beside @cpu; on a one-CPU host HEAD refuses the DAG arc over capacity, as dev.5 does, and changes nothing', T, async () => {
+test('upgrade.named-cpu-low-host: the previous release\'s plan\'s named resource `cpu` is reserved beside @cpu; on a one-CPU host HEAD refuses the DAG arc over capacity and changes nothing', T, async () => {
   const affinity = spawnSync('taskset', ['-c', '0', process.execPath, '-e', 'process.stdout.write(String(require("node:os").availableParallelism()))'], { encoding: 'utf8' });
   assert.equal(affinity.status, 0, `taskset: ${affinity.stderr}`);
   assert.equal(affinity.stdout, '1', 'taskset -c 0 leaves one CPU available');
@@ -627,7 +590,7 @@ test('upgrade.named-cpu-low-host: a dev.5 plan\'s named resource `cpu` is reserv
   assert.equal(journalOf(p).view.highWater(), highWater, 'the refused start appended nothing');
   const plan = requirePlanInForce(absPath(p.l.runDir), journalOf(p).view).plan;
   const specs = new Map(plan.units.map((u) => [u.id, loadSpec(absPath(join(p.l.input, u.spec)))] as const));
-  assert.ok(overCapacity(plan, { cpu: 1 }, specs, journalOf(p).view).length > 0, 'the dev.5 arc is a DAG arc: over a one-CPU capacity');
+  assert.ok(overCapacity(plan, { cpu: 1 }, specs).length > 0, 'the previous release\'s arc is a DAG arc: over a one-CPU capacity');
 
   const scope = scopeOf(p);
   let f: Finished;
@@ -643,88 +606,7 @@ test('upgrade.named-cpu-low-host: a dev.5 plan\'s named resource `cpu` is reserv
 });
 
 // ---------------------------------------------------------------------------------------------------
-// M3 variants (1.0.0-dev.5 → dev.6)
-
-/** Every M3 fact kind but `arc-completed` (whether an arc without the layer records its completion is not what these variants test). */
-const HOLISTIC_KINDS: ReadonlySet<string> = new Set([
-  'witnessed', 'obligation-latched', 'finding-opened', 'finding-transition', 'audit-started', 'audit-ended', 'docs-covered', 'checkpoint-inputs',
-  'bundle-decided', 'divergence', 'divergence-digest', 'steered', 'merged-in', 'audit-requested', 'admissions-closed', 'docs-published',
-]);
-
-test('upgrade.dev5-completes: HEAD finishes a dev.5 arc with no vision and no holistic layer: no holistic fact, no arc call or job, no plan revision', T, async () => {
-  const { p, head } = await stoppedMidBuild(clean());
-  const scope = scopeOf(p);
-  let f: Finished;
-  track(scope);
-  try {
-    f = await finishOnHead(p, head);
-  } finally {
-    await teardown(scope);
-  }
-  assertFinished(f);
-  assert.equal(f.view.holistic().on, false);
-  assert.deepEqual(f.after.flatMap((e) => (e.type === 'fact' && HOLISTIC_KINDS.has(e.fact.kind) ? [e.fact.kind] : [])), [], 'no holistic fact');
-  assert.deepEqual(factsOf(f.after, 'plan-applied'), [], 'no plan revision');
-  const jobs = f.after.flatMap((e) => (e.type === 'intent' && (e.kind === 'revision.commit' || e.kind === 'docs.commit' || e.kind === 'mutant.apply' || e.parent?.type === 'job') ? [`${e.kind} ${canonicalJson(e.parent)}`] : []));
-  assert.deepEqual(jobs, [], 'no revision, docs publication, mutant or job');
-  assert.deepEqual(f.calls.map((c) => c.lens), f.calls.map(() => null), 'no lens call');
-  assert.equal(f.calls.length, SMOKE_CALLS + head.length, 'the unit calls, and no arc call');
-  const s = f.report.status;
-  assert.deepEqual([s.vision, s.audit, s.divergences, s.spend.byJob], [null, null, [], []]);
-  assert.ok(defaulted(p, f.report.generation!).has('dispatch.transientRules'), 'page-id, dispatched by dev.5, keeps its transient rules');
-});
-
-test('upgrade.dev5-approval-open-ff: dev.5 approved page-id and crashed with its ff open; HEAD\'s recovery compares the dev.5 fingerprint byte for byte and publishes, with no new judgment', T, async () => {
-  const c = clean();
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], []);
-  await crashPrevious(p, { label: 'ff.act-start', occurrence: 1, unit: 'page-id' });
-  const mid = journalOf(p).view;
-  assert.equal(mid.unit(unitId('slug')).status, 'retired');
-  const open = mid.opsOf('integration.ff').filter((i) => mid.doneOf(i.op) === null);
-  assert.equal(open.length, 1, 'page-id\'s ff intent is open');
-  const approval = mid.unit(unitId('page-id')).approval;
-  assert.ok(approval !== null, 'dev.5 recorded page-id\'s approval');
-  assert.equal('obligationRevs' in approval.fingerprint, false, 'a dev.5 fingerprint has no obligationRevs');
-
-  const scope = scopeOf(p);
-  let f: Finished;
-  track(scope);
-  try {
-    f = await finishOnHead(p, []);
-  } finally {
-    await teardown(scope);
-  }
-  assertFinished(f);
-  assert.equal(f.calls.length, SMOKE_CALLS, 'no judgment, no build: the smoke only');
-  assert.deepEqual(factsOf(f.after, 'judgment-inputs'), []);
-  assert.deepEqual(outcomesOf(f.after, 'page-id'), ['ff:published', 'snapshot:published'], 'the recovered ff published, then the snapshot');
-  const done = f.view.doneOf(open[0]!.op);
-  assert.ok(done !== null && done.kind === 'integration.ff');
-  assert.equal(canonicalJson(f.view.unit(unitId('page-id')).approval?.fingerprint), canonicalJson(approval.fingerprint), 'the approval is read as dev.5 wrote it');
-});
-
-test('upgrade.dev5-plan-check-answer: dev.5 crashed after page-id\'s plan-check result; HEAD consumes the answer without visionConflict (read as none) and builds, with no new plan-check', T, async () => {
-  const c = clean();
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck], []);
-  await crashPrevious(p, { label: 'spawn.after-result', occurrence: 1, unit: 'page-id' });
-  const mid = journalOf(p).view;
-  assert.equal(mid.unit(unitId('slug')).status, 'retired');
-  assert.deepEqual(outcomesOf(journalOf(p).events, 'page-id'), [], 'dev.5 recorded no outcome for page-id');
-
-  const scope = scopeOf(p);
-  let f: Finished;
-  track(scope);
-  try {
-    f = await finishOnHead(p, [c.pageId.build, c.pageId.gate]);
-  } finally {
-    await teardown(scope);
-  }
-  assertFinished(f);
-  assert.deepEqual(f.calls.slice(SMOKE_CALLS).map((call) => call.as), ['codex', 'claude'], 'the build and the gate, and no plan-check call');
-  assert.equal(outcomesOf(f.after, 'page-id')[0], 'plan-check:approve', 'HEAD recorded the dev.5 answer\'s outcome');
-  assert.ok(defaulted(p, f.report.generation!).has('planCheck.visionConflict'));
-  assert.deepEqual(factsOf(f.after, 'finding-opened'), [], 'no vision-conflict finding');
-});
+// The architect acting on HEAD's running arc
 
 /** Replaces the plan's `direction`, as the architect would. */
 const newDirection = (l: Layout): void =>
@@ -733,7 +615,7 @@ const newDirection = (l: Layout): void =>
 /** The queued command file's bytes. */
 const commandBytes = (p: Phase1, id: string): Buffer => readFileSync(incomingPath(absPath(p.l.runDir), commandId(id)));
 
-test('upgrade.dev5-apply-queued: an apply dev.5\'s CLI queues on HEAD\'s running arc is applied as revision 2 under the legacy interpretation, its bytes unchanged', T, async () => {
+test('upgrade.dev6-apply-queued: an apply the previous release\'s CLI queues on HEAD\'s running arc is applied as revision 2, its bytes unchanged', T, async () => {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle. The edit is made
   // on the running arc, so HEAD's start finds the files in force and the revision is the command's.
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
@@ -750,7 +632,7 @@ test('upgrade.dev5-apply-queued: an apply dev.5\'s CLI queues on HEAD\'s running
       assert.equal(apply.code, 0, apply.stderr);
       id = (JSON.parse(apply.stdout) as { command: string }).command;
       queued = commandBytes(p, id);
-      const receipt = await until(`the dev.5 apply ${id} ends`, PHASE_MS, () => terminalReceipt(absPath(p.l.runDir), commandId(id)));
+      const receipt = await until(`the previous release's apply ${id} ends`, PHASE_MS, () => terminalReceipt(absPath(p.l.runDir), commandId(id)));
       assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
       await submitOnHead(p, ['resume', 'page-id']);
     });
@@ -761,78 +643,7 @@ test('upgrade.dev5-apply-queued: an apply dev.5\'s CLI queues on HEAD\'s running
   const [fact, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(fact !== undefined && more.length === 0);
   assert.deepEqual([fact.rev, fact.command, fact.changes], [2, id, [{ type: 'plan-field', field: 'direction' }]]);
-  assert.ok(queued !== null && commandBytes(p, id).equals(queued), 'the dev.5 command file is never rewritten');
-  assert.ok(defaulted(p, f.report.generation!).has('apply.manifest'));
-});
-
-test('upgrade.dev5-apply-open: dev.5 crashed with the architect\'s apply open past its revision; HEAD\'s start leaves the files to it, recovery finishes it, then re-opens page-id, which merges on its rev 2', T, async () => {
-  const c = clean();
-  const p = await preparePrevious([...c.slug, ESCALATE, ESCALATE], []);
-  let id = '';
-  await crashPrevious(p, { label: 'command.apply.after-effect', occurrence: 1 }, async () => {
-    await parkedAtPlanCheck(p);
-    const apply = await p.cli(['apply', ...p.run]);
-    assert.equal(apply.code, 0, apply.stderr);
-    id = (JSON.parse(apply.stdout) as { command: string }).command;
-  });
-  const mid = journalOf(p).view;
-  const open = mid.opsOf('command.apply').filter((i) => mid.doneOf(i.op) === null);
-  assert.deepEqual(open.map((i) => i.expect.command), [id], 'the apply\'s op is open');
-  assert.deepEqual([mid.planApplied()?.rev, mid.planApplied()?.command], [2, id], 'dev.5 committed its revision');
-  assert.equal(terminalReceipt(absPath(p.l.runDir), commandId(id)), null, 'and wrote no receipt');
-  const queued = commandBytes(p, id);
-  const reopen = await p.cli(['resume', 'page-id', ...p.run]);
-  assert.equal(reopen.code, 0, reopen.stderr);
-
-  // HEAD's CLI and fakes directly: the M1 driver stops a run it sees parked, and page-id is parked until the reopen.
-  const scope = scopeOf(p);
-  let r: HeadRun;
-  track(scope);
-  try {
-    r = await runOnHead(p, headFakeSteps({ steps: [c.pageId.planCheck, c.pageId.build, c.pageId.gate] }, 'default'), async () => {});
-  } finally {
-    await teardown(scope);
-  }
-  assert.deepEqual(r.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
-  assert.equal(terminalReceipt(absPath(p.l.runDir), commandId(id))?.state, 'applied');
-  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD recorded no revision: the start left the files to the open command');
-  assert.ok(r.view.doneOf(open[0]!.op) !== null, 'recovery finished the dev.5 command\'s op');
-  assert.ok(commandBytes(p, id).equals(queued));
-  const u = r.view.unit(unitId('page-id'));
-  assert.deepEqual([u.reopened?.specRev, u.spec?.rev], [2, 2], 'page-id re-opened and merged on rev 2');
-  assert.deepEqual(r.view.needsUser().map((n) => [n.blocking, n.ack !== null]), [[true, true]], 'the park\'s needs-user, acknowledged by the reopen');
-  assert.deepEqual(factsOf(r.after, 'stage-outcome').filter((o) => o.class === 'park' || o.class === 'stop'), [], 'HEAD parked or stopped no unit');
-});
-
-/** The repo config's non-default binding: `efficient` (the build seats under `default`) on another Codex triple. */
-const EFFICIENT = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } as const;
-
-test('upgrade.dev5-spend-by-model: dev.5\'s revision is adopted with its routing provenance reconstructed from the repo\'s class binding, and status attributes every build to the bound model', T, async () => {
-  const { p, head } = await stoppedMidBuild(clean(), (l) => {
-    writeFileSync(join(l.repo, '.roadmap', 'config.json'), `${JSON.stringify({ routing: { classes: { efficient: EFFICIENT } } }, null, 2)}\n`);
-    git(l.repo, 'commit', '--quiet', '--all', '--message', 'bind efficient');
-    git(l.repo, 'branch', '--force', 'integration', 'main');
-    const baseline = git(l.repo, 'rev-parse', 'main');
-    editJson<{ baseline: string }>(l.plan, (plan) => ({ ...plan, baseline }));
-  });
-  const scope = scopeOf(p);
-  let f: Finished;
-  track(scope);
-  try {
-    f = await finishOnHead(p, head);
-  } finally {
-    await teardown(scope);
-  }
-  assertFinished(f);
-  const adopted = JSON.parse(readFileSync(join(p.l.runDir, 'routing-provenance', '1.json'), 'utf8')) as { kind: string; provenance: { repoConfig: { classes: object } }; matched: unknown[] };
-  assert.equal(adopted.kind, 'reconstructed');
-  assert.deepEqual(adopted.provenance.repoConfig.classes, { efficient: EFFICIENT });
-  assert.ok(adopted.matched.length > 0, 'the reconstruction resolves the routing revs dev.5 recorded');
-  const spend = f.report.status.spend.byModel;
-  assert.deepEqual(spend.unresolvedRevs, []);
-  const models = new Map(spend.models.map((m) => [m.model, m.calls] as const));
-  assert.equal(models.get('gpt-5.6-sol'), 3, 'slug\'s build and page-id\'s stopped one (dev.5), and page-id\'s resumed build (HEAD)');
-  assert.equal(models.has('gpt-5.6-luna'), false, 'never the default efficient model');
+  assert.ok(queued !== null && commandBytes(p, id).equals(queued), 'the previous release\'s command file is never rewritten');
 });
 
 /**
@@ -862,14 +673,14 @@ async function submitOnHead(p: Phase1, args: readonly string[]): Promise<string>
 const RULING = 'C-3';
 const RULING_TEXT = 'Every page identifier is built from slugify.';
 
-test('upgrade.rule-on-dev5-arc: `roadmap rule` lands on a dev.5 revision: the live ledger\'s preimage kept, constraints.md published, the files written back; the arc then merges', T, async () => {
+test('upgrade.rule-on-dev6-arc: `roadmap rule` lands on the previous release\'s revision: constraints.md published, the files written back; the arc then merges', T, async () => {
   let marker = '';
   const { p, head } = await stoppedMidBuild(clean(), (l) => {
     marker = join(l.dir, 'page-id-lane');
     holdLane(l, marker);
   });
   const ledger = join(p.l.input, 'rulings.md');
-  const dev5Ledger = readFileSync(ledger);
+  const before = readFileSync(ledger);
   let id = '';
   const scope = scopeOf(p);
   let f: Finished;
@@ -882,8 +693,8 @@ test('upgrade.rule-on-dev5-arc: `roadmap rule` lands on a dev.5 revision: the li
         schema: 'roadmap/ruling-m3', id: RULING, statement: RULING_TEXT, kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'review', supersedes: [], condition: null,
         docRefs: [{ path: 'ARCHITECTURE.md', anchor: '#architecture', quotedText: 'A tiny library of pure string and number helpers.', relation: 'consistent' }],
         contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-        // A dev.5 revision in force: the live ledger, no obligations and no vision.
-        consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: bytesSha256(dev5Ledger), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
+        // The previous release's revision in force: its ledger, no obligations and no vision.
+        consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: bytesSha256(before), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
       };
       const file = join(p.dir, 'C-3.json');
       writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
@@ -897,83 +708,17 @@ test('upgrade.rule-on-dev5-arc: `roadmap rule` lands on a dev.5 revision: the li
   const [fact, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(fact !== undefined && more.length === 0);
   const written = readFileSync(ledger);
-  assert.equal(written.toString('utf8'), `${dev5Ledger.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'the live ledger written back');
+  assert.equal(written.toString('utf8'), `${before.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'the live ledger written back');
   assert.deepEqual([fact.rev, fact.command, fact.source, fact.rulingsSha256, fact.publication?.pub], [2, id, { type: 'command', command: id }, bytesSha256(written), 'docs-1']);
   assert.ok(existsSync(join(`${ledger}.d`, `${RULING}.json`)), 'its sidecar written beside the ledger');
-  const preimage = JSON.parse(readFileSync(join(p.l.runDir, 'commands', 'rule-preimages', `${id}.json`), 'utf8')) as unknown;
-  assert.deepEqual(preimage, { ledgerSha256: bytesSha256(dev5Ledger) }, 'the dev.5 ledger\'s hash, kept before the commit');
   assert.match(git(p.l.repo, 'show', `integration:.roadmap/constraints.md`), new RegExp(`${RULING} — ${RULING_TEXT}`), 'constraints.md published');
-  assert.ok(defaulted(p, f.report.generation!).has('rulings.live'));
-});
-
-
-const CONSTRAINTS = '.roadmap/constraints.md';
-
-test('upgrade.dev5-roadmap-diff-branch: a dev.5-approved branch editing .roadmap/constraints.md reaches candidate admission on HEAD and publishes under dev.5\'s transient rules', T, async () => {
-  const c = clean();
-  let hold = '';
-  let edited = '';
-  // page-id's build also edits the in-tree ledger rendering, an entry dev.5's transient check allows.
-  const withConstraints = (l: Layout): readonly M1Step[] => {
-    edited = `${readFileSync(join(l.repo, CONSTRAINTS), 'utf8')}C-3 — (proposed) Page identifiers are ASCII.\n`;
-    const build = { ...c.pageId.build, acts: c.pageId.build.acts.map((a) => (a.type === 'commit' ? { ...a, files: { ...a.files, [CONSTRAINTS]: edited } } : a)) };
-    return [...c.slug, c.pageId.planCheck, build, c.pageId.gate];
-  };
-  const p = await preparePrevious(withConstraints, [], (l) => {
-    hold = join(l.dir, 'candidate-hold');
-    // The suite waits on page-id's candidate (the only one holding src/page-id.js) until released.
-    editJson<{ suite: { lanes: { argv: readonly string[] }[] } }>(l.plan, (plan) => ({
-      ...plan,
-      suite: {
-        lanes: plan.suite.lanes.map((lane) => ({
-          ...lane,
-          argv: ['/bin/sh', '-c', '{ [ ! -e src/page-id.js ] || [ -e "$1.release" ]; } || { : > "$1.reached"; while [ ! -e "$1.release" ]; do sleep 0.2; done; }; exec npm test', 'suite', hold],
-        })),
-      },
-    }));
-  });
-  const scope = scopeOf(p);
-  track(scope);
-  try {
-    const supervisor = await startPrevious(p);
-    await until('page-id\'s candidate waits in its suite', PHASE_MS, () => (existsSync(`${hold}.reached`) ? true : null));
-    await stopPrevious(p, supervisor);
-  } finally {
-    await teardown(scope);
-  }
-  const mid = journalOf(p).view;
-  const held = mid.unit(unitId('page-id'));
-  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['candidate', 'held', 'interrupted']);
-  assert.ok(held.approval !== null, 'dev.5 approved the branch');
-  const dispatch = mid.dispatchOf(unitId('page-id'));
-  assert.ok(dispatch !== null && dispatch.transientRules === undefined, 'dispatched by dev.5');
-  // The branch's diff is allowed by dev.5's rules only.
-  const scopeRules = { evidenceGlobs: [], scope: dispatch.scope };
-  assert.deepEqual(transientViolations({ kind: 'dev5', ...scopeRules }, [repoPath(CONSTRAINTS)]), []);
-  assert.deepEqual(transientViolations({ kind: 'm3', ...scopeRules }, [repoPath(CONSTRAINTS)]).map((v) => v.rule), ['roadmap-dir']);
-  writeFileSync(`${hold}.release`, '');
-  const resume = await p.cli(['resume', ...p.run]);
-  assert.equal(resume.code, 0, resume.stderr);
-
-  let f: Finished;
-  track(scope);
-  try {
-    f = await finishOnHead(p, []);
-  } finally {
-    await teardown(scope);
-  }
-  assertFinished(f);
-  assert.equal(f.calls.length, SMOKE_CALLS, 'no judgment: dev.5\'s approval stands');
-  assert.deepEqual(outcomesOf(f.after, 'page-id'), ['candidate:green', 'ff:published', 'snapshot:published']);
-  assert.equal(git(p.l.repo, 'show', `integration:${CONSTRAINTS}`), edited.trimEnd(), 'published with the branch\'s .roadmap/ edit');
-  assert.ok(defaulted(p, f.report.generation!).has('dispatch.transientRules'));
 });
 
 /** The arc whose released residue pairs fill the host index to the compaction threshold (COMPACT_THRESHOLD). */
 const FILLER = arcId('upgrade-filler');
 const FILLERS = 64;
 
-test('upgrade.compact-with-dev5-retry: dev.5\'s retry crashed after its disposition; HEAD\'s start compacts the index, keeping that pair byte for byte, and recovery releases it', T, async () => {
+test('upgrade.compact-with-dev6-retry: the previous release\'s retry crashed after its disposition; HEAD\'s start compacts the index, keeping that pair byte for byte, and recovery releases it', T, async () => {
   const c = clean();
   const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], [], (l) => {
     // The resource's teardown fails once: the first release of `scratch` leaves a residue.
@@ -993,8 +738,8 @@ test('upgrade.compact-with-dev5-retry: dev.5\'s retry crashed after its disposit
   const held = mid.resources().get(scratch)?.status;
   assert.ok(held !== undefined && held.state === 'cleaning' && held.holder.type === 'retry', `scratch is cleaning under the retry: ${JSON.stringify(held)}`);
   const host = absPath(p.host);
-  const dev5Pair = readResidues(host).map((l) => canonicalJson(bodyOf(l)));
-  assert.equal(dev5Pair.length, 2, 'the residue and its cleaned disposition');
+  const previousPair = readResidues(host).map((l) => canonicalJson(bodyOf(l)));
+  assert.equal(previousPair.length, 2, 'the residue and its cleaned disposition');
 
   // Another arc's released pairs, its log readable (an empty one) in the repo's runtime dir.
   const fillerRunDir = absPath(join(p.l.repo, '.git', 'roadmap-runtime', FILLER));
@@ -1019,8 +764,8 @@ test('upgrade.compact-with-dev5-retry: dev.5\'s retry crashed after its disposit
   const archives = readdirSync(p.host).filter((n) => RESIDUE_ARCHIVE.test(n));
   assert.equal(archives.length, 1, 'HEAD\'s start compacted the index once');
   assert.ok(readFileSync(join(p.host, archives[0]!)).equals(before), 'the archive is the index as it stood, byte for byte');
-  assert.deepEqual(readResidues(host).map((l) => canonicalJson(bodyOf(l))), dev5Pair, 'the fillers went; the dev.5 pair stays unchanged, and no second disposition');
-  assert.deepEqual(f.view.resources().get(scratch)?.status, { state: 'free' }, 'recovery released the dev.5 retry');
+  assert.deepEqual(readResidues(host).map((l) => canonicalJson(bodyOf(l))), previousPair, 'the fillers went; the previous release\'s pair stays unchanged, and no second disposition');
+  assert.deepEqual(f.view.resources().get(scratch)?.status, { state: 'free' }, 'recovery released the previous release\'s retry');
 });
 
 /**
@@ -1089,7 +834,7 @@ function obligations(): unknown {
   };
 }
 
-test('upgrade.opt-in-holistic: an architect apply adds `holistic` to a dev.5 arc mid-run: the baseline job, the drift audit, the brake on page-id\'s candidate, the final audit, no-op checkpoints, arc-completed', T, async () => {
+test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previous release\'s arc mid-run: the baseline job, the drift audit, the brake on page-id\'s candidate, the final audit, no-op checkpoints, arc-completed', T, async () => {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle.
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
   // The opt-in revision triggers a drift audit (audit-1, L ∩ {drift, vision} empty: all of L), whose checkpoint is
