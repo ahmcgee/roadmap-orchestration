@@ -20,7 +20,9 @@ node evals/probe.ts
 Runs the production argv builder, runner and adapter against the real `claude` and `codex` (both must be on
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
 implementer argvs, the Fable id pin, and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
-prompt modules over tiny fixtures on their own seats. Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
+prompt modules over tiny fixtures on their own seats; (M4a) the forge functions read-only against the real repository
+(identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
+call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
 its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies.
 
 ## The M1 fixture
